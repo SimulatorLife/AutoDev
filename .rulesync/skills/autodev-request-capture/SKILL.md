@@ -9,8 +9,7 @@ This skill is for working on the AutoDev repository itself. It is exposed only
 through AutoDev's repository-scoped skill folders and is never installed at user
 level.
 
-Use it before changing anything that sits between AutoDev, an ACP or OpenCLI
-executor, and a model provider:
+Use it before changing any AutoDev transport, executor, or model-provider boundary:
 
 - `runtime/src/router/` and `runtime/src/xacpx/` routes, session pinning, header allowlists, and payload boundaries;
 - ACP profiles and provider transports in `runtime/src/acp/provider-profiles.ts` and `runtime/src/providers/opencli-turn.ts`;

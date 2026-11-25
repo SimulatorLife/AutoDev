@@ -12,11 +12,11 @@ Prefer indexed/deterministic tooling for mechanical discovery and graph traversa
 
 ## Tool Responsibilities
 
-Use each tool for a distinct information class.
+Choose the narrowest authorized capability for the information needed. The implementations below are AutoDev's configured defaults, not mandatory dependencies of general skills. If one is unavailable or unindexed, use authorized alternatives; report missing required evidence.
 
 ### CodeGraphContext (CGC) — structural repository understanding
 
-Use **CGC as the default structural map** for:
+Use an available, sufficiently current structural map (currently CGC) for:
 
 - callers/callees and transitive call relationships
 - call chains
@@ -29,7 +29,7 @@ Prefer CGC graph traversal over repeated step-by-step LSP/file traversal when th
 
 **Graph lifecycle (current state):** session start owns creating and refreshing the active checkout's graph (runtime/src/platform/code-graph-ensure.ts). A detached worker indexes a repository the graph does not list, and refreshes one whose checkout changed since its last successful run. Its freshness stamp includes HEAD, Git status, and content/mode hashes for tracked changed files and non-ignored untracked files, so later edits to an already-dirty path invalidate the stamp too. A lock and the freshness stamp keep this idempotent; state lives outside the repository. Agents do not index: role allowlists omit add_code_to_graph and check_job_status, and the root session gets the same four-tool CGC surface because the orchestrator role's per-server settings are composed into the root config. list_indexed_repositories establishes graph presence, not that an asynchronous index/refresh is complete or current. CGC answers queries about an unindexed repository with successful, empty results, so confirm the workspace before interpreting an empty answer.
 
-**Query discipline:** CGC find_code is identifier/keyword/content lookup, not natural-language semantic discovery: query a known symbol or a few distinctive terms. Use CocoIndex Code (CCC) for an unknown concept or behavior, then use CGC for callers, dependencies, and other structural relationships. An empty CGC result is not proof that the code does not exist; first confirm the repository path and use an exact known symbol when available.
+**Query discipline:** CGC find_code is identifier/keyword/content lookup, not natural-language semantic discovery: query a known symbol or a few distinctive terms. Use semantic search (currently CCC) for an unknown concept or behavior; use structural analysis for callers and dependencies only when the question requires it. An empty CGC result is not proof that the code does not exist; first confirm the repository path and use an exact known symbol when available.
 
 ### CocoIndex Code (CCC) — semantic discovery
 
@@ -41,7 +41,7 @@ Examples:
 - “What controls cars bunching under braking?”
 - “Where does intervention-phase dimming happen?”
 
-Use semantic search to identify likely anchors, then switch to CGC/LSP rather than repeatedly searching.
+Use semantic search to identify likely anchors, then inspect the relevant source or use available structural or language-aware analysis as needed rather than repeatedly searching.
 
 ### LSP MCP — precise language semantics
 
@@ -69,7 +69,7 @@ A Repomix briefing is useful when a task needs high-level project context that i
 
 Prefer full content for important docs/config, but omit source-code bodies or include only source directory structure where CGC already represents implementation relationships. Do **not** use Repomix for symbol, caller, dependency, or implementation-location questions, and do not query Repomix and CGC for the same fact.
 
-Repomix is currently **not installed, registered as an AutoDev MCP server, or run automatically for tasks**. If a repository owner supplies a briefing, treat it as orientation rather than authoritative evidence about current source; confirm task-relevant implementation details with CGC and targeted source inspection.
+Repomix is currently **not installed, registered as an AutoDev MCP server, or run automatically for tasks**. If a repository owner supplies a briefing, treat it as orientation rather than authoritative evidence about current source; confirm task-relevant implementation details through targeted source inspection and other available appropriate capabilities.
 
 A bounded Repomix integration may be evaluated later if measurements show repeated rediscovery of high-level repository rules/docs. Any integration should remain optional, have explicit generation/freshness ownership, exclude implementation source already covered by CGC, and avoid assuming unverified performance/compression benefits.
 
@@ -84,29 +84,17 @@ LSP      → "What exactly does the language/compiler know here?"
 
 ## Expected Task Flow
 
-```text
-Task
-  ↓
-Relevant code already known?
-  ├─ No → CCC semantic search → establish likely anchor(s)
-  └─ Yes
-       ↓
-CGC structural context
-  dependency/call relationships
-  ownership/blast radius
-       ↓
-Targeted source inspection
-       ↓
-Need exact compiler/language semantics?
-  ├─ Yes → LSP
-  └─ No
-       ↓
-Implement
-       ↓
-LSP diagnostics / focused validation
-```
+Select by information intent rather than imposing a fixed dependency order:
 
-Do **not** query CCC, CGC, LSP, grep, and file search for the same fact merely to increase confidence.
+| Need | Suitable capability |
+| --- | --- |
+| Unknown implementation or behavior | Semantic search; targeted text/source discovery if unavailable |
+| Callers, imports, dependencies, blast radius | Structural analysis; language-aware queries or targeted source inspection if unavailable |
+| Exact definitions, references, types, diagnostics | Language-aware analysis; targeted source and build/compiler evidence as appropriate |
+| Literal strings, configuration, documentation | Text search and direct reads |
+| Confirm implementation details | Targeted source inspection |
+
+Skip discovery steps whose answers are already known. Verify index coverage and freshness when relying on indexed results. Use the available appropriate validation capability after changes. Do not query multiple tools for the same fact merely to increase confidence.
 
 ## Suspected Tool Overlap — Cross-Validate Before Restricting
 
@@ -150,7 +138,7 @@ After cross-validation, likely candidates to hide or demote from normal agents i
 - LSP file-import/dependency exploration when CGC already owns repository dependency analysis
 - low-level LSP workspace-symbol tools when a higher-level bundled symbol tool provides the needed information
 
-Do not permanently remove useful recovery/precision capabilities. Keep them available to expanded/debug/validator roles when justified.
+Do not permanently remove useful recovery/precision capabilities. Keep them available to expanded/debug/validator roles when justified. A restriction that depends on a complementary provider must not leave the role unable to answer required questions when that provider is absent. Verify authorized alternatives before changing exposure.
 
 ### Current state: LSP on normal implementation roles
 
@@ -190,7 +178,7 @@ May receive broader access, including overlapping tools, when independent verifi
 
 ## Longer-Term Interface
 
-Prefer eventually hiding backend-specific MCP complexity behind a small user-level interface such as:
+Prefer selecting among a few information intents using the existing exposed tool interfaces; the following is a conceptual mapping, not a proposed custom tool wrapper:
 
 ```text
 code.search      → CCC
@@ -200,9 +188,7 @@ code.validate    → LSP
 repo.brief       → Repomix/docs/config
 ```
 
-Or a higher-level `get_task_context(task)` that mechanically combines the appropriate indexed information before implementation begins.
-
-The agent should choose among a few **information intents**, not dozens of overlapping MCP operations.
+The agent should choose among these information intents without adding custom wrappers or a mandatory cross-tool workflow.
 
 ## Repository and Tool Exclusions
 
@@ -225,13 +211,13 @@ Track at minimum:
 - tokens before first edit
 - unique files read before first edit
 - repeated reads/searches
-- CCC / CGC / LSP call counts
+- discovery call counts by information capability, retaining concrete tool attribution
 - total tool calls
 - rework caused by insufficient investigation
 
-Use these measurements to validate whether reduced tool exposure and clearer ownership actually improve performance.
+Use these measurements to validate whether reduced tool exposure and clearer ownership actually improve performance. Generic capability classification is a target for future diagnostics schema work, not a claim that the existing JSON fields have changed.
 
-**Current state:** the session-diagnostics skill's `session-trace.ts` reports these per thread as an `investigation` line and a JSON field, up to the thread's first file change. It covers tool calls, tokens, unique files read, repeated reads and searches, and CCC/CGC/LSP call counts, and its `tools` line gives total tool calls. It reads them from Codex's structured `item_completed` records. Rework caused by insufficient investigation cannot be measured mechanically from rollouts and stays a review judgement. The session-diagnostics skill provides `investigation-compare.ts` to aggregate these metrics from two saved `session-trace --json` reports, showing before/after totals and means, metric-specific observed/missing counts, unavailable-thread counts, and after-minus-before deltas. It accepts the JSON object emitted by `session-trace --json` (top-level `threads` array; each thread has an `investigation` object with boolean `observed`), and validates the records and metric values. It is descriptive only and does not establish causation; missing observations are not treated as zero.
+**Historical/current report contract (verify coverage for the active provider):** the session-diagnostics skill's `session-trace.ts` reports these per thread as an `investigation` line and a JSON field, up to the thread's first file change. It covers tool calls, tokens, unique files read, repeated reads and searches, and CCC/CGC/LSP call counts, and its `tools` line gives total tool calls. It reads them from Codex's structured `item_completed` records. Rework caused by insufficient investigation cannot be measured mechanically from rollouts and stays a review judgement. The session-diagnostics skill provides `investigation-compare.ts` to aggregate these metrics from two saved `session-trace --json` reports, showing before/after totals and means, metric-specific observed/missing counts, unavailable-thread counts, and after-minus-before deltas. It accepts the JSON object emitted by `session-trace --json` (top-level `threads` array; each thread has an `investigation` object with boolean `observed`), and validates the records and metric values. It is descriptive only and does not establish causation; missing observations are not treated as zero.
 
 ## Required Validation Before Tool-Surface Changes
 

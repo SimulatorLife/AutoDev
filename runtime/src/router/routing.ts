@@ -17,7 +17,8 @@ import {
   CODEX_MODEL_PATTERN,
   MINIMAX_MODEL_PATTERN,
   OPENCLI_CHATGPT_MODEL_PATTERN,
-  OPENCLI_GEMINI_MODEL_PATTERN
+  OPENCLI_GEMINI_MODEL_PATTERN,
+  OPENCLI_PROVIDER_SITES
 } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 import {
@@ -642,8 +643,8 @@ export class RoutingPolicy {
   /**
    * The capability a provider needs to serve a role at all.
    *
-   * The orchestrator's job is delegating, so a provider that cannot create
-   * Codex children cannot serve the orchestrator tier however it is enabled and
+   * The orchestrator's job is delegating, so a provider without an authorized
+   * XACPX delegation path cannot serve the orchestrator tier however it is enabled and
    * ranked. This is deliberately a separate fact from enablement: the Console
    * and the router status used to report a provider as enabled for the
    * orchestrator while the router refused to route to it, so an operator
@@ -696,6 +697,9 @@ export class RoutingPolicy {
       typeof provider === "string" && provider.trim().length > 0
         ? provider.trim()
         : "This provider";
+    if (Object.hasOwn(OPENCLI_PROVIDER_SITES, name)) {
+      return `${name} cannot serve the ${role} role yet: its native MCP integration has no verified conversation-specific role, workspace and coordinator binding to Supergateway/XACPX. This is an integration parity gap, not a permanent provider restriction.`;
+    }
     return `${name} cannot serve the ${role} role: it has no delegation path, so it cannot create the child agents an orchestrator needs.`;
   }
 

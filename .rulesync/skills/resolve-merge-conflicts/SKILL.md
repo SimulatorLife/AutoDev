@@ -26,13 +26,13 @@ Resolve conflicts as an integration problem, not a text-selection problem. Under
 
 Use the bundled context extractor before reading full conflicted files. It summarizes unresolved paths from Git's index, classifies conflict types, extracts only conflict hunks plus nearby context, and falls back to stage previews for index-only conflicts
 
-The installed user-level skill path is:
+Locate the bundled helper relative to the active skill directory. For example, in a user-level installation:
 
 ```bash
 conflict_context="$HOME/.agents/skills/resolve-merge-conflicts/scripts/extract_conflict_context.py"
 ```
 
-If working directly in the AutoDev source tree before installation, the canonical source is:
+If the skill is instead loaded from a repository's Rulesync source directory, the equivalent example is:
 
 ```bash
 conflict_context=".rulesync/skills/resolve-merge-conflicts/scripts/extract_conflict_context.py"

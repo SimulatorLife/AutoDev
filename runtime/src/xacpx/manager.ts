@@ -61,6 +61,12 @@ import { composeRoleSystemPrompt } from "@simulatorlife/autodev-runtime/shared/r
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 import { execa } from "execa";
 
+import {
+  geminiConversationId,
+  parseOpencliOutput,
+  replyFromRow
+} from "../providers/opencli-turn.ts";
+
 export interface XacpxBinaries {
   readonly xacpxBin: string;
   readonly acpxBin: string;
@@ -131,6 +137,7 @@ export type AcpTransportFactory = (
 export interface GithubWorkerRunResult {
   readonly outputText: string;
   readonly exitCode: number;
+  readonly conversationId: string;
 }
 
 export type GithubWorkerRunner = (
@@ -144,6 +151,14 @@ export interface SessionTurnResult {
   readonly outputText: string;
   readonly stopReason: string;
   readonly acpSessionId: string | null;
+  readonly conversationId?: string;
+}
+
+interface LiveOpencliSessionHandle {
+  readonly repository: string;
+  conversationId: string | null;
+  active: { controller: AbortController; settled: Promise<void> } | null;
+  uncertain: boolean;
 }
 
 interface LiveAcpSessionHandle {
@@ -343,20 +358,21 @@ async function defaultGithubWorkerRunner(
   signal?: AbortSignal
 ): Promise<GithubWorkerRunResult> {
   const parsedModel = opencliModel(task.model);
-  const site =
-    parsedModel?.site ??
-    (task.provider === "opencli-gemini" ? "gemini" : "chatgpt");
-  const commandArguments =
-    site === "gemini"
-      ? [
-          "gemini",
-          "ask",
-          task.prompt,
-          ...(parsedModel?.siteModel ? ["--model", parsedModel.siteModel] : []),
-          "-f",
-          "json"
-        ]
-      : ["chatgpt", "ask", task.prompt, "-f", "json"];
+  if (!parsedModel || parsedModel.provider !== task.provider) {
+    throw new Error("OpenCLI model does not match the pinned provider.");
+  }
+  const { site, siteModel } = parsedModel;
+  const commandArguments = [
+    site,
+    "ask",
+    task.prompt,
+    ...(site === "gemini" ? ["--model", siteModel] : []),
+    ...(task.conversationId
+      ? ["--conversation", task.conversationId]
+      : ["--new", "true"]),
+    "-f",
+    "json"
+  ];
 
   const command = process.env.OPENCLI_BIN?.trim() || "opencli";
   const result = await execa(command, commandArguments, {
@@ -372,7 +388,15 @@ async function defaultGithubWorkerRunner(
       errorText || output || `opencli github-worker exited with code ${exitCode}`
     );
   }
-  return { outputText: output, exitCode };
+  const row = parseOpencliOutput(output, exitCode)[0];
+  if (!row) throw new Error("OpenCLI returned no response row.");
+  const reply = replyFromRow(row);
+  const conversationId =
+    site === "gemini" ? geminiConversationId(row.url) : reply.conversationId;
+  if (!conversationId) {
+    throw new Error("OpenCLI response has no verifiable conversation identity.");
+  }
+  return { outputText: reply.response, exitCode, conversationId };
 }
 
 function resolvePackageBinary(
@@ -487,6 +511,7 @@ roles <-> ACP providers).
 export class XacpxSessionManager {
   private readonly pins = new Map<string, PinnedSessionRecord>();
   private readonly liveSessions = new Map<string, LiveAcpSessionHandle>();
+  private readonly opencliSessions = new Map<string, LiveOpencliSessionHandle>();
   private readonly policy: RoutingPolicy;
   private readonly consoleSink: AcpConsoleSink | null;
   private readonly acpTransportFactory: AcpTransportFactory;
@@ -519,6 +544,8 @@ export class XacpxSessionManager {
   }
 
   clearPinnedSession(sessionId: string): boolean {
+    if (this.opencliSessions.get(sessionId)?.active) return false;
+    this.opencliSessions.delete(sessionId);
     return this.pins.delete(sessionId);
   }
 
@@ -557,7 +584,7 @@ export class XacpxSessionManager {
           `Pinned provider '${pinned.provider}' is no longer eligible for session ${sessionId} (${role}).`
         );
       }
-      if (COOLDOWNS.isCooling(matching.provider, Date.now(), matching.model)) {
+      if (COOLDOWNS.isCooling(pinned.provider, Date.now(), pinned.model)) {
         throw new Error(
           `Pinned provider '${matching.provider}' is cooling down; start a new session instead of hopping mid-session.`
         );
@@ -574,10 +601,47 @@ export class XacpxSessionManager {
       (candidate) =>
         !COOLDOWNS.isCooling(candidate.provider, now, candidate.model)
     );
-    const chosen = healthy ?? eligible[0];
-    if (!chosen) {
+    if (!healthy && eligible.length > 0) {
       throw new Error(
-        `No eligible provider candidate found for role '${role}'.`
+        `All eligible provider candidates for role '${role}' are cooling down: ${eligible.map((candidate) => candidate.provider).join(", ")}.`
+      );
+    }
+    const chosen = healthy;
+    if (!chosen) {
+      const blockedOpencli = rawCandidates
+        .filter((candidate) => isGithubWorkerProvider(candidate.provider))
+        .map((candidate) => candidate.provider);
+      if (role !== GITHUB_WORKER_ROLE && blockedOpencli.length > 0) {
+        throw new Error(
+          `No eligible provider candidate found for role '${role}'. OpenCLI integration parity gap (${[...new Set(blockedOpencli)].join(", ")}): native MCP conversation-specific role, workspace and coordinator binding to Supergateway/XACPX is not verified.`
+        );
+      }
+      const tier =
+        role === "orchestrator"
+          ? this.policy.config.orchestrator.tier
+          : this.policy.tierForRole(role);
+      const scope = role === "orchestrator" ? "orchestrator" : "subagent";
+      const blockers = tier ? this.policy.tierServingBlockers(tier, scope) : null;
+      const excluded = tier ? this.policy.excludedProviders(tier, scope) : [];
+      const reasons = new Map(
+        excluded.map(({ provider, reason }) => [provider, reason])
+      );
+      for (const provider of blockers?.disabled ?? []) {
+        if (!reasons.has(provider)) reasons.set(provider, "disabled");
+      }
+      for (const provider of blockers?.cannotDelegate ?? []) {
+        reasons.set(provider, "delegation unavailable");
+      }
+      for (const provider of blockers?.servable ?? []) {
+        if (!reasons.has(provider)) {
+          reasons.set(provider, "no eligible model or execution transport");
+        }
+      }
+      const details = [...reasons]
+        .map(([provider, reason]) => `${provider}: ${reason}`)
+        .join("; ");
+      throw new Error(
+        `No eligible provider candidate found for role '${role}'.${details ? ` ${details}.` : ""}`
       );
     }
     return chosen;
@@ -602,6 +666,29 @@ export class XacpxSessionManager {
     const systemPrompt =
       request.systemPrompt.trim() || renderRoleSystemPrompt(role);
     const existing = this.pins.get(request.sessionId);
+    if (
+      existing &&
+      (existing.cwd !== cwd ||
+        existing.parentSessionId !== (request.parentSessionId ?? null))
+    ) {
+      throw new Error("Pinned session workspace or parent identity cannot change.");
+    }
+    const opencli = this.opencliSessions.get(request.sessionId);
+    if (opencli?.active) {
+      throw new Error("An OpenCLI turn is already active for this session.");
+    }
+    if (opencli?.uncertain) {
+      throw new Error(
+        "Previous OpenCLI turn outcome is uncertain; reconcile it before starting another session."
+      );
+    }
+    if (
+      opencli &&
+      request.repository &&
+      request.repository !== opencli.repository
+    ) {
+      throw new Error("Pinned OpenCLI session repository cannot change.");
+    }
     const chosen = this.selectCandidateForSession(request.sessionId, role);
 
     const session: PinnedSessionRecord = existing ?? {
@@ -638,9 +725,11 @@ export class XacpxSessionManager {
         task: buildGithubWorkerTaskSpec({
           provider: chosen.provider,
           model: chosen.model,
-          repository: request.repository ?? path.basename(cwd),
+          repository:
+            opencli?.repository ?? request.repository ?? path.basename(cwd),
           task: request.promptOrTask,
-          sessionId: request.sessionId
+          sessionId: request.sessionId,
+          conversationId: opencli?.conversationId ?? null
         })
       };
     }
@@ -680,10 +769,56 @@ export class XacpxSessionManager {
     environment: NodeJS.ProcessEnv = process.env,
     signal?: AbortSignal
   ): Promise<SessionTurnResult> {
+    if (signal?.aborted) {
+      throw new Error("Session turn cancelled before dispatch.");
+    }
     const plan = this.planDispatch(request, environment);
+    let opencliCancelled = false;
+    let opencli: LiveOpencliSessionHandle | undefined;
+    if (plan.kind === "opencli-github-worker") {
+      opencli = this.opencliSessions.get(request.sessionId) ?? {
+        repository: plan.task.repository,
+        conversationId: null,
+        active: null,
+        uncertain: false
+      };
+      this.opencliSessions.set(request.sessionId, opencli);
+    }
     try {
-      if (plan.kind === "opencli-github-worker") {
-        const result = await this.githubWorkerRunner(plan.task, signal);
+      if (plan.kind === "opencli-github-worker" && opencli) {
+        const controller = new AbortController();
+        const { promise: settled, resolve: settle } =
+          Promise.withResolvers<void>();
+        opencli.active = { controller, settled };
+        const abort = (): void => controller.abort();
+        signal?.addEventListener("abort", abort, { once: true });
+        let result: GithubWorkerRunResult;
+        try {
+          result = await this.githubWorkerRunner(plan.task, controller.signal);
+          if (controller.signal.aborted) {
+            throw new Error("OpenCLI turn cancelled.");
+          }
+          if (
+            result.exitCode !== 0 ||
+            typeof result.conversationId !== "string" ||
+            !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u.test(result.conversationId) ||
+            (opencli.conversationId !== null &&
+              result.conversationId !== opencli.conversationId)
+          ) {
+            throw new Error(
+              "OpenCLI response does not match the pinned conversation."
+            );
+          }
+          opencli.conversationId = result.conversationId;
+        } catch (error) {
+          opencliCancelled = controller.signal.aborted;
+          opencli.uncertain = true;
+          throw error;
+        } finally {
+          signal?.removeEventListener("abort", abort);
+          opencli.active = null;
+          settle();
+        }
         this.consoleSink?.emit({
           type: "session_completed",
           sessionId: plan.session.sessionId,
@@ -696,9 +831,11 @@ export class XacpxSessionManager {
           kind: "opencli-github-worker",
           outputText: result.outputText,
           stopReason: "end_turn",
-          acpSessionId: null
+          acpSessionId: null,
+          conversationId: result.conversationId
         };
       }
+      if (plan.kind !== "acp") throw new Error("Missing OpenCLI session state.");
 
       let handle = this.liveSessions.get(request.sessionId);
       if (!handle) {
@@ -748,11 +885,13 @@ export class XacpxSessionManager {
       };
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      COOLDOWNS.cooldownProvider(plan.session.provider, {
-        failureClass: "upstream_error",
-        detail,
-        model: plan.session.model
-      });
+      if (!signal?.aborted && !opencliCancelled) {
+        COOLDOWNS.cooldownProvider(plan.session.provider, {
+          failureClass: "upstream_error",
+          detail,
+          model: plan.session.model
+        });
+      }
       this.consoleSink?.emit({
         type: "session_failed",
         sessionId: plan.session.sessionId,
@@ -789,7 +928,8 @@ export class XacpxSessionManager {
         ...(pinned.parentSessionId && {
           parentSessionId: pinned.parentSessionId
         }),
-        ...(live?.mcpConfigPath && { mcpConfigPath: live.mcpConfigPath })
+        ...(live?.mcpConfigPath && { mcpConfigPath: live.mcpConfigPath }),
+        ...(live?.supergateway && { supergateway: live.supergateway })
       },
       environment,
       signal
@@ -797,9 +937,14 @@ export class XacpxSessionManager {
   }
 
   /**
-  Cancel the active ACP turn for `sessionId` if connected.
+  Request cancellation of the active ACP or OpenCLI turn for `sessionId`.
   */
   async cancelSession(sessionId: string): Promise<boolean> {
+    const opencli = this.opencliSessions.get(sessionId);
+    if (opencli?.active) {
+      opencli.active.controller.abort();
+      return true;
+    }
     const live = this.liveSessions.get(sessionId);
     if (!live) return false;
     await live.connection.agent.notify(AGENT_METHODS.session_cancel, {
@@ -809,12 +954,17 @@ export class XacpxSessionManager {
   }
 
   /**
-  Close any live ACP connection, release transport, and clear session pin state.
+  Close live transport, settle any cancelled OpenCLI turn, and clear session pin state.
   */
   async closeSession(sessionId: string): Promise<boolean> {
+    const activeOpencli = this.opencliSessions.get(sessionId)?.active;
+    if (activeOpencli) {
+      activeOpencli.controller.abort();
+      await activeOpencli.settled;
+    }
     const live = this.liveSessions.get(sessionId);
     this.liveSessions.delete(sessionId);
-    const hadPin = this.pins.delete(sessionId);
+    const hadPin = this.clearPinnedSession(sessionId);
     if (!live) return hadPin;
     try {
       await live.connection.agent.request(AGENT_METHODS.session_close, {

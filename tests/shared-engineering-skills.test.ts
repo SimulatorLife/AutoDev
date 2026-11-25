@@ -66,3 +66,55 @@ test("diagnosing skill requires root-cause evidence and verification of the orig
     /Do not weaken assertions, skip tests, swallow errors, add arbitrary retries, or suppress warnings to hide the failure/
   );
 });
+
+test("semantic and language-aware skills do not require a structural graph provider", () => {
+  for (const skill of ["ccc", "lsp-mcp-server"]) {
+    const body = read(`.rulesync/skills/${skill}/SKILL.md`);
+    assert.doesNotMatch(
+      body,
+      /CodeGraphContext|\bCGC\b|list_indexed_repositories/
+    );
+    assert.match(body, /structural (?:code )?analysis|code context graph/i);
+    assert.match(body, /when available|when exposed|not required|Neither is required/i);
+  }
+  assert.match(read(".rulesync/skills/ccc/SKILL.md"), /cocoindex-code.*search/);
+  assert.match(read(".rulesync/skills/lsp-mcp-server/SKILL.md"), /lsp_goto_definition/);
+});
+
+test("shared navigation selects available capabilities rather than mandating a provider", () => {
+  const prompt = read("agents/prompts/code-search.md");
+  assert.doesNotMatch(
+    prompt,
+    /CodeGraphContext|CocoIndex|list_indexed_repositories|\bCGC\b/
+  );
+  assert.match(prompt, /semantic code discovery/i);
+  assert.match(prompt, /structural analysis/i);
+  assert.match(prompt, /language-aware analysis/i);
+  assert.match(prompt, /authorized alternative/i);
+});
+
+test("orchestration uses the xacpx delegation contract without provider-native spawning", () => {
+  const root = ".rulesync/skills/orchestration/";
+  for (const path of [
+    "SKILL.md",
+    "references/runtime-contract.md",
+    "references/development-lifecycle.md",
+    "references/recovery.md",
+    "references/tool-names.md",
+    "references/web-chat.md",
+    "references/playtesting.md",
+    "references/validation.md",
+    "references/xacpx-delegation.md"
+  ]) {
+    const body = read(root + path);
+    assert.doesNotMatch(
+      body,
+      /multi_agent_v1__|codex-code-mode\.md|CodeGraphContext/
+    );
+  }
+  const delegation = read(root + "references/xacpx-delegation.md");
+  assert.match(delegation, /delegate_request/);
+  assert.match(delegation, /task_watch/);
+  assert.match(delegation, /task_cancel/);
+  assert.match(delegation, /timeout does not mean failure/i);
+});

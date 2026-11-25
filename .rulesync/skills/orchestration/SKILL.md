@@ -14,12 +14,12 @@ The root owns planning, decomposition, delegation, synthesis, integration, lifec
 
 ## References: read only what applies
 
-Each reference is a self-contained procedure. Read one when its trigger applies to your provider and situation; skip the rest.
+Each reference is a self-contained procedure. Read one when its trigger applies to your situation; skip the rest.
 
 | Reference | Read when |
 | --- | --- |
-| `references/runtime-contract.md` | Before your first spawn: spawning, waiting, parking, closing, commits |
-| `references/codex-code-mode.md` | Before your first spawn, on every provider: the one spawn surface |
+| `references/runtime-contract.md` | Before delegation: ownership, lifecycle, concurrency, commits |
+| `references/xacpx-delegation.md` | Before delegation: canonical AutoDev task operations |
 | `references/web-chat.md` | Your replies go through a web chat (`opencli-chatgpt`, `opencli-gemini`) |
 | `references/recovery.md` | A spawn fails for capacity or admission, or a delegation is interrupted |
 | `references/validation.md` | You plan or run a validation gate, including browser verification |
@@ -33,7 +33,7 @@ Each reference is a self-contained procedure. Read one when its trigger applies 
 | ----------------- | ------------------------------------------------------- | --------------- | ------- |
 | `default` | General-purpose development | workspace-write |
 | `docs-researcher` | Authoritative, version-aware external research, website research, documentation discovery | read-only | - |
-| `browser-tester` | Browser and runtime evidence | read-only | Uses Playwright strictly for delegated UI and browser testing via browser-tester; do not use browser automation for general web research. |
+| `browser-tester` | Browser and runtime evidence | read-only | Uses authorized browser/runtime validation tools; do not use browser automation for general web research. |
 | `explorer` | Architecture, dependencies, and current-state discovery | read-only | - |
 | `worker` | Bounded implementation | workspace-write | - |
 | `validator` | Independent review and validation | workspace-write | Validators must be independent of the scope they validate and pinned to an identified repository state; see `references/validation.md`. |
@@ -67,19 +67,18 @@ Each delegated task must define:
 
 Delegated roles are leaves unless nested delegation is explicitly designed. Read-only roles may inspect authorized external state but must not edit, stage, commit, or push.
 
-Allow discovery and worker subagents to complete their assignments. Do not close or kill in-flight subagents on wait timeouts; if progress or partial evidence is urgently needed, prompt the subagent for an interim summary rather than terminating it. Completed subagents must remain parked and be reused for follow-up discovery and implementation tasks rather than closed and re-spawned.
+Allow discovery and worker subagents to complete their assignments. Do not close or kill in-flight subagents on wait timeouts; if progress or partial evidence is urgently needed, prompt the subagent for an interim summary rather than terminating it. Reuse compatible delegated sessions when the runtime supports it; leave session allocation and cleanup to the canonical lifecycle owner.
 
-Batch initial read-only exploration and CodeGraphContext lookups in parallel up front, then transition promptly to spawning bounded `worker` / `default` implementation children once the failing seam is identified rather than running repeated serial read passes in the root turn.
+Batch independent initial read-only exploration when useful. Select available discovery capabilities according to the question; transition promptly to bounded implementation tasks once the failing seam is identified.
 
 ## Waiting and context budget
 
 Each model request re-sends the whole conversation, as with any stateless LLM API, so every tool output stays in every later request until compaction. Prompt caching bills that repeated prefix at a fraction of the normal price, but it still counts against usage limits and adds latency, and a wake that returns nothing new buys nothing.
 
-- Wait on all outstanding children in one `wait_agent` call with `timeout_ms` of at least 300000, never a 10–60s loop. In code mode, put `// @exec: {"yield_time_ms": <timeout_ms + 30000>}` on the cell's first line: without it the cell yields after about 30 seconds and each resume is an extra model turn.
-- A Codex code-mode `exec` cell has no `setTimeout` or `setInterval`; wait through `wait_agent` or `write_stdin`.
-- Run commands to completion with a timeout sized to them. Poll a background command with empty `write_stdin` at `yield_time_ms` of at least 60000.
+- Wait on outstanding tasks through the canonical delegation interface, with bounded waits appropriate to the work. Do not repeatedly poll without new evidence; a timeout is not failure.
+- Run authorized commands to completion with an appropriately sized timeout; use the execution environment's completion mechanism for long-running commands.
 - Scope reads and searches to the step (`rg -l`, `--max-count`, a line range, a path filter), and do not re-run a call whose output is already in context.
-- The root does not read git history: the role-sandbox hook refuses `git log`, `git show`, `git blame` and the other history commands for the root orchestrator. When a regression needs history, delegate it to one child with the symptom, the files, and a commit range, and have it report the finding.
+- When a scoped regression needs git history, use an authorized role and bound the symptom, files, and commit range. Respect the root's configured permissions.
 
 After compaction, re-read files or re-request reports only when the current step needs them. When the user's next request is unrelated to the finished task, say that a fresh session will be cheaper and sharper than continuing this one.
 

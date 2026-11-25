@@ -47,14 +47,6 @@ any skipped or unavailable tiers rather than implying full coverage.
 
 ## Browser verification
 
-Delegate browser verification to `browser-tester` (`playwright-mcp` launches
-`--headless --no-sandbox --isolated`). If headless Chromium fails to launch
-inside a macOS Seatbelt sandbox with `MachPortRendezvousServer` permission
-denied, retry headless with `["--no-sandbox", "--single-process"]` or fall back
-to server/DOM/unit assertions, and report the sandbox Mach port restriction as
-an environment boundary rather than a product failure.
+Delegate browser verification to the authorized browser-testing role when available. Verify actual UI/runtime behavior through the scoped browser capability; if unavailable, report the limitation and use authorized server/DOM/unit assertions where meaningful. Do not describe substitute evidence as browser verification.
 
-Root and child MCP capabilities can differ. For role-scoped MCP
-(`browser-tester` -> Playwright, `playtester` -> Playtest), verify a real call
-through the routed provider; do not infer exposure from root tools or
-telemetry, and never enable those servers at the root.
+For role-scoped browser or game-playtesting capabilities, verify actual exposure and a real call through the selected role. Do not infer availability from the root's inventory or telemetry, and do not enable or invoke role-restricted servers at the root.

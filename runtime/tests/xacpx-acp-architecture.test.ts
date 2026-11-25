@@ -36,6 +36,7 @@ import {
 import { evaluateRoleSandboxHook } from "../src/hooks/role-sandbox.ts";
 import { resolveMcpCommand } from "../src/mcp/launcher.ts";
 import { COOLDOWNS } from "../src/router/cooldown/index.ts";
+import { ROUTING_POLICY, RoutingPolicy } from "../src/router/routing.ts";
 import { autodevHome, autodevStateHome } from "../src/shared/autodev-home.ts";
 import { roleContract } from "../src/shared/execution-contract.ts";
 import { findMcodeBinary } from "../src/shared/executables.ts";
@@ -344,6 +345,142 @@ test("XacpxSessionManager resolves binaries, enforces github-worker <-> opencli 
   assert.match(ghPlan.session.provider, /^opencli-(?:chatgpt|gemini)$/u);
 });
 
+test("OpenCLI-only worker allocation reports the missing role-bound MCP integration", () => {
+  const policy = new RoutingPolicy(
+    ROUTING_POLICY.config,
+    ROUTING_POLICY.configFile,
+    {}
+  );
+  for (const provider of policy.providerIds()) {
+    policy.setProviderAssignment(provider, "subagent", {
+      priority: "disabled",
+      model: null
+    });
+  }
+  policy.setProviderAssignment("opencli-chatgpt", "subagent", {
+    priority: 1,
+    model: "opencli-chatgpt-fast"
+  });
+  assert.deepEqual(
+    policy.roleCandidates("worker").map((candidate) => candidate.provider),
+    ["opencli-chatgpt"]
+  );
+  const manager = new XacpxSessionManager({ policy });
+  assert.throws(
+    () => manager.selectCandidateForSession("opencli-parity-worker", "worker"),
+    /OpenCLI integration parity gap \(opencli-chatgpt\).*conversation-specific/u
+  );
+  assert.equal(manager.getPinnedSession("opencli-parity-worker"), null);
+});
+
+test("OpenCLI sessions resume the verified conversation and never replay an uncertain turn", async () => {
+  const policy = new RoutingPolicy(
+    ROUTING_POLICY.config,
+    ROUTING_POLICY.configFile,
+    {}
+  );
+  for (const provider of policy.providerIds()) {
+    policy.setProviderAssignment(provider, "subagent", {
+      priority: "disabled",
+      model: null
+    });
+  }
+  const provider = "opencli-chatgpt";
+  const model = "opencli-chatgpt-fast";
+  policy.setProviderAssignment(provider, "subagent", { priority: 1, model });
+  COOLDOWNS.clearAfterSuccess(provider, model);
+  const calls: Array<{ conversationId: string | null; repository: string }> = [];
+  const manager = new XacpxSessionManager({
+    policy,
+    githubWorkerRunner: async (task) => {
+      calls.push({
+        conversationId: task.conversationId,
+        repository: task.repository
+      });
+      return {
+        outputText: "done",
+        exitCode: 0,
+        conversationId: calls.length === 3 ? "wrong-chat" : "verified-chat"
+      };
+    }
+  });
+  const request = {
+    sessionId: "opencli-persistent",
+    role: GITHUB_WORKER_ROLE,
+    cwd: REPO_ROOT,
+    systemPrompt: "",
+    promptOrTask: "inspect",
+    repository: "SimulatorLife/AutoDev"
+  };
+  try {
+    COOLDOWNS.cooldownProvider(provider, {
+      failureClass: "rate_limit",
+      model
+    });
+    await assert.rejects(
+      manager.executeTurn(request),
+      /All eligible provider candidates.*cooling down/u
+    );
+    assert.equal(manager.getPinnedSession(request.sessionId), null);
+    assert.equal(calls.length, 0);
+    COOLDOWNS.clearAfterSuccess(provider, model);
+    const first = await manager.executeTurn(request);
+    assert.equal(first.conversationId, "verified-chat");
+    const next = await manager.promptSession(request.sessionId, "follow-up");
+    assert.equal(next.conversationId, first.conversationId);
+    assert.deepEqual(calls, [
+      { conversationId: null, repository: request.repository },
+      { conversationId: "verified-chat", repository: request.repository }
+    ]);
+    await assert.rejects(
+      manager.executeTurn({ ...request, repository: "another/repo" }),
+      /repository cannot change/u
+    );
+    await assert.rejects(
+      manager.executeTurn({ ...request, cwd: path.dirname(REPO_ROOT) }),
+      /workspace or parent identity cannot change/u
+    );
+    await assert.rejects(
+      manager.promptSession(request.sessionId, "mismatched reply"),
+      /does not match the pinned conversation/u
+    );
+    await assert.rejects(
+      manager.promptSession(request.sessionId, "do not replay"),
+      /outcome is uncertain/u
+    );
+    assert.equal(calls.length, 3);
+  } finally {
+    await manager.closeAllSessions();
+    COOLDOWNS.clearAfterSuccess(provider, model);
+  }
+
+  const cancellingManager = new XacpxSessionManager({
+    policy,
+    githubWorkerRunner: (_task, signal) =>
+      new Promise((_resolve, reject) => {
+        signal?.addEventListener(
+          "abort",
+          () => reject(new Error("OpenCLI turn cancelled")),
+          { once: true }
+        );
+      })
+  });
+  try {
+    const turn = cancellingManager.executeTurn(request);
+    const rejection = assert.rejects(turn, /cancelled/u);
+    assert.equal(await cancellingManager.cancelSession(request.sessionId), true);
+    await rejection;
+    assert.equal(COOLDOWNS.isCooling(provider, Date.now(), model), false);
+    await assert.rejects(
+      cancellingManager.promptSession(request.sessionId, "do not replay"),
+      /outcome is uncertain/u
+    );
+  } finally {
+    await cancellingManager.closeAllSessions();
+    COOLDOWNS.clearAfterSuccess(provider, model);
+  }
+});
+
 test("XacpxSessionManager executes live ACP turns, enforces read-only permissions, and serves /v1/acp/sessions", async () => {
   const permissionOutcomes: string[] = [];
   let createdSessions = 0;
@@ -431,7 +568,11 @@ test("XacpxSessionManager executes live ACP turns, enforces read-only permission
     },
     githubWorkerRunner: async (task) => {
       opencliCalls.push(`${task.provider}:${task.prompt}`);
-      return { outputText: "github pr #42 opened", exitCode: 0 };
+      return {
+        outputText: "github pr #42 opened",
+        exitCode: 0,
+        conversationId: "github-chat-42"
+      };
     }
   });
 
@@ -474,6 +615,7 @@ test("XacpxSessionManager executes live ACP turns, enforces read-only permission
   });
   assert.equal(ghResult.kind, "opencli-github-worker");
   assert.equal(ghResult.outputText, "github pr #42 opened");
+  assert.equal(ghResult.conversationId, "github-chat-42");
   assert.equal(opencliCalls.length, 1);
 
   // HTTP /v1/acp/sessions endpoint round-trip.

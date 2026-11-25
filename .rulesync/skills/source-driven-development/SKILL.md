@@ -17,7 +17,7 @@ Ground external implementation assumptions in primary, version-relevant evidence
 2. **Fetch the narrowest primary source**
    - Research the specific implementation decision, not the technology in general.
    - Prefer official versioned documentation or specifications, then upstream source/types/tests, then official release or migration notes.
-   - Use Context7 when it improves version matching. Use general web search to locate primary sources, not as evidence by itself.
+   - Use available version-aware documentation retrieval when it improves version matching. General web search can locate primary sources but is not evidence by itself.
 
 3. **Reconcile with repository reality**
    - Confirm the source applies to the target version.
@@ -43,4 +43,4 @@ The implementation-critical external assumption is supported by version-relevant
 
 ## Attribution
 
-Adapted from Addy Osmani's `source-driven-development` and Matt Pocock's `research` skill, narrowed to AutoDev's documentation-research role.
+Adapted from Addy Osmani's `source-driven-development` and Matt Pocock's `research` skill, adapted for focused, version-aware documentation research.

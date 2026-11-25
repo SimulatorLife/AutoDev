@@ -764,6 +764,16 @@ test("the orchestrator tier admits only providers that can delegate, however the
     policy.orchestratorCandidates(seeded(1)).map(({ provider }) => provider),
     ["claude"]
   );
+  for (const provider of ["opencli-chatgpt", "opencli-gemini"]) {
+    assert.equal(
+      policy.providerRoleCapabilityReason(provider, "orchestrator"),
+      "provider_cannot_delegate"
+    );
+    assert.match(
+      policy.providerRoleCapabilityExplanation(provider, "orchestrator") ?? "",
+      /conversation-specific role, workspace and coordinator binding.*integration parity gap/u
+    );
+  }
   // Copilot delegates through canonical XACPX, so it may orchestrate.
   policy.setProviderAssignment("copilot", "orchestrator", {
     priority: 3,

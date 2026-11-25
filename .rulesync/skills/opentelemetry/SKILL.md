@@ -1,29 +1,31 @@
 ---
 name: opentelemetry
-description: Defines OpenTelemetry architecture, ownership, semantic-convention, instrumentation, and telemetry-quality rules for AutoDev. Use when implementing, modifying, debugging, reviewing, or organizing OTLP ingestion, Collector configuration, telemetry attributes, traces, metrics, logs, agent/tool/skill/MCP observability, telemetry attribution, or related dashboard/status data
+description: Use when implementing, reviewing, or debugging OpenTelemetry instrumentation, OTLP transport, Collector configuration, semantic conventions, traces, metrics, logs, attribution, or telemetry quality. Apply project-specific architecture from its owning documentation.
 ---
 
 # OpenTelemetry
 
-Use OpenTelemetry as AutoDev's standard telemetry transport and interoperability layer while keeping AutoDev-specific semantic truth at the operation-owning producer and in the separate control plane.
+Use OpenTelemetry as a standard telemetry transport and interoperability layer. Keep domain-specific semantic truth at the operation-owning producer. Where a project has a separate control plane, keep state-changing operations in that authorized plane.
 
-## AutoDev target-state pointer
+## Project architecture and authority
 
-`docs/autodev-console-target-state.md` is the sole source of truth for AutoDev's observability architecture, OpenLIT integration and local patch policy, dashboard variables, Control API, migration status, open gaps, acceptance evidence, and handoff. Read it before project-specific telemetry work and update it in the same change. This skill supplies reusable OTel engineering rules; it must not maintain a competing AutoDev migration plan.
+Identify the project's canonical observability or architecture target-state document, if one exists, using repository guidance, architecture documentation, and configuration. Read the applicable design decisions before changing telemetry, and verify them against the current implementation and dependency versions. Update the owning documentation when those decisions change.
+
+If no canonical document exists, establish the relevant constraints from the codebase, configuration, and available project guidance. Do not invent an architecture, backend, migration plan, or documentation layout. This skill supplies reusable OpenTelemetry engineering guidance, not a competing source of project-specific architecture.
 
 ## Ownership boundaries
 
 - Prefer standard OpenTelemetry protocols, APIs, SDKs, semantic conventions, and Collector components over custom equivalents.
-- The AutoDev OpenLIT distribution owns observability ingestion, storage, query execution, traces, and dashboards. Keep the observability substrate close to OpenLIT upstream while allowing the AutoDev-centric product shell, resource modules, and control surfaces defined in the target-state document.
-- AutoDev owns correct instrumentation and context at the operation-owning producer, plus domain-specific runtime/control semantics. Do not build a parallel generic historical aggregator or dashboard.
-- Use OpenLIT's first-party OTLP receiver by default. A separate AutoDev-owned Collector requires a concrete, documented policy need; a pass-through hop is not a target.
-- Keep configuration mutations on the authenticated AutoDev Control API. Telemetry and dashboard/query paths are observation-only; mirror a completed control action into OTel only as an observation.
+- Keep ingestion, storage, query execution, and dashboards with the configured observability backend; do not introduce a competing generic historical aggregator.
+- Instrument operations and context at their actual owner. Keep domain-specific runtime/control semantics in the owning application.
+- Prefer the configured backend's supported OTLP receiver; add an intermediate Collector only for a documented policy or processing need.
+- Keep configuration mutations with their authorized owner. Telemetry is observation-only; use a separate control plane when the project's architecture calls for one.
 - A custom event/control channel may remain authoritative when it provides lifecycle, authorization, or state semantics OTel cannot provide. Do not force OTel to become a command protocol.
 
 ## Semantic conventions
 
-- Prefer established OpenTelemetry semantic conventions, including `gen_ai.*` and MCP conventions, before defining AutoDev attributes.
-- Use `autodev.*` only for genuinely AutoDev-specific concepts without a suitable standard; Skills may use a minimal `autodev.skill.*` vocabulary. Define its semantics in the target-state document before relying on it.
+- Prefer established OpenTelemetry semantic conventions, including `gen_ai.*` and MCP conventions, before defining application-specific attributes.
+- Define custom namespaced attributes only for domain concepts without a suitable standard; document their semantics in the owning contract.
 - Never fabricate an attribute because a schema has a field; derive values from observed inputs, outputs, owned state, or validated correlation.
 - Treat telemetry schemas as versioned contracts and avoid permanent aliases or competing sources of truth.
 
@@ -38,16 +40,16 @@ Use OpenTelemetry as AutoDev's standard telemetry transport and interoperability
 
 Do not promote request-, session-, trace-, conversation-, path-, or other high-cardinality identifiers into metric dimensions. Use trace/span/log context for per-session investigation.
 
-Every router metric dimension and aggregation key is reduced by `safeMetricLabel` in `runtime/src/router/metric-label.ts`, which is the single owner of that bounding. Import it from there rather than reaching through another router module or keeping a local copy.
+Use the project's shared metric-label bounding implementation where one exists; do not duplicate it.
 
 ## Instrumentation
 
 - Instrument the component that actually owns each operation.
 - Keep span boundaries around one meaningful operation.
-- Preserve trace/context propagation across provider, tool, subagent, MCP, and bridge boundaries where technically possible.
+- Preserve trace/context propagation across service, process, transport, and other execution boundaries where technically possible, including agent and tool boundaries when applicable.
 - Avoid duplicate instrumentation of the same operation at multiple layers.
-- If AutoDev emits first-class OTel, use the official OpenTelemetry API/SDK rather than hand-building OTLP payloads.
-- Do not add an OTel SDK merely to re-express telemetry already emitted correctly by Codex or another upstream component.
+- When emitting first-class OTel, use the official OpenTelemetry API/SDK rather than hand-building OTLP payloads.
+- Do not add an OTel SDK merely to re-express telemetry already emitted correctly by an upstream component.
 
 ## Telemetry quality
 
@@ -56,13 +58,13 @@ Every router metric dimension and aggregation key is reduced by `safeMetricLabel
 - Prefer identifiers and categorical metadata over captured content; redact or normalize sensitive/high-cardinality data before export.
 - Distinguish unknown or unattributed from zero; absence of evidence is not evidence of absence.
 - Preserve source timestamps and stable identities where needed for deduplication, retries, and out-of-order delivery.
-- Telemetry must not break or materially delay the agent operation.
+- Telemetry must not break or materially delay the instrumented operation.
 
 ## Collector rules
 
 - Keep Collector configuration minimal and purpose-driven.
-- Use OpenLIT's first-party OTLP receiver as the AutoDev target. Add a separate Collector only for a demonstrated need such as pre-export redaction, routing, or fan-out, and record that decision in `docs/autodev-console-target-state.md`.
-- Do not put AutoDev-specific semantic translation in a Collector merely to accommodate a backend or UI.
+- Follow the project's configured OTLP receiver and Collector ownership; justify additional hops with concrete needs such as redaction, routing, or fan-out.
+- Do not put domain-specific semantic translation in a Collector merely to accommodate a backend or UI.
 - Validate component stability and exact pinned versions separately from configuration syntax.
 - Avoid processing the same signal independently at multiple tiers when doing so can double-count or change meaning.
 
@@ -70,21 +72,21 @@ Every router metric dimension and aggregation key is reduced by `safeMetricLabel
 
 When changing telemetry, verify:
 
-1. The owning layer is correct: producer, OpenLIT's first-party OTLP receiver, OpenLIT backend, or AutoDev Control API.
-2. Existing OTel conventions are reused before introducing `autodev.*`.
+1. The owning layer is correct: producer, receiver/Collector, configured observability backend, or authorized control plane.
+2. Existing OTel conventions are reused before introducing custom attributes.
 3. Attribute scope and cardinality are appropriate.
 4. Values come from evidence rather than inference or placeholders.
 5. Retries, redelivery, and cross-signal ordering cannot double-count or permanently misattribute data.
 6. Privacy-sensitive content is excluded or explicitly protected.
 7. The change does not introduce a second source of truth or redundant telemetry path.
-8. AutoDev-specific semantics remain testable independently of transport.
+8. Domain-specific semantics remain testable independently of transport.
 9. Raw telemetry remains distinguishable from any producer-side enrichment.
 10. Dashboards consume canonical telemetry and never recreate control or attribution logic.
 
 ## Architectural preference
 
-`producer → standard OTLP → OpenLIT first-party OTLP receiver → stock OpenLIT storage/query/UI`
+`producer → standard OTLP → configured receiver → observability backend`
 
-`OpenLIT /autodev UI → authenticated server-side proxy → AutoDev Control API → runtime/configuration`
+Where a separate control plane exists: `authorized client → control interface → state owner`.
 
-The first path observes; the second authorizes and changes state. For AutoDev-specific decisions, migration, and progress, follow `docs/autodev-console-target-state.md`.
+The telemetry path observes; the control path authorizes and changes state. Apply the project's documented architecture; no particular backend, control-plane implementation, or repository layout is required.

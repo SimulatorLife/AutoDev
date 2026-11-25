@@ -10,7 +10,7 @@ Turn a recorded gameplay session into an evidence-linked review, not an unsuppor
 
 ## AutoDev tool invocation
 
-Provider-agent roles run in AutoDev Code Mode. Use the `exec` JavaScript tool for MCP operations and call only exact `tools.mcp__<server>__<tool>` names advertised in `ALL_TOOLS`. The dotted names in this skill (for example `playtest.prepareReview`) describe MCP operations; they are not direct top-level provider functions. Resource listing does not enumerate available tools. Use only tools enabled for this role; do not invoke shell, filesystem, network, or another role's capabilities.
+Use only the Playtest MCP analysis operations authorized and exposed to the current role through its active tool interface. Discover callable names and argument schemas there. Dotted names (for example `playtest.prepareReview`) describe operations, not invocation syntax; resource listing does not enumerate tools. Report missing required capabilities rather than invoking shell, filesystem, network, or another role's capabilities.
 
 ## Strict `submitReview` shape
 

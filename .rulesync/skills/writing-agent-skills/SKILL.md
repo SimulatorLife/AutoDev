@@ -11,13 +11,23 @@ Create the smallest reusable skill that reliably produces the intended agent beh
 ## Principles
 
 - Start from desired behavior, not prose
-- Prefer observed failures over speculative rules
+- Prefer skills that address observed failures over speculative rules
 - Keep instructions proportional to task complexity and risk
 - Separate reusable judgment from deterministic mechanics
 - Keep the core skill concise; move non-essential detail to references, scripts, or assets
 - Test both behavior and triggering
 - Optimize for portability; do not assume a specific agent, CLI, subagent system, or test harness unless the target environment requires it
 - Add constraints only when they prevent a real failure or encode a real requirement
+
+## Capability and project independence
+
+- Own only the skill's capability or workflow; keep complementary capabilities generic and optional unless required for correctness or security.
+- Discover capabilities through the active execution environment. Do not assume a specific provider, dependency, role, or tool inventory.
+- For reusable skills, refer to the current project or codebase rather than the repository that distributes the skill. Discover canonical architecture, target-state documentation, conventions, and configuration where they exist; do not assume a fixed layout or invent missing documents.
+- Keep project-specific policy in its authoritative project documentation or genuinely project-specific skills. Keep implementation-specific instructions in the owning tool skill or reference.
+- Avoid mandatory tool ordering unless justified by correctness, security, or demonstrated efficiency.
+- Use authorized alternatives for missing optional capabilities; report missing required capabilities without bypassing permissions.
+- Leave provider adaptation and permission enforcement to the runtime. Do not duplicate configuration or instructions owned elsewhere.
 
 ## 1. Decide whether this should be a skill
 
@@ -142,7 +152,7 @@ Before behavioral testing, check:
 - Referenced files actually exist
 - Instructions do not contradict each other
 - Required inputs and outputs are clear
-- Environment assumptions are explicit
+- Environment assumptions are explicit; optional capabilities are not treated as prerequisites
 - The skill contains no obsolete facts or unnecessary duplicated guidance
 
 Use an available validator when one exists. Do not make a specific validator a portability requirement.
@@ -231,7 +241,8 @@ Before finishing, ask:
 - Are defaults clear?
 - Are examples concrete where ambiguity exists?
 - Are factual claims current and sourced appropriately?
-- Does the skill avoid unnecessary vendor-specific assumptions?
+- Does the skill avoid unnecessary vendor-specific assumptions, cross-capability dependencies, and coupling to its distributing repository?
+- Does it behave correctly with optional capabilities absent, replaced, or unauthorized?
 - Did testing cover behavior as well as triggering?
 - Did revisions target observed failures rather than imagined ones?
 

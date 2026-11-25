@@ -1,6 +1,6 @@
 ---
 name: lsp-mcp-server
-description: "Use LSP when exact language/compiler semantics are needed after structural discovery: definitions, references, inferred types, diagnostics, rename, refactoring, and precise navigation. Do not use LSP to rebuild broad code relationships that CodeGraphContext already maps."
+description: "Use LSP for precise, language-aware code analysis: definitions, references, inferred types, diagnostics, rename, refactoring, and navigation. Complements semantic discovery, structural analysis, and direct source inspection."
 targets: ["copilot"]
 ---
 
@@ -10,14 +10,14 @@ This MCP server exposes a Language Server (LSP) to you as ~30 tools. LSP servers
 
 ## Hard rules
 
-1. **Use LSP for exact language/compiler semantics after structural discovery.** Consult the shared codebase-navigation workflow first; use LSP for precise definitions, references, inferred types, diagnostics, and compiler-aware navigation. Do not use LSP to reconstruct broad call/import/dependency relationships already represented by CodeGraphContext.
+1. **Use LSP whenever precise language/compiler semantics are needed.** Structural and semantic discovery can complement LSP when available; do not repeat analysis whose evidence is already sufficient.
 2. **Plain text search is still right** for strings, comments, config files, docs, log lines, and matching across non-code files.
 3. **All file paths must be absolute.** Relative paths are rejected by Zod validation.
 4. **All line / column numbers are 1-indexed** (what an editor shows). Internal conversion to LSP 0-indexed happens for you.
 5. **First-touch wakes the server.** Auto-start is on by default — you do not need `lsp_start_server`. The first tool call that takes a `file_path` will spawn the right language server and open the file. There is no need to ping `lsp_server_status` before each call.
 6. **Position points at the symbol, not whitespace.** When you pass `line`/`column`, point at any character of the identifier itself. Pointing at a space, the `(` after a function name, or a comma will give empty or surprising results.
-7. **The names below are the server's own; your runtime prefixes them.** In Codex code mode they are `tools.mcp__lsp__<name>` inside `exec` (e.g. `await tools.mcp__lsp__lsp_find_symbol({...})`); in Claude Code they are `mcp__lsp__<name>`. To check availability, search for `mcp__lsp__` (e.g. `ALL_TOOLS.filter((t) => t.name.startsWith("mcp__lsp__"))`), never for a bare `lsp_` prefix: that finds nothing and wrongly reads as "LSP is unavailable".
-8. **Normal implementation roles see only the precision tools.** `default` and `worker` get symbol lookup, definitions, references, implementations, type hierarchy, hover, signatures, document symbols, diagnostics, and rename/code-action/format. Tools marked `†` below are only on `explorer`, `validator`, `smart`, and `orchestrator`. Without them, use `lsp_find_symbol` for name lookup, CodeGraphContext (`analyze_code_relationships`) for callers, callees, and imports, and `lsp_find_symbol`/`lsp_smart_search` with `include: ["incoming_calls","outgoing_calls"]` when one exact hop is enough.
+7. **The names below are the server's own operation names.** Discover the actual callable names and schemas in your active tool interface; prefixes and invocation syntax vary by harness.
+8. **Tool availability varies with authorization and configuration.** Tools marked `†` may be restricted. Check the current inventory; use authorized alternatives (such as targeted source inspection or available structural analysis) when an optional operation is missing. For exact single-hop relationships, use `lsp_find_symbol` or `lsp_smart_search` with the supported `include` options when exposed.
 
 ## Decision tree: pick the right tool
 
@@ -32,14 +32,14 @@ I have a symbol at a position and want…
    …concrete implementations of interface      → lsp_find_implementations
    …type / docs                                → lsp_hover
    …function parameter hints inside a call     → lsp_signature_help
-   …who calls it / what it calls               → lsp_call_hierarchy †     (CGC owns transitive call relationships)
+   …who calls it / what it calls               → lsp_call_hierarchy †     (structural analysis may help with broad/transitive queries)
    …parents/children of a class                → lsp_type_hierarchy
    …EVERYTHING in one call                     → lsp_smart_search
 
 I want to understand a file
    …structure / outline                        → lsp_document_symbols
    …public API only                            → lsp_file_exports †
-   …its imports                                → lsp_file_imports †       (CGC owns imports/dependencies)
+   …its imports                                → lsp_file_imports †       (structural analysis may help with broad dependency queries)
    …who depends on it                          → lsp_related_files †      (with caveat — see below)
    …foldable structure (functions/blocks)      → lsp_folding_ranges †
 
@@ -222,10 +222,10 @@ Common codes:
 
 ## When NOT to use these tools
 
-- Reading prose / Markdown / TOML / YAML — use `Read`.
-- Searching for a literal string, log message, regex pattern — use `Grep`.
-- Listing files by glob — use `Glob`.
-- Running tests, the compiler, or your build tool — use `Bash`.
+- Reading prose / Markdown / TOML / YAML — use authorized file-reading tools.
+- Searching for a literal string, log message, regex pattern — use text search.
+- Listing files by glob — use file discovery.
+- Running tests, the compiler, or your build tool — use authorized command/test execution.
 
 The LSP tools speak code, not text. If your question is "find every place that mentions the word 'deprecated' in a comment" — that is a Grep job, not an LSP job.
 
@@ -250,10 +250,10 @@ The LSP tools speak code, not text. If your question is "find every place that m
 
 ## One more rule
 
-If a tool returns nothing, **before falling back to grep**, check:
+If an exposed tool returns nothing, **before falling back to text search**, check:
 - Is the cursor on the identifier (not on a space, dot, or bracket)?
 - Did you pass an absolute path?
 - Is the language server actually installed? (`lsp_server_status` will tell you.)
 - For workspace-wide queries: are you assuming files are opened that aren't?
 
-Use text search for literal strings, comments, logs, and documentation. For unknown code concepts or implementation locations use CocoIndex; for structural code relationships use CodeGraphContext rather than repeating broad LSP calls.
+Use text search for literal strings, comments, logs, and documentation. For unknown code concepts or implementation locations, consider semantic search. For broad structural relationships, consider a code context graph or equivalent tooling when available. Neither is required to use LSP.

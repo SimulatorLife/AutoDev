@@ -349,4 +349,4 @@ If support status is genuinely ambiguous, inspect authoritative requirements or 
 
 ## Attribution
 
-Inspired by the `code-simplification` workflow in Addy Osmani's `agent-skills` project and adapted for repository-agnostic, user-level Codex use across autonomous and interactive coding workflows
+Inspired by the `code-simplification` workflow in Addy Osmani's `agent-skills` project and adapted for repository-agnostic use across autonomous and interactive coding workflows

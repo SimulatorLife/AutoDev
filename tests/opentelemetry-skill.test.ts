@@ -24,7 +24,7 @@ function splitFrontmatter(text: string): [string, string] {
   return [match.groups.front, match.groups.body.replaceAll(/^\n+|\n+$/gu, "")];
 }
 
-test("opentelemetry skill is a repository-only canonical skill", () => {
+test("opentelemetry skill is project-independent and retains its current repository projection", () => {
   assert.equal(lstatSync(skillPath).isSymbolicLink(), false);
   const content = readFileSync(skillPath, "utf8");
   const [front, body] = splitFrontmatter(content);
@@ -32,11 +32,11 @@ test("opentelemetry skill is a repository-only canonical skill", () => {
   assert.match(front, /^name: opentelemetry$/mu);
   assert.match(
     front,
-    /^description: Defines OpenTelemetry architecture, ownership, semantic-convention, instrumentation, and telemetry-quality rules for AutoDev\. Use when implementing, modifying, debugging, reviewing, or organizing OTLP ingestion, Collector configuration, telemetry attributes, traces, metrics, logs, agent\/tool\/skill\/MCP observability, telemetry attribution, or related dashboard\/status data$/mu
+    /^description: .*OpenTelemetry.*instrumentation.*OTLP.*telemetry quality.*$/mu
   );
   assert.doesNotMatch(front, /^targets:/mu);
 
-  // AutoDev-only development skill: must never be installed at user level.
+  // Content portability is independent of the current repository-only projection.
   assert.ok(
     !userLevelSkills(
       fileURLToPath(new URL(".rulesync/skills", repositoryRoot))
@@ -45,7 +45,7 @@ test("opentelemetry skill is a repository-only canonical skill", () => {
 
   // Required reusable OTel sections and project-specific source-of-truth pointer.
   assert.match(body, /^# OpenTelemetry$/mu);
-  assert.match(body, /^## AutoDev target-state pointer$/mu);
+  assert.match(body, /^## Project architecture and authority$/mu);
   assert.match(body, /^## Ownership boundaries$/mu);
   assert.match(body, /^## Semantic conventions$/mu);
   assert.match(body, /^## Attribute placement$/mu);
@@ -54,9 +54,26 @@ test("opentelemetry skill is a repository-only canonical skill", () => {
   assert.match(body, /^## Collector rules$/mu);
   assert.match(body, /^## Review checklist$/mu);
   assert.match(body, /^## Architectural preference$/mu);
-  assert.match(body, /docs\/autodev-console-target-state\.md/);
+  assert.match(
+    body,
+    /canonical observability or architecture target-state document, if one exists/
+  );
+  assert.match(body, /If no canonical document exists/);
+  assert.doesNotMatch(content, /AutoDev|OpenLIT/i);
 
-  // The canonical target document carries the maintenance rule future agents need.
+  assert.match(body, /configured receiver/);
+  assert.match(body, /authorized control plane|authorized owner/);
+  assert.match(
+    body,
+    /Prefer established OpenTelemetry semantic conventions, including `gen_ai\.\*`/
+  );
+  assert.match(
+    body,
+    /Never fabricate an attribute because a schema has a field/
+  );
+});
+
+test("AutoDev's target-state document owns its concrete observability architecture", () => {
   const targetState = readFileSync(targetStatePath, "utf8");
   const authorityLine = targetState
     .split("\n")
@@ -82,22 +99,6 @@ test("opentelemetry skill is a repository-only canonical skill", () => {
   assert.match(openLitStrategy, /must\s+(?:not|never)\s+block AutoDev/i);
 
   // Project-specific architecture must not regress to the old local aggregator target.
-  assert.match(body, /OpenLIT first-party OTLP receiver/);
-  assert.match(body, /authenticated AutoDev Control API/);
-  assert.doesNotMatch(
-    body,
-    /producer → OTel\/OTLP → Collector → AutoDev semantic aggregation/
-  );
-  assert.doesNotMatch(
-    body,
-    /Keep \*\*stateful\/domain-specific interpretation\*\* in AutoDev/
-  );
-  assert.match(
-    body,
-    /Prefer established OpenTelemetry semantic conventions, including `gen_ai\.\*`/
-  );
-  assert.match(
-    body,
-    /Never fabricate an attribute because a schema has a field/
-  );
+  assert.match(targetState, /OpenLIT first-party OTLP receiver/);
+  assert.match(targetState, /authenticated Control API/);
 });

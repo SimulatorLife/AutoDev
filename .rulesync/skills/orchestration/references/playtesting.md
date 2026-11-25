@@ -27,23 +27,8 @@ for the supported end-to-end workflow.
 
 ## MCP boundary
 
-Codex-native `multi_agent_v1` children inherit the parent's host MCP set;
-per-agent `mcp_servers` in a custom role file do not override that host-level
-set ([Codex subagent configuration](https://learn.chatgpt.com/docs/agent-configuration/subagents)).
-AutoDev intentionally disables `playtest` and `playwright` in the root session.
-A native child using `autodev/<role>` is still served through AutoDev's Model
-Router: for roles with `roleScopedMcp`, the router filters provider candidates
-to bridges that inject the role contract's MCP into that provider invocation
-(`roleMcpInjection`). The provider-native MCP tools may therefore be available
-even when absent from the parent/child host `ALL_TOOLS`; use the role's
-supported provider-mediated path rather than generic parent-session MCP tools.
-Verify a real provider tool call, not just the role TOML or `mcpExposed`
-telemetry. Never enable the servers globally. Playtester MCP additionally
-requires the trusted workspace/session identity and dedicated runner credential
-supplied by Runtime; an arbitrary MCP launch or shell invocation without that
-binding must stop. Every provider spawns through Codex's own
-`multi_agent_v1__spawn_agent`, so each child is a native Codex thread routed
-through the same role-aware Router path.
+Delegate through the canonical xacpx MCP and the configured execution contract. Playtest and browser operations must be exposed only to authorized roles through their scoped execution interface. The parent or root tool inventory is not proof of child exposure; verify an actual role-scoped invocation rather than relying on configuration or telemetry alone. Never enable the servers globally or use a parent or unrelated tool interface to compensate for missing access.
 
-These handoffs reuse the existing orchestrator and roles; they do not create
-another scheduler or grant a role capabilities it does not already have.
+Playtester MCP requires the trusted workspace/session identity and dedicated runner credential supplied by Runtime. An arbitrary tool launch or shell invocation without that binding must stop. Report missing required capabilities or authorization without substituting another role's tools.
+
+These handoffs reuse the existing orchestrator and roles; they do not create another scheduler or grant a role capabilities it does not already have.

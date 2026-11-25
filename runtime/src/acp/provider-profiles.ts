@@ -99,6 +99,7 @@ export interface GithubWorkerTaskSpec {
   readonly task: string;
   readonly prompt: string;
   readonly sessionId: string;
+  readonly conversationId: string | null;
 }
 
 const COPILOT_EXCLUDED_NATIVE_TOOLS = [
@@ -463,6 +464,7 @@ export function buildGithubWorkerTaskSpec(options: {
   readonly repository: string;
   readonly task: string;
   readonly sessionId: string;
+  readonly conversationId?: string | null;
 }): GithubWorkerTaskSpec {
   const prompt = [
     `Repository: ${options.repository}`,
@@ -481,6 +483,7 @@ export function buildGithubWorkerTaskSpec(options: {
     repository: options.repository,
     task: options.task,
     prompt,
-    sessionId: options.sessionId
+    sessionId: options.sessionId,
+    conversationId: options.conversationId ?? null
   };
 }

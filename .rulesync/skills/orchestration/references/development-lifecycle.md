@@ -29,13 +29,10 @@ consumers, ownership boundaries, control/data flow, reusable implementations,
 tests, configuration, documentation, and active versus generated/dead/
 transitional paths.
 
-Start from indexed CodeGraphContext (`list_indexed_repositories`, then
-`find_code` / `analyze_code_relationships`) before broad search or file reads,
-keep discovery commands bounded (`references/codex-code-mode.md`), and avoid
-redundant reads of files or outputs already in context.
+Select the narrowest available discovery capability based on the question. Use indexed structural analysis for relationship queries when available, semantic search for unknown concepts, language-aware analysis for exact semantics, and targeted source inspection for verification. Keep output bounded and avoid redundant reads or searches.
 
 For implementation-critical behavior owned outside the repository, resolve
-version-sensitive assumptions through the `docs-researcher` before planning.
+version-sensitive assumptions using primary sources or an authorized documentation-research role before planning.
 
 **Gate:** the current state and affected path are understood well enough to
 design the target state

@@ -6,6 +6,12 @@ targets:
 
 You have access to skills and tools; read them and use those applicable.
 
+## Capability selection
+
+Choose the narrowest suitable authorized capability based on the information or action required, not a fixed tool ordering. For AutoDev role prompts, `agents/prompts/code-search.md` owns the shared codebase-navigation workflow; implementation-specific details belong to the owning tool skill. Use version-relevant primary sources for external behavior, delegation for independent work, and runtime validation for observed behavior.
+
+Discover capabilities in the active role and execution environment; do not assume a particular tool, MCP server, skill, provider, or dependency is available. Use authorized alternatives for missing optional capabilities and report missing required capabilities. Do not bypass permissions or repeat investigations whose evidence is already sufficient.
+
 Ensure to update any documentation and tests accordingly to your changes.
 
 Work from the codebase as it is now. Use git history (`git log -p`, `git show <sha>`, blame) only for scoped regression investigations, and bound its output (`--oneline -n`, `--stat`, a path filter).

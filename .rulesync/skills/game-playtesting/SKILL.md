@@ -10,7 +10,7 @@ Execute one explicitly authorized bounded gameplay workflow and hand off its evi
 
 ## AutoDev tool invocation
 
-Use the Playtest MCP tools exposed to this role by its active execution path. In an isolated AutoDev Code Mode process, call only exact `tools.mcp__playtest__<tool>` names advertised in `ALL_TOOLS`; in a provider-managed bridge, use only the Playtest tools exposed through that provider's native MCP interface. Dotted `playtest.*` names describe operations, not necessarily the provider's callable syntax. Do not infer that Playtest is unavailable only because the parent Codex session's `ALL_TOOLS` omits it, and do not probe an unrelated/global MCP server to compensate. If neither the role-scoped Code Mode surface nor the active provider's scoped MCP interface exposes the approved tools, report the actual missing boundary and stop. Do not use shell, filesystem, arbitrary network access, or another role's capabilities. Do not print, copy, or broaden trusted session credentials.
+Use only the Playtest MCP operations authorized and exposed to the current role through its active tool interface. Discover callable names and schemas there; dotted `playtest.*` names describe operations, not invocation syntax. Do not infer availability from another agent's inventory or probe unrelated/global servers. If the required scoped operations are unavailable, report the capability blocker and stop.
 
 ## Trigger
 
