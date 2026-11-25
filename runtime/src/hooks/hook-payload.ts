@@ -4,6 +4,7 @@ Antigravity (`agy`), GitHub Copilot CLI, and MiniMax Code (`mcode`).
 */
 
 import { isRecord } from "@simulatorlife/autodev-core";
+import { MCODE_NATIVE_TOOL_NAMES } from "@simulatorlife/autodev-runtime/shared/tool-names";
 
 export interface NormalizedHookToolCall {
   readonly rawToolName: string;
@@ -129,6 +130,20 @@ export function parseHookPayload(
 }
 
 /**
+Translate MiniMax Code's own tool names into the canonical AutoDev names the
+hook implementations read. MiniMax Code names its file tools `read`, `write`
+and `edit`; every other provider either uses the canonical names or has no
+native file tools, so the translation is scoped to MiniMax Code.
+*/
+function canonicalToolName(
+  toolName: string,
+  environment: NodeJS.ProcessEnv = process.env
+): string {
+  if (environment.AUTODEV_PROVIDER?.trim() !== "mcode") return toolName;
+  return MCODE_NATIVE_TOOL_NAMES[toolName.toLowerCase()] ?? toolName;
+}
+
+/**
 Extract the tool name and tool arguments from any supported hook payload:
 - Codex / Claude / Copilot flat `{ tool_name|toolName, tool_input|toolArgs }`
 - Antigravity nested `{ toolCall: { name, arguments } }` (and `tool_call`)
@@ -154,7 +169,7 @@ export function extractHookToolCall(
     pickToolArguments(payload) ??
     {};
 
-  return unwrapCallMcpTool(rawToolName, toolInput);
+  return unwrapCallMcpTool(canonicalToolName(rawToolName), toolInput);
 }
 
 /**

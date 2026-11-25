@@ -4,7 +4,6 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   rmSync
 } from "node:fs";
 import { createServer } from "node:http";
@@ -36,10 +35,6 @@ import {
 } from "../src/hooks/hook-payload.ts";
 import { evaluateRoleSandboxHook } from "../src/hooks/role-sandbox.ts";
 import { resolveMcpCommand } from "../src/mcp/launcher.ts";
-import {
-  materializeMcodeProjection,
-  renderMcodeProjection
-} from "../src/platform/mcode-projection.ts";
 import { COOLDOWNS } from "../src/router/cooldown/index.ts";
 import { autodevHome, autodevStateHome } from "../src/shared/autodev-home.ts";
 import { roleContract } from "../src/shared/execution-contract.ts";
@@ -262,39 +257,6 @@ test("ACP provider profiles project canonical role capabilities, native mcpServe
   });
   assert.equal(ghTask.role, GITHUB_WORKER_ROLE);
   assert.match(ghTask.prompt, /Raise a PR to AutoDev/u);
-});
-
-test("mcode projection materializes and detects drift from canonical .rulesync", () => {
-  const temporaryDirectory = mkdtempSync(
-    path.join(tmpdir(), "autodev-mcode-proj-")
-  );
-  const mcodeHome = path.join(temporaryDirectory, "mcode-home");
-  try {
-    const preview = renderMcodeProjection(REPO_ROOT);
-    assert.ok(JSON.parse(preview.mcpJson).mcpServers.filesystem);
-    assert.ok(JSON.parse(preview.mcpJson).mcpServers.github);
-    assert.ok(JSON.parse(preview.mcpJson).mcpServers.xacpx);
-
-    const result = materializeMcodeProjection({
-      repositoryRoot: REPO_ROOT,
-      mcodeHome
-    });
-    assert.equal(result.written.length, 4);
-    assert.ok(existsSync(path.join(mcodeHome, "AGENTS.md")));
-    assert.equal(
-      readFileSync(path.join(mcodeHome, "mcp.json"), "utf8"),
-      preview.mcpJson
-    );
-
-    const checkClean = materializeMcodeProjection({
-      repositoryRoot: REPO_ROOT,
-      mcodeHome,
-      check: true
-    });
-    assert.deepEqual(checkClean.drifted, []);
-  } finally {
-    rmSync(temporaryDirectory, { recursive: true, force: true });
-  }
 });
 
 test("XacpxSessionManager resolves binaries, enforces github-worker <-> opencli boundary, and pins sessions", () => {
@@ -580,6 +542,13 @@ test("XacpxSessionManager executes live ACP turns, enforces read-only permission
   assert.deepEqual(mcodeLaunch.args, ["acp"]);
   assert.equal(mcodeLaunch.env.MINIMAX_API_KEY, "minimax-secret");
   assert.equal(mcodeLaunch.env.CONTEXT7_API_KEY, undefined);
+  // MiniMax Code reads its profile from MINIMAX_DATA_DIR and never from
+  // MCODE_HOME, so the AutoDev-managed profile is handed over that way.
+  assert.equal(
+    mcodeLaunch.env.MINIMAX_DATA_DIR,
+    path.join(autodevHome(), "providers", "mcode")
+  );
+  assert.equal(mcodeLaunch.env.MCODE_HOME, undefined);
 
   const claudeWorker = buildAcpProviderLaunchSpec({
     provider: "claude",

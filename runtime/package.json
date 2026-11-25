@@ -47,7 +47,7 @@
     "./platform/install-command": "./src/platform/install-command.ts",
     "./platform/install-materializer": "./src/platform/install-materializer.ts",
     "./platform/install-state": "./src/platform/install-state.ts",
-    "./platform/mcode-projection": "./src/platform/mcode-projection.ts",
+    "./platform/mcode-profile": "./src/platform/mcode-profile.ts",
     "./platform/launchagent": "./src/platform/macos/launchagent.ts",
     "./platform/launchd": "./src/platform/macos/launchd.ts",
     "./platform/router-ensure": "./src/platform/router-ensure.ts",

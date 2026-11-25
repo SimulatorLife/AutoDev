@@ -40,7 +40,7 @@ import {
   updateAntigravityPermissions,
   updateAntigravitySkills
 } from "./antigravity-settings.ts";
-import { materializeMcodeProjection } from "./mcode-projection.ts";
+import { materializeMcodeProfile } from "./mcode-profile.ts";
 import { createCodexMcpSource } from "./codex-mcp-source.ts";
 import { createCodexPermissionsSource } from "./codex-permissions-source.ts";
 import {
@@ -266,7 +266,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/xacpx/http.ts",
   "runtime/src/xacpx/manager.ts",
   "runtime/src/xacpx/orchestration-ipc.ts",
-  "runtime/src/platform/mcode-projection.ts"
+  "runtime/src/platform/mcode-profile.ts"
 ] as const;
 export const OBSOLETE_RUNTIME_DATA_FILES = [
   path.join("run", "claude-rate-limit.json")
@@ -2302,12 +2302,15 @@ export function materializeInstallation(options: MaterializeOptions): void {
       path.join(autodevHome, "config", "execution-contract.json"),
       0o644
     );
-    materializeMcodeProjection({
-      repositoryRoot: options.repositoryRoot,
-      mcodeHome: path.join(autodevHome, "providers", "mcode")
-    });
     prepareRunLogs(autodevHome);
   }
+  // The MiniMax Code provider runs against the profile in the AutoDev home,
+  // wherever that home is, so the profile is materialized either way.
+  materializeMcodeProfile({
+    repositoryRoot: options.repositoryRoot,
+    profileDirectory: path.join(autodevHome, "providers", "mcode"),
+    home: options.home
+  });
 }
 function exists(filePath: string): boolean {
   try {

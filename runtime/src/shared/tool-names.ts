@@ -224,6 +224,56 @@ export const COPILOT_NATIVE_TOOL_EXCEPTIONS = {
   execute: "execute"
 } as const;
 
+/**
+ * MiniMax Code native tool names, in the canonical AutoDev dialect.
+ *
+ * MiniMax Code names its own file tools `read`, `write` and `edit`, while the
+ * canonical hook declarations name the Codex dialect (`read_file`,
+ * `write_to_file`, `replace_file_content`). The hook implementations read
+ * the canonical names, so a MiniMax Code payload is translated when the hook
+ * payload is normalized.
+ */
+export const MCODE_NATIVE_TOOL_NAMES: Readonly<Record<string, string>> = {
+  read: "read_file",
+  write: "write_to_file",
+  edit: "replace_file_content"
+};
+
+/**
+ * The canonical AutoDev tool names, in MiniMax Code's dialect.
+ *
+ * MiniMax Code matches a hook against the names of the tools it offers, so a
+ * canonical hook matcher is projected onto these names before it is written
+ * into a MiniMax Code profile. The canonical names are the ones the hook
+ * declarations are written against (`write_to_file`, `read_file`, and the other
+ * separator-tolerant spellings); a canonical tool MiniMax Code does not offer
+ * (`view_image`, `write_stdin`, Antigravity's `call_mcp_tool` dispatcher) is
+ * absent here and therefore not projected.
+ */
+export const CANONICAL_TO_MCODE_TOOL_NAMES: Readonly<Record<string, string>> =
+  {
+    apply_patch: "apply_patch",
+    bash: "bash",
+    exec_command: "bash",
+    execute_command: "bash",
+    glob: "glob",
+    grep: "grep",
+    list: "list",
+    multi_replace_file_content: "edit",
+    read: "read",
+    read_file: "read",
+    read_multiple_files: "read",
+    read_text_file: "read",
+    replace_file_content: "edit",
+    run_command: "bash",
+    sh: "bash",
+    shell: "bash",
+    unified_exec: "bash",
+    view_file: "read",
+    write_to_file: "write",
+    zsh: "bash"
+  };
+
 /** Flat set of every documented CLI exception. */
 export const ALL_DOCUMENTED_EXCEPTIONS: ReadonlySet<string> = new Set([
   ...Object.values(CLAUDE_NATIVE_TOOL_EXCEPTIONS),

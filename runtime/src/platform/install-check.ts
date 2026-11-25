@@ -19,6 +19,7 @@ import {
   runModelCatalog
 } from "@simulatorlife/autodev-runtime/config";
 import { listBundledPlugins } from "@simulatorlife/autodev-runtime/shared/bundled-plugins";
+import { autodevHome } from "@simulatorlife/autodev-runtime/shared/autodev-home";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import { findCopilotBinary } from "@simulatorlife/autodev-runtime/shared/executables";
@@ -38,6 +39,7 @@ import { checkCodeGraphDatabase } from "./code-graph-ensure.ts";
 import { resolveRuntimeSourcePath } from "../shared/runtime-source-root.ts";
 import { createCodexMcpSource } from "./codex-mcp-source.ts";
 import { createCodexPermissionsSource } from "./codex-permissions-source.ts";
+import { materializeMcodeProfile } from "./mcode-profile.ts";
 import {
   checkCocoIndex,
   checkCodeGraphContext,
@@ -1046,11 +1048,47 @@ function checkAntigravityCli(
   );
 }
 
-function checkGitExcludes(
+/**
+ * The AutoDev-managed MiniMax Code profile has to hold the artifacts
+ * MiniMax Code discovers natively, generated from the canonical RuleSync
+ * sources. A profile that drifted from the canonical sources is a provider
+ * running stale instructions, hooks or permissions.
+ */
+function checkMcodeProfile(
   paths: RunInstallPaths,
   failures: { value: number }
 ): void {
+  const autodevProviderHome = autodevHome(process.env, paths.home);
+  const profileDir = path.join(autodevProviderHome, "providers", "mcode");
   try {
+    const result = materializeMcodeProfile({
+      repositoryRoot: paths.repositoryRoot,
+      profileDirectory: profileDir,
+      home: paths.home,
+      check: true
+    });
+    if (result.drifted.length > 0) {
+      writeLine(
+        `missing-or-drifted MiniMax Code profile: ${result.drifted.join(", ")}`
+      );
+      failures.value = 1;
+      return;
+    }
+    writeLine(
+      `ok MiniMax Code profile (${profileDir}) generated from ${paths.repositoryRoot}/.rulesync`
+    );
+  } catch (error) {
+    writeLine(
+      `missing-or-drifted MiniMax Code profile: ${errorMessage(error)}`
+    );
+    failures.value = 1;
+  }
+}
+
+function checkGitExcludes(
+  paths: RunInstallPaths,
+  failures: { value: number }
+): void {  try {
     const exclude = execFileSync(
       "git",
       [
@@ -1240,6 +1278,7 @@ export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
     checkOtelIngress(paths, failures);
     checkObsoleteSkillPaths(paths, failures);
     checkAntigravityCli(paths, failures);
+    checkMcodeProfile(paths, failures);
     checkGitExcludes(paths, failures);
     checkGlobalExcludes(paths, failures);
     checkDependencies(paths, failures);
