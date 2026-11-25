@@ -60,6 +60,12 @@ Worker allocation diagnostics distinguish an unavailable OpenCLI execution trans
 
 Native MCP integration investigation (2026-11-25): [OpenAI plugin metadata](https://developers.openai.com/plugins/reference) documents `openai/session` (anonymized conversation correlation), `openai/subject` and `openai/organization`. The existing gateway forwards tool-call metadata, but the XACPX stdio backend currently receives a fixed coordinator identity. Verify actual host-provided metadata and its provenance through the authenticated tunnel; do not trust a model argument, assume the anonymized identifier equals the OpenCLI browser UUID, or use correlation metadata alone as an authorization grant. Bind the authenticated principal, role, workspace and coordinator to an independently established Runtime session before admitting role-scoped calls, and verify that another conversation cannot reuse the binding. [Gemini Connected Apps](https://developers.google.com/connected-apps/mcp/) provides native remote MCP connectivity; verify its supported authenticated context and endpoint reachability separately. Do not make the existing private gateway public merely to enable Gemini.
 
+### OpenCLI startup diagnostics
+
+XACPX role execution resolves the CLI with the same `resolveOpencliCommand()` used by the managed browser service: an explicit validated `OPENCLI_BIN` override or the lockfile-pinned package entry point invoked with Runtime's Node executable. Do not depend on a global `opencli` being on launchd's PATH. Spawn failures (for example ENOENT), signal termination and cancellation are not fabricated child exit codes; native JSON error codes and hints are retained when available. A request that reaches XACPX but fails before the native conversation starts is a provider execution failure, not an MCP discovery failure.
+
+The source fix has regression coverage in `runtime/tests/opencli-role.test.ts`. Reconcile the installed Runtime and retry a real delegated turn before declaring live acceptance. If allocation names only OpenCLI, inspect effective Console subagent assignments (which override source default ranking), not the requested agent label. Do not silently change operator assignments or clear cooldowns. Browser readiness, the configured dedicated-browser transport and the installed role-specific ChatGPT apps also require live verification; CLI resolution alone does not establish them.
+
 ## Observability and troubleshooting
 
 Use the Console Providers, MCPs, Agents and Usage resources and the existing Runtime/OpenLIT diagnostics:

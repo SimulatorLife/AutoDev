@@ -16,6 +16,7 @@
 
 import { execa } from "execa";
 
+import { resolveOpencliCommand } from "@simulatorlife/autodev-runtime/shared/executables";
 import {
   OPENCLI_PROVIDER_SITES,
   opencliModel,
@@ -154,10 +155,6 @@ export function buildOpencliRoleTaskSpec(options: {
   };
 }
 
-function opencliCommand(): string {
-  return process.env.OPENCLI_BIN?.trim() || "opencli";
-}
-
 /**
  * Run one site-driven role turn.
  *
@@ -193,23 +190,69 @@ export async function runOpencliRoleTurn(
     "json"
   ];
 
-  const result = await execa(opencliCommand(), commandArguments, {
-    stdin: "ignore",
-    reject: false,
-    ...(signal ? { cancelSignal: signal } : {})
-  });
-  const output = result.stdout.trim();
-  const errorText = result.stderr.trim();
-  const exitCode = result.exitCode ?? 1;
-  if (exitCode !== 0) {
+  // Use the exact same pinned package and Node executable as the installer
+  // and browser service. The supervised Runtime does not have a login-shell
+  // PATH, and a globally installed OpenCLI may target a different daemon.
+  const command = resolveOpencliCommand();
+  const result = await execa(
+    command.command,
+    [...command.args, ...commandArguments],
+    {
+      stdin: "ignore",
+      reject: false,
+      ...(signal ? { cancelSignal: signal } : {})
+    }
+  );
+  const output = (result.stdout ?? "").trim();
+  const errorText = (result.stderr ?? "").trim();
+  const exitCode = result.exitCode ?? null;
+  if (result.failed || exitCode !== 0) {
+    // Execa reports spawn failures and signal termination without an exit
+    // code. Do not fabricate one or include its full command (the prompt).
+    if (result.isCanceled || signal?.aborted) {
+      throw new OpencliCommandError(
+        "OpenCLI turn cancelled.",
+        "CANCELLED",
+        exitCode
+      );
+    }
+    if (exitCode === null) {
+      const reason = result.code ?? result.signal ?? "unknown reason";
+      throw new OpencliCommandError(
+        `OpenCLI could not complete process execution: ${reason}`,
+        "COMMAND_EXEC",
+        null
+      );
+    }
+    if (output) {
+      // The native JSON envelope carries the actionable error code and hint.
+      // Preserve them instead of replacing them with a generic exit failure.
+      try {
+        parseOpencliOutput(output, exitCode);
+      } catch (error) {
+        if (
+          !(error instanceof OpencliCommandError) ||
+          error.code !== "INVALID_OUTPUT" ||
+          !errorText
+        ) {
+          throw error;
+        }
+      }
+    }
     throw new OpencliCommandError(
-      errorText || output || `opencli exited with code ${exitCode}`,
+      errorText.slice(-800) || `opencli exited with code ${exitCode}`,
       "COMMAND_EXEC",
       exitCode
     );
   }
   const row = parseOpencliOutput(output, exitCode)[0];
-  if (!row) throw new OpencliCommandError("OpenCLI returned no response row.", "INVALID_OUTPUT", null);
+  if (!row) {
+    throw new OpencliCommandError(
+      "OpenCLI returned no response row.",
+      "INVALID_OUTPUT",
+      null
+    );
+  }
   const reply = replyFromRow(row);
   const conversationId =
     task.site === "gemini" ? geminiConversationId(row.url) : reply.conversationId;
