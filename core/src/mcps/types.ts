@@ -113,7 +113,7 @@ export interface RuleSyncMcpState {
   readonly servers: readonly McpServerDefinition[];
 }
 
-/** Secret-free operator view of the external ChatGPT MCP service. */
+/** Secret-free operator view of the ChatGPT MCP gateway ingress. */
 export const CHATGPT_TUNNEL_CONTROL_PATH = "/control/chatgpt-tunnel";
 export type ChatgptMcpGrants = Record<string, string[]>;
 export interface ChatgptTunnelStatus {
@@ -122,6 +122,8 @@ export interface ChatgptTunnelStatus {
   readonly configured: boolean;
   readonly enabled: boolean;
   readonly ready: boolean;
+  readonly role: string;
+  readonly availableRoles?: readonly string[];
   readonly workspace: string | null;
   readonly tunnelId: string | null;
   readonly reviewed: ChatgptMcpGrants;
@@ -129,5 +131,5 @@ export interface ChatgptTunnelStatus {
 }
 export type ChatgptTunnelMutation =
   | { action: "disable" | "enable" | "forget"; expectedRevision: string }
-  | { action: "configure"; expectedRevision: string; workspace: string; grants: ChatgptMcpGrants }
+  | { action: "configure"; expectedRevision: string; workspace: string; role?: string; grants: ChatgptMcpGrants }
   | { action: "rotate"; expectedRevision: string; runtimeKey: string };

@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
+import { tokenize } from "../agents/read-only-policy.ts";
 import { resolveRuntimeSourceRoot } from "./runtime-source-root.ts";
 
 export function resolveSkillRoots(configuredRepoRoot?: string): string[] {
@@ -92,21 +93,9 @@ export function normaliseSkillReadPath(raw: unknown): string | null {
   return result;
 }
 
+/** Reuses the canonical shell tokenizer owned by `read-only-policy.ts`. */
 export function tokenizeShellWords(cmd: string): string[] {
-  const tokens: string[] = [];
-  const re = /'[^']*'|"(?:[^"\\]|\\.)*"|\S+/g;
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(cmd)) !== null) {
-    let token = match[0];
-    if (
-      (token.startsWith("'") && token.endsWith("'")) ||
-      (token.startsWith('"') && token.endsWith('"'))
-    ) {
-      token = token.slice(1, -1);
-    }
-    tokens.push(token);
-  }
-  return tokens;
+  return tokenize(cmd);
 }
 
 export function isPathLikeToken(token: unknown): string | null {

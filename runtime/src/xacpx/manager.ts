@@ -12,7 +12,7 @@ proxying.
 */
 
 import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { Readable, Writable } from "node:stream";
 
@@ -28,9 +28,11 @@ import {
   type RequestPermissionResponse,
   type Stream
 } from "@agentclientprotocol/sdk";
+import { isPathWithin } from "@simulatorlife/autodev-data/files";
 import {
   type AcpProviderId,
   type AcpProviderLaunchSpec,
+  type AcpSupergatewayEndpoint,
   buildAcpProviderLaunchSpec,
   buildGithubWorkerTaskSpec,
   GITHUB_WORKER_ROLE,
@@ -38,16 +40,26 @@ import {
   isGithubWorkerProvider,
   resolveAcpProviderId
 } from "@simulatorlife/autodev-runtime/acp/provider-profiles";
-import { evaluateReadOnlyToolCall } from "@simulatorlife/autodev-runtime/agents/read-only-policy";
+import {
+  evaluateReadOnlyToolCall,
+  isShellToolName,
+  normalizeToolName
+} from "@simulatorlife/autodev-runtime/agents/read-only-policy";
+import { isDisabledNativeFileTool } from "@simulatorlife/autodev-runtime/hooks/file-surface";
 import { COOLDOWNS } from "@simulatorlife/autodev-runtime/router/cooldown";
 import {
   type Candidate,
   ROUTING_POLICY,
   type RoutingPolicy
 } from "@simulatorlife/autodev-runtime/router/routing";
-import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import {
+  hasRoleContract,
+  roleContract
+} from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { opencliModel } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
+import { composeRoleSystemPrompt } from "@simulatorlife/autodev-runtime/shared/role-prompts";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
+import { execa } from "execa";
 
 export interface XacpxBinaries {
   readonly xacpxBin: string;
@@ -103,6 +115,8 @@ export interface PlanSessionRequest {
   readonly repository?: string;
   readonly parentSessionId?: string | null;
   readonly mcpConfigPath?: string;
+  readonly supergateway?: AcpSupergatewayEndpoint;
+  readonly authorizedWorkspaceRoot?: string | null;
 }
 
 export interface AcpTransportConnection {
@@ -139,34 +153,148 @@ interface LiveAcpSessionHandle {
   readonly acpSessionId: string;
   readonly systemPrompt: string;
   readonly mcpConfigPath?: string;
+  readonly supergateway?: AcpSupergatewayEndpoint;
+  readonly injectSystemPromptOnFirstTurn: boolean;
+  promptSent: boolean;
+}
+
+function rejectPermissionResponse(
+  request: RequestPermissionRequest
+): RequestPermissionResponse {
+  const rejectOption = request.options.find(
+    (option) =>
+      option.kind === "reject_once" || option.kind === "reject_always"
+  );
+  if (rejectOption) {
+    return {
+      outcome: { outcome: "selected", optionId: rejectOption.optionId }
+    };
+  }
+  return { outcome: { outcome: "cancelled" } };
+}
+
+function parseQualifiedMcpTool(
+  rawName: string
+): { server: string; tool: string } | null {
+  const normalized = rawName.trim();
+  const prefixed = /^mcp__([a-zA-Z0-9_-]+)__([a-zA-Z0-9_.-]+)$/u.exec(
+    normalized
+  );
+  if (prefixed?.[1] && prefixed[2]) {
+    return { server: prefixed[1], tool: prefixed[2] };
+  }
+  return null;
 }
 
 /**
-Evaluate an ACP `session/request_permission` prompt against AutoDev's role
-read-only contract so read-only subagents cannot execute mutating tools even
-when an autonomous CLI proposes them.
+Validate that a delegated child role exists in the canonical execution contract
+and cannot escalate to an orchestrator role.
+*/
+export function validateDelegatedRole(role: string): string {
+  const normalized = role.trim().toLowerCase();
+  if (!hasRoleContract(normalized)) {
+    throw new Error(`Unknown delegated agent role '${role}'.`);
+  }
+  const contract = roleContract(normalized);
+  if (contract.kind === "orchestrator" || normalized === "orchestrator") {
+    throw new Error(
+      `Role escalation denied: delegated child agents cannot run as '${normalized}'.`
+    );
+  }
+  return normalized;
+}
+
+/**
+Validate that a delegated workspace directory is an existing absolute directory
+and stays confined within `authorizedWorkspaceRoot` when provided.
+*/
+export function validateDelegatedWorkspace(
+  cwd: string,
+  authorizedWorkspaceRoot?: string | null
+): string {
+  const trimmed = cwd.trim();
+  if (!trimmed || !path.isAbsolute(trimmed)) {
+    throw new Error(`Delegated workspace must be an absolute path: '${cwd}'.`);
+  }
+  let resolvedCwd: string;
+  try {
+    resolvedCwd = realpathSync(trimmed);
+  } catch {
+    throw new Error(`Delegated workspace does not exist: '${trimmed}'.`);
+  }
+  if (!statSync(resolvedCwd).isDirectory()) {
+    throw new Error(`Delegated workspace must be a directory: '${trimmed}'.`);
+  }
+  if (authorizedWorkspaceRoot?.trim()) {
+    const resolvedRoot = realpathSync(authorizedWorkspaceRoot.trim());
+    if (!isPathWithin(resolvedCwd, resolvedRoot)) {
+      throw new Error(
+        `Workspace confinement violation: '${trimmed}' is outside authorized workspace '${resolvedRoot}'.`
+      );
+    }
+  }
+  return resolvedCwd;
+}
+
+/**
+Compose the canonical leaf and role-specific system prompt for a delegated role
+from `agents/prompts/`, delegating to the single shared prompt composer.
+*/
+export function renderRoleSystemPrompt(
+  role: string,
+  repositoryRoot: string = resolveRuntimeSourceRoot(
+    import.meta.dirname,
+    process.env.AUTODEV_REPO_ROOT
+  )
+): string {
+  return composeRoleSystemPrompt(role, repositoryRoot);
+}
+
+/**
+Evaluate an ACP `session/request_permission` prompt against AutoDev's canonical
+role contract (unknown-role fail-closed, native file-surface block, shell
+enablement, role MCP/tool allowlists, and read-only boundary) so delegated
+subagents receive exactly their contracted permissions regardless of provider.
 */
 export function resolveAcpPermissionResponse(
   role: string,
   request: RequestPermissionRequest
 ): RequestPermissionResponse {
-  const isReadOnly = roleContract(role).readOnly === true;
+  if (!hasRoleContract(role)) {
+    return rejectPermissionResponse(request);
+  }
+  const contract = roleContract(role);
+  const toolName = request.toolCall.name ?? request.toolCall.title ?? "";
+  if (isDisabledNativeFileTool(toolName)) {
+    return rejectPermissionResponse(request);
+  }
+  if (contract.shell === false && isShellToolName(normalizeToolName(toolName))) {
+    return rejectPermissionResponse(request);
+  }
+  const mcpTool = parseQualifiedMcpTool(toolName);
+  if (mcpTool) {
+    if (!contract.mcp.includes(mcpTool.server)) {
+      return rejectPermissionResponse(request);
+    }
+    const roleTools = contract.mcpTools as
+      | Record<string, string[]>
+      | undefined;
+    const serverAllowlist = roleTools?.[mcpTool.server];
+    if (
+      Array.isArray(serverAllowlist) &&
+      !serverAllowlist.includes(mcpTool.tool)
+    ) {
+      return rejectPermissionResponse(request);
+    }
+  }
+  const isReadOnly = contract.readOnly === true;
   if (isReadOnly) {
     const decision = evaluateReadOnlyToolCall({
-      toolName: request.toolCall.name ?? request.toolCall.title ?? "",
+      toolName,
       toolInput: request.toolCall.rawInput
     });
     if (!decision.allowed) {
-      const rejectOption = request.options.find(
-        (option) =>
-          option.kind === "reject_once" || option.kind === "reject_always"
-      );
-      if (rejectOption) {
-        return {
-          outcome: { outcome: "selected", optionId: rejectOption.optionId }
-        };
-      }
-      return { outcome: { outcome: "cancelled" } };
+      return rejectPermissionResponse(request);
     }
   }
   const allowOption =
@@ -210,7 +338,7 @@ function defaultAcpTransportFactory(
   };
 }
 
-function defaultGithubWorkerRunner(
+async function defaultGithubWorkerRunner(
   task: GithubWorkerTaskSpec,
   signal?: AbortSignal
 ): Promise<GithubWorkerRunResult> {
@@ -230,40 +358,21 @@ function defaultGithubWorkerRunner(
         ]
       : ["chatgpt", "ask", task.prompt, "-f", "json"];
 
-  return new Promise<GithubWorkerRunResult>((resolve, reject) => {
-    const command = process.env.OPENCLI_BIN?.trim() || "opencli";
-    const child = spawn(command, commandArguments, {
-      stdio: ["ignore", "pipe", "pipe"],
-      signal
-    });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    child.stdout?.on("data", (chunk: Buffer) => {
-      stdout.push(chunk);
-    });
-    child.stderr?.on("data", (chunk: Buffer) => {
-      stderr.push(chunk);
-    });
-    child.once("error", (error) => {
-      reject(error);
-    });
-    child.once("close", (code) => {
-      const output = Buffer.concat(stdout).toString("utf8").trim();
-      const errorText = Buffer.concat(stderr).toString("utf8").trim();
-      const exitCode = code ?? 1;
-      if (exitCode !== 0) {
-        reject(
-          new Error(
-            errorText ||
-              output ||
-              `opencli github-worker exited with code ${exitCode}`
-          )
-        );
-        return;
-      }
-      resolve({ outputText: output, exitCode });
-    });
+  const command = process.env.OPENCLI_BIN?.trim() || "opencli";
+  const result = await execa(command, commandArguments, {
+    stdin: "ignore",
+    reject: false,
+    ...(signal ? { cancelSignal: signal } : {})
   });
+  const output = result.stdout.trim();
+  const errorText = result.stderr.trim();
+  const exitCode = result.exitCode ?? 1;
+  if (exitCode !== 0) {
+    throw new Error(
+      errorText || output || `opencli github-worker exited with code ${exitCode}`
+    );
+  }
+  return { outputText: output, exitCode };
 }
 
 function resolvePackageBinary(
@@ -346,15 +455,22 @@ async function connectLiveAcpSession(
       clientCapabilities: {}
     });
     const activeSession = await connection.agent
-      .buildSession(launch.cwd)
+      .buildSession({
+        cwd: launch.cwd,
+        mcpServers: [...launch.acpMcpServers]
+      })
       .start();
     return {
       transport,
       connection,
       activeSession,
       acpSessionId: activeSession.sessionId,
-      systemPrompt: request.systemPrompt,
-      ...(request.mcpConfigPath && { mcpConfigPath: request.mcpConfigPath })
+      systemPrompt: launch.systemPrompt,
+      ...(request.mcpConfigPath && { mcpConfigPath: request.mcpConfigPath }),
+      ...(request.supergateway && { supergateway: request.supergateway }),
+      injectSystemPromptOnFirstTurn:
+        launch.isolation.systemPromptInjection === "initial_turn",
+      promptSent: false
     };
   } catch (error) {
     connection.close(error);
@@ -474,19 +590,27 @@ export class XacpxSessionManager {
     request: PlanSessionRequest,
     environment: NodeJS.ProcessEnv = process.env
   ): SessionDispatchPlan {
+    const role = request.parentSessionId
+      ? validateDelegatedRole(request.role)
+      : request.role.trim().toLowerCase();
+    if (!hasRoleContract(role)) {
+      throw new Error(`Unknown agent role '${request.role}'.`);
+    }
+    const cwd = request.authorizedWorkspaceRoot
+      ? validateDelegatedWorkspace(request.cwd, request.authorizedWorkspaceRoot)
+      : request.cwd;
+    const systemPrompt =
+      request.systemPrompt.trim() || renderRoleSystemPrompt(role);
     const existing = this.pins.get(request.sessionId);
-    const chosen = this.selectCandidateForSession(
-      request.sessionId,
-      request.role
-    );
+    const chosen = this.selectCandidateForSession(request.sessionId, role);
 
     const session: PinnedSessionRecord = existing ?? {
       sessionId: request.sessionId,
-      role: request.role,
+      role,
       provider: chosen.provider,
       model: chosen.model,
       reasoningEffort: chosen.reasoningEffort ?? null,
-      cwd: request.cwd,
+      cwd,
       parentSessionId: request.parentSessionId ?? null,
       createdAt: new Date().toISOString()
     };
@@ -502,7 +626,7 @@ export class XacpxSessionManager {
       role: session.role
     });
 
-    if (request.role === GITHUB_WORKER_ROLE) {
+    if (role === GITHUB_WORKER_ROLE) {
       if (!isGithubWorkerProvider(chosen.provider)) {
         throw new Error(
           `github-worker must route to opencli; got '${chosen.provider}'.`
@@ -514,7 +638,7 @@ export class XacpxSessionManager {
         task: buildGithubWorkerTaskSpec({
           provider: chosen.provider,
           model: chosen.model,
-          repository: request.repository ?? path.basename(request.cwd),
+          repository: request.repository ?? path.basename(cwd),
           task: request.promptOrTask,
           sessionId: request.sessionId
         })
@@ -534,12 +658,13 @@ export class XacpxSessionManager {
       session,
       launch: buildAcpProviderLaunchSpec({
         provider: acpProvider,
-        role: request.role,
+        role,
         model: chosen.model,
-        cwd: request.cwd,
-        systemPrompt: request.systemPrompt,
+        cwd,
+        systemPrompt,
         sessionId: request.sessionId,
         ...(request.mcpConfigPath && { mcpConfigPath: request.mcpConfigPath }),
+        ...(request.supergateway && { supergateway: request.supergateway }),
         reasoningEffort: chosen.reasoningEffort ?? null,
         env: environment
       })
@@ -591,9 +716,16 @@ export class XacpxSessionManager {
       signal?.addEventListener("abort", onAbort, { once: true });
       let promptResponse: Awaited<ReturnType<ActiveSession["prompt"]>>;
       let outputText: string;
+      const turnPrompt =
+        !handle.promptSent &&
+        handle.injectSystemPromptOnFirstTurn &&
+        handle.systemPrompt.trim().length > 0
+          ? `<system_instructions>\n${handle.systemPrompt.trim()}\n</system_instructions>\n\n${request.promptOrTask}`
+          : request.promptOrTask;
+      handle.promptSent = true;
       try {
         [promptResponse, outputText] = await Promise.all([
-          handle.activeSession.prompt(request.promptOrTask),
+          handle.activeSession.prompt(turnPrompt),
           handle.activeSession.readText()
         ]);
       } finally {

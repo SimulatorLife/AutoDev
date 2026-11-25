@@ -3843,7 +3843,9 @@ export async function fetchChatgptTunnel(config: ControlApiConfig): Promise<Cont
   if (!isRecord(data) || data.schema !== "autodev-chatgpt-tunnel-v1" ||
     typeof data.revision !== "string" || !/^[a-f0-9]{64}$/u.test(data.revision) ||
     typeof data.configured !== "boolean" || typeof data.enabled !== "boolean" ||
-    typeof data.ready !== "boolean" || !isNullableString(data.workspace) ||
+    typeof data.ready !== "boolean" || typeof data.role !== "string" || !data.role.trim() ||
+    (data.availableRoles !== undefined && !isStringList(data.availableRoles)) ||
+    !isNullableString(data.workspace) ||
     !isNullableString(data.tunnelId) || !grants(data.reviewed) || !grants(data.grants))
     return invalidResponse("ChatgptTunnel", "autodev-chatgpt-tunnel-v1");
   return { kind: "ok", data: data as unknown as ChatgptTunnelStatus };

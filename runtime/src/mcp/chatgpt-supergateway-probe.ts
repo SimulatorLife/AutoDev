@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createServer } from "node:net";
+import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -12,6 +13,13 @@ import {
   qualifiedToolNames,
   supergatewayConfigSchema
 } from "../config/render-chatgpt-supergateway.ts";
+import {
+  CHATGPT_MCP_POOL_PORT_ENV,
+  CHATGPT_MCP_POOL_TOKEN_ENV,
+  chatgptBackendPoolConfigSchema,
+  type ChatgptBackendPoolHandle,
+  startChatgptBackendPool
+} from "./chatgpt-backend-pool.ts";
 
 async function allocateLoopbackPort(): Promise<number> {
   const server = createServer();
@@ -74,11 +82,34 @@ export async function probeSupergateway(
   if (!token) throw new Error("Supergateway API key file is empty");
 
   const probePort = await allocateLoopbackPort();
+  const poolConfigPath = path.join(
+    path.dirname(configFile),
+    "backend-pool.json"
+  );
+  const usesBackendPool = Object.values(
+    config.mcpServers.autodev.mcpServers
+  ).some((entry) => "type" in entry && entry.type === "streamableHttp");
+  let pool: ChatgptBackendPoolHandle | undefined;
+  let gatewayEnv = env;
+  if (usesBackendPool && existsSync(poolConfigPath)) {
+    const poolConfig = chatgptBackendPoolConfigSchema.parse(
+      JSON.parse(readFileSync(poolConfigPath, "utf8"))
+    );
+    pool = await startChatgptBackendPool(poolConfig, {
+      gatewayEnv: env,
+      secretEnv: process.env
+    });
+    gatewayEnv = {
+      ...env,
+      [CHATGPT_MCP_POOL_PORT_ENV]: String(pool.port),
+      [CHATGPT_MCP_POOL_TOKEN_ENV]: pool.token
+    };
+  }
   const child = spawn(
     executable,
     ["--config", configFile, "--port", String(probePort)],
     {
-      env,
+      env: gatewayEnv,
       stdio: ["pipe", "ignore", "inherit"]
     }
   );
@@ -179,6 +210,7 @@ export async function probeSupergateway(
         await once(child, "exit").catch(() => {});
       }
     }
+    if (pool) await pool.close().catch(() => {});
   }
 }
 

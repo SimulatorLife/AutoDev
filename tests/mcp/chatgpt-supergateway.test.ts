@@ -5,7 +5,9 @@ import { fileURLToPath } from "node:url";
 
 import {
   chatgptSupergatewayEnvironment,
+  DEFAULT_CHATGPT_SESSION_TIMEOUT_MS,
   parseRulesyncExternalMcpPermissions,
+  renderChatgptBackendPoolConfig,
   renderChatgptSupergatewayConfig
 } from "../../runtime/src/config/render-chatgpt-supergateway.ts";
 
@@ -75,6 +77,19 @@ test("Supergateway config is generated from the canonical catalogue with loopbac
       }
     }
   });
+  const withTimeout = JSON.parse(
+    renderChatgptSupergatewayConfig(
+      catalogue,
+      { "future-server": ["search"] },
+      "/project",
+      { "future-server": ["search"] },
+      { ...http, sessionTimeout: DEFAULT_CHATGPT_SESSION_TIMEOUT_MS }
+    )
+  );
+  assert.equal(
+    withTimeout.mcpServers.autodev.sessionTimeout,
+    DEFAULT_CHATGPT_SESSION_TIMEOUT_MS
+  );
 });
 
 test("ungranted servers, unknown names, wildcard and empty grants fail closed", () => {
@@ -266,8 +281,8 @@ test("reject incompatible transports, credentials, workspace, HTTP options and c
   );
 });
 
-test("Supergateway receives an explicit credential-free process environment", () => {
-  const env = chatgptSupergatewayEnvironment(
+test("Supergateway receives an explicit credential-free role-aware process environment", () => {
+  const orchestratorEnv = chatgptSupergatewayEnvironment(
     {
       home: "/home/test",
       codexHome: "/home/test/.codex",
@@ -277,19 +292,40 @@ test("Supergateway receives an explicit credential-free process environment", ()
     "/bin/node",
     "/bin"
   );
-  assert.deepEqual(env, {
+  assert.deepEqual(orchestratorEnv, {
     HOME: "/home/test",
     CODEX_HOME: "/home/test/.codex",
     PATH: "/bin",
     AUTODEV_REPO_ROOT: "/project",
     AUTODEV_NODE_BIN: "/bin/node",
     AUTODEV_MCP_WORKSPACE: "/project",
-    AUTODEV_MCP_READ_ONLY: "1",
-    AUTODEV_MCP_WORKSPACE_ONLY: "1"
+    AUTODEV_AGENT_ROLE: "orchestrator",
+    AUTODEV_XACPX_WORKSPACE: "/project",
+    AUTODEV_XACPX_COORDINATOR_SESSION: "chatgpt:orchestrator:project",
+    XACPX_ORCHESTRATION_SOCKET:
+      "/home/test/.codex/run/xacpx-orchestration.sock",
+    XACPX_CONFIG: "/home/test/.codex/run/xacpx/config.json",
+    XACPX_STATE: "/home/test/.codex/run/xacpx/state.json"
   });
+  assert.equal("AUTODEV_MCP_READ_ONLY" in orchestratorEnv, false);
+  assert.equal("AUTODEV_MCP_WORKSPACE_ONLY" in orchestratorEnv, false);
+
+  const explorerEnv = chatgptSupergatewayEnvironment(
+    {
+      home: "/home/test",
+      codexHome: "/home/test/.codex",
+      repositoryRoot: "/project"
+    },
+    "/project",
+    "/bin/node",
+    "/bin",
+    { role: "explorer" }
+  );
+  assert.equal(explorerEnv.AUTODEV_AGENT_ROLE, "explorer");
+  assert.equal(explorerEnv.AUTODEV_MCP_READ_ONLY, "1");
 });
 
-test("local grants may narrow but not expand reviewed external permissions", () => {
+test("local grants may narrow but not expand authorized role permissions", () => {
   const reviewed = { filesystem: ["read_text_file"] };
   assert.throws(
     () =>
@@ -300,7 +336,7 @@ test("local grants may narrow but not expand reviewed external permissions", () 
         reviewed,
         http
       ),
-    /reviewed external policy/
+    /authorized role policy/
   );
   assert.throws(
     () =>
@@ -311,7 +347,7 @@ test("local grants may narrow but not expand reviewed external permissions", () 
         reviewed,
         http
       ),
-    /reviewed external policy/
+    /authorized role policy/
   );
   assert.doesNotThrow(() =>
     renderChatgptSupergatewayConfig(
@@ -407,7 +443,8 @@ test("canonical .rulesync/permissions.jsonc derives reviewed ChatGPT MCP permiss
     "filesystem",
     "googleDeveloperKnowledge",
     "lsp",
-    "openaiDeveloperDocs"
+    "openaiDeveloperDocs",
+    "xacpx"
   ]);
   assert.deepEqual([...summary.deniedServers].sort(), [
     "playtest",
@@ -421,5 +458,77 @@ test("canonical .rulesync/permissions.jsonc derives reviewed ChatGPT MCP permiss
       "analyze_code_relationships",
       "get_repository_stats"
     ]
+  });
+});
+
+test("pooled Supergateway config renders loopback Streamable HTTP upstreams paired with backend-pool manifest", () => {
+  const mixedCatalogue = {
+    filesystem: { command: "example-fs", args: ["--read-only"] },
+    context7: {
+      url: "https://mcp.context7.com/mcp",
+      bearer_token_env_var: "CONTEXT7_API_KEY"
+    }
+  };
+  const grants = {
+    filesystem: ["read_text_file"],
+    context7: ["query-docs"]
+  };
+  const gatewayJson = JSON.parse(
+    renderChatgptSupergatewayConfig(
+      mixedCatalogue,
+      grants,
+      "/project",
+      grants,
+      {
+        ...http,
+        sessionTimeout: DEFAULT_CHATGPT_SESSION_TIMEOUT_MS,
+        backendPool: true
+      }
+    )
+  );
+  assert.equal(DEFAULT_CHATGPT_SESSION_TIMEOUT_MS, 60_000);
+  assert.equal(gatewayJson.mcpServers.autodev.sessionTimeout, 60_000);
+  assert.deepEqual(gatewayJson.mcpServers.autodev.mcpServers, {
+    filesystem: {
+      url: "http://127.0.0.1:${AUTODEV_MCP_POOL_PORT}/mcp/filesystem",
+      type: "streamableHttp",
+      oauth2Bearer: "${AUTODEV_MCP_POOL_TOKEN}",
+      toolPrefix: "filesystem__",
+      tools: ["read_text_file"]
+    },
+    context7: {
+      url: "http://127.0.0.1:${AUTODEV_MCP_POOL_PORT}/mcp/context7",
+      type: "streamableHttp",
+      oauth2Bearer: "${AUTODEV_MCP_POOL_TOKEN}",
+      toolPrefix: "context7__",
+      tools: ["query-docs"]
+    }
+  });
+
+  const poolManifest = JSON.parse(
+    renderChatgptBackendPoolConfig(
+      mixedCatalogue,
+      grants,
+      "/project",
+      grants
+    )
+  );
+  assert.deepEqual(poolManifest, {
+    version: 1,
+    servers: {
+      filesystem: {
+        kind: "stdio",
+        command: "example-fs",
+        args: ["--read-only"],
+        cwd: "/project",
+        tools: ["read_text_file"]
+      },
+      context7: {
+        kind: "remote",
+        url: "https://mcp.context7.com/mcp",
+        bearer_token_env_var: "CONTEXT7_API_KEY",
+        tools: ["query-docs"]
+      }
+    }
   });
 });

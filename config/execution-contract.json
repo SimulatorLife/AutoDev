@@ -4,6 +4,8 @@
     "browser-tester": {
       "kind": "leaf",
       "readOnly": true,
+      "shell": false,
+      "hooks": false,
       "mcp": [
         "filesystem",
         "playwright"
@@ -32,6 +34,10 @@
           "browser_close"
         ]
       },
+      "mcpApprovalMode": {
+        "filesystem": "approve",
+        "playwright": "approve"
+      },
       "mcpEnvVars": {
         "playwright": [
           "PATH",
@@ -47,13 +53,16 @@
           "PLAYWRIGHT_BROWSERS_PATH"
         ]
       },
-      "roleScopedMcp": [
-        "playwright"
-      ]
+      "skillsPolicy": {
+        "includeInstructions": false,
+        "bundledEnabled": false
+      }
     },
     "default": {
       "kind": "leaf",
       "readOnly": false,
+      "shell": true,
+      "hooks": true,
       "mcp": [
         "filesystem",
         "lsp",
@@ -95,6 +104,11 @@
           "get_repository_stats"
         ]
       },
+      "mcpApprovalMode": {
+        "filesystem": "approve",
+        "cocoindex-code": "approve",
+        "codegraphcontext": "approve"
+      },
       "mcpEnvVars": {
         "cocoindex-code": [
           "HOME"
@@ -107,6 +121,8 @@
     "docs-researcher": {
       "kind": "leaf",
       "readOnly": true,
+      "shell": true,
+      "hooks": true,
       "mcp": [
         "filesystem",
         "openaiDeveloperDocs",
@@ -116,6 +132,9 @@
       "skills": [
         "source-driven-development"
       ],
+      "mcpApprovalMode": {
+        "filesystem": "approve"
+      },
       "webResearch": {
         "search": true,
         "fetch": true,
@@ -125,6 +144,8 @@
     "explorer": {
       "kind": "leaf",
       "readOnly": true,
+      "shell": true,
+      "hooks": true,
       "mcp": [
         "filesystem",
         "lsp",
@@ -144,6 +165,11 @@
           "get_repository_stats"
         ]
       },
+      "mcpApprovalMode": {
+        "filesystem": "approve",
+        "cocoindex-code": "approve",
+        "codegraphcontext": "approve"
+      },
       "mcpEnvVars": {
         "cocoindex-code": [
           "HOME"
@@ -151,25 +177,35 @@
         "codegraphcontext": [
           "HOME"
         ]
+      },
+      "reasoning": {
+        "summary": "none"
       }
     },
     "github-worker": {
       "kind": "leaf",
       "readOnly": false,
+      "shell": false,
+      "hooks": false,
       "mcp": [
         "github"
       ],
-      "skills": []
+      "skills": [],
+      "mcpApprovalMode": {
+        "github": "approve"
+      }
     },
     "orchestrator": {
       "kind": "orchestrator",
       "readOnly": false,
+      "shell": true,
+      "hooks": true,
       "mcp": [
         "filesystem",
         "lsp",
         "cocoindex-code",
         "codegraphcontext",
-        "codex_app"
+        "xacpx"
       ],
       "skills": [
         "orchestration",
@@ -182,10 +218,12 @@
           "find_code",
           "analyze_code_relationships",
           "get_repository_stats"
-        ],
-        "codex_app": [
-          "request_user_input"
         ]
+      },
+      "mcpApprovalMode": {
+        "filesystem": "approve",
+        "codegraphcontext": "approve",
+        "xacpx": "approve"
       },
       "mcpEnvVars": {
         "cocoindex-code": [
@@ -199,12 +237,13 @@
         "search": true,
         "fetch": true,
         "optionalMcp": []
-      },
-      "allowProviderHop": true
+      }
     },
     "playtest-analyst": {
       "kind": "leaf",
       "readOnly": true,
+      "shell": false,
+      "hooks": false,
       "mcp": [
         "playtest"
       ],
@@ -223,6 +262,9 @@
           "playtest.submitDiscoveryReview",
           "playtest.submitCrossSessionSynthesis"
         ]
+      },
+      "mcpApprovalMode": {
+        "playtest": "approve"
       },
       "mcpEnvVars": {
         "playtest": [
@@ -244,11 +286,20 @@
           "AUTODEV_REPO_ROOT",
           "AUTODEV_NODE_BIN"
         ]
+      },
+      "skillsPolicy": {
+        "includeInstructions": false,
+        "bundledEnabled": false
+      },
+      "reasoning": {
+        "summary": "none"
       }
     },
     "playtester": {
       "kind": "leaf",
       "readOnly": true,
+      "shell": false,
+      "hooks": false,
       "mcp": [
         "playtest"
       ],
@@ -267,6 +318,9 @@
           "playtest.readEpisode",
           "playtest.readWindow"
         ]
+      },
+      "mcpApprovalMode": {
+        "playtest": "approve"
       },
       "mcpEnvVars": {
         "playtest": [
@@ -297,13 +351,16 @@
           "AUTODEV_PLAYTEST_CONTROL_API_ROLE"
         ]
       },
-      "roleScopedMcp": [
-        "playtest"
-      ]
+      "skillsPolicy": {
+        "includeInstructions": false,
+        "bundledEnabled": false
+      }
     },
     "smart": {
       "kind": "leaf",
       "readOnly": false,
+      "shell": true,
+      "hooks": true,
       "mcp": [
         "filesystem",
         "lsp",
@@ -351,6 +408,12 @@
           "get_repository_stats"
         ]
       },
+      "mcpApprovalMode": {
+        "filesystem": "approve",
+        "playwright": "approve",
+        "cocoindex-code": "approve",
+        "codegraphcontext": "approve"
+      },
       "mcpEnvVars": {
         "cocoindex-code": [
           "HOME"
@@ -358,6 +421,9 @@
         "codegraphcontext": [
           "HOME"
         ]
+      },
+      "reasoning": {
+        "summary": "none"
       },
       "webResearch": {
         "search": true,
@@ -370,6 +436,8 @@
     "validator": {
       "kind": "leaf",
       "readOnly": false,
+      "shell": true,
+      "hooks": true,
       "mcp": [
         "filesystem",
         "lsp",
@@ -390,6 +458,11 @@
           "get_repository_stats"
         ]
       },
+      "mcpApprovalMode": {
+        "filesystem": "approve",
+        "cocoindex-code": "approve",
+        "codegraphcontext": "approve"
+      },
       "mcpEnvVars": {
         "cocoindex-code": [
           "HOME"
@@ -397,11 +470,16 @@
         "codegraphcontext": [
           "HOME"
         ]
+      },
+      "reasoning": {
+        "summary": "none"
       }
     },
     "worker": {
       "kind": "leaf",
       "readOnly": false,
+      "shell": true,
+      "hooks": true,
       "mcp": [
         "filesystem",
         "lsp",
@@ -444,6 +522,11 @@
           "get_repository_stats"
         ]
       },
+      "mcpApprovalMode": {
+        "filesystem": "approve",
+        "cocoindex-code": "approve",
+        "codegraphcontext": "approve"
+      },
       "mcpEnvVars": {
         "cocoindex-code": [
           "HOME"
@@ -451,70 +534,56 @@
         "codegraphcontext": [
           "HOME"
         ]
+      },
+      "reasoning": {
+        "summary": "none"
       }
     }
   },
   "providers": {
     "claude": {
-      "spawnTools": [],
       "permissionMode": "native",
-      "delegation": "codex"
+      "delegation": "xacpx"
     },
     "antigravity-gemini": {
-      "spawnTools": [
-        "invoke_subagent"
-      ],
       "permissionMode": "configured",
-      "delegation": "codex",
-      "roleMcpInjection": true
+      "delegation": "xacpx"
     },
     "antigravity-claude-gpt": {
-      "spawnTools": [
-        "invoke_subagent"
-      ],
       "permissionMode": "configured",
-      "delegation": "codex",
-      "roleMcpInjection": true
+      "delegation": "xacpx"
     },
     "antigravity-argon": {
-      "spawnTools": [
-        "invoke_subagent"
-      ],
       "permissionMode": "configured",
-      "delegation": "codex",
-      "roleMcpInjection": true
+      "delegation": "xacpx"
     },
     "minimax": {
-      "spawnTools": [],
       "permissionMode": "upstream",
-      "delegation": "codex"
+      "delegation": "xacpx"
     },
     "mcode": {
-      "spawnTools": [],
       "permissionMode": "configured",
-      "delegation": "xacpx",
-      "roleMcpInjection": true
+      "delegation": "xacpx"
     },
     "opencli-chatgpt": {
-      "spawnTools": [],
       "permissionMode": "upstream",
-      "delegation": "codex"
+      "delegation": "none"
     },
     "opencli-gemini": {
-      "spawnTools": [],
       "permissionMode": "upstream",
-      "delegation": "codex"
+      "delegation": "none"
     },
     "copilot": {
-      "spawnTools": [],
       "permissionMode": "configured",
-      "delegation": "none",
-      "roleMcpInjection": true
+      "delegation": "xacpx"
     },
     "codex": {
-      "spawnTools": [],
       "permissionMode": "native",
-      "delegation": "codex"
+      "delegation": "xacpx"
+    },
+    "chatgpt": {
+      "permissionMode": "configured",
+      "delegation": "xacpx"
     }
   }
 }

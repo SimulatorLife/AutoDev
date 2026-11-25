@@ -24,12 +24,12 @@
     "./control-api/opencli-browser": "./src/control-api/opencli-browser.ts",
     "./cli/control-api-preflight": "./src/cli/control-api-preflight.ts",
     "./hooks": "./src/hooks/index.ts",
+    "./hooks/file-surface": "./src/hooks/file-surface.ts",
     "./hooks/hook-log": "./src/hooks/hook-log.ts",
     "./hooks/hook-payload": "./src/hooks/hook-payload.ts",
     "./mcp": "./src/mcp/index.ts",
     "./mcp/mcp-telemetry": "./src/mcp/mcp-telemetry.ts",
     "./mcp/filesystem-server": "./src/mcp/filesystem-server.ts",
-    "./mcp/process-registry": "./src/mcp/process-registry.ts",
     "./platform": "./src/platform/index.ts",
     "./playtesting": "./src/playtesting/index.ts",
     "./playtesting/statistics": "./src/playtesting/statistics/index.ts",
@@ -97,6 +97,7 @@
     "./shared/provider-model-ids": "./src/shared/provider-model-ids.ts",
     "./shared/request-content": "./src/shared/request-content.ts",
     "./shared/resolve-workspace": "./src/shared/resolve-workspace.ts",
+    "./shared/role-prompts": "./src/shared/role-prompts.ts",
     "./shared/runtime-source-root": "./src/shared/runtime-source-root.ts",
     "./shared/runtime-secrets": "./src/shared/runtime-secrets.ts",
     "./shared/service-lifecycle": "./src/shared/service-lifecycle.ts",
@@ -108,7 +109,8 @@
     "./telemetry/tracer-provider": "./src/telemetry/tracer-provider.ts",
     "./shared/skill-reads": "./src/shared/skill-reads.ts",
     "./xacpx/http": "./src/xacpx/http.ts",
-    "./xacpx/manager": "./src/xacpx/manager.ts"
+    "./xacpx/manager": "./src/xacpx/manager.ts",
+    "./xacpx/orchestration-ipc": "./src/xacpx/orchestration-ipc.ts"
   },
   "scripts": {
     "autodev": "node src/cli/autodev.ts",

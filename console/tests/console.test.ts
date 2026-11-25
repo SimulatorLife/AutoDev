@@ -20101,6 +20101,8 @@ test("ChatgptTunnelPanel and fetchChatgptTunnel render status without leaking se
     configured: true,
     enabled: true,
     ready: true,
+    role: "orchestrator",
+    availableRoles: ["default", "explorer", "orchestrator", "worker"],
     workspace: "/Users/test/project",
     tunnelId: "tunnel_0123456789abcdef0123456789abcdef",
     reviewed: { filesystem: ["read_text_file", "list_directory"] },
@@ -20205,10 +20207,11 @@ test("ChatGPT tunnel Console route enforces same-origin and forwards valid mutat
       const configureBody = new URLSearchParams({
         action: "configure",
         expectedRevision: revision,
-        workspace: "/Users/test/project"
+        workspace: "/Users/test/project",
+        role: "worker"
       });
       configureBody.append("grant", "filesystem:read_text_file");
-      configureBody.append("grant", "filesystem:list_directory");
+      configureBody.append("grant", "filesystem:write_file");
       const configured = await chatgptTunnelRoute.POST(
         sameOriginFormRequest("/api/chatgpt-tunnel", configureBody.toString())
       );
@@ -20221,7 +20224,8 @@ test("ChatGPT tunnel Console route enforces same-origin and forwards valid mutat
         action: "configure",
         expectedRevision: revision,
         workspace: "/Users/test/project",
-        grants: { filesystem: ["read_text_file", "list_directory"] }
+        role: "worker",
+        grants: { filesystem: ["read_text_file", "write_file"] }
       });
 
       const rotated = await chatgptTunnelRoute.POST(

@@ -27,6 +27,7 @@ import {
   buildGithubWorkerTaskSpec,
   GITHUB_WORKER_ROLE
 } from "../src/acp/provider-profiles.ts";
+import { renderBridgeMcpCatalogue } from "../src/config/render-bridge-mcp-catalogue.ts";
 import { evaluatePreToolUse as evaluateBlockCcc } from "../src/hooks/block-ccc-cli.ts";
 import { evaluateFileSurfaceHook } from "../src/hooks/file-surface.ts";
 import {
@@ -49,9 +50,13 @@ import {
 import { didHandleAcpRoute } from "../src/xacpx/http.ts";
 import {
   type AcpConsoleSessionEvent,
+  resolveAcpPermissionResponse,
   resolveXacpxBinaries,
+  validateDelegatedRole,
+  validateDelegatedWorkspace,
   XacpxSessionManager
 } from "../src/xacpx/manager.ts";
+import { startXacpxOrchestrationIpcServer } from "../src/xacpx/orchestration-ipc.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -179,7 +184,7 @@ test("MCP launcher resolves newly added github and xacpx servers", () => {
   ]);
 });
 
-test("ACP provider profiles disable native surfaces across all ACP providers", () => {
+test("ACP provider profiles project canonical role capabilities, native mcpServers, and truthful isolation", () => {
   for (const provider of ACP_PROVIDER_IDS) {
     const spec = buildAcpProviderLaunchSpec({
       provider,
@@ -187,15 +192,65 @@ test("ACP provider profiles disable native surfaces across all ACP providers", (
       model: `${provider}-model`,
       cwd: REPO_ROOT,
       systemPrompt: "Static role prompt",
-      sessionId: `sess-${provider}`
+      sessionId: `sess-${provider}`,
+      supergateway: {
+        url: "http://127.0.0.1:4199/mcp",
+        bearerToken: "gw-token"
+      }
     });
-    assert.equal(spec.nativeToolsDisabled, true);
-    assert.equal(spec.nativePromptsDisabled, true);
-    assert.equal(spec.nativeSkillsDisabled, true);
-    assert.equal(spec.nativeMcpsDisabled, true);
     assert.equal(spec.compactionManagedByProvider, true);
+    assert.equal(spec.readOnly, false);
+    assert.equal(spec.shell, true);
+    assert.equal(spec.hooks, true);
     assert.ok(spec.mcpServers.includes("filesystem"));
+    assert.deepEqual(spec.acpMcpServers, [
+      {
+        type: "http",
+        name: "autodev",
+        url: "http://127.0.0.1:4199/mcp",
+        headers: [{ name: "Authorization", value: "Bearer gw-token" }]
+      }
+    ]);
+    assert.ok(spec.isolation.nativeTools);
+    if (provider === "claude") {
+      assert.equal(spec.isolation.nativeTools, "enforced");
+      assert.equal(spec.isolation.systemPromptInjection, "cli_flag");
+      assert.equal(spec.isolation.gaps.length, 0);
+    } else {
+      assert.equal(spec.isolation.systemPromptInjection, "initial_turn");
+      assert.ok(spec.isolation.gaps.length > 0);
+    }
+
+    const browserSpec = buildAcpProviderLaunchSpec({
+      provider,
+      role: "browser-tester",
+      model: `${provider}-model`,
+      cwd: REPO_ROOT,
+      systemPrompt: "Browser tester prompt",
+      sessionId: `sess-bt-${provider}`
+    });
+    assert.equal(browserSpec.readOnly, true);
+    assert.equal(browserSpec.shell, false);
+    assert.equal(browserSpec.hooks, false);
+    assert.equal(browserSpec.env.AUTODEV_MCP_READ_ONLY, "1");
+    assert.equal(browserSpec.env.AUTODEV_ROLE_SHELL_ENABLED, "0");
+    assert.ok(
+      browserSpec.acpMcpServers.some((server) => server.name === "playwright")
+    );
   }
+
+  assert.throws(
+    () =>
+      buildAcpProviderLaunchSpec({
+        provider: "claude",
+        role: "nonexistent-role",
+        model: "claude-sonnet",
+        cwd: REPO_ROOT,
+        systemPrompt: "x",
+        sessionId: "sess-bad"
+      }),
+    /Unknown AutoDev agent role/u
+  );
 
   const ghTask = buildGithubWorkerTaskSpec({
     provider: "opencli-chatgpt",
@@ -425,7 +480,7 @@ test("XacpxSessionManager executes live ACP turns, enforces read-only permission
     promptOrTask: "attempt-write"
   });
   assert.equal(firstTurn.kind, "acp");
-  assert.equal(firstTurn.outputText, "echo:attempt-write");
+  assert.match(firstTurn.outputText, /^echo:<system_instructions>\nExplorer prompt\n<\/system_instructions>\n\nattempt-write$/u);
   assert.equal(firstTurn.stopReason, "end_turn");
   assert.equal(transportCalls, 1);
 
@@ -548,4 +603,229 @@ test("XacpxSessionManager executes live ACP turns, enforces read-only permission
   assert.equal(documentationResearcher.env.MINIMAX_API_KEY, undefined);
   assert.equal(documentationResearcher.env.CONTEXT7_API_KEY, "context7-secret");
   assert.equal(findMcodeBinary({ PATH: "", HOME: "/nonexistent-home" }), null);
+});
+
+test("XACPX role permissions, anti-escalation, workspace confinement, and orchestration IPC enforce canonical contracts", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "autodev-xacpx-ipc-"));
+  const workspace = path.join(root, "workspace");
+  const outside = path.join(root, "outside");
+  mkdirSync(workspace, { recursive: true });
+  mkdirSync(outside, { recursive: true });
+
+  // Anti-escalation and unknown role denial.
+  assert.equal(validateDelegatedRole("worker"), "worker");
+  assert.equal(validateDelegatedRole("explorer"), "explorer");
+  assert.throws(() => validateDelegatedRole("orchestrator"), /escalation/i);
+  assert.throws(() => validateDelegatedRole("nonexistent"), /Unknown/i);
+
+  // Workspace confinement.
+  assert.equal(
+    validateDelegatedWorkspace(workspace, workspace),
+    path.resolve(workspace).replace(/^\/var\//, "/private/var/")
+  );
+  assert.throws(
+    () => validateDelegatedWorkspace(outside, workspace),
+    /confinement/i
+  );
+
+  // Per-role MCP server + read-only permission enforcement.
+  const options = [
+    { optionId: "allow", name: "Allow", kind: "allow_once" as const },
+    { optionId: "reject", name: "Reject", kind: "reject_once" as const }
+  ];
+  const workerWrite = resolveAcpPermissionResponse("worker", {
+    sessionId: "s1",
+    toolCall: { toolCallId: "1", name: "mcp__filesystem__write_file" },
+    options
+  });
+  assert.deepEqual(workerWrite, {
+    outcome: { outcome: "selected", optionId: "allow" }
+  });
+  const explorerWrite = resolveAcpPermissionResponse("explorer", {
+    sessionId: "s2",
+    toolCall: { toolCallId: "2", name: "mcp__filesystem__write_file" },
+    options
+  });
+  assert.deepEqual(explorerWrite, {
+    outcome: { outcome: "selected", optionId: "reject" }
+  });
+  const workerUngrantedMcp = resolveAcpPermissionResponse("worker", {
+    sessionId: "s3",
+    toolCall: { toolCallId: "3", name: "mcp__playwright__browser_navigate" },
+    options
+  });
+  assert.deepEqual(workerUngrantedMcp, {
+    outcome: { outcome: "selected", optionId: "reject" }
+  });
+  const workerDisallowedCgcTool = resolveAcpPermissionResponse("worker", {
+    sessionId: "s4",
+    toolCall: {
+      toolCallId: "4",
+      name: "mcp__codegraphcontext__delete_repository"
+    },
+    options
+  });
+  assert.deepEqual(workerDisallowedCgcTool, {
+    outcome: { outcome: "selected", optionId: "reject" }
+  });
+
+  // Shell-disabled roles deny host shell tools; writable worker allows shell.
+  const browserShell = resolveAcpPermissionResponse("browser-tester", {
+    sessionId: "s5",
+    toolCall: { toolCallId: "5", name: "bash" },
+    options
+  });
+  assert.deepEqual(browserShell, {
+    outcome: { outcome: "selected", optionId: "reject" }
+  });
+  const analystShell = resolveAcpPermissionResponse("playtest-analyst", {
+    sessionId: "s6",
+    toolCall: { toolCallId: "6", name: "exec_command" },
+    options
+  });
+  assert.deepEqual(analystShell, {
+    outcome: { outcome: "selected", optionId: "reject" }
+  });
+  const workerShell = resolveAcpPermissionResponse("worker", {
+    sessionId: "s7",
+    toolCall: { toolCallId: "7", name: "bash" },
+    options
+  });
+  assert.deepEqual(workerShell, {
+    outcome: { outcome: "selected", optionId: "allow" }
+  });
+
+  // Provider-native file tools are denied across ALL roles in favor of filesystem MCP.
+  for (const nativeFileTool of [
+    "apply_patch",
+    "view_image",
+    "write_to_file",
+    "replace_file_content"
+  ]) {
+    const decision = resolveAcpPermissionResponse("worker", {
+      sessionId: "s8",
+      toolCall: { toolCallId: `nf-${nativeFileTool}`, name: nativeFileTool },
+      options
+    });
+    assert.deepEqual(
+      decision,
+      { outcome: { outcome: "selected", optionId: "reject" } },
+      `native file tool ${nativeFileTool} must be denied even for writable worker`
+    );
+  }
+
+  // Unknown role fails closed.
+  const unknownDecision = resolveAcpPermissionResponse("nonexistent", {
+    sessionId: "s9",
+    toolCall: { toolCallId: "9", name: "mcp__filesystem__read_text_file" },
+    options
+  });
+  assert.deepEqual(unknownDecision, {
+    outcome: { outcome: "selected", optionId: "reject" }
+  });
+
+  // Direct canonical `.rulesync/mcp.jsonc` catalogue rendering (no temp Codex TOML detour).
+  const catalogue = JSON.parse(
+    renderBridgeMcpCatalogue(path.join(REPO_ROOT, ".rulesync", "mcp.jsonc"))
+  ) as Record<string, Record<string, unknown>>;
+  for (const requiredServer of [
+    "filesystem",
+    "lsp",
+    "cocoindex-code",
+    "codegraphcontext",
+    "xacpx",
+    "github",
+    "playwright",
+    "playtest",
+    "openaiDeveloperDocs",
+    "context7",
+    "googleDeveloperKnowledge"
+  ]) {
+    assert.ok(
+      catalogue[requiredServer],
+      `canonical MCP catalogue must include ${requiredServer}`
+    );
+  }
+  assert.equal(
+    roleContract("orchestrator", REPO_ROOT).mcp.includes("codex_app"),
+    false
+  );
+  assert.deepEqual(catalogue.googleDeveloperKnowledge?.http_headers, {
+    "X-Goog-Api-Key": "${GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY}"
+  });
+
+  // ACP session/new delivers native mcpServers and injects canonical system prompt on initial turn only.
+  const observedSessionNew: Array<{ cwd: string; mcpServers: unknown[] }> = [];
+  const observedPrompts: string[] = [];
+  const acpManager = new XacpxSessionManager({
+    acpTransportFactory: (launch) => ({
+      target: new AgentApp({ name: `mock-${launch.provider}` })
+        .onRequest(AGENT_METHODS.initialize, async () => ({
+          protocolVersion: PROTOCOL_VERSION,
+          agentCapabilities: { loadSession: false }
+        }))
+        .onRequest(AGENT_METHODS.session_new, async ({ params }) => {
+          observedSessionNew.push({
+            cwd: params.cwd,
+            mcpServers: [...(params.mcpServers ?? [])]
+          });
+          return { sessionId: "acp-mcp-1" };
+        })
+        .onRequest(AGENT_METHODS.session_prompt, async ({ params, client }) => {
+          const text = params.prompt
+            .map((b) => (b.type === "text" ? b.text : ""))
+            .join("");
+          observedPrompts.push(text);
+          await client.notify("session/update", {
+            sessionId: params.sessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "ok" }
+            }
+          });
+          return { stopReason: "end_turn" };
+        })
+        .onRequest(AGENT_METHODS.session_close, async () => ({}))
+    })
+  });
+  await acpManager.executeTurn({
+    sessionId: "sess-mcp-gw-1",
+    role: "worker",
+    cwd: workspace,
+    systemPrompt: "CANONICAL_ROLE_INSTRUCTIONS",
+    promptOrTask: "first turn",
+    supergateway: {
+      url: "http://127.0.0.1:4199/mcp",
+      bearerToken: "gw-secret"
+    }
+  });
+  await acpManager.promptSession("sess-mcp-gw-1", "second turn");
+  await acpManager.closeSession("sess-mcp-gw-1");
+  assert.equal(observedSessionNew.length, 1);
+  assert.deepEqual(observedSessionNew[0]?.mcpServers, [
+    {
+      type: "http",
+      name: "autodev",
+      url: "http://127.0.0.1:4199/mcp",
+      headers: [{ name: "Authorization", value: "Bearer gw-secret" }]
+    }
+  ]);
+  assert.equal(observedPrompts.length, 2);
+  assert.match(observedPrompts[1] ?? "", /^second turn$/u);
+
+  // Orchestration IPC server lifecycle check.
+  const socketPath = path.join(root, "xacpx.sock");
+  const manager = new XacpxSessionManager();
+  const handle = await startXacpxOrchestrationIpcServer({
+    socketPath,
+    manager,
+    authorizedWorkspaceRoot: workspace,
+    repositoryRoot: REPO_ROOT
+  });
+  try {
+    assert.equal(existsSync(socketPath), true);
+  } finally {
+    await handle.close();
+    rmSync(root, { recursive: true, force: true });
+  }
 });

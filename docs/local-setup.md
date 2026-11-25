@@ -284,9 +284,10 @@ for it, Codex reads the variable from its own process environment, and every
 AutoDev-owned surface (the bridge MCP catalogue, the Control API's declared and
 applied MCP state) keeps the `${VAR}` reference, so no tracked file and no
 catalogue holds the key. The operator supplies
-`GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY` the same way as `CONTEXT7_API_KEY`, in the
-environment AutoDev runs in or in `$CODEX_HOME/.env`. The role TOMLs gate it the
-way they gate `context7`: `docs-researcher` and `smart` enable it,
+`GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY` the same way as `CONTEXT7_API_KEY` — in
+macOS Keychain (`install-state keychain set GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY`),
+in the environment AutoDev runs in, or in `$CODEX_HOME/.env`. The role TOMLs
+gate it the way they gate `context7`: `docs-researcher` and `smart` enable it,
 `orchestrator` explicitly disables it so documentation research is delegated
 rather than done by the root turn, and every other role omits it. Without a key
 the server still starts and answers authentication failures, so its tools are
@@ -367,7 +368,7 @@ fetching/opening and is the appropriate search/open/read path for authoritative
 websites. Do not add a separate Codex `web_fetch` tool. Their rendered remote
 MCP entries set `transport = "streamable_http"`, which the installed Codex
 0.153.x role loader requires even when `url` is present.
-Playwright is reserved for explicitly granted UI/browser testing roles; documentation-only and ungranted root roles do not receive it. Resolve tool names and grants from the current role contract, rather than relying on a provider's native tool surface. All ACP profiles and the future gateway enforce the same role/workspace policy, with separate authorization for external ChatGPT access.
+Playwright is reserved for explicitly granted UI/browser testing roles; documentation-only and ungranted root roles do not receive it. Resolve tool names and grants from the current role contract, rather than relying on a provider's native tool surface. All ACP profiles and the shared Supergateway (including authenticated ChatGPT sessions) enforce the same canonical role and workspace policy, without provider-specific read-only restrictions.
 
 The installer installs CodeGraphContext `0.6.13` and CocoIndex Code
 `0.2.41` with pipx at pinned versions. The `codegraphcontext` MCP starts

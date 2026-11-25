@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  findRoleContract,
+  hasRoleContract,
   isReadOnlyRole,
-  roleAllowsProviderHop
+  roleContract
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 
 void test("isReadOnlyRole: reports read-only capability per contract role", () => {
@@ -19,24 +21,26 @@ void test("isReadOnlyRole: reports read-only capability per contract role", () =
   assert.equal(isReadOnlyRole("default"), false);
 });
 
-void test("isReadOnlyRole: empty / unknown / null returns false", () => {
-  assert.equal(isReadOnlyRole(null), false);
-  assert.equal(isReadOnlyRole(undefined), false);
-  assert.equal(isReadOnlyRole(""), false);
-  assert.equal(isReadOnlyRole("   "), false);
-  assert.equal(isReadOnlyRole("nonexistent-role"), false);
+void test("unknown, empty, or null roles fail closed (read-only and no writable fallback)", () => {
+  for (const invalid of [null, undefined, "", "   ", "nonexistent-role"]) {
+    assert.equal(isReadOnlyRole(invalid), true);
+    assert.equal(hasRoleContract(invalid), false);
+    assert.equal(findRoleContract(invalid), null);
+    assert.throws(
+      () => roleContract(invalid),
+      /Unknown AutoDev agent role/u
+    );
+  }
 });
 
-void test("isReadOnlyRole: case-insensitive role keys", () => {
+void test("isReadOnlyRole and roleContract: case-insensitive role keys and full capability projection", () => {
   assert.equal(isReadOnlyRole("Explorer"), true);
   assert.equal(isReadOnlyRole("WORKER"), false);
-});
-
-void test("roleAllowsProviderHop: only orchestrator allows cross-provider hops", () => {
-  assert.equal(roleAllowsProviderHop("orchestrator"), true);
-  assert.equal(roleAllowsProviderHop("ORCHESTRATOR"), true);
-  assert.equal(roleAllowsProviderHop("worker"), false);
-  assert.equal(roleAllowsProviderHop("explorer"), false);
-  assert.equal(roleAllowsProviderHop("smart"), false);
-  assert.equal(roleAllowsProviderHop(null), false);
+  assert.equal(roleContract("browser-tester").shell, false);
+  assert.equal(roleContract("browser-tester").hooks, false);
+  assert.equal(roleContract("playtest-analyst").shell, false);
+  assert.equal(roleContract("playtest-analyst").skillsPolicy?.bundledEnabled, false);
+  assert.equal(roleContract("worker").shell, true);
+  assert.equal(roleContract("worker").hooks, true);
+  assert.equal(roleContract("orchestrator").mcpApprovalMode?.xacpx, "approve");
 });

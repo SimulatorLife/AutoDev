@@ -53,7 +53,6 @@ export {
   subagentProviderForThread,
   SubagentRegistry,
   type SubagentSpawnRecord,
-  subagentSpawnToolsFor,
   type SubagentStatus,
   subagentStatus,
   type SubagentTelemetry,

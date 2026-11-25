@@ -15,10 +15,15 @@ export function ChatgptTunnelPanel({ status }: { status: ChatgptTunnelStatus | n
     React.createElement("p", null, !status ? "Tunnel status unavailable." : !status.configured ? "Not configured. Run scripts/install.sh --enable-chatgpt-tunnel with authorized OpenAI credentials." : status.enabled ? status.ready ? "Ready" : "Enabled, not ready" : "Disabled"),
     status?.configured ? React.createElement(React.Fragment, null,
       React.createElement("p", null, "Tunnel: " + status.tunnelId),
+      React.createElement("p", null, "Effective role: " + status.role),
       form(status.enabled ? "disable" : "enable", status.enabled ? "Disconnect and disable" : "Enable"),
-      form("configure", "Apply reviewed grants and connect", [
+      form("configure", "Apply role grants and connect", [
         React.createElement("label", { key: "workspace" }, "Workspace",
           React.createElement("input", { name: "workspace", required: true, defaultValue: status.workspace ?? "", className: "block w-full border border-border rounded p-2" })),
+        React.createElement("label", { key: "role" }, "Agent role",
+          React.createElement("select", { name: "role", defaultValue: status.role, className: "block w-full border border-border rounded p-2" },
+            ...(status.availableRoles?.length ? status.availableRoles : [status.role]).map(roleOption =>
+              React.createElement("option", { key: roleOption, value: roleOption }, roleOption)))),
         ...Object.entries(status.reviewed).map(([server, tools]) =>
           React.createElement("fieldset", { key: server, className: "flex flex-col gap-1" },
             React.createElement("legend", null, server),

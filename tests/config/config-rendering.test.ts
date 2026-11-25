@@ -308,94 +308,87 @@ test("bridge MCP catalogues are deterministic and preserve launch authentication
   }
 });
 
-test("execution-contract provider delegation is explicit and consistent", () => {
+test("execution-contract provider delegation is explicit and rejects legacy fields", () => {
   assert.deepEqual(
     validateProviderContracts({
-      codex: { delegation: "codex", spawnTools: [], roleMcpInjection: false },
-      claude: {
-        delegation: "codex",
-        spawnTools: ["Agent"],
-        roleMcpInjection: false
-      },
-      minimax: { delegation: "none", spawnTools: [], roleMcpInjection: false }
+      codex: { delegation: "xacpx", permissionMode: "native" },
+      claude: { delegation: "xacpx", permissionMode: "native" },
+      "opencli-chatgpt": { delegation: "none", permissionMode: "upstream" }
     }),
     {
-      codex: { delegation: "codex", spawnTools: [], roleMcpInjection: false },
-      claude: {
-        delegation: "codex",
-        spawnTools: ["Agent"],
-        roleMcpInjection: false
-      },
-      minimax: { delegation: "none", spawnTools: [], roleMcpInjection: false }
+      codex: { delegation: "xacpx", permissionMode: "native" },
+      claude: { delegation: "xacpx", permissionMode: "native" },
+      "opencli-chatgpt": { delegation: "none", permissionMode: "upstream" }
     }
   );
   assert.throws(
-    () => validateProviderContracts({ unknown: { spawnTools: [] } }),
+    () => validateProviderContracts({ unknown: {} }),
     /must declare delegation/
   );
   assert.throws(
     () =>
       validateProviderContracts({
-        minimax: { delegation: "none", spawnTools: ["invoke_subagent"] }
+        codex: { delegation: "codex" }
       }),
-    /cannot declare spawnTools/
+    /must declare delegation/
+  );
+  assert.throws(
+    () =>
+      validateProviderContracts({
+        minimax: { delegation: "xacpx", spawnTools: ["invoke_subagent"] }
+      }),
+    /must not declare legacy spawnTools/
   );
   assert.throws(
     () =>
       validateProviderContracts({
         antigravity: {
-          delegation: "codex",
-          spawnTools: ["invoke_subagent"],
-          roleMcpInjection: "true"
+          delegation: "xacpx",
+          roleMcpInjection: true
         }
       }),
-    /roleMcpInjection must be boolean/
+    /must not declare legacy roleMcpInjection/
   );
 });
 
-test("orchestrator codex_app MCP is scoped to a single tool", () => {
-  // Read the live contract that install.sh materialises. The install flow
-  // re-renders this from `agents/roles/*.toml` against the rulesync
-  // projection, so a render failure in install --check would surface here.
+test("orchestrator MCP contract is provider-agnostic and omits Codex-only plugin MCPs", () => {
   const contract = JSON.parse(
     readFileSync("config/execution-contract.json", "utf8")
   ) as {
     roles: Record<
       string,
-      { mcp?: string[]; mcpTools?: Record<string, string[]> }
+      {
+        mcp?: string[];
+        mcpTools?: Record<string, string[]>;
+        allowProviderHop?: boolean;
+      }
     >;
   };
   const orchestrator = contract.roles.orchestrator;
   assert.ok(orchestrator, "orchestrator role must be declared");
   assert.deepEqual(
     orchestrator.mcp,
-    ["filesystem", "lsp", "cocoindex-code", "codegraphcontext", "codex_app"],
-    "orchestrator MCPs must include codex_app in deterministic order"
+    ["filesystem", "lsp", "cocoindex-code", "codegraphcontext", "xacpx"],
+    "orchestrator MCPs must be provider-agnostic and include xacpx in deterministic order"
   );
-  assert.deepEqual(
-    orchestrator.mcpTools,
-    {
-      codegraphcontext: [
-        "list_indexed_repositories",
-        "find_code",
-        "analyze_code_relationships",
-        "get_repository_stats"
-      ],
-      codex_app: ["request_user_input"]
-    },
-    "codex_app must expose only request_user_input"
-  );
+  assert.equal("allowProviderHop" in orchestrator, false);
+  assert.deepEqual(orchestrator.mcpTools, {
+    codegraphcontext: [
+      "list_indexed_repositories",
+      "find_code",
+      "analyze_code_relationships",
+      "get_repository_stats"
+    ]
+  });
 
-  // Every other role must not see codex_app — it is orchestrator-only.
   for (const [roleName, roleCfg] of Object.entries(contract.roles)) {
-    if (roleName === "orchestrator") continue;
     assert.ok(
       !(roleCfg.mcp ?? []).includes("codex_app"),
-      `${roleName} must not list codex_app in mcp`
+      `${roleName} must not list Codex-only codex_app in canonical mcp`
     );
     assert.ok(
       !(roleCfg.mcpTools ?? {}).codex_app,
-      `${roleName} must not list codex_app in mcpTools`
+      `${roleName} must not list codex_app in canonical mcpTools`
     );
   }
 });
@@ -452,7 +445,9 @@ test("context7 is enabled on docs-researcher and explorer only", () => {
     openaiDeveloperDocs: 5,
     context7: 6,
     googleDeveloperKnowledge: 7,
-    codex_app: 8
+    codex_app: 8,
+    github: 9,
+    xacpx: 10
   };
   for (const [roleName, roleCfg] of Object.entries(contract.roles)) {
     const mcp = roleCfg.mcp ?? [];
@@ -620,19 +615,28 @@ test("lsp is scoped to precision tools on normal implementation roles and unrest
   }
 });
 
-test("Playtester and Browser Tester declare isolated MCP injection requirements", () => {
+test("Playtester and Browser Tester project role tool/env/shell boundaries without legacy provider exclusions", () => {
   const contract = JSON.parse(
     readFileSync("config/execution-contract.json", "utf8")
   ) as {
     roles: Record<
       string,
       {
+        shell?: boolean;
+        hooks?: boolean;
         roleScopedMcp?: string[];
         mcpEnvVars?: Record<string, string[]>;
         mcpTools?: Record<string, string[]>;
       }
     >;
-    providers: Record<string, { roleMcpInjection?: boolean }>;
+    providers: Record<
+      string,
+      {
+        delegation?: string;
+        roleMcpInjection?: boolean;
+        spawnTools?: string[];
+      }
+    >;
   };
   assert.equal(
     contract.roles["browser-tester"]?.mcpTools?.playwright?.includes(
@@ -644,10 +648,12 @@ test("Playtester and Browser Tester declare isolated MCP injection requirements"
     contract.roles.smart?.mcpTools?.playwright?.includes("browser_evaluate"),
     true
   );
-  assert.deepEqual(contract.roles["browser-tester"]?.roleScopedMcp, [
-    "playwright"
-  ]);
-  assert.deepEqual(contract.roles.playtester?.roleScopedMcp, ["playtest"]);
+  assert.equal(contract.roles["browser-tester"]?.shell, false);
+  assert.equal(contract.roles["browser-tester"]?.hooks, false);
+  assert.equal(contract.roles.playtester?.shell, false);
+  assert.equal(contract.roles.playtester?.hooks, false);
+  assert.equal("roleScopedMcp" in (contract.roles["browser-tester"] ?? {}), false);
+  assert.equal("roleScopedMcp" in (contract.roles.playtester ?? {}), false);
   assert.deepEqual(contract.roles["browser-tester"]?.mcpEnvVars?.playwright, [
     "PATH",
     "HOME",
@@ -668,16 +674,33 @@ test("Playtester and Browser Tester declare isolated MCP injection requirements"
     false,
     "the MCP reads the runner token from the protected secret file"
   );
+  for (const [providerName, provider] of Object.entries(contract.providers)) {
+    assert.equal(
+      "roleMcpInjection" in provider,
+      false,
+      `${providerName} must not carry legacy roleMcpInjection`
+    );
+    assert.equal(
+      "spawnTools" in provider,
+      false,
+      `${providerName} must not carry legacy spawnTools`
+    );
+  }
   for (const provider of [
+    "claude",
+    "codex",
+    "copilot",
+    "mcode",
+    "minimax",
+    "chatgpt",
     "antigravity-gemini",
     "antigravity-argon",
     "antigravity-claude-gpt"
-  ])
-    assert.deepEqual(contract.providers[provider]?.roleMcpInjection, true);
-  assert.deepEqual(contract.providers.copilot?.roleMcpInjection, true);
-  assert.equal(contract.providers.codex?.roleMcpInjection ?? false, false);
-  assert.equal(contract.providers.claude?.roleMcpInjection ?? false, false);
-  assert.equal(contract.providers.minimax?.roleMcpInjection ?? false, false);
+  ]) {
+    assert.equal(contract.providers[provider]?.delegation, "xacpx");
+  }
+  assert.equal(contract.providers["opencli-chatgpt"]?.delegation, "none");
+  assert.equal(contract.providers["opencli-gemini"]?.delegation, "none");
 });
 
 test("every AutoDev user-level skill is explicitly gated on root config and every role", () => {

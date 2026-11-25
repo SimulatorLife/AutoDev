@@ -3,12 +3,26 @@ import path from "node:path";
 
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
+export interface RoleSkillsPolicy {
+  readonly includeInstructions?: boolean;
+  readonly bundledEnabled?: boolean;
+}
+
+export interface RoleReasoningPolicy {
+  readonly effort?: string;
+  readonly summary?: string;
+}
+
 export interface RoleContract {
   mcp: string[];
-  allowProviderHop?: boolean;
   readOnly?: boolean;
+  shell?: boolean;
+  hooks?: boolean;
+  mcpTools?: Record<string, string[]>;
+  mcpApprovalMode?: Record<string, string>;
   mcpEnvVars?: Record<string, string[]>;
-  roleScopedMcp?: string[];
+  skillsPolicy?: RoleSkillsPolicy;
+  reasoning?: RoleReasoningPolicy;
   webResearch?: {
     search?: boolean;
     fetch?: boolean;
@@ -17,15 +31,14 @@ export interface RoleContract {
   [key: string]: unknown;
 }
 export interface ProviderContract {
-  spawnTools: string[];
   /**
-   * `codex`: the provider's orchestrator spawns through Codex's own
-   * `multi_agent_v1__*` functions on `exec`, the one delegation surface.
-   * `none`: the provider cannot serve the orchestrator tier.
+   * `xacpx`: the provider delegates exclusively through the canonical `xacpx`
+   * MCP interface over the shared Supergateway.
+   * `none`: the provider cannot serve the orchestrator tier (e.g. web-chat
+   * `github-worker` lanes).
    */
-  delegation: "codex" | "none";
+  delegation: "xacpx" | "none";
   permissionMode: string;
-  roleMcpInjection?: boolean;
   [key: string]: unknown;
 }
 
@@ -83,10 +96,10 @@ const CONTRACT = Object.freeze(
 
 export const EXECUTION_CONTRACT = CONTRACT;
 
-function contractRoleKey(role: unknown): string {
-  return typeof role === "string" && role.trim()
-    ? role.trim().toLowerCase()
-    : "default";
+function normalizedRoleKey(role: unknown): string | null {
+  if (typeof role !== "string") return null;
+  const trimmed = role.trim().toLowerCase();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 function skillNames(value: unknown): string[] {
@@ -114,22 +127,16 @@ export function contractRoleSkills(
 }
 
 /**
- * The role contract, projected for one workspace.
- *
- * A workspace adds skills to a role; it never removes them and never changes
- * anything else about the role. The global contract is frozen, so a workspace
- * that adds something yields a new object rather than a mutated one.
- *
- * A turn that names no workspace gets the global contract: a role's skills are
- * the contract's business, and a guess about which workspace a turn is for
- * would hand it skills it must not have.
+ * Look up a declared role contract, or return `null` when `role` is missing or
+ * undeclared. Never falls back to a writable default role.
  */
-export function roleContract(
+export function findRoleContract(
   role: unknown,
   workspace?: string | null
-): RoleContract {
-  const key = contractRoleKey(role);
-  const global = CONTRACT.roles[key] ?? CONTRACT.roles.default ?? { mcp: [] };
+): RoleContract | null {
+  const key = normalizedRoleKey(role);
+  if (!key || !Object.hasOwn(CONTRACT.roles, key)) return null;
+  const global = CONTRACT.roles[key]!;
   if (workspace === undefined || workspace === null) return global;
   const workspaceSkills = contractRoleSkills(CONTRACT, key, workspace);
   if (workspaceSkills.length === 0) return global;
@@ -137,6 +144,24 @@ export function roleContract(
     ...new Set([...skillNames(global.skills), ...workspaceSkills])
   ].sort();
   return { ...global, skills };
+}
+
+/**
+ * The canonical role contract, projected for one workspace.
+ *
+ * Fails closed when `role` is empty or undeclared rather than falling back to
+ * the writable `default` role. A workspace adds skills to a role and never
+ * widens MCP, shell, or write authority.
+ */
+export function roleContract(
+  role: unknown,
+  workspace?: string | null
+): RoleContract {
+  const contract = findRoleContract(role, workspace);
+  if (!contract) {
+    throw new Error(`Unknown AutoDev agent role: ${String(role ?? "")}`);
+  }
+  return contract;
 }
 
 /**
@@ -157,39 +182,31 @@ export function workspaceIdFromKey(value: unknown): string | null {
 export function providerContract(provider: string): ProviderContract {
   return (
     CONTRACT.providers[provider] ?? {
-      spawnTools: [],
       delegation: "none",
-      permissionMode: "unknown",
-      roleMcpInjection: false
+      permissionMode: "unknown"
     }
   );
 }
 
-/** MCP servers that must be launched inside a role-scoped provider session. */
-export function roleScopedMcp(role: unknown): string[] {
-  return roleContract(role).roleScopedMcp ?? [];
-}
-
-/** Whether a provider bridge owns MCP startup and role-specific tool filtering. */
-export function providerInjectsRoleMcp(provider: string): boolean {
-  return providerContract(provider).roleMcpInjection === true;
-}
-
 /**
- * Whether a role may hop across providers after its first request has been
- * served by one provider. Only roles declaring `allowProviderHop: true` in
- * `config/execution-contract.json` (currently `orchestrator`) may hop; leaf
- * subagents stay pinned to their initial provider and fail cleanly instead.
+ * Whether the contract marks this role as read-only (`readOnly: true`).
+ *
+ * Fails closed: empty, missing, or undeclared role identifiers are treated as
+ * read-only so unknown roles never inherit write authority.
  */
-export function roleAllowsProviderHop(role: unknown): boolean {
-  if (typeof role !== "string" || !role.trim()) return false;
-  return CONTRACT.roles[contractRoleKey(role)]?.allowProviderHop === true;
+export function isReadOnlyRole(role: string | null | undefined): boolean {
+  const contract = findRoleContract(role);
+  if (!contract) return true;
+  return contract.readOnly === true;
 }
 
-/** Whether the contract marks this role as read-only (`readOnly: true`). */
-export function isReadOnlyRole(role: string | null | undefined): boolean {
-  if (typeof role !== "string") return false;
-  const key = role.trim().toLowerCase();
-  if (!key) return false;
-  return CONTRACT.roles[key]?.readOnly === true;
+/** Whether `role` names an explicit role declared in `config/execution-contract.json`. */
+export function hasRoleContract(role: unknown): role is string {
+  const key = normalizedRoleKey(role);
+  return key !== null && Object.hasOwn(CONTRACT.roles, key);
+}
+
+/** Sorted canonical role names declared in `config/execution-contract.json`. */
+export function declaredRoleNames(): string[] {
+  return Object.keys(CONTRACT.roles).sort();
 }

@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 
 /** Stdio MCP policy boundary that exposes only the tools assigned to a role or external gateway. */
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { isRecord } from "@simulatorlife/autodev-core";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import {
+  KEYCHAIN_SECRET_NAMES,
   readRuntimeSecret,
   resolveManagedSecret
 } from "../shared/runtime-secrets.ts";
@@ -17,6 +17,26 @@ import {
   MCP_SERVER_FILESYSTEM
 } from "../shared/tool-names.ts";
 import type { ToolCallOutcome } from "./mcp-telemetry.ts";
+
+function signalProcessGroup(
+  child: ChildProcess,
+  signal: NodeJS.Signals
+): void {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  if (process.platform !== "win32" && typeof child.pid === "number") {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      /* Process group already exited or differs; fall through to direct signal. */
+    }
+  }
+  try {
+    child.kill(signal);
+  } catch {
+    /* Already exited. */
+  }
+}
 
 type JsonRecord = Record<string, unknown>;
 type JsonRpcId = string | number;
@@ -171,6 +191,10 @@ function runToolFilter(args: string[]): void {
     "ping",
     "tools/list",
     "tools/call",
+    "tasks/get",
+    "tasks/list",
+    "tasks/result",
+    "tasks/cancel",
     "notifications/initialized",
     "notifications/cancelled"
   ]);
@@ -278,7 +302,10 @@ function runToolFilter(args: string[]): void {
             protocolVersion: negotiatedProtocol,
             serverInfo: result.serverInfo,
             capabilities: {
-              tools: isRecord(capabilities.tools) ? capabilities.tools : {}
+              tools: isRecord(capabilities.tools) ? capabilities.tools : {},
+              ...(isRecord(capabilities.tasks)
+                ? { tasks: capabilities.tasks }
+                : {})
             }
           };
           process.stdout.write(jsonLine(message));
@@ -295,26 +322,12 @@ function runToolFilter(args: string[]): void {
     ) {
       message.result = {
         ...result,
-        tools: result.tools
-          .filter(
-            (tool) =>
-              isRecord(tool) &&
-              typeof tool.name === "string" &&
-              allowed.has(tool.name)
-          )
-          .map((tool) =>
-            external
-              ? {
-                  ...tool,
-                  annotations: {
-                    readOnlyHint: true,
-                    destructiveHint: false,
-                    idempotentHint: true,
-                    openWorldHint: isRemote
-                  }
-                }
-              : tool
-          )
+        tools: result.tools.filter(
+          (tool) =>
+            isRecord(tool) &&
+            typeof tool.name === "string" &&
+            allowed.has(tool.name)
+        )
       };
       process.stdout.write(jsonLine(message));
       return;
@@ -326,37 +339,47 @@ function runToolFilter(args: string[]): void {
 
   let connection: BackendConnection;
   if (remoteSpec) {
+    const spec = remoteSpec;
     const headers = resolveRemoteMcpHeaders(
-      remoteSpec,
+      spec,
       server ?? "",
       process.env
     );
-    const transport = new StreamableHTTPClientTransport(
-      new URL(remoteSpec.url),
-      { requestInit: { headers } }
-    );
     let closed = false;
+    type RemoteTransport =
+      import("@modelcontextprotocol/sdk/client/streamableHttp.js").StreamableHTTPClientTransport;
+    let transportInstance: RemoteTransport | null = null;
+    const transportPromise: Promise<RemoteTransport> = import(
+      "@modelcontextprotocol/sdk/client/streamableHttp.js"
+    ).then(({ StreamableHTTPClientTransport }) => {
+      const transport = new StreamableHTTPClientTransport(new URL(spec.url), {
+        requestInit: { headers }
+      });
+      transport.onmessage = (message) => {
+        handleBackendMessage(message as unknown as JsonRecord);
+      };
+      transport.onerror = (error) => {
+        process.stderr.write(
+          `external remote MCP error: ${error instanceof Error ? error.message : String(error)}\n`
+        );
+      };
+      transport.onclose = () => {
+        if (!closed) {
+          closed = true;
+          shutdownFromBackend(0);
+        }
+      };
+      transportInstance = transport;
+      return transport;
+    });
     let sendChain: Promise<void> = Promise.resolve();
-    transport.onmessage = (message) => {
-      handleBackendMessage(message as unknown as JsonRecord);
-    };
-    transport.onerror = (error) => {
-      process.stderr.write(
-        `external remote MCP error: ${error instanceof Error ? error.message : String(error)}\n`
-      );
-    };
-    transport.onclose = () => {
-      if (!closed) {
-        closed = true;
-        shutdownFromBackend(0);
-      }
-    };
     connection = {
       send(message) {
         if (closed) return;
         sendChain = sendChain.then(async () => {
           if (closed) return;
           try {
+            const transport = await transportPromise;
             await transport.send(message as unknown as JSONRPCMessage);
           } catch (error) {
             const id =
@@ -385,6 +408,11 @@ function runToolFilter(args: string[]): void {
       close() {
         if (closed) return;
         closed = true;
+        const transport = transportInstance;
+        if (!transport) {
+          shutdownFromBackend(0, true);
+          return;
+        }
         void Promise.race([
           transport.terminateSession().catch(() => {}),
           new Promise((resolve) => setTimeout(resolve, 300).unref())
@@ -398,21 +426,39 @@ function runToolFilter(args: string[]): void {
     };
   } else {
     const sandboxed = external && command === "/usr/bin/sandbox-exec";
-    const childEnv =
-      sandboxed && server === MCP_SERVER_FILESYSTEM
-        ? { HOME: process.cwd(), PATH: "/usr/bin:/bin", LANG: "en_US.UTF-8" }
-        : sandboxed && server === MCP_SERVER_COCOINDEX
+    let childEnv: NodeJS.ProcessEnv;
+    if (sandboxed && server === MCP_SERVER_FILESYSTEM) {
+      childEnv = {
+        HOME: process.cwd(),
+        PATH: "/usr/bin:/bin",
+        LANG: "en_US.UTF-8"
+      };
+    } else if (external) {
+      childEnv = {
+        ...(sandboxed && server === MCP_SERVER_COCOINDEX
           ? {
               // Outbound HTTPS is blocked inside Seatbelt; avoid huggingface_hub
               // network probe stalls when initializing/querying cached models.
               HF_HUB_OFFLINE: "1",
-              TRANSFORMERS_OFFLINE: "1",
-              ...process.env
+              TRANSFORMERS_OFFLINE: "1"
             }
-          : process.env;
+          : {}),
+        ...process.env
+      };
+      for (const secretName of [
+        ...KEYCHAIN_SECRET_NAMES,
+        "OPENAI_ADMIN_KEY",
+        "OPENLIT_OTLP_API_KEY"
+      ]) {
+        delete childEnv[secretName];
+      }
+    } else {
+      childEnv = process.env;
+    }
     const backend = spawn(command, backendArgs, {
       cwd: process.cwd(),
       env: childEnv,
+      detached: process.platform !== "win32",
       stdio: ["pipe", "pipe", "inherit"]
     });
     const backendLines = createInterface({ input: backend.stdout! });
@@ -437,11 +483,11 @@ function runToolFilter(args: string[]): void {
       },
       close() {
         if (backend.exitCode === null && backend.signalCode === null) {
-          backend.kill("SIGTERM");
+          signalProcessGroup(backend, "SIGTERM");
           if (external) {
             const timer = setTimeout(() => {
               if (backend.exitCode === null && backend.signalCode === null)
-                backend.kill("SIGKILL");
+                signalProcessGroup(backend, "SIGKILL");
             }, 5000);
             timer.unref();
           }
@@ -449,7 +495,7 @@ function runToolFilter(args: string[]): void {
       },
       kill() {
         if (backend.exitCode === null && backend.signalCode === null)
-          backend.kill("SIGKILL");
+          signalProcessGroup(backend, "SIGKILL");
       }
     };
   }
@@ -491,11 +537,6 @@ function runToolFilter(args: string[]): void {
       pendingInitialize.set(id, requested);
       if (isRecord(message.params))
         message.params = { ...message.params, capabilities: {} };
-    }
-    if (external && message.method === "notifications/initialized") {
-      setImmediate(() => {
-        void loadTelemetry().catch(() => {});
-      });
     }
     if (
       external &&

@@ -11,7 +11,10 @@ parity verification.
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
+import {
+  atomicWriteSync,
+  parseJsoncObject
+} from "@simulatorlife/autodev-data/files";
 
 const FILE_NAME_COLLATOR = new Intl.Collator();
 
@@ -32,18 +35,9 @@ export interface McodeProjectionResult {
   readonly drifted: readonly string[];
 }
 
-function stripJsoncLineComments(text: string): string {
-  return text
-    .split("\n")
-    .filter((line) => !line.trimStart().startsWith("//"))
-    .join("\n");
-}
-
 function readJsoncObject(filePath: string): Record<string, unknown> {
   if (!existsSync(filePath)) return {};
-  const raw = readFileSync(filePath, "utf8");
-  const parsed: unknown = JSON.parse(stripJsoncLineComments(raw));
-  return isRecord(parsed) ? parsed : {};
+  return parseJsoncObject(readFileSync(filePath, "utf8"), filePath);
 }
 
 function renderMcodeRules(repositoryRoot: string): string {

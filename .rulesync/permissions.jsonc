@@ -9,8 +9,9 @@
   //   workspace read roots `AUTODEV_AGY_READ_ROOTS`).
   // - Per-role capability & read-only enforcement (MCP/tool allowlists,
   //   shell_tool = false, AUTODEV_MCP_READ_ONLY) remain in `agents/roles/*.toml`
-  //   -> `config/execution-contract.json` and Runtime hooks (`role-sandbox.ts`,
-  //   `block-ccc-cli.ts`, `file-surface.ts`).
+  //   -> `config/execution-contract.json` and Runtime hooks/gateway boundaries
+  //   (`role-sandbox.ts`, `block-ccc-cli.ts`, `file-surface.ts`, Supergateway)
+  //   uniformly across every local and external provider, including ChatGPT.
   "permission": {
     "webfetch": {
       "*": "allow"
@@ -118,6 +119,9 @@
       "*": "allow"
     },
     "mcp__lsp": {
+      "*": "allow"
+    },
+    "mcp__xacpx": {
       "*": "allow"
     },
     "mcp__openaiDeveloperDocs": {

@@ -1,9 +1,13 @@
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 
-import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
+import { isRecord } from "@simulatorlife/autodev-core";
+import {
+  atomicWriteSync,
+  parseJsoncObject
+} from "@simulatorlife/autodev-data/files";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
-import { codexEnvironmentHeaders } from "@simulatorlife/autodev-runtime/shared/mcp-headers";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
+import { codexEnvironmentHeaders } from "@simulatorlife/autodev-runtime/shared/mcp-headers";
 import {
   writeErrorLine,
   writeLine
@@ -21,45 +25,113 @@ const LAUNCH_KEYS = [
   "http_headers"
 ] as const;
 
-export function renderBridgeMcpCatalogue(source: string): string {
-  const servers = parseTomlFile(source, "MCP source").mcp_servers;
-  if (
-    !servers ||
-    typeof servers !== "object" ||
-    Array.isArray(servers) ||
-    Object.keys(servers).length === 0
-  ) {
-    throw new ConfigError(`MCP source declares no mcp_servers: ${source}`);
+function renderServerEntry(
+  name: string,
+  serverTable: Record<string, unknown>
+): Record<string, unknown> {
+  const launch: Record<string, unknown> = {};
+  for (const key of LAUNCH_KEYS) {
+    if (serverTable[key] !== undefined) launch[key] = serverTable[key];
   }
-  const catalogue: Record<string, TomlTable> = {};
-  for (const name of Object.keys(servers as TomlTable).sort()) {
-    const server = (servers as TomlTable)[name];
-    if (!server || typeof server !== "object" || Array.isArray(server))
-      continue;
-    const launch: TomlTable = {};
-    const serverTable = server as TomlTable;
-    for (const key of LAUNCH_KEYS)
-      if (serverTable[key] !== undefined) launch[key] = serverTable[key]!;
-    // Codex spells an environment-sourced header `env_http_headers`; the
-    // catalogue keeps AutoDev's `${VAR}` reference so it names the variable
-    // without carrying the credential.
-    if (serverTable.env_http_headers !== undefined) {
-      const environmentHeaders = codexEnvironmentHeaders(
-        serverTable.env_http_headers
-      );
-      if (environmentHeaders === null)
+  // Canonical `.rulesync/mcp.jsonc` spells HTTP headers as `headers`; keep
+  // `${VAR}` references verbatim under `http_headers` without embedding secrets.
+  if (isRecord(serverTable.headers)) {
+    const existingHeaders = isRecord(launch.http_headers)
+      ? (launch.http_headers as Record<string, string>)
+      : {};
+    const canonicalHeaders: Record<string, string> = {};
+    for (const [headerName, headerValue] of Object.entries(
+      serverTable.headers
+    )) {
+      if (typeof headerValue !== "string" || !headerValue.trim()) {
         throw new ConfigError(
-          `MCP source declares invalid env_http_headers for ${name}`
+          `MCP source declares invalid header '${headerName}' for ${name}`
         );
-      const headers = launch.http_headers;
-      launch.http_headers = {
-        ...(headers && typeof headers === "object" && !Array.isArray(headers)
-          ? (headers as Record<string, string>)
-          : {}),
-        ...environmentHeaders
-      };
+      }
+      canonicalHeaders[headerName] = headerValue;
     }
-    catalogue[name] = launch;
+    launch.http_headers = { ...existingHeaders, ...canonicalHeaders };
+  }
+  if (serverTable.env_http_headers !== undefined) {
+    const environmentHeaders = codexEnvironmentHeaders(
+      serverTable.env_http_headers
+    );
+    if (environmentHeaders === null) {
+      throw new ConfigError(
+        `MCP source declares invalid env_http_headers for ${name}`
+      );
+    }
+    const headers = launch.http_headers;
+    launch.http_headers = {
+      ...(isRecord(headers) ? (headers as Record<string, string>) : {}),
+      ...environmentHeaders
+    };
+  }
+  return launch;
+}
+
+/**
+ * Render the canonical MCP server catalogue directly from `.rulesync/mcp.jsonc`
+ * (without routing through a temporary Codex `config.toml` projection).
+ */
+export function renderBridgeMcpCatalogue(source: string): string {
+  let servers: Record<string, unknown>;
+  if (source.endsWith(".jsonc") || source.endsWith(".json")) {
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = parseJsoncObject(readFileSync(source, "utf8"), source);
+    } catch (error) {
+      throw new ConfigError(
+        `unable to read MCP source ${source}: ${errorMessage(error)}`
+      );
+    }
+    if (!isRecord(parsed.mcpServers) || Object.keys(parsed.mcpServers).length === 0) {
+      throw new ConfigError(`MCP source declares no mcpServers: ${source}`);
+    }
+    const merged: Record<string, unknown> = { ...parsed.mcpServers };
+    if (isRecord(parsed.codexcli) && isRecord(parsed.codexcli.mcpServers)) {
+      for (const [name, override] of Object.entries(parsed.codexcli.mcpServers)) {
+        if (override === null) {
+          delete merged[name];
+          continue;
+        }
+        if (!isRecord(override)) continue;
+        const base = isRecord(merged[name])
+          ? { ...(merged[name] as Record<string, unknown>) }
+          : {};
+        if (override.url !== undefined && override.command === undefined) {
+          delete base.command;
+          delete base.args;
+          delete base.cwd;
+        } else if (override.command !== undefined && override.url === undefined) {
+          delete base.url;
+          delete base.bearer_token_env_var;
+          delete base.headers;
+          delete base.http_headers;
+          delete base.env_http_headers;
+        }
+        merged[name] = { ...base, ...override };
+      }
+    }
+    servers = merged;
+  } else {
+    const parsedServers = parseTomlFile(source, "MCP source").mcp_servers;
+    if (
+      !parsedServers ||
+      typeof parsedServers !== "object" ||
+      Array.isArray(parsedServers) ||
+      Object.keys(parsedServers).length === 0
+    ) {
+      throw new ConfigError(`MCP source declares no mcp_servers: ${source}`);
+    }
+    servers = parsedServers as TomlTable;
+  }
+
+  const catalogue: Record<string, Record<string, unknown>> = {};
+  for (const name of Object.keys(servers).sort()) {
+    const server = servers[name];
+    if (!isRecord(server)) continue;
+    catalogue[name] = renderServerEntry(name, server);
   }
   return `${JSON.stringify(catalogue, null, 2)}\n`;
 }

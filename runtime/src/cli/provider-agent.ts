@@ -1,5 +1,4 @@
 import { spawn, spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import {
   chmodSync,
   copyFileSync,
@@ -26,7 +25,11 @@ import {
 } from "@simulatorlife/autodev-runtime/platform";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { resolveCodexBinary } from "@simulatorlife/autodev-runtime/shared/executables";
-import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import {
+  declaredRoleNames,
+  hasRoleContract,
+  roleContract
+} from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   readRuntimeSecret,
@@ -45,20 +48,12 @@ const CODEX_CONFIG_FILE = "config.toml";
 const BROWSER_TESTER_ROLE = "browser-tester";
 const PLAYTESTER_ROLE = "playtester";
 const PLAYTEST_ANALYST_ROLE = "playtest-analyst";
-const SUPPORTED_ROLES = [
-  "default",
-  "docs-researcher",
-  BROWSER_TESTER_ROLE,
-  "explorer",
-  "worker",
-  "validator",
-  "smart",
-  PLAYTEST_ANALYST_ROLE,
-  PLAYTESTER_ROLE
-] as const;
+const SUPPORTED_ROLES: readonly string[] = declaredRoleNames().filter(
+  (role) => roleContract(role).kind !== "orchestrator"
+);
 const LINE_BREAK = /\r?\n/u;
 const TOML_BARE_KEY_PATTERN = /^[A-Za-z0-9_-]+$/u;
-export type ProviderAgentRole = (typeof SUPPORTED_ROLES)[number];
+export type ProviderAgentRole = string;
 
 export interface ProviderAgentOptions {
   readonly role: ProviderAgentRole;
@@ -88,90 +83,6 @@ export interface ProviderAgentDeps {
   ) => number | Promise<number>;
 }
 
-const MEMORY_MCP_CONFIG_KEY = "mcp_servers.autodev_memory";
-
-interface MemoryMcpLaunch {
-  readonly args: readonly string[];
-  readonly environment: NodeJS.ProcessEnv;
-}
-
-/**
- * Give ordinary JIT runs a run-bound Memory MCP server. Controlled cohorts
- * cannot use this explicit path to bypass router injection assignment.
- */
-function configureMemoryMcp(
-  options: ProviderAgentOptions,
-  environment: NodeJS.ProcessEnv
-): MemoryMcpLaunch {
-  const mode = environment.AUTODEV_MEMORY_MODE?.trim() || "jit";
-  const boundRepositoryRoot =
-    environment.AUTODEV_MEMORY_REPOSITORY_ROOT?.trim();
-  const workspaceId = environment.AUTODEV_MEMORY_WORKSPACE_ID?.trim();
-  const repositoryId = environment.AUTODEV_MEMORY_REPOSITORY_ID?.trim();
-  const databaseUrl = environment.AUTODEV_MEMORY_DATABASE_URL?.trim();
-  const cohortControlsMcp =
-    environment.AUTODEV_MEMORY_ABLATION === "1" ||
-    Boolean(environment.AUTODEV_MEMORY_EXPERIMENT_ID?.trim());
-  const trustedWorkspace =
-    boundRepositoryRoot &&
-    path.isAbsolute(boundRepositoryRoot) &&
-    path.resolve(boundRepositoryRoot) === options.workspace;
-  const validScope =
-    workspaceId &&
-    workspaceId !== "unknown" &&
-    repositoryId &&
-    repositoryId !== "unknown" &&
-    databaseUrl;
-
-  if (mode !== "jit" || cohortControlsMcp || !trustedWorkspace || !validScope) {
-    // The server exists only through the enable overrides below. Emitting a
-    // bare `enabled=false` would define a transport-less server table that
-    // Codex strict config rejects, so a disabled run simply omits it.
-    return { args: [], environment };
-  }
-
-  const taskId = `provider-task-${randomUUID()}`;
-  const runId = `provider-run-${randomUUID()}`;
-  const actorId = `provider-${options.role}-${randomUUID()}`;
-  const mcpEnvironment: NodeJS.ProcessEnv = {
-    ...environment,
-    AUTODEV_MEMORY_WORKSPACE_ID: workspaceId,
-    AUTODEV_MEMORY_REPOSITORY_ID: repositoryId,
-    AUTODEV_MEMORY_REPOSITORY_ROOT: options.workspace,
-    AUTODEV_MEMORY_ROLE: options.role,
-    AUTODEV_MEMORY_ACTOR_ID: actorId,
-    AUTODEV_MEMORY_AUTHORITY: "worker",
-    AUTODEV_MEMORY_TASK_ID: taskId,
-    AUTODEV_MEMORY_RUN_ID: runId,
-    AUTODEV_MEMORY_MODE: "jit"
-  };
-  // A general-purpose provider process never inherits operator-only grants or
-  // an unrelated task description from its launcher environment.
-  delete mcpEnvironment.AUTODEV_MEMORY_READ_GLOBAL;
-  delete mcpEnvironment.AUTODEV_MEMORY_READ_TASK_HISTORY;
-  delete mcpEnvironment.AUTODEV_MEMORY_TASK_TEXT;
-
-  const mcpEntryPoint = path.join(
-    boundRepositoryRoot,
-    "runtime",
-    "src",
-    "router",
-    "memory",
-    "mcp-main.ts"
-  );
-  return {
-    args: [
-      "-c",
-      `${MEMORY_MCP_CONFIG_KEY}.enabled=true`,
-      "-c",
-      `${MEMORY_MCP_CONFIG_KEY}.command=${JSON.stringify(process.execPath)}`,
-      "-c",
-      `${MEMORY_MCP_CONFIG_KEY}.args=${JSON.stringify([mcpEntryPoint])}`
-    ],
-    environment: mcpEnvironment
-  };
-}
-
 function usage(): string {
   return `Usage: run-provider-agent.sh --role ROLE [options]
 
@@ -188,7 +99,7 @@ Options:
 }
 
 function isRole(value: string): value is ProviderAgentRole {
-  return (SUPPORTED_ROLES as readonly string[]).includes(value);
+  return hasRoleContract(value) && SUPPORTED_ROLES.includes(value);
 }
 
 function stringValue(value: TomlValue | undefined): string {
@@ -845,7 +756,7 @@ function providerCodexEnvironment(
   options: ProviderAgentOptions,
   executionEnvironment: NodeJS.ProcessEnv,
   analystDispatch: boolean
-): MemoryMcpLaunch {
+): NodeJS.ProcessEnv {
   const providerEnvironment = analystDispatch
     ? analystCodexEnvironment(executionEnvironment, options)
     : {
@@ -863,6 +774,11 @@ function providerCodexEnvironment(
   delete providerEnvironment.AUTODEV_PLAYTEST_ANALYST_CONTROL_API_TOKEN;
   delete providerEnvironment.MINIMAX_API_KEY;
   delete providerEnvironment.AUTODEV_CHATGPT_TUNNEL_API_KEY;
+  for (const key of Object.keys(providerEnvironment)) {
+    if (key.startsWith("AUTODEV_MEMORY_")) {
+      delete providerEnvironment[key];
+    }
+  }
   if (roleContract(options.role).mcp.includes("context7")) {
     const context7Key = resolveManagedSecret(
       "CONTEXT7_API_KEY",
@@ -872,73 +788,42 @@ function providerCodexEnvironment(
   } else {
     delete providerEnvironment.CONTEXT7_API_KEY;
   }
+  if (roleContract(options.role).mcp.includes("googleDeveloperKnowledge")) {
+    const googleDocsKey = resolveManagedSecret(
+      "GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY",
+      providerEnvironment
+    );
+    if (googleDocsKey) {
+      providerEnvironment.GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY = googleDocsKey;
+    }
+  } else {
+    delete providerEnvironment.GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY;
+  }
   if (options.role === BROWSER_TESTER_ROLE) {
-    return {
-      args: [],
-      environment: browserTesterEnvironment(
-        options,
-        providerEnvironment,
-        executionEnvironment
-      )
-    };
+    return browserTesterEnvironment(
+      options,
+      providerEnvironment,
+      executionEnvironment
+    );
   }
   if (options.role === PLAYTESTER_ROLE) {
-    const environment = bindPlaytesterMcpContext(providerEnvironment, options);
-    for (const key of Object.keys(environment)) {
-      if (key.startsWith("AUTODEV_MEMORY_")) delete environment[key];
-    }
-    return { args: [], environment };
-  }
-  if (options.role === PLAYTEST_ANALYST_ROLE) {
-    for (const key of Object.keys(providerEnvironment)) {
-      if (key.startsWith("AUTODEV_MEMORY_")) delete providerEnvironment[key];
-    }
+    return bindPlaytesterMcpContext(providerEnvironment, options);
   }
   const gitIdentity =
     options.role === PLAYTEST_ANALYST_ROLE
       ? {}
       : gitCommitIdentityEnv({ role: options.role, provider: "codex" });
-  return configureMemoryMcp(options, {
+  return {
     ...providerEnvironment,
     ...gitIdentity
-  });
+  };
 }
 
-const BROWSER_TESTER_ENABLED_TOOLS = [
-  "browser_navigate",
-  "browser_tabs",
-  "browser_snapshot",
-  "browser_evaluate",
-  "browser_take_screenshot",
-  "browser_click",
-  "browser_type",
-  "browser_fill_form",
-  "browser_press_key",
-  "browser_wait_for",
-  "browser_console_messages",
-  "browser_network_requests",
-  "browser_find",
-  "browser_hover",
-  "browser_select_option",
-  "browser_drag",
-  "browser_handle_dialog",
-  "browser_resize",
-  "browser_close"
-] as const;
+const BROWSER_TESTER_ENABLED_TOOLS: readonly string[] =
+  roleContract(BROWSER_TESTER_ROLE).mcpTools?.playwright ?? [];
 
-const BROWSER_TESTER_MCP_ENVIRONMENT_VARIABLES = [
-  "PATH",
-  "HOME",
-  "TMPDIR",
-  "TMP",
-  "TEMP",
-  "LANG",
-  "LC_ALL",
-  "CODEX_HOME",
-  "AUTODEV_REPO_ROOT",
-  "AUTODEV_NODE_BIN",
-  "PLAYWRIGHT_BROWSERS_PATH"
-] as const;
+const BROWSER_TESTER_MCP_ENVIRONMENT_VARIABLES: readonly string[] =
+  roleContract(BROWSER_TESTER_ROLE).mcpEnvVars?.playwright ?? [];
 
 const BROWSER_TESTER_PROCESS_ENVIRONMENT_VARIABLES = [
   "PATH",
@@ -955,45 +840,11 @@ const BROWSER_TESTER_PROCESS_ENVIRONMENT_VARIABLES = [
   "PLAYWRIGHT_BROWSERS_PATH"
 ] as const;
 
-const PLAYTESTER_ENABLED_TOOLS = [
-  "playtest.capabilities",
-  "playtest.run",
-  "playtest.lookupRequest",
-  "playtest.wait",
-  "playtest.activeRuns",
-  "playtest.cancel",
-  "playtest.listEpisodes",
-  "playtest.readEpisode",
-  "playtest.readWindow"
-] as const;
+const PLAYTESTER_ENABLED_TOOLS: readonly string[] =
+  roleContract(PLAYTESTER_ROLE).mcpTools?.playtest ?? [];
 
-const PLAYTESTER_MCP_ENVIRONMENT_VARIABLES = [
-  "PATH",
-  "HOME",
-  "TMPDIR",
-  "TMP",
-  "TEMP",
-  "LANG",
-  "LC_ALL",
-  "AUTODEV_NODE_BIN",
-  "AUTODEV_PLAYTEST_WORKSPACE_ID",
-  "AUTODEV_PLAYTEST_ROLE",
-  "AUTODEV_PLAYTEST_ACTOR_ID",
-  "AUTODEV_PLAYTEST_TASK_ID",
-  "AUTODEV_PLAYTEST_RUN_ID",
-  "AUTODEV_PLAYTEST_REPOSITORY_ROOT",
-  "AUTODEV_REPO_ROOT",
-  "CODEX_HOME",
-  "AUTODEV_OPENLIT_SECRET_FILE",
-  "CLICKHOUSE_URL",
-  "OPENLIT_DB_USER",
-  "OPENLIT_DB_NAME",
-  "AUTODEV_CONTROL_API_BASE_URL",
-  "AUTODEV_CONTROL_API_LISTEN_HOST",
-  "AUTODEV_CONTROL_API_LISTEN_PORT",
-  "AUTODEV_PLAYTEST_CONTROL_API_ACTOR",
-  "AUTODEV_PLAYTEST_CONTROL_API_ROLE"
-] as const;
+const PLAYTESTER_MCP_ENVIRONMENT_VARIABLES: readonly string[] =
+  roleContract(PLAYTESTER_ROLE).mcpEnvVars?.playtest ?? [];
 
 /**
  * The bounded playtester role gets the local, trusted Playtesting MCP
@@ -1234,7 +1085,6 @@ function playtesterCodexOverrides(
 function providerCodexArguments(
   options: ProviderAgentOptions,
   settings: RoleExecutionSettings,
-  memory: MemoryMcpLaunch,
   analystDispatch: boolean,
   executionEnvironment: NodeJS.ProcessEnv
 ): string[] {
@@ -1277,9 +1127,6 @@ function providerCodexArguments(
     );
   }
   args.push(
-    ...memory.args,
-    "-c",
-    `shell_environment_policy.filters.AUTODEV_MEMORY_DATABASE_URL=${JSON.stringify("exclude")}`,
     "exec",
     "--model",
     `autodev/${options.role}`,
@@ -1515,7 +1362,7 @@ export async function runProviderAgent(
   if (runtimeEnvironment.analystDispatch && !settings.readOnly) {
     throw new Error("Playtest analyst dispatch requires a read-only role.");
   }
-  const memory = providerCodexEnvironment(
+  const providerEnv = providerCodexEnvironment(
     options,
     runtimeEnvironment.execution,
     runtimeEnvironment.analystDispatch
@@ -1523,11 +1370,10 @@ export async function runProviderAgent(
   const args = providerCodexArguments(
     options,
     settings,
-    memory,
     runtimeEnvironment.analystDispatch,
     runtimeEnvironment.execution
   );
-  return execute(options.codexBinary, args, memory.environment, false);
+  return execute(options.codexBinary, args, providerEnv, false);
 }
 
 if (isEntryPoint(import.meta.url)) {

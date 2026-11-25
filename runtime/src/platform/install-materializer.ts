@@ -212,9 +212,10 @@ export const RUNTIME_MODULES = [
   "runtime/src/mcp/filesystem-server.ts",
   "runtime/src/mcp/mcp-telemetry.ts",
   "runtime/src/mcp/launcher.ts",
+  "runtime/src/mcp/chatgpt-backend-pool.ts",
   "runtime/src/mcp/chatgpt-supergateway-probe.ts",
   "runtime/src/mcp/chatgpt-filesystem-sandbox.ts",
-  "runtime/src/mcp/process-registry.ts",
+  "runtime/src/shared/role-prompts.ts",
   "runtime/src/cli/diagnostics.ts",
   "runtime/src/cli/router-status.ts",
   "runtime/src/cli/router-status-client.ts",
@@ -264,6 +265,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/acp/provider-profiles.ts",
   "runtime/src/xacpx/http.ts",
   "runtime/src/xacpx/manager.ts",
+  "runtime/src/xacpx/orchestration-ipc.ts",
   "runtime/src/platform/mcode-projection.ts"
 ] as const;
 export const OBSOLETE_RUNTIME_DATA_FILES = [
@@ -1433,7 +1435,7 @@ export function materializeMcpConfiguration(options: {
     options.codexMcpSource
   );
   runBridgeMcpCatalogue(
-    options.codexMcpSource,
+    path.join(options.repositoryRoot, ".rulesync", "mcp.jsonc"),
     path.join(options.codexHome, "provider-runtime", "mcp-servers.json")
   );
   const configPath = path.join(options.codexHome, CONFIG_TOML_FILE);
@@ -1998,12 +2000,11 @@ function prepareRunLogs(codexHome: string): void {
  */
 function renderAndMaterializeContract(
   repositoryRoot: string,
-  codexMcpSource: string,
   target: FileTarget
 ): void {
   const exitCode = runExecutionContract(
     path.join(repositoryRoot, "agents/roles"),
-    codexMcpSource,
+    path.join(repositoryRoot, ".rulesync", "mcp.jsonc"),
     path.join(repositoryRoot, "config/execution-contract.json"),
     target("config/execution-contract.json")
   );
@@ -2275,11 +2276,7 @@ export function materializeInstallation(options: MaterializeOptions): void {
   ensureBootstrapScript(options);
   composeAndLinkConfigs(options, source);
   ensureCodexAppMcpServerEnabled(options.codexHome);
-  renderAndMaterializeContract(
-    options.repositoryRoot,
-    options.codexMcpSource,
-    target
-  );
+  renderAndMaterializeContract(options.repositoryRoot, target);
   renderGlobalMcpIfNeeded(options);
   applyAntigravityIfInstalled(options, skillsRoot);
   renderLaunchAgentsFor({

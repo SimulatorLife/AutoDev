@@ -749,29 +749,29 @@ test("the providers a tier cannot use are named, and why", () => {
 });
 
 test("the orchestrator tier admits only providers that can delegate, however they are ranked", (t) => {
-  // Copilot cannot delegate, and this contract says MiniMax cannot either.
+  // opencli-gemini cannot delegate (delegation: "none"), and this contract says MiniMax cannot either.
   t.after(useNonDelegatingContract("minimax"));
   const policy = assignmentTestPolicy();
   policy.setProviderAssignment("minimax", "orchestrator", {
     priority: 1,
     model: MINIMAX_DEFAULT_TEST_MODEL
   });
-  policy.setProviderAssignment("copilot", "orchestrator", {
+  policy.setProviderAssignment("opencli-gemini", "orchestrator", {
     priority: 2,
-    model: "copilot"
+    model: "opencli-gemini-3.1-pro"
   });
   assert.deepEqual(
     policy.orchestratorCandidates(seeded(1)).map(({ provider }) => provider),
     ["claude"]
   );
-  // opencli delegates through Codex's own exec tool, so it may orchestrate.
-  policy.setProviderAssignment("opencli-gemini", "orchestrator", {
+  // Copilot delegates through canonical XACPX, so it may orchestrate.
+  policy.setProviderAssignment("copilot", "orchestrator", {
     priority: 3,
-    model: "opencli-gemini-3.1-pro"
+    model: "copilot"
   });
   assert.deepEqual(
     policy.orchestratorCandidates(seeded(1)).map(({ provider }) => provider),
-    ["claude", "opencli-gemini"]
+    ["claude", "copilot"]
   );
 });
 
@@ -782,33 +782,33 @@ test("a model the provider rejected as unknown stops being an operator choice", 
     process.env
   );
   const configured =
-    ROUTING_POLICY.config.providers["opencli-gemini"]?.models.orchestrator;
-  assert.ok(configured, "opencli-gemini has a configured orchestrator model");
-  const stale = "opencli-gemini-4-argon-complex-tasks";
-  policy.setProviderAssignment("opencli-gemini", "orchestrator", {
+    ROUTING_POLICY.config.providers.claude?.models.orchestrator;
+  assert.ok(configured, "claude has a configured orchestrator model");
+  const stale = "claude-4-argon-complex-tasks";
+  policy.setProviderAssignment("claude", "orchestrator", {
     priority: 1,
     model: stale,
     reasoningEffort: "medium"
   });
-  policy.setAgentModel("opencli-gemini", "worker", stale);
+  policy.setAgentModel("claude", "worker", stale);
   const before = policy
     .orchestratorCandidates(seeded(7))
-    .find((candidate) => candidate.provider === "opencli-gemini");
+    .find((candidate) => candidate.provider === "claude");
   assert.equal(before?.model, stale);
 
-  assert.equal(policy.forgetRejectedModel("opencli-gemini", stale), true);
+  assert.equal(policy.forgetRejectedModel("claude", stale), true);
 
-  assert.deepEqual(policy.assignmentFor("opencli-gemini", "orchestrator"), {
+  assert.deepEqual(policy.assignmentFor("claude", "orchestrator"), {
     priority: 1,
     model: null,
     reasoningEffort: "medium"
   });
-  assert.equal(policy.agentModelFor("opencli-gemini", "worker"), undefined);
+  assert.equal(policy.agentModelFor("claude", "worker"), undefined);
   const after = policy
     .orchestratorCandidates(seeded(7))
-    .find((candidate) => candidate.provider === "opencli-gemini");
+    .find((candidate) => candidate.provider === "claude");
   assert.equal(after?.model, configured, "the tier's configured model serves");
-  assert.equal(policy.forgetRejectedModel("opencli-gemini", stale), false);
+  assert.equal(policy.forgetRejectedModel("claude", stale), false);
 });
 
 test("a configured model the provider refuses is left to the cooldown", () => {

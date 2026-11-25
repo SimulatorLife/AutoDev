@@ -3184,7 +3184,7 @@ test("Control API surfaces all 13 typed resource families", async () => {
         tool.sourceAuthority === "rulesync-plugin"
     );
     assert.ok(appTool);
-    assert.ok(appTool.exposedRoles.includes("orchestrator"));
+    assert.deepEqual(appTool.exposedRoles, []);
     assert.equal("status" in webSearch, false);
     // The RuleSync plugin entry for codex_app surfaces through the
     // composite catalog so the Console can pivot to its canonical edit

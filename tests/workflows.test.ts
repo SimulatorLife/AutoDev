@@ -570,15 +570,15 @@ test("Antigravity workspace customizations expose the code skills", async () => 
   });
 });
 
-test("ACP provider profiles disable native surfaces so RuleSync and role MCPs own execution", async () => {
+test("ACP provider profiles declare truthful isolation surfaces so RuleSync and role MCPs own execution", async () => {
   const profiles = await readFile(
     path.join(root, "runtime", "src", "acp", "provider-profiles.ts"),
     "utf8"
   );
-  assert.match(profiles, /nativeToolsDisabled:\s*true/);
-  assert.match(profiles, /nativePromptsDisabled:\s*true/);
-  assert.match(profiles, /nativeSkillsDisabled:\s*true/);
-  assert.match(profiles, /nativeMcpsDisabled:\s*true/);
+  assert.match(profiles, /isolation:\s*\{/);
+  assert.match(profiles, /nativeTools:\s*"(?:enforced|runtime_permission_guard)"/);
+  assert.match(profiles, /systemPromptInjection:\s*"(?:cli_flag|initial_turn)"/);
+  assert.match(profiles, /acpMcpServers/);
   assert.match(profiles, /compactionManagedByProvider:\s*true/);
   assert.match(profiles, /"mcode"/);
   const installer = await readFile(

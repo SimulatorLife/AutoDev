@@ -166,7 +166,7 @@ test("a payload that cannot be read is left alone rather than refused blindly", 
   }
 });
 
-test("a role the contract does not describe is left to the session's sandbox", () => {
+test("a role the contract does not describe fails closed as read-only", () => {
   const outcome = evaluateRoleSandboxHook(
     payload({
       agentType: "no-such-role",
@@ -174,7 +174,7 @@ test("a role the contract does not describe is left to the session's sandbox", (
       toolInput: { cmd: "rm -rf build" }
     })
   );
-  assert.equal(outcome.denied, false);
+  assert.equal(outcome.denied, true);
 });
 
 /**

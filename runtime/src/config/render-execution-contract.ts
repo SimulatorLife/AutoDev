@@ -1,7 +1,10 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
+import {
+  atomicWriteSync,
+  parseJsoncObject
+} from "@simulatorlife/autodev-data/files";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import {
@@ -22,16 +25,10 @@ const MCP_ORDER: Record<string, number> = {
   openaiDeveloperDocs: 5,
   context7: 6,
   googleDeveloperKnowledge: 7,
-  codex_app: 8,
-  github: 9,
-  xacpx: 10
+  github: 8,
+  xacpx: 9,
+  playtest: 10
 };
-// MCPs whose existence is owned by Codex Desktop plugins rather than the
-// rulesync-generated Codex CLI catalog. They appear in the projection so
-// `fillLaunchKeys` can resolve launch keys for role TOMLs, but their
-// `enabled = false` flag keeps Codex CLI from launching them. The orchestrator
-// role can declare them without the renderer's root-config check complaining.
-const PLUGIN_MCPS = new Set(["codex_app"]);
 const SKILL_ORDER: Record<string, number> = {
   orchestration: 0,
   ccc: 1,
@@ -50,7 +47,7 @@ const SKILL_ORDER: Record<string, number> = {
 const ROLE_FILE_EXTENSION = /\.toml$/u;
 const collator = new Intl.Collator();
 const RESEARCH_ROLES = new Set(["docs-researcher", "smart", "orchestrator"]);
-const DELEGATION_MODES = new Set(["codex", "xacpx", "acp", "none"]);
+const DELEGATION_MODES = new Set(["xacpx", "none"]);
 
 export function validateProviderContracts(value: unknown): UnknownRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -60,32 +57,19 @@ export function validateProviderContracts(value: unknown): UnknownRecord {
   for (const [name, raw] of Object.entries(providers)) {
     const provider = record(raw);
     const delegation = provider.delegation;
-    if (
-      provider.roleMcpInjection !== undefined &&
-      typeof provider.roleMcpInjection !== "boolean"
-    ) {
-      throw new ConfigError(
-        `provider '${name}' roleMcpInjection must be boolean when present`
-      );
-    }
     if (typeof delegation !== "string" || !DELEGATION_MODES.has(delegation)) {
       throw new ConfigError(
         `provider '${name}' must declare delegation as one of: ${[...DELEGATION_MODES].join(", ")}`
       );
     }
-    if (
-      !Array.isArray(provider.spawnTools) ||
-      provider.spawnTools.some(
-        (tool) => typeof tool !== "string" || !tool.trim()
-      )
-    ) {
+    if ("spawnTools" in provider) {
       throw new ConfigError(
-        `provider '${name}' must declare spawnTools as an array of non-empty strings`
+        `provider '${name}' must not declare legacy spawnTools; use canonical XACPX delegation`
       );
     }
-    if (delegation === "none" && provider.spawnTools.length > 0) {
+    if ("roleMcpInjection" in provider) {
       throw new ConfigError(
-        `provider '${name}' cannot declare spawnTools when delegation is none`
+        `provider '${name}' must not declare legacy roleMcpInjection; MCP exposure is gateway-governed`
       );
     }
   }
@@ -95,13 +79,22 @@ export function validateProviderContracts(value: unknown): UnknownRecord {
 type UnknownRecord = Record<string, unknown>;
 type RoleProjection = {
   kind: "leaf" | "orchestrator";
-  allowProviderHop?: boolean;
   readOnly: boolean;
+  shell: boolean;
+  hooks: boolean;
   mcp: string[];
   skills: string[];
   mcpTools?: Record<string, string[]>;
+  mcpApprovalMode?: Record<string, string>;
   mcpEnvVars?: Record<string, string[]>;
-  roleScopedMcp?: string[];
+  skillsPolicy?: {
+    includeInstructions?: boolean;
+    bundledEnabled?: boolean;
+  };
+  reasoning?: {
+    effort?: string;
+    summary?: string;
+  };
   webResearch?: { search: true; fetch: true; optionalMcp: string[] };
 };
 
@@ -144,11 +137,19 @@ function readRole(source: string): RoleProjection {
     MCP_ORDER
   );
   const mcpTools: Record<string, string[]> = {};
+  const mcpApprovalMode: Record<string, string> = {};
   const mcpEnvVars: Record<string, string[]> = {};
   for (const [name, value] of enabledServers) {
-    const tools = stringArray(record(value).enabled_tools);
+    const serverConfig = record(value);
+    const tools = stringArray(serverConfig.enabled_tools);
     if (tools.length > 0) mcpTools[name] = tools;
-    const envVars = stringArray(record(value).env_vars);
+    if (
+      typeof serverConfig.default_tools_approval_mode === "string" &&
+      serverConfig.default_tools_approval_mode.trim().length > 0
+    ) {
+      mcpApprovalMode[name] = serverConfig.default_tools_approval_mode.trim();
+    }
+    const envVars = stringArray(serverConfig.env_vars);
     if (envVars.length > 0) mcpEnvVars[name] = envVars;
   }
 
@@ -161,6 +162,32 @@ function readRole(source: string): RoleProjection {
         )
         .map((entry) => entry.name as string)
     : [];
+  const skillsPolicy: NonNullable<RoleProjection["skillsPolicy"]> = {};
+  if (typeof skillsTable.include_instructions === "boolean") {
+    skillsPolicy.includeInstructions = skillsTable.include_instructions;
+  }
+  const bundledSkills = record(skillsTable.bundled);
+  if (typeof bundledSkills.enabled === "boolean") {
+    skillsPolicy.bundledEnabled = bundledSkills.enabled;
+  }
+
+  const features = record(config.features);
+  const shell = features.shell_tool !== false;
+  const hooks = features.hooks !== false;
+
+  const reasoning: NonNullable<RoleProjection["reasoning"]> = {};
+  if (
+    typeof config.model_reasoning_effort === "string" &&
+    config.model_reasoning_effort.trim().length > 0
+  ) {
+    reasoning.effort = config.model_reasoning_effort.trim();
+  }
+  if (
+    typeof config.model_reasoning_summary === "string" &&
+    config.model_reasoning_summary.trim().length > 0
+  ) {
+    reasoning.summary = config.model_reasoning_summary.trim();
+  }
 
   const tools = config.tools;
   let webResearch: RoleProjection["webResearch"];
@@ -190,16 +217,45 @@ function readRole(source: string): RoleProjection {
   const projection: RoleProjection = {
     kind,
     readOnly,
+    shell,
+    hooks,
     mcp,
     skills: sortedByOrder(skills, SKILL_ORDER)
   };
   if (Object.keys(mcpTools).length > 0) projection.mcpTools = mcpTools;
+  if (Object.keys(mcpApprovalMode).length > 0) {
+    projection.mcpApprovalMode = mcpApprovalMode;
+  }
   if (Object.keys(mcpEnvVars).length > 0) projection.mcpEnvVars = mcpEnvVars;
+  if (Object.keys(skillsPolicy).length > 0) {
+    projection.skillsPolicy = skillsPolicy;
+  }
+  if (Object.keys(reasoning).length > 0) projection.reasoning = reasoning;
   if (webResearch) {
     if (roleName === "smart") webResearch.optionalMcp = ["playwright"];
     projection.webResearch = webResearch;
   }
   return projection;
+}
+
+function readDeclaredMcpServers(mcpSourcePath: string): Set<string> {
+  const raw = readFileSync(mcpSourcePath, "utf8");
+  if (mcpSourcePath.endsWith(".jsonc") || mcpSourcePath.endsWith(".json")) {
+    const parsed = parseJsoncObject(raw, `MCP source ${mcpSourcePath}`);
+    const topLevel = record(parsed.mcpServers);
+    return new Set(
+      Object.entries(topLevel)
+        .filter(([, value]) => value !== null && record(value).disabled !== true)
+        .map(([name]) => name)
+    );
+  }
+  const rootConfig = record(parseToml(raw));
+  const rootServers = record(rootConfig.mcp_servers);
+  return new Set(
+    Object.entries(rootServers)
+      .filter(([, value]) => record(value).enabled !== false)
+      .map(([name]) => name)
+  );
 }
 
 export function renderExecutionContract(
@@ -229,42 +285,9 @@ export function renderExecutionContract(
       "role TOMLs must include the orchestrator capability declaration"
     );
 
-  const rootConfig = record(parseToml(readFileSync(rootConfigPath, "utf8")));
-  const rootServers = record(rootConfig.mcp_servers);
-  const enabledRootMcp = new Set(
-    Object.entries(rootServers)
-      .filter(([, value]) => record(value).enabled !== false)
-      .map(([name]) => name)
-  );
-  const templateRoles = record(template.roles);
-  for (const [roleName, role] of Object.entries(roles)) {
-    const policy = record(templateRoles[roleName]);
-    if (policy.allowProviderHop === true || role.kind === "orchestrator") {
-      role.allowProviderHop = true;
-    }
-    const roleScopedMcp = stringArray(policy.roleScopedMcp);
-    if (new Set(roleScopedMcp).size !== roleScopedMcp.length) {
-      throw new ConfigError(
-        `role '${roleName}' roleScopedMcp must contain unique server names.`
-      );
-    }
-    for (const server of roleScopedMcp) {
-      if (
-        !role.mcp.includes(server) ||
-        enabledRootMcp.has(server) ||
-        PLUGIN_MCPS.has(server) ||
-        (role.mcpTools?.[server] === undefined &&
-          role.mcpEnvVars?.[server] === undefined)
-      ) {
-        throw new ConfigError(
-          `role '${roleName}' cannot scope MCP '${server}': it must be enabled for the role, disabled in the root, non-plugin-owned, and have a role tool or environment allowlist.`
-        );
-      }
-    }
-    if (roleScopedMcp.length > 0) role.roleScopedMcp = roleScopedMcp;
-  }
+  const declaredMcp = readDeclaredMcpServers(rootConfigPath);
   const missingRootMcp = roles.orchestrator.mcp.filter(
-    (name) => !PLUGIN_MCPS.has(name) && !enabledRootMcp.has(name)
+    (name) => !declaredMcp.has(name)
   );
   if (missingRootMcp.length > 0)
     throw new ConfigError(

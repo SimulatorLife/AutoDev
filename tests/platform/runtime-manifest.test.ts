@@ -787,29 +787,22 @@ test("router concurrency policy is Runtime-owned behind its workspace subpath", 
   );
 });
 
-test("MCP process lifecycle is Runtime-owned", () => {
+test("dead MCP process-registry module is removed", () => {
   const runtimePackage = JSON.parse(
     readFileSync(join(repositoryRoot, "runtime/package.json"), "utf8")
   ) as { exports: Record<string, string> };
-  const migrations = [
-    {
-      exportPath: "./mcp/process-registry",
-      exportTarget: "./src/mcp/process-registry.ts",
-      runtimePath: "runtime/src/mcp/process-registry.ts",
-      legacyPath: "src/router/mcp-process-registry.ts"
-    }
-  ];
   const modules = RUNTIME_MODULES as readonly string[];
-  for (const migration of migrations) {
-    assert.equal(
-      runtimePackage.exports[migration.exportPath],
-      migration.exportTarget
-    );
-    assert.equal(existsSync(join(repositoryRoot, migration.runtimePath)), true);
-    assert.equal(existsSync(join(repositoryRoot, migration.legacyPath)), false);
-    assert.equal(modules.includes(migration.runtimePath), true);
-    assert.equal(modules.includes(migration.legacyPath), false);
-  }
+  assert.equal("./mcp/process-registry" in runtimePackage.exports, false);
+  assert.equal(
+    existsSync(join(repositoryRoot, "runtime/src/mcp/process-registry.ts")),
+    false
+  );
+  assert.equal(
+    existsSync(join(repositoryRoot, "src/router/mcp-process-registry.ts")),
+    false
+  );
+  assert.equal(modules.includes("runtime/src/mcp/process-registry.ts"), false);
+  assert.equal(modules.includes("runtime/src/shared/role-prompts.ts"), true);
 });
 
 test("CLI implementations are Runtime-owned behind workspace subpaths", () => {

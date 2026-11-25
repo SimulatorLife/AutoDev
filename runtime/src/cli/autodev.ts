@@ -63,8 +63,8 @@ const repoRoot = path.resolve(resolveRuntimeSourceRoot(import.meta.dirname));
 const defaults = {
   agents: path.join(repoRoot, "agents/roles"),
   prompts: path.join(repoRoot, "agents/prompts"),
-  mcp: path.join(repoRoot, "config/config.autodev.toml"),
-  rootConfig: path.join(repoRoot, "config/config.autodev.toml"),
+  mcp: path.join(repoRoot, ".rulesync/mcp.jsonc"),
+  rootConfig: path.join(repoRoot, ".rulesync/mcp.jsonc"),
   contract: path.join(repoRoot, "config/execution-contract.json")
 };
 

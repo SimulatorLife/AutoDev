@@ -130,3 +130,104 @@ lines.on("line", line => {
     rmSync(temp, { recursive: true, force: true });
   }
 });
+
+test("stdio MCP tool filter terminates entire child process group on close without orphaning grandchildren", async () => {
+  const temp = mkdtempSync(join(tmpdir(), "autodev-mcp-tool-filter-pg-"));
+  const grandchildPidFile = join(temp, "grandchild.pid");
+  const wrapper = join(temp, "wrapper.mjs");
+  writeFileSync(
+    wrapper,
+    String.raw`import { spawn } from "node:child_process";
+import { writeFileSync } from "node:fs";
+import { createInterface } from "node:readline";
+const gc = spawn(process.execPath, ["-e", "setInterval(() => {}, 60_000)"], { stdio: "ignore" });
+writeFileSync(${JSON.stringify(grandchildPidFile)}, String(gc.pid));
+const lines = createInterface({ input: process.stdin });
+lines.on("line", (line) => {
+  const m = JSON.parse(line);
+  if (m.method === "initialize") {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "wrapper", version: "1" } } }) + "\n");
+  }
+});
+`,
+    { mode: 0o600 }
+  );
+
+  let child: ChildProcess | undefined;
+  let grandchildPid = 0;
+  try {
+    child = spawn(
+      process.execPath,
+      [
+        FILTER,
+        process.execPath,
+        JSON.stringify([wrapper]),
+        JSON.stringify(["allowed_tool"]),
+        "external",
+        "wrapper"
+      ],
+      { cwd: REPO_ROOT, stdio: ["pipe", "pipe", "pipe"] }
+    );
+    const lines = createInterface({ input: child.stdout! });
+    const initReply = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error("Timed out waiting for initialize")),
+        5000
+      );
+      lines.once("line", () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+    child.stdin!.write(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2024-11-05",
+          capabilities: {},
+          clientInfo: { name: "test", version: "1" }
+        }
+      }) + "\n"
+    );
+    await initReply;
+    grandchildPid = Number(
+      (await import("node:fs")).readFileSync(grandchildPidFile, "utf8").trim()
+    );
+    assert.ok(Number.isInteger(grandchildPid) && grandchildPid > 0);
+    // Confirm grandchild is alive before closing tool-filter.
+    process.kill(grandchildPid, 0);
+
+    child.stdin!.end();
+    await once(child, "close");
+
+    let exited = false;
+    for (let i = 0; i < 40; i++) {
+      try {
+        process.kill(grandchildPid, 0);
+      } catch {
+        exited = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.equal(
+      exited,
+      true,
+      `Grandchild pid ${grandchildPid} survived tool-filter close`
+    );
+  } finally {
+    if (child && child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGKILL");
+    }
+    if (grandchildPid > 0) {
+      try {
+        process.kill(grandchildPid, "SIGKILL");
+      } catch {
+        /* already dead */
+      }
+    }
+    rmSync(temp, { recursive: true, force: true });
+  }
+});

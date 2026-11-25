@@ -10,8 +10,7 @@ import {
   providerCapabilities,
   reportedChildren,
   roleCapabilityRequirements,
-  SubagentRegistry,
-  subagentSpawnToolsFor
+  SubagentRegistry
 } from "@simulatorlife/autodev-runtime/router/subagents";
 import type { ExecutionContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 
@@ -263,27 +262,22 @@ test("capabilities and telemetry headers resolve properly", () => {
   const mockExecutionContract: ExecutionContract = {
     providers: {
       claude: {
-        spawnTools: ["Agent"],
-        delegation: "codex",
+        delegation: "xacpx",
         permissionMode: "native"
       },
       antigravity: {
-        spawnTools: ["invoke_subagent"],
-        delegation: "codex",
+        delegation: "xacpx",
         permissionMode: "configured"
       },
       copilot: {
-        spawnTools: [],
-        delegation: "none",
+        delegation: "xacpx",
         permissionMode: "configured"
       },
       codex: {
-        spawnTools: [],
-        delegation: "codex",
+        delegation: "xacpx",
         permissionMode: "native"
       },
-      minimax: {
-        spawnTools: [],
+      "opencli-chatgpt": {
         delegation: "none",
         permissionMode: "upstream"
       }
@@ -307,37 +301,14 @@ test("capabilities and telemetry headers resolve properly", () => {
     }
   };
 
-  const caps = providerCapabilities("claude", mockExecutionContract);
-  assert.equal(caps.subagentSpawn, true);
-  assert.deepEqual(caps.subagentSpawnTools, ["Agent"]);
-
-  assert.deepEqual(
-    subagentSpawnToolsFor("antigravity", mockExecutionContract),
-    ["invoke_subagent"]
-  );
+  assert.equal(providerCapabilities("claude", mockExecutionContract).subagentSpawn, true);
+  assert.equal(providerCapabilities("copilot", mockExecutionContract).subagentSpawn, true);
   assert.equal(
-    providerCapabilities("minimax", mockExecutionContract).subagentSpawn,
-    false
-  );
-  assert.equal(
-    providerCapabilities("copilot", mockExecutionContract).subagentSpawn,
+    providerCapabilities("opencli-chatgpt", mockExecutionContract).subagentSpawn,
     false
   );
   assert.equal(
     providerCapabilities("missing", mockExecutionContract).subagentSpawn,
-    false
-  );
-  assert.equal(
-    providerCapabilities("minimax", {
-      roles: {},
-      providers: {
-        minimax: {
-          spawnTools: ["invoke_subagent"],
-          delegation: "none",
-          permissionMode: "upstream"
-        }
-      }
-    }).subagentSpawn,
     false
   );
   assert.deepEqual(mcpContractForRole("orchestrator", mockExecutionContract), [
@@ -356,37 +327,17 @@ test("capabilities and telemetry headers resolve properly", () => {
   assert.equal(roleReqs.webResearch.search, true);
   assert.equal(roleReqs.webResearch.fetch, false);
 
-  // Missing roles use the explicitly configured default contract; unknown
-  // non-empty role names stay unconfigured instead of inheriting capabilities.
-  for (const defaultRole of [null, undefined, "", "   "]) {
-    const defaultRequirements = roleCapabilityRequirements(
-      defaultRole,
+  // Missing, empty, and unknown roles all fail closed (never inherit default).
+  for (const unknownRole of [null, undefined, "", "   ", "nonexistent"]) {
+    const unknownRequirements = roleCapabilityRequirements(
+      unknownRole,
       mockExecutionContract
     );
-    assert.deepEqual([...defaultRequirements.mcp], ["default-server"]);
-    assert.deepEqual([...defaultRequirements.skills], ["default-skill"]);
-    assert.equal(defaultRequirements.webResearch.search, true);
-    assert.equal(defaultRequirements.webResearch.fetch, false);
-    assert.deepEqual(
-      [...defaultRequirements.webResearch.optionalMcp],
-      ["default-api"]
-    );
-    assert.deepEqual(mcpContractForRole(defaultRole, mockExecutionContract), [
-      "default-server"
-    ]);
+    assert.equal(unknownRequirements.mcp.size, 0);
+    assert.equal(unknownRequirements.skills.size, 0);
+    assert.equal(unknownRequirements.webResearch.search, false);
+    assert.deepEqual(mcpContractForRole(unknownRole, mockExecutionContract), []);
   }
-
-  const unknownRequirements = roleCapabilityRequirements(
-    "nonexistent",
-    mockExecutionContract
-  );
-  assert.equal(unknownRequirements.mcp.size, 0);
-  assert.equal(unknownRequirements.skills.size, 0);
-  assert.equal(unknownRequirements.webResearch.search, false);
-  assert.deepEqual(
-    mcpContractForRole("nonexistent", mockExecutionContract),
-    []
-  );
 
   // bridgeTelemetryHeaders for codex returns empty
   assert.deepEqual(
@@ -396,7 +347,7 @@ test("capabilities and telemetry headers resolve properly", () => {
     {}
   );
 
-  // bridgeTelemetryHeaders for claude includes request id and spawn tools
+  // bridgeTelemetryHeaders for non-codex providers carries request id and events URL
   const headers = bridgeTelemetryHeaders({ provider: "claude" }, "req-123", {
     executionContract: mockExecutionContract,
     agentEventsUrl: "http://127.0.0.1:4100/v1/agent-events"
@@ -406,7 +357,7 @@ test("capabilities and telemetry headers resolve properly", () => {
     headers["x-autodev-agent-events-url"],
     "http://127.0.0.1:4100/v1/agent-events"
   );
-  assert.equal(headers["x-autodev-subagent-spawn-tools"], "Agent");
+  assert.equal("x-autodev-subagent-spawn-tools" in headers, false);
 });
 
 test("convenience functions delegate to default SubagentRegistry", async () => {

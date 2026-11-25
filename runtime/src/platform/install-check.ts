@@ -837,7 +837,12 @@ function checkUserConfigAndAgents(
   } finally {
     rmSync(rendered, { recursive: true, force: true });
   }
-  const expectedContract = `${JSON.stringify(renderExecutionContract(path.join(paths.repositoryRoot, "agents/roles"), projection.source, path.join(paths.repositoryRoot, "config/execution-contract.json")), null, 2)}\n`;
+  const canonicalMcpSource = path.join(
+    paths.repositoryRoot,
+    ".rulesync",
+    "mcp.jsonc"
+  );
+  const expectedContract = `${JSON.stringify(renderExecutionContract(path.join(paths.repositoryRoot, "agents/roles"), canonicalMcpSource, path.join(paths.repositoryRoot, "config/execution-contract.json")), null, 2)}\n`;
   check(
     "execution contract",
     existsSync(
@@ -867,7 +872,7 @@ function checkUserConfigAndAgents(
   check(
     "bridge MCP catalogue",
     runBridgeMcpCatalogue(
-      projection.source,
+      canonicalMcpSource,
       path.join(paths.codexHome, "provider-runtime", "mcp-servers.json"),
       true
     ) === 0,

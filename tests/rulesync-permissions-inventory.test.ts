@@ -108,6 +108,7 @@ test("Antigravity static permissions live in .rulesync/permissions.jsonc and dyn
     "*": "allow"
   });
   assert.deepEqual(sharedPermission.mcp__lsp, { "*": "allow" });
+  assert.deepEqual(sharedPermission.mcp__xacpx, { "*": "allow" });
   assert.deepEqual(sharedPermission.mcp__openaiDeveloperDocs, { "*": "allow" });
   assert.deepEqual(sharedPermission.mcp__context7, { "*": "allow" });
   assert.deepEqual(sharedPermission.mcp__googleDeveloperKnowledge, {
@@ -204,19 +205,23 @@ test("Codex Rulesync permissions are consolidated while subagent generation rema
         "copilot",
         "minimax",
         "opencli-chatgpt",
-        "opencli-gemini"
+        "opencli-gemini",
+        "mcode",
+        "chatgpt"
       ].map((name) => [name, asObject(providers[name]).delegation])
     ),
     {
-      codex: "codex",
-      claude: "codex",
-      "antigravity-gemini": "codex",
-      "antigravity-argon": "codex",
-      "antigravity-claude-gpt": "codex",
-      copilot: "none",
-      minimax: "codex",
-      "opencli-chatgpt": "codex",
-      "opencli-gemini": "codex"
+      codex: "xacpx",
+      claude: "xacpx",
+      "antigravity-gemini": "xacpx",
+      "antigravity-argon": "xacpx",
+      "antigravity-claude-gpt": "xacpx",
+      copilot: "xacpx",
+      minimax: "xacpx",
+      "opencli-chatgpt": "none",
+      "opencli-gemini": "none",
+      mcode: "xacpx",
+      chatgpt: "xacpx"
     }
   );
   const mcpTargets = asObject(rulesyncMcp);

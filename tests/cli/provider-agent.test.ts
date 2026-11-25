@@ -423,67 +423,29 @@ test("provider agent builds the bounded prompt and role-specific Codex flags", a
       calls[0]?.env.AUTODEV_PLAYTEST_CONTROL_API_ROLE,
       "playtest-analyst"
     );
-    assert.deepEqual(calls[0]?.args.slice(0, 8), [
+    assert.deepEqual(calls[0]?.args.slice(0, 7), [
       "--strict-config",
       "-C",
       join(f.root, "workspace"),
       "-c",
       "model_reasoning_effort=high",
       "-c",
-      "model_reasoning_summary=concise",
-      "-c"
+      "model_reasoning_summary=concise"
     ]);
     assert.equal(
       calls[0]?.args.some((arg) => arg.startsWith("sandbox_mode=")),
       false
     );
-    assert.ok(
-      calls[0]?.args.includes("mcp_servers.autodev_memory.enabled=true")
-    );
-    assert.ok(
-      calls[0]?.args.includes(
-        'shell_environment_policy.filters.AUTODEV_MEMORY_DATABASE_URL="exclude"'
-      )
-    );
-    assert.ok(
-      calls[0]?.args.includes(
-        `mcp_servers.autodev_memory.command=${JSON.stringify(process.execPath)}`
-      )
-    );
-    assert.ok(
-      calls[0]?.args.some((argument) => {
-        const prefix = "mcp_servers.autodev_memory.args=";
-        if (!argument.startsWith(prefix)) return false;
-        assert.deepEqual(JSON.parse(argument.slice(prefix.length)), [
-          join(
-            f.root,
-            "workspace",
-            "runtime",
-            "src",
-            "router",
-            "memory",
-            "mcp-main.ts"
-          )
-        ]);
-        return true;
-      })
+    assert.equal(
+      calls[0]?.args.some((arg) => arg.startsWith("mcp_servers.autodev_memory.")),
+      false,
+      "retired custom Memory MCP must never be configured"
     );
     assert.ok(
       calls[0]?.args.every(
         (argument) => !argument.includes("postgresql://memory-user:secret")
       )
     );
-    assert.equal(
-      calls[0]?.env.AUTODEV_MEMORY_REPOSITORY_ROOT,
-      join(f.root, "workspace")
-    );
-    assert.equal(calls[0]?.env.AUTODEV_MEMORY_AUTHORITY, "worker");
-    assert.equal(calls[0]?.env.AUTODEV_MEMORY_ROLE, "smart");
-    assert.equal(calls[0]?.env.AUTODEV_MEMORY_READ_GLOBAL, undefined);
-    assert.equal(calls[0]?.env.AUTODEV_MEMORY_READ_TASK_HISTORY, undefined);
-    assert.equal(calls[0]?.env.AUTODEV_MEMORY_TASK_TEXT, undefined);
-    assert.match(calls[0]?.env.AUTODEV_MEMORY_TASK_ID ?? "", /^provider-task-/);
-    assert.match(calls[0]?.env.AUTODEV_MEMORY_RUN_ID ?? "", /^provider-run-/);
     assert.equal(calls[0]?.env.GIT_AUTHOR_NAME, "AutoDev Agent (smart)");
     assert.equal(
       calls[0]?.env.GIT_AUTHOR_EMAIL,

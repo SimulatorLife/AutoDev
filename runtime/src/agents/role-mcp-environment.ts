@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import path from "node:path";
 
-import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import { findRoleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { readRuntimeSecret } from "@simulatorlife/autodev-runtime/shared/runtime-secrets";
 
 const WORKSPACE_ID_PATTERN = /^[^/\\\s]+\/[^/\\\s]+$/u;
@@ -37,7 +37,7 @@ export function roleMcpEnvironment(
   env: NodeJS.ProcessEnv = process.env
 ): Record<string, string> {
   const role = context.role?.trim().toLowerCase() ?? "";
-  const allowed = roleContract(role).mcpEnvVars?.[context.server] ?? [];
+  const allowed = findRoleContract(role)?.mcpEnvVars?.[context.server] ?? [];
   if (allowed.length === 0) return {};
   const allowedSet = new Set(allowed);
   const values: Record<string, string> = {};

@@ -121,7 +121,8 @@ export function runInstallCommand(
       "OPENAI_ADMIN_KEY",
       CHATGPT_TUNNEL_API_KEY_ENV,
       "MINIMAX_API_KEY",
-      "CONTEXT7_API_KEY"
+      "CONTEXT7_API_KEY",
+      "GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY"
     ].map((key) => [key, process.env[key]])
   );
   for (const key of Object.keys(isolatedSecrets)) delete process.env[key];

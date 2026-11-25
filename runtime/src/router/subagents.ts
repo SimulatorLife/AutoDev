@@ -65,7 +65,6 @@ export const SESSION_ID_HEADER = "x-autodev-session-id";
 export const SESSION_SCOPE_HEADER = "x-autodev-session-scope";
 export const THREAD_ID_HEADER = "x-autodev-thread-id";
 export const REQUEST_ID_HEADER = "x-autodev-request-id";
-export const SUBAGENT_SPAWN_TOOLS_HEADER = "x-autodev-subagent-spawn-tools";
 export const AGENT_EVENTS_URL_HEADER = "x-autodev-agent-events-url";
 export const AGENT_EVENTS_PATH = "/v1/agent-events";
 export const DEFAULT_AGENT_EVENTS_URL = `http://127.0.0.1:4100${AGENT_EVENTS_PATH}`;
@@ -374,7 +373,6 @@ export interface BridgeParentActivityEntry {
 
 export interface ProviderCapabilities {
   subagentSpawn: boolean;
-  subagentSpawnTools: string[];
   normalizeItemIds: boolean;
 }
 
@@ -402,11 +400,10 @@ function roleContractForAgent(
   executionContract: ExecutionContract,
   workspace?: string | null
 ): RoleContract | null {
-  const key =
-    typeof role === "string" && role.trim()
-      ? role.trim().toLowerCase()
-      : "default";
-  const global = executionContract.roles?.[key];
+  if (typeof role !== "string" || !role.trim()) return null;
+  const key = role.trim().toLowerCase();
+  if (!Object.hasOwn(executionContract.roles ?? {}, key)) return null;
+  const global = executionContract.roles[key];
   if (!global) return null;
   const workspaceSkills = contractRoleSkills(executionContract, key, workspace);
   if (workspaceSkills.length === 0) return global;
@@ -572,26 +569,11 @@ export function providerCapabilities(
   provider: string,
   executionContract: ExecutionContract = getDefaultExecutionContract()
 ): ProviderCapabilities {
-  const rawSpawnTools = executionContract.providers?.[provider]?.spawnTools;
-  const subagentSpawnTools = Array.isArray(rawSpawnTools)
-    ? rawSpawnTools.filter(
-        (tool): tool is string =>
-          typeof tool === "string" && tool.trim().length > 0
-      )
-    : [];
-  // The provider delegation mode is generated alongside the role contract.
-  // A route is not evidence of orchestration capability: a provider whose
-  // model cannot reach Codex's spawn functions must not enter the root
-  // fallback tier merely because it can serve ordinary turns.
+  // The canonical execution contract is the single source of truth for whether
+  // a provider can orchestrate children through the shared XACPX MCP gateway.
   const delegation = executionContract.providers?.[provider]?.delegation;
-  // The execution contract is the provider capability source of truth. A
-  // route alone is not evidence that its orchestrator can delegate, and a
-  // stale spawnTools list must not resurrect a provider explicitly marked
-  // `none`.
-  const subagentSpawn = delegation === "codex";
   return {
-    subagentSpawn,
-    subagentSpawnTools,
+    subagentSpawn: delegation === "xacpx",
     normalizeItemIds: true
   };
 }
@@ -608,13 +590,6 @@ export function roleCapabilityRequirements(
     skills: capabilitySet(contract.skills),
     webResearch: roleWebResearchRequirements(contract.webResearch)
   };
-}
-
-export function subagentSpawnToolsFor(
-  provider: string,
-  executionContract: ExecutionContract = getDefaultExecutionContract()
-): string[] {
-  return providerCapabilities(provider, executionContract).subagentSpawnTools;
 }
 
 export function mcpContractForRole(
@@ -634,19 +609,11 @@ export function bridgeTelemetryHeaders(
   } = {}
 ): Record<string, string> {
   if (!requestId || !route?.provider || route.provider === "codex") return {};
-  const spawnTools = subagentSpawnToolsFor(
-    route.provider,
-    options.executionContract
-  );
-  const headers: Record<string, string> = {
+  return {
     [REQUEST_ID_HEADER]: requestId,
     [AGENT_EVENTS_URL_HEADER]:
       options.agentEventsUrl ?? DEFAULT_AGENT_EVENTS_URL
   };
-  if (spawnTools.length > 0) {
-    headers[SUBAGENT_SPAWN_TOOLS_HEADER] = spawnTools.join(",");
-  }
-  return headers;
 }
 
 export interface SubagentRegistryOptions {

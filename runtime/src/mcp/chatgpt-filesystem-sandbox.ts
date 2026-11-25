@@ -1,4 +1,4 @@
-/** OS confinement for reviewed local external MCP backends. */
+/** Role-aware OS confinement for local AutoDev MCP backends served via Supergateway. */
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
@@ -6,11 +6,17 @@ import path from "node:path";
 
 import { z } from "zod";
 
+import { isReadOnlyRole } from "../shared/execution-contract.ts";
+import { resolveSkillRoots } from "../shared/skill-reads.ts";
 import {
   MCP_SERVER_COCOINDEX,
   MCP_SERVER_CODEGRAPHCONTEXT,
   MCP_SERVER_FILESYSTEM,
-  MCP_SERVER_LSP
+  MCP_SERVER_GITHUB,
+  MCP_SERVER_LSP,
+  MCP_SERVER_PLAYTEST,
+  MCP_SERVER_PLAYWRIGHT,
+  MCP_SERVER_XACPX
 } from "../shared/tool-names.ts";
 
 const packageName = "@modelcontextprotocol/server-filesystem";
@@ -24,15 +30,28 @@ export interface ExternalBackend {
   args: string[];
 }
 
-const CONFINED_EXTERNAL_SERVERS = new Set<string>([
+export interface ExternalMcpBackendOptions {
+  /** Override whether the backend enforces read-only confinement; defaults to the assigned role's contract. */
+  readonly readOnly?: boolean;
+  /** Canonical AutoDev role governing this backend's capabilities. */
+  readonly role?: string;
+  /** Optional explicit read-only skill roots to mount on the filesystem MCP. */
+  readonly skillRoots?: readonly string[];
+}
+
+const SUPPORTED_LOCAL_GATEWAY_SERVERS = new Set<string>([
   MCP_SERVER_FILESYSTEM,
   MCP_SERVER_LSP,
   MCP_SERVER_COCOINDEX,
-  MCP_SERVER_CODEGRAPHCONTEXT
+  MCP_SERVER_CODEGRAPHCONTEXT,
+  MCP_SERVER_XACPX,
+  MCP_SERVER_PLAYWRIGHT,
+  MCP_SERVER_PLAYTEST,
+  MCP_SERVER_GITHUB
 ]);
 
 export function hasExternalMcpProfile(server: string): boolean {
-  return CONFINED_EXTERNAL_SERVERS.has(server);
+  return SUPPORTED_LOCAL_GATEWAY_SERVERS.has(server);
 }
 
 function physicalPath(target: string): string {
@@ -42,6 +61,14 @@ function physicalPath(target: string): string {
   } catch {
     return resolved;
   }
+}
+
+function isWithin(child: string, parent: string): boolean {
+  const relative = path.relative(parent, child);
+  return (
+    relative === "" ||
+    (!relative.startsWith("..") && !path.isAbsolute(relative))
+  );
 }
 
 function resolveLauncherScript(repositoryRoot: string): string {
@@ -78,19 +105,51 @@ function resolveDirectNodeExecutable(node: string, cwd: string): string {
   return resolved;
 }
 
-/** No generic sandbox claim: admit a backend only after its specific scope,
- * environment and capabilities have been implemented and reviewed. */
+function externalSkillReadRoots(
+  workspace: string,
+  repositoryRoot: string,
+  explicitRoots?: readonly string[]
+): string[] {
+  const roots = explicitRoots ?? resolveSkillRoots(repositoryRoot);
+  return [
+    ...new Set(
+      roots
+        .filter((dir) => existsSync(dir))
+        .map(physicalPath)
+        .filter((dir) => !isWithin(dir, workspace) && !isWithin(workspace, dir))
+    )
+  ];
+}
+
+/**
+ * Resolve the confined launch command for a role-authorized AutoDev MCP server.
+ *
+ * Confinement follows the assigned role's canonical execution contract (writable
+ * roles may mutate inside the confined workspace; read-only roles remain strictly
+ * read-only), never a blanket provider- or external-only read-only restriction.
+ */
 export function externalMcpBackend(
   server: string,
   repositoryRoot: string,
   workspace: string,
   node: string,
   home: string = homedir(),
-  codexHome: string = path.join(home, ".codex")
+  codexHome: string = path.join(home, ".codex"),
+  options: ExternalMcpBackendOptions = {}
 ): ExternalBackend {
   if (process.platform !== "darwin" || !existsSync(sandboxExecutable))
     throw new Error("External MCP confinement requires macOS sandbox-exec");
+  const readOnly =
+    options.readOnly !== undefined
+      ? options.readOnly
+      : options.role !== undefined
+        ? isReadOnlyRole(options.role)
+        : false;
   const binary = resolveDirectNodeExecutable(node, workspace);
+  const physicalHome = physicalPath(home);
+  const physicalCodexHome = physicalPath(codexHome);
+  const physicalWorkspace = physicalPath(workspace);
+
   if (server === MCP_SERVER_FILESYSTEM) {
     const modules = path.join(repositoryRoot, "node_modules");
     const packageRoot = realpathSync(path.join(modules, packageName));
@@ -103,24 +162,34 @@ export function externalMcpBackend(
         : manifest.bin["mcp-server-filesystem"];
     if (!entry) throw new Error("Filesystem MCP executable is missing");
     const script = realpathSync(path.join(packageRoot, entry));
+    const skillRoots = externalSkillReadRoots(
+      physicalWorkspace,
+      repositoryRoot,
+      options.skillRoots
+    );
     return {
       command: sandboxExecutable,
       args: [
         "-p",
-        filesystemSandboxProfile(workspace, realpathSync(modules), binary),
+        filesystemSandboxProfile(
+          physicalWorkspace,
+          realpathSync(modules),
+          binary,
+          { readOnly, readOnlySkillRoots: skillRoots }
+        ),
         binary,
         script,
-        "--read-only",
+        ...(readOnly ? ["--read-only"] : []),
         "--confine-roots",
+        ...skillRoots.flatMap((dir) => ["--read-only-dir", dir]),
         "--",
-        workspace
+        physicalWorkspace
       ]
     };
   }
-  const physicalHome = physicalPath(home);
-  const physicalCodexHome = physicalPath(codexHome);
-  const physicalWorkspace = physicalPath(workspace);
+
   const launcher = resolveLauncherScript(repositoryRoot);
+
   if (server === MCP_SERVER_LSP) {
     return {
       command: sandboxExecutable,
@@ -129,7 +198,8 @@ export function externalMcpBackend(
         workspaceCodeToolSandboxProfile({
           workspace: physicalWorkspace,
           home: physicalHome,
-          codexHome: physicalCodexHome
+          codexHome: physicalCodexHome,
+          writableSubpaths: readOnly ? [] : [physicalWorkspace]
         }),
         binary,
         launcher,
@@ -182,6 +252,39 @@ export function externalMcpBackend(
       ]
     };
   }
+  if (server === MCP_SERVER_XACPX) {
+    return {
+      command: sandboxExecutable,
+      args: [
+        "-p",
+        workspaceCodeToolSandboxProfile({
+          workspace: physicalWorkspace,
+          home: physicalHome,
+          codexHome: physicalCodexHome,
+          writableSubpaths: [
+            path.join(physicalCodexHome, "run"),
+            path.join(physicalHome, ".xacpx")
+          ],
+          allowUnixSockets: true,
+          allowLocalhostNetwork: true,
+          allowPosixIpc: true
+        }),
+        binary,
+        launcher,
+        MCP_SERVER_XACPX
+      ]
+    };
+  }
+  if (
+    server === MCP_SERVER_PLAYWRIGHT ||
+    server === MCP_SERVER_PLAYTEST ||
+    server === MCP_SERVER_GITHUB
+  ) {
+    return {
+      command: binary,
+      args: [launcher, server]
+    };
+  }
   throw new Error(
     "No externally confined execution profile for MCP: " + server
   );
@@ -200,8 +303,8 @@ interface WorkspaceToolSandboxOptions {
 }
 
 /**
- * Confinement profile for read-only workspace intelligence servers (LSP,
- * CocoIndex, CodeGraphContext): forbids workspace source edits, blocks host
+ * Confinement profile for workspace code/orchestration servers (LSP, CocoIndex,
+ * CodeGraphContext, XACPX): enforces role-scoped write boundaries, blocks host
  * secrets/tunnels/`.env*`, and blocks outbound non-local network traffic.
  */
 function workspaceCodeToolSandboxProfile(
@@ -259,25 +362,39 @@ function workspaceCodeToolSandboxProfile(
   return rules.join("\n");
 }
 
-/** Default deny, including all network and writes. The only data readable
- * outside the workspace is installed code and system runtime support.
- * No shell startup, HOME/CODEX_HOME secret files or arbitrary executables. */
+export interface FilesystemSandboxProfileOptions {
+  /** When true, deny all workspace writes; when false, permit writes strictly inside `workspace`. */
+  readonly readOnly?: boolean;
+  /** Additional read-only skill roots mounted outside the workspace. */
+  readonly readOnlySkillRoots?: readonly string[];
+}
+
+/**
+ * Default deny, including all network and arbitrary host paths.
+ * Reads are limited to the workspace, optional read-only skill roots, installed
+ * runtime modules, and system libraries. Writes are denied for read-only roles
+ * and strictly confined to `workspace` for writable roles. Never exposes `.env*`
+ * secret files (except workspace `.env.example`) or host credentials.
+ */
 export function filesystemSandboxProfile(
   workspace: string,
   modules: string,
-  node: string
+  node: string,
+  options: FilesystemSandboxProfileOptions = {}
 ): string {
+  const readOnly = options.readOnly ?? false;
   const literal = (value: string) => "(literal " + JSON.stringify(value) + ")";
   const subtree = (value: string) => "(subpath " + JSON.stringify(value) + ")";
   const roots = [
     workspace,
+    ...(options.readOnlySkillRoots ?? []),
     modules,
     "/System",
     "/usr/lib",
     "/usr/share",
     "/Library/Apple/System"
   ];
-  return [
+  const rules = [
     "(version 1)",
     "(deny default)",
     '(import "dyld-support.sb")',
@@ -296,11 +413,23 @@ export function filesystemSandboxProfile(
       ].join(" ") +
       ")",
     // Never expose local .env / .env.* secret files (including via symlinks)
-    // through external MCP reads; permit only .env.example inside the workspace.
+    // through MCP reads; permit only .env.example inside the workspace.
     '(deny file-read-data (regex #"/\\.env(\\.[^/]*)?(/|$)"))',
     "(allow file-read-data (require-all " +
       subtree(workspace) +
       ' (regex #"/\\.env\\.example$")))',
     "(allow file-write-data " + literal("/dev/null") + ")"
-  ].join("\n");
+  ];
+  if (!readOnly) {
+    // Permit workspace mutations strictly inside the confined workspace, while
+    // blocking writes to .env* secret files and anything outside workspace.
+    rules.push("(allow file-write* " + subtree(workspace) + ")");
+    rules.push('(deny file-write* (regex #"/\\.env(\\.[^/]*)?(/|$)"))');
+    rules.push(
+      "(allow file-write* (require-all " +
+        subtree(workspace) +
+        ' (regex #"/\\.env\\.example$")))'
+    );
+  }
+  return rules.join("\n");
 }

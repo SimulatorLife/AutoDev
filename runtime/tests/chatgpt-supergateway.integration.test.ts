@@ -20,14 +20,27 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import {
+  AGENT_METHODS,
+  AgentApp,
+  CLIENT_METHODS,
+  PROTOCOL_VERSION
+} from "@agentclientprotocol/sdk";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 
 import {
   chatgptSupergatewayEnvironment,
+  DEFAULT_CHATGPT_SESSION_TIMEOUT_MS,
+  renderChatgptBackendPoolConfig,
   renderChatgptSupergatewayConfig
 } from "../src/config/render-chatgpt-supergateway.ts";
+import {
+  CHATGPT_MCP_POOL_PORT_ENV,
+  CHATGPT_MCP_POOL_TOKEN_ENV,
+  startChatgptBackendPool
+} from "../src/mcp/chatgpt-backend-pool.ts";
 import { probeSupergateway } from "../src/mcp/chatgpt-supergateway-probe.ts";
 import {
   externalMcpBackend,
@@ -53,6 +66,11 @@ import {
 } from "../src/platform/chatgpt-tunnel-install.ts";
 import { resolveCocoIndexBinary } from "../src/shared/executables.ts";
 import { resolveCommandOnPath } from "../src/platform/runtime-files.ts";
+import { XacpxSessionManager } from "../src/xacpx/manager.ts";
+import {
+  resolveXacpxOrchestrationSocketPath,
+  startXacpxOrchestrationIpcServer
+} from "../src/xacpx/orchestration-ipc.ts";
 
 const repo = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -154,16 +172,17 @@ test(
       name: "autodev-supergateway-test-2",
       version: "1.0.0"
     });
-    const env = chatgptSupergatewayEnvironment(
-      {
-        home: root,
-        codexHome: path.join(root, ".codex"),
-        repositoryRoot: repo
-      },
-      workspace,
-      process.execPath,
-      process.env.PATH ?? "/usr/bin:/bin"
-    );
+      const env = chatgptSupergatewayEnvironment(
+        {
+          home: root,
+          codexHome: path.join(root, ".codex"),
+          repositoryRoot: repo
+        },
+        workspace,
+        process.execPath,
+        process.env.PATH ?? "/usr/bin:/bin",
+        { role: "explorer" }
+      );
     let gateway: ChildProcess | undefined;
     try {
       mkdirSync(workspace);
@@ -201,7 +220,15 @@ test(
           { port: mcpPort, apiKeyFile: keyFile },
           undefined,
           (server) =>
-            externalMcpBackend(server, repo, workspace, process.execPath)
+            externalMcpBackend(
+              server,
+              repo,
+              workspace,
+              process.execPath,
+              root,
+              path.join(root, ".codex"),
+              { role: "explorer", readOnly: true }
+            )
         )
       );
       gateway = await startSupergatewayServer(
@@ -300,6 +327,7 @@ test(
   }
 );
 
+
 test("dependency setup excludes both OpenAI credentials", () => {
   assert.deepEqual(
     dependencyEnvironment({
@@ -328,11 +356,45 @@ test("MCP probe executes when started through the installed source symlink", () 
   }
 });
 
-test("external sandbox admits reviewed workspace backends under Seatbelt and rejects unreviewed servers", () => {
-  const lspBackend = externalMcpBackend("lsp", repo, repo, process.execPath);
-  assert.equal(lspBackend.command, "/usr/bin/sandbox-exec");
-  assert.match(lspBackend.args[1]!, /\(allow signal \(target same-sandbox\)\)/);
-  assert.doesNotMatch(lspBackend.args[1]!, /\(allow ipc-sysv\*\)/);
+test("role-aware sandbox admits canonical AutoDev local MCP backends and enforces role read-only vs writable confinement", () => {
+  const roFs = externalMcpBackend(
+    "filesystem",
+    repo,
+    repo,
+    process.execPath,
+    undefined,
+    undefined,
+    { role: "explorer" }
+  );
+  assert.equal(roFs.command, "/usr/bin/sandbox-exec");
+  assert.ok(roFs.args.includes("--read-only"));
+  assert.doesNotMatch(roFs.args[1]!, /\(allow file-write\*/);
+
+  const rwFs = externalMcpBackend(
+    "filesystem",
+    repo,
+    repo,
+    process.execPath,
+    undefined,
+    undefined,
+    { role: "orchestrator" }
+  );
+  assert.equal(rwFs.command, "/usr/bin/sandbox-exec");
+  assert.ok(!rwFs.args.includes("--read-only"));
+  assert.match(rwFs.args[1]!, /\(allow file-write\*/);
+
+  const lspRo = externalMcpBackend(
+    "lsp",
+    repo,
+    repo,
+    process.execPath,
+    undefined,
+    undefined,
+    { role: "explorer" }
+  );
+  assert.equal(lspRo.command, "/usr/bin/sandbox-exec");
+  assert.match(lspRo.args[1]!, /\(allow signal \(target same-sandbox\)\)/);
+  assert.doesNotMatch(lspRo.args[1]!, /\(allow ipc-sysv\*\)/);
 
   const cccBackend = externalMcpBackend(
     "cocoindex-code",
@@ -345,21 +407,32 @@ test("external sandbox admits reviewed workspace backends under Seatbelt and rej
   assert.match(cccBackend.args[1]!, /\(allow ipc-posix\*\)/);
   assert.match(cccBackend.args[1]!, /\(allow ipc-sysv\*\)/);
 
-  for (const reviewed of ["filesystem", "codegraphcontext"]) {
-    const backend = externalMcpBackend(reviewed, repo, repo, process.execPath);
-    assert.equal(backend.command, "/usr/bin/sandbox-exec");
-  }
-  for (const server of [
+  const xacpxBackend = externalMcpBackend(
+    "xacpx",
+    repo,
+    repo,
+    process.execPath,
+    undefined,
+    undefined,
+    { role: "orchestrator" }
+  );
+  assert.equal(xacpxBackend.command, "/usr/bin/sandbox-exec");
+  assert.match(xacpxBackend.args[1]!, /\(allow network\* \(remote unix-socket\)\)/);
+
+  for (const canonical of [
+    "filesystem",
+    "codegraphcontext",
     "playwright",
     "playtest",
-    "github",
-    "xacpx",
-    "codex_app"
-  ])
-    assert.throws(
-      () => externalMcpBackend(server, repo, repo, process.execPath),
-      /No externally confined/
-    );
+    "github"
+  ]) {
+    const backend = externalMcpBackend(canonical, repo, repo, process.execPath);
+    assert.ok(backend.command.length > 0);
+  }
+  assert.throws(
+    () => externalMcpBackend("codex_app", repo, repo, process.execPath),
+    /No externally confined/
+  );
 });
 
 test("externalMcpBackend resolves wrapper Node shims to the direct Node binary for sandbox-exec", () => {
@@ -417,7 +490,8 @@ test(
       const profile = filesystemSandboxProfile(
         workspace,
         realpathSync(path.join(repo, "node_modules")),
-        node
+        node,
+        { readOnly: true }
       );
       const result = spawnSync(
         "/usr/bin/sandbox-exec",
@@ -458,6 +532,7 @@ test(
     }
   }
 );
+
 
 test("credential validation, private file ownership and symlinks fail closed", () => {
   const root = mkdtempSync(path.join(tmpdir(), "external-mcp-keys-"));
@@ -827,6 +902,7 @@ test(
   }
 );
 
+
 function readFileExists(file: string): boolean {
   try {
     readFileSync(file);
@@ -982,14 +1058,21 @@ test(
       hasSecret: (name) => name === "CONTEXT7_API_KEY",
       discoverTools: async (server) =>
         server === "filesystem"
-          ? ["read_text_file", "list_allowed_directories"]
+          ? [
+              "read_text_file",
+              "write_file",
+              "edit_file",
+              "list_allowed_directories"
+            ]
           : server === "lsp"
             ? ["lsp_find_symbol", "lsp_workspace_diagnostics"]
-            : server === "openaiDeveloperDocs"
-              ? ["search_openai_docs", "list_openai_docs"]
-              : server === "context7"
-                ? ["resolve-library-id", "query-docs"]
-                : [],
+            : server === "xacpx"
+              ? ["delegate_request", "task_get", "task_list", "task_cancel"]
+              : server === "openaiDeveloperDocs"
+                ? ["search_openai_docs", "list_openai_docs"]
+                : server === "context7"
+                  ? ["resolve-library-id", "query-docs"]
+                  : [],
       launchValues: () => ({
         ...paths,
         nodeBin: process.execPath,
@@ -1105,6 +1188,8 @@ test(
           lsp: { command: "/fixture/lsp", args: [] },
           "cocoindex-code": { command: "/fixture/ccc", args: [] },
           codegraphcontext: { command: "/fixture/cgc", args: [] },
+          xacpx: { command: "/fixture/xacpx", args: [] },
+          playwright: { command: "/fixture/playwright", args: [] },
           openaiDeveloperDocs: { url: "https://example.test/openai/mcp" },
           context7: {
             url: "https://example.test/context7/mcp",
@@ -1241,17 +1326,82 @@ test(
       assert.deepEqual(Object.keys(policyUpgraded.grants).sort(), [
         "cocoindex-code",
         "codegraphcontext",
-        "context7",
         "filesystem",
         "lsp",
-        "openaiDeveloperDocs"
+        "xacpx"
       ]);
+      assert.equal(policyUpgraded.role, "orchestrator");
+      assert.ok(policyUpgraded.grants.filesystem.includes("write_file"));
+      assert.ok(policyUpgraded.grants.xacpx.includes("delegate_request"));
       assert.match(
         readFileSync(
           path.join(directory, policyUpgraded.generation, "autodev.yaml"),
           "utf8"
         ),
         /env:AUTODEV_CHATGPT_TUNNEL_API_KEY/
+      );
+      // Switching to the `smart` role (which enables googleDeveloperKnowledge and playwright
+      // without xacpx) and supplying GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY invalidates policyDigest
+      // and admits the exact smart-role MCP servers.
+      let googleKeyConfigured = false;
+      const credentialDeps: ChatgptTunnelDependencies = {
+        ...deps,
+        hasSecret: (name) =>
+          name === "CONTEXT7_API_KEY" ||
+          (googleKeyConfigured &&
+            name === "GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY"),
+        discoverTools: async (server) =>
+          server === "googleDeveloperKnowledge"
+            ? ["search_documents", "get_documents", "answer_query"]
+            : deps.discoverTools!(
+                server,
+                {},
+                paths,
+                workspace,
+                process.execPath,
+                {},
+                env
+              )
+      };
+      googleKeyConfigured = true;
+      await ensureChatgptTunnel(
+        paths,
+        "reconcile",
+        { HOME: home, PATH: "/bin", AUTODEV_CHATGPT_AGENT_ROLE: "smart" },
+        undefined,
+        credentialDeps
+      );
+      const googleAdded = JSON.parse(privateRead(stateFile));
+      assert.equal(googleAdded.role, "smart");
+      assert.notEqual(googleAdded.policyDigest, policyUpgraded.policyDigest);
+      assert.equal(googleAdded.grants.xacpx, undefined);
+      assert.deepEqual(googleAdded.grants.googleDeveloperKnowledge, [
+        "search_documents",
+        "get_documents",
+        "answer_query"
+      ]);
+      const googleSupergateway = JSON.parse(
+        privateRead(
+          path.join(directory, googleAdded.generation, "supergateway.json")
+        )
+      );
+      assert.ok(googleSupergateway.mcpServers.autodev.sessionTimeout > 0);
+      assert.deepEqual(
+        googleSupergateway.mcpServers.autodev.mcpServers
+          .googleDeveloperKnowledge.tools,
+        ["search_documents", "get_documents", "answer_query"]
+      );
+      // Restore orchestrator role for the remaining lifecycle checks below.
+      await ensureChatgptTunnel(
+        paths,
+        "reconcile",
+        {
+          HOME: home,
+          PATH: "/bin",
+          AUTODEV_CHATGPT_AGENT_ROLE: "orchestrator"
+        },
+        undefined,
+        deps
       );
       // Daemon runner starts Supergateway (clean env) then tunnel-client (Keychain + auth header),
       // honoring staged candidates and explicit env overrides without plaintext tunnel files.
@@ -1485,6 +1635,7 @@ test(
   }
 );
 
+
 test(
   "real combined gateway exposes local confined and authenticated remote Streamable HTTP MCPs with credential isolation",
   {
@@ -1515,7 +1666,7 @@ test(
         '  } else if (m.method === "ping") {',
         '    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: {} }) + "\\n");',
         '  } else if (m.method === "tools/list") {',
-        '    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { tools: [{ name: "find_symbol", inputSchema: { type: "object" } }, { name: "mutate", inputSchema: { type: "object" } }] } }) + "\\n");',
+        '    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { tools: [{ name: "find_symbol", inputSchema: { type: "object" }, annotations: { readOnlyHint: true, openWorldHint: false } }, { name: "mutate", inputSchema: { type: "object" }, annotations: { readOnlyHint: false, destructiveHint: true } }] } }) + "\\n");',
         '  } else if (m.method === "tools/call") {',
         '    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { content: [{ type: "text", text: "symbol:" + (m.params.arguments?.name ?? "") }] } }) + "\\n");',
         "  }",
@@ -1525,7 +1676,11 @@ test(
 
     const remoteSessions = new Set<string>();
     const remoteServer = createHttpServer((req, res) => {
-      if (req.headers.authorization !== "Bearer remote-context7-token") {
+      const isGoogle = req.url?.startsWith("/google");
+      const authorized = isGoogle
+        ? req.headers["x-goog-api-key"] === "remote-gdev-token"
+        : req.headers.authorization === "Bearer remote-context7-token";
+      if (!authorized) {
         res.writeHead(401).end("unauthorized");
         return;
       }
@@ -1560,7 +1715,11 @@ test(
         } else if (msg.method === "tools/list") {
           result = {
             tools: [
-              { name: "query-docs", inputSchema: { type: "object" } },
+              {
+                name: "query-docs",
+                inputSchema: { type: "object" },
+                annotations: { readOnlyHint: true, openWorldHint: true }
+              },
               { name: "hidden-admin", inputSchema: { type: "object" } }
             ]
           };
@@ -1605,12 +1764,19 @@ test(
         context7: {
           url: `http://127.0.0.1:${remoteAddr.port}/mcp`,
           bearer_token_env_var: "CONTEXT7_API_KEY"
+        },
+        googleDeveloperKnowledge: {
+          url: `http://127.0.0.1:${remoteAddr.port}/google/mcp`,
+          http_headers: {
+            "X-Goog-Api-Key": "${GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY}"
+          }
         }
       };
       const policy = {
         filesystem: ["read_text_file"],
         lsp: ["find_symbol"],
-        context7: ["query-docs"]
+        context7: ["query-docs"],
+        googleDeveloperKnowledge: ["query-docs"]
       };
       writeFileSync(
         config,
@@ -1634,7 +1800,8 @@ test(
           process.execPath,
           process.env.PATH ?? "/usr/bin:/bin"
         ),
-        CONTEXT7_API_KEY: "remote-context7-token"
+        CONTEXT7_API_KEY: "remote-context7-token",
+        GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY: "remote-gdev-token"
       };
       gateway = await startSupergatewayServer(
         executable,
@@ -1659,6 +1826,7 @@ test(
       assert.deepEqual(listed.tools.map((t) => t.name).sort(), [
         "context7__query-docs",
         "filesystem__read_text_file",
+        "googleDeveloperKnowledge__query-docs",
         "lsp__find_symbol"
       ]);
       const remoteTool = listed.tools.find(
@@ -1669,7 +1837,7 @@ test(
       assert.equal(remoteTool?.annotations?.readOnlyHint, true);
       assert.equal(localTool?.annotations?.openWorldHint, false);
 
-      const [fsRes, lspRes, c7Res] = await Promise.all([
+      const [fsRes, lspRes, c7Res, gdevRes] = await Promise.all([
         client.callTool({
           name: "filesystem__read_text_file",
           arguments: { path: inside }
@@ -1681,11 +1849,21 @@ test(
         client.callTool({
           name: "context7__query-docs",
           arguments: { q: "supergateway" }
+        }),
+        client.callTool({
+          name: "googleDeveloperKnowledge__query-docs",
+          arguments: { q: "gdev" }
         })
       ]);
       assert.match(JSON.stringify(fsRes), /multi-server-ok/);
       assert.match(JSON.stringify(lspRes), /symbol:Chatgpt/);
       assert.match(JSON.stringify(c7Res), /docs:supergateway/);
+      assert.match(JSON.stringify(gdevRes), /docs:gdev/);
+      const localEnvKeys = JSON.parse(
+        readFileSync(envSpyPath, "utf8")
+      ) as string[];
+      assert.ok(!localEnvKeys.includes("CONTEXT7_API_KEY"));
+      assert.ok(!localEnvKeys.includes("GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY"));
 
       await assert.rejects(async () => {
         const denied = await client.callTool({
@@ -1705,6 +1883,7 @@ test(
     }
   }
 );
+
 
 test(
   "real tunnel-client dev proxy routes Streamable HTTP MCP sessions through Supergateway with session isolation, reconnection, and service restarts",
@@ -1757,7 +1936,15 @@ test(
         { port: mcpPort, apiKeyFile: keyFile },
         undefined,
         (server) =>
-          externalMcpBackend(server, repo, workspace, process.execPath)
+          externalMcpBackend(
+            server,
+            repo,
+            workspace,
+            process.execPath,
+            root,
+            codexHome,
+            { role: "explorer", readOnly: true }
+          )
       )
     );
     const gatewayEnv = chatgptSupergatewayEnvironment(
@@ -1955,6 +2142,7 @@ test(
   }
 );
 
+
 test(
   "pinned Supergateway and tunnel-client proxy serve Seatbelt-confined LSP (past watchdog) and CocoIndex semantic search",
   {
@@ -1984,6 +2172,7 @@ test(
     );
     const greeterFile = path.join(workspace, "src", "greeter.ts");
     const mainFile = path.join(workspace, "src", "main.ts");
+    const brokenFile = path.join(workspace, "src", "broken.ts");
     writeFileSync(
       greeterFile,
       "export function formatGreeting(name: string): string {\n  return `Hello, ${name}`;\n}\n"
@@ -1991,6 +2180,10 @@ test(
     writeFileSync(
       mainFile,
       'import { formatGreeting } from "./greeter.ts";\nexport const banner = formatGreeting("AutoDev");\n'
+    );
+    writeFileSync(
+      brokenFile,
+      'export const brokenCount: number = "not-a-number";\n'
     );
 
     const cccBinary = resolveCocoIndexBinary(process.env);
@@ -2023,6 +2216,10 @@ test(
     privateWrite(headerFile, `Bearer ${localToken}\n`);
     const mcpPort = await allocateLoopbackPort();
     const catalogue: Record<string, Record<string, unknown>> = {
+      filesystem: {
+        command: process.execPath,
+        args: [path.join(repo, "runtime/src/mcp/launcher.ts"), "filesystem"]
+      },
       lsp: {
         command: process.execPath,
         args: [path.join(repo, "runtime/src/mcp/launcher.ts"), "lsp"]
@@ -2040,11 +2237,14 @@ test(
         : {})
     };
     const policy: Record<string, string[]> = {
+      filesystem: ["read_text_file"],
       lsp: [
         "lsp_server_status",
         "lsp_document_symbols",
         "lsp_hover",
         "lsp_goto_definition",
+        "lsp_find_references",
+        "lsp_diagnostics",
         "lsp_workspace_symbols"
       ],
       ...(includeCocoindex ? { "cocoindex-code": ["search"] } : {})
@@ -2167,12 +2367,41 @@ test(
       });
       assert.deepEqual(JSON.parse(firstText(initialStatus)), { servers: [] });
 
+      const readRes = await client.callTool({
+        name: "filesystem__read_text_file",
+        arguments: { path: greeterFile }
+      });
+      assert.equal(readRes.isError, undefined);
+      assert.match(firstText(readRes), /formatGreeting/);
+
       const symbols = await client.callTool({
         name: "lsp__lsp_document_symbols",
         arguments: { file_path: mainFile }
       });
       assert.equal(symbols.isError, undefined);
       assert.match(JSON.stringify(symbols), /banner/);
+
+      // A separate client session (mirroring per-call ChatGPT sessions) has an isolated
+      // lsp-mcp-server process whose lazy server map is still empty until a file request runs.
+      const isolatedClient = new Client({
+        name: "autodev-code-tools-isolated-session",
+        version: "1.0.0"
+      });
+      try {
+        await isolatedClient.connect(
+          new StreamableHTTPClientTransport(mcpEndpoint, { requestInit }),
+          { timeout: 45_000 }
+        );
+        const isolatedStatus = await isolatedClient.callTool({
+          name: "lsp__lsp_server_status",
+          arguments: {}
+        });
+        assert.deepEqual(JSON.parse(firstText(isolatedStatus)), {
+          servers: []
+        });
+      } finally {
+        await isolatedClient.close().catch(() => {});
+      }
 
       // Wait past typescript-language-server's 3-second watchDog (`process.kill(parentPid, 0)`).
       await delay(4200);
@@ -2190,6 +2419,29 @@ test(
       });
       assert.equal(definition.isError, undefined);
       assert.match(JSON.stringify(definition), /greeter\.ts/);
+
+      const references = await client.callTool({
+        name: "lsp__lsp_find_references",
+        arguments: { file_path: greeterFile, line: 1, column: 17 }
+      });
+      assert.equal(references.isError, undefined);
+      assert.match(JSON.stringify(references), /main\.ts/);
+
+      const diagnostics = JSON.parse(
+        firstText(
+          await client.callTool({
+            name: "lsp__lsp_diagnostics",
+            arguments: { file_path: brokenFile }
+          })
+        )
+      ) as {
+        diagnostics: Array<{ severity: string; message: string }>;
+        summary: { errors: number };
+      };
+      assert.ok(diagnostics.summary.errors >= 1);
+      assert.ok(
+        diagnostics.diagnostics.some((entry) => entry.severity === "error")
+      );
 
       const workspaceSymbols = await client.callTool({
         name: "lsp__lsp_workspace_symbols",
@@ -2257,6 +2509,1006 @@ test(
       } catch {
         /* daemon may not have been started */
       }
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+);
+
+
+test(
+  "ChatGPT writable role performs authorized workspace mutations, reads skills read-only, preserves truthful tool annotations, and enforces workspace/secret confinement over Supergateway",
+  {
+    skip: process.env.AUTODEV_TEST_SUPERGATEWAY !== "1",
+    timeout: 180_000
+  },
+  async () => {
+    const root = realpathSync(
+      mkdtempSync(path.join(tmpdir(), "autodev-chatgpt-rw-e2e-"))
+    );
+    const home = path.join(root, "home");
+    const codexHome = path.join(home, ".codex");
+    const workspace = path.join(root, "workspace");
+    const skillRoot = path.join(root, "skills-root");
+    mkdirSync(path.join(skillRoot, "demo-skill"), { recursive: true });
+    mkdirSync(workspace, { recursive: true });
+    mkdirSync(codexHome, { recursive: true });
+
+    const insideFile = path.join(workspace, "notes.txt");
+    const createdFile = path.join(workspace, "sub", "created.txt");
+    const outsideFile = path.join(root, "outside.txt");
+    const secretEnv = path.join(workspace, ".env");
+    const skillFile = path.join(skillRoot, "demo-skill", "SKILL.md");
+    writeFileSync(insideFile, "initial-line\n");
+    writeFileSync(outsideFile, "outside-secret");
+    writeFileSync(secretEnv, "SECRET_TOKEN=never-leak\n");
+    writeFileSync(skillFile, "# Demo Skill\nUse canonical tools.\n");
+    symlinkSync(outsideFile, path.join(workspace, "escape-link.txt"));
+
+    const executable = resolveSupergateway(repo);
+    const config = path.join(root, "supergateway.json");
+    const keyFile = path.join(root, "supergateway.key");
+    const localToken = "rw-gateway-token";
+    privateWrite(keyFile, localToken + "\n");
+    const mcpPort = await allocateLoopbackPort();
+    const catalogue = {
+      filesystem: {
+        command: process.execPath,
+        args: [path.join(repo, "runtime/src/mcp/launcher.ts"), "filesystem"]
+      }
+    };
+    const grants = {
+      filesystem: [
+        "read_text_file",
+        "write_file",
+        "edit_file",
+        "create_directory",
+        "list_allowed_directories"
+      ]
+    };
+    writeFileSync(
+      config,
+      renderChatgptSupergatewayConfig(
+        catalogue,
+        grants,
+        workspace,
+        grants,
+        { port: mcpPort, apiKeyFile: keyFile },
+        undefined,
+        (server) =>
+          externalMcpBackend(
+            server,
+            repo,
+            workspace,
+            process.execPath,
+            home,
+            codexHome,
+            { role: "orchestrator", skillRoots: [skillRoot] }
+          )
+      )
+    );
+    const env = chatgptSupergatewayEnvironment(
+      { home, codexHome, repositoryRoot: repo },
+      workspace,
+      process.execPath,
+      process.env.PATH ?? "/usr/bin:/bin",
+      { role: "orchestrator" }
+    );
+    let gateway: ChildProcess | undefined;
+    const client = new Client({ name: "chatgpt-rw-e2e", version: "1.0.0" });
+    try {
+      gateway = await startSupergatewayServer(
+        executable,
+        config,
+        workspace,
+        env,
+        mcpPort
+      );
+      await client.connect(
+        new StreamableHTTPClientTransport(
+          new URL(`http://127.0.0.1:${mcpPort}/mcp`),
+          {
+            requestInit: { headers: { Authorization: `Bearer ${localToken}` } }
+          }
+        )
+      );
+
+      // 1. Truthful tool annotations: write_file must NOT carry a forged readOnlyHint: true.
+      const listed = await client.listTools();
+      const writeTool = listed.tools.find(
+        (tool) => tool.name === "filesystem__write_file"
+      );
+      assert.ok(writeTool, "writable role must expose filesystem__write_file");
+      assert.notEqual(writeTool.annotations?.readOnlyHint, true);
+
+      // 2. Authorized mutations inside workspace succeed.
+      const mkdirRes = await client.callTool({
+        name: "filesystem__create_directory",
+        arguments: { path: path.join(workspace, "sub") }
+      });
+      assert.equal(mkdirRes.isError, undefined);
+
+      const writeRes = await client.callTool({
+        name: "filesystem__write_file",
+        arguments: { path: createdFile, content: "written-by-chatgpt\n" }
+      });
+      assert.equal(writeRes.isError, undefined);
+      assert.equal(readFileSync(createdFile, "utf8"), "written-by-chatgpt\n");
+
+      const editRes = await client.callTool({
+        name: "filesystem__edit_file",
+        arguments: {
+          path: insideFile,
+          edits: [{ oldText: "initial-line", newText: "edited-by-chatgpt" }]
+        }
+      });
+      assert.equal(editRes.isError, undefined);
+      assert.equal(readFileSync(insideFile, "utf8"), "edited-by-chatgpt\n");
+
+      // 3. Mounted skill root is readable but read-only (cannot be mutated).
+      const skillRead = await client.callTool({
+        name: "filesystem__read_text_file",
+        arguments: { path: skillFile }
+      });
+      assert.equal(skillRead.isError, undefined);
+      assert.match(JSON.stringify(skillRead), /Demo Skill/);
+
+      const skillWrite = await client.callTool({
+        name: "filesystem__write_file",
+        arguments: { path: skillFile, content: "tampered" }
+      });
+      assert.equal(skillWrite.isError, true);
+      assert.match(readFileSync(skillFile, "utf8"), /Demo Skill/);
+
+      // 4. Out-of-workspace, symlink escape, and .env secrets remain denied for both reads and writes.
+      for (const blockedPath of [
+        outsideFile,
+        path.join(workspace, "escape-link.txt"),
+        secretEnv
+      ]) {
+        const readBlocked = await client.callTool({
+          name: "filesystem__read_text_file",
+          arguments: { path: blockedPath }
+        });
+        assert.equal(readBlocked.isError, true);
+        assert.doesNotMatch(
+          JSON.stringify(readBlocked),
+          /outside-secret|never-leak/
+        );
+
+        const writeBlocked = await client.callTool({
+          name: "filesystem__write_file",
+          arguments: { path: blockedPath, content: "pwned" }
+        });
+        assert.equal(writeBlocked.isError, true);
+      }
+      assert.equal(readFileSync(outsideFile, "utf8"), "outside-secret");
+      assert.equal(readFileSync(secretEnv, "utf8"), "SECRET_TOKEN=never-leak\n");
+    } finally {
+      await client.close().catch(() => {});
+      await stopProcess(gateway);
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+);
+
+
+test(
+  "ChatGPT orchestrator delegates and manages child agents end-to-end through Supergateway + XACPX MCP with role isolation, workspace confinement, and cross-session denial",
+  {
+    skip: process.env.AUTODEV_TEST_SUPERGATEWAY !== "1",
+    timeout: 180_000
+  },
+  async () => {
+    const root = realpathSync(
+      mkdtempSync(path.join(tmpdir(), "autodev-chatgpt-xacpx-e2e-"))
+    );
+    const home = path.join(root, "home");
+    const codexHome = path.join(home, ".codex");
+    const workspace = path.join(root, "workspace");
+    const outsideDir = path.join(root, "outside");
+    mkdirSync(workspace, { recursive: true });
+    mkdirSync(outsideDir, { recursive: true });
+    mkdirSync(path.join(codexHome, "run", "xacpx"), { recursive: true });
+
+    const socketPath = resolveXacpxOrchestrationSocketPath(codexHome, {});
+    const recordedLaunches: Array<{
+      role: string;
+      cwd: string;
+      systemPrompt: string;
+      permissions: Record<string, string>;
+    }> = [];
+
+    const createMockAgentForLaunch = (launch: {
+      role: string;
+      cwd: string;
+      systemPrompt: string;
+    }) => {
+      const permissions: Record<string, string> = {};
+      recordedLaunches.push({
+        role: launch.role,
+        cwd: launch.cwd,
+        systemPrompt: launch.systemPrompt,
+        permissions
+      });
+      let cancelled = false;
+      return new AgentApp({ name: `mock-${launch.role}` })
+        .onRequest(AGENT_METHODS.initialize, async () => ({
+          protocolVersion: PROTOCOL_VERSION,
+          agentCapabilities: { loadSession: false }
+        }))
+        .onRequest(AGENT_METHODS.session_new, async () => ({
+          sessionId: `acp-${launch.role}-${recordedLaunches.length}`
+        }))
+        .onRequest(AGENT_METHODS.session_prompt, async ({ params, client }) => {
+          const text = params.prompt
+            .map((block) => (block.type === "text" ? block.text : ""))
+            .join("");
+          if (text.includes("HOLD_OPEN")) {
+            for (let i = 0; i < 60 && !cancelled; i++) {
+              await delay(50);
+            }
+            return { stopReason: cancelled ? "cancelled" : "end_turn" };
+          }
+          for (const toolName of [
+            "mcp__filesystem__read_text_file",
+            "mcp__filesystem__write_file",
+            "mcp__playwright__browser_navigate"
+          ]) {
+            const resp = await client.request(
+              CLIENT_METHODS.session_request_permission,
+              {
+                sessionId: params.sessionId,
+                toolCall: {
+                  toolCallId: `tc-${toolName}`,
+                  name: toolName,
+                  rawInput: { path: path.join(launch.cwd, "demo.ts") }
+                },
+                options: [
+                  { optionId: "allow", name: "Allow", kind: "allow_once" },
+                  { optionId: "reject", name: "Reject", kind: "reject_once" }
+                ]
+              }
+            );
+            permissions[toolName] =
+              resp.outcome.outcome === "selected"
+                ? resp.outcome.optionId
+                : resp.outcome.outcome;
+          }
+          await client.notify("session/update", {
+            sessionId: params.sessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: {
+                type: "text",
+                text: `role=${launch.role} reply=${text}`
+              }
+            }
+          });
+          return { stopReason: "end_turn" };
+        })
+        .onNotification(AGENT_METHODS.session_cancel, () => {
+          cancelled = true;
+        })
+        .onRequest(AGENT_METHODS.session_close, async () => ({}));
+    };
+
+    const manager = new XacpxSessionManager({
+      acpTransportFactory: (launch) => ({
+        target: createMockAgentForLaunch(launch)
+      })
+    });
+    const ipcServer = await startXacpxOrchestrationIpcServer({
+      socketPath,
+      manager,
+      authorizedWorkspaceRoot: workspace,
+      maxConcurrentChildrenPerCoordinator: 2,
+      repositoryRoot: repo
+    });
+
+    const executable = resolveSupergateway(repo);
+    const keyFileA = path.join(root, "supergateway-a.key");
+    const keyFileB = path.join(root, "supergateway-b.key");
+    const headerFileA = path.join(root, "supergateway-a.header");
+    const tokenA = "xacpx-coord-a-token";
+    const tokenB = "xacpx-coord-b-token";
+    privateWrite(keyFileA, tokenA + "\n");
+    privateWrite(headerFileA, `Bearer ${tokenA}\n`);
+    privateWrite(keyFileB, tokenB + "\n");
+    const portA = await allocateLoopbackPort();
+    const portB = await allocateLoopbackPort();
+
+    const catalogue = {
+      filesystem: {
+        command: process.execPath,
+        args: [path.join(repo, "runtime/src/mcp/launcher.ts"), "filesystem"]
+      },
+      xacpx: {
+        command: process.execPath,
+        args: [path.join(repo, "runtime/src/mcp/launcher.ts"), "xacpx"]
+      }
+    };
+    const grants = {
+      filesystem: ["read_text_file", "write_file"],
+      xacpx: [
+        "delegate_request",
+        "task_get",
+        "task_list",
+        "task_watch",
+        "task_cancel",
+        "agent_list",
+        "agent_send"
+      ]
+    };
+    const configA = path.join(root, "supergateway-a.json");
+    const configB = path.join(root, "supergateway-b.json");
+    const makeConfig = (port: number, keyFile: string) =>
+      renderChatgptSupergatewayConfig(
+        catalogue,
+        grants,
+        workspace,
+        grants,
+        { port, apiKeyFile: keyFile },
+        undefined,
+        (server) =>
+          externalMcpBackend(
+            server,
+            repo,
+            workspace,
+            process.execPath,
+            home,
+            codexHome,
+            { role: "orchestrator" }
+          )
+      );
+    writeFileSync(configA, makeConfig(portA, keyFileA));
+    writeFileSync(configB, makeConfig(portB, keyFileB));
+
+    const envA = chatgptSupergatewayEnvironment(
+      { home, codexHome, repositoryRoot: repo },
+      workspace,
+      process.execPath,
+      process.env.PATH ?? "/usr/bin:/bin",
+      {
+        role: "orchestrator",
+        coordinatorSession: "chatgpt-coord-a",
+        xacpxSocketPath: socketPath
+      }
+    );
+    const envB = chatgptSupergatewayEnvironment(
+      { home, codexHome, repositoryRoot: repo },
+      workspace,
+      process.execPath,
+      process.env.PATH ?? "/usr/bin:/bin",
+      {
+        role: "orchestrator",
+        coordinatorSession: "chatgpt-coord-b",
+        xacpxSocketPath: socketPath
+      }
+    );
+
+    let gatewayA: ChildProcess | undefined;
+    let gatewayB: ChildProcess | undefined;
+    let proxyA: ChildProcess | undefined;
+    const clientA = new Client({ name: "chatgpt-orch-a", version: "1.0.0" });
+    const clientB = new Client({ name: "chatgpt-orch-b", version: "1.0.0" });
+    try {
+      [gatewayA, gatewayB] = await Promise.all([
+        startSupergatewayServer(executable, configA, workspace, envA, portA),
+        startSupergatewayServer(executable, configB, workspace, envB, portB)
+      ]);
+
+      // Route coordinator A through real tunnel-client dev proxy when installed.
+      let endpointA = new URL(`http://127.0.0.1:${portA}/mcp`);
+      let requestInitA: RequestInit = {
+        headers: { Authorization: `Bearer ${tokenA}` }
+      };
+      const tunnelBin = resolveCommandOnPath("tunnel-client");
+      if (tunnelBin) {
+        const urlFile = path.join(root, "proxy-a.json");
+        const healthUrlFile = path.join(root, "health-a.url");
+        proxyA = spawn(
+          tunnelBin,
+          [
+            "dev",
+            "proxy",
+            "--mcp-server-url",
+            `http://127.0.0.1:${portA}/mcp`,
+            "--url-file",
+            urlFile,
+            "--health-url-file",
+            healthUrlFile,
+            "--readiness-timeout",
+            "30s"
+          ],
+          {
+            env: { ...process.env, ...tunnelClientMcpEnv(headerFileA) },
+            stdio: ["ignore", "pipe", "pipe"]
+          }
+        );
+        let proxyUrl: string | undefined;
+        for (let attempt = 0; attempt < 150; attempt++) {
+          await delay(200);
+          try {
+            const raw = readFileSync(urlFile, "utf8").trim();
+            if (raw) {
+              proxyUrl = (JSON.parse(raw) as { mcp_url?: string }).mcp_url;
+              if (proxyUrl) break;
+            }
+          } catch {
+            /* waiting for proxy readiness */
+          }
+        }
+        assert.ok(proxyUrl, "tunnel-client dev proxy did not report mcp_url");
+        endpointA = new URL(proxyUrl);
+        requestInitA = {};
+      }
+
+      await clientA.connect(
+        new StreamableHTTPClientTransport(endpointA, {
+          requestInit: requestInitA
+        }),
+        { timeout: 45_000 }
+      );
+      await clientB.connect(
+        new StreamableHTTPClientTransport(
+          new URL(`http://127.0.0.1:${portB}/mcp`),
+          {
+            requestInit: { headers: { Authorization: `Bearer ${tokenB}` } }
+          }
+        ),
+        { timeout: 45_000 }
+      );
+
+      // 1. Delegate writable worker and read-only explorer through canonical xacpx MCP.
+      const workerDelegate = await clientA.callTool({
+        name: "xacpx__delegate_request",
+        arguments: {
+          targetAgent: "worker",
+          role: "worker",
+          workingDirectory: workspace,
+          task: "implement-feature"
+        }
+      });
+      assert.ok(
+        !workerDelegate.isError,
+        `worker delegation failed: ${JSON.stringify(workerDelegate)}`
+      );
+      const workerTaskId = (
+        workerDelegate.structuredContent as { taskId?: string } | undefined
+      )?.taskId;
+      assert.ok(workerTaskId, "delegate_request must return taskId");
+
+      const workerWatch = await clientA.callTool({
+        name: "xacpx__task_watch",
+        arguments: { taskId: workerTaskId, timeoutMs: 10_000 }
+      });
+      assert.ok(!workerWatch.isError);
+      assert.match(JSON.stringify(workerWatch), /completed/);
+
+      const workerGet = await clientA.callTool({
+        name: "xacpx__task_get",
+        arguments: { taskId: workerTaskId }
+      });
+      const workerGetText = JSON.stringify(workerGet);
+      assert.match(workerGetText, /role=worker reply=/);
+      assert.match(workerGetText, /<system_instructions>/);
+      assert.match(workerGetText, /implement-feature/);
+
+      const explorerDelegate = await clientA.callTool({
+        name: "xacpx__delegate_request",
+        arguments: {
+          targetAgent: "explorer",
+          role: "explorer",
+          workingDirectory: workspace,
+          task: "inspect-module"
+        }
+      });
+      assert.ok(!explorerDelegate.isError);
+      const explorerTaskId = (
+        explorerDelegate.structuredContent as { taskId?: string } | undefined
+      )?.taskId;
+      assert.ok(explorerTaskId);
+      await clientA.callTool({
+        name: "xacpx__task_watch",
+        arguments: { taskId: explorerTaskId, timeoutMs: 10_000 }
+      });
+
+      // Verify delegated role permissions and canonical role prompts!
+      const workerLaunch = recordedLaunches.find((l) => l.role === "worker");
+      const explorerLaunch = recordedLaunches.find(
+        (l) => l.role === "explorer"
+      );
+      assert.ok(workerLaunch && explorerLaunch);
+      assert.equal(
+        workerLaunch.permissions.mcp__filesystem__write_file,
+        "allow"
+      );
+      assert.equal(
+        workerLaunch.permissions.mcp__playwright__browser_navigate,
+        "reject"
+      );
+      assert.equal(
+        explorerLaunch.permissions.mcp__filesystem__read_text_file,
+        "allow"
+      );
+      assert.equal(
+        explorerLaunch.permissions.mcp__filesystem__write_file,
+        "reject"
+      );
+      assert.equal(
+        explorerLaunch.permissions.mcp__playwright__browser_navigate,
+        "reject"
+      );
+      assert.ok(workerLaunch.systemPrompt.length > 0);
+      assert.ok(explorerLaunch.systemPrompt.length > 0);
+      assert.notEqual(workerLaunch.systemPrompt, explorerLaunch.systemPrompt);
+
+      // 2. Follow-up message to owned pinned child via agent_list + agent_send.
+      const agentsA = await clientA.callTool({
+        name: "xacpx__agent_list",
+        arguments: {}
+      });
+      const agentListA = (
+        agentsA.structuredContent as
+          | { agents?: Array<{ handle: string; agent: string }> }
+          | undefined
+      )?.agents;
+      assert.ok(agentListA && agentListA.length === 2);
+      const workerHandle = agentListA.find((a) => a.agent === "worker")!.handle;
+
+      const sendRes = await clientA.callTool({
+        name: "xacpx__agent_send",
+        arguments: { to: workerHandle, message: "follow-up-step" }
+      });
+      assert.ok(!sendRes.isError);
+      assert.match(JSON.stringify(sendRes), /injected/);
+
+      // 3. Role escalation (orchestrator as child) and unknown role are denied.
+      const escalate = await clientA.callTool({
+        name: "xacpx__delegate_request",
+        arguments: {
+          targetAgent: "orchestrator",
+          role: "orchestrator",
+          workingDirectory: workspace,
+          task: "escalate"
+        }
+      });
+      assert.equal(escalate.isError, true);
+      assert.match(JSON.stringify(escalate), /escalation/i);
+
+      const unknownRole = await clientA.callTool({
+        name: "xacpx__delegate_request",
+        arguments: {
+          targetAgent: "root-admin",
+          role: "root-admin",
+          workingDirectory: workspace,
+          task: "unknown"
+        }
+      });
+      assert.equal(unknownRole.isError, true);
+
+      // 4. Out-of-workspace delegation is denied.
+      const outsideDelegate = await clientA.callTool({
+        name: "xacpx__delegate_request",
+        arguments: {
+          targetAgent: "worker",
+          role: "worker",
+          workingDirectory: outsideDir,
+          task: "escape-workspace"
+        }
+      });
+      assert.equal(outsideDelegate.isError, true);
+      assert.match(JSON.stringify(outsideDelegate), /confinement/i);
+
+      // 5. Cross-session isolation: coordinator B cannot see, cancel, or message coordinator A's children.
+      const listB = await clientB.callTool({
+        name: "xacpx__task_list",
+        arguments: {}
+      });
+      assert.deepEqual(
+        (listB.structuredContent as { tasks?: unknown[] } | undefined)?.tasks,
+        []
+      );
+      const getFromB = await clientB.callTool({
+        name: "xacpx__task_get",
+        arguments: { taskId: workerTaskId }
+      });
+      assert.equal(
+        (getFromB.structuredContent as { task?: unknown } | undefined)?.task,
+        null
+      );
+      const cancelFromB = await clientB.callTool({
+        name: "xacpx__task_cancel",
+        arguments: { taskId: workerTaskId }
+      });
+      assert.equal(cancelFromB.isError, true);
+      const sendFromB = await clientB.callTool({
+        name: "xacpx__agent_send",
+        arguments: { to: workerHandle, message: "cross-session-hijack" }
+      });
+      assert.equal(sendFromB.isError, true);
+
+      // 6. Lifecycle cancellation of an active child task.
+      const runningDelegate = await clientA.callTool({
+        name: "xacpx__delegate_request",
+        arguments: {
+          targetAgent: "worker",
+          role: "worker",
+          workingDirectory: workspace,
+          task: "HOLD_OPEN"
+        }
+      });
+      assert.ok(!runningDelegate.isError);
+      const runningTaskId = (
+        runningDelegate.structuredContent as { taskId?: string } | undefined
+      )?.taskId;
+      assert.ok(runningTaskId);
+      const cancelled = await clientA.callTool({
+        name: "xacpx__task_cancel",
+        arguments: { taskId: runningTaskId }
+      });
+      assert.ok(!cancelled.isError);
+      assert.match(JSON.stringify(cancelled), /cancelled/);
+    } finally {
+      await Promise.allSettled([clientA.close(), clientB.close()]);
+      await stopProcess(proxyA);
+      await stopProcess(gatewayA);
+      await stopProcess(gatewayB);
+      await ipcServer.close();
+      await manager.closeAllSessions();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+);
+
+test(
+  "pooled loopback backend host coalesces many one-shot sessions onto one backend process, enforces auth/grants, reaps idle backends, and cleans up process groups",
+  { timeout: 30_000 },
+  async () => {
+    const root = realpathSync(
+      mkdtempSync(path.join(tmpdir(), "autodev-backend-pool-"))
+    );
+    const spawnLog = path.join(root, "spawns.log");
+    const grandchildPidFile = path.join(root, "grandchild.pid");
+    const serverScript = path.join(root, "pooled-fixture.mjs");
+    writeFileSync(
+      serverScript,
+      String.raw`import { spawn } from "node:child_process";
+import { appendFileSync, writeFileSync } from "node:fs";
+import { createInterface } from "node:readline";
+appendFileSync(${JSON.stringify(spawnLog)}, process.pid + "\n");
+const gc = spawn(process.execPath, ["-e", "setInterval(() => {}, 60_000)"], { stdio: "ignore" });
+writeFileSync(${JSON.stringify(grandchildPidFile)}, String(gc.pid));
+let changed = false;
+const lines = createInterface({ input: process.stdin });
+const send = (m) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...m }) + "\n");
+lines.on("line", (line) => {
+  const m = JSON.parse(line);
+  if (m.method === "initialize") {
+    send({ id: m.id, result: { protocolVersion: "2025-03-26", capabilities: { tools: { listChanged: true }, resources: {}, prompts: {} }, serverInfo: { name: "pooled-fixture", version: "1" } } });
+  } else if (m.method === "tools/list") {
+    const tools = [{ name: "echo", inputSchema: { type: "object" } }, { name: "hidden", inputSchema: { type: "object" } }];
+    if (changed) tools.push({ name: "extra", inputSchema: { type: "object" } });
+    send({ id: m.id, result: { tools } });
+  } else if (m.method === "tools/call") {
+    if (m.params?.arguments?.change) {
+      changed = true;
+      send({ method: "notifications/tools/list_changed" });
+    }
+    send({ id: m.id, result: { content: [{ type: "text", text: "ok:" + (m.params?.arguments?.n ?? "") }] } });
+  }
+});
+`,
+      { mode: 0o600 }
+    );
+
+    const pool = await startChatgptBackendPool(
+      {
+        version: 1,
+        servers: {
+          demo: {
+            kind: "stdio",
+            command: process.execPath,
+            args: [serverScript],
+            cwd: root,
+            tools: ["echo", "extra"]
+          }
+        }
+      },
+      {
+        gatewayEnv: {
+          HOME: root,
+          PATH: process.env.PATH ?? "/usr/bin:/bin"
+        },
+        idleTimeoutMs: 250
+      }
+    );
+
+    let grandchildPid = 0;
+    try {
+      const url = `http://127.0.0.1:${pool.port}/mcp/demo`;
+      // Unauthenticated request is rejected with 401.
+      const unauth = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" })
+      });
+      assert.equal(unauth.status, 401);
+      await unauth.text();
+
+      const authHeaders = {
+        "content-type": "application/json",
+        authorization: `Bearer ${pool.token}`
+      };
+      const runOneShotSession = async (n: number) => {
+        const initRes = await fetch(url, {
+          method: "POST",
+          headers: authHeaders,
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 0,
+            method: "initialize",
+            params: { protocolVersion: "2025-03-26", capabilities: {} }
+          })
+        });
+        assert.equal(initRes.status, 200);
+        const sid = initRes.headers.get("mcp-session-id");
+        assert.ok(sid);
+        const initBody = (await initRes.json()) as {
+          result: { capabilities: Record<string, unknown> };
+        };
+        assert.equal(initBody.result.capabilities.resources, undefined);
+        assert.equal(initBody.result.capabilities.prompts, undefined);
+
+        const listRes = await fetch(url, {
+          method: "POST",
+          headers: { ...authHeaders, "mcp-session-id": sid },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" })
+        });
+        const listBody = (await listRes.json()) as {
+          result: { tools: Array<{ name: string }> };
+        };
+        assert.ok(!listBody.result.tools.some((t) => t.name === "hidden"));
+
+        const callRes = await fetch(url, {
+          method: "POST",
+          headers: { ...authHeaders, "mcp-session-id": sid },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 2,
+            method: "tools/call",
+            params: { name: "echo", arguments: { n } }
+          })
+        });
+        const callBody = (await callRes.json()) as {
+          result: { content: Array<{ text: string }> };
+        };
+        assert.equal(callBody.result.content[0]?.text, `ok:${n}`);
+
+        // Denied tool fails closed without touching backend.
+        const deniedRes = await fetch(url, {
+          method: "POST",
+          headers: { ...authHeaders, "mcp-session-id": sid },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 3,
+            method: "tools/call",
+            params: { name: "hidden", arguments: {} }
+          })
+        });
+        const deniedBody = (await deniedRes.json()) as {
+          error?: { code: number; message: string };
+        };
+        assert.equal(deniedBody.error?.code, -32_601);
+        // Deliberately do NOT send DELETE — mirroring ChatGPT's abandoned one-shot sessions.
+      };
+
+      // Burst 15 concurrent one-shot sessions + 5 sequential ones -> must coalesce onto 1 process!
+      await Promise.all(
+        Array.from({ length: 15 }, (_, i) => runOneShotSession(i))
+      );
+      for (let i = 15; i < 20; i++) {
+        await runOneShotSession(i);
+      }
+      assert.equal(pool.stats().demo?.spawns, 1);
+      const spawnedPids = readFileSync(spawnLog, "utf8")
+        .trim()
+        .split("\n")
+        .filter(Boolean);
+      assert.equal(spawnedPids.length, 1);
+
+      // Wait for idle reaping (>250ms): process stops cleanly, yet cached
+      // initialize + tools/list still serve without respawning!
+      await delay(450);
+      assert.equal(pool.stats().demo?.running, false);
+      const initCached = await fetch(url, {
+        method: "POST",
+        headers: authHeaders,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 0,
+          method: "initialize",
+          params: { protocolVersion: "2025-03-26", capabilities: {} }
+        })
+      });
+      assert.equal(initCached.status, 200);
+      const cachedSid = initCached.headers.get("mcp-session-id")!;
+      await initCached.text();
+      const listCached = await fetch(url, {
+        method: "POST",
+        headers: { ...authHeaders, "mcp-session-id": cachedSid },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" })
+      });
+      assert.equal(listCached.status, 200);
+      await listCached.text();
+      assert.equal(pool.stats().demo?.spawns, 1);
+      assert.equal(pool.stats().demo?.running, false);
+
+      // Next real tools/call lazily respawns exactly once and records grandchild PID.
+      await runOneShotSession(99);
+      assert.equal(pool.stats().demo?.spawns, 2);
+      grandchildPid = Number(readFileSync(grandchildPidFile, "utf8").trim());
+      assert.ok(Number.isInteger(grandchildPid) && grandchildPid > 0);
+      process.kill(grandchildPid, 0);
+    } finally {
+      await pool.close();
+      if (grandchildPid > 0) {
+        let dead = false;
+        for (let i = 0; i < 40; i++) {
+          try {
+            process.kill(grandchildPid, 0);
+          } catch {
+            dead = true;
+            break;
+          }
+          await delay(50);
+        }
+        if (!dead) {
+          try {
+            process.kill(grandchildPid, "SIGKILL");
+          } catch {
+            /* ignore */
+          }
+        }
+        assert.equal(
+          dead,
+          true,
+          `Pooled backend grandchild ${grandchildPid} survived pool.close()`
+        );
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+);
+
+test(
+  "pinned Supergateway with pooled loopback backend serves 15 abandoned one-shot sessions with a single backend spawn",
+  {
+    skip: process.env.AUTODEV_TEST_SUPERGATEWAY !== "1",
+    timeout: 180_000
+  },
+  async () => {
+    const root = realpathSync(
+      mkdtempSync(path.join(tmpdir(), "autodev-supergateway-pooled-"))
+    );
+    const workspace = path.join(root, "workspace");
+    mkdirSync(workspace);
+    const spawnLog = path.join(root, "spawns.log");
+    const backendScript = path.join(root, "pooled-mcp.mjs");
+    writeFileSync(
+      backendScript,
+      String.raw`import { appendFileSync } from "node:fs";
+import { createInterface } from "node:readline";
+appendFileSync(${JSON.stringify(spawnLog)}, process.pid + "\n");
+const lines = createInterface({ input: process.stdin });
+const send = (m) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...m }) + "\n");
+lines.on("line", (line) => {
+  const m = JSON.parse(line);
+  if (m.method === "initialize") {
+    send({ id: m.id, result: { protocolVersion: "2025-03-26", capabilities: { tools: {} }, serverInfo: { name: "pooled-mcp", version: "1" } } });
+  } else if (m.method === "tools/list") {
+    send({ id: m.id, result: { tools: [{ name: "ping_tool", inputSchema: { type: "object" } }] } });
+  } else if (m.method === "tools/call") {
+    send({ id: m.id, result: { content: [{ type: "text", text: "pong:" + (m.params?.arguments?.i ?? "") }] } });
+  }
+});
+`,
+      { mode: 0o600 }
+    );
+
+    const executable = resolveSupergateway(repo);
+    const configPath = path.join(root, "supergateway.json");
+    const poolConfigPath = path.join(root, "backend-pool.json");
+    const keyFile = path.join(root, "supergateway.key");
+    const localToken = "pooled-supergateway-token";
+    privateWrite(keyFile, localToken + "\n");
+    const mcpPort = await allocateLoopbackPort();
+    const catalogue = {
+      demo: { command: process.execPath, args: [backendScript] }
+    };
+    const grants = { demo: ["ping_tool"] };
+    const poolJson = renderChatgptBackendPoolConfig(
+      catalogue,
+      grants,
+      workspace,
+      grants
+    );
+    writeFileSync(poolConfigPath, poolJson);
+    writeFileSync(
+      configPath,
+      renderChatgptSupergatewayConfig(catalogue, grants, workspace, grants, {
+        port: mcpPort,
+        apiKeyFile: keyFile,
+        sessionTimeout: DEFAULT_CHATGPT_SESSION_TIMEOUT_MS,
+        backendPool: true
+      })
+    );
+    const baseEnv = {
+      HOME: root,
+      CODEX_HOME: root,
+      PATH: process.env.PATH ?? "/usr/bin:/bin"
+    };
+
+    // 1. Installer probe passes end-to-end against pooled config + sibling backend-pool.json.
+    await probeSupergateway(executable, configPath, baseEnv);
+
+    // Clear spawn log after probe to measure steady-state one-shot session bursts.
+    writeFileSync(spawnLog, "");
+    const pool = await startChatgptBackendPool(JSON.parse(poolJson), {
+      gatewayEnv: baseEnv
+    });
+    let gateway: ChildProcess | undefined;
+    try {
+      gateway = await startSupergatewayServer(
+        executable,
+        configPath,
+        workspace,
+        {
+          ...baseEnv,
+          [CHATGPT_MCP_POOL_PORT_ENV]: String(pool.port),
+          [CHATGPT_MCP_POOL_TOKEN_ENV]: pool.token
+        },
+        mcpPort
+      );
+      const endpoint = new URL(`http://127.0.0.1:${mcpPort}/mcp`);
+      const sessionIds = new Set<string>();
+      await Promise.all(
+        Array.from({ length: 15 }, async (_, i) => {
+          const client = new Client({ name: `burst-${i}`, version: "1.0.0" });
+          const transport = new StreamableHTTPClientTransport(endpoint, {
+            requestInit: {
+              headers: { Authorization: `Bearer ${localToken}` }
+            }
+          });
+          await client.connect(transport, { timeout: 20_000 });
+          assert.ok(transport.sessionId);
+          sessionIds.add(transport.sessionId);
+          const listed = await client.listTools();
+          assert.deepEqual(
+            listed.tools.map((t) => t.name),
+            ["demo__ping_tool"]
+          );
+          const res = await client.callTool({
+            name: "demo__ping_tool",
+            arguments: { i }
+          });
+          assert.match(JSON.stringify(res), new RegExp(`pong:${i}`));
+          // Deliberately abandon without client.close() / DELETE (ChatGPT behavior).
+        })
+      );
+      assert.equal(sessionIds.size, 15);
+      const spawns = readFileSync(spawnLog, "utf8")
+        .trim()
+        .split("\n")
+        .filter(Boolean);
+      assert.equal(
+        spawns.length,
+        1,
+        `Expected 1 coalesced backend spawn across 15 sessions, saw ${spawns.length}`
+      );
+    } finally {
+      await stopProcess(gateway);
+      await pool.close();
       rmSync(root, { recursive: true, force: true });
     }
   }

@@ -46,7 +46,6 @@ function contextHeaderValue(headers: unknown, name: string): string | null {
 }
 
 export const REQUEST_ID_HEADER = "x-autodev-request-id";
-export const SUBAGENT_SPAWN_TOOLS_HEADER = "x-autodev-subagent-spawn-tools";
 export const AGENT_EVENTS_URL_HEADER = "x-autodev-agent-events-url";
 // A Codex hook that runs before a native tool call has no router-issued
 // request id to authorize a post. The router proves the post is from this
@@ -707,16 +706,7 @@ export function resolveAgentEventReporter(
   const requestId = contextHeaderValue(headers, REQUEST_ID_HEADER);
   if (!url || !requestId) return null;
   const sessionId = contextHeaderValue(headers, SESSION_ID_HEADER);
-  const tools = contextHeaderValue(headers, SUBAGENT_SPAWN_TOOLS_HEADER);
-  const spawnTools = new Set(
-    tools
-      ? tools
-          .split(",")
-          .map((tool) => tool.trim())
-          .filter(Boolean)
-      : []
-  );
-  return new AgentEventReporter(url, requestId, spawnTools, sessionId);
+  return new AgentEventReporter(url, requestId, new Set(), sessionId);
 }
 
 /**

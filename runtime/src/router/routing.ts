@@ -12,10 +12,6 @@ import {
   type RoutingPolicyState
 } from "@simulatorlife/autodev-core";
 import {
-  providerInjectsRoleMcp,
-  roleScopedMcp
-} from "@simulatorlife/autodev-runtime/shared/execution-contract";
-import {
   ANTIGRAVITY_PROVIDER_PATTERNS,
   CLAUDE_MODEL_PATTERN,
   CODEX_MODEL_PATTERN,
@@ -1593,15 +1589,11 @@ export class RoutingPolicy {
     random = Math.random,
     preferred: string | null = null
   ): Candidate[] {
-    const scopedMcp = roleScopedMcp(role);
     const candidates = this.tierCandidates(
       typeof role === "string" ? this.config.roles[role]?.tier : undefined,
       random,
       "subagent",
       role ?? null
-    ).filter(
-      (candidate) =>
-        scopedMcp.length === 0 || providerInjectsRoleMcp(candidate.provider)
     );
     return this.preferProvider(candidates, preferred, "subagent");
   }

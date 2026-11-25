@@ -1,9 +1,12 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
+import { isRecord } from "@simulatorlife/autodev-core";
+import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
+import { declaredRoleNames } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import {
   isExecutable,
   resolveCocoIndexBinary,
@@ -24,6 +27,7 @@ import {
   MCP_SERVER_PLAYTEST,
   MCP_SERVER_XACPX
 } from "@simulatorlife/autodev-runtime/shared/tool-names";
+import { resolveXacpxOrchestrationSocketPath } from "../xacpx/orchestration-ipc.ts";
 
 export type McpName =
   | "lsp"
@@ -104,11 +108,7 @@ export function resolveMcpCommand(
     // tools that cannot change the filesystem.
     return {
       binary: path.join(repoRoot, "node_modules/.bin/mcp-server-filesystem"),
-      args:
-        env[MCP_FILESYSTEM_READ_ONLY_ENV] === "1" ||
-        env[MCP_FILESYSTEM_WORKSPACE_ONLY_ENV] === "1"
-          ? ["--read-only"]
-          : [],
+      args: env[MCP_FILESYSTEM_READ_ONLY_ENV] === "1" ? ["--read-only"] : [],
       pathPrepend: [path.dirname(process.execPath)]
     };
   if (tool === "cocoindex-code") {
@@ -297,6 +297,57 @@ export function resolveCocoindexInitRoot(
   return root;
 }
 
+function ensureXacpxConfig(
+  configPath: string,
+  workspaceKey: string | undefined,
+  workspaceDir: string
+): void {
+  let existing: Record<string, unknown> = {};
+  if (existsSync(configPath)) {
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(configPath, "utf8"));
+      if (isRecord(parsed)) existing = parsed;
+    } catch {
+      existing = {};
+    }
+  }
+  const transport = isRecord(existing.transport)
+    ? existing.transport
+    : { type: "acpx-bridge" };
+  const channel = isRecord(existing.channel)
+    ? existing.channel
+    : { type: "weixin", replyMode: "verbose" };
+  const agents: Record<string, unknown> = isRecord(existing.agents)
+    ? { ...existing.agents }
+    : {};
+  for (const role of declaredRoleNames()) {
+    if (role === "orchestrator") continue;
+    if (!isRecord(agents[role])) {
+      agents[role] = { driver: "codex" };
+    }
+  }
+  const workspaces: Record<string, unknown> = isRecord(existing.workspaces)
+    ? { ...existing.workspaces }
+    : {};
+  if (!isRecord(workspaces.home)) {
+    workspaces.home = { cwd: "~", description: "home directory" };
+  }
+  if (workspaceKey) {
+    workspaces[workspaceKey] = { cwd: workspaceDir };
+  }
+  const next = {
+    ...existing,
+    transport,
+    channel,
+    agents,
+    workspaces
+  };
+  atomicWriteSync(configPath, JSON.stringify(next, null, 2) + "\n", {
+    mode: 0o600,
+    skipUnchanged: true
+  });
+}
+
 export function runMcp(
   name: string,
   repoRoot: string,
@@ -308,13 +359,43 @@ export function runMcp(
     throw new Error(
       `AutoDev MCP binary is missing or not executable: ${command.binary}`
     );
+  const xacpxEnv: Record<string, string> = {};
+  if (name === MCP_SERVER_XACPX) {
+    const home = env.HOME?.trim() || homedir();
+    const codexHome = env.CODEX_HOME?.trim() || path.join(home, ".codex");
+    const xacpxRunDir = path.join(codexHome, "run", "xacpx");
+    if (!env.XACPX_ORCHESTRATION_SOCKET?.trim()) {
+      xacpxEnv.XACPX_ORCHESTRATION_SOCKET = resolveXacpxOrchestrationSocketPath(
+        codexHome,
+        env
+      );
+    }
+    const configPath =
+      env.XACPX_CONFIG?.trim() || path.join(xacpxRunDir, "config.json");
+    if (!env.XACPX_CONFIG?.trim()) {
+      xacpxEnv.XACPX_CONFIG = configPath;
+    }
+    if (!env.XACPX_STATE?.trim()) {
+      xacpxEnv.XACPX_STATE = path.join(xacpxRunDir, "state.json");
+    }
+    ensureXacpxConfig(
+      configPath,
+      env.AUTODEV_XACPX_WORKSPACE?.trim(),
+      physicalPath(workspace)
+    );
+  }
   const childEnv =
-    command.pathPrepend.length > 0
+    command.pathPrepend.length > 0 || Object.keys(xacpxEnv).length > 0
       ? {
           ...env,
-          PATH: [...command.pathPrepend, env.PATH ?? ""]
-            .filter(Boolean)
-            .join(path.delimiter)
+          ...xacpxEnv,
+          ...(command.pathPrepend.length > 0
+            ? {
+                PATH: [...command.pathPrepend, env.PATH ?? ""]
+                  .filter(Boolean)
+                  .join(path.delimiter)
+              }
+            : {})
         }
       : env;
   if (name === "cocoindex-code" && !findCocoindexProjectRoot(workspace)) {

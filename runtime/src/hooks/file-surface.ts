@@ -53,6 +53,11 @@ function normalizeToolName(name: string): string {
     .replaceAll(/[\s-]+/gu, "_");
 }
 
+/** Whether `toolName` is a provider-native file tool superseded by the `filesystem` MCP server. */
+export function isDisabledNativeFileTool(toolName: string): boolean {
+  return REPLACEMENTS.has(normalizeToolName(toolName));
+}
+
 export interface FileSurfaceDecision {
   readonly denied: boolean;
   readonly reason: string | null;

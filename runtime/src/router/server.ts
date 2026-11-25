@@ -49,6 +49,11 @@ import { findAgyBinary, findClaudeBinary } from "../shared/executables.ts";
 import { resolveRuntimePackageManifest } from "../shared/runtime-source-root.ts";
 import { SHARED_XACPX_SESSION_MANAGER } from "../xacpx/http.ts";
 import {
+  resolveXacpxOrchestrationSocketPath,
+  startXacpxOrchestrationIpcServer,
+  type XacpxOrchestrationIpcHandle
+} from "../xacpx/orchestration-ipc.ts";
+import {
   agentActivity,
   checkProvider,
   getRouterStatus,
@@ -182,6 +187,7 @@ export function startRouterServer(port = PORT, host = HOST): Server {
   // not orphaned to finish a read nobody will publish and write its cache.
   const quotaAxiAbort = new AbortController();
   let controlServer: Server | null = null;
+  let xacpxIpcServer: XacpxOrchestrationIpcHandle | null = null;
   let cleanedUp = false;
   let playtestingShutdown: Promise<void> | null = null;
   const modelDiscovery = IS_MAIN
@@ -344,6 +350,10 @@ export function startRouterServer(port = PORT, host = HOST): Server {
       clearTimeout(backgroundWarmupTimer);
       backgroundWarmupTimer = null;
     }
+    if (xacpxIpcServer) {
+      void xacpxIpcServer.close().catch(() => undefined);
+      xacpxIpcServer = null;
+    }
     void SHARED_XACPX_SESSION_MANAGER.closeAllSessions().catch(() => undefined);
     if (quotaPollInterval !== null) {
       clearInterval(quotaPollInterval);
@@ -405,6 +415,34 @@ export function startRouterServer(port = PORT, host = HOST): Server {
               );
             }
           );
+        }
+        const configuredXacpxSocket =
+          process.env.AUTODEV_XACPX_ORCHESTRATION_SOCKET?.trim();
+        if (
+          configuredXacpxSocket !== "none" &&
+          (IS_MAIN || Boolean(configuredXacpxSocket))
+        ) {
+          const socketPath = resolveXacpxOrchestrationSocketPath(
+            undefined,
+            process.env
+          );
+          void startXacpxOrchestrationIpcServer({
+            socketPath,
+            manager: SHARED_XACPX_SESSION_MANAGER
+          })
+            .then((handle) => {
+              if (cleanedUp) {
+                void handle.close().catch(() => undefined);
+                return;
+              }
+              xacpxIpcServer = handle;
+              writeErrorLine(
+                `AutoDev XACPX orchestration IPC listening at ${handle.socketPath}`
+              );
+            })
+            .catch(() => {
+              writeErrorLine("AutoDev XACPX orchestration IPC startup failed.");
+            });
         }
         if (getControlApiAvailability().enabled) {
           try {
@@ -502,8 +540,6 @@ export {
   SESSION_ID_HEADER,
   SESSION_SCOPE_HEADER,
   spawnFailureStatus,
-  SUBAGENT_SPAWN_TOOLS_HEADER,
-  subagentSpawnToolsFor,
   subagentStatus,
   THREAD_ID_HEADER,
   UNATTRIBUTED_SUBAGENT_ROLE

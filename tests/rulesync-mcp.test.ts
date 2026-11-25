@@ -154,7 +154,7 @@ test("source declares each launch definition consistently", () => {
   const shared = serverMap(document.mcpServers);
   assert.deepEqual(
     Object.keys(document).sort(),
-    ["$schema", "codexcli", "copilotcli", "mcpServers"].sort()
+    ["$schema", "codexcli", "mcpServers"].sort()
   );
   assert.deepEqual(Object.keys(shared).sort(), [
     "cocoindex-code",
@@ -165,6 +165,8 @@ test("source declares each launch definition consistently", () => {
     "googleDeveloperKnowledge",
     "lsp",
     "openaiDeveloperDocs",
+    "playtest",
+    "playwright",
     "xacpx"
   ]);
   assert.equal(shared.context7?.url, "https://mcp.context7.com/mcp");

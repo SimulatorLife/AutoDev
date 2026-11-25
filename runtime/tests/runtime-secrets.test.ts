@@ -175,6 +175,7 @@ test(
       for (const [name, value] of [
         ["MINIMAX_API_KEY", "sk-minimax-real-test"],
         ["CONTEXT7_API_KEY", "ctx7sk-real-test"],
+        ["GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY", "gdev-real-test"],
         ["AUTODEV_CHATGPT_TUNNEL_API_KEY", "sk-tunnel-real-test"]
       ] as const) {
         writeKeychainSecret(name, value, env);

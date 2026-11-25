@@ -8,6 +8,10 @@ import {
   writeErrorLine,
   writeLine
 } from "@simulatorlife/autodev-runtime/shared/output";
+import {
+  loadSharedRolePromptParts,
+  readPromptFileText
+} from "@simulatorlife/autodev-runtime/shared/role-prompts";
 import { parse } from "smol-toml";
 
 import { parseArgs, requiredArg } from "./cli-args.ts";
@@ -42,10 +46,10 @@ const TABLE = /^\[mcp_servers\.(?:"([^"]+)"|([A-Za-z0-9_-]+))\]\s*$/gm;
 
 function prompt(filePath: string, label: string): string {
   try {
-    const text = readFileSync(filePath, "utf8").trim();
-    if (text.includes('"""'))
-      throw new Error("contains TOML multiline-string delimiter");
-    return text;
+    return readPromptFileText(filePath, {
+      required: true,
+      disallowTomlDelimiter: true
+    });
   } catch (error) {
     throw new ConfigError(
       `unable to read ${label} prompt ${filePath}: ${error}`
@@ -194,9 +198,18 @@ export function renderAgentDirectory(
     Object.keys(servers).length === 0
   )
     throw new ConfigError(`MCP source declares no mcp_servers: ${mcpSource}`);
-  const base = prompt(path.join(promptDir, "base.md"), "base"),
-    leaf = prompt(path.join(promptDir, "leaf.md"), "leaf"),
-    code = prompt(path.join(promptDir, "code-search.md"), "code search");
+  let shared: { base: string; leaf: string; codeSearch: string };
+  try {
+    shared = loadSharedRolePromptParts(promptDir, {
+      required: true,
+      disallowTomlDelimiter: true
+    });
+  } catch (error) {
+    throw new ConfigError(
+      `unable to read shared prompts under ${promptDir}: ${error}`
+    );
+  }
+  const { base, leaf, codeSearch: code } = shared;
   const sources = readdirSync(sourceDir)
     .filter((name) => name.endsWith(".toml") && name !== "orchestrator.toml")
     .sort();

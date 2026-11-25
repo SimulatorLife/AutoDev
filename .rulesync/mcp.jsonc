@@ -25,6 +25,14 @@
       "command": "bash",
       "args": ["-lc", "exec \"${AUTODEV_HOME:-$HOME/.autodev}/hooks/run-autodev-mcp.sh\" xacpx"]
     },
+    "playwright": {
+      "command": "bash",
+      "args": ["-lc", "exec \"${AUTODEV_HOME:-$HOME/.autodev}/hooks/run-autodev-mcp.sh\" playwright"]
+    },
+    "playtest": {
+      "command": "bash",
+      "args": ["-lc", "exec \"${AUTODEV_HOME:-$HOME/.autodev}/hooks/run-autodev-mcp.sh\" playtest"]
+    },
     "openaiDeveloperDocs": {
       "url": "https://developers.openai.com/mcp"
     },
@@ -70,7 +78,6 @@
       "xacpx": {
         "command": "bash",
         "args": ["-lc", "exec \"${AUTODEV_HOME:-$HOME/.autodev}/hooks/run-autodev-mcp.sh\" xacpx"],
-        "disabled": true,
         "default_tools_approval_mode": "approve"
       },
       "openaiDeveloperDocs": {
@@ -111,13 +118,6 @@
         "disabled": true,
         "enabled_tools": ["request_user_input"]
       }
-    }
-  },
-  "copilotcli": {
-    "mcpServers": {
-      "openaiDeveloperDocs": null,
-      "codegraphcontext": null,
-      "lsp": null
     }
   }
 }

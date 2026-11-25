@@ -36,25 +36,12 @@ export function createBridgeMcpHomes(): {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "autodev-bridge-mcp-")));
   const rulesync = join(REPO_ROOT, "node_modules", ".bin", "rulesync");
   const source = join(REPO_ROOT, ".rulesync");
-  const projection = join(root, "projection");
-  run(rulesync, [
-    "generate",
-    "--input-roots",
-    source,
-    "--targets",
-    "codexcli",
-    "--features",
-    "mcp",
-    "--output-roots",
-    projection,
-    "--silent"
-  ]);
   const codexHome = join(root, "codex");
   const catalogue = join(codexHome, "provider-runtime", "mcp-servers.json");
   run("node", [
     join(REPO_ROOT, "runtime/src/config/render-bridge-mcp-catalogue.ts"),
     "--mcp-source",
-    join(projection, ".codex", "config.toml"),
+    join(source, "mcp.jsonc"),
     "--output",
     catalogue
   ]);

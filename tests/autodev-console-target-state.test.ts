@@ -2168,6 +2168,38 @@ test("canonical target does not restore pre-ACP provider hopping or removed memo
   assert.match(setup, /The `xacpx` MCP is declared here/u);
 });
 
+test("canonical target treats ChatGPT as a first-class role-governed participant", () => {
+  const doc = readFileSync(targetStatePath, "utf8");
+  const entrypoints = doc.slice(
+    doc.indexOf("### Unified user-chat and CLI execution entrypoints"),
+    doc.indexOf("### Role-oriented execution and provider routing")
+  );
+  assert.match(entrypoints, /first-class, provider-agnostic agent participants/u);
+  assert.match(
+    entrypoints,
+    /never treated as a permanently restricted read-only external MCP consumer/u
+  );
+  assert.match(
+    entrypoints,
+    /never\*\* a separate read-only capability model/u
+  );
+  assert.match(entrypoints, /workspace-confined filesystem mutations/u);
+  assert.match(entrypoints, /canonical `xacpx` MCP interface/u);
+  assert.doesNotMatch(
+    doc,
+    /External grants remain separately reviewed and may be narrower than local roles/u
+  );
+  const tunnelDoc = readFileSync(
+    new URL("docs/chatgpt-secure-mcp-tunnel.md", repositoryRoot),
+    "utf8"
+  );
+  assert.doesNotMatch(
+    tunnelDoc,
+    /restricted to stateless, read-only tools/u
+  );
+  assert.match(tunnelDoc, /Role-driven MCP access policy/u);
+});
+
 test("active documentation does not prescribe retired execution paths", () => {
   const todo = readFileSync(new URL("docs/TODO.md", repositoryRoot), "utf8");
   const active = todo

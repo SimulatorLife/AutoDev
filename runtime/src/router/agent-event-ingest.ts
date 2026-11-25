@@ -1,8 +1,4 @@
 import { type AgentActivityTracker } from "@simulatorlife/autodev-runtime/agents";
-import {
-  getDefaultMcpProcessRegistry,
-  registerLogical
-} from "@simulatorlife/autodev-runtime/mcp/process-registry";
 import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
 import {
   type LiveFeedCategory,
@@ -308,18 +304,6 @@ function applyMcpExposedEvent(
   requestId: string
 ): void {
   recordBridgeMcpExposure({ event, context, requestId });
-  const server =
-    typeof event.server === "string" && event.server.trim()
-      ? event.server.trim()
-      : null;
-  const sessionKey = context.sessionKey ?? context.activitySubject;
-  if (server && typeof sessionKey === "string" && sessionKey.trim()) {
-    try {
-      registerLogical(sessionKey, server, getDefaultMcpProcessRegistry());
-    } catch {
-      // Defensive: registration must never fail an ingest.
-    }
-  }
 }
 
 function applyAgentEvent(
