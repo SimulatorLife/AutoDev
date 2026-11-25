@@ -86,6 +86,19 @@
       "vault *": "deny"
     },
     "read": {
+      "~/.autodev/**": "allow",
+      "~/.agents/**": "allow",
+      "~/.codex/**": "allow",
+      "~/.claude/**": "allow",
+      "~/.gemini/**": "allow",
+      "~/.minimax/**": "allow",
+      "~/.mmx/**": "allow",
+      "~/.opencli/**": "allow",
+      "~/.copilot/**": "allow",
+      "~/.docker/**": "allow",
+      "~/.xacpx/**": "allow",
+      "~/.cocoindex_code/**": "allow",
+      "~/.codegraphcontext/**": "allow",
       "~/.ssh/**": "deny",
       "~/.gnupg/**": "deny",
       "~/.aws/**": "deny",
@@ -151,16 +164,6 @@
   "antigravity-cli": {
     "agentMode": "accept-edits",
     "permission": {
-      "read": {
-        "~/.agents/**": "allow",
-        "~/.codex/**": "allow",
-        "~/.claude/**": "allow",
-        "~/.gemini/**": "allow",
-        "~/.minimax/**": "allow",
-        "~/.mmx/**": "allow",
-        "~/.opencli/**": "allow",
-        "~/.copilot/**": "allow"
-      },
       "unsandboxed": {
         "pwd *": "allow",
         "pnpm test *": "allow",

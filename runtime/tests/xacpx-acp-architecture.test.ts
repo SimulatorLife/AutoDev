@@ -22,10 +22,12 @@ import {
 
 import {
   ACP_PROVIDER_IDS,
-  buildAcpProviderLaunchSpec,
-  buildGithubWorkerTaskSpec,
-  GITHUB_WORKER_ROLE
+  buildAcpProviderLaunchSpec
 } from "../src/acp/provider-profiles.ts";
+import {
+  buildOpencliRoleTaskSpec,
+  GITHUB_WORKER_ROLE
+} from "../src/providers/opencli-role.ts";
 import { renderBridgeMcpCatalogue } from "../src/config/render-bridge-mcp-catalogue.ts";
 import { evaluatePreToolUse as evaluateBlockCcc } from "../src/hooks/block-ccc-cli.ts";
 import { evaluateFileSurfaceHook } from "../src/hooks/file-surface.ts";
@@ -249,18 +251,24 @@ test("ACP provider profiles project canonical role capabilities, native mcpServe
     /Unknown AutoDev agent role/u
   );
 
-  const ghTask = buildGithubWorkerTaskSpec({
+  const ghTask = buildOpencliRoleTaskSpec({
+    role: GITHUB_WORKER_ROLE,
     provider: "opencli-chatgpt",
     model: "opencli-chatgpt-advanced",
     repository: "SimulatorLife/AutoDev",
     task: "Raise a PR to AutoDev to update README",
-    sessionId: "gh-sess-1"
+    sessionId: "gh-sess-1",
+    workspace: REPO_ROOT,
+    systemPrompt: "",
+    mcpApp: "AutoDev"
   });
   assert.equal(ghTask.role, GITHUB_WORKER_ROLE);
   assert.match(ghTask.prompt, /Raise a PR to AutoDev/u);
+  assert.equal(ghTask.mcpApp, "AutoDev");
+  assert.equal(ghTask.site, "chatgpt");
 });
 
-test("XacpxSessionManager resolves binaries, enforces github-worker <-> opencli boundary, and pins sessions", () => {
+test("XacpxSessionManager resolves binaries, dispatches every transport, and pins sessions", () => {
   const binaries = resolveXacpxBinaries(process.env, REPO_ROOT);
   assert.equal(existsSync(binaries.xacpxBin), true);
   assert.equal(existsSync(binaries.acpxBin), true);
@@ -331,7 +339,8 @@ test("XacpxSessionManager resolves binaries, enforces github-worker <-> opencli 
     );
   }
 
-  // github-worker routes exclusively to opencli-chatgpt / opencli-gemini.
+  // The `github-worker` role is served by an opencli site, and the site is
+  // chosen by capability rather than by the role.
   mkdirSync(REPO_ROOT, { recursive: true });
   const ghPlan = manager.planDispatch({
     sessionId: "gh-worker-1",
@@ -341,11 +350,90 @@ test("XacpxSessionManager resolves binaries, enforces github-worker <-> opencli 
     promptOrTask: "Raise a PR to AutoDev",
     repository: "SimulatorLife/AutoDev"
   });
-  assert.equal(ghPlan.kind, "opencli-github-worker");
+  assert.equal(ghPlan.kind, "opencli");
   assert.match(ghPlan.session.provider, /^opencli-(?:chatgpt|gemini)$/u);
+  assert.equal(ghPlan.task.role, GITHUB_WORKER_ROLE);
 });
 
-test("OpenCLI-only worker allocation reports the missing role-bound MCP integration", () => {
+test("an opencli-backed provider serves every role its transport can reach", async () => {
+  const policy = new RoutingPolicy(
+    ROUTING_POLICY.config,
+    ROUTING_POLICY.configFile,
+    {}
+  );
+  for (const provider of policy.providerIds()) {
+    policy.setProviderAssignment(provider, "subagent", {
+      priority: "disabled",
+      model: null
+    });
+    policy.setProviderAssignment(provider, "orchestrator", {
+      priority: "disabled",
+      model: null
+    });
+  }
+  policy.setProviderAssignment("opencli-chatgpt", "subagent", {
+    priority: 1,
+    model: "opencli-chatgpt-fast"
+  });
+  policy.setProviderAssignment("opencli-chatgpt", "orchestrator", {
+    priority: 1,
+    model: "opencli-chatgpt-balanced"
+  });
+  assert.deepEqual(
+    policy.roleCandidates("worker").map((candidate) => candidate.provider),
+    ["opencli-chatgpt"]
+  );
+
+  const manager = new XacpxSessionManager({
+    policy,
+    opencliRunner: async () => ({
+      outputText: "done",
+      exitCode: 0,
+      conversationId: "chat-1"
+    })
+  });
+  try {
+    // A leaf role: the site drives it with the role's MCP app selected.
+    const worker = manager.selectCandidateForSession(
+      "opencli-parity-worker",
+      "worker"
+    );
+    assert.equal(worker.provider, "opencli-chatgpt");
+    const workerPlan = manager.planDispatch({
+      sessionId: "opencli-parity-worker",
+      role: "worker",
+      cwd: REPO_ROOT,
+      systemPrompt: "Worker prompt",
+      promptOrTask: "Implement the feature"
+    });
+    assert.equal(workerPlan.kind, "opencli");
+    assert.equal(workerPlan.task.role, "worker");
+    assert.equal(workerPlan.task.mcpApp, "AutoDev worker");
+    assert.match(workerPlan.task.prompt, /Worker prompt/u);
+    assert.match(workerPlan.task.prompt, /Implement the feature/u);
+
+    // The orchestrator tier: the same transport now holds the delegation path.
+    const orchestrator = manager.selectCandidateForSession(
+      "opencli-parity-orchestrator",
+      "orchestrator"
+    );
+    assert.equal(orchestrator.provider, "opencli-chatgpt");
+    const orchestratorPlan = manager.planDispatch({
+      sessionId: "opencli-parity-orchestrator",
+      role: "orchestrator",
+      cwd: REPO_ROOT,
+      systemPrompt: "Orchestrator prompt",
+      promptOrTask: "Plan and delegate"
+    });
+    assert.equal(orchestratorPlan.kind, "opencli");
+    assert.equal(orchestratorPlan.task.role, "orchestrator");
+    assert.equal(orchestratorPlan.task.mcpApp, "AutoDev");
+  } finally {
+    await manager.closeAllSessions();
+  }
+});
+
+test("a site without a gateway ingress is refused for roles the gateway owns, with the reason named", () => {
   const policy = new RoutingPolicy(
     ROUTING_POLICY.config,
     ROUTING_POLICY.configFile,
@@ -357,20 +445,20 @@ test("OpenCLI-only worker allocation reports the missing role-bound MCP integrat
       model: null
     });
   }
-  policy.setProviderAssignment("opencli-chatgpt", "subagent", {
+  policy.setProviderAssignment("opencli-gemini", "subagent", {
     priority: 1,
-    model: "opencli-chatgpt-fast"
+    model: "opencli-gemini-4-neon"
   });
-  assert.deepEqual(
-    policy.roleCandidates("worker").map((candidate) => candidate.provider),
-    ["opencli-chatgpt"]
-  );
   const manager = new XacpxSessionManager({ policy });
+  // The `github` surface is the site's own integration, so that role is
+  // deliverable; a role whose tools live in the gateway is not.
+  assert.equal(policy.providerReachesRoleMcp("opencli-gemini", "github-worker"), true);
+  assert.equal(policy.providerReachesRoleMcp("opencli-gemini", "worker"), false);
   assert.throws(
-    () => manager.selectCandidateForSession("opencli-parity-worker", "worker"),
-    /OpenCLI integration parity gap \(opencli-chatgpt\).*conversation-specific/u
+    () => manager.selectCandidateForSession("gemini-parity-worker", "worker"),
+    /cannot reach the MCP surface of role 'worker'/u
   );
-  assert.equal(manager.getPinnedSession("opencli-parity-worker"), null);
+  assert.equal(manager.getPinnedSession("gemini-parity-worker"), null);
 });
 
 test("OpenCLI sessions resume the verified conversation and never replay an uncertain turn", async () => {
@@ -389,10 +477,13 @@ test("OpenCLI sessions resume the verified conversation and never replay an unce
   const model = "opencli-chatgpt-fast";
   policy.setProviderAssignment(provider, "subagent", { priority: 1, model });
   COOLDOWNS.clearAfterSuccess(provider, model);
-  const calls: Array<{ conversationId: string | null; repository: string }> = [];
+  const calls: Array<{
+    conversationId: string | null;
+    repository: string | null;
+  }> = [];
   const manager = new XacpxSessionManager({
     policy,
-    githubWorkerRunner: async (task) => {
+    opencliRunner: async (task) => {
       calls.push({
         conversationId: task.conversationId,
         repository: task.repository
@@ -456,7 +547,7 @@ test("OpenCLI sessions resume the verified conversation and never replay an unce
 
   const cancellingManager = new XacpxSessionManager({
     policy,
-    githubWorkerRunner: (_task, signal) =>
+    opencliRunner: (_task, signal) =>
       new Promise((_resolve, reject) => {
         signal?.addEventListener(
           "abort",
@@ -566,7 +657,7 @@ test("XacpxSessionManager executes live ACP turns, enforces read-only permission
       launchedPromptMode = launch.isolation.systemPromptInjection;
       return { target: createMockAcpAgent() };
     },
-    githubWorkerRunner: async (task) => {
+    opencliRunner: async (task) => {
       opencliCalls.push(`${task.provider}:${task.prompt}`);
       return {
         outputText: "github pr #42 opened",
@@ -613,7 +704,7 @@ test("XacpxSessionManager executes live ACP turns, enforces read-only permission
     promptOrTask: "Inspect PR checks",
     repository: "SimulatorLife/AutoDev"
   });
-  assert.equal(ghResult.kind, "opencli-github-worker");
+  assert.equal(ghResult.kind, "opencli");
   assert.equal(ghResult.outputText, "github pr #42 opened");
   assert.equal(ghResult.conversationId, "github-chat-42");
   assert.equal(opencliCalls.length, 1);

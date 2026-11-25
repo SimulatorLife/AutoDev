@@ -9,7 +9,9 @@ import {
 import {
   contractRoleSkills,
   type ExecutionContract,
-  type RoleContract
+  type ProviderMcpIngress,
+  type RoleContract,
+  SITE_NATIVE_MCP_SERVERS
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
@@ -374,6 +376,8 @@ export interface BridgeParentActivityEntry {
 export interface ProviderCapabilities {
   subagentSpawn: boolean;
   normalizeItemIds: boolean;
+  /** How this provider's transport reaches the role-scoped MCP surfaces. */
+  mcpIngress: ProviderMcpIngress;
 }
 
 export interface RoleCapabilityRequirements {
@@ -570,12 +574,38 @@ export function providerCapabilities(
   executionContract: ExecutionContract = getDefaultExecutionContract()
 ): ProviderCapabilities {
   // The canonical execution contract is the single source of truth for whether
-  // a provider can orchestrate children through the shared XACPX MCP gateway.
-  const delegation = executionContract.providers?.[provider]?.delegation;
+  // a provider can orchestrate children through the shared XACPX MCP gateway,
+  // and for how its transport reaches the role-scoped MCP surfaces at all.
+  const contract = executionContract.providers?.[provider];
+  const delegation = contract?.delegation;
+  const mcpIngress = contract?.mcpIngress ?? "local";
   return {
     subagentSpawn: delegation === "xacpx",
-    normalizeItemIds: true
+    normalizeItemIds: true,
+    mcpIngress
   };
+}
+
+/**
+ * Whether a provider's transport can deliver a role's MCP surface.
+ *
+ * A `gateway` or `local` transport reaches every role's MCP surface. A
+ * `site-native` transport reaches only the roles whose tools the site itself
+ * provides. A transport with no ingress reaches no role that needs tools.
+ */
+export function providerDeliversRoleMcp(
+  provider: string,
+  roleMcpServers: readonly string[],
+  executionContract: ExecutionContract = getDefaultExecutionContract()
+): boolean {
+  const ingress = providerCapabilities(provider, executionContract).mcpIngress;
+  if (ingress === "gateway" || ingress === "local") return true;
+  if (ingress === "site-native") {
+    return roleMcpServers.every((server) =>
+      SITE_NATIVE_MCP_SERVERS.includes(server)
+    );
+  }
+  return false;
 }
 
 export function roleCapabilityRequirements(

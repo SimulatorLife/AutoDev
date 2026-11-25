@@ -4,7 +4,7 @@ AutoDev keeps **one broad target-state authority** and a small set of focused op
 
 ## Canonical target
 
-- [`autodev-console-target-state.md`](autodev-console-target-state.md) — **sole AutoDev codebase target-state authority**: agent orchestration and ACP/MCP/opencli transport gates, dependency ownership/reuse, provider routing, Rulesync/permissions, OpenLIT/OpenTelemetry, Control API, Console design/resource contracts and acceptance criteria.
+- [`autodev-console-target-state.md`](autodev-console-target-state.md) — **sole AutoDev codebase target-state authority**: agent orchestration and ACP/MCP/opencli transport gates, dependency ownership/reuse, provider routing, Rulesync/permissions, [unified desktop/IDE/CLI integration](autodev-console-target-state.md#unified-desktop-ide-cli-and-external-agent-integration), OpenLIT/OpenTelemetry, Control API, Console design/resource contracts and acceptance criteria.
 
 ## Focused operational/design docs
 

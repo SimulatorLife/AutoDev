@@ -6,6 +6,22 @@
 >
 > **Last reviewed:** 2026-11-20 (OpenLIT patch 76 remains deployed; Runtime v3 live identity and patch 77 exact-session lookup are source-implemented but await managed deployment and live acceptance; source-confirmed attribution gaps remain explicit; MCP HTTP-header credential values are no longer exposed by applied reads or mutation replies, and malformed applied-catalogue diagnostics do not echo source text; the Providers page configures Runtime-registered providers only and uses a modal for reset confirmation).
 
+## Desktop, IDE and standalone client integration — pending
+
+The canonical [unified client integration target](autodev-console-target-state.md#unified-desktop-ide-cli-and-external-agent-integration) now explicitly includes operator-enrolled desktop apps, IDEs, standalone CLIs and web sessions, not just Runtime-launched agents. This is a target expansion, not a deployment claim.
+
+**Source-inspected baseline (2026-11-25):** `rulesync.jsonc` currently targets Copilot, Claude Code, Codex CLI, Antigravity CLI and AGENTS.md for selected features. The MiniMax managed profile generator (`runtime/src/platform/mcode-profile.ts`) deliberately removes profile-level MCP configuration and uses the role's native ACP session injection; it does not own the standalone operator profile at `~/.minimax`. The operator's reported standalone `mcp.json` still contains direct launches and lacks XACPX. Actual native app consumption, session binding, telemetry coverage and full gateway convergence are unverified.
+
+Remaining work, in cutover order:
+
+1. Inventory actual installed desktop/IDE/CLI versions, shared native harnesses and profiles, configuration precedence and supported native plugin/configuration/telemetry features. Build a capability/evidence matrix for ChatGPT, Codex, Claude, Copilot, MiniMax, Antigravity, Cursor and other enrolled interfaces; verify upstream and installed-version behavior.
+2. Reuse stock RuleSync targets and shared native formats/configuration locations; generate missing standalone projections where supported, including MiniMax operator profile enrollment, without modifying unrelated user state or widening managed ACP grants. Record missing native support explicitly.
+3. Reconcile all AutoDev-managed registrations to authenticated role/workspace-bound Supergateway references. Prove trusted identity/session binding, role admission, workspace switching, revocation and cross-session isolation for externally initiated sessions; remove superseded direct launch entries. Do not weaken existing managed-role isolation.
+4. Configure supported native OTel exporters, shared hooks and existing gateway/Runtime observations. Confirm actual client surface and session-origin attribution, deduplication and Not observed semantics for unavailable metrics. Validate hook context so Runtime-only policies do not fire on unrelated native chats.
+5. Enable authorized XACPX and commands MCP capabilities after their respective acceptance gates; reconcile through the single installer and existing Console/Control API. Exercise actual enrolled client interfaces with allowed and denied operations, native configuration precedence, two roles/workspaces, lifecycle, telemetry and preserved user settings. Record observed, unavailable and skipped separately.
+
+No desktop integration was deployed or live-tested as part of this documentation update.
+
 ## Current baseline
 
 The repository is on the four-workspace TypeScript layout (Console, Runtime, Core, Data) and the obsolete root implementation tree is gone. OpenLIT plus the AutoDev Control API are the target observability/control foundation, but the migration is not complete: the unified Console still lacks full feature parity, the OpenLIT product shell still contains unwanted generic product code, RuleSync role/permission parity is incomplete, and router-owned direct OTLP/history paths remain.

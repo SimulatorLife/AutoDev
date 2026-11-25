@@ -48,6 +48,7 @@ const ROLE_FILE_EXTENSION = /\.toml$/u;
 const collator = new Intl.Collator();
 const RESEARCH_ROLES = new Set(["docs-researcher", "smart", "orchestrator"]);
 const DELEGATION_MODES = new Set(["xacpx", "none"]);
+const MCP_INGRESS_MODES = new Set(["gateway", "local", "site-native", "none"]);
 
 export function validateProviderContracts(value: unknown): UnknownRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -60,6 +61,24 @@ export function validateProviderContracts(value: unknown): UnknownRecord {
     if (typeof delegation !== "string" || !DELEGATION_MODES.has(delegation)) {
       throw new ConfigError(
         `provider '${name}' must declare delegation as one of: ${[...DELEGATION_MODES].join(", ")}`
+      );
+    }
+    const mcpIngress = provider.mcpIngress;
+    if (
+      typeof mcpIngress !== "string" ||
+      !MCP_INGRESS_MODES.has(mcpIngress)
+    ) {
+      throw new ConfigError(
+        `provider '${name}' must declare mcpIngress as one of: ${[...MCP_INGRESS_MODES].join(", ")}`
+      );
+    }
+    // Delegation runs over the `xacpx` MCP server, so a provider that cannot
+    // reach any MCP surface cannot delegate either. Declaring both without
+    // that consistency would let the router promise delegation the transport
+    // cannot deliver.
+    if (delegation === "xacpx" && mcpIngress === "none") {
+      throw new ConfigError(
+        `provider '${name}' cannot declare delegation 'xacpx' with mcpIngress 'none'`
       );
     }
     if ("spawnTools" in provider) {

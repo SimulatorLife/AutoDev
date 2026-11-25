@@ -34,10 +34,6 @@ import {
   type AcpProviderLaunchSpec,
   type AcpSupergatewayEndpoint,
   buildAcpProviderLaunchSpec,
-  buildGithubWorkerTaskSpec,
-  GITHUB_WORKER_ROLE,
-  type GithubWorkerTaskSpec,
-  isGithubWorkerProvider,
   resolveAcpProviderId
 } from "@simulatorlife/autodev-runtime/acp/provider-profiles";
 import {
@@ -56,16 +52,19 @@ import {
   hasRoleContract,
   roleContract
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
-import { opencliModel } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
+import { resolveChatgptMcpApp } from "@simulatorlife/autodev-runtime/shared/opencli-mcp-app";
 import { composeRoleSystemPrompt } from "@simulatorlife/autodev-runtime/shared/role-prompts";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 import { execa } from "execa";
 
 import {
-  geminiConversationId,
-  parseOpencliOutput,
-  replyFromRow
-} from "../providers/opencli-turn.ts";
+  buildOpencliRoleTaskSpec,
+  isOpencliProvider,
+  type OpencliRoleTaskSpec,
+  type OpencliRunResult,
+  type OpencliRunner,
+  runOpencliRoleTurn
+} from "../providers/opencli-role.ts";
 
 export interface XacpxBinaries {
   readonly xacpxBin: string;
@@ -90,9 +89,9 @@ export type SessionDispatchPlan =
       readonly launch: AcpProviderLaunchSpec;
     }
   | {
-      readonly kind: "opencli-github-worker";
+      readonly kind: "opencli";
       readonly session: PinnedSessionRecord;
-      readonly task: GithubWorkerTaskSpec;
+      readonly task: OpencliRoleTaskSpec;
     };
 
 export interface AcpConsoleSessionEvent {
@@ -134,20 +133,9 @@ export type AcpTransportFactory = (
   launch: AcpProviderLaunchSpec
 ) => AcpTransportConnection | Promise<AcpTransportConnection>;
 
-export interface GithubWorkerRunResult {
-  readonly outputText: string;
-  readonly exitCode: number;
-  readonly conversationId: string;
-}
-
-export type GithubWorkerRunner = (
-  task: GithubWorkerTaskSpec,
-  signal?: AbortSignal
-) => Promise<GithubWorkerRunResult>;
-
 export interface SessionTurnResult {
   readonly session: PinnedSessionRecord;
-  readonly kind: "acp" | "opencli-github-worker";
+  readonly kind: "acp" | "opencli";
   readonly outputText: string;
   readonly stopReason: string;
   readonly acpSessionId: string | null;
@@ -353,52 +341,6 @@ function defaultAcpTransportFactory(
   };
 }
 
-async function defaultGithubWorkerRunner(
-  task: GithubWorkerTaskSpec,
-  signal?: AbortSignal
-): Promise<GithubWorkerRunResult> {
-  const parsedModel = opencliModel(task.model);
-  if (!parsedModel || parsedModel.provider !== task.provider) {
-    throw new Error("OpenCLI model does not match the pinned provider.");
-  }
-  const { site, siteModel } = parsedModel;
-  const commandArguments = [
-    site,
-    "ask",
-    task.prompt,
-    ...(site === "gemini" ? ["--model", siteModel] : []),
-    ...(task.conversationId
-      ? ["--conversation", task.conversationId]
-      : ["--new", "true"]),
-    "-f",
-    "json"
-  ];
-
-  const command = process.env.OPENCLI_BIN?.trim() || "opencli";
-  const result = await execa(command, commandArguments, {
-    stdin: "ignore",
-    reject: false,
-    ...(signal ? { cancelSignal: signal } : {})
-  });
-  const output = result.stdout.trim();
-  const errorText = result.stderr.trim();
-  const exitCode = result.exitCode ?? 1;
-  if (exitCode !== 0) {
-    throw new Error(
-      errorText || output || `opencli github-worker exited with code ${exitCode}`
-    );
-  }
-  const row = parseOpencliOutput(output, exitCode)[0];
-  if (!row) throw new Error("OpenCLI returned no response row.");
-  const reply = replyFromRow(row);
-  const conversationId =
-    site === "gemini" ? geminiConversationId(row.url) : reply.conversationId;
-  if (!conversationId) {
-    throw new Error("OpenCLI response has no verifiable conversation identity.");
-  }
-  return { outputText: reply.response, exitCode, conversationId };
-}
-
 function resolvePackageBinary(
   name: string,
   environmentKey: string,
@@ -505,8 +447,11 @@ async function connectLiveAcpSession(
 
 /**
 In-memory registry pinning each session to its chosen provider and enforcing
-role/provider eligibility boundaries (`github-worker` <-> `opencli`, all other
-roles <-> ACP providers).
+role/provider eligibility boundaries.
+
+Eligibility is a capability question, never a transport question: a provider
+serves a role when its transport can reach that role's MCP surface, and the
+orchestrator tier additionally requires the canonical XACPX delegation path.
 */
 export class XacpxSessionManager {
   private readonly pins = new Map<string, PinnedSessionRecord>();
@@ -515,20 +460,19 @@ export class XacpxSessionManager {
   private readonly policy: RoutingPolicy;
   private readonly consoleSink: AcpConsoleSink | null;
   private readonly acpTransportFactory: AcpTransportFactory;
-  private readonly githubWorkerRunner: GithubWorkerRunner;
+  private readonly opencliRunner: OpencliRunner;
 
   constructor(options?: {
     readonly policy?: RoutingPolicy;
     readonly consoleSink?: AcpConsoleSink | null;
     readonly acpTransportFactory?: AcpTransportFactory;
-    readonly githubWorkerRunner?: GithubWorkerRunner;
+    readonly opencliRunner?: OpencliRunner;
   }) {
     this.policy = options?.policy ?? ROUTING_POLICY;
     this.consoleSink = options?.consoleSink ?? null;
     this.acpTransportFactory =
       options?.acpTransportFactory ?? defaultAcpTransportFactory;
-    this.githubWorkerRunner =
-      options?.githubWorkerRunner ?? defaultGithubWorkerRunner;
+    this.opencliRunner = options?.opencliRunner ?? runOpencliRoleTurn;
   }
 
   getPinnedSession(sessionId: string): PinnedSessionRecord | null {
@@ -551,7 +495,13 @@ export class XacpxSessionManager {
 
   /**
   Select an eligible provider/model via AutoDev's RoutingPolicy while honoring
-  strict per-session pinning and the `github-worker` <-> `opencli` boundary.
+  strict per-session pinning.
+
+  Eligibility is the routing policy's own capability verdict: a candidate is
+  eligible when the provider is enabled, ranked for the tier, can reach the
+  role's MCP surface, and -- for the orchestrator -- holds the canonical
+  XACPX delegation path. The transport (ACP or an opencli site) is never a
+  reason to reject a candidate.
   */
   selectCandidateForSession(sessionId: string, role: string): Candidate {
     const pinned = this.pins.get(sessionId);
@@ -560,15 +510,9 @@ export class XacpxSessionManager {
         ? this.policy.orchestratorCandidates()
         : this.policy.roleCandidates(role);
 
-    const eligible = rawCandidates.filter((candidate) => {
-      if (role === GITHUB_WORKER_ROLE) {
-        return isGithubWorkerProvider(candidate.provider);
-      }
-      if (isGithubWorkerProvider(candidate.provider)) {
-        return false;
-      }
-      return resolveAcpProviderId(candidate.provider) !== null;
-    });
+    const eligible = rawCandidates.filter((candidate) =>
+      this.policy.providerReachesRoleMcp(candidate.provider, role)
+    );
 
     if (pinned) {
       if (pinned.role !== role) {
@@ -608,14 +552,6 @@ export class XacpxSessionManager {
     }
     const chosen = healthy;
     if (!chosen) {
-      const blockedOpencli = rawCandidates
-        .filter((candidate) => isGithubWorkerProvider(candidate.provider))
-        .map((candidate) => candidate.provider);
-      if (role !== GITHUB_WORKER_ROLE && blockedOpencli.length > 0) {
-        throw new Error(
-          `No eligible provider candidate found for role '${role}'. OpenCLI integration parity gap (${[...new Set(blockedOpencli)].join(", ")}): native MCP conversation-specific role, workspace and coordinator binding to Supergateway/XACPX is not verified.`
-        );
-      }
       const tier =
         role === "orchestrator"
           ? this.policy.config.orchestrator.tier
@@ -637,6 +573,22 @@ export class XacpxSessionManager {
           reasons.set(provider, "no eligible model or execution transport");
         }
       }
+      // A provider that is ranked and enabled but whose transport cannot reach
+      // this role's MCP surface is named with the reason, so the refusal says
+      // what the operator has to change rather than that nothing is enabled.
+      const genericReason = "no eligible model or execution transport";
+      const tierProviders = tier
+        ? this.policy.effectiveProviderGroups(tier, scope).flat()
+        : [];
+      for (const provider of tierProviders) {
+        const known = reasons.get(provider);
+        if (known !== undefined && known !== genericReason) continue;
+        if (this.policy.providerReachesRoleMcp(provider, role)) continue;
+        reasons.set(
+          provider,
+          `its transport cannot reach the MCP surface of role '${role}'`
+        );
+      }
       const details = [...reasons]
         .map(([provider, reason]) => `${provider}: ${reason}`)
         .join("; ");
@@ -648,7 +600,11 @@ export class XacpxSessionManager {
   }
 
   /**
-  Plan an ACP or `github-worker` session dispatch, pinning newly created sessions.
+  Plan a session dispatch, pinning newly created sessions.
+
+  The transport follows the provider the routing policy chose: an ACP
+  provider runs the role's contracted MCP servers itself, and an opencli
+  provider drives the site with the role's MCP app selected.
   */
   planDispatch(
     request: PlanSessionRequest,
@@ -713,23 +669,27 @@ export class XacpxSessionManager {
       role: session.role
     });
 
-    if (role === GITHUB_WORKER_ROLE) {
-      if (!isGithubWorkerProvider(chosen.provider)) {
-        throw new Error(
-          `github-worker must route to opencli; got '${chosen.provider}'.`
-        );
-      }
+    if (isOpencliProvider(chosen.provider)) {
+      // The site's MCP app is what carries this role's tool surface, so the
+      // app is selected by the role: the conversation's tools are the role's
+      // canonical contract and the coordinator that owns its delegated
+      // children is that role's own.
+      const mcpApp = resolveChatgptMcpApp(role, environment);
       return {
-        kind: "opencli-github-worker",
+        kind: "opencli",
         session,
-        task: buildGithubWorkerTaskSpec({
+        task: buildOpencliRoleTaskSpec({
+          role,
           provider: chosen.provider,
           model: chosen.model,
           repository:
             opencli?.repository ?? request.repository ?? path.basename(cwd),
           task: request.promptOrTask,
           sessionId: request.sessionId,
-          conversationId: opencli?.conversationId ?? null
+          conversationId: opencli?.conversationId ?? null,
+          workspace: cwd,
+          mcpApp,
+          systemPrompt
         })
       };
     }
@@ -739,7 +699,7 @@ export class XacpxSessionManager {
     );
     if (!acpProvider) {
       throw new Error(
-        `Provider '${chosen.provider}' does not map to a supported ACP executor.`
+        `Provider '${chosen.provider}' does not map to a supported execution transport.`
       );
     }
     return {
@@ -761,8 +721,8 @@ export class XacpxSessionManager {
   }
 
   /**
-  Dispatch and execute one turn for a session via native ACP or direct `opencli`
-  (`github-worker`), reusing pinned live sessions across follow-up turns.
+  Dispatch and execute one turn for a session via native ACP or an opencli
+  site, reusing pinned live sessions across follow-up turns.
   */
   async executeTurn(
     request: PlanSessionRequest,
@@ -775,9 +735,9 @@ export class XacpxSessionManager {
     const plan = this.planDispatch(request, environment);
     let opencliCancelled = false;
     let opencli: LiveOpencliSessionHandle | undefined;
-    if (plan.kind === "opencli-github-worker") {
+    if (plan.kind === "opencli") {
       opencli = this.opencliSessions.get(request.sessionId) ?? {
-        repository: plan.task.repository,
+        repository: plan.task.repository ?? "",
         conversationId: null,
         active: null,
         uncertain: false
@@ -785,16 +745,16 @@ export class XacpxSessionManager {
       this.opencliSessions.set(request.sessionId, opencli);
     }
     try {
-      if (plan.kind === "opencli-github-worker" && opencli) {
+      if (plan.kind === "opencli" && opencli) {
         const controller = new AbortController();
         const { promise: settled, resolve: settle } =
           Promise.withResolvers<void>();
         opencli.active = { controller, settled };
         const abort = (): void => controller.abort();
         signal?.addEventListener("abort", abort, { once: true });
-        let result: GithubWorkerRunResult;
+        let result: OpencliRunResult;
         try {
-          result = await this.githubWorkerRunner(plan.task, controller.signal);
+          result = await this.opencliRunner(plan.task, controller.signal);
           if (controller.signal.aborted) {
             throw new Error("OpenCLI turn cancelled.");
           }
@@ -828,7 +788,7 @@ export class XacpxSessionManager {
         });
         return {
           session: plan.session,
-          kind: "opencli-github-worker",
+          kind: "opencli",
           outputText: result.outputText,
           stopReason: "end_turn",
           acpSessionId: null,

@@ -46,7 +46,7 @@ flowchart TD
     S --> W[Authorized workspace and existing project toolchain]
 ```
 
-The same role and workspace receive the same semantic command capabilities across providers. ChatGPT is not a special execution path. The backend does not require an AI provider or delegation to execute a command. There is no direct-provider connection or unsandboxed fallback.
+The same role and workspace receive the same semantic command capabilities across providers and enrolled desktop, IDE, standalone CLI and web interfaces, whether Runtime-initiated or externally initiated. See the canonical [unified client integration target](autodev-console-target-state.md#unified-desktop-ide-cli-and-external-agent-integration). ChatGPT is not a special execution path. The backend does not require an AI provider or delegation to execute a command. There is no direct-provider connection or unsandboxed fallback.
 
 | Responsibility | Owner |
 | --- | --- |
@@ -309,7 +309,7 @@ Use synthetic fixtures for unit tests and independent canonical-source validatio
 
 Verify real canonical projections, installer/drift detection, authentication, role-specific discovery and invocation, trusted workspace binding, tool annotations, telemetry and required/optional capability-gap behavior. Reject direct backend access, forged metadata and cross-role/session operations.
 
-For each eligible provider below, record actual discovery, allowed execution, denied unauthorized invocation, result retrieval and long-running/cancellation acceptance (or an explicit unresolved prerequisite):
+For each eligible provider below and each enrolled native desktop/IDE/CLI/web interface that consumes it, record actual discovery, allowed execution, denied unauthorized invocation, result retrieval and long-running/cancellation acceptance (or an explicit unresolved prerequisite). Test externally initiated sessions as well as Runtime-managed ones; shared harness configuration is not sufficient evidence of equivalent behavior:
 
 - ChatGPT via the actual secure gateway ingress
 - Codex

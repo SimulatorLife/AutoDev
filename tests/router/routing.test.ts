@@ -571,7 +571,10 @@ function assignmentTestPolicy(): RoutingPolicy {
         },
         copilot: { models: { default: "copilot" } },
         minimax: { models: { default: MINIMAX_DEFAULT_TEST_MODEL } },
-        "opencli-gemini": { models: { default: "opencli-gemini-3.8-flash" } }
+        "opencli-gemini": { models: { default: "opencli-gemini-3.8-flash" } },
+        "opencli-chatgpt": {
+          models: { default: "opencli-chatgpt-balanced" }
+        }
       },
       roles: {
         default: { tier: "default" },
@@ -764,16 +767,26 @@ test("the orchestrator tier admits only providers that can delegate, however the
     policy.orchestratorCandidates(seeded(1)).map(({ provider }) => provider),
     ["claude"]
   );
-  for (const provider of ["opencli-chatgpt", "opencli-gemini"]) {
-    assert.equal(
-      policy.providerRoleCapabilityReason(provider, "orchestrator"),
-      "provider_cannot_delegate"
-    );
-    assert.match(
-      policy.providerRoleCapabilityExplanation(provider, "orchestrator") ?? "",
-      /conversation-specific role, workspace and coordinator binding.*integration parity gap/u
-    );
-  }
+  // A site whose transport cannot reach the shared gateway cannot orchestrate.
+  assert.equal(
+    policy.providerRoleCapabilityReason("opencli-gemini", "orchestrator"),
+    "provider_cannot_delegate"
+  );
+  assert.match(
+    policy.providerRoleCapabilityExplanation("opencli-gemini", "orchestrator") ??
+      "",
+    /no delegation path/u
+  );
+  // An opencli-backed provider that reaches the gateway holds the canonical
+  // XACPX delegation path, so the transport alone never disqualifies it.
+  assert.equal(
+    policy.providerRoleCapabilityReason("opencli-chatgpt", "orchestrator"),
+    null
+  );
+  assert.equal(
+    policy.providerRoleCapabilityExplanation("opencli-chatgpt", "orchestrator"),
+    null
+  );
   // Copilot delegates through canonical XACPX, so it may orchestrate.
   policy.setProviderAssignment("copilot", "orchestrator", {
     priority: 3,
@@ -782,6 +795,15 @@ test("the orchestrator tier admits only providers that can delegate, however the
   assert.deepEqual(
     policy.orchestratorCandidates(seeded(1)).map(({ provider }) => provider),
     ["claude", "copilot"]
+  );
+  // An opencli-backed provider is ranked and admitted on the same terms.
+  policy.setProviderAssignment("opencli-chatgpt", "orchestrator", {
+    priority: 4,
+    model: "opencli-chatgpt-balanced"
+  });
+  assert.deepEqual(
+    policy.orchestratorCandidates(seeded(1)).map(({ provider }) => provider),
+    ["claude", "copilot", "opencli-chatgpt"]
   );
 });
 

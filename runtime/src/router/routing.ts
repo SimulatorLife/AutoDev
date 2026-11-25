@@ -17,16 +17,22 @@ import {
   CODEX_MODEL_PATTERN,
   MINIMAX_MODEL_PATTERN,
   OPENCLI_CHATGPT_MODEL_PATTERN,
-  OPENCLI_GEMINI_MODEL_PATTERN,
-  OPENCLI_PROVIDER_SITES
+  OPENCLI_GEMINI_MODEL_PATTERN
 } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
+import {
+  hasRoleContract,
+  roleContract
+} from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 import {
   isKeychainSecretName,
   resolveManagedSecret
 } from "@simulatorlife/autodev-runtime/shared/runtime-secrets";
 
-import { providerCapabilities } from "./subagents.ts";
+import {
+  providerCapabilities,
+  providerDeliversRoleMcp
+} from "./subagents.ts";
 
 export const ROLE_NAMES = [
   "default",
@@ -129,9 +135,16 @@ function normaliseLimit(value: unknown): number | null {
  * `provider_cannot_delegate` is a capability, not a switch: the provider is
  * enabled and ranked for the role, and no operator action can make it serve
  * that tier, because the orchestrator's whole job is delegating.
+ *
+ * `provider_cannot_reach_role_mcp` is the same kind of fact about a named
+ * role: the provider's transport cannot reach the role's MCP surface, so the
+ * role's tools would be missing no matter how the provider is switched.
  */
 export type RouteDisabledReason =
-  "provider_disabled" | "model_disabled" | "provider_cannot_delegate";
+  | "provider_disabled"
+  | "model_disabled"
+  | "provider_cannot_delegate"
+  | "provider_cannot_reach_role_mcp";
 
 /** Which of a provider's operator-set agent limits refuses a new agent. */
 export type AgentLimitReason =
@@ -697,10 +710,25 @@ export class RoutingPolicy {
       typeof provider === "string" && provider.trim().length > 0
         ? provider.trim()
         : "This provider";
-    if (Object.hasOwn(OPENCLI_PROVIDER_SITES, name)) {
-      return `${name} cannot serve the ${role} role yet: its native MCP integration has no verified conversation-specific role, workspace and coordinator binding to Supergateway/XACPX. This is an integration parity gap, not a permanent provider restriction.`;
-    }
     return `${name} cannot serve the ${role} role: it has no delegation path, so it cannot create the child agents an orchestrator needs.`;
+  }
+
+  /**
+   * Whether a provider's transport can reach a named role's MCP surface.
+   *
+   * A provider that cannot reach the surface cannot serve the role, whatever
+   * the tier says, because the role's tools would simply be missing. This is
+   * a property of the transport, not of the operator's switches.
+   */
+  providerReachesRoleMcp(
+    provider: unknown,
+    agentRole: string | null | undefined
+  ): boolean {
+    if (typeof provider !== "string" || provider.trim().length === 0) return false;
+    const role = agentRole?.trim().toLowerCase();
+    if (!role || !hasRoleContract(role)) return true;
+    const contract = roleContract(role);
+    return providerDeliversRoleMcp(provider, contract.mcp ?? []);
   }
 
   /** The provider's assignment for a role, or `undefined` when unobserved. */

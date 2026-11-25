@@ -311,15 +311,34 @@ test("bridge MCP catalogues are deterministic and preserve launch authentication
 test("execution-contract provider delegation is explicit and rejects legacy fields", () => {
   assert.deepEqual(
     validateProviderContracts({
-      codex: { delegation: "xacpx", permissionMode: "native" },
-      claude: { delegation: "xacpx", permissionMode: "native" },
-      "opencli-chatgpt": { delegation: "none", permissionMode: "upstream" }
+      codex: { delegation: "xacpx", permissionMode: "native", mcpIngress: "local" },
+      claude: { delegation: "xacpx", permissionMode: "native", mcpIngress: "local" },
+      "opencli-chatgpt": {
+        delegation: "xacpx",
+        permissionMode: "upstream",
+        mcpIngress: "gateway"
+      }
     }),
     {
-      codex: { delegation: "xacpx", permissionMode: "native" },
-      claude: { delegation: "xacpx", permissionMode: "native" },
-      "opencli-chatgpt": { delegation: "none", permissionMode: "upstream" }
+      codex: { delegation: "xacpx", permissionMode: "native", mcpIngress: "local" },
+      claude: { delegation: "xacpx", permissionMode: "native", mcpIngress: "local" },
+      "opencli-chatgpt": {
+        delegation: "xacpx",
+        permissionMode: "upstream",
+        mcpIngress: "gateway"
+      }
     }
+  );
+  assert.throws(
+    () =>
+      validateProviderContracts({
+        "opencli-chatgpt": {
+          delegation: "xacpx",
+          permissionMode: "upstream",
+          mcpIngress: "none"
+        }
+      }),
+    /cannot declare delegation 'xacpx' with mcpIngress 'none'/u
   );
   assert.throws(
     () => validateProviderContracts({ unknown: {} }),
@@ -335,7 +354,11 @@ test("execution-contract provider delegation is explicit and rejects legacy fiel
   assert.throws(
     () =>
       validateProviderContracts({
-        minimax: { delegation: "xacpx", spawnTools: ["invoke_subagent"] }
+        minimax: {
+          delegation: "xacpx",
+          mcpIngress: "local",
+          spawnTools: ["invoke_subagent"]
+        }
       }),
     /must not declare legacy spawnTools/
   );
@@ -344,6 +367,7 @@ test("execution-contract provider delegation is explicit and rejects legacy fiel
       validateProviderContracts({
         antigravity: {
           delegation: "xacpx",
+          mcpIngress: "local",
           roleMcpInjection: true
         }
       }),
@@ -692,15 +716,18 @@ test("Playtester and Browser Tester project role tool/env/shell boundaries witho
     "copilot",
     "mcode",
     "minimax",
-    "chatgpt",
+    "opencli-chatgpt",
     "antigravity-gemini",
     "antigravity-argon",
     "antigravity-claude-gpt"
   ]) {
     assert.equal(contract.providers[provider]?.delegation, "xacpx");
   }
-  assert.equal(contract.providers["opencli-chatgpt"]?.delegation, "none");
   assert.equal(contract.providers["opencli-gemini"]?.delegation, "none");
+  assert.equal(
+    contract.providers["opencli-gemini"]?.mcpIngress,
+    "site-native"
+  );
 });
 
 test("every AutoDev user-level skill is explicitly gated on root config and every role", () => {

@@ -44,8 +44,9 @@
     ]
   },
   "gitignoreDestination": "gitexclude",
-  "delete": true,
-  "global": false,
+  "delete": true, // Delete existing files before generating
+  "verbose": false, // Verbose output
+  "global": false, // Generate for global(user scope) configuration files
   "sources": [
     {
       "source": "vercel-labs/agent-skills",

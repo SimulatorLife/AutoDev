@@ -543,47 +543,53 @@
   "providers": {
     "claude": {
       "permissionMode": "native",
-      "delegation": "xacpx"
+      "delegation": "xacpx",
+      "mcpIngress": "local"
     },
     "antigravity-gemini": {
       "permissionMode": "configured",
-      "delegation": "xacpx"
+      "delegation": "xacpx",
+      "mcpIngress": "local"
     },
     "antigravity-claude-gpt": {
       "permissionMode": "configured",
-      "delegation": "xacpx"
+      "delegation": "xacpx",
+      "mcpIngress": "local"
     },
     "antigravity-argon": {
       "permissionMode": "configured",
-      "delegation": "xacpx"
+      "delegation": "xacpx",
+      "mcpIngress": "local"
     },
     "minimax": {
       "permissionMode": "upstream",
-      "delegation": "xacpx"
+      "delegation": "xacpx",
+      "mcpIngress": "local"
     },
     "mcode": {
       "permissionMode": "configured",
-      "delegation": "xacpx"
+      "delegation": "xacpx",
+      "mcpIngress": "local"
     },
     "opencli-chatgpt": {
       "permissionMode": "upstream",
-      "delegation": "none"
+      "delegation": "xacpx",
+      "mcpIngress": "gateway"
     },
     "opencli-gemini": {
       "permissionMode": "upstream",
-      "delegation": "none"
+      "delegation": "none",
+      "mcpIngress": "site-native"
     },
     "copilot": {
       "permissionMode": "configured",
-      "delegation": "xacpx"
+      "delegation": "xacpx",
+      "mcpIngress": "local"
     },
     "codex": {
       "permissionMode": "native",
-      "delegation": "xacpx"
-    },
-    "chatgpt": {
-      "permissionMode": "configured",
-      "delegation": "xacpx"
+      "delegation": "xacpx",
+      "mcpIngress": "local"
     }
   }
 }

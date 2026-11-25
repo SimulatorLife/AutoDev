@@ -30,16 +30,6 @@ export const ACP_PROVIDER_IDS = [
 
 export type AcpProviderId = (typeof ACP_PROVIDER_IDS)[number];
 
-export const GITHUB_WORKER_ROLE = "github-worker" as const;
-
-export const GITHUB_WORKER_PROVIDER_IDS = [
-  "opencli-chatgpt",
-  "opencli-gemini"
-] as const;
-
-export type GithubWorkerProviderId =
-  (typeof GITHUB_WORKER_PROVIDER_IDS)[number];
-
 export type AcpIsolationEnforcement =
   | "enforced"
   | "runtime_permission_guard"
@@ -91,17 +81,6 @@ export interface AcpProviderLaunchSpec {
   readonly compactionManagedByProvider: true;
 }
 
-export interface GithubWorkerTaskSpec {
-  readonly role: typeof GITHUB_WORKER_ROLE;
-  readonly provider: GithubWorkerProviderId;
-  readonly model: string;
-  readonly repository: string;
-  readonly task: string;
-  readonly prompt: string;
-  readonly sessionId: string;
-  readonly conversationId: string | null;
-}
-
 const COPILOT_EXCLUDED_NATIVE_TOOLS = [
   "view",
   "edit",
@@ -135,12 +114,6 @@ export function resolveAcpProviderId(provider: string): AcpProviderId | null {
   if (provider === "mcode" || provider === "minimax") return "mcode";
   if (provider === "codex") return "codex";
   return null;
-}
-
-export function isGithubWorkerProvider(
-  provider: string
-): provider is GithubWorkerProviderId {
-  return (GITHUB_WORKER_PROVIDER_IDS as readonly string[]).includes(provider);
 }
 
 function sharedIsolationEnvironment(
@@ -452,38 +425,4 @@ export function buildAcpProviderLaunchSpec(
       throw new Error(`Unsupported ACP provider: ${String(unreachable)}`);
     }
   }
-}
-
-/**
-Build a high-level autonomous task prompt for the `github-worker` subagent lane
-served by `opencli-chatgpt` / `opencli-gemini` via their native GitHub integration.
-*/
-export function buildGithubWorkerTaskSpec(options: {
-  readonly provider: GithubWorkerProviderId;
-  readonly model: string;
-  readonly repository: string;
-  readonly task: string;
-  readonly sessionId: string;
-  readonly conversationId?: string | null;
-}): GithubWorkerTaskSpec {
-  const prompt = [
-    `Repository: ${options.repository}`,
-    "",
-    "You are AutoDev's `github-worker` subagent. Use your connected GitHub integration/tools directly to complete the full multi-step GitHub task below autonomously:",
-    "",
-    options.task.trim(),
-    "",
-    "Report the exact resulting pull request/issue URL, branch name, and final status. Never fabricate repository changes or URLs."
-  ].join("\n");
-
-  return {
-    role: GITHUB_WORKER_ROLE,
-    provider: options.provider,
-    model: options.model,
-    repository: options.repository,
-    task: options.task,
-    prompt,
-    sessionId: options.sessionId,
-    conversationId: options.conversationId ?? null
-  };
 }

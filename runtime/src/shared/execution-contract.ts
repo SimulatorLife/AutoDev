@@ -30,15 +30,40 @@ export interface RoleContract {
   };
   [key: string]: unknown;
 }
+/**
+ * How a provider's transport reaches the role-scoped MCP surfaces.
+ *
+ * `gateway`: the transport's MCP client reaches AutoDev's shared gateway, so
+ * every role the gateway publishes is deliverable to it.
+ * `local`: the transport runs the role's MCP servers itself, as the ACP
+ * providers do with one role-scoped stdio server per contracted MCP server.
+ * `site-native`: the transport reaches a role's tools through the site's own
+ * connected integration only, so it can serve roles whose tools the site
+ * itself provides and no others.
+ * `none`: the transport reaches no MCP surface at all.
+ */
+export type ProviderMcpIngress = "gateway" | "local" | "site-native" | "none";
+
+/**
+ * MCP servers the site itself delivers through its own connected
+ * integration. A `site-native` transport can serve only the roles whose MCP
+ * surface is made entirely of these.
+ */
+export const SITE_NATIVE_MCP_SERVERS: readonly string[] = Object.freeze([
+  "github"
+]);
+
 export interface ProviderContract {
   /**
    * `xacpx`: the provider delegates exclusively through the canonical `xacpx`
    * MCP interface over the shared Supergateway.
-   * `none`: the provider cannot serve the orchestrator tier (e.g. web-chat
-   * `github-worker` lanes).
+   * `none`: the provider cannot serve the orchestrator tier, because its
+   * transport cannot reach the delegation surface.
    */
   delegation: "xacpx" | "none";
   permissionMode: string;
+  /** How this provider's transport reaches the role-scoped MCP surfaces. */
+  mcpIngress?: ProviderMcpIngress;
   [key: string]: unknown;
 }
 
