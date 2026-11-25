@@ -5,6 +5,7 @@ import { createServer as createNetServer } from "node:net";
 import { once } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -14,7 +15,7 @@ import {
   symlinkSync,
   writeFileSync
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -29,7 +30,7 @@ import {
 } from "../src/config/render-chatgpt-supergateway.ts";
 import { probeSupergateway } from "../src/mcp/chatgpt-supergateway-probe.ts";
 import {
-  externalFilesystemBackend,
+  externalMcpBackend,
   filesystemSandboxProfile
 } from "../src/mcp/chatgpt-filesystem-sandbox.ts";
 import {
@@ -50,6 +51,7 @@ import {
   tunnelMetadata,
   validateRuntimeKey
 } from "../src/platform/chatgpt-tunnel-install.ts";
+import { resolveCocoIndexBinary } from "../src/shared/executables.ts";
 import { resolveCommandOnPath } from "../src/platform/runtime-files.ts";
 
 const repo = fileURLToPath(new URL("../../", import.meta.url));
@@ -199,7 +201,7 @@ test(
           { port: mcpPort, apiKeyFile: keyFile },
           undefined,
           (server) =>
-            externalFilesystemBackend(server, repo, workspace, process.execPath)
+            externalMcpBackend(server, repo, workspace, process.execPath)
         )
       );
       gateway = await startSupergatewayServer(
@@ -326,21 +328,41 @@ test("MCP probe executes when started through the installed source symlink", () 
   }
 });
 
-test("external sandbox rejects every backend without a reviewed confinement profile", () => {
+test("external sandbox admits reviewed workspace backends under Seatbelt and rejects unreviewed servers", () => {
+  const lspBackend = externalMcpBackend("lsp", repo, repo, process.execPath);
+  assert.equal(lspBackend.command, "/usr/bin/sandbox-exec");
+  assert.match(lspBackend.args[1]!, /\(allow signal \(target same-sandbox\)\)/);
+  assert.doesNotMatch(lspBackend.args[1]!, /\(allow ipc-sysv\*\)/);
+
+  const cccBackend = externalMcpBackend(
+    "cocoindex-code",
+    repo,
+    repo,
+    process.execPath
+  );
+  assert.equal(cccBackend.command, "/usr/bin/sandbox-exec");
+  assert.match(cccBackend.args[1]!, /\(allow signal \(target same-sandbox\)\)/);
+  assert.match(cccBackend.args[1]!, /\(allow ipc-posix\*\)/);
+  assert.match(cccBackend.args[1]!, /\(allow ipc-sysv\*\)/);
+
+  for (const reviewed of ["filesystem", "codegraphcontext"]) {
+    const backend = externalMcpBackend(reviewed, repo, repo, process.execPath);
+    assert.equal(backend.command, "/usr/bin/sandbox-exec");
+  }
   for (const server of [
     "playwright",
     "playtest",
-    "lsp",
-    "codegraphcontext",
-    "cocoindex-code"
+    "github",
+    "xacpx",
+    "codex_app"
   ])
     assert.throws(
-      () => externalFilesystemBackend(server, repo, repo, process.execPath),
+      () => externalMcpBackend(server, repo, repo, process.execPath),
       /No externally confined/
     );
 });
 
-test("externalFilesystemBackend resolves wrapper Node shims to the direct Node binary for sandbox-exec", () => {
+test("externalMcpBackend resolves wrapper Node shims to the direct Node binary for sandbox-exec", () => {
   const root = mkdtempSync(path.join(tmpdir(), "autodev-node-shim-"));
   try {
     const shim = path.join(root, "node");
@@ -349,7 +371,7 @@ test("externalFilesystemBackend resolves wrapper Node shims to the direct Node b
       `#!/usr/bin/env bash\nexec ${JSON.stringify(process.execPath)} "$@"\n`,
       { mode: 0o700 }
     );
-    const backend = externalFilesystemBackend("filesystem", repo, repo, shim);
+    const backend = externalMcpBackend("filesystem", repo, repo, shim);
     assert.equal(backend.command, "/usr/bin/sandbox-exec");
     assert.equal(backend.args[2], realpathSync(process.execPath));
   } finally {
@@ -957,6 +979,17 @@ test(
       tunnelBinary: () => "/fixture/tunnel-client",
       supergateway: () => "/fixture/supergateway",
       backend: () => ({ command: "/fixture/filesystem", args: [] }),
+      hasSecret: (name) => name === "CONTEXT7_API_KEY",
+      discoverTools: async (server) =>
+        server === "filesystem"
+          ? ["read_text_file", "list_allowed_directories"]
+          : server === "lsp"
+            ? ["lsp_find_symbol", "lsp_workspace_diagnostics"]
+            : server === "openaiDeveloperDocs"
+              ? ["search_openai_docs", "list_openai_docs"]
+              : server === "context7"
+                ? ["resolve-library-id", "query-docs"]
+                : [],
       launchValues: () => ({
         ...paths,
         nodeBin: process.execPath,
@@ -1068,7 +1101,21 @@ test(
       writeFileSync(
         path.join(codexHome, "provider-runtime", "mcp-servers.json"),
         JSON.stringify({
-          filesystem: { command: "/fixture/filesystem", args: [] }
+          filesystem: { command: "/fixture/filesystem", args: [] },
+          lsp: { command: "/fixture/lsp", args: [] },
+          "cocoindex-code": { command: "/fixture/ccc", args: [] },
+          codegraphcontext: { command: "/fixture/cgc", args: [] },
+          openaiDeveloperDocs: { url: "https://example.test/openai/mcp" },
+          context7: {
+            url: "https://example.test/context7/mcp",
+            bearer_token_env_var: "CONTEXT7_API_KEY"
+          },
+          googleDeveloperKnowledge: {
+            url: "https://example.test/google/mcp",
+            http_headers: {
+              "X-Goog-Api-Key": "${GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY}"
+            }
+          }
         })
       );
       await ensureChatgptTunnel(paths, "reconcile", env, undefined, deps);
@@ -1100,6 +1147,10 @@ test(
       assert.match(
         readFileSync(plistFile, "utf8"),
         /chatgpt-tunnel-install\.ts/
+      );
+      assert.match(
+        readFileSync(plistFile, "utf8"),
+        /<key>ProcessType<\/key>\s*<string>Interactive<\/string>/
       );
       assert.equal((await chatgptTunnelStatus(paths, deps)).ready, true);
       assert.equal(events.filter((event) => event === "create").length, 1);
@@ -1159,9 +1210,45 @@ test(
       const migratedState = JSON.parse(privateRead(stateFile));
       assert.equal(migratedState.mcpPort, 3312);
       assert.equal(await checkChatgptTunnel(paths, deps), true);
+      // An older installation without policyDigest must automatically pick up
+      // newly approved servers/tools from checked-in chatgpt-mcp-policy.json.
+      const { policyDigest: _droppedDigest, ...staleGrantState } =
+        migratedState;
+      privateWrite(
+        stateFile,
+        JSON.stringify(
+          {
+            ...staleGrantState,
+            grants: { filesystem: ["read_text_file"] }
+          },
+          null,
+          2
+        ) + "\n"
+      );
+      await ensureChatgptTunnel(
+        paths,
+        "reconcile",
+        { HOME: home, PATH: "/bin" },
+        undefined,
+        deps
+      );
+      const policyUpgraded = JSON.parse(privateRead(stateFile));
+      assert.ok(policyUpgraded.policyDigest);
+      assert.match(
+        policyUpgraded.policyFile,
+        /\.rulesync\/permissions\.jsonc$/u
+      );
+      assert.deepEqual(Object.keys(policyUpgraded.grants).sort(), [
+        "cocoindex-code",
+        "codegraphcontext",
+        "context7",
+        "filesystem",
+        "lsp",
+        "openaiDeveloperDocs"
+      ]);
       assert.match(
         readFileSync(
-          path.join(directory, migratedState.generation, "autodev.yaml"),
+          path.join(directory, policyUpgraded.generation, "autodev.yaml"),
           "utf8"
         ),
         /env:AUTODEV_CHATGPT_TUNNEL_API_KEY/
@@ -1399,6 +1486,227 @@ test(
 );
 
 test(
+  "real combined gateway exposes local confined and authenticated remote Streamable HTTP MCPs with credential isolation",
+  {
+    skip: process.env.AUTODEV_TEST_SUPERGATEWAY !== "1",
+    timeout: 180_000
+  },
+  async () => {
+    const root = realpathSync(
+      mkdtempSync(path.join(tmpdir(), "autodev-multi-mcp-"))
+    );
+    const workspace = path.join(root, "workspace");
+    mkdirSync(workspace);
+    const inside = path.join(workspace, "readme.txt");
+    writeFileSync(inside, "multi-server-ok");
+    const envSpyPath = path.join(root, "local-env-keys.json");
+    const envSpyScript = path.join(root, "local-code-tool.mjs");
+    writeFileSync(
+      envSpyScript,
+      [
+        'import { createInterface } from "node:readline";',
+        'import { writeFileSync } from "node:fs";',
+        `writeFileSync(${JSON.stringify(envSpyPath)}, JSON.stringify(Object.keys(process.env).sort()));`,
+        "const rl = createInterface({ input: process.stdin });",
+        'rl.on("line", (line) => {',
+        "  const m = JSON.parse(line);",
+        '  if (m.method === "initialize") {',
+        '    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { protocolVersion: m.params.protocolVersion, capabilities: { tools: {}, prompts: {}, resources: {} }, serverInfo: { name: "local-code", version: "1" } } }) + "\\n");',
+        '  } else if (m.method === "ping") {',
+        '    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: {} }) + "\\n");',
+        '  } else if (m.method === "tools/list") {',
+        '    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { tools: [{ name: "find_symbol", inputSchema: { type: "object" } }, { name: "mutate", inputSchema: { type: "object" } }] } }) + "\\n");',
+        '  } else if (m.method === "tools/call") {',
+        '    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result: { content: [{ type: "text", text: "symbol:" + (m.params.arguments?.name ?? "") }] } }) + "\\n");',
+        "  }",
+        "});"
+      ].join("\n")
+    );
+
+    const remoteSessions = new Set<string>();
+    const remoteServer = createHttpServer((req, res) => {
+      if (req.headers.authorization !== "Bearer remote-context7-token") {
+        res.writeHead(401).end("unauthorized");
+        return;
+      }
+      if (req.method === "GET") {
+        res.writeHead(405).end();
+        return;
+      }
+      if (req.method === "DELETE") {
+        res.writeHead(200).end();
+        return;
+      }
+      const chunks: Buffer[] = [];
+      req.on("data", (c) => chunks.push(c));
+      req.on("end", () => {
+        const msg = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        const sessionId =
+          (typeof req.headers["mcp-session-id"] === "string" &&
+            req.headers["mcp-session-id"]) ||
+          "remote-sess-" + (remoteSessions.size + 1);
+        remoteSessions.add(sessionId);
+        if (msg.id === undefined) {
+          res.writeHead(202, { "mcp-session-id": sessionId }).end();
+          return;
+        }
+        let result: unknown = {};
+        if (msg.method === "initialize") {
+          result = {
+            protocolVersion: msg.params.protocolVersion,
+            capabilities: { tools: {}, prompts: {}, resources: {} },
+            serverInfo: { name: "remote-docs", version: "1" }
+          };
+        } else if (msg.method === "tools/list") {
+          result = {
+            tools: [
+              { name: "query-docs", inputSchema: { type: "object" } },
+              { name: "hidden-admin", inputSchema: { type: "object" } }
+            ]
+          };
+        } else if (msg.method === "tools/call") {
+          result = {
+            content: [
+              { type: "text", text: "docs:" + (msg.params.arguments?.q ?? "") }
+            ]
+          };
+        }
+        res
+          .writeHead(200, {
+            "content-type": "application/json",
+            "mcp-session-id": sessionId
+          })
+          .end(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result }));
+      });
+    });
+
+    const client = new Client({ name: "multi-e2e", version: "1" });
+    let gateway: ChildProcess | undefined;
+    try {
+      remoteServer.listen(0, "127.0.0.1");
+      await once(remoteServer, "listening");
+      const remoteAddr = remoteServer.address();
+      assert.ok(remoteAddr && typeof remoteAddr !== "string");
+      const executable = resolveSupergateway(repo);
+      const config = path.join(root, "supergateway.json");
+      const keyFile = path.join(root, "supergateway.key");
+      const localToken = "multi-gateway-token";
+      privateWrite(keyFile, localToken + "\n");
+      const mcpPort = await allocateLoopbackPort();
+      const catalogue = {
+        filesystem: {
+          command: process.execPath,
+          args: [path.join(repo, "runtime/src/mcp/launcher.ts"), "filesystem"]
+        },
+        lsp: {
+          command: process.execPath,
+          args: [envSpyScript]
+        },
+        context7: {
+          url: `http://127.0.0.1:${remoteAddr.port}/mcp`,
+          bearer_token_env_var: "CONTEXT7_API_KEY"
+        }
+      };
+      const policy = {
+        filesystem: ["read_text_file"],
+        lsp: ["find_symbol"],
+        context7: ["query-docs"]
+      };
+      writeFileSync(
+        config,
+        renderChatgptSupergatewayConfig(
+          catalogue,
+          policy,
+          workspace,
+          policy,
+          { port: mcpPort, apiKeyFile: keyFile },
+          undefined,
+          (server) =>
+            server === "filesystem"
+              ? externalMcpBackend(server, repo, workspace, process.execPath)
+              : catalogue[server as "lsp"]
+        )
+      );
+      const env = {
+        ...chatgptSupergatewayEnvironment(
+          { home: root, codexHome: root, repositoryRoot: repo },
+          workspace,
+          process.execPath,
+          process.env.PATH ?? "/usr/bin:/bin"
+        ),
+        CONTEXT7_API_KEY: "remote-context7-token"
+      };
+      gateway = await startSupergatewayServer(
+        executable,
+        config,
+        workspace,
+        env,
+        mcpPort
+      );
+      await client.connect(
+        new StreamableHTTPClientTransport(
+          new URL(`http://127.0.0.1:${mcpPort}/mcp`),
+          {
+            requestInit: { headers: { Authorization: `Bearer ${localToken}` } }
+          }
+        )
+      );
+      const caps = client.getServerCapabilities();
+      assert.equal(caps?.prompts, undefined);
+      assert.equal(caps?.resources, undefined);
+
+      const listed = await client.listTools();
+      assert.deepEqual(listed.tools.map((t) => t.name).sort(), [
+        "context7__query-docs",
+        "filesystem__read_text_file",
+        "lsp__find_symbol"
+      ]);
+      const remoteTool = listed.tools.find(
+        (t) => t.name === "context7__query-docs"
+      );
+      const localTool = listed.tools.find((t) => t.name === "lsp__find_symbol");
+      assert.equal(remoteTool?.annotations?.openWorldHint, true);
+      assert.equal(remoteTool?.annotations?.readOnlyHint, true);
+      assert.equal(localTool?.annotations?.openWorldHint, false);
+
+      const [fsRes, lspRes, c7Res] = await Promise.all([
+        client.callTool({
+          name: "filesystem__read_text_file",
+          arguments: { path: inside }
+        }),
+        client.callTool({
+          name: "lsp__find_symbol",
+          arguments: { name: "Chatgpt" }
+        }),
+        client.callTool({
+          name: "context7__query-docs",
+          arguments: { q: "supergateway" }
+        })
+      ]);
+      assert.match(JSON.stringify(fsRes), /multi-server-ok/);
+      assert.match(JSON.stringify(lspRes), /symbol:Chatgpt/);
+      assert.match(JSON.stringify(c7Res), /docs:supergateway/);
+
+      await assert.rejects(async () => {
+        const denied = await client.callTool({
+          name: "context7__hidden-admin",
+          arguments: {}
+        });
+        if (denied.isError) throw new Error("denied");
+      });
+      // Probe must confirm exact multi-server aggregation without capability leaks.
+      await probeSupergateway(executable, config, env);
+    } finally {
+      await client.close().catch(() => {});
+      await stopProcess(gateway);
+      remoteServer.closeAllConnections();
+      remoteServer.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+);
+
+test(
   "real tunnel-client dev proxy routes Streamable HTTP MCP sessions through Supergateway with session isolation, reconnection, and service restarts",
   {
     skip:
@@ -1449,7 +1757,7 @@ test(
         { port: mcpPort, apiKeyFile: keyFile },
         undefined,
         (server) =>
-          externalFilesystemBackend(server, repo, workspace, process.execPath)
+          externalMcpBackend(server, repo, workspace, process.execPath)
       )
     );
     const gatewayEnv = chatgptSupergatewayEnvironment(
@@ -1642,6 +1950,313 @@ test(
       await Promise.allSettled(openClients.map((client) => client.close()));
       await stopProcess(proxy);
       await stopProcess(gateway);
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+);
+
+test(
+  "pinned Supergateway and tunnel-client proxy serve Seatbelt-confined LSP (past watchdog) and CocoIndex semantic search",
+  {
+    skip: process.env.AUTODEV_TEST_SUPERGATEWAY !== "1",
+    timeout: 180_000
+  },
+  async () => {
+    const root = realpathSync(
+      mkdtempSync(path.join(tmpdir(), "autodev-code-tools-e2e-"))
+    );
+    const home = path.join(root, "home");
+    const codexHome = path.join(home, ".codex");
+    const workspace = path.join(root, "workspace");
+    mkdirSync(path.join(workspace, "src"), { recursive: true });
+    mkdirSync(codexHome, { recursive: true });
+    // Mirror the host node_modules so workspace tsc/tsserver resolution works inside the temp root.
+    symlinkSync(
+      path.join(repo, "node_modules"),
+      path.join(workspace, "node_modules")
+    );
+    writeFileSync(
+      path.join(workspace, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: { target: "ES2022", module: "NodeNext", strict: true },
+        include: ["src/**/*.ts"]
+      })
+    );
+    const greeterFile = path.join(workspace, "src", "greeter.ts");
+    const mainFile = path.join(workspace, "src", "main.ts");
+    writeFileSync(
+      greeterFile,
+      "export function formatGreeting(name: string): string {\n  return `Hello, ${name}`;\n}\n"
+    );
+    writeFileSync(
+      mainFile,
+      'import { formatGreeting } from "./greeter.ts";\nexport const banner = formatGreeting("AutoDev");\n'
+    );
+
+    const cccBinary = resolveCocoIndexBinary(process.env);
+    const userHome = homedir();
+    const userCccSettings = path.join(
+      userHome,
+      ".cocoindex_code",
+      "global_settings.yml"
+    );
+    const userHfCache = path.join(userHome, ".cache", "huggingface");
+    const includeCocoindex = Boolean(
+      cccBinary && existsSync(userCccSettings) && existsSync(userHfCache)
+    );
+    if (includeCocoindex) {
+      mkdirSync(path.join(home, ".cocoindex_code"), { recursive: true });
+      cpSync(
+        userCccSettings,
+        path.join(home, ".cocoindex_code", "global_settings.yml")
+      );
+      mkdirSync(path.join(home, ".cache"), { recursive: true });
+      symlinkSync(userHfCache, path.join(home, ".cache", "huggingface"));
+    }
+
+    const supergateway = resolveSupergateway(repo);
+    const config = path.join(root, "supergateway.json");
+    const keyFile = path.join(root, "supergateway.key");
+    const headerFile = path.join(root, "supergateway-auth.header");
+    const localToken = "code-tools-e2e-token";
+    privateWrite(keyFile, localToken + "\n");
+    privateWrite(headerFile, `Bearer ${localToken}\n`);
+    const mcpPort = await allocateLoopbackPort();
+    const catalogue: Record<string, Record<string, unknown>> = {
+      lsp: {
+        command: process.execPath,
+        args: [path.join(repo, "runtime/src/mcp/launcher.ts"), "lsp"]
+      },
+      ...(includeCocoindex
+        ? {
+            "cocoindex-code": {
+              command: process.execPath,
+              args: [
+                path.join(repo, "runtime/src/mcp/launcher.ts"),
+                "cocoindex-code"
+              ]
+            }
+          }
+        : {})
+    };
+    const policy: Record<string, string[]> = {
+      lsp: [
+        "lsp_server_status",
+        "lsp_document_symbols",
+        "lsp_hover",
+        "lsp_goto_definition",
+        "lsp_workspace_symbols"
+      ],
+      ...(includeCocoindex ? { "cocoindex-code": ["search"] } : {})
+    };
+    writeFileSync(
+      config,
+      renderChatgptSupergatewayConfig(
+        catalogue,
+        policy,
+        workspace,
+        policy,
+        { port: mcpPort, apiKeyFile: keyFile },
+        undefined,
+        (server) =>
+          externalMcpBackend(
+            server,
+            repo,
+            workspace,
+            process.execPath,
+            home,
+            codexHome
+          )
+      )
+    );
+    const servicePath = [
+      path.dirname(process.execPath),
+      path.join(repo, "node_modules/.bin"),
+      ...(cccBinary ? [path.dirname(cccBinary)] : []),
+      process.env.PATH ?? "/usr/bin:/bin"
+    ].join(":");
+    const gatewayEnv = chatgptSupergatewayEnvironment(
+      { home, codexHome, repositoryRoot: repo },
+      workspace,
+      process.execPath,
+      servicePath
+    );
+
+    let gateway: ChildProcess | undefined;
+    let proxy: ChildProcess | undefined;
+    const client = new Client({
+      name: "autodev-code-tools-e2e",
+      version: "1.0.0"
+    });
+    try {
+      gateway = await startSupergatewayServer(
+        supergateway,
+        config,
+        workspace,
+        gatewayEnv,
+        mcpPort
+      );
+
+      let mcpEndpoint = new URL(`http://127.0.0.1:${mcpPort}/mcp`);
+      let requestInit: RequestInit = {
+        headers: { Authorization: `Bearer ${localToken}` }
+      };
+      const tunnelBin = resolveCommandOnPath("tunnel-client");
+      if (tunnelBin) {
+        const urlFile = path.join(root, "proxy.json");
+        const healthUrlFile = path.join(root, "health.url");
+        proxy = spawn(
+          tunnelBin,
+          [
+            "dev",
+            "proxy",
+            "--mcp-server-url",
+            `http://127.0.0.1:${mcpPort}/mcp`,
+            "--url-file",
+            urlFile,
+            "--health-url-file",
+            healthUrlFile,
+            "--readiness-timeout",
+            "30s",
+            "--response-timeout",
+            "60s"
+          ],
+          {
+            env: { ...process.env, ...tunnelClientMcpEnv(headerFile) },
+            stdio: ["ignore", "pipe", "pipe"]
+          }
+        );
+        let proxyUrl: string | undefined;
+        for (let attempt = 0; attempt < 150; attempt++) {
+          await delay(200);
+          try {
+            const raw = readFileSync(urlFile, "utf8").trim();
+            if (raw) {
+              proxyUrl = (JSON.parse(raw) as { mcp_url?: string }).mcp_url;
+              if (proxyUrl) break;
+            }
+          } catch {
+            /* waiting for proxy readiness */
+          }
+        }
+        assert.ok(proxyUrl, "tunnel-client dev proxy did not report mcp_url");
+        mcpEndpoint = new URL(proxyUrl);
+        requestInit = {};
+      }
+
+      await client.connect(
+        new StreamableHTTPClientTransport(mcpEndpoint, { requestInit }),
+        { timeout: 45_000 }
+      );
+
+      const firstText = (result: unknown): string => {
+        const content =
+          result && typeof result === "object"
+            ? (result as { content?: unknown }).content
+            : undefined;
+        const items = Array.isArray(content)
+          ? (content as Array<{ text?: string }>)
+          : [];
+        return items[0]?.text ?? "";
+      };
+
+      // 1. LSP lazy startup is initially empty, then initializes and survives >4s (past the 3s watchdog).
+      const initialStatus = await client.callTool({
+        name: "lsp__lsp_server_status",
+        arguments: {}
+      });
+      assert.deepEqual(JSON.parse(firstText(initialStatus)), { servers: [] });
+
+      const symbols = await client.callTool({
+        name: "lsp__lsp_document_symbols",
+        arguments: { file_path: mainFile }
+      });
+      assert.equal(symbols.isError, undefined);
+      assert.match(JSON.stringify(symbols), /banner/);
+
+      // Wait past typescript-language-server's 3-second watchDog (`process.kill(parentPid, 0)`).
+      await delay(4200);
+
+      const hover = await client.callTool({
+        name: "lsp__lsp_hover",
+        arguments: { file_path: mainFile, line: 2, column: 14 }
+      });
+      assert.equal(hover.isError, undefined);
+      assert.match(JSON.stringify(hover), /banner/);
+
+      const definition = await client.callTool({
+        name: "lsp__lsp_goto_definition",
+        arguments: { file_path: mainFile, line: 2, column: 23 }
+      });
+      assert.equal(definition.isError, undefined);
+      assert.match(JSON.stringify(definition), /greeter\.ts/);
+
+      const workspaceSymbols = await client.callTool({
+        name: "lsp__lsp_workspace_symbols",
+        arguments: { query: "formatGreeting" }
+      });
+      assert.equal(workspaceSymbols.isError, undefined);
+      assert.match(JSON.stringify(workspaceSymbols), /formatGreeting/);
+
+      const activeStatus = JSON.parse(
+        firstText(
+          await client.callTool({
+            name: "lsp__lsp_server_status",
+            arguments: {}
+          })
+        )
+      ) as { servers: Array<{ id: string; status: string }> };
+      assert.equal(activeStatus.servers.length, 1);
+      assert.equal(activeStatus.servers[0]?.id, "typescript");
+      assert.equal(activeStatus.servers[0]?.status, "running");
+
+      // 2. CocoIndex cold-starts daemon inside Seatbelt, initializes env, indexes, and searches.
+      if (includeCocoindex) {
+        const searchResult = await client.callTool(
+          {
+            name: "cocoindex_code__search",
+            arguments: { query: "formatGreeting", limit: 3 }
+          },
+          undefined,
+          { timeout: 60_000 }
+        );
+        assert.ok(
+          !searchResult.isError,
+          `CocoIndex search returned MCP error: ${JSON.stringify(searchResult)}`
+        );
+        const parsedSearch = JSON.parse(firstText(searchResult)) as {
+          success: boolean;
+          results: Array<{ file_path: string; content: string }>;
+          message?: string | null;
+        };
+        assert.equal(
+          parsedSearch.success,
+          true,
+          `CocoIndex search failed: ${parsedSearch.message ?? ""}`
+        );
+        assert.ok(
+          parsedSearch.results.some((entry) =>
+            entry.file_path.endsWith("greeter.ts")
+          )
+        );
+      }
+    } finally {
+      await client.close().catch(() => {});
+      await stopProcess(proxy);
+      await stopProcess(gateway);
+      try {
+        const daemonPid = Number(
+          readFileSync(
+            path.join(home, ".cocoindex_code", "daemon.pid"),
+            "utf8"
+          ).trim()
+        );
+        if (Number.isInteger(daemonPid) && daemonPid > 0) {
+          process.kill(daemonPid, "SIGKILL");
+        }
+      } catch {
+        /* daemon may not have been started */
+      }
       rmSync(root, { recursive: true, force: true });
     }
   }

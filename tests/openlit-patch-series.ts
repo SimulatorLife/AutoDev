@@ -96,7 +96,8 @@ export const OPENLIT_PATCH_NAMES = [
   "79-autodev-usage-session-pagination",
   "80-retire-autodev-memory-ui-routes",
   "81-autodev-usage-models",
-  "82-optimize-dockerfile-build-cache"
+  "82-optimize-dockerfile-build-cache",
+  "83-autodev-clickhouse-max-threads"
 ] as const;
 
 /** Strips the `.patch` suffix a directory listing carries. */

@@ -23,7 +23,9 @@ export type UsageContractOutcome =
   | { readonly kind: "unreachable" }
   | { readonly kind: "not-configured" };
 
-const DEFAULT_CONTRACT_PROBE_TIMEOUT_MS = 45_000;
+// Leave headroom for OpenLIT's 8-way query fan-out on a loaded host while
+// still staying below service-restart's 100s Console readiness budget.
+const DEFAULT_CONTRACT_PROBE_TIMEOUT_MS = 75_000;
 
 export interface UsageContractOptions {
   readonly baseUrl?: string;

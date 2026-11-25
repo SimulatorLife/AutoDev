@@ -1,0 +1,25 @@
+diff --git a/assets/clickhouse-users.xml b/assets/clickhouse-users.xml
+index 426ae9b5..569d2c74 100644
+--- a/assets/clickhouse-users.xml
++++ b/assets/clickhouse-users.xml
+@@ -19,6 +19,12 @@
+            58M rows, almost all of them the console's own fast widget
+            queries. The slow ones are the ones worth keeping.
+ 
++         * max_threads caps per-query parallelism to the ClickHouse
++           container's 2-CPU limit (`cpus: "2.0"`). Without it ClickHouse
++           defaults to `auto(nproc)` from the host, so eight concurrent Usage
++           queries spawn ~96 threads competing for 2 CPUs and turn zero-row
++           contract probes into multi-second CPU-wait stalls.
++
+          This file is mounted as a separate file in users.d on purpose: the
+          image's entrypoint writes default-user.xml into that same directory
+          with the generated password, and replacing that file would replace
+@@ -28,6 +34,7 @@
+         <default>
+             <log_processors_profiles>0</log_processors_profiles>
+             <log_queries_min_query_duration_ms>1000</log_queries_min_query_duration_ms>
++            <max_threads>2</max_threads>
+         </default>
+     </profiles>
+ </clickhouse>

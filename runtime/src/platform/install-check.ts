@@ -275,7 +275,7 @@ function checkAuth(
     status = JSON.parse(
       execFileSync(
         "curl",
-        ["--silent", "--max-time", "1", "http://127.0.0.1:4100/status"],
+        ["--silent", "--max-time", "5", "http://127.0.0.1:4100/status"],
         { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
       )
     ) as { authentication?: { responseRequests?: boolean } };

@@ -230,7 +230,16 @@ exit 0
   );
 
   // The catalog synchronization steps are not what this test governs.
-  writeExecutable(join(bin, "pnpm"), "#!/usr/bin/env bash\nexit 0\n");
+  // Optional stub script overrides how Usage contract verification behaves.
+  writeExecutable(
+    join(bin, "pnpm"),
+    `#!/usr/bin/env bash
+if [[ "$*" == *"usage-contract.ts"* && -n "\${STUB_VERIFY_SCRIPT:-}" ]]; then
+  exec bash "$STUB_VERIFY_SCRIPT"
+fi
+exit 0
+`
+  );
 
   return { root, codexHome, bin, state };
 }
@@ -256,6 +265,8 @@ interface RunOptions {
   readonly clickhouseConfiguration?: string;
   /** Optional TSV rows returned for ClickHouse system log discovery. */
   readonly systemLogRows?: string;
+  /** Optional bash snippet run instead of usage-contract.ts. */
+  readonly verifyScript?: string;
 }
 
 function runUp(fixture: Fixture, options: RunOptions = {}) {
@@ -301,10 +312,16 @@ function runUp(fixture: Fixture, options: RunOptions = {}) {
         ...(options.systemLogRows === undefined
           ? {}
           : { STUB_SYSTEM_LOG_ROWS: options.systemLogRows }),
+        ...(options.verifyScript === undefined
+          ? {}
+          : {
+              STUB_VERIFY_SCRIPT: join(fixture.state, "verify-stub.sh")
+            }),
         AUTODEV_OPENLIT_COMPOSE_ATTEMPTS: "3",
         AUTODEV_OPENLIT_ENGINE_TIMEOUT_SECONDS: "2",
         AUTODEV_OPENLIT_CLICKHOUSE_TIMEOUT_SECONDS: "2",
-        AUTODEV_OPENLIT_HTTP_TIMEOUT_SECONDS: "2"
+        AUTODEV_OPENLIT_HTTP_TIMEOUT_SECONDS: "2",
+        AUTODEV_OPENLIT_USAGE_VERIFY_TIMEOUT_SECONDS: "10"
       },
       stdio: ["ignore", "pipe", "pipe"]
     }
@@ -332,6 +349,12 @@ function withFixture(
       writeFileSync(join(fixture.state, "port-down"), "");
     if (options.unhealthyOpenlit === true)
       writeFileSync(join(fixture.state, "unhealthy-openlit"), "");
+    if (options.verifyScript !== undefined) {
+      writeExecutable(
+        join(fixture.state, "verify-stub.sh"),
+        options.verifyScript
+      );
+    }
     if (options.clickhouseConfiguration !== undefined)
       writeFileSync(
         join(
@@ -510,6 +533,11 @@ test("the ClickHouse user profile stops the diagnostic logs from growing without
     /<log_queries_min_query_duration_ms>\d+<\/log_queries_min_query_duration_ms>/u,
     "the console's own fast widget queries must not all reach the query log"
   );
+  assert.match(
+    users,
+    /<max_threads>2<\/max_threads>/u,
+    "per-query ClickHouse threads must match the 2-CPU container budget"
+  );
 
   const compose = readFileSync(
     join(repositoryRoot, "config", "openlit", "docker-compose.yml"),
@@ -605,6 +633,53 @@ test("the OpenLIT runner skips ALTER TABLE when diagnostic logs already declare 
       assert.match(
         statements,
         /ALTER TABLE system\.query_log MODIFY TTL event_date \+ INTERVAL 604800 SECOND;/u
+      );
+    }
+  );
+});
+
+test("the OpenLIT runner retries temporary Usage verification failures (exit 75) and fails fast on permanent errors", () => {
+  withFixture(
+    {
+      verifyScript: `#!/usr/bin/env bash
+count_file="$STUB_STATE_DIR/verify-calls"
+calls=$(( $(cat "$count_file" 2>/dev/null || echo 0) + 1 ))
+printf '%s' "$calls" > "$count_file"
+if [[ "$calls" -eq 1 ]]; then
+  exit 75
+fi
+exit 0
+`
+    },
+    (fixture, result) => {
+      assert.equal(result.status, 0, result.output);
+      assert.equal(
+        readFileSync(join(fixture.state, "verify-calls"), "utf8").trim(),
+        "2",
+        "exit 75 (EX_TEMPFAIL) must trigger a retry"
+      );
+      assert.match(
+        result.output,
+        /Usage API did not answer yet; retrying contract verification/u
+      );
+    }
+  );
+
+  withFixture(
+    {
+      verifyScript: `#!/usr/bin/env bash
+count_file="$STUB_STATE_DIR/verify-calls"
+calls=$(( $(cat "$count_file" 2>/dev/null || echo 0) + 1 ))
+printf '%s' "$calls" > "$count_file"
+exit 1
+`
+    },
+    (fixture, result) => {
+      assert.equal(result.status, 1);
+      assert.equal(
+        readFileSync(join(fixture.state, "verify-calls"), "utf8").trim(),
+        "1",
+        "permanent contract verification errors must not be retried"
       );
     }
   );

@@ -21,15 +21,21 @@ import { createServer } from "node:net";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import { z } from "zod";
 import { isEntryPoint } from "../shared/entry-point.ts";
 import {
   deleteKeychainSecret,
   readKeychainSecret,
+  readRuntimeSecret,
+  resolveManagedSecret,
   secureDeleteFile,
   writeKeychainSecret
 } from "../shared/runtime-secrets.ts";
+import { MCP_SERVER_FILESYSTEM } from "../shared/tool-names.ts";
 import { httpHealthProbe } from "./health-probe.ts";
 import { waitForProbe } from "./wait-for-probe.ts";
 import { sleep } from "./sleep.ts";
@@ -43,12 +49,21 @@ import { parseCliVersion } from "../providers/cli-versions.ts";
 import { writeLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 import { readBridgeMcpCatalogue } from "../mcp/filesystem-server.ts";
-import { externalFilesystemBackend } from "../mcp/chatgpt-filesystem-sandbox.ts";
 import {
+  externalMcpBackend,
+  hasExternalMcpProfile
+} from "../mcp/chatgpt-filesystem-sandbox.ts";
+import { resolveRemoteMcpHeaders } from "../mcp/tool-filter.ts";
+import {
+  CANONICAL_CHATGPT_POLICY_RELATIVE,
   chatgptGrantsSchema,
   chatgptSupergatewayEnvironment,
   DEFAULT_CHATGPT_MCP_PORT,
+  isApprovedHeaderTemplates,
+  isApprovedRemoteUrl,
+  parseRulesyncExternalMcpPermissions,
   renderChatgptSupergatewayConfig,
+  requiredRemoteSecretNames,
   supergatewayConfigSchema,
   validateChatgptWorkspace
 } from "../config/render-chatgpt-supergateway.ts";
@@ -69,6 +84,11 @@ const installedStateSchema = z
   .object({
     workspace: z.string().refine(path.isAbsolute),
     policyFile: z.string().refine(path.isAbsolute),
+    policyDigest: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/u)
+      .optional(),
+    reviewed: chatgptGrantsSchema.optional(),
     grants: chatgptGrantsSchema,
     generation: z.string().regex(/^generation-[a-zA-Z0-9_-]+$/u),
     port: z.number().int().min(1024).max(65535),
@@ -548,21 +568,264 @@ function resolveMcpPort(
   return port;
 }
 
-function reviewedPolicy(paths: Paths) {
-  return chatgptGrantsSchema.parse(
-    JSON.parse(
-      readFileSync(
-        path.join(paths.repositoryRoot, "config", "chatgpt-mcp-policy.json"),
-        "utf8"
-      )
-    )
-  );
+function canonicalPolicyPath(paths: Paths): string {
+  return path.join(paths.repositoryRoot, CANONICAL_CHATGPT_POLICY_RELATIVE);
 }
-function stateRevision(file: string, reviewed: unknown): string {
+
+function readCanonicalPolicyRaw(paths: Paths): string {
+  return readFileSync(canonicalPolicyPath(paths), "utf8");
+}
+
+function staticRulesyncFallbackReviewed(
+  paths: Paths
+): Record<string, string[]> {
+  const raw = readCanonicalPolicyRaw(paths);
+  const parsed = parseRulesyncExternalMcpPermissions(raw);
+  return Object.keys(parsed.allowedTools).length > 0
+    ? chatgptGrantsSchema.parse(parsed.allowedTools)
+    : {};
+}
+
+function statusReviewedPolicy(
+  paths: Paths,
+  prior?: InstalledState
+): Record<string, string[]> {
+  return prior?.reviewed ?? staticRulesyncFallbackReviewed(paths);
+}
+
+function stateRevision(
+  file: string,
+  reviewed: unknown,
+  rawPolicy: string
+): string {
   return createHash("sha256")
     .update(privateRead(file))
     .update(JSON.stringify(reviewed))
+    .update(rawPolicy)
     .digest("hex");
+}
+
+function computePolicyDigest(
+  rawPolicy: string,
+  catalogue: Record<string, Record<string, unknown>>
+): string {
+  return createHash("sha256")
+    .update(rawPolicy)
+    .update("\n")
+    .update(JSON.stringify(catalogue))
+    .digest("hex");
+}
+
+async function discoverServerReadOnlyTools(
+  server: string,
+  descriptor: Record<string, unknown>,
+  paths: Paths,
+  workspace: string,
+  node: string,
+  gatewayEnv: Record<string, string>,
+  env: NodeJS.ProcessEnv,
+  backendResolver: typeof externalMcpBackend
+): Promise<string[]> {
+  const client = new Client({
+    name: "autodev-chatgpt-policy-discovery",
+    version: "1.0.0"
+  });
+  const transport =
+    descriptor.url !== undefined
+      ? new StreamableHTTPClientTransport(new URL(String(descriptor.url)), {
+          requestInit: {
+            headers: resolveRemoteMcpHeaders(
+              {
+                url: String(descriptor.url),
+                ...(typeof descriptor.bearer_token_env_var === "string"
+                  ? { bearer_token_env_var: descriptor.bearer_token_env_var }
+                  : {}),
+                ...(descriptor.http_headers &&
+                typeof descriptor.http_headers === "object" &&
+                !Array.isArray(descriptor.http_headers)
+                  ? {
+                      http_headers: descriptor.http_headers as Record<
+                        string,
+                        string
+                      >
+                    }
+                  : {})
+              },
+              server,
+              env
+            )
+          }
+        })
+      : (() => {
+          const backend = backendResolver(
+            server,
+            paths.repositoryRoot,
+            workspace,
+            node,
+            paths.home,
+            paths.codexHome
+          );
+          return new StdioClientTransport({
+            command: backend.command,
+            args: backend.args,
+            cwd: workspace,
+            env:
+              server === MCP_SERVER_FILESYSTEM
+                ? {
+                    HOME: workspace,
+                    PATH: "/usr/bin:/bin",
+                    LANG: "en_US.UTF-8"
+                  }
+                : gatewayEnv,
+            stderr: "pipe"
+          });
+        })();
+  try {
+    await client.connect(transport, { timeout: 20_000 });
+    const discovered: string[] = [];
+    let cursor: string | undefined;
+    const seenCursors = new Set<string>();
+    do {
+      const page = await client.listTools(cursor ? { cursor } : {}, {
+        timeout: 20_000
+      });
+      for (const tool of page.tools) {
+        if (tool.annotations?.readOnlyHint === true) {
+          discovered.push(tool.name);
+        }
+      }
+      cursor = page.nextCursor;
+      if (cursor && seenCursors.has(cursor)) break;
+      if (cursor) seenCursors.add(cursor);
+    } while (cursor);
+    return [...new Set(discovered)];
+  } finally {
+    await Promise.allSettled([client.close(), transport.close()]);
+  }
+}
+
+async function resolveReviewedFromRulesync(
+  paths: Paths,
+  catalogue: Record<string, Record<string, unknown>>,
+  workspace: string,
+  node: string,
+  gatewayEnv: Record<string, string>,
+  env: NodeJS.ProcessEnv,
+  deps: ChatgptTunnelDependencies,
+  prior?: InstalledState
+): Promise<{
+  policyFile: string;
+  policyDigest: string;
+  rawPolicy: string;
+  reviewed: Record<string, string[]>;
+}> {
+  const policyFile = canonicalPolicyPath(paths);
+  const rawPolicy = readCanonicalPolicyRaw(paths);
+  const policyDigest = computePolicyDigest(rawPolicy, catalogue);
+  if (
+    prior?.policyFile === policyFile &&
+    prior.policyDigest === policyDigest &&
+    prior.reviewed
+  ) {
+    return { policyFile, policyDigest, rawPolicy, reviewed: prior.reviewed };
+  }
+
+  const permissions = parseRulesyncExternalMcpPermissions(rawPolicy);
+  const hasSecret =
+    deps.hasSecret ??
+    ((name: string, currentEnv: NodeJS.ProcessEnv) =>
+      Boolean(
+        resolveManagedSecret(name, currentEnv) ??
+        readRuntimeSecret(name, currentEnv)
+      ));
+  const discover =
+    deps.discoverTools ??
+    ((
+      server: string,
+      descriptor: Record<string, unknown>,
+      currentPaths: Paths,
+      currentWorkspace: string,
+      currentNode: string,
+      currentGatewayEnv: Record<string, string>,
+      currentEnv: NodeJS.ProcessEnv
+    ) =>
+      discoverServerReadOnlyTools(
+        server,
+        descriptor,
+        currentPaths,
+        currentWorkspace,
+        currentNode,
+        currentGatewayEnv,
+        currentEnv,
+        deps.backend
+      ));
+
+  const candidates = Object.entries(catalogue).filter(
+    ([server, descriptor]) => {
+      if (permissions.deniedServers.has(server)) return false;
+      if (descriptor.env !== undefined) return false;
+      if (descriptor.url !== undefined) {
+        if (
+          descriptor.command !== undefined ||
+          !isApprovedRemoteUrl(descriptor.url)
+        )
+          return false;
+        if (
+          descriptor.http_headers !== undefined &&
+          !isApprovedHeaderTemplates(descriptor.http_headers)
+        )
+          return false;
+        const missingSecret = requiredRemoteSecretNames(descriptor).some(
+          (secretName) => !hasSecret(secretName, env)
+        );
+        return !missingSecret;
+      }
+      return (
+        typeof descriptor.command === "string" &&
+        Boolean(descriptor.command.trim()) &&
+        hasExternalMcpProfile(server)
+      );
+    }
+  );
+
+  const resolvedEntries = await Promise.all(
+    candidates.map(async ([server, descriptor]) => {
+      const denied = permissions.deniedTools[server];
+      if (permissions.allowedServers.has(server)) {
+        const tools = await discover(
+          server,
+          descriptor,
+          paths,
+          workspace,
+          node,
+          gatewayEnv,
+          env
+        );
+        const filtered = denied
+          ? tools.filter((tool) => !denied.has(tool))
+          : tools;
+        return filtered.length > 0 ? ([server, filtered] as const) : null;
+      }
+      const explicit = permissions.allowedTools[server];
+      if (!explicit?.length) return null;
+      const filtered = denied
+        ? explicit.filter((tool) => !denied.has(tool))
+        : explicit;
+      return filtered.length > 0 ? ([server, filtered] as const) : null;
+    })
+  );
+
+  const reviewedMap = Object.fromEntries(
+    resolvedEntries.filter(
+      (entry): entry is readonly [string, string[]] => entry !== null
+    )
+  );
+  return {
+    policyFile,
+    policyDigest,
+    rawPolicy,
+    reviewed: chatgptGrantsSchema.parse(reviewedMap)
+  };
 }
 
 function stateAt(file: string): TunnelState | undefined {
@@ -698,10 +961,10 @@ export async function chatgptTunnelStatus(
   );
   const state = stateAt(stateFile);
   const prior = installedState(state);
-  const reviewed = reviewedPolicy(paths);
+  const reviewed = statusReviewedPolicy(paths, prior);
   return {
     schema: "autodev-chatgpt-tunnel-v1",
-    revision: stateRevision(stateFile, reviewed),
+    revision: stateRevision(stateFile, reviewed, readCanonicalPolicyRaw(paths)),
     configured: prior !== undefined,
     enabled: state?.enabled === true,
     ready: state?.enabled === true && (await checkChatgptTunnel(paths, deps)),
@@ -722,7 +985,17 @@ export interface ChatgptTunnelDependencies {
   node(home: string): string;
   tunnelBinary(env: NodeJS.ProcessEnv): string;
   supergateway(repositoryRoot: string): string;
-  backend: typeof externalFilesystemBackend;
+  backend: typeof externalMcpBackend;
+  hasSecret?(name: string, env: NodeJS.ProcessEnv): boolean;
+  discoverTools?(
+    server: string,
+    descriptor: Record<string, unknown>,
+    paths: Paths,
+    workspace: string,
+    node: string,
+    gatewayEnv: Record<string, string>,
+    env: NodeJS.ProcessEnv
+  ): Promise<string[]>;
   launchValues(paths: Paths): LaunchAgentValues;
   metadata: typeof tunnelMetadata;
   create: typeof createTunnel;
@@ -753,7 +1026,7 @@ function defaultTunnelDependencies(): ChatgptTunnelDependencies {
     node: resolveServiceNode,
     tunnelBinary,
     supergateway: resolveSupergateway,
-    backend: externalFilesystemBackend,
+    backend: externalMcpBackend,
     launchValues: resolveLaunchAgentValues,
     metadata: tunnelMetadata,
     create: createTunnel,
@@ -852,10 +1125,11 @@ export async function ensureChatgptTunnel(
   }
   try {
     if (mutation) {
-      if (!installedState(stateAt(stateFile)))
-        throw new Error("Complete initial installation first");
+      const prior = installedState(stateAt(stateFile));
+      if (!prior) throw new Error("Complete initial installation first");
+      const reviewed = statusReviewedPolicy(paths, prior);
       if (
-        stateRevision(stateFile, reviewedPolicy(paths)) !==
+        stateRevision(stateFile, reviewed, readCanonicalPolicyRaw(paths)) !==
         mutation.expectedRevision
       )
         throw new Error("Tunnel configuration revision conflict");
@@ -924,23 +1198,6 @@ async function reconcile(
     paths.home,
     paths.codexHome
   );
-  const reviewedFile = path.join(
-    paths.repositoryRoot,
-    "config",
-    "chatgpt-mcp-policy.json"
-  );
-  const policyOverride = env.AUTODEV_CHATGPT_MCP_POLICY_FILE?.trim();
-  const policyFile = path.resolve(
-    policyOverride || prior?.policyFile || reviewedFile
-  );
-  const reviewed = reviewedPolicy(paths);
-  const grants = chatgptGrantsSchema.parse(
-    mutation?.action === "configure"
-      ? mutation.grants
-      : policyOverride || !prior
-        ? JSON.parse(readFileSync(policyFile, "utf8"))
-        : prior.grants
-  );
   const node = deps.node(paths.home);
   const catalogue = readBridgeMcpCatalogue(paths.codexHome);
   const filter = {
@@ -948,7 +1205,14 @@ async function reconcile(
     script: path.join(paths.codexHome, "src/mcp/tool-filter.ts")
   };
   const backendFor = (server: string) =>
-    deps.backend(server, paths.repositoryRoot, workspace, node);
+    deps.backend(
+      server,
+      paths.repositoryRoot,
+      workspace,
+      node,
+      paths.home,
+      paths.codexHome
+    );
   const org =
     env.AUTODEV_CHATGPT_ORGANIZATION_ID?.trim() || prior?.organizationId;
   const workspaceId =
@@ -993,6 +1257,42 @@ async function reconcile(
     workspace,
     node,
     servicePath
+  );
+  const policyOverride = env.AUTODEV_CHATGPT_MCP_POLICY_FILE?.trim();
+  const {
+    policyFile: canonicalFile,
+    policyDigest: canonicalDigest,
+    reviewed
+  } = await resolveReviewedFromRulesync(
+    paths,
+    catalogue,
+    workspace,
+    node,
+    gatewayEnv,
+    env,
+    deps,
+    prior
+  );
+  const policyFile = policyOverride
+    ? path.resolve(policyOverride)
+    : canonicalFile;
+  const policyDigest = policyOverride
+    ? createHash("sha256")
+        .update(readFileSync(policyFile, "utf8"))
+        .update("\n")
+        .update(canonicalDigest)
+        .digest("hex")
+    : canonicalDigest;
+  const grants = chatgptGrantsSchema.parse(
+    mutation?.action === "configure"
+      ? mutation.grants
+      : policyOverride
+        ? JSON.parse(readFileSync(policyFile, "utf8"))
+        : !prior ||
+            prior.policyFile !== policyFile ||
+            prior.policyDigest !== policyDigest
+          ? reviewed
+          : prior.grants
   );
   const runtimeEnv = { ...cleanEnv, [CHATGPT_TUNNEL_API_KEY_ENV]: rawKey };
   const idFile = path.join(directory, "tunnel-id");
@@ -1054,6 +1354,7 @@ async function reconcile(
     legacyFiles.length === 0 &&
     prior.workspace === workspace &&
     prior.policyFile === policyFile &&
+    prior.policyDigest === policyDigest &&
     prior.port === port &&
     prior.mcpPort === mcpPort &&
     prior.tunnelId === id &&
@@ -1216,6 +1517,8 @@ async function reconcile(
     const nextState = installedStateSchema.parse({
       workspace,
       policyFile,
+      policyDigest,
+      reviewed,
       grants,
       generation: path.basename(generation),
       port,

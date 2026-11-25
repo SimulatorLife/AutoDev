@@ -1,16 +1,75 @@
 #!/usr/bin/env node
 
-/** Stdio MCP policy boundary that exposes only the tools assigned to a role. */
+/** Stdio MCP policy boundary that exposes only the tools assigned to a role or external gateway. */
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { isRecord } from "@simulatorlife/autodev-core";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
-import { readRuntimeSecret } from "../shared/runtime-secrets.ts";
+import {
+  readRuntimeSecret,
+  resolveManagedSecret
+} from "../shared/runtime-secrets.ts";
+import {
+  MCP_SERVER_COCOINDEX,
+  MCP_SERVER_FILESYSTEM
+} from "../shared/tool-names.ts";
 import type { ToolCallOutcome } from "./mcp-telemetry.ts";
 
 type JsonRecord = Record<string, unknown>;
 type JsonRpcId = string | number;
+
+export interface RemoteBackendSpec {
+  url: string;
+  bearer_token_env_var?: string;
+  http_headers?: Record<string, string>;
+}
+
+/** Resolve declared credentials for one remote MCP server without exposing secrets to siblings. */
+export function resolveRemoteMcpHeaders(
+  spec: RemoteBackendSpec,
+  server: string,
+  env: NodeJS.ProcessEnv = process.env
+): Record<string, string> {
+  const resolveSecret = (name: string): string | null =>
+    resolveManagedSecret(name, env) ?? readRuntimeSecret(name, env);
+  const headers: Record<string, string> = {};
+  if (spec.bearer_token_env_var) {
+    const token = resolveSecret(spec.bearer_token_env_var);
+    if (!token) {
+      throw new Error(
+        `Missing credential for remote MCP server ${server}: ${spec.bearer_token_env_var}`
+      );
+    }
+    headers.Authorization = `Bearer ${token}`;
+  }
+  if (spec.http_headers) {
+    for (const [headerName, template] of Object.entries(spec.http_headers)) {
+      const resolved = template.replaceAll(
+        /\$\{([A-Za-z0-9_]+)\}/gu,
+        (_match, envName: string) => {
+          const value = resolveSecret(envName);
+          if (!value) {
+            throw new Error(
+              `Missing credential for remote MCP server ${server}: ${envName}`
+            );
+          }
+          return value;
+        }
+      );
+      headers[headerName] = resolved;
+    }
+  }
+  return headers;
+}
+
+interface BackendConnection {
+  send(message: JsonRecord): void;
+  close(): void;
+  kill(): void;
+}
 
 function parseJson(value: string): JsonRecord | null {
   try {
@@ -59,13 +118,36 @@ function runToolFilter(args: string[]): void {
     return telemetryModulePromise;
   };
   if (!command?.trim()) throw new Error("a backend MCP command is required");
-  const backendArgs: unknown = JSON.parse(argsJson ?? "null");
+  const isRemote = command === "--remote";
+  let remoteSpec: RemoteBackendSpec | null = null;
+  let backendArgs: string[] = [];
+  if (isRemote) {
+    const parsed: unknown = JSON.parse(argsJson ?? "null");
+    if (
+      !isRecord(parsed) ||
+      typeof parsed.url !== "string" ||
+      !parsed.url.trim() ||
+      (parsed.bearer_token_env_var !== undefined &&
+        typeof parsed.bearer_token_env_var !== "string") ||
+      (parsed.http_headers !== undefined &&
+        (!isRecord(parsed.http_headers) ||
+          !Object.values(parsed.http_headers).every(
+            (value) => typeof value === "string"
+          )))
+    ) {
+      throw new Error("remote MCP descriptor is invalid");
+    }
+    remoteSpec = parsed as unknown as RemoteBackendSpec;
+  } else {
+    const parsedArgs: unknown = JSON.parse(argsJson ?? "null");
+    if (
+      !Array.isArray(parsedArgs) ||
+      !parsedArgs.every((arg) => typeof arg === "string")
+    )
+      throw new Error("backend MCP arguments must be a string array");
+    backendArgs = parsedArgs;
+  }
   const allowedTools: unknown = JSON.parse(toolsJson ?? "null");
-  if (
-    !Array.isArray(backendArgs) ||
-    !backendArgs.every((arg) => typeof arg === "string")
-  )
-    throw new Error("backend MCP arguments must be a string array");
   if (
     !Array.isArray(allowedTools) ||
     !allowedTools.every((tool) => typeof tool === "string" && tool.trim())
@@ -74,7 +156,7 @@ function runToolFilter(args: string[]): void {
 
   const allowed = new Set<string>(allowedTools);
   const pendingToolLists = new Set<JsonRpcId>();
-  const pendingInitialize = new Set<JsonRpcId>();
+  const pendingInitialize = new Map<JsonRpcId, string | undefined>();
   const deadlines = new Map<JsonRpcId, NodeJS.Timeout>();
   const cancelledRequests = new Set<JsonRpcId>();
   const observations = new Map<JsonRpcId, (outcome: ToolCallOutcome) => void>();
@@ -92,14 +174,6 @@ function runToolFilter(args: string[]): void {
     "notifications/initialized",
     "notifications/cancelled"
   ]);
-  const backend = spawn(command, backendArgs, {
-    cwd: process.cwd(),
-    env:
-      external && command === "/usr/bin/sandbox-exec"
-        ? { HOME: process.cwd(), PATH: "/usr/bin:/bin", LANG: "en_US.UTF-8" }
-        : process.env,
-    stdio: ["pipe", "pipe", "inherit"]
-  });
   const clearDeadline = (id: JsonRpcId): void => {
     const timer = deadlines.get(id);
     if (timer) clearTimeout(timer);
@@ -112,13 +186,273 @@ function runToolFilter(args: string[]): void {
       process.stdout.write(
         jsonLine(errorResponse(id, "External MCP request timed out"))
       );
-      backend.kill("SIGKILL");
+      connection.kill();
     }, milliseconds);
     timer.unref();
     deadlines.set(id, timer);
   };
+
   const clientLines = createInterface({ input: process.stdin });
-  const backendLines = createInterface({ input: backend.stdout! });
+
+  const shutdownFromBackend = (code: number, exitWhenFlushed = false): void => {
+    if (external) {
+      for (const id of deadlines.keys()) clearDeadline(id);
+      for (const id of observations.keys())
+        finish(id, { status: "error", errorType: "backend_closed" });
+      if (telemetryModulePromise) {
+        const flushed = Promise.allSettled([...spans]).then(() =>
+          telemetryModulePromise!.then(
+            (telemetry) => telemetry.shutdownTelemetry(),
+            () => {}
+          )
+        );
+        if (exitWhenFlushed) {
+          void Promise.race([
+            flushed,
+            new Promise((resolve) => setTimeout(resolve, 400).unref())
+          ]).finally(() => process.exit(code));
+        }
+      } else if (exitWhenFlushed) {
+        process.exit(code);
+      }
+    } else if (exitWhenFlushed) {
+      process.exit(code);
+    }
+    process.exitCode = code;
+    clientLines.close();
+    process.stdin.pause();
+    process.stdin.destroy();
+  };
+
+  const handleBackendMessage = (
+    message: JsonRecord | null,
+    rawLine?: string
+  ): void => {
+    const result = message && isRecord(message.result) ? message.result : null;
+    if (external) {
+      if (!message) return;
+      const id =
+        typeof message.id === "string" || typeof message.id === "number"
+          ? message.id
+          : null;
+      if (typeof message.method === "string") {
+        if (id !== null)
+          connection.send(
+            errorResponse(
+              id,
+              "MCP client capability is not externally approved"
+            )
+          );
+        else if (
+          message.method === "notifications/tools/list_changed" ||
+          message.method === "notifications/progress"
+        )
+          process.stdout.write(jsonLine(message));
+        return;
+      }
+      if (id !== null) {
+        if (!deadlines.has(id)) return;
+        clearDeadline(id);
+        if (cancelledRequests.delete(id)) {
+          pendingToolLists.delete(id);
+          pendingInitialize.delete(id);
+          return;
+        }
+        finish(
+          id,
+          message.error || result?.isError === true
+            ? { status: "error", errorType: "tool_error" }
+            : { status: "ok" }
+        );
+        const requestedProtocol = pendingInitialize.get(id);
+        if (pendingInitialize.delete(id) && result) {
+          const capabilities = isRecord(result.capabilities)
+            ? result.capabilities
+            : {};
+          // Keep all external filtered backends on a single tool-only protocol
+          // version so Supergateway's CombinedServers does not tear down and
+          // restart higher-version backends on every new session handshake.
+          const negotiatedProtocol =
+            requestedProtocol === "2024-11-05" ? "2024-11-05" : "2025-03-26";
+          message.result = {
+            protocolVersion: negotiatedProtocol,
+            serverInfo: result.serverInfo,
+            capabilities: {
+              tools: isRecord(capabilities.tools) ? capabilities.tools : {}
+            }
+          };
+          process.stdout.write(jsonLine(message));
+          return;
+        }
+      }
+    }
+    if (
+      message &&
+      (typeof message.id === "string" || typeof message.id === "number") &&
+      pendingToolLists.delete(message.id) &&
+      result &&
+      Array.isArray(result.tools)
+    ) {
+      message.result = {
+        ...result,
+        tools: result.tools
+          .filter(
+            (tool) =>
+              isRecord(tool) &&
+              typeof tool.name === "string" &&
+              allowed.has(tool.name)
+          )
+          .map((tool) =>
+            external
+              ? {
+                  ...tool,
+                  annotations: {
+                    readOnlyHint: true,
+                    destructiveHint: false,
+                    idempotentHint: true,
+                    openWorldHint: isRemote
+                  }
+                }
+              : tool
+          )
+      };
+      process.stdout.write(jsonLine(message));
+      return;
+    }
+    process.stdout.write(
+      rawLine !== undefined ? `${rawLine}\n` : jsonLine(message!)
+    );
+  };
+
+  let connection: BackendConnection;
+  if (remoteSpec) {
+    const headers = resolveRemoteMcpHeaders(
+      remoteSpec,
+      server ?? "",
+      process.env
+    );
+    const transport = new StreamableHTTPClientTransport(
+      new URL(remoteSpec.url),
+      { requestInit: { headers } }
+    );
+    let closed = false;
+    let sendChain: Promise<void> = Promise.resolve();
+    transport.onmessage = (message) => {
+      handleBackendMessage(message as unknown as JsonRecord);
+    };
+    transport.onerror = (error) => {
+      process.stderr.write(
+        `external remote MCP error: ${error instanceof Error ? error.message : String(error)}\n`
+      );
+    };
+    transport.onclose = () => {
+      if (!closed) {
+        closed = true;
+        shutdownFromBackend(0);
+      }
+    };
+    connection = {
+      send(message) {
+        if (closed) return;
+        sendChain = sendChain.then(async () => {
+          if (closed) return;
+          try {
+            await transport.send(message as unknown as JSONRPCMessage);
+          } catch (error) {
+            const id =
+              typeof message.id === "string" || typeof message.id === "number"
+                ? message.id
+                : null;
+            if (id !== null && deadlines.has(id)) {
+              clearDeadline(id);
+              finish(id, { status: "error", errorType: "tool_error" });
+              pendingInitialize.delete(id);
+              pendingToolLists.delete(id);
+              process.stdout.write(
+                jsonLine(
+                  errorResponse(
+                    id,
+                    error instanceof Error
+                      ? error.message
+                      : "Remote MCP request failed"
+                  )
+                )
+              );
+            }
+          }
+        });
+      },
+      close() {
+        if (closed) return;
+        closed = true;
+        void Promise.race([
+          transport.terminateSession().catch(() => {}),
+          new Promise((resolve) => setTimeout(resolve, 300).unref())
+        ])
+          .finally(() => transport.close().catch(() => {}))
+          .finally(() => shutdownFromBackend(0, true));
+      },
+      kill() {
+        connection.close();
+      }
+    };
+  } else {
+    const sandboxed = external && command === "/usr/bin/sandbox-exec";
+    const childEnv =
+      sandboxed && server === MCP_SERVER_FILESYSTEM
+        ? { HOME: process.cwd(), PATH: "/usr/bin:/bin", LANG: "en_US.UTF-8" }
+        : sandboxed && server === MCP_SERVER_COCOINDEX
+          ? {
+              // Outbound HTTPS is blocked inside Seatbelt; avoid huggingface_hub
+              // network probe stalls when initializing/querying cached models.
+              HF_HUB_OFFLINE: "1",
+              TRANSFORMERS_OFFLINE: "1",
+              ...process.env
+            }
+          : process.env;
+    const backend = spawn(command, backendArgs, {
+      cwd: process.cwd(),
+      env: childEnv,
+      stdio: ["pipe", "pipe", "inherit"]
+    });
+    const backendLines = createInterface({ input: backend.stdout! });
+    backendLines.on("line", (line) => {
+      handleBackendMessage(parseJson(line), line);
+    });
+    backend.on("error", (error) => {
+      process.stderr.write(
+        external
+          ? "external MCP backend failed to start\n"
+          : `role MCP backend failed to start: ${error.message}\n`
+      );
+      process.exitCode = 1;
+    });
+    backend.on("close", (code) => {
+      backendLines.close();
+      shutdownFromBackend(code ?? 1, external);
+    });
+    connection = {
+      send(message) {
+        backend.stdin?.write(jsonLine(message));
+      },
+      close() {
+        if (backend.exitCode === null && backend.signalCode === null) {
+          backend.kill("SIGTERM");
+          if (external) {
+            const timer = setTimeout(() => {
+              if (backend.exitCode === null && backend.signalCode === null)
+                backend.kill("SIGKILL");
+            }, 5000);
+            timer.unref();
+          }
+        }
+      },
+      kill() {
+        if (backend.exitCode === null && backend.signalCode === null)
+          backend.kill("SIGKILL");
+      }
+    };
+  }
 
   clientLines.on("line", (line) => {
     const message = parseJson(line);
@@ -149,7 +483,12 @@ function runToolFilter(args: string[]): void {
       return;
     }
     if (external && message.method === "initialize" && id !== null) {
-      pendingInitialize.add(id);
+      const requested = isRecord(message.params)
+        ? typeof message.params.protocolVersion === "string"
+          ? message.params.protocolVersion
+          : undefined
+        : undefined;
+      pendingInitialize.set(id, requested);
       if (isRecord(message.params))
         message.params = { ...message.params, capabilities: {} };
     }
@@ -170,7 +509,7 @@ function runToolFilter(args: string[]): void {
           clearDeadline(cancelled);
           // The upstream may ignore cancellation. End that backend session
           // if it has not answered within the bounded cancellation grace.
-          const timer = setTimeout(() => backend.kill("SIGKILL"), 5000);
+          const timer = setTimeout(() => connection.kill(), 5000);
           timer.unref();
           deadlines.set(cancelled, timer);
           cancelledRequests.add(cancelled);
@@ -221,144 +560,16 @@ function runToolFilter(args: string[]): void {
     }
     if (external && id !== null)
       armDeadline(id, message.method === "tools/call" ? 60_000 : 15_000);
-    backend.stdin?.write(external ? jsonLine(message) : `${line}\n`);
-  });
-
-  backendLines.on("line", (line) => {
-    const message = parseJson(line);
-    const result = message && isRecord(message.result) ? message.result : null;
-    if (external) {
-      if (!message) return;
-      const id =
-        typeof message.id === "string" || typeof message.id === "number"
-          ? message.id
-          : null;
-      if (typeof message.method === "string") {
-        if (id !== null)
-          backend.stdin?.write(
-            jsonLine(
-              errorResponse(
-                id,
-                "MCP client capability is not externally approved"
-              )
-            )
-          );
-        else if (
-          message.method === "notifications/tools/list_changed" ||
-          message.method === "notifications/progress"
-        )
-          process.stdout.write(jsonLine(message));
-        return;
-      }
-      if (id !== null) {
-        if (!deadlines.has(id)) return;
-        clearDeadline(id);
-        if (cancelledRequests.delete(id)) {
-          pendingToolLists.delete(id);
-          pendingInitialize.delete(id);
-          return;
-        }
-        finish(
-          id,
-          message.error || result?.isError === true
-            ? { status: "error", errorType: "tool_error" }
-            : { status: "ok" }
-        );
-        if (pendingInitialize.delete(id) && result) {
-          const capabilities = isRecord(result.capabilities)
-            ? result.capabilities
-            : {};
-          message.result = {
-            protocolVersion: result.protocolVersion,
-            serverInfo: result.serverInfo,
-            capabilities: {
-              tools: isRecord(capabilities.tools) ? capabilities.tools : {}
-            }
-          };
-          process.stdout.write(jsonLine(message));
-          return;
-        }
-      }
-    }
-    if (
-      message &&
-      (typeof message.id === "string" || typeof message.id === "number") &&
-      pendingToolLists.delete(message.id) &&
-      result &&
-      Array.isArray(result.tools)
-    ) {
-      message.result = {
-        ...result,
-        tools: result.tools
-          .filter(
-            (tool) =>
-              isRecord(tool) &&
-              typeof tool.name === "string" &&
-              allowed.has(tool.name)
-          )
-          .map((tool) =>
-            external
-              ? {
-                  ...tool,
-                  annotations: {
-                    readOnlyHint: true,
-                    destructiveHint: false,
-                    idempotentHint: true,
-                    openWorldHint: false
-                  }
-                }
-              : tool
-          )
-      };
-      process.stdout.write(jsonLine(message));
-      return;
-    }
-    process.stdout.write(`${line}\n`);
+    if (external) connection.send(message);
+    else connection.send(parseJson(line) ?? message);
   });
 
   clientLines.on("close", () => {
-    if (backend.exitCode === null && backend.signalCode === null) {
-      backend.kill("SIGTERM");
-      if (external) {
-        const timer = setTimeout(() => {
-          if (backend.exitCode === null && backend.signalCode === null)
-            backend.kill("SIGKILL");
-        }, 5000);
-        timer.unref();
-      }
-    }
-  });
-  backend.on("error", (error) => {
-    process.stderr.write(
-      external
-        ? "external MCP backend failed to start\n"
-        : `role MCP backend failed to start: ${error.message}\n`
-    );
-    process.exitCode = 1;
-  });
-  backend.on("close", (code) => {
-    if (external) {
-      for (const id of deadlines.keys()) clearDeadline(id);
-      for (const id of observations.keys())
-        finish(id, { status: "error", errorType: "backend_closed" });
-      if (telemetryModulePromise) {
-        void Promise.allSettled([...spans]).then(() =>
-          telemetryModulePromise!.then(
-            (telemetry) => telemetry.shutdownTelemetry(),
-            () => {}
-          )
-        );
-      }
-    }
-    process.exitCode = code ?? 1;
-    clientLines.close();
-    backendLines.close();
-    process.stdin.pause();
-    process.stdin.destroy();
+    connection.close();
   });
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.once(signal, () => {
-      if (!backend.killed) backend.kill(signal);
+      connection.close();
     });
   }
 }

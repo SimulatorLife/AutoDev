@@ -601,7 +601,7 @@ test("OpenLIT reconciliation fingerprints mounted config for service restarts", 
   );
   assert.match(
     runner,
-    /Verifying the deployed AutoDev Usage response contract[\s\S]*openlit:verify-usage/u
+    /Verifying the deployed AutoDev Usage response contract[\s\S]*usage-contract\.ts/u
   );
   assert.match(runner, /CONSOLE_USAGE_TOKEN_OVERRIDE=/u);
   assert.match(

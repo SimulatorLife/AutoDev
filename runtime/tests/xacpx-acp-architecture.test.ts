@@ -533,7 +533,7 @@ test("XacpxSessionManager executes live ACP turns, enforces read-only permission
   assert.equal(claudeWorker.env.MINIMAX_API_KEY, undefined);
   assert.equal(claudeWorker.env.CONTEXT7_API_KEY, undefined);
 
-  const docsResearcher = buildAcpProviderLaunchSpec({
+  const documentationResearcher = buildAcpProviderLaunchSpec({
     provider: "claude",
     role: "docs-researcher",
     model: "sonnet",
@@ -545,7 +545,7 @@ test("XacpxSessionManager executes live ACP turns, enforces read-only permission
       CONTEXT7_API_KEY: "context7-secret"
     }
   });
-  assert.equal(docsResearcher.env.MINIMAX_API_KEY, undefined);
-  assert.equal(docsResearcher.env.CONTEXT7_API_KEY, "context7-secret");
+  assert.equal(documentationResearcher.env.MINIMAX_API_KEY, undefined);
+  assert.equal(documentationResearcher.env.CONTEXT7_API_KEY, "context7-secret");
   assert.equal(findMcodeBinary({ PATH: "", HOME: "/nonexistent-home" }), null);
 });

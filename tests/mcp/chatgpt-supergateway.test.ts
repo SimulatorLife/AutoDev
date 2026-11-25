@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
   chatgptSupergatewayEnvironment,
+  parseRulesyncExternalMcpPermissions,
   renderChatgptSupergatewayConfig
 } from "../../runtime/src/config/render-chatgpt-supergateway.ts";
 
@@ -127,11 +129,79 @@ test("ungranted servers, unknown names, wildcard and empty grants fail closed", 
   );
 });
 
+test("remote Streamable HTTP descriptors render parameterized --remote filter entries without leaking secrets", () => {
+  const remoteCatalogue = {
+    ...catalogue,
+    openaiDeveloperDocs: { url: "https://developers.openai.com/mcp" },
+    context7: {
+      url: "https://mcp.context7.com/mcp",
+      bearer_token_env_var: "CONTEXT7_API_KEY"
+    },
+    googleDeveloperKnowledge: {
+      url: "https://developerknowledge.googleapis.com/mcp",
+      http_headers: {
+        "X-Goog-Api-Key": "${GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY}"
+      }
+    }
+  };
+  const remoteGrants = {
+    filesystem: ["read_text_file"],
+    openaiDeveloperDocs: ["search_openai_docs"],
+    context7: ["resolve-library-id", "query-docs"],
+    googleDeveloperKnowledge: ["search_documents"]
+  };
+  const rendered = renderChatgptSupergatewayConfig(
+    remoteCatalogue,
+    remoteGrants,
+    "/project",
+    remoteGrants,
+    http
+  );
+  assert.doesNotMatch(rendered, /Bearer\s+[A-Za-z0-9]/u);
+  const parsed = JSON.parse(rendered);
+  const servers = parsed.mcpServers.autodev.mcpServers;
+  assert.equal(servers.openaiDeveloperDocs.args[1], "--remote");
+  assert.deepEqual(JSON.parse(servers.openaiDeveloperDocs.args[2]), {
+    url: "https://developers.openai.com/mcp"
+  });
+  assert.equal(servers.openaiDeveloperDocs.toolPrefix, "openaiDeveloperDocs__");
+  assert.equal(servers.context7.args[1], "--remote");
+  assert.deepEqual(JSON.parse(servers.context7.args[2]), {
+    url: "https://mcp.context7.com/mcp",
+    bearer_token_env_var: "CONTEXT7_API_KEY"
+  });
+  assert.equal(
+    servers.googleDeveloperKnowledge.args[2],
+    JSON.stringify({
+      url: "https://developerknowledge.googleapis.com/mcp",
+      http_headers: {
+        "X-Goog-Api-Key": "$${GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY}"
+      }
+    })
+  );
+});
+
 test("reject incompatible transports, credentials, workspace, HTTP options and colliding namespaces", () => {
   assert.throws(
     () =>
       renderChatgptSupergatewayConfig(
-        { docs: { url: "https://example.test/mcp" } },
+        { docs: { url: "http://example.test/mcp" } },
+        { docs: ["search"] },
+        "/project",
+        { docs: ["search"] },
+        http
+      ),
+    /Unsupported/
+  );
+  assert.throws(
+    () =>
+      renderChatgptSupergatewayConfig(
+        {
+          docs: {
+            url: "https://example.test/mcp",
+            http_headers: { Authorization: "Bearer literal-secret" }
+          }
+        },
         { docs: ["search"] },
         "/project",
         { docs: ["search"] },
@@ -322,4 +392,34 @@ test("different prefixes cannot produce identical qualified names", () => {
       ),
     /Colliding MCP qualified tool name/
   );
+});
+
+test("canonical .rulesync/permissions.jsonc derives reviewed ChatGPT MCP permissions without duplication", () => {
+  const permissionsUrl = new URL(
+    "../../.rulesync/permissions.jsonc",
+    import.meta.url
+  );
+  const summary = parseRulesyncExternalMcpPermissions(
+    readFileSync(permissionsUrl, "utf8")
+  );
+  assert.deepEqual([...summary.allowedServers].sort(), [
+    "context7",
+    "filesystem",
+    "googleDeveloperKnowledge",
+    "lsp",
+    "openaiDeveloperDocs"
+  ]);
+  assert.deepEqual([...summary.deniedServers].sort(), [
+    "playtest",
+    "playwright"
+  ]);
+  assert.deepEqual(summary.allowedTools, {
+    "cocoindex-code": ["search"],
+    codegraphcontext: [
+      "list_indexed_repositories",
+      "find_code",
+      "analyze_code_relationships",
+      "get_repository_stats"
+    ]
+  });
 });

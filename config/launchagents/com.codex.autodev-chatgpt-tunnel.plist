@@ -24,6 +24,12 @@
   </dict>
   <key>WorkingDirectory</key>
   <string>__TUNNEL_WORKSPACE__</string>
+  <!-- Interactive, not default/Background: Supergateway spawns multiple sandboxed
+       MCP child processes per session, which stall under launchd's throttled
+       daemon/background QoS when omitted. LaunchAgents without a GUI never
+       appear in the Dock. -->
+  <key>ProcessType</key>
+  <string>Interactive</string>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>

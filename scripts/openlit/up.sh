@@ -155,6 +155,7 @@ COMPOSE_RETRY_DELAY_SECONDS="${AUTODEV_OPENLIT_COMPOSE_RETRY_DELAY_SECONDS:-5}"
 # How long the stack may take to serve once Compose has started it.
 CLICKHOUSE_TIMEOUT_SECONDS="${AUTODEV_OPENLIT_CLICKHOUSE_TIMEOUT_SECONDS:-120}"
 OPENLIT_TIMEOUT_SECONDS="${AUTODEV_OPENLIT_HTTP_TIMEOUT_SECONDS:-120}"
+USAGE_VERIFY_TIMEOUT_SECONDS="${AUTODEV_OPENLIT_USAGE_VERIFY_TIMEOUT_SECONDS:-120}"
 CLICKHOUSE_HTTP_PORT="${AUTODEV_OPENLIT_CLICKHOUSE_HTTP_PORT:-8123}"
 
 COMPOSE_LOG="$WORK_DIR/compose-up.log"
@@ -463,8 +464,24 @@ if ! ensure_system_log_retention; then
 fi
 
 echo "==> Verifying the deployed AutoDev Usage response contract"
-AUTODEV_OPENLIT_USAGE_TOKEN="${CONSOLE_USAGE_TOKEN_OVERRIDE:-$AUTODEV_OPENLIT_USAGE_TOKEN}" \
-	pnpm --filter @simulatorlife/autodev-runtime openlit:verify-usage
+# Invoke node via `pnpm --dir ... exec` instead of `pnpm --filter ... run`:
+# pnpm's recursive runner swallows exit code 75 (EX_TEMPFAIL) as 1, hiding
+# whether the Usage API is still warming up vs permanently broken.
+USAGE_VERIFY_DEADLINE=$((SECONDS + USAGE_VERIFY_TIMEOUT_SECONDS))
+while :; do
+	verify_status=0
+	AUTODEV_OPENLIT_USAGE_URL="${AUTODEV_OPENLIT_USAGE_URL:-http://127.0.0.1:${PORT:-3000}}" \
+	AUTODEV_OPENLIT_USAGE_TOKEN="${CONSOLE_USAGE_TOKEN_OVERRIDE:-$AUTODEV_OPENLIT_USAGE_TOKEN}" \
+		pnpm --dir "$REPO_ROOT/runtime" exec node src/platform/usage-contract.ts || verify_status=$?
+	if [[ "$verify_status" -eq 0 ]]; then
+		break
+	fi
+	if [[ "$verify_status" -ne 75 ]] || (( SECONDS >= USAGE_VERIFY_DEADLINE )); then
+		exit "$verify_status"
+	fi
+	echo "up.sh: Usage API did not answer yet; retrying contract verification..." >&2
+	sleep 2
+done
 
 echo "==> Synchronizing AutoDev provider models, pricing, and workspace architecture"
 pnpm --filter @simulatorlife/autodev-data openlit:sync-models &
