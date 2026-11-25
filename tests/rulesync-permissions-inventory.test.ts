@@ -12,6 +12,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { updateAntigravityPermissions } from "@simulatorlife/autodev-runtime/platform/antigravity-settings";
+import { parseJsoncObject } from "@simulatorlife/autodev-data/files";
 import { parse } from "smol-toml";
 
 import { normalizedSource } from "./source-text.ts";
@@ -22,17 +23,8 @@ const read = (relativePath: string): string => {
   const text = readFileSync(join(repositoryRoot, relativePath), "utf8");
   return relativePath.endsWith(".ts") ? normalizedSource(text) : text;
 };
-const stripJsoncComments = (text: string): string =>
-  text
-    .split("\n")
-    .filter((line) => !line.trimStart().startsWith("//"))
-    .join("\n");
 const readJson = (relativePath: string): JsonObject =>
-  JSON.parse(
-    relativePath.endsWith(".jsonc")
-      ? stripJsoncComments(read(relativePath))
-      : read(relativePath)
-  ) as JsonObject;
+  parseJsoncObject(read(relativePath), relativePath) as JsonObject;
 const asObject = (value: unknown): JsonObject => {
   assert.ok(value && typeof value === "object" && !Array.isArray(value));
   return value as JsonObject;
@@ -145,16 +137,31 @@ test("Antigravity static permissions live in .rulesync/permissions.jsonc and dyn
     false
   );
   assert.deepEqual(asObject(sharedPermission.bash)["ccc *"], "deny");
-  assert.deepEqual(agyPermission.read, {
-    "~/.agents/**": "allow",
-    "~/.codex/**": "allow",
-    "~/.claude/**": "allow",
-    "~/.gemini/**": "allow",
-    "~/.minimax/**": "allow",
-    "~/.mmx/**": "allow",
-    "~/.opencli/**": "allow",
-    "~/.copilot/**": "allow"
-  });
+  // The read roots are shared by every target; Antigravity only overrides the
+  // machine-local write behaviour.
+  const sharedRead = asObject(sharedPermission.read);
+  for (const root of [
+    "~/.autodev/**",
+    "~/.agents/**",
+    "~/.codex/**",
+    "~/.claude/**",
+    "~/.gemini/**",
+    "~/.minimax/**",
+    "~/.mmx/**",
+    "~/.opencli/**",
+    "~/.copilot/**"
+  ])
+    assert.equal(sharedRead[root], "allow", root);
+  for (const root of [
+    "~/.ssh/**",
+    "~/.gnupg/**",
+    "~/.aws/**",
+    "~/.netrc",
+    "~/.npmrc",
+    "~/.git-credentials"
+  ])
+    assert.equal(sharedRead[root], "deny", root);
+  assert.equal(Object.hasOwn(agyPermission, "read"), false);
   assert.deepEqual(agyPermission.unsandboxed, {
     "pwd *": "allow",
     "pnpm test *": "allow",
@@ -234,8 +241,7 @@ test("Codex Rulesync permissions are consolidated while subagent generation rema
         "minimax",
         "opencli-chatgpt",
         "opencli-gemini",
-        "mcode",
-        "chatgpt"
+        "mcode"
       ].map((name) => [name, asObject(providers[name]).delegation])
     ),
     {
@@ -246,12 +252,13 @@ test("Codex Rulesync permissions are consolidated while subagent generation rema
       "antigravity-claude-gpt": "xacpx",
       copilot: "xacpx",
       minimax: "xacpx",
-      "opencli-chatgpt": "none",
+      "opencli-chatgpt": "xacpx",
       "opencli-gemini": "none",
-      mcode: "xacpx",
-      chatgpt: "xacpx"
+      mcode: "xacpx"
     }
   );
+  // The retired `chatgpt` contract entry must not come back.
+  assert.equal(Object.hasOwn(providers, "chatgpt"), false);
   const mcpTargets = asObject(rulesyncMcp);
   const providerTargets = Object.keys(mcpTargets).filter(
     (name) => name !== "$schema" && name !== "mcpServers"

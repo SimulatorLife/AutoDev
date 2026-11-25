@@ -74,6 +74,7 @@ import {
 } from "../mcp/chatgpt-backend-pool.ts";
 import { resolveRemoteMcpHeaders } from "../mcp/tool-filter.ts";
 import {
+  type ChatgptRoleSurface,
   CANONICAL_CHATGPT_POLICY_RELATIVE,
   CANONICAL_EXECUTION_CONTRACT_RELATIVE,
   chatgptGrantsSchema,
@@ -103,12 +104,17 @@ const defaultMcpPort = DEFAULT_CHATGPT_MCP_PORT;
 export const CHATGPT_TUNNEL_API_KEY_ENV = "AUTODEV_CHATGPT_TUNNEL_API_KEY";
 export const CHATGPT_MCP_PORT_ENV = "AUTODEV_CHATGPT_MCP_PORT";
 export const CHATGPT_AGENT_ROLE_ENV = "AUTODEV_CHATGPT_AGENT_ROLE";
+// Comma-separated roles this tunnel publishes a surface for.
+export const CHATGPT_MCP_ROLES_ENV = "AUTODEV_CHATGPT_MCP_ROLES";
 const CHATGPT_TUNNEL_API_KEY_REF = `env:${CHATGPT_TUNNEL_API_KEY_ENV}`;
 export type ChatgptTunnelMode = "reconcile" | "enable" | "disable";
 const installedStateSchema = z
   .object({
     workspace: z.string().refine(path.isAbsolute),
+    // The primary role: it owns the gateway's delegation coordinator.
     role: z.string().min(1).optional(),
+    // Every role this tunnel publishes a surface for, primary role first.
+    roles: z.array(z.string().min(1)).min(1).optional(),
     policyFile: z.string().refine(path.isAbsolute),
     policyDigest: z
       .string()
@@ -158,7 +164,11 @@ export const tunnelMutationSchema = z.discriminatedUnion("action", [
       action: z.literal("configure"),
       expectedRevision: revision,
       workspace: z.string().min(1),
+      // The primary role; it owns the gateway's delegation coordinator.
       role: z.string().min(1).optional(),
+      // The additional roles this tunnel publishes a surface for.
+      roles: z.array(z.string().min(1)).min(1).optional(),
+      // Explicit grants for the primary role.
       grants: chatgptGrantsSchema
     })
     .strict(),
@@ -615,6 +625,82 @@ function readCanonicalContractRaw(paths: Paths): string {
   }
 }
 
+/**
+ * Parse the operator's published role list.
+ *
+ * The list is the roles the tunnel exposes to ChatGPT; the first entry is the
+ * primary role the Console configures.
+ */
+export function parsePublishedRoles(
+  raw: string | undefined
+): string[] | undefined {
+  const roles = (raw ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return roles.length ? roles : undefined;
+}
+
+/**
+ * Resolve the roles this tunnel publishes.
+ *
+ * The primary role comes first: it owns the gateway's own delegation
+ * coordinator. Every published role carries its own coordinator on its
+ * surface, so the order only fixes which role the shared environment names.
+ */
+export function resolvePublishedRoles(
+  primary: string,
+  requested: string[] | undefined
+): string[] {
+  const roles: string[] = [];
+  for (const candidate of [primary, ...(requested ?? [])]) {
+    const role = resolveChatgptRole(candidate);
+    if (!roles.includes(role)) roles.push(role);
+  }
+  return roles;
+}
+
+// The local gateway URL that serves one published role's surface.
+export function chatgptRoleSurfaceUrl(mcpPort: number, role: string): string {
+  return `http://127.0.0.1:${mcpPort}/${role}/mcp`;
+}
+
+// The tunnel channel name that carries one published role's surface.
+export function chatgptRoleChannel(role: string): string {
+  return role.replace(/[^a-zA-Z0-9_-]/gu, "-");
+}
+
+/**
+ * Rewrite the generated tunnel profile so it publishes one channel per role.
+ *
+ * `tunnel-client init` writes a single channel; the profile is the tunnel's
+ * own routing table, so each role's surface is addressed by its own channel.
+ */
+export function withTunnelProfileChannels(
+  profileText: string,
+  channels: ReadonlyArray<{ readonly channel: string; readonly url: string }>
+): string {
+  const lines = profileText.split("\n");
+  const start = lines.findIndex((line) => /^mcp:$/.test(line));
+  if (start < 0) throw new Error("Tunnel profile has no mcp section");
+  let end = start + 1;
+  while (end < lines.length) {
+    const line = lines[end]!;
+    if (line.trim() === "") break;
+    if (!/^\s/u.test(line)) break;
+    end += 1;
+  }
+  const block = [
+    "mcp:",
+    "  server_urls:",
+    ...channels.flatMap((entry) => [
+      `    - channel: ${entry.channel}`,
+      `      url: "${entry.url}"`
+    ])
+  ];
+  return [...lines.slice(0, start), ...block, ...lines.slice(end)].join("\n");
+}
+
 function staticRoleFallbackReviewed(
   paths: Paths,
   role: string
@@ -965,9 +1051,24 @@ async function resolveReviewedFromRoleContract(
   };
 }
 
+/**
+ * Read the persisted tunnel state.
+ *
+ * The state file is a projection of the current installation, not an
+ * authority. A file whose shape no longer matches is treated as absent so the
+ * next install re-projects it, while unreadable JSON still fails loudly.
+ */
 function stateAt(file: string): TunnelState | undefined {
   const text = privateRead(file);
-  return text ? stateSchema.parse(JSON.parse(text)) : undefined;
+  if (!text) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error("ChatGPT tunnel state file is not valid JSON");
+  }
+  const result = stateSchema.safeParse(parsed);
+  return result.success ? result.data : undefined;
 }
 
 export async function ready(
@@ -1067,19 +1168,25 @@ export async function checkChatgptTunnel(
     const supergatewayConfig = supergatewayConfigSchema.parse(
       JSON.parse(supergatewayRaw)
     );
-    const allPooled = Object.values(
-      supergatewayConfig.mcpServers.autodev.mcpServers
-    ).every((entry) => "type" in entry && entry.type === "streamableHttp");
+    const surfaces = Object.entries(supergatewayConfig.mcpServers);
+    const allPooled = surfaces.every(([, surface]) =>
+      Object.values(surface.mcpServers).every(
+        (entry) => "type" in entry && entry.type === "streamableHttp"
+      )
+    );
     if (
+      !surfaces.length ||
       !allPooled ||
       supergatewayConfig.host !== "127.0.0.1" ||
       supergatewayConfig.port !== state.mcpPort ||
-      supergatewayConfig.mcpServers.autodev.sessionTimeout !==
-        DEFAULT_CHATGPT_SESSION_TIMEOUT_MS ||
-      supergatewayConfig.mcpServers.autodev.apiKeyFile.replaceAll("$$", "$") !==
-        keyFile
+      surfaces.some(
+        ([, surface]) =>
+          surface.sessionTimeout !== DEFAULT_CHATGPT_SESSION_TIMEOUT_MS ||
+          surface.apiKeyFile.replaceAll("$$", "$") !== keyFile
+      )
     )
       return false;
+    const publishedMcpPort = state.mcpPort;
     const key =
       process.env[CHATGPT_TUNNEL_API_KEY_ENV]?.trim() ||
       deps.readKey(process.env);
@@ -1087,7 +1194,12 @@ export async function checkChatgptTunnel(
       key &&
       legacyRuntimeKeyPaths(directory, state).length === 0 &&
       profileText.includes(CHATGPT_TUNNEL_API_KEY_REF) &&
-      profileText.includes(`http://127.0.0.1:${state.mcpPort}/mcp`) &&
+      publishedMcpPort !== undefined &&
+      (state.roles ?? [resolveChatgptRole(state.role)]).every((published) =>
+        profileText.includes(
+          chatgptRoleSurfaceUrl(publishedMcpPort!, published)
+        )
+      ) &&
       !profileText.includes("commands:") &&
       !/api_key:\s*["']?file:/u.test(profileText) &&
       launchAgentMatches(
@@ -1114,7 +1226,9 @@ export async function chatgptTunnelStatus(
   const state = stateAt(stateFile);
   const prior = installedState(state);
   const role = resolveChatgptRole(prior?.role);
+  const roles = prior?.roles ?? [role];
   const reviewed = statusReviewedPolicy(paths, prior);
+  const grants = prior?.grants ?? reviewed;
   return {
     schema: "autodev-chatgpt-tunnel-v1",
     revision: stateRevision(
@@ -1127,11 +1241,12 @@ export async function chatgptTunnelStatus(
     enabled: state?.enabled === true,
     ready: state?.enabled === true && (await checkChatgptTunnel(paths, deps)),
     role,
+    roles,
     availableRoles: declaredRoleNames(),
     workspace: prior?.workspace ?? null,
     tunnelId: prior?.tunnelId ?? null,
     reviewed,
-    grants: prior?.grants ?? reviewed
+    grants
   };
 }
 
@@ -1302,7 +1417,7 @@ function defaultTunnelDependencies(): ChatgptTunnelDependencies {
         );
         if (!readyOk)
           throw new Error("Candidate Supergateway did not become ready");
-        return await fn(`http://127.0.0.1:${doctorPort}/mcp`);
+        return await fn(`http://127.0.0.1:${doctorPort}`);
       } finally {
         await stopChildProcess(child);
         if (poolChild) await stopChildProcess(poolChild);
@@ -1432,20 +1547,29 @@ async function reconcile(
     paths.home,
     paths.codexHome
   );
-  const role = resolveChatgptRole(
+  const primaryRole = resolveChatgptRole(
     (mutation?.action === "configure" ? mutation.role : undefined) ??
       (env[CHATGPT_AGENT_ROLE_ENV]?.trim() ||
         prior?.role ||
         DEFAULT_CHATGPT_ROLE)
   );
-  const roleReadOnly = roleContract(role).readOnly === true;
+  const priorAdditionalRoles = (prior?.roles ?? []).filter(
+    (published) => published !== resolveChatgptRole(prior?.role)
+  );
+  const roles = resolvePublishedRoles(
+    primaryRole,
+    (mutation?.action === "configure" ? mutation.roles : undefined) ??
+      parsePublishedRoles(env[CHATGPT_MCP_ROLES_ENV]?.trim()) ??
+      priorAdditionalRoles
+  );
+  const role = roles[0]!;
   const node = deps.node(paths.home);
   const catalogue = readBridgeMcpCatalogue(paths.codexHome);
   const filter = {
     command: node,
     script: path.join(paths.codexHome, "src/mcp/tool-filter.ts")
   };
-  const backendFor = (server: string) =>
+  const backendFor = (server: string, backendRole: string) =>
     deps.backend(
       server,
       paths.repositoryRoot,
@@ -1453,7 +1577,10 @@ async function reconcile(
       node,
       paths.home,
       paths.codexHome,
-      { role, readOnly: roleReadOnly }
+      {
+        role: backendRole,
+        readOnly: roleContract(backendRole).readOnly === true
+      }
     );
   const org =
     env.AUTODEV_CHATGPT_ORGANIZATION_ID?.trim() || prior?.organizationId;
@@ -1502,11 +1629,7 @@ async function reconcile(
     { role }
   );
   const policyOverride = env.AUTODEV_CHATGPT_MCP_POLICY_FILE?.trim();
-  const {
-    policyFile: canonicalFile,
-    policyDigest: canonicalDigest,
-    reviewed
-  } = await resolveReviewedFromRoleContract(
+  const canonical = await resolveReviewedFromRoleContract(
     paths,
     catalogue,
     role,
@@ -1519,29 +1642,54 @@ async function reconcile(
   );
   const policyFile = policyOverride
     ? path.resolve(policyOverride)
-    : canonicalFile;
+    : canonical.policyFile;
   const policyDigest = policyOverride
     ? createHash("sha256")
         .update(readFileSync(policyFile, "utf8"))
         .update("\n")
-        .update(canonicalDigest)
+        .update(canonical.policyDigest)
         .digest("hex")
-    : canonicalDigest;
-  const roleChanged = prior !== undefined && resolveChatgptRole(prior.role) !== role;
+    : canonical.policyDigest;
+  const reviewed = canonical.reviewed;
   const grants = chatgptGrantsSchema.parse(
     mutation?.action === "configure"
-      ? roleChanged && Object.keys(mutation.grants).length === 0
+      ? Object.keys(mutation.grants).length === 0
         ? reviewed
         : mutation.grants
       : policyOverride
         ? JSON.parse(readFileSync(policyFile, "utf8"))
         : !prior ||
-            roleChanged ||
+            resolveChatgptRole(prior.role) !== role ||
             prior.policyFile !== policyFile ||
             prior.policyDigest !== policyDigest
           ? reviewed
           : prior.grants
   );
+  const surfaces: ChatgptRoleSurface[] = [];
+  for (const publishedRole of roles) {
+    const resolved =
+      publishedRole === role
+        ? { reviewed, policyDigest }
+        : await resolveReviewedFromRoleContract(
+            paths,
+            catalogue,
+            publishedRole,
+            workspace,
+            node,
+            gatewayEnv,
+            env,
+            deps,
+            prior
+          );
+    surfaces.push({
+      role: publishedRole,
+      grants:
+        publishedRole === role
+          ? grants
+          : chatgptGrantsSchema.parse(resolved.reviewed),
+      reviewed: resolved.reviewed
+    });
+  }
   const runtimeEnv = { ...cleanEnv, [CHATGPT_TUNNEL_API_KEY_ENV]: rawKey };
   const idFile = path.join(directory, "tunnel-id");
   const existingId =
@@ -1601,7 +1749,8 @@ async function reconcile(
     prior &&
     legacyFiles.length === 0 &&
     prior.workspace === workspace &&
-    resolveChatgptRole(prior.role) === role &&
+    (prior.roles ?? [resolveChatgptRole(prior.role)]).join(",") ===
+      roles.join(",") &&
     prior.policyFile === policyFile &&
     prior.policyDigest === policyDigest &&
     prior.port === port &&
@@ -1621,9 +1770,8 @@ async function reconcile(
     const expectedActive = activeKey
       ? renderChatgptSupergatewayConfig(
           catalogue,
-          grants,
+          surfaces,
           workspace,
-          reviewed,
           {
             port: mcpPort,
             apiKeyFile: activeAuth.keyFile,
@@ -1637,9 +1785,8 @@ async function reconcile(
     const expectedActivePool = activeKey
       ? renderChatgptBackendPoolConfig(
           catalogue,
-          grants,
+          surfaces,
           workspace,
-          reviewed,
           backendFor
         )
       : "";
@@ -1684,16 +1831,14 @@ async function reconcile(
     const authFiles = writeLocalAuthFiles(generation, localToken);
     const generatedPool = renderChatgptBackendPoolConfig(
       catalogue,
-      grants,
+      surfaces,
       workspace,
-      reviewed,
       backendFor
     );
     const generated = renderChatgptSupergatewayConfig(
       catalogue,
-      grants,
+      surfaces,
       workspace,
-      reviewed,
       {
         port: mcpPort,
         apiKeyFile: authFiles.keyFile,
@@ -1741,17 +1886,27 @@ async function reconcile(
         "--control-plane-api-key-ref",
         CHATGPT_TUNNEL_API_KEY_REF,
         "--mcp-server-url",
-        `http://127.0.0.1:${mcpPort}/mcp`,
+        chatgptRoleSurfaceUrl(mcpPort, role),
         "--health-listen-addr",
         `127.0.0.1:${port}`
       ],
       { env: cleanEnv, timeout: 30_000 }
     );
+    privateWrite(
+      profile,
+      withTunnelProfileChannels(
+        readFileSync(profile, "utf8"),
+        roles.map((published) => ({
+          channel: chatgptRoleChannel(published),
+          url: chatgptRoleSurfaceUrl(mcpPort, published)
+        }))
+      )
+    );
     chmodSync(profile, 0o600);
     // The prior service may own the desired ports. Doctor validates the
     // candidate against an ephemeral candidate Supergateway and health port.
     stage = "tunnel-client doctor";
-    const runDoctor = (doctorMcpUrl: string): void => {
+    const runDoctor = (doctorBaseUrl: string): void => {
       deps.run(
         binary,
         [
@@ -1760,8 +1915,13 @@ async function reconcile(
           profile,
           "--health.listen-addr",
           "127.0.0.1:0",
-          "--mcp.server-url",
-          `url=${doctorMcpUrl},channel=main`,
+          ...roles.flatMap((published) => [
+            "--mcp.server-url",
+            `url=${chatgptRoleSurfaceUrl(
+              Number(new URL(doctorBaseUrl).port),
+              published
+            )},channel=${chatgptRoleChannel(published)}`
+          ]),
           "--mcp.oauth-discovery=disabled",
           "--explain"
         ],
@@ -1783,7 +1943,7 @@ async function reconcile(
         runDoctor
       );
     } else {
-      runDoctor(`http://127.0.0.1:${mcpPort}/mcp`);
+      runDoctor(`http://127.0.0.1:${mcpPort}`);
     }
 
     stage = "keychain store";
@@ -1800,6 +1960,7 @@ async function reconcile(
     const nextState = installedStateSchema.parse({
       workspace,
       role,
+      roles,
       policyFile,
       policyDigest,
       reviewed,
@@ -2000,9 +2161,11 @@ export async function runChatgptTunnelDaemon(
     state.workspace,
     state.node,
     state.servicePath,
-    { role: resolveChatgptRole(state.role) }
+    { role: resolveChatgptRole(state.role ?? DEFAULT_CHATGPT_ROLE) }
   );
-  const backendPoolRaw = privateRead(path.join(generation, "backend-pool.json"));
+  const backendPoolRaw = privateRead(
+    path.join(generation, "backend-pool.json")
+  );
   let backendPool: ChatgptBackendPoolHandle | undefined;
   if (backendPoolRaw) {
     backendPool = await startChatgptBackendPool(

@@ -64,7 +64,7 @@ import {
 type JsonRecord = Record<string, unknown>;
 type JsonRpcId = string | number;
 
-const identifier = z.string().regex(/^[a-zA-Z0-9_-]+$/u);
+const identifier = z.string().regex(/^[a-zA-Z0-9_.-]+$/u);
 const toolIdentifier = z.string().regex(/^[a-zA-Z0-9_.-]+$/u);
 
 export const CHATGPT_MCP_POOL_PORT_ENV = "AUTODEV_MCP_POOL_PORT";
@@ -92,10 +92,22 @@ const CLIENT_METHODS = new Set([
 const pooledLocalBackendSchema = z
   .object({
     kind: z.literal("stdio"),
+    /**
+     * The canonical MCP server this backend serves. The pool key may be
+     * role-qualified, but the server identity decides the confinement and
+     * sandbox rules the backend runs under.
+     */
+    server: z.string().min(1),
     command: z.string().min(1),
     args: z.array(z.string()),
     cwd: z.string().min(1),
-    tools: z.array(toolIdentifier).min(1)
+    tools: z.array(toolIdentifier).min(1),
+    /**
+     * Role-scoped environment for this backend. It is applied on top of the
+     * shared gateway environment so one pooled backend per role can enforce
+     * that role's own permissions.
+     */
+    env: z.record(z.string(), z.string()).optional()
   })
   .strict();
 
@@ -514,15 +526,17 @@ class PooledBackendController {
   private async buildLocalChildEnv(): Promise<NodeJS.ProcessEnv> {
     if (this.spec.kind !== "stdio") return {};
     const sandboxed = this.spec.command === "/usr/bin/sandbox-exec";
-    if (sandboxed && this.name === MCP_SERVER_FILESYSTEM) {
+    const server = this.spec.server;
+    if (sandboxed && server === MCP_SERVER_FILESYSTEM) {
       return {
         HOME: this.spec.cwd,
         PATH: "/usr/bin:/bin",
-        LANG: "en_US.UTF-8"
+        LANG: "en_US.UTF-8",
+        ...(this.spec.env ?? {})
       };
     }
     let cocoindexSupervised = false;
-    if (sandboxed && this.name === MCP_SERVER_COCOINDEX) {
+    if (sandboxed && server === MCP_SERVER_COCOINDEX) {
       const homeDir = this.gatewayEnv.HOME;
       if (homeDir) {
         const daemonSock = path.join(homeDir, ".cocoindex_code", "daemon.sock");
@@ -533,7 +547,7 @@ class PooledBackendController {
       }
     }
     const childEnv: NodeJS.ProcessEnv = {
-      ...(sandboxed && this.name === MCP_SERVER_COCOINDEX
+      ...(sandboxed && server === MCP_SERVER_COCOINDEX
         ? {
             HF_HUB_OFFLINE: "1",
             TRANSFORMERS_OFFLINE: "1",
@@ -542,7 +556,10 @@ class PooledBackendController {
               : {})
           }
         : {}),
-      ...this.gatewayEnv
+      ...this.gatewayEnv,
+      // The role-scoped environment is applied last so one role's identity and
+      // coordinator always win over the gateway's shared defaults.
+      ...(this.spec.env ?? {})
     };
     for (const secretName of [
       ...KEYCHAIN_SECRET_NAMES,
@@ -573,9 +590,8 @@ class PooledBackendController {
         this.name,
         this.secretEnv
       );
-      const { StreamableHTTPClientTransport } = await import(
-        "@modelcontextprotocol/sdk/client/streamableHttp.js"
-      );
+      const { StreamableHTTPClientTransport } =
+        await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
       const transport = new StreamableHTTPClientTransport(
         new URL(remoteSpec.url),
         { requestInit: { headers } }
@@ -766,7 +782,10 @@ class PooledBackendController {
           {
             protocolVersion: "2025-03-26",
             capabilities: {},
-            clientInfo: { name: "autodev-chatgpt-backend-pool", version: "1.0.0" }
+            clientInfo: {
+              name: "autodev-chatgpt-backend-pool",
+              version: "1.0.0"
+            }
           },
           0,
           null,
@@ -774,7 +793,8 @@ class PooledBackendController {
         );
         if (initResp.error || !isRecord(initResp.result)) {
           throw new Error(
-            isRecord(initResp.error) && typeof initResp.error.message === "string"
+            isRecord(initResp.error) &&
+              typeof initResp.error.message === "string"
               ? initResp.error.message
               : `Backend "${this.name}" failed initialize`
           );
@@ -884,7 +904,9 @@ class PooledBackendController {
           method: "notifications/cancelled",
           params: { requestId: entry.internalId }
         });
-        entry.resolve(errorResponse(requestId, "External MCP request cancelled"));
+        entry.resolve(
+          errorResponse(requestId, "External MCP request cancelled")
+        );
         // Keep entry in `this.pending` briefly? No — removing immediately drops any late reply cleanly.
         this.pending.delete(entry.internalId);
         this.armIdleTimer();
@@ -1126,7 +1148,7 @@ export async function startChatgptBackendPool(
         return;
       }
 
-      const match = /^\/mcp\/([a-zA-Z0-9_-]+)$/u.exec(parsedUrl.pathname);
+      const match = /^\/mcp\/([a-zA-Z0-9_.-]+)$/u.exec(parsedUrl.pathname);
       const controller = match?.[1] ? controllers.get(match[1]) : undefined;
       if (!controller) {
         res.writeHead(404, { "content-type": "application/json" }).end(
@@ -1201,9 +1223,7 @@ export async function startChatgptBackendPool(
       }
       const messages: JsonRecord[] = rawMessages;
 
-      const hasInitialize = messages.some(
-        (msg) => msg.method === "initialize"
-      );
+      const hasInitialize = messages.some((msg) => msg.method === "initialize");
       let session: LogicalSession | undefined;
       if (sessionIdHeader) {
         session = controller.getSession(sessionIdHeader);

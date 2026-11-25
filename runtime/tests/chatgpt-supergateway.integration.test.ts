@@ -172,17 +172,17 @@ test(
       name: "autodev-supergateway-test-2",
       version: "1.0.0"
     });
-      const env = chatgptSupergatewayEnvironment(
-        {
-          home: root,
-          codexHome: path.join(root, ".codex"),
-          repositoryRoot: repo
-        },
-        workspace,
-        process.execPath,
-        process.env.PATH ?? "/usr/bin:/bin",
-        { role: "explorer" }
-      );
+    const env = chatgptSupergatewayEnvironment(
+      {
+        home: root,
+        codexHome: path.join(root, ".codex"),
+        repositoryRoot: repo
+      },
+      workspace,
+      process.execPath,
+      process.env.PATH ?? "/usr/bin:/bin",
+      { role: "explorer" }
+    );
     let gateway: ChildProcess | undefined;
     try {
       mkdirSync(workspace);
@@ -214,9 +214,8 @@ test(
         config,
         renderChatgptSupergatewayConfig(
           catalogue,
-          policy,
+          [{ role: "orchestrator", grants: policy, reviewed: policy }],
           workspace,
-          policy,
           { port: mcpPort, apiKeyFile: keyFile },
           undefined,
           (server) =>
@@ -327,7 +326,6 @@ test(
   }
 );
 
-
 test("dependency setup excludes both OpenAI credentials", () => {
   assert.deepEqual(
     dependencyEnvironment({
@@ -417,7 +415,10 @@ test("role-aware sandbox admits canonical AutoDev local MCP backends and enforce
     { role: "orchestrator" }
   );
   assert.equal(xacpxBackend.command, "/usr/bin/sandbox-exec");
-  assert.match(xacpxBackend.args[1]!, /\(allow network\* \(remote unix-socket\)\)/);
+  assert.match(
+    xacpxBackend.args[1]!,
+    /\(allow network\* \(remote unix-socket\)\)/
+  );
 
   for (const canonical of [
     "filesystem",
@@ -532,7 +533,6 @@ test(
     }
   }
 );
-
 
 test("credential validation, private file ownership and symlinks fail closed", () => {
   const root = mkdtempSync(path.join(tmpdir(), "external-mcp-keys-"));
@@ -769,10 +769,15 @@ test(
       };
       writeFileSync(
         config,
-        renderChatgptSupergatewayConfig(catalogue, grants, root, grants, {
-          port: mcpPort,
-          apiKeyFile: keyFile
-        })
+        renderChatgptSupergatewayConfig(
+          catalogue,
+          [{ role: "orchestrator", grants: grants, reviewed: grants }],
+          root,
+          {
+            port: mcpPort,
+            apiKeyFile: keyFile
+          }
+        )
       );
       gateway = await startSupergatewayServer(
         executable,
@@ -901,7 +906,6 @@ test(
     }
   }
 );
-
 
 function readFileExists(file: string): boolean {
   try {
@@ -1100,7 +1104,7 @@ test(
       wait: async ({ probe }) => probe(),
       withCandidateGateway: async (_exec, _config, env, _cwd, fn) => {
         assert.equal(env.AUTODEV_CHATGPT_TUNNEL_API_KEY, undefined);
-        return fn("http://127.0.0.1:49999/mcp");
+        return fn("http://127.0.0.1:49999");
       },
       run: (_command, args, options) => {
         assert.ok(!options.env.OPENAI_ADMIN_KEY);
@@ -1112,9 +1116,9 @@ test(
             args[args.indexOf("--sample") + 1],
             "sample_mcp_remote_no_auth"
           );
-          assert.equal(
-            args[args.indexOf("--mcp-server-url") + 1],
-            "http://127.0.0.1:3312/mcp"
+          assert.match(
+            args[args.indexOf("--mcp-server-url") + 1]!,
+            /^http:\/\/127\.0\.0\.1:3312\/[a-z0-9-]+\/mcp$/u
           );
           assert.equal(
             args[args.indexOf("--control-plane-api-key-ref") + 1],
@@ -1145,9 +1149,9 @@ test(
             options.env.MCP_DISCOVERY_EXTRA_HEADERS ?? "",
             /^Authorization: file:/
           );
-          assert.equal(
-            args[args.indexOf("--mcp.server-url") + 1],
-            "url=http://127.0.0.1:49999/mcp,channel=main"
+          assert.match(
+            args[args.indexOf("--mcp.server-url") + 1]!,
+            /^url=http:\/\/127\.0\.0\.1:49999\/[a-z0-9-]+\/mcp,channel=[a-z0-9-]+$/u
           );
         }
       },
@@ -1385,10 +1389,10 @@ test(
           path.join(directory, googleAdded.generation, "supergateway.json")
         )
       );
-      assert.ok(googleSupergateway.mcpServers.autodev.sessionTimeout > 0);
+      assert.ok(googleSupergateway.mcpServers.smart.sessionTimeout > 0);
       assert.deepEqual(
-        googleSupergateway.mcpServers.autodev.mcpServers
-          .googleDeveloperKnowledge.tools,
+        googleSupergateway.mcpServers.smart.mcpServers.googleDeveloperKnowledge
+          .tools,
         ["search_documents", "get_documents", "answer_query"]
       );
       // Restore orchestrator role for the remaining lifecycle checks below.
@@ -1635,7 +1639,6 @@ test(
   }
 );
 
-
 test(
   "real combined gateway exposes local confined and authenticated remote Streamable HTTP MCPs with credential isolation",
   {
@@ -1782,9 +1785,8 @@ test(
         config,
         renderChatgptSupergatewayConfig(
           catalogue,
-          policy,
+          [{ role: "orchestrator", grants: policy, reviewed: policy }],
           workspace,
-          policy,
           { port: mcpPort, apiKeyFile: keyFile },
           undefined,
           (server) =>
@@ -1884,7 +1886,6 @@ test(
   }
 );
 
-
 test(
   "real tunnel-client dev proxy routes Streamable HTTP MCP sessions through Supergateway with session isolation, reconnection, and service restarts",
   {
@@ -1930,9 +1931,8 @@ test(
       config,
       renderChatgptSupergatewayConfig(
         catalogue,
-        policy,
+        [{ role: "orchestrator", grants: policy, reviewed: policy }],
         workspace,
-        policy,
         { port: mcpPort, apiKeyFile: keyFile },
         undefined,
         (server) =>
@@ -2142,7 +2142,6 @@ test(
   }
 );
 
-
 test(
   "pinned Supergateway and tunnel-client proxy serve Seatbelt-confined LSP (past watchdog) and CocoIndex semantic search",
   {
@@ -2253,9 +2252,8 @@ test(
       config,
       renderChatgptSupergatewayConfig(
         catalogue,
-        policy,
+        [{ role: "orchestrator", grants: policy, reviewed: policy }],
         workspace,
-        policy,
         { port: mcpPort, apiKeyFile: keyFile },
         undefined,
         (server) =>
@@ -2514,7 +2512,6 @@ test(
   }
 );
 
-
 test(
   "ChatGPT writable role performs authorized workspace mutations, reads skills read-only, preserves truthful tool annotations, and enforces workspace/secret confinement over Supergateway",
   {
@@ -2569,9 +2566,8 @@ test(
       config,
       renderChatgptSupergatewayConfig(
         catalogue,
-        grants,
+        [{ role: "orchestrator", grants: grants, reviewed: grants }],
         workspace,
-        grants,
         { port: mcpPort, apiKeyFile: keyFile },
         undefined,
         (server) =>
@@ -2682,7 +2678,10 @@ test(
         assert.equal(writeBlocked.isError, true);
       }
       assert.equal(readFileSync(outsideFile, "utf8"), "outside-secret");
-      assert.equal(readFileSync(secretEnv, "utf8"), "SECRET_TOKEN=never-leak\n");
+      assert.equal(
+        readFileSync(secretEnv, "utf8"),
+        "SECRET_TOKEN=never-leak\n"
+      );
     } finally {
       await client.close().catch(() => {});
       await stopProcess(gateway);
@@ -2690,7 +2689,6 @@ test(
     }
   }
 );
-
 
 test(
   "ChatGPT orchestrator delegates and manages child agents end-to-end through Supergateway + XACPX MCP with role isolation, workspace confinement, and cross-session denial",
@@ -2844,9 +2842,8 @@ test(
     const makeConfig = (port: number, keyFile: string) =>
       renderChatgptSupergatewayConfig(
         catalogue,
-        grants,
+        [{ role: "orchestrator", grants: grants, reviewed: grants }],
         workspace,
-        grants,
         { port, apiKeyFile: keyFile },
         undefined,
         (server) =>
@@ -3050,8 +3047,7 @@ test(
       });
       const agentListA = (
         agentsA.structuredContent as
-          | { agents?: Array<{ handle: string; agent: string }> }
-          | undefined
+          { agents?: Array<{ handle: string; agent: string }> } | undefined
       )?.agents;
       assert.ok(agentListA && agentListA.length === 2);
       const workerHandle = agentListA.find((a) => a.agent === "worker")!.handle;
@@ -3206,8 +3202,13 @@ lines.on("line", (line) => {
       {
         version: 1,
         servers: {
-          demo: {
+          "orchestrator.demo": {
             kind: "stdio",
+            server: "demo",
+            env: {
+              AUTODEV_AGENT_ROLE: "orchestrator",
+              AUTODEV_XACPX_COORDINATOR_SESSION: "chatgpt:orchestrator:project"
+            },
             command: process.execPath,
             args: [serverScript],
             cwd: root,
@@ -3226,7 +3227,7 @@ lines.on("line", (line) => {
 
     let grandchildPid = 0;
     try {
-      const url = `http://127.0.0.1:${pool.port}/mcp/demo`;
+      const url = `http://127.0.0.1:${pool.port}/mcp/orchestrator.demo`;
       // Unauthenticated request is rejected with 401.
       const unauth = await fetch(url, {
         method: "POST",
@@ -3310,7 +3311,7 @@ lines.on("line", (line) => {
       for (let i = 15; i < 20; i++) {
         await runOneShotSession(i);
       }
-      assert.equal(pool.stats().demo?.spawns, 1);
+      assert.equal(pool.stats()["orchestrator.demo"]?.spawns, 1);
       const spawnedPids = readFileSync(spawnLog, "utf8")
         .trim()
         .split("\n")
@@ -3320,7 +3321,7 @@ lines.on("line", (line) => {
       // Wait for idle reaping (>250ms): process stops cleanly, yet cached
       // initialize + tools/list still serve without respawning!
       await delay(450);
-      assert.equal(pool.stats().demo?.running, false);
+      assert.equal(pool.stats()["orchestrator.demo"]?.running, false);
       const initCached = await fetch(url, {
         method: "POST",
         headers: authHeaders,
@@ -3341,12 +3342,12 @@ lines.on("line", (line) => {
       });
       assert.equal(listCached.status, 200);
       await listCached.text();
-      assert.equal(pool.stats().demo?.spawns, 1);
-      assert.equal(pool.stats().demo?.running, false);
+      assert.equal(pool.stats()["orchestrator.demo"]?.spawns, 1);
+      assert.equal(pool.stats()["orchestrator.demo"]?.running, false);
 
       // Next real tools/call lazily respawns exactly once and records grandchild PID.
       await runOneShotSession(99);
-      assert.equal(pool.stats().demo?.spawns, 2);
+      assert.equal(pool.stats()["orchestrator.demo"]?.spawns, 2);
       grandchildPid = Number(readFileSync(grandchildPidFile, "utf8").trim());
       assert.ok(Number.isInteger(grandchildPid) && grandchildPid > 0);
       process.kill(grandchildPid, 0);
@@ -3429,19 +3430,23 @@ lines.on("line", (line) => {
     const grants = { demo: ["ping_tool"] };
     const poolJson = renderChatgptBackendPoolConfig(
       catalogue,
-      grants,
-      workspace,
-      grants
+      [{ role: "orchestrator", grants: grants, reviewed: grants }],
+      workspace
     );
     writeFileSync(poolConfigPath, poolJson);
     writeFileSync(
       configPath,
-      renderChatgptSupergatewayConfig(catalogue, grants, workspace, grants, {
-        port: mcpPort,
-        apiKeyFile: keyFile,
-        sessionTimeout: DEFAULT_CHATGPT_SESSION_TIMEOUT_MS,
-        backendPool: true
-      })
+      renderChatgptSupergatewayConfig(
+        catalogue,
+        [{ role: "orchestrator", grants: grants, reviewed: grants }],
+        workspace,
+        {
+          port: mcpPort,
+          apiKeyFile: keyFile,
+          sessionTimeout: DEFAULT_CHATGPT_SESSION_TIMEOUT_MS,
+          backendPool: true
+        }
+      )
     );
     const baseEnv = {
       HOME: root,

@@ -244,7 +244,8 @@ test(
         roleCandidates: () => [
           { provider: "claude", model: "sonnet", reasoningEffort: null }
         ],
-        orchestratorCandidates: () => []
+        orchestratorCandidates: () => [],
+        providerReachesRoleMcp: () => true
       } as unknown as RoutingPolicy,
       acpTransportFactory: async () => {
         calls += 1;

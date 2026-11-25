@@ -8,15 +8,15 @@ Select a named capability role, not a provider/model, when requesting routed exe
 
 - `config/model-routing.json` owns configured providers, model assignments, tier priority/fallback groups, enabled state, limits and provider links. Do not reproduce model names, priorities or quotas in documentation or a second registry.
 - The Console **Providers** resource is the operator edit surface; changes go through the authenticated Control API. **Agents** shows effective role assignments, and **MCPs** owns the MCP configuration/exposure controls.
-- Default, Smart, Orchestrator and Subagent are provider assignment scopes, not a second named-agent catalogue. The effective role/tier mapping is validated by Runtime. Transport is selected independently of role authorization; the current bounded OpenCLI worker path is a transitional implementation.
+- Default, Smart, Orchestrator and Subagent are provider assignment scopes, not a second named-agent catalogue. The effective role/tier mapping is validated by Runtime. Transport is selected independently of role authorization; an OpenCLI-backed provider is admitted to a role exactly when the execution contract says its transport can deliver that role's contract.
 
 ## Execution transports and routing
 
 | Role / caller | Execution path |
 | --- | --- |
-| Interactive coding roles, including root orchestrator and named leaves | Native ACP for CLI providers (`codex-acp`, `claude-agent-acp`, `agy acp`, `copilot --acp`, `mcode acp`); native site MCP integration for OpenCLI-backed providers is the required parity target. |
+| Interactive coding roles, including root orchestrator and named leaves | Native ACP for CLI providers (`codex-acp`, `claude-agent-acp`, `agy acp`, `copilot --acp`, `mcode acp`); OpenCLI-backed providers drive the site's own native MCP app, so the same shared Supergateway surfaces serve both transports. |
 | `github-worker` | Direct bounded opencli site execution through the Runtime's opencli integration; never fall back to ACP. |
-| All orchestrators | Target: the canonical `xacpx` MCP over Supergateway for all child operations, independent of which provider executes the parent. |
+| All orchestrators | The canonical `xacpx` MCP over Supergateway for all child operations, independent of which provider executes the parent. |
 
 `runtime/src/xacpx/manager.ts` owns session selection and pinning. It uses the existing Router policy and rejects a role change, a no-longer-eligible pinned provider or a cooling pinned provider. The Runtime exposes the ACP session lifecycle at `/v1/acp/sessions` (create/list, prompt, cancel, close). See `runtime/src/xacpx/http.ts` for the current typed request contracts and [local setup](local-setup.md) for installation. Native provider sessions own history and auto-compaction. The former per-provider Responses translation bridges, custom continuation/compaction adapters and Codex-specific tool mirroring are not prerequisites or fallback paths.
 
@@ -38,13 +38,27 @@ The [mandatory shared MCP gateway](autodev-console-target-state.md#mandatory-sha
 
 ## OpenCLI execution
 
-The current OpenCLI implementation supports bounded `github-worker` site execution and health/model/browser facilities. This is an implementation gap, not a target role restriction: OpenCLI-backed ChatGPT and Gemini must support orchestrator and other authorized roles through native site MCP access to the shared Supergateway, including XACPX delegation. Until authenticated conversation-specific role/workspace/coordinator binding and live tool invocation are proven, unsupported assignments must fail closed with a specific parity diagnostic. Do not infer tool availability from a browser login or an installed account-level plugin, and do not restore custom Responses bridges or text tool-call protocols. The dedicated browser mode and current operator controls are described in [opencli-separate-browser.md](opencli-separate-browser.md). Its current opt-in mode is a gap against the target's dedicated-browser-only isolation contract. Browser authentication is an explicit operator action; no shared profile or cookie exposure is an acceptable target fallback.
+OpenCLI is an execution transport, not a capability or permission boundary. A provider is eligible for a role when the canonical execution contract says so: `providers[].delegation` states whether the provider may drive orchestrator delegation, and `providers[].mcpIngress` states how the provider's transport reaches role-scoped MCP surfaces (`gateway`, `local`, `site-native` or `none`). No code path may special-case a provider name to decide role eligibility; a provider that cannot deliver a role's grants is refused at dispatch with a named reason instead of being routed around.
 
-The current `github-worker` runner explicitly starts a fresh conversation and then pins the returned native conversation ID to the AutoDev session. Follow-up turns use OpenCLI's `--conversation` argument, preserve the original repository and workspace, reject missing or mismatched conversation IDs, and refuse concurrent turns or automatic replay after an uncertain result. Cancellation aborts the local CLI invocation; it does not prove that a remote browser action has stopped. The session association is in memory, not a restart-durable accepted-turn ledger. The ChatGPT model selection and dedicated-browser execution path still require live verification.
+### Conversation-specific role binding
+
+A browser-backed conversation must be bound to one role, one workspace and one coordinator. The site's native MCP integration is the binding mechanism, not a translated tool-call protocol:
+
+- ChatGPT exposes installed apps in the composer's own "+" menu. `opencli chatgpt ask --app <app>` selects that app in the conversation before the prompt is sent, so only the selected app's tools reach the model. ChatGPT stores the app reference with the submitted turn, and the reply is matched against the app-attached turn.
+- AutoDev names the app per role (`AUTODEV_CHATGPT_MCP_APP`, or `AUTODEV_CHATGPT_MCP_APP_BASE` plus the role), and the Runtime passes that name with every role turn. The operator connects the matching app in ChatGPT.
+- The shared Supergateway publishes one named surface per published role at its own path, each carrying that role's tool allowlist and a role-scoped backend environment (the role identity, that role's own coordinator, and read-only confinement for read-only roles). The secure tunnel publishes one channel per role so each surface is independently addressable.
+
+No Responses translation bridge, custom tool-call text protocol, Codex-native delegation or parallel execution infrastructure is part of this path.
+
+### Verified behaviour
+
+The path was exercised against a live ChatGPT workspace: a conversation issued `xacpx__delegate_request` through the connected AutoDev app, the tunnel and the shared gateway, and the Runtime created the delegated task with the expected role, workspace and coordinator. `opencli chatgpt ask --app AutoDev` was verified to attach the app, submit the turn and return the reply.
+
+`opencli-gemini` is kept at `delegation: "none"` and `mcpIngress: "site-native"`: Gemini's native MCP connectivity requires a publicly reachable remote MCP server registered in the Connected Console, and AutoDev's gateway is loopback-only with no Google private-tunnel client. That is a genuine upstream reachability gap, not an AutoDev restriction, and it must not be worked around by making the private gateway public.
+
+Worker allocation diagnostics distinguish an unavailable OpenCLI execution transport from disabled assignments, missing model routes and cooling candidates. An all-cooling candidate set is refused rather than dispatched, and a pinned session checks cooldown against its own pinned model. The `github-worker` runner starts a fresh conversation and pins the returned native conversation ID to the AutoDev session; follow-up turns use OpenCLI's `--conversation` argument, preserve the original repository and workspace, reject missing or mismatched conversation IDs, and refuse concurrent turns or automatic replay after an uncertain result. Cancellation aborts the local CLI invocation; it does not prove that a remote browser action has stopped.
 
 Native MCP integration investigation (2026-11-25): [OpenAI plugin metadata](https://developers.openai.com/plugins/reference) documents `openai/session` (anonymized conversation correlation), `openai/subject` and `openai/organization`. The existing gateway forwards tool-call metadata, but the XACPX stdio backend currently receives a fixed coordinator identity. Verify actual host-provided metadata and its provenance through the authenticated tunnel; do not trust a model argument, assume the anonymized identifier equals the OpenCLI browser UUID, or use correlation metadata alone as an authorization grant. Bind the authenticated principal, role, workspace and coordinator to an independently established Runtime session before admitting role-scoped calls, and verify that another conversation cannot reuse the binding. [Gemini Connected Apps](https://developers.google.com/connected-apps/mcp/) provides native remote MCP connectivity; verify its supported authenticated context and endpoint reachability separately. Do not make the existing private gateway public merely to enable Gemini.
-
-Worker allocation diagnostics now distinguish an unavailable OpenCLI execution transport from disabled assignments, missing model routes and cooling candidates. An all-cooling candidate set is refused rather than dispatched, and a pinned session checks cooldown against its own pinned model. The live worker task `task-8510bc16-579` failed before provider launch; the running Runtime's effective assignments and the new diagnostics still require verification after reconciliation.
 
 ## Observability and troubleshooting
 

@@ -4,6 +4,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  chatgptRoleEnvironment,
   chatgptSupergatewayEnvironment,
   DEFAULT_CHATGPT_SESSION_TIMEOUT_MS,
   parseRulesyncExternalMcpPermissions,
@@ -21,9 +22,20 @@ test("Supergateway config is generated from the canonical catalogue with loopbac
   const result = JSON.parse(
     renderChatgptSupergatewayConfig(
       catalogue,
-      { "future-server": ["search"], filesystem: ["read_text_file"] },
+      [
+        {
+          role: "orchestrator",
+          grants: {
+            "future-server": ["search"],
+            filesystem: ["read_text_file"]
+          },
+          reviewed: {
+            "future-server": ["search"],
+            filesystem: ["read_text_file"]
+          }
+        }
+      ],
       "/project",
-      { "future-server": ["search"], filesystem: ["read_text_file"] },
       http
     )
   );
@@ -34,8 +46,8 @@ test("Supergateway config is generated from the canonical catalogue with loopbac
     logFormat: "json",
     healthEndpoint: ["/readyz"],
     mcpServers: {
-      autodev: {
-        path: "/",
+      orchestrator: {
+        path: "/orchestrator",
         outputTransport: "streamableHttp",
         streamableHttpPath: "/mcp",
         stateful: true,
@@ -54,6 +66,10 @@ test("Supergateway config is generated from the canonical catalogue with loopbac
               "future-server"
             ],
             cwd: "/project",
+            env: {
+              AUTODEV_AGENT_ROLE: "orchestrator",
+              AUTODEV_XACPX_COORDINATOR_SESSION: "chatgpt:orchestrator:project"
+            },
             toolPrefix: "future_server__",
             tools: ["search"]
           },
@@ -70,6 +86,10 @@ test("Supergateway config is generated from the canonical catalogue with loopbac
               "filesystem"
             ],
             cwd: "/project",
+            env: {
+              AUTODEV_AGENT_ROLE: "orchestrator",
+              AUTODEV_XACPX_COORDINATOR_SESSION: "chatgpt:orchestrator:project"
+            },
             toolPrefix: "filesystem__",
             tools: ["read_text_file"]
           }
@@ -80,14 +100,19 @@ test("Supergateway config is generated from the canonical catalogue with loopbac
   const withTimeout = JSON.parse(
     renderChatgptSupergatewayConfig(
       catalogue,
-      { "future-server": ["search"] },
+      [
+        {
+          role: "orchestrator",
+          grants: { "future-server": ["search"] },
+          reviewed: { "future-server": ["search"] }
+        }
+      ],
       "/project",
-      { "future-server": ["search"] },
       { ...http, sessionTimeout: DEFAULT_CHATGPT_SESSION_TIMEOUT_MS }
     )
   );
   assert.equal(
-    withTimeout.mcpServers.autodev.sessionTimeout,
+    withTimeout.mcpServers.orchestrator.sessionTimeout,
     DEFAULT_CHATGPT_SESSION_TIMEOUT_MS
   );
 });
@@ -96,22 +121,32 @@ test("ungranted servers, unknown names, wildcard and empty grants fail closed", 
   const result = JSON.parse(
     renderChatgptSupergatewayConfig(
       catalogue,
-      { "future-server": ["search"] },
+      [
+        {
+          role: "orchestrator",
+          grants: { "future-server": ["search"] },
+          reviewed: { "future-server": ["search"] }
+        }
+      ],
       "/project",
-      { "future-server": ["search"] },
       http
     )
   );
-  assert.deepEqual(Object.keys(result.mcpServers.autodev.mcpServers), [
+  assert.deepEqual(Object.keys(result.mcpServers.orchestrator.mcpServers), [
     "future-server"
   ]);
   assert.throws(
     () =>
       renderChatgptSupergatewayConfig(
         catalogue,
-        { shell: ["exec"] },
+        [
+          {
+            role: "orchestrator",
+            grants: { shell: ["exec"] },
+            reviewed: { shell: ["exec"] }
+          }
+        ],
         "/project",
-        { shell: ["exec"] },
         http
       ),
     /Unknown/
@@ -120,9 +155,14 @@ test("ungranted servers, unknown names, wildcard and empty grants fail closed", 
     () =>
       renderChatgptSupergatewayConfig(
         catalogue,
-        { filesystem: ["*"] },
+        [
+          {
+            role: "orchestrator",
+            grants: { filesystem: ["*"] },
+            reviewed: { filesystem: ["read_text_file"] }
+          }
+        ],
         "/project",
-        { filesystem: ["read_text_file"] },
         http
       ),
     /wildcards/
@@ -131,15 +171,26 @@ test("ungranted servers, unknown names, wildcard and empty grants fail closed", 
     () =>
       renderChatgptSupergatewayConfig(
         catalogue,
-        { filesystem: [] },
+        [
+          {
+            role: "orchestrator",
+            grants: { filesystem: [] },
+            reviewed: { filesystem: ["read_text_file"] }
+          }
+        ],
         "/project",
-        { filesystem: ["read_text_file"] },
         http
       ),
     /Explicit/
   );
   assert.throws(
-    () => renderChatgptSupergatewayConfig(catalogue, {}, "/project", {}, http),
+    () =>
+      renderChatgptSupergatewayConfig(
+        catalogue,
+        [{ role: "orchestrator", grants: {}, reviewed: {} }],
+        "/project",
+        http
+      ),
     /No MCP/
   );
 });
@@ -167,14 +218,13 @@ test("remote Streamable HTTP descriptors render parameterized --remote filter en
   };
   const rendered = renderChatgptSupergatewayConfig(
     remoteCatalogue,
-    remoteGrants,
+    [{ role: "orchestrator", grants: remoteGrants, reviewed: remoteGrants }],
     "/project",
-    remoteGrants,
     http
   );
   assert.doesNotMatch(rendered, /Bearer\s+[A-Za-z0-9]/u);
   const parsed = JSON.parse(rendered);
-  const servers = parsed.mcpServers.autodev.mcpServers;
+  const servers = parsed.mcpServers.orchestrator.mcpServers;
   assert.equal(servers.openaiDeveloperDocs.args[1], "--remote");
   assert.deepEqual(JSON.parse(servers.openaiDeveloperDocs.args[2]), {
     url: "https://developers.openai.com/mcp"
@@ -201,9 +251,14 @@ test("reject incompatible transports, credentials, workspace, HTTP options and c
     () =>
       renderChatgptSupergatewayConfig(
         { docs: { url: "http://example.test/mcp" } },
-        { docs: ["search"] },
+        [
+          {
+            role: "orchestrator",
+            grants: { docs: ["search"] },
+            reviewed: { docs: ["search"] }
+          }
+        ],
         "/project",
-        { docs: ["search"] },
         http
       ),
     /Unsupported/
@@ -217,9 +272,14 @@ test("reject incompatible transports, credentials, workspace, HTTP options and c
             http_headers: { Authorization: "Bearer literal-secret" }
           }
         },
-        { docs: ["search"] },
+        [
+          {
+            role: "orchestrator",
+            grants: { docs: ["search"] },
+            reviewed: { docs: ["search"] }
+          }
+        ],
         "/project",
-        { docs: ["search"] },
         http
       ),
     /Unsupported/
@@ -228,9 +288,14 @@ test("reject incompatible transports, credentials, workspace, HTTP options and c
     () =>
       renderChatgptSupergatewayConfig(
         { docs: { command: "example", env: { SECRET: "x" } } },
-        { docs: ["search"] },
+        [
+          {
+            role: "orchestrator",
+            grants: { docs: ["search"] },
+            reviewed: { docs: ["search"] }
+          }
+        ],
         "/project",
-        { docs: ["search"] },
         http
       ),
     /Unsupported/
@@ -239,9 +304,14 @@ test("reject incompatible transports, credentials, workspace, HTTP options and c
     () =>
       renderChatgptSupergatewayConfig(
         { docs: { command: "example", cwd: "/other" } },
-        { docs: ["search"] },
+        [
+          {
+            role: "orchestrator",
+            grants: { docs: ["search"] },
+            reviewed: { docs: ["search"] }
+          }
+        ],
         "/project",
-        { docs: ["search"] },
         http
       ),
     /cwd/
@@ -250,9 +320,14 @@ test("reject incompatible transports, credentials, workspace, HTTP options and c
     () =>
       renderChatgptSupergatewayConfig(
         { "a-b": { command: "example" }, a_b: { command: "example" } },
-        { "a-b": ["search"], a_b: ["search"] },
+        [
+          {
+            role: "orchestrator",
+            grants: { "a-b": ["search"], a_b: ["search"] },
+            reviewed: { "a-b": ["search"], a_b: ["search"] }
+          }
+        ],
         "/project",
-        { "a-b": ["search"], a_b: ["search"] },
         http
       ),
     /Colliding/
@@ -261,9 +336,14 @@ test("reject incompatible transports, credentials, workspace, HTTP options and c
     () =>
       renderChatgptSupergatewayConfig(
         catalogue,
-        { filesystem: ["read_text_file"] },
+        [
+          {
+            role: "orchestrator",
+            grants: { filesystem: ["read_text_file"] },
+            reviewed: { filesystem: ["read_text_file"] }
+          }
+        ],
         "/project",
-        { filesystem: ["read_text_file"] },
         { port: 80, apiKeyFile: "/var/run/supergateway.key" }
       ),
     /port/
@@ -272,9 +352,14 @@ test("reject incompatible transports, credentials, workspace, HTTP options and c
     () =>
       renderChatgptSupergatewayConfig(
         catalogue,
-        { filesystem: ["read_text_file"] },
+        [
+          {
+            role: "orchestrator",
+            grants: { filesystem: ["read_text_file"] },
+            reviewed: { filesystem: ["read_text_file"] }
+          }
+        ],
         "/project",
-        { filesystem: ["read_text_file"] },
         { port: 3312, apiKeyFile: "relative/supergateway.key" }
       ),
     /API key file/
@@ -322,7 +407,18 @@ test("Supergateway receives an explicit credential-free role-aware process envir
     { role: "explorer" }
   );
   assert.equal(explorerEnv.AUTODEV_AGENT_ROLE, "explorer");
-  assert.equal(explorerEnv.AUTODEV_MCP_READ_ONLY, "1");
+  // Read-only confinement belongs to the published surface, not to the shared
+  // gateway process, so one role's read-only grant never reaches another's.
+  assert.equal("AUTODEV_MCP_READ_ONLY" in explorerEnv, false);
+  assert.deepEqual(chatgptRoleEnvironment("explorer", "/project"), {
+    AUTODEV_AGENT_ROLE: "explorer",
+    AUTODEV_XACPX_COORDINATOR_SESSION: "chatgpt:explorer:project",
+    AUTODEV_MCP_READ_ONLY: "1"
+  });
+  assert.deepEqual(chatgptRoleEnvironment("orchestrator", "/project"), {
+    AUTODEV_AGENT_ROLE: "orchestrator",
+    AUTODEV_XACPX_COORDINATOR_SESSION: "chatgpt:orchestrator:project"
+  });
 });
 
 test("local grants may narrow but not expand authorized role permissions", () => {
@@ -331,9 +427,14 @@ test("local grants may narrow but not expand authorized role permissions", () =>
     () =>
       renderChatgptSupergatewayConfig(
         catalogue,
-        { "future-server": ["search"] },
+        [
+          {
+            role: "orchestrator",
+            grants: { "future-server": ["search"] },
+            reviewed: reviewed
+          }
+        ],
         "/project",
-        reviewed,
         http
       ),
     /authorized role policy/
@@ -342,9 +443,14 @@ test("local grants may narrow but not expand authorized role permissions", () =>
     () =>
       renderChatgptSupergatewayConfig(
         catalogue,
-        { filesystem: ["write_file"] },
+        [
+          {
+            role: "orchestrator",
+            grants: { filesystem: ["write_file"] },
+            reviewed: reviewed
+          }
+        ],
         "/project",
-        reviewed,
         http
       ),
     /authorized role policy/
@@ -352,9 +458,14 @@ test("local grants may narrow but not expand authorized role permissions", () =>
   assert.doesNotThrow(() =>
     renderChatgptSupergatewayConfig(
       catalogue,
-      { filesystem: ["read_text_file"] },
+      [
+        {
+          role: "orchestrator",
+          grants: { filesystem: ["read_text_file"] },
+          reviewed: reviewed
+        }
+      ],
       "/project",
-      reviewed,
       http
     )
   );
@@ -372,19 +483,27 @@ test("canonical shell expressions and key paths survive Supergateway interpolati
           ]
         }
       },
-      { filesystem: ["read_text_file"] },
+      [
+        {
+          role: "orchestrator",
+          grants: { filesystem: ["read_text_file"] },
+          reviewed: { filesystem: ["read_text_file"] }
+        }
+      ],
       "/a$b",
-      { filesystem: ["read_text_file"] },
       { port: 3312, apiKeyFile: "/a$b/supergateway.key" }
     )
   );
-  const entry = result.mcpServers.autodev.mcpServers.filesystem;
+  const entry = result.mcpServers.orchestrator.mcpServers.filesystem;
   assert.equal(
     JSON.parse(entry.args[2])[1],
     'exec "$${CODEX_HOME:-$$HOME/.codex}/hooks/run-autodev-mcp.sh" filesystem'
   );
   assert.equal(entry.cwd, "/a$$b");
-  assert.equal(result.mcpServers.autodev.apiKeyFile, "/a$$b/supergateway.key");
+  assert.equal(
+    result.mcpServers.orchestrator.apiKeyFile,
+    "/a$$b/supergateway.key"
+  );
 });
 
 test("missing or malformed reviewed policy fails closed", () => {
@@ -393,9 +512,8 @@ test("missing or malformed reviewed policy fails closed", () => {
     () =>
       renderChatgptSupergatewayConfig(
         catalogue,
-        grants,
+        [{ role: "orchestrator", grants: grants, reviewed: undefined }],
         "/project",
-        undefined,
         http
       ),
     /reviewed/
@@ -404,11 +522,16 @@ test("missing or malformed reviewed policy fails closed", () => {
     () =>
       renderChatgptSupergatewayConfig(
         catalogue,
-        grants,
+        [
+          {
+            role: "orchestrator",
+            grants: grants,
+            reviewed: {
+              filesystem: ["*"]
+            }
+          }
+        ],
         "/project",
-        {
-          filesystem: ["*"]
-        },
         http
       ),
     /reviewed/
@@ -421,9 +544,8 @@ test("different prefixes cannot produce identical qualified names", () => {
     () =>
       renderChatgptSupergatewayConfig(
         { a: { command: "example" }, a__b: { command: "example" } },
-        grants,
+        [{ role: "orchestrator", grants: grants, reviewed: grants }],
         "/project",
-        grants,
         http
       ),
     /Colliding MCP qualified tool name/
@@ -476,9 +598,8 @@ test("pooled Supergateway config renders loopback Streamable HTTP upstreams pair
   const gatewayJson = JSON.parse(
     renderChatgptSupergatewayConfig(
       mixedCatalogue,
-      grants,
+      [{ role: "orchestrator", grants: grants, reviewed: grants }],
       "/project",
-      grants,
       {
         ...http,
         sessionTimeout: DEFAULT_CHATGPT_SESSION_TIMEOUT_MS,
@@ -487,17 +608,17 @@ test("pooled Supergateway config renders loopback Streamable HTTP upstreams pair
     )
   );
   assert.equal(DEFAULT_CHATGPT_SESSION_TIMEOUT_MS, 60_000);
-  assert.equal(gatewayJson.mcpServers.autodev.sessionTimeout, 60_000);
-  assert.deepEqual(gatewayJson.mcpServers.autodev.mcpServers, {
+  assert.equal(gatewayJson.mcpServers.orchestrator.sessionTimeout, 60_000);
+  assert.deepEqual(gatewayJson.mcpServers.orchestrator.mcpServers, {
     filesystem: {
-      url: "http://127.0.0.1:${AUTODEV_MCP_POOL_PORT}/mcp/filesystem",
+      url: "http://127.0.0.1:${AUTODEV_MCP_POOL_PORT}/mcp/orchestrator.filesystem",
       type: "streamableHttp",
       oauth2Bearer: "${AUTODEV_MCP_POOL_TOKEN}",
       toolPrefix: "filesystem__",
       tools: ["read_text_file"]
     },
     context7: {
-      url: "http://127.0.0.1:${AUTODEV_MCP_POOL_PORT}/mcp/context7",
+      url: "http://127.0.0.1:${AUTODEV_MCP_POOL_PORT}/mcp/orchestrator.context7",
       type: "streamableHttp",
       oauth2Bearer: "${AUTODEV_MCP_POOL_TOKEN}",
       toolPrefix: "context7__",
@@ -508,22 +629,26 @@ test("pooled Supergateway config renders loopback Streamable HTTP upstreams pair
   const poolManifest = JSON.parse(
     renderChatgptBackendPoolConfig(
       mixedCatalogue,
-      grants,
-      "/project",
-      grants
+      [{ role: "orchestrator", grants: grants, reviewed: grants }],
+      "/project"
     )
   );
   assert.deepEqual(poolManifest, {
     version: 1,
     servers: {
-      filesystem: {
+      "orchestrator.filesystem": {
         kind: "stdio",
+        server: "filesystem",
+        env: {
+          AUTODEV_AGENT_ROLE: "orchestrator",
+          AUTODEV_XACPX_COORDINATOR_SESSION: "chatgpt:orchestrator:project"
+        },
         command: "example-fs",
         args: ["--read-only"],
         cwd: "/project",
         tools: ["read_text_file"]
       },
-      context7: {
+      "orchestrator.context7": {
         kind: "remote",
         url: "https://mcp.context7.com/mcp",
         bearer_token_env_var: "CONTEXT7_API_KEY",

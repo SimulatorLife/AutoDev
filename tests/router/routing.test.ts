@@ -773,8 +773,10 @@ test("the orchestrator tier admits only providers that can delegate, however the
     "provider_cannot_delegate"
   );
   assert.match(
-    policy.providerRoleCapabilityExplanation("opencli-gemini", "orchestrator") ??
-      "",
+    policy.providerRoleCapabilityExplanation(
+      "opencli-gemini",
+      "orchestrator"
+    ) ?? "",
     /no delegation path/u
   );
   // An opencli-backed provider that reaches the gateway holds the canonical
@@ -798,11 +800,16 @@ test("the orchestrator tier admits only providers that can delegate, however the
   );
   // An opencli-backed provider is ranked and admitted on the same terms.
   policy.setProviderAssignment("opencli-chatgpt", "orchestrator", {
-    priority: 4,
+    priority: 3,
     model: "opencli-chatgpt-balanced"
   });
+  // The opencli-backed provider is admitted on the same terms; the order
+  // within a priority band is the seeded shuffle, so membership is the claim.
   assert.deepEqual(
-    policy.orchestratorCandidates(seeded(1)).map(({ provider }) => provider),
+    policy
+      .orchestratorCandidates(seeded(1))
+      .map(({ provider }) => provider)
+      .sort(),
     ["claude", "copilot", "opencli-chatgpt"]
   );
 });

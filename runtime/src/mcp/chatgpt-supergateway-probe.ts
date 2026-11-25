@@ -31,15 +31,15 @@ import {
 function isUnixSocketReachable(socketPath: string): Promise<boolean> {
   if (!socketPath || !existsSync(socketPath)) return Promise.resolve(false);
   return new Promise<boolean>((resolve) => {
-    const socket = createConnection(socketPath);
+    const connection = createConnection(socketPath);
     const finish = (ok: boolean): void => {
-      socket.removeAllListeners();
-      socket.destroy();
+      connection.removeAllListeners();
+      connection.destroy();
       resolve(ok);
     };
-    socket.setTimeout(500, () => finish(false));
-    socket.once("connect", () => finish(true));
-    socket.once("error", () => finish(false));
+    connection.setTimeout(500, () => finish(false));
+    connection.once("connect", () => finish(true));
+    connection.once("error", () => finish(false));
   });
 }
 
@@ -98,8 +98,10 @@ export async function probeSupergateway(
   const config = supergatewayConfigSchema.parse(
     JSON.parse(readFileSync(configFile, "utf8"))
   );
-  const expected = qualifiedToolNames(config);
-  const apiKeyFile = config.mcpServers.autodev.apiKeyFile.replaceAll("$$", "$");
+  const surfaces = Object.entries(config.mcpServers);
+  if (!surfaces.length)
+    throw new Error("Supergateway publishes no role surface");
+  const apiKeyFile = surfaces[0]![1].apiKeyFile.replaceAll("$$", "$");
   const token = readFileSync(apiKeyFile, "utf8").split("\n")[0]?.trim();
   if (!token) throw new Error("Supergateway API key file is empty");
 
@@ -108,15 +110,16 @@ export async function probeSupergateway(
     path.dirname(configFile),
     "backend-pool.json"
   );
-  const usesBackendPool = Object.values(
-    config.mcpServers.autodev.mcpServers
-  ).some((entry) => "type" in entry && entry.type === "streamableHttp");
+  const usesBackendPool = surfaces.some(([, surface]) =>
+    Object.values(surface.mcpServers).some(
+      (entry) => "type" in entry && entry.type === "streamableHttp"
+    )
+  );
   let probeXacpxIpc: XacpxOrchestrationIpcHandle | undefined;
   let effectiveEnv = env;
   if (
-    Object.prototype.hasOwnProperty.call(
-      config.mcpServers.autodev.mcpServers,
-      MCP_SERVER_XACPX
+    surfaces.some(([, surface]) =>
+      Object.prototype.hasOwnProperty.call(surface.mcpServers, MCP_SERVER_XACPX)
     ) &&
     !(await isUnixSocketReachable(env.XACPX_ORCHESTRATION_SOCKET ?? ""))
   ) {
@@ -160,14 +163,6 @@ export async function probeSupergateway(
       stdio: ["pipe", "ignore", "inherit"]
     }
   );
-  const primary = new Client({
-    name: "autodev-install-check",
-    version: "1.0.0"
-  });
-  const secondary = new Client({
-    name: "autodev-install-check-2",
-    version: "1.0.0"
-  });
   try {
     let ready = false;
     for (let attempt = 0; attempt < 150; attempt++) {
@@ -191,61 +186,80 @@ export async function probeSupergateway(
     }
     if (!ready) throw new Error("Supergateway probe did not become ready");
 
-    const endpoint = new URL(`http://127.0.0.1:${probePort}/mcp`);
-    const unauthenticated = await fetch(endpoint, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "initialize",
-        params: {}
-      })
-    });
-    if (unauthenticated.status !== 401) {
-      throw new Error(
-        `Expected unauthenticated MCP request to return 401, got ${unauthenticated.status}`
+    for (const [role, surface] of surfaces) {
+      const endpoint = new URL(
+        `http://127.0.0.1:${probePort}${surface.path}${surface.streamableHttpPath}`
       );
-    }
+      const expected = qualifiedToolNames({
+        ...config,
+        mcpServers: { [role]: surface }
+      });
+      const unauthenticated = await fetch(endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {}
+        })
+      });
+      if (unauthenticated.status !== 401) {
+        throw new Error(
+          `Expected unauthenticated MCP request to return 401 for role '${role}', got ${unauthenticated.status}`
+        );
+      }
 
-    const requestInit: RequestInit = {
-      headers: { Authorization: `Bearer ${token}` }
-    };
-    const transportA = new StreamableHTTPClientTransport(endpoint, {
-      requestInit
-    });
-    const transportB = new StreamableHTTPClientTransport(endpoint, {
-      requestInit
-    });
-    await primary.connect(transportA, { timeout: 20_000 });
-    await secondary.connect(transportB, { timeout: 20_000 });
-    if (
-      !transportA.sessionId ||
-      !transportB.sessionId ||
-      transportA.sessionId === transportB.sessionId
-    ) {
-      throw new Error(
-        "Supergateway failed to isolate Streamable HTTP session IDs"
-      );
-    }
+      const requestInit: RequestInit = {
+        headers: { Authorization: `Bearer ${token}` }
+      };
+      const primary = new Client({
+        name: "autodev-install-check",
+        version: "1.0.0"
+      });
+      const secondary = new Client({
+        name: "autodev-install-check-2",
+        version: "1.0.0"
+      });
+      const transportA = new StreamableHTTPClientTransport(endpoint, {
+        requestInit
+      });
+      const transportB = new StreamableHTTPClientTransport(endpoint, {
+        requestInit
+      });
+      try {
+        await primary.connect(transportA, { timeout: 20_000 });
+        await secondary.connect(transportB, { timeout: 20_000 });
+        if (
+          !transportA.sessionId ||
+          !transportB.sessionId ||
+          transportA.sessionId === transportB.sessionId
+        ) {
+          throw new Error(
+            "Supergateway failed to isolate Streamable HTTP session IDs"
+          );
+        }
 
-    assertApprovedCapabilities(primary);
-    assertApprovedCapabilities(secondary);
+        assertApprovedCapabilities(primary);
+        assertApprovedCapabilities(secondary);
 
-    const [toolsA, toolsB] = await Promise.all([
-      listAllTools(primary),
-      listAllTools(secondary)
-    ]);
-    if (
-      JSON.stringify(toolsA) !== JSON.stringify(expected) ||
-      JSON.stringify(toolsB) !== JSON.stringify(expected)
-    ) {
-      throw new Error(
-        "Supergateway discovered tools do not match reviewed grants"
-      );
+        const [toolsA, toolsB] = await Promise.all([
+          listAllTools(primary),
+          listAllTools(secondary)
+        ]);
+        if (
+          JSON.stringify(toolsA) !== JSON.stringify(expected) ||
+          JSON.stringify(toolsB) !== JSON.stringify(expected)
+        ) {
+          throw new Error(
+            `Supergateway discovered tools do not match reviewed grants for role '${role}'`
+          );
+        }
+      } finally {
+        await Promise.allSettled([primary.close(), secondary.close()]);
+      }
     }
   } finally {
-    await Promise.allSettled([primary.close(), secondary.close()]);
     if (child.exitCode === null && child.signalCode === null) {
       child.kill("SIGTERM");
       const exited = await Promise.race([

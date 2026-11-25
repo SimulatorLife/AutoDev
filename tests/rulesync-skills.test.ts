@@ -42,6 +42,7 @@ import {
   frontmatterDescription,
   splitFrontmatter
 } from "./support/skill-document.ts";
+import { parseJsoncObject } from "@simulatorlife/autodev-data/files";
 
 type JsonObject = Record<string, unknown>;
 type RunResult = ReturnType<typeof spawnSync>;
@@ -102,10 +103,7 @@ A run that names its targets replaces the configuration's per-target map
 with a flat selection, so the owners are named explicitly.
 */
 function skillOwners(): string[] {
-  return targetsOwningFeature(
-    readRulesyncConfig(repositoryRoot),
-    "skills"
-  );
+  return targetsOwningFeature(readRulesyncConfig(repositoryRoot), "skills");
 }
 
 /**
@@ -389,7 +387,9 @@ test("a user-level skill reaches a repository folder only where it was asked for
   // level of its own.
   const userLevel = new Set(userLevelSkills(sourceRoot));
   for (const [tree, owner] of skillTreeOwners()) {
-    const projected = readdirSync(join(generated, tree), { withFileTypes: true })
+    const projected = readdirSync(join(generated, tree), {
+      withFileTypes: true
+    })
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name);
     const projectedUserLevel = projected.filter((name) => userLevel.has(name));
@@ -430,10 +430,7 @@ test("generated documents preserve name, description, and body without targets",
       if (canonicalSet.has(skill.name)) {
         assert.equal(declaredName, skill.name, `${tree}/${skill.name}`);
       }
-      assert.match(
-        front,
-        new RegExp(`^name:[ \t]*${declaredName}$`, "mu")
-      );
+      assert.match(front, new RegExp(`^name:[ \t]*${declaredName}$`, "mu"));
       assert.equal(
         frontmatterDescription(front),
         frontmatterDescription(sourceFront)
@@ -449,9 +446,9 @@ test("Rulesync check detects edited, stale, and missing generated skills", () =>
   const firstTree = skillTreeOwners().keys().next();
   assert.ok(!firstTree.done, "a skill tree exists");
   const tree = firstTree.value;
-  const skill = readdirSync(join(generated, tree), { withFileTypes: true }).find(
-    (entry) => entry.isDirectory()
-  );
+  const skill = readdirSync(join(generated, tree), {
+    withFileTypes: true
+  }).find((entry) => entry.isDirectory());
   assert.ok(skill, "a skill exists");
   for (const [label, damage] of [
     [
@@ -469,8 +466,7 @@ test("Rulesync check detects edited, stale, and missing generated skills", () =>
     ],
     [
       "missing",
-      (root: string) =>
-        rmSync(join(root, tree, skill.name, "SKILL.md"))
+      (root: string) => rmSync(join(root, tree, skill.name, "SKILL.md"))
     ]
   ] as const) {
     const root = join(temporaryRoot, label);
@@ -525,7 +521,10 @@ manifest declares no version, the way the GitHub sources declare no ref:
 the lockfile is what pins it.
 */
 test("every npm-transport source locks the version the workspace installs", () => {
-  const config = readJson(rulesyncConfigPath);
+  const config = parseJsoncObject(
+    readFileSync(rulesyncConfigPath, "utf8"),
+    "rulesync.jsonc"
+  ) as Record<string, unknown>;
   const sources = config.sources as Array<Record<string, unknown>>;
   const npmSources = new Map(
     sources
@@ -681,10 +680,10 @@ test("a user skill link into the canonical source is stale once the skill is not
     symlinkSync(join(skills, "repo-only"), join(user, "repo-only"));
     symlinkSync(join(skills, "deleted"), join(user, "deleted"));
     symlinkSync(other, join(user, "mine"));
-    assert.deepEqual(staleUserSkillLinks(skills, user, ["kept"]).sort(compareText), [
-      join(user, "deleted"),
-      join(user, "repo-only")
-    ]);
+    assert.deepEqual(
+      staleUserSkillLinks(skills, user, ["kept"]).sort(compareText),
+      [join(user, "deleted"), join(user, "repo-only")]
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

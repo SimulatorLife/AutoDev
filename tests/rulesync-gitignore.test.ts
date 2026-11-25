@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { runRulesyncGitignore } from "../runtime/src/platform/runtime-files.ts";
+import { parseJsoncObject } from "@simulatorlife/autodev-data/files";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
 
@@ -77,8 +78,9 @@ test("the exclusion run is idempotent", () => {
 });
 
 test("the repository configuration routes the exclusions to the exclude file", () => {
-  const config = JSON.parse(
-    readFileSync(path.join(repositoryRoot, "rulesync.jsonc"), "utf8")
+  const config = parseJsoncObject(
+    readFileSync(path.join(repositoryRoot, "rulesync.jsonc"), "utf8"),
+    "rulesync.jsonc"
   ) as Record<string, unknown>;
   assert.equal(config.gitignoreDestination, "gitexclude");
   assert.ok(

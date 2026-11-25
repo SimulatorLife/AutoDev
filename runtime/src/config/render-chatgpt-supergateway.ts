@@ -15,10 +15,7 @@ import {
   chatgptBackendPoolConfigSchema,
   type PooledBackendSpec
 } from "../mcp/chatgpt-backend-pool.ts";
-import {
-  hasRoleContract,
-  roleContract
-} from "../shared/execution-contract.ts";
+import { hasRoleContract, roleContract } from "../shared/execution-contract.ts";
 import { MCP_FILESYSTEM_READ_ONLY_ENV } from "../shared/tool-names.ts";
 import { resolveXacpxOrchestrationSocketPath } from "../xacpx/orchestration-ipc.ts";
 
@@ -60,6 +57,7 @@ const stdioServerSchema = z
     command: z.string().min(1),
     args: z.array(z.string()),
     cwd: z.string(),
+    env: z.record(z.string(), z.string()).optional(),
     toolPrefix: identifier,
     tools: z.array(toolIdentifier).min(1)
   })
@@ -77,6 +75,24 @@ const gatewayServerSchema = z.union([
   stdioServerSchema,
   streamableHttpServerSchema
 ]);
+/**
+ * One role's published surface.
+ *
+ * Every role the tunnel publishes gets its own named server at its own path,
+ * so a conversation that binds to one surface can only ever reach that role's
+ * tools.
+ */
+const chatgptRoleSurfaceSchema = z
+  .object({
+    path: z.string().regex(/^\/[a-zA-Z0-9_-]+$/u),
+    outputTransport: z.literal("streamableHttp"),
+    streamableHttpPath: z.literal("/mcp"),
+    stateful: z.literal(true),
+    sessionTimeout: z.number().int().min(1).optional(),
+    apiKeyFile: z.string().min(1),
+    mcpServers: z.record(identifier, gatewayServerSchema)
+  })
+  .strict();
 export const DEFAULT_CHATGPT_MCP_PORT = 3312;
 /**
  * Bound idle stateful sessions (Supergateway defaults to 30m) because external
@@ -93,21 +109,7 @@ export const supergatewayConfigSchema = z
     logLevel: z.literal("none"),
     logFormat: z.literal("json"),
     healthEndpoint: z.tuple([z.literal("/readyz")]),
-    mcpServers: z
-      .object({
-        autodev: z
-          .object({
-            path: z.literal("/"),
-            outputTransport: z.literal("streamableHttp"),
-            streamableHttpPath: z.literal("/mcp"),
-            stateful: z.literal(true),
-            sessionTimeout: z.number().int().min(1).optional(),
-            apiKeyFile: z.string().min(1),
-            mcpServers: z.record(identifier, gatewayServerSchema)
-          })
-          .strict()
-      })
-      .strict()
+    mcpServers: z.record(identifier, chatgptRoleSurfaceSchema)
   })
   .strict();
 type GatewayServer = z.infer<typeof gatewayServerSchema>;
@@ -125,9 +127,15 @@ export interface ChatgptSupergatewayHttpOptions {
 export function qualifiedToolNames(
   config: ChatgptSupergatewayConfig
 ): string[] {
-  return Object.values(config.mcpServers.autodev.mcpServers)
-    .flatMap(({ toolPrefix, tools }) => tools.map((tool) => toolPrefix + tool))
-    .sort();
+  return [
+    ...new Set(
+      Object.values(config.mcpServers)
+        .flatMap((surface) => Object.values(surface.mcpServers))
+        .flatMap(({ toolPrefix, tools }) =>
+          tools.map((tool) => toolPrefix + tool)
+        )
+    )
+  ].sort();
 }
 
 interface ValidatedExternalServer {
@@ -139,12 +147,32 @@ interface ValidatedExternalServer {
   readonly filterTargetArgs: string;
 }
 
+/**
+ * One role's published MCP surface.
+ *
+ * `grants` are the role's authorized grants and `reviewed` the policy they may
+ * not exceed. Both are the role's own, so each surface enforces exactly that
+ * role's contract and never another role's.
+ */
+export interface ChatgptRoleSurface {
+  readonly role: string;
+  readonly grants: unknown;
+  readonly reviewed: unknown;
+}
+
+/** Builds the confined backend command for one role's MCP server. */
+export type ChatgptConfinedBackend = (
+  server: string,
+  role: string
+) => { command: string; args: string[] };
+
 function resolveValidatedExternalServers(
   catalogue: Catalogue,
   grants: unknown,
   workspace: string,
   reviewedGrants: unknown,
-  confinedBackend?: (server: string) => { command: string; args: string[] }
+  confinedBackend?: ChatgptConfinedBackend,
+  role: string = DEFAULT_CHATGPT_ROLE
 ): ValidatedExternalServer[] {
   if (!path.isAbsolute(workspace))
     throw new Error("ChatGPT MCP workspace must be absolute");
@@ -167,9 +195,7 @@ function resolveValidatedExternalServers(
       !Array.isArray(allowedByPolicy) ||
       tools.some((tool) => !allowedByPolicy.includes(tool))
     )
-      throw new Error(
-        `MCP grant exceeds the authorized role policy: ${name}`
-      );
+      throw new Error(`MCP grant exceeds the authorized role policy: ${name}`);
     const descriptor = catalogue[name]!;
     if (descriptor.env !== undefined)
       throw new Error(
@@ -254,7 +280,7 @@ function resolveValidatedExternalServers(
           `MCP cwd does not match the selected workspace: ${name}`
         );
 
-      const backend = confinedBackend?.(name) ?? {
+      const backend = confinedBackend?.(name, role) ?? {
         command: descriptor.command,
         args
       };
@@ -264,10 +290,12 @@ function resolveValidatedExternalServers(
         tools: uniqueTools,
         poolSpec: {
           kind: "stdio",
+          server: name,
           command: backend.command,
           args: backend.args,
           cwd: workspace,
-          tools: uniqueTools
+          tools: uniqueTools,
+          env: chatgptRoleEnvironment(role, workspace)
         },
         filterTargetCommand: backend.command,
         filterTargetArgs: JSON.stringify(backend.args)
@@ -282,46 +310,62 @@ function resolveValidatedExternalServers(
  * Render the private loopback backend-pool manifest paired with pooled
  * Supergateway configs. Contains only role-approved commands/URLs and env var
  * references — never literal credentials.
+ *
+ * Each published role gets its own pooled backends, so a role's tool
+ * allowlist and its role-scoped environment are enforced independently of every
+ * other role sharing the gateway.
  */
 export function renderChatgptBackendPoolConfig(
   catalogue: Catalogue,
-  grants: unknown,
+  surfaces: ChatgptRoleSurface[],
   workspace: string,
-  reviewedGrants: unknown,
-  confinedBackend?: (server: string) => { command: string; args: string[] }
+  confinedBackend?: ChatgptConfinedBackend
 ): string {
-  const servers = resolveValidatedExternalServers(
-    catalogue,
-    grants,
-    workspace,
-    reviewedGrants,
-    confinedBackend
-  );
+  const servers: Record<string, PooledBackendSpec> = {};
+  for (const surface of surfaces) {
+    const resolved = resolveValidatedExternalServers(
+      catalogue,
+      surface.grants,
+      workspace,
+      surface.reviewed,
+      confinedBackend,
+      surface.role
+    );
+    for (const entry of resolved) {
+      servers[chatgptPoolServerKey(surface.role, entry.name)] = entry.poolSpec;
+    }
+  }
   const manifest: ChatgptBackendPoolConfig =
     chatgptBackendPoolConfigSchema.parse({
       version: 1,
-      servers: Object.fromEntries(
-        servers.map((entry) => [entry.name, entry.poolSpec])
-      )
+      servers
     });
   return JSON.stringify(manifest, null, 2) + "\n";
+}
+
+/** The pooled backend key that carries one role's instance of one MCP server. */
+export function chatgptPoolServerKey(role: string, server: string): string {
+  return `${role}.${server}`;
 }
 
 /**
  * AutoDev owns grants, workspace scope, loopback binding and local auth.
  * Supergateway owns Streamable HTTP sessions, discovery, namespacing, dispatch and process lifecycle.
+ *
+ * One named server is published per role, each at its own path, so a
+ * conversation that binds to one role's surface can only reach that role's
+ * contracted tools.
  */
 export function renderChatgptSupergatewayConfig(
   catalogue: Catalogue,
-  grants: unknown,
+  surfaces: ChatgptRoleSurface[],
   workspace: string,
-  reviewedGrants: unknown,
   http: ChatgptSupergatewayHttpOptions,
   filter = {
     command: process.execPath,
     script: fileURLToPath(new URL("../mcp/tool-filter.ts", import.meta.url))
   },
-  confinedBackend?: (server: string) => { command: string; args: string[] }
+  confinedBackend?: ChatgptConfinedBackend
 ): string {
   if (!path.isAbsolute(workspace))
     throw new Error("ChatGPT MCP workspace must be absolute");
@@ -331,47 +375,81 @@ export function renderChatgptSupergatewayConfig(
     );
   if (!path.isAbsolute(http.apiKeyFile))
     throw new Error("ChatGPT Supergateway API key file must be absolute");
-  const resolvedServers = resolveValidatedExternalServers(
-    catalogue,
-    grants,
-    workspace,
-    reviewedGrants,
-    confinedBackend
+  if (!surfaces.length)
+    throw new Error("No ChatGPT MCP role surface to publish");
+  const roleEnv = new Map(
+    surfaces.map((surface) => [
+      surface.role,
+      chatgptRoleEnvironment(surface.role, workspace)
+    ])
   );
-  const entries: Array<[string, GatewayServer]> = resolvedServers.map(
-    (entry) => {
-      if (http.backendPool) {
-        return [
-          entry.name,
-          {
-            url: `http://127.0.0.1:\${${CHATGPT_MCP_POOL_PORT_ENV}}/mcp/${entry.name}`,
-            type: "streamableHttp",
-            oauth2Bearer: `\${${CHATGPT_MCP_POOL_TOKEN_ENV}}`,
-            toolPrefix: entry.toolPrefix,
-            tools: entry.tools
+  const published = Object.fromEntries(
+    surfaces.map((surface) => {
+      const resolvedServers = resolveValidatedExternalServers(
+        catalogue,
+        surface.grants,
+        workspace,
+        surface.reviewed,
+        confinedBackend,
+        surface.role
+      );
+      const entries: Array<[string, GatewayServer]> = resolvedServers.map(
+        (entry) => {
+          const env = roleEnv.get(surface.role)!;
+          if (http.backendPool) {
+            return [
+              entry.name,
+              {
+                url: `http://127.0.0.1:\${${CHATGPT_MCP_POOL_PORT_ENV}}/mcp/${chatgptPoolServerKey(surface.role, entry.name)}`,
+                type: "streamableHttp",
+                oauth2Bearer: `\${${CHATGPT_MCP_POOL_TOKEN_ENV}}`,
+                toolPrefix: entry.toolPrefix,
+                tools: entry.tools
+              }
+            ];
           }
-        ];
-      }
+          return [
+            entry.name,
+            {
+              // Supergateway interpolates ${VAR} in config strings. Preserve the
+              // canonical shell argument and header templates using its literal-dollar escape.
+              command: escapeInterpolation(filter.command),
+              args: [
+                filter.script,
+                entry.filterTargetCommand,
+                entry.filterTargetArgs,
+                JSON.stringify(entry.tools),
+                "external",
+                entry.name
+              ].map(escapeInterpolation),
+              cwd: escapeInterpolation(workspace),
+              env: Object.fromEntries(
+                Object.entries(env).map(([key, value]) => [
+                  key,
+                  escapeInterpolation(value)
+                ])
+              ),
+              toolPrefix: entry.toolPrefix,
+              tools: entry.tools
+            }
+          ];
+        }
+      );
       return [
-        entry.name,
+        surface.role,
         {
-          // Supergateway interpolates ${VAR} in config strings. Preserve the
-          // canonical shell argument and header templates using its literal-dollar escape.
-          command: escapeInterpolation(filter.command),
-          args: [
-            filter.script,
-            entry.filterTargetCommand,
-            entry.filterTargetArgs,
-            JSON.stringify(entry.tools),
-            "external",
-            entry.name
-          ].map(escapeInterpolation),
-          cwd: escapeInterpolation(workspace),
-          toolPrefix: entry.toolPrefix,
-          tools: entry.tools
+          path: `/${surface.role}`,
+          outputTransport: "streamableHttp",
+          streamableHttpPath: "/mcp",
+          stateful: true,
+          ...(http.sessionTimeout !== undefined
+            ? { sessionTimeout: http.sessionTimeout }
+            : {}),
+          apiKeyFile: escapeInterpolation(http.apiKeyFile),
+          mcpServers: Object.fromEntries(entries)
         }
       ];
-    }
+    })
   );
 
   return (
@@ -382,19 +460,7 @@ export function renderChatgptSupergatewayConfig(
         logLevel: "none",
         logFormat: "json",
         healthEndpoint: ["/readyz"],
-        mcpServers: {
-          autodev: {
-            path: "/",
-            outputTransport: "streamableHttp",
-            streamableHttpPath: "/mcp",
-            stateful: true,
-            ...(http.sessionTimeout !== undefined
-              ? { sessionTimeout: http.sessionTimeout }
-              : {}),
-            apiKeyFile: escapeInterpolation(http.apiKeyFile),
-            mcpServers: Object.fromEntries(entries)
-          }
-        }
+        mcpServers: published
       }),
       null,
       2
@@ -554,6 +620,32 @@ export interface ChatgptSupergatewayEnvironmentOptions {
 }
 
 /**
+ * The environment one role's backends run with.
+ *
+ * The role identity is role-scoped, so the backends of one published surface
+ * report the role they actually served and a read-only role's backends keep
+ * their read-only confinement. The delegation coordinator stays on the shared
+ * gateway environment: only the orchestrator surface carries the `xacpx`
+ * server, so the gateway's own coordinator is the one that owns children.
+ */
+export function chatgptRoleEnvironment(
+  role: string,
+  workspace: string
+): Record<string, string> {
+  const normalized = resolveChatgptRole(role);
+  const workspaceName = path.basename(workspace) || "workspace";
+  return {
+    AUTODEV_AGENT_ROLE: normalized,
+    // Each surface owns its own coordinator, so a conversation bound to one
+    // role delegates under that role's identity and never another's.
+    AUTODEV_XACPX_COORDINATOR_SESSION: `chatgpt:${normalized}:${workspaceName}`,
+    ...(roleContract(normalized).readOnly === true
+      ? { [MCP_FILESYSTEM_READ_ONLY_ENV]: "1" }
+      : {})
+  };
+}
+
+/**
  * Pass this as the entire environment of the Supergateway process, not a
  * delta merged with the tunnel client's environment. Its children inherit
  * only these values. Read-only mode is set strictly from the assigned role's
@@ -567,7 +659,6 @@ export function chatgptSupergatewayEnvironment(
   options: ChatgptSupergatewayEnvironmentOptions = {}
 ): Record<string, string> {
   const role = resolveChatgptRole(options.role);
-  const readOnly = roleContract(role).readOnly === true;
   const workspaceName = path.basename(workspace) || "workspace";
   const coordinatorSession =
     options.coordinatorSession?.trim() || `chatgpt:${role}:${workspaceName}`;
@@ -587,7 +678,6 @@ export function chatgptSupergatewayEnvironment(
     AUTODEV_XACPX_COORDINATOR_SESSION: coordinatorSession,
     XACPX_ORCHESTRATION_SOCKET: xacpxSocketPath,
     XACPX_CONFIG: path.join(xacpxRunDir, "config.json"),
-    XACPX_STATE: path.join(xacpxRunDir, "state.json"),
-    ...(readOnly ? { [MCP_FILESYSTEM_READ_ONLY_ENV]: "1" } : {})
+    XACPX_STATE: path.join(xacpxRunDir, "state.json")
   };
 }

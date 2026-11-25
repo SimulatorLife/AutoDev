@@ -123,6 +123,8 @@ export interface ChatgptTunnelStatus {
   readonly enabled: boolean;
   readonly ready: boolean;
   readonly role: string;
+  // Every role this tunnel publishes a surface for, primary role first.
+  readonly roles: readonly string[];
   readonly availableRoles?: readonly string[];
   readonly workspace: string | null;
   readonly tunnelId: string | null;
@@ -131,5 +133,15 @@ export interface ChatgptTunnelStatus {
 }
 export type ChatgptTunnelMutation =
   | { action: "disable" | "enable" | "forget"; expectedRevision: string }
-  | { action: "configure"; expectedRevision: string; workspace: string; role?: string; grants: ChatgptMcpGrants }
+  | {
+      action: "configure";
+      expectedRevision: string;
+      workspace: string;
+      // The primary role; it owns the gateway's delegation coordinator.
+      role?: string;
+      // The additional roles this tunnel publishes a surface for.
+      roles?: readonly string[];
+      // Explicit grants for the primary role.
+      grants: ChatgptMcpGrants;
+    }
   | { action: "rotate"; expectedRevision: string; runtimeKey: string };

@@ -1,8 +1,29 @@
 diff --git a/cli-manifest.json b/cli-manifest.json
-index 4b294f1db04d234f44a88729727093c2ac44f413..95bc4a672d185f1f1bec879be991de09628620da 100644
+index 4b294f1db04d234f44a88729727093c2ac44f413..ce7d47a53834ba93d45c8dfcaae88474620d9e62 100644
 --- a/cli-manifest.json
 +++ b/cli-manifest.json
-@@ -5493,6 +5493,13 @@
+@@ -5430,12 +5430,20 @@
+         "default": false,
+         "required": false,
+         "help": "Enable ChatGPT 网页搜索 (Web Search)"
++      },
++      {
++        "name": "app",
++        "type": "str",
++        "required": false,
++        "valueRequired": true,
++        "help": "Attach the connected app (plugin) shown under this name to the conversation"
+       }
+     ],
+     "columns": [
+       "conversationId",
+       "conversationUrl",
+       "tool",
++      "app",
+       "response"
+     ],
+     "type": "js",
+@@ -5493,6 +5501,13 @@
          "required": false,
          "valueRequired": true,
          "help": "Start a new chat inside a ChatGPT project ID or /g/g-p-<id> URL"
@@ -16,7 +37,7 @@ index 4b294f1db04d234f44a88729727093c2ac44f413..95bc4a672d185f1f1bec879be991de09
        }
      ],
      "columns": [
-@@ -12172,16 +12179,23 @@
+@@ -12172,16 +12187,23 @@
          "required": false,
          "help": "Start a new chat first (true/false, default: false)"
        },
@@ -160,10 +181,10 @@ index 976208dca661fbb87a02335cc87606f5c1a534bb..2b47941bfc22cb153a210f96eb997167
          const currentUrl = await currentChatGPTUrl(page);
          const conversationId = parseChatGPTConversationId(currentUrl) || '';
 diff --git a/clis/chatgpt/ask.js b/clis/chatgpt/ask.js
-index 7d615f3b5993ddaac0ea895fc0e100d27f35d401..fb314326d390396b33d47604190974ab35069fc5 100644
+index 7d615f3b5993ddaac0ea895fc0e100d27f35d401..dbf726bb85d904b5500fad050d3403b7ead80a7e 100644
 --- a/clis/chatgpt/ask.js
 +++ b/clis/chatgpt/ask.js
-@@ -6,8 +6,7 @@ import {
+@@ -6,14 +6,14 @@ import {
      currentChatGPTUrl,
      ensureChatGPTComposer,
      ensureOnChatGPT,
@@ -173,7 +194,33 @@ index 7d615f3b5993ddaac0ea895fc0e100d27f35d401..fb314326d390396b33d47604190974ab
      normalizeBooleanFlag,
      openChatGPTConversation,
      requireNonEmptyPrompt,
-@@ -108,9 +107,8 @@ export const askCommand = cli({
+     requirePositiveInt,
+     parseChatGPTConversationId,
+     sendChatGPTMessage,
++    selectChatGPTApp,
+     selectChatGPTTool,
+     isGenerating,
+     startNewChat,
+@@ -54,8 +54,9 @@ export const askCommand = cli({
+         { name: 'wait', type: 'boolean', default: true, help: 'Wait for the assistant response after sending' },
+         { name: 'deep-research', type: 'boolean', default: false, help: 'Enable ChatGPT 深度研究 (Deep Research)' },
+         { name: 'web-search', type: 'boolean', default: false, help: 'Enable ChatGPT 网页搜索 (Web Search)' },
++        { name: 'app', valueRequired: true, help: 'Attach the connected app (plugin) shown under this name to the conversation' },
+     ],
+-    columns: ['conversationId', 'conversationUrl', 'tool', 'response'],
++    columns: ['conversationId', 'conversationUrl', 'tool', 'app', 'response'],
+     func: async (page, kwargs) => {
+         const prompt = requireNonEmptyPrompt(kwargs.prompt, 'chatgpt ask');
+         const timeout = requirePositiveInt(
+@@ -98,6 +99,7 @@ export const askCommand = cli({
+         // startNewChat / ensureOnChatGPT now wait for the composer selector
+         // after navigating, so the previous standalone 2 s settle is redundant.
+         await ensureChatGPTComposer(page, 'ChatGPT ask requires a logged-in ChatGPT session with a visible composer.');
++        const selectedApp = kwargs.app ? await selectChatGPTApp(page, kwargs.app) : null;
+         const selectedTool = tool ? await selectChatGPTTool(page, tool) : null;
+ 
+         const settleStart = Date.now();
+@@ -108,9 +110,8 @@ export const askCommand = cli({
              await page.sleep(3);
          }
  
@@ -185,9 +232,12 @@ index 7d615f3b5993ddaac0ea895fc0e100d27f35d401..fb314326d390396b33d47604190974ab
          const sent = await sendChatGPTMessage(page, prompt);
          if (!sent) {
              throw new CommandExecutionError('Failed to send message to ChatGPT', `Open ${CHATGPT_URL} and verify the composer is ready.`);
-@@ -120,9 +118,9 @@ export const askCommand = cli({
+@@ -118,12 +119,12 @@ export const askCommand = cli({
+ 
+         const { conversationId, conversationUrl } = await waitForConversationUrl(page);
          if (!shouldWait) {
-             return [{ conversationId, conversationUrl, tool: selectedTool?.Tool ?? '', response: '' }];
+-            return [{ conversationId, conversationUrl, tool: selectedTool?.Tool ?? '', response: '' }];
++            return [{ conversationId, conversationUrl, tool: selectedTool?.Tool ?? '', app: selectedApp?.App ?? '', response: '' }];
          }
 -        const response = await waitForChatGPTResponse(page, baseline, prompt, timeout, {
 -            baselinePairCounts,
@@ -196,13 +246,38 @@ index 7d615f3b5993ddaac0ea895fc0e100d27f35d401..fb314326d390396b33d47604190974ab
 +            conversationUrl: /\/c\/[\w-]+/.test(startingUrl) ? startingUrl : conversationUrl,
 +            baselinePromptId,
          });
-         return [{ conversationId, conversationUrl, tool: selectedTool?.Tool ?? '', response }];
+-        return [{ conversationId, conversationUrl, tool: selectedTool?.Tool ?? '', response }];
++        return [{ conversationId, conversationUrl, tool: selectedTool?.Tool ?? '', app: selectedApp?.App ?? '', response }];
      },
+ });
 diff --git a/clis/chatgpt/utils.js b/clis/chatgpt/utils.js
-index 05a28f7e7ac12fef47fc9ee9926dc35a2d317aaf..f5b680faae14900f7373f31bd56eb9e2f6bb2bf5 100644
+index 05a28f7e7ac12fef47fc9ee9926dc35a2d317aaf..023ec439584d720a4c95644caf50c449cdb56dc7 100644
 --- a/clis/chatgpt/utils.js
 +++ b/clis/chatgpt/utils.js
-@@ -691,7 +691,19 @@ export async function selectChatGPTModel(page, model) {
+@@ -424,6 +424,22 @@ function requireKnownChatGPTTool(tool) {
+     return { key, ...option };
+ }
+ 
++/**
++ * An installed app (plugin) is addressed by the label ChatGPT shows for it,
++ * because that is the only name the site itself exposes. Unlike the built-in
++ * composer tools there is no closed set of app names to validate against.
++ */
++function requireChatGPTApp(app) {
++    const label = String(app ?? '').trim();
++    if (!label) {
++        throw new ArgumentError(
++            'A ChatGPT app name is required',
++            'Pass the connected app name exactly as ChatGPT shows it.',
++        );
++    }
++    return { key: label.toLowerCase(), label, labels: [label] };
++}
++
+ const REASONING_CONTROLS_JS = `
+     const reasoningVisible = (element) => {
+         if (!(element instanceof HTMLElement) || element.closest('[hidden], [inert], [aria-hidden="true"]')) return false;
+@@ -691,7 +707,19 @@ export async function selectChatGPTModel(page, model) {
      if (before.model === target.key) {
          return { Status: 'Already selected', Model: target.label };
      }
@@ -223,7 +298,175 @@ index 05a28f7e7ac12fef47fc9ee9926dc35a2d317aaf..f5b680faae14900f7373f31bd56eb9e2
          return { Status: 'Success', Model: target.label };
      }
      const apiResult = await setChatGPTModelConfig(page, target);
-@@ -2314,66 +2326,187 @@ export function getChatGPTResponsePairCounts(messages, prompt) {
+@@ -946,6 +974,29 @@ export async function selectChatGPTTool(page, tool) {
+         return { Status: 'Already selected', Tool: target.label };
+     }
+ 
++    await openChatGPTComposerMenu(page);
++
++    const optionCenter = await findChatGPTMenuOption(page, target.labels);
++    if (!optionCenter?.found) {
++        throw new CommandExecutionError(`Could not find the ChatGPT ${target.label} tool option.`);
++    }
++    if (!optionCenter.checked) {
++        await page.nativeClick(Number(optionCenter.x), Number(optionCenter.y));
++    }
++
++    await page.wait(0.5);
++    const after = await getCurrentChatGPTTool(page);
++    if (after.tool !== target.key) {
++        throw new CommandExecutionError(`ChatGPT tool did not switch to ${target.label}.`);
++    }
++    return { Status: optionCenter.checked ? 'Already selected' : 'Success', Tool: target.label };
++}
++
++/**
++ * Open the composer's "+" menu, the menu ChatGPT itself uses to offer the
++ * tools, files and installed apps a message may use.
++ */
++async function openChatGPTComposerMenu(page) {
+     const menuButton = requireObjectEvaluateResult(unwrapEvaluateResult(await page.evaluate(`(() => {
+         const isVisible = (el) => {
+             if (!(el instanceof HTMLElement)) return false;
+@@ -969,7 +1020,15 @@ export async function selectChatGPTTool(page, tool) {
+     }
+     await page.nativeClick(Number(menuButton.x), Number(menuButton.y));
+     await page.wait(0.5);
++}
+ 
++/**
++ * Find an open menu entry whose visible label matches one of `labels`.
++ *
++ * The composer's menu lists built-in tools and installed apps side by side, so
++ * one label-driven lookup serves both.
++ */
++async function findChatGPTMenuOption(page, labels) {
+     let optionCenter = null;
+     for (let attempt = 0; attempt < 10; attempt += 1) {
+         optionCenter = requireObjectEvaluateResult(unwrapEvaluateResult(await page.evaluate(`(() => {
+@@ -982,7 +1041,7 @@ export async function selectChatGPTTool(page, tool) {
+             };
+             const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+             const compact = (value) => normalize(value).toLowerCase().replace(/[^\\p{L}\\p{N}]+/gu, '');
+-            const labels = ${JSON.stringify(target.labels)};
++            const labels = ${JSON.stringify(labels)};
+             const optionSelector = '[role="menuitemradio"], [role="menuitem"], [role="option"], button, div[tabindex="0"]';
+             const matchesLabel = (value) => {
+                 const normalized = normalize(value).toLowerCase();
+@@ -1026,23 +1085,106 @@ export async function selectChatGPTTool(page, tool) {
+                 x: Math.round(rect.left + rect.width / 2),
+                 y: Math.round(rect.top + rect.height / 2),
+             };
+-        })()`)), 'chatgpt tool option click');
++        })()`)), 'chatgpt menu option');
+         if (optionCenter.found) break;
+         await page.wait(0.5);
+     }
++    return optionCenter;
++}
++
++/**
++ * Report the app the composer currently shows as attached to the conversation.
++ *
++ * An attached app renders as a pill next to the composer, which is the same
++ * shape a selected built-in tool uses.
++ */
++export async function getCurrentChatGPTApp(page, target) {
++    return requireObjectEvaluateResult(unwrapEvaluateResult(await page.evaluate(`(() => {
++        const isVisible = (el) => {
++            if (!(el instanceof HTMLElement)) return false;
++            const style = window.getComputedStyle(el);
++            if (style.display === 'none' || style.visibility === 'hidden') return false;
++            const rect = el.getBoundingClientRect();
++            return rect.width > 0 && rect.height > 0;
++        };
++        const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
++        const compact = (value) => normalize(value).toLowerCase().replace(/[^\\p{L}\\p{N}]+/gu, '');
++        const labels = ${JSON.stringify(target.labels)};
++        const matchesLabel = (value) => {
++            const normalized = normalize(value).toLowerCase();
++            const compacted = compact(value);
++            if (!normalized && !compacted) return false;
++            return labels.some((label) => {
++                const normalizedLabel = normalize(label).toLowerCase();
++                const compactedLabel = compact(label);
++                return normalized === normalizedLabel
++                    || normalized.includes(normalizedLabel)
++                    || (compactedLabel && compacted.includes(compactedLabel));
++            });
++        };
++        const form = Array.from(document.querySelectorAll('form')).find((node) => node instanceof HTMLElement && isVisible(node));
++        const root = form || document.body;
++        const composerSelector = '[contenteditable="true"][role="textbox"], #prompt-textarea[contenteditable="true"], [data-testid="prompt-textarea"][contenteditable="true"]';
++        const nodes = Array.from(root.querySelectorAll('button, [role="button"], span, div'));
++        const node = nodes.find((candidate) => {
++            if (!isVisible(candidate)) return false;
++            const toolPill = candidate.closest('[contenteditable="false"]');
++            if (!toolPill && (candidate.closest(composerSelector) || candidate.querySelector(composerSelector))) return false;
++            // An attached app is either a composer pill or a button that names it.
++            const isControl = candidate.tagName === 'BUTTON' || candidate.getAttribute('role') === 'button';
++            if (!toolPill && !isControl) return false;
++            const haystacks = [
++                candidate.textContent,
++                candidate.getAttribute('aria-label'),
++                candidate.getAttribute('title'),
++                candidate.getAttribute('data-testid'),
++            ];
++            return haystacks.some((value) => matchesLabel(value, labels));
++        });
++        return {
++            selected: Boolean(node),
++            label: node ? normalize(node.getAttribute('aria-label') || node.textContent) : null,
++        };
++    })()`)), 'chatgpt current app');
++}
++
++/**
++ * Attach an installed app to the conversation.
++ *
++ * ChatGPT binds a conversation to a connected app when the app is chosen from
++ * the composer's "+" menu, and only the chosen app's tools are then available
++ * to the model. Selecting the app here is how one conversation is bound to one
++ * tool surface.
++ */
++export async function selectChatGPTApp(page, app) {
++    const target = requireChatGPTApp(app);
++    if (typeof page.nativeClick !== 'function') {
++        throw new CommandExecutionError('ChatGPT app selection requires native browser click support.');
++    }
++    await ensureOnChatGPT(page);
++    await ensureChatGPTComposer(page, 'ChatGPT app selection requires a logged-in ChatGPT session with a visible composer.');
++
++    const before = await getCurrentChatGPTApp(page, target);
++    if (before.selected) {
++        return { Status: 'Already selected', App: target.label };
++    }
++
++    await openChatGPTComposerMenu(page);
++
++    const optionCenter = await findChatGPTMenuOption(page, target.labels);
+     if (!optionCenter?.found) {
+-        throw new CommandExecutionError(`Could not find the ChatGPT ${target.label} tool option.`);
++        throw new CommandExecutionError(`Could not find the ChatGPT "${target.label}" app in the composer menu.`);
+     }
+     if (!optionCenter.checked) {
+         await page.nativeClick(Number(optionCenter.x), Number(optionCenter.y));
+     }
+ 
+     await page.wait(0.5);
+-    const after = await getCurrentChatGPTTool(page);
+-    if (after.tool !== target.key) {
+-        throw new CommandExecutionError(`ChatGPT tool did not switch to ${target.label}.`);
++    const after = await getCurrentChatGPTApp(page, target);
++    if (!after.selected) {
++        throw new CommandExecutionError(`ChatGPT app did not switch to ${target.label}.`);
+     }
+-    return { Status: optionCenter.checked ? 'Already selected' : 'Success', Tool: target.label };
++    return { Status: optionCenter.checked ? 'Already selected' : 'Success', App: target.label };
+ }
+ 
+ export async function clearChatGPTDraft(page) {
+@@ -2314,66 +2456,198 @@ export function getChatGPTResponsePairCounts(messages, prompt) {
      return counts;
  }
  
@@ -336,6 +579,17 @@ index 05a28f7e7ac12fef47fc9ee9926dc35a2d317aaf..f5b680faae14900f7373f31bd56eb9e2
  
 -export async function waitForChatGPTResponse(page, baselineCount, prompt, timeoutSeconds, options = {}) {
 +/**
++ * ChatGPT stores an attached app as a leading "[$slug](app://<id>)" reference
++ * in front of the submitted text. The reference is the site's own record of
++ * which app the turn was bound to, so it is stripped before the stored turn is
++ * compared with the text that was submitted.
++ */
++export function stripChatGPTAppReference(text) {
++    const match = /^\[[^\]]*\]\(app:\/\/[^)]*\)\s*/u.exec(String(text ?? ''));
++    return match ? String(text).slice(match[0].length) : String(text ?? '');
++}
++
++/**
 + * Poll the stored current-branch answer and bind it to the new submitted
 + * user node. No DOM matching or prior-rendered-response baseline is needed.
 + */
@@ -380,11 +634,9 @@ index 05a28f7e7ac12fef47fc9ee9926dc35a2d317aaf..f5b680faae14900f7373f31bd56eb9e2
 +        if (!conversationId) {
 +            if (now - startTime >= 12000) {
 +                throw new CommandExecutionError('ChatGPT did not create a conversation URL after sending the message');
-             }
++            }
 +            continue;
-         }
--        if (await isGenerating(page)) {
--            stableCount = 0;
++        }
 +        if (!observedConversationId) observedConversationId = conversationId;
 +
 +        // Read and emit progress even while ChatGPT is still generating.
@@ -397,6 +649,23 @@ index 05a28f7e7ac12fef47fc9ee9926dc35a2d317aaf..f5b680faae14900f7373f31bd56eb9e2
 +            if (!generatingNow && !storedErrorSince) storedErrorSince = now;
 +            if (!generatingNow && now - storedErrorSince >= 12000) {
 +                throw new CommandExecutionError("ChatGPT's stored reply could not be read: " + storedError);
+             }
++            continue;
+         }
+-        if (await isGenerating(page)) {
+-            stableCount = 0;
++        storedError = '';
++        storedErrorSince = 0;
++
++        // A repeated prompt must have a different user-message node than the
++        // last persisted one. Exact text matching rejects substring collisions.
++        const matchesSubmittedTurn = !!stored.promptId
++            && (!options.baselinePromptId || stored.promptId !== options.baselinePromptId)
++            && stripChatGPTAppReference(stored.promptText) === expectedPromptText;
++        if (!matchesSubmittedTurn) {
++            if (!wrongPromptSince) wrongPromptSince = now;
++            if (now - wrongPromptSince >= 12000) {
++                throw new CommandExecutionError('ChatGPT stored reply belongs to a different prompt or turn');
 +            }
              continue;
          }
@@ -411,21 +680,6 @@ index 05a28f7e7ac12fef47fc9ee9926dc35a2d317aaf..f5b680faae14900f7373f31bd56eb9e2
 -        } else {
 -            lastText = candidate;
 -            stableCount = 0;
-+        storedError = '';
-+        storedErrorSince = 0;
-+
-+        // A repeated prompt must have a different user-message node than the
-+        // last persisted one. Exact text matching rejects substring collisions.
-+        const matchesSubmittedTurn = !!stored.promptId
-+            && (!options.baselinePromptId || stored.promptId !== options.baselinePromptId)
-+            && stored.promptText === expectedPromptText;
-+        if (!matchesSubmittedTurn) {
-+            if (!wrongPromptSince) wrongPromptSince = now;
-+            if (now - wrongPromptSince >= 12000) {
-+                throw new CommandExecutionError('ChatGPT stored reply belongs to a different prompt or turn');
-+            }
-+            continue;
-+        }
 +        wrongPromptSince = 0;
 +        if (stored.text !== lastStoredText || generatingNow) {
 +            lastStoredText = stored.text;
@@ -457,7 +711,7 @@ index 05a28f7e7ac12fef47fc9ee9926dc35a2d317aaf..f5b680faae14900f7373f31bd56eb9e2
      throw new TimeoutError(
          'chatgpt ask',
          timeoutSeconds,
-@@ -2670,6 +2803,97 @@ const CHATGPT_ATTACHMENT_CARD_JS = `
+@@ -2670,6 +2944,97 @@ const CHATGPT_ATTACHMENT_CARD_JS = `
      };
  `;
  
@@ -555,7 +809,7 @@ index 05a28f7e7ac12fef47fc9ee9926dc35a2d317aaf..f5b680faae14900f7373f31bd56eb9e2
  /** Attach documents to the active composer and verify new, ready attachment chips. */
  export async function uploadChatGPTFiles(page, filePaths) {
      const path = await import('node:path');
-@@ -2677,30 +2901,7 @@ export async function uploadChatGPTFiles(page, filePaths) {
+@@ -2677,30 +3042,7 @@ export async function uploadChatGPTFiles(page, filePaths) {
      if (!prepared.ok) return prepared;
      const names = prepared.paths.map(file => path.default.basename(file));
      if (new Set(names).size !== names.length) return { ok: false, reason: 'Attachments must have distinct filenames' };
@@ -587,7 +841,7 @@ index 05a28f7e7ac12fef47fc9ee9926dc35a2d317aaf..f5b680faae14900f7373f31bd56eb9e2
      if (!target.ok) return target;
      let uploaded = false;
      if (typeof page.setFileInput === 'function') {
-@@ -3697,3 +3898,43 @@ export async function getChatGPTImageAssets(page, urls) {
+@@ -3697,3 +4039,43 @@ export async function getChatGPTImageAssets(page, urls) {
          })(${urlsJson})
      `)), 'chatgpt image asset export');
  }

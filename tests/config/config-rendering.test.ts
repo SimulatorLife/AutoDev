@@ -311,8 +311,16 @@ test("bridge MCP catalogues are deterministic and preserve launch authentication
 test("execution-contract provider delegation is explicit and rejects legacy fields", () => {
   assert.deepEqual(
     validateProviderContracts({
-      codex: { delegation: "xacpx", permissionMode: "native", mcpIngress: "local" },
-      claude: { delegation: "xacpx", permissionMode: "native", mcpIngress: "local" },
+      codex: {
+        delegation: "xacpx",
+        permissionMode: "native",
+        mcpIngress: "local"
+      },
+      claude: {
+        delegation: "xacpx",
+        permissionMode: "native",
+        mcpIngress: "local"
+      },
       "opencli-chatgpt": {
         delegation: "xacpx",
         permissionMode: "upstream",
@@ -320,8 +328,16 @@ test("execution-contract provider delegation is explicit and rejects legacy fiel
       }
     }),
     {
-      codex: { delegation: "xacpx", permissionMode: "native", mcpIngress: "local" },
-      claude: { delegation: "xacpx", permissionMode: "native", mcpIngress: "local" },
+      codex: {
+        delegation: "xacpx",
+        permissionMode: "native",
+        mcpIngress: "local"
+      },
+      claude: {
+        delegation: "xacpx",
+        permissionMode: "native",
+        mcpIngress: "local"
+      },
       "opencli-chatgpt": {
         delegation: "xacpx",
         permissionMode: "upstream",
@@ -657,6 +673,7 @@ test("Playtester and Browser Tester project role tool/env/shell boundaries witho
       string,
       {
         delegation?: string;
+        mcpIngress?: string;
         roleMcpInjection?: boolean;
         spawnTools?: string[];
       }
@@ -676,7 +693,10 @@ test("Playtester and Browser Tester project role tool/env/shell boundaries witho
   assert.equal(contract.roles["browser-tester"]?.hooks, false);
   assert.equal(contract.roles.playtester?.shell, false);
   assert.equal(contract.roles.playtester?.hooks, false);
-  assert.equal("roleScopedMcp" in (contract.roles["browser-tester"] ?? {}), false);
+  assert.equal(
+    "roleScopedMcp" in (contract.roles["browser-tester"] ?? {}),
+    false
+  );
   assert.equal("roleScopedMcp" in (contract.roles.playtester ?? {}), false);
   assert.deepEqual(contract.roles["browser-tester"]?.mcpEnvVars?.playwright, [
     "PATH",
@@ -724,10 +744,7 @@ test("Playtester and Browser Tester project role tool/env/shell boundaries witho
     assert.equal(contract.providers[provider]?.delegation, "xacpx");
   }
   assert.equal(contract.providers["opencli-gemini"]?.delegation, "none");
-  assert.equal(
-    contract.providers["opencli-gemini"]?.mcpIngress,
-    "site-native"
-  );
+  assert.equal(contract.providers["opencli-gemini"]?.mcpIngress, "site-native");
 });
 
 test("every AutoDev user-level skill is explicitly gated on root config and every role", () => {
