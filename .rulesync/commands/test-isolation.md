@@ -1,9 +1,17 @@
 ---
 targets: ["*"]
-description: Make one flaky test deterministic with per-test fixtures, mocked APIs, better teardown, or fake timers.
+description: Eliminate flaky, brittle, or unnecessarily coupled tests through proper isolation and deterministic validation.
 ---
-# Make one flaky test deterministic
 
-Identify a test known to be flaky (shared globals, timing reliance, leaking timers, real network calls) and refactor it for determinism. Apply fixes such as per-test fixtures, mocked-APIs, better teardown, explicit waits, or fake timers, and include evidence (failing reproduction or reasoning) that the old test flaked. Keep the scope tight by focusing on one flaky scenario and ensuring the suite now runs reliably. IMPORTANT: timeouts on tests to enforce maximum run durations and prevent never-ending tests are *desired* and should be preserved and added where applicable/possible.
+# Improve test isolation
 
-Before editing, discover the target repository's documented conventions and validation commands. Do not assume a particular language, package manager, framework, directory layout, or fixture format. Keep the work to one bounded change, preserve unrelated work, and never weaken tests or add compatibility shims.
+Identify and fix tests that are flaky, brittle, or unnecessarily coupled to implementation details, mutable content, generated artifacts, shared state, execution order, timing, or external dependencies.
+
+- Test observable behavior, contracts, and invariants rather than incidental implementation details or editable content.
+- Preserve a single source of truth. Avoid duplicating production data, configuration, or content in test expectations.
+- Use controlled fixtures for unit tests and independently validate integration-test expectations against canonical sources, not stale projections or the implementation under test.
+- Separate behavioral correctness from generated-artifact drift detection.
+- Use isolated fixtures, mocks, proper teardown, explicit synchronization, and fake timers where appropriate.
+- Preserve meaningful assertions, security guarantees, performance thresholds, and bounded execution timeouts.
+
+Fix root causes rather than weakening assertions or updating brittle expectations. Run affected tests and report evidence of improved isolation and reliability.

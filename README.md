@@ -32,12 +32,13 @@ in sync.
 
 ## Local validation toolchain
 
-AutoDev is managed exclusively with standalone pnpm `12.21.0`, declared by
-`packageManager` in `package.json` and locked in `pnpm-lock.yaml`. pnpm also
-manages Node.js. The project pins Node `24.12.0` in `.node-version` (which
-pnpm's Node shim honors) and requires Node `>=24.12.0` in `engines`.
+AutoDev is managed exclusively with standalone pnpm, pinned by
+`packageManager` in `package.json`. pnpm also manages Node.js. The project
+pins Node in `.node-version` (which pnpm's Node shim honors) and defines the
+supported runtime range in `engines.node`. The shared Node type dependency
+is declared in the pnpm workspace catalog.
 Bootstrap pnpm itself using its standalone installer, then run
-`pnpm runtime set node 24.12.0 -g` if Node is not already provisioned.
+`pnpm runtime set node "$(cat .node-version)" -g` from the repository root.
 npm, npx, NVM, and Corepack are not installation prerequisites. Use
 `pnpm install --frozen-lockfile` before running the checks. The typed command
 boundary is available as `pnpm autodev -- <command>` (or

@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=24.12.0"
+    "node": ">=26.13.1 <27"
   },
   "scripts": {
     "dev": "node runtime/src/cli/dev.ts",
@@ -26,7 +26,7 @@
     "format": "prettier --cache --write --ignore-path .gitignore \"{tests,core,data,console,runtime}/**/*.{ts,tsx}\" \".rulesync/**/*.ts\" \"*.{js,ts}\"",
     "format:check": "prettier --check --ignore-path .gitignore \"{tests,core,data,console,runtime}/**/*.{ts,tsx}\" \".rulesync/**/*.ts\" \"*.{js,ts}\""
   },
-  "packageManager": "pnpm@12.21.0",
+  "packageManager": "pnpm@12.23.0",
   "devDependencies": {
     "@e18e/eslint-plugin": "^0.8.1",
     "@eslint/compat": "^2.1.1",
@@ -46,7 +46,7 @@
     "@simulatorlife/autodev-core": "workspace:*",
     "@simulatorlife/autodev-data": "workspace:*",
     "@simulatorlife/autodev-runtime": "workspace:*",
-    "@types/node": "^24.19.2",
+    "@types/node": "catalog:",
     "eslint": "^10.15.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-import-resolver-typescript": "^4.4.5",
@@ -66,7 +66,7 @@
     "lsp-mcp-server": "^1.1.27",
     "playwright-core": "1.65.1",
     "prettier": "^3.10.1",
-    "rulesync": "43.11.0",
+    "rulesync": "43.14.0",
     "smol-toml": "^1.9.1",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.73.0",

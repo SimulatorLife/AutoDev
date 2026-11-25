@@ -1119,7 +1119,22 @@ test("AutoDev shell launchers resolve pnpm-managed Node without nvm or npm", asy
 
 test("Node actions use the pnpm-compatible .node-version pin", async () => {
   const version = await readFile(path.join(root, ".node-version"), "utf8");
-  assert.equal(version.trim(), "24.12.0");
+  const pin = version.trim();
+  assert.match(pin, /^\d+\.\d+\.\d+$/u);
+  const major = pin.split(".")[0];
+  const manifest = JSON.parse(
+    await readFile(path.join(root, "package.json"), "utf8")
+  ) as { engines: { node: string }; devDependencies: Record<string, string> };
+  assert.equal(manifest.engines.node, `>=${pin} <${Number(major) + 1}`);
+  assert.equal(manifest.devDependencies["@types/node"], "catalog:");
+  const workspace = await readFile(path.join(root, "pnpm-workspace.yaml"), "utf8");
+  assert.match(workspace, new RegExp(`"@types/node": \\^${major}\\.`, "u"));
+  for (const directory of ["runtime", "data", "console"]) {
+    const pkg = JSON.parse(
+      await readFile(path.join(root, directory, "package.json"), "utf8")
+    ) as { devDependencies: Record<string, string> };
+    assert.equal(pkg.devDependencies["@types/node"], "catalog:", directory);
+  }
   assert.equal(existsSync(path.join(root, ".nvmrc")), false);
   for (const name of [
     "copilot-setup-steps.yml",
@@ -1127,7 +1142,7 @@ test("Node actions use the pnpm-compatible .node-version pin", async () => {
     "target-validation.yml"
   ]) {
     const source = await readWorkflow(name);
-    assert.doesNotMatch(source, /node-version:\s*["']22["']/u, name);
+    assert.doesNotMatch(source, /^\s*node-version:\s*/mu, name);
     assert.match(source, /node-version-file:/u, name);
   }
 });

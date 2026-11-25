@@ -258,9 +258,11 @@ A shared component for cycling between representations of the same value.
 AutoDev-owned JavaScript installation, local checks, CI, launch scripts, provider
 bridges, and service reconciliation use **standalone pnpm as the only package
 manager**. pnpm manages the Node.js runtime as well: the root `package.json`
-pins `packageManager: pnpm@12.21.0`, `.node-version` pins Node `24.12.0`
-for pnpm's project-aware `node` shim and CI, and `engines.node` defines the
-minimum supported runtime. Provision Node with `pnpm runtime set node`; do
+pins pnpm through `packageManager`, `.node-version` pins Node for pnpm's
+project-aware `node` shim and CI, and `engines.node` defines the supported
+runtime range. The pnpm workspace catalog single-sources `@types/node`,
+whose major must match the pinned runtime. Provision Node with
+`pnpm runtime set node "$(cat .node-version)" -g` from the repository root; do
 not require an npm, npx, NVM, or Corepack executable, or use them as a fallback
 in first-party install, build, test, provider bootstrap, or validation paths.
 

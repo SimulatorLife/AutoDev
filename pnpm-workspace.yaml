@@ -4,6 +4,9 @@ packages:
   - core
   - data
 
+catalog:
+  "@types/node": ^26.6.9
+
 allowBuilds:
   "@jackwener/opencli": true
   esbuild: true
@@ -25,3 +28,6 @@ patchedDependencies:
 # and shadow the RuleSync-managed copy.
 skills:
   dirs: []
+minimumReleaseAgeExclude:
+  - "@types/node@26.6.9"
+  - rulesync@43.14.0

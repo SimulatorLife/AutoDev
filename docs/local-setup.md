@@ -4,8 +4,9 @@
 
 > This is an operational/current-state runbook. The canonical future ownership and AutoDev Console target live in [`docs/autodev-console-target-state.md`](autodev-console-target-state.md).
 
-**JavaScript prerequisite:** install standalone pnpm (v12.21.0 for this
-checkout), then use `pnpm runtime set node 24.12.0 -g` to provision Node
+**JavaScript prerequisite:** install standalone pnpm at the version specified
+by `packageManager` in `package.json`, then use
+`pnpm runtime set node "$(cat .node-version)" -g` from the repository root to provision Node
 without npm, npx, NVM, or Corepack. The repository's `.node-version` is
 understood by pnpm's `node` shim. Keep `PNPM_HOME/bin` on PATH
 (`~/Library/pnpm/bin` on macOS). The installer does not edit `.zprofile`. Where this file describes native role TOMLs or other transitional inputs, do not treat them as a competing long-term source of truth; RuleSync is the target canonical source for every agent-facing configuration surface it natively supports.
@@ -14,7 +15,7 @@ The `scripts/` tree is the tracked home for the local-PC setup previously kept i
 
 ## Installation
 
-AutoDev now requires Node 24.12+ for native TypeScript execution. Validate the
+AutoDev requires the Node.js version range declared in `engines.node` for native TypeScript execution. Validate the
 checkout and typed configuration surfaces with:
 
 ```bash
@@ -849,7 +850,8 @@ disturb the sandbox the roles run in.
   resolves `${PNPM_HOME:-$HOME/Library/pnpm}/bin/node` instead. There is no
   fallback to NVM, npm or Homebrew-managed Node, and the installer never
   creates or rewrites `~/.zprofile` to modify the login shell's PATH.
-  If Node is missing, provision it with `pnpm runtime set node 24.12.0 -g`
+  If Node is missing or outdated, provision it from the repository root with
+  `pnpm runtime set node "$(cat .node-version)" -g`
   and rerun the installer.
 - Keep OAuth/PAT/API credentials outside the repository. On macOS, store `MINIMAX_API_KEY`, `CONTEXT7_API_KEY`, and `AUTODEV_CHATGPT_TUNNEL_API_KEY` in macOS Keychain via `/usr/bin/security` (or `node runtime/src/platform/install-state.ts keychain set <NAME>` reading from stdin); explicit environment variables always override Keychain. Normal runs of `scripts/install.sh` check that required API keys (`MINIMAX_API_KEY`, `CONTEXT7_API_KEY`) are present in macOS Keychain without modifying Keychain or migrating `.env` automatically (and `scripts/install.sh --check` reports missing Keychain items or leftover plaintext entries in `$CODEX_HOME/.env`). Each secret is injected only into processes that require it (`MINIMAX_API_KEY` into the Model Router and `mcode`, `CONTEXT7_API_KEY` into roles enabling `context7`, `AUTODEV_CHATGPT_TUNNEL_API_KEY` into `tunnel-client`). Background services keep other internal router/bridge credentials in mode-0600 `$CODEX_HOME/.env` and `$CODEX_HOME/openlit-secrets.env`.
 - Treat proxy and router logs as local-only operational data. Antigravity's
