@@ -14,10 +14,8 @@ import {
   CONTROL_API_PLAYTESTING_READINESS_SCHEMA,
   type ControlApiHookDeclaration,
   type ControlApiHookEvent,
-  type ControlApiHookEventPatchResponse,
   type ControlApiHooksAppliedResponse,
   type ControlApiHooksResponse,
-  isHookEvent,
   PLAYTEST_LAUNCH_REQUEST_SCHEMA,
   playtestAssignmentManifestHashInput,
   type PlaytestComparison,
@@ -906,7 +904,6 @@ function sendJson(
 
 /** The path of one MCP server's canonical declaration. */
 const MCP_SERVER_ROUTE = /^\/control\/mcps\/([^/]+)$/u;
-const HOOK_EVENT_ROUTE = /^\/control\/hooks\/([a-z][A-Za-z]{0,63})$/u;
 
 /** The moment the fixture's synthetic applied state was observed. */
 const MCP_OBSERVED_AT = "2026-10-22T12:00:00.000Z";
@@ -1127,113 +1124,6 @@ function initialHookDeclaration(): FixtureHookDeclaration {
 }
 
 let hookDeclaration: FixtureHookDeclaration = initialHookDeclaration();
-
-/**
- * The write of one hook event's action list.
- *
- * The write is a compare-and-swap on the declaration's revision, so a write
- * decided on an older declaration is refused. A write that lands moves the
- * declaration, applies it, and the Runtime's verdict follows.
- */
-async function applyHookDeclarationWrite(
-  response: ServerResponse,
-  request: IncomingMessage,
-  url: URL
-): Promise<boolean> {
-  const match = url.pathname.match(HOOK_EVENT_ROUTE);
-  if (match === null) return false;
-  if (request.method !== "PATCH") return false;
-  const event = decodeURIComponent(match[1] ?? "");
-  // The Runtime refuses an event outside the vocabulary it runs before it looks
-  // at the body, so the fixture refuses it the same way and for the same reason:
-  // an event the Codex runtime does not run is not a declaration that can be
-  // written, and it is not an event the page can describe.
-  if (!isHookEvent(event)) {
-    sendCanonicalSourceError(
-      response,
-      400,
-      "autodev_control_hook_unknown_event",
-      `"${event}" is not a hook event the Codex runtime runs.`
-    );
-    return true;
-  }
-  const body = await readJsonBody(request);
-  const expectedRevision = body?.expectedRevision;
-  const actions = body?.actions;
-  if (typeof expectedRevision !== "string" || !Array.isArray(actions)) {
-    sendCanonicalSourceError(
-      response,
-      400,
-      "autodev_control_api_invalid_body",
-      "Hook declaration updates require exactly the expected revision and an action list."
-    );
-    return true;
-  }
-  if (expectedRevision !== hookDeclaration.revision) {
-    sendCanonicalSourceError(
-      response,
-      409,
-      "autodev_control_hook_revision_conflict",
-      "The canonical hook declaration changed since it was loaded."
-    );
-    return true;
-  }
-  const current = hookDeclaration.events.find((entry) => entry.event === event);
-  if (current === undefined) {
-    sendCanonicalSourceError(
-      response,
-      400,
-      "autodev_control_hook_invalid_declaration",
-      `Hook event "${event}" is not declared for the target "codexcli".`
-    );
-    return true;
-  }
-  const writtenActions = actions.map((action) => {
-    const entry = action as Record<string, unknown>;
-    return {
-      type: "command" as const,
-      command: String(entry.command ?? ""),
-      ...(typeof entry.matcher === "string" ? { matcher: entry.matcher } : {}),
-      ...(typeof entry.statusMessage === "string"
-        ? { statusMessage: entry.statusMessage }
-        : {})
-    };
-  });
-  const written: ControlApiHookDeclaration = {
-    event,
-    origin: current.origin,
-    actions: writtenActions
-  };
-  const events = hookDeclaration.events.map((entry) =>
-    entry.event === event ? written : entry
-  );
-  const revision = createHash("sha256")
-    .update(`${hookDeclaration.revision}:${event}`, "utf8")
-    .digest("hex");
-  const generation = hookGeneration(events);
-  hookDeclaration = {
-    revision,
-    events,
-    appliedEvents: events.map((entry) => ({
-      event: entry.event,
-      actions: entry.actions
-    })),
-    desiredGeneration: generation,
-    observedGeneration: generation,
-    converged: true
-  };
-  const patch: ControlApiHookEventPatchResponse = {
-    schema: "autodev-control-hook-event-patch-v1",
-    event,
-    target: "codexcli",
-    revision,
-    changed: true,
-    actions: writtenActions,
-    reconciliation: hookReconciliation()
-  };
-  sendJson(response, patch);
-  return true;
-}
 
 /**
  * The Runtime's verdict on the hook declaration.
@@ -4593,7 +4483,7 @@ function handleHookCatalogRead(url: URL, response: ServerResponse): boolean {
     const body: ControlApiHooksResponse = {
       schema: "autodev-control-hooks-v2",
       source: ".rulesync/hooks.jsonc",
-      readOnly: false,
+      readOnly: true,
       valid: true,
       issues: [],
       revision: hookDeclaration.revision,
@@ -5472,20 +5362,25 @@ async function handleSyntheticMutationRoutes(
   if (await applyMcpDeclarationWrite(response, request, url)) {
     return true;
   }
-  if (await applyHookDeclarationWrite(response, request, url)) {
+  if (url.pathname.startsWith("/control/hooks/")) {
+    sendJson(
+      response,
+      { error: { code: "autodev_control_api_unknown_path", message: "Unknown Control API path." } },
+      404
+    );
     return true;
   }
   if (await applyWorkspaceConfigurationWrite(request, response, url)) {
     return true;
   }
-  if (url.pathname === "/control/permissions" && request.method !== "GET") {
+  if (["/control/permissions", "/control/hooks", "/control/hooks-applied"].includes(url.pathname) && request.method !== "GET") {
     response.setHeader("allow", "GET");
     sendJson(
       response,
       {
         error: {
           code: "autodev_control_api_method_not_allowed",
-          message: "Permissions is read-only via GET."
+          message: "Control API collections are read-only via GET."
         }
       },
       405

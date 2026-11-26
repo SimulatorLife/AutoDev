@@ -78,6 +78,18 @@ export interface ApprovedCommandScope {
   at. Absent means dependency installation is not available at all.
   */
   readonly registryEndpoint?: string;
+  /**
+  The environment a command's Git commits are attributed through.
+
+  A confined command runs with a private HOME, so Git finds no identity of
+  its own and refuses to commit at all. The identity is the Runtime's own
+  bounded agent identity -- the same one every other AutoDev agent path
+  commits under -- so a commit made through this surface is attributable in
+  exactly the same way. It travels in the environment rather than by granting
+  the command read access to the operator's Git configuration, which also
+  names credential helpers no confined command may reach.
+  */
+  readonly commitIdentityEnv?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -396,8 +408,18 @@ export function prepareCommand(
     npm_config_update_notifier: "false",
     npm_config_fund: "false",
     npm_config_audit: "false",
-    npm_config_store_dir: path.join(cache, "pnpm-store")
+    npm_config_store_dir: path.join(cache, "pnpm-store"),
+    // Git must never read the host's configuration. The operator's global
+    // file names credential helpers, commit templates and aliases that point
+    // outside the workspace, and the system file is host configuration. An
+    // empty global configuration leaves Git with no identity of its own, so
+    // the Runtime's own identity is the only one a commit can carry.
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    // A confined command has no terminal to answer a credential prompt on.
+    GIT_TERMINAL_PROMPT: "0"
   };
+  Object.assign(environment, scope.commitIdentityEnv ?? {});
   if (scope.registryEndpoint && definition.executionClass === "dependency_install") {
     environment.npm_config_registry = scope.registryEndpoint;
   }

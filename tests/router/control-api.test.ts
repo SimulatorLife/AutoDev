@@ -3181,6 +3181,7 @@ test("Control API surfaces all 13 typed resource families", async () => {
     });
     assert.equal(permissions.response.statusCode, 200);
     assert.equal(permissions.body.schema, "autodev-control-permissions-v2");
+    assert.equal(permissions.body.readOnly, true);
     const permissionsRaw = readFileSync(
       join(
         fileURLToPath(new URL("../../", import.meta.url)),
@@ -3217,7 +3218,7 @@ test("Control API surfaces all 13 typed resource families", async () => {
     assert.ok(
       typeof permissions.body.revision === "string" &&
         permissions.body.revision.length === 64,
-      "the permission policy publishes the revision a write compares against"
+      "the permission policy publishes the observed source revision"
     );
 
     // The effective capability matrix must be a real projection of the

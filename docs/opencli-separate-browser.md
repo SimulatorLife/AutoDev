@@ -1,26 +1,18 @@
 # opencli in a separate browser: findings and design
 
-Status: **implemented as an opt-in mode (the Console's Dedicated browser
-toggle, off by default); live occlusion and session-longevity acceptance
-remains.** This document records the
-2026-11-11 investigation into moving the opencli providers
-(`opencli-chatgpt`, `opencli-gemini`) out of the user's own Chrome. It is
-subordinate to [`provider-routing.md`](provider-routing.md), which remains the
-focused routing guide. The [canonical target](autodev-console-target-state.md#role-oriented-execution-and-provider-routing) requires dedicated-browser isolation exclusively; the current opt-in/shared-extension mode is a migration gap, not a permanent alternative.
+Status: **dedicated browser is the only site-command path in current source;
+live native-input, occlusion and session-longevity acceptance remains.**
+This document records the 2026-11-11 investigation into moving the opencli
+providers (`opencli-chatgpt`, `opencli-gemini`) out of the user's own Chrome.
+It is subordinate to [`provider-routing.md`](provider-routing.md) and the
+[canonical target](autodev-console-target-state.md#role-oriented-execution-and-provider-routing).
 
 ## Implementation status
 
-The dedicated browser is one of two modes, chosen by the **Dedicated browser**
-toggle on either opencli provider's Console page
-(`PATCH /control/providers/{provider}/browser`, stored in
-`$CODEX_HOME/run/opencli-browser.json`, see
-`runtime/src/shared/opencli-browser-setting.ts`). Off -- the default -- keeps
-the original path: the operator's own Chrome through the Browser Bridge
-extension, its "OpenCLI" tab group and `OPENCLI_SITE_SLOTS`. The bridge
-watches the setting and applies it to the next command; turning the
-dedicated browser on starts it, turning it off closes its window once its
-leased commands finish. The rest of this section describes the mode when it is
-on.
+The source no longer uses the former opt-in Dedicated browser toggle or
+the shared Browser Bridge extension for recognized site commands. The
+following describes the dedicated owner; the installed revision must be
+verified separately.
 
 The bridge owns a separate headed Chromium process, an AutoDev-private
 profile, a loopback-only ephemeral CDP port, and a per-site tab pool sized by
@@ -34,7 +26,25 @@ typed installer places the Playwright-pinned Chromium in
 for setup and [`provider-routing.md`](provider-routing.md) for the runtime
 contract.
 
-Source change (2026-11-25; deployment and live acceptance pending): XACPX role turns now use the same authenticated loopback browser service as other OpenCLI turns. The dedicated browser activates the exact leased CDP target before invoking native input and holds an exclusive foreground lease across sites until process settlement, including cancellation quarantine. Target replacement cannot steal another foreground lease. This intentionally serializes foreground-sensitive commands even when the configured per-site tab pool has multiple slots. It does not bypass visibility checks or guarantee macOS visibility when the browser is covered, minimized, or on another Space. A regression fixture covers activation and exclusive leasing; it has not been executed on the host.
+Source change (2026-11-25; installed revision and live acceptance pending):
+XACPX role turns use the same authenticated loopback browser service as
+other OpenCLI turns. The dedicated browser activates the exact leased CDP
+target before foreground-sensitive operations and releases foreground after
+confirmed submission or process settlement; cancellation quarantine retains
+ownership when necessary. This does not bypass visibility checks or guarantee
+macOS visibility when the window is covered, minimized, or on another Space.
+The most recent observed live probe still failed the native visible-page
+guard.
+
+The owner now shares startup and health checks as one readiness transaction,
+publishes readiness only after the target pool is built, refuses to restart
+on a transient health failure while commands are active, and ignores stale
+target inventories and stale-generation completion. Lease waiters recheck a
+change revision so a release during an asynchronous inventory request cannot
+be missed. Target replacement does not proceed while foreground is held or
+the missing slot is still leased. Regression fixtures cover concurrent
+startup, concurrent recovery of a lost slot, and failed health checks during
+active execution. These new fixtures have not been executed locally.
 
 The foreground lease is required only by the operations that actually use native input. Reading the installed opencli 2.0.3 shows that attaching a ChatGPT app, enabling a site tool and picking a model open a menu with an unguarded native click, which a hidden page refuses, while ChatGPT's prompt path inserts text and clicks submit programmatically and Gemini's adapter never clicks natively at all. The requirement is therefore derived from the command (`opencliCommandRequiresForeground`), so a Gemini turn and a plain ChatGPT turn do not take the foreground from each other, and the foreground is released as soon as the prompt has been submitted rather than being held for the whole turn. A background command also waits for the foreground to be free before it replaces a lost tab, because creating a target activates it and would hide the page a native-input turn is holding.
 
@@ -46,9 +56,9 @@ signed-in turns across both sites, and session longevity. The earlier sandboxed
 network reproduction was blocked before it reached opencli; it is not evidence
 that the current environment can perform a live provider turn.
 
-## Problem
+## Historical problem (before dedicated-browser migration)
 
-The opencli bridge drives the user's everyday, signed-in Chrome through
+The former opencli bridge drove the user's everyday, signed-in Chrome through
 opencli's Browser Bridge extension. When the user is working in that Chrome at
 the same time:
 
@@ -66,10 +76,10 @@ the same time:
 The question was whether opencli can use headless tabs instead and, if not,
 what would keep agents out of the user's browser.
 
-## What happens today when a user closes an opencli tab
+## Historical shared-browser tab behavior
 
-From the bridge's contract in `provider-routing.md` (not exercised live in this
-investigation):
+The following records the former bridge contract, not current dedicated
+browser acceptance (not exercised live in the original investigation):
 
 - Every turn is one opencli command that opens its own chat by id
   (`--conversation <id>` or `--new`) and confirms the tab shows that chat
@@ -264,9 +274,10 @@ through the direct CDP transport.
 
 ### Tab pool
 
-- The bridge opens one tab per concurrent turn per site (the route's
-  `maxConcurrentRequests`, as `routedSiteTabs` computes today) through
-  `PUT /json/new`, keeps each tab's `webSocketDebuggerUrl`, and runs each
+- The bridge opens one target per concurrent turn per site (the route's
+  `maxConcurrentRequests`, as `routedSiteTabs` computes), preferring native
+  CDP `Target.createTarget` with `newWindow: true` where available, and
+  retaining its `webSocketDebuggerUrl`. It runs each
   opencli command with `OPENCLI_CDP_ENDPOINT` set to **that tab's `ws://`
   URL**, so two commands can never attach to the same tab.
   `OPENCLI_CDP_TARGET` alone is not enough: with several tabs on one site,
@@ -327,5 +338,7 @@ opencli's own tab pool. It was not chosen because:
 - the extension only works in a headful browser too, so it offers no
   headless advantage.
 
-It remains the fallback if direct CDP turns out to lack something the patched
-adapters need (item 6 above).
+This is a historical alternative, not an enabled fallback. If direct CDP
+lacks a required native capability, qualify the upstream limitation and
+repair the dedicated path rather than silently restoring shared-browser
+execution.

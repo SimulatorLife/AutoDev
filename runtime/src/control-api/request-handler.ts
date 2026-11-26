@@ -19,7 +19,6 @@ import {
   type ControlApiEvaluationsResponse,
   type ControlApiHookDeclaration,
   type ControlApiHookEvent,
-  type ControlApiHookEventPatchResponse,
   type ControlApiHooksResponse,
   type ControlApiLiveAgentCounts,
   type ControlApiLiveSessions,
@@ -65,7 +64,6 @@ import {
   type HookAction,
   type HookEvent,
   isAntigravityProvider,
-  isHookEvent,
   LOCAL_CONTROL_API_ACTOR,
   type McpServerResource,
   type OperationHistoryEntry,
@@ -107,8 +105,6 @@ import {
   RuleSyncCommandConflictError,
   type RuleSyncCommandHistoryPage,
   RuleSyncCommandValidationError,
-  RuleSyncHooksConflictError,
-  RuleSyncHooksValidationError,
   RuleSyncMcpConflictError,
   RuleSyncMcpValidationError,
   RuleSyncRepository,
@@ -130,7 +126,6 @@ import {
   dependencyEnvironment,
   installedSkillMatches,
   materializeCurrentCommandProjections,
-  materializeCurrentHookProjections,
   materializeCurrentMcpConfiguration,
   materializeRuleSyncSkillProjections,
   tunnelMutationSchema
@@ -433,7 +428,6 @@ const AGENT_DETAIL_PATH = /^\/control\/agents\/([a-zA-Z0-9._-]+)$/u;
 const PROMPT_DETAIL_PATH = /^\/control\/prompts\/([a-zA-Z0-9._-]+)$/u;
 const MCP_SERVER_PATH =
   /^\/control\/mcps\/([A-Za-z0-9][A-Za-z0-9._-]{0,127})$/u;
-const HOOK_EVENT_PATH = /^\/control\/hooks\/([a-z][A-Za-z]{0,63})$/u;
 /**
  * One workspace's own configuration route.
  *
@@ -3090,8 +3084,7 @@ const CODEX_HOOK_EVENT_BY_NAME: ReadonlyMap<string, HookEvent> = new Map(
  *
  * The events are the target's effective declaration: the shared declaration
  * with the target's own merged over it, one event at a time, which is how
- * RuleSync merges them. The revision is published with them because a write
- * compares against it.
+ * RuleSync merges them. The revision identifies the canonical declaration.
  */
 function hooksView(
   repositoryRoot: string = DEFAULT_REPO_ROOT
@@ -3102,7 +3095,7 @@ function hooksView(
   return {
     schema: "autodev-control-hooks-v2",
     source: state.source,
-    readOnly: false,
+    readOnly: true,
     valid: state.valid,
     issues: state.issues,
     revision,
@@ -3368,249 +3361,6 @@ function hooksAppliedView(
     events: state.events,
     reconciliation: state.reconciliation
   };
-}
-
-/**
- * The action list one hook write sets.
- *
- * The list is the event's whole list, because the declaration replaces an
- * event's list rather than adding to it. An action that is not a command hook
- * with a command is refused rather than dropped, because a write that quietly
- * dropped one of the operator's actions would say it succeeded.
- */
-function hookActionsFromBody(value: unknown): HookAction[] | null {
-  if (!Array.isArray(value)) return null;
-  const actions: HookAction[] = [];
-  for (const entry of value) {
-    if (!isPlainRecord(entry)) return null;
-    if (entry.type !== "command") return null;
-    if (typeof entry.command !== "string") return null;
-    if (entry.command.trim().length === 0) return null;
-    if (entry.matcher !== undefined && typeof entry.matcher !== "string") {
-      return null;
-    }
-    if (
-      entry.statusMessage !== undefined &&
-      typeof entry.statusMessage !== "string"
-    ) {
-      return null;
-    }
-    actions.push({
-      type: "command",
-      command: entry.command,
-      ...(typeof entry.matcher === "string" ? { matcher: entry.matcher } : {}),
-      ...(typeof entry.statusMessage === "string"
-        ? { statusMessage: entry.statusMessage }
-        : {})
-    });
-  }
-  return actions;
-}
-
-/**
- * The refusal of a canonical hook declaration write.
- *
- * A conflict and a refused declaration are different facts: the first says the
- * declaration moved under the write, the second says the write could not be
- * expressed. They get different codes, and the reason is the Runtime's.
- */
-function sendHookWriteFailure(
-  response: ServerResponse,
-  actor: ControlApiActor,
-  resource: string,
-  error: unknown
-): void {
-  const conflict = error instanceof RuleSyncHooksConflictError;
-  const validation = error instanceof RuleSyncHooksValidationError;
-  if (!conflict && !validation) throw error;
-  const status = conflict ? 409 : 400;
-  const code = conflict
-    ? "autodev_control_hook_revision_conflict"
-    : "autodev_control_hook_invalid_declaration";
-  const message =
-    error instanceof Error
-      ? error.message
-      : "The canonical hook declaration is invalid.";
-  auditMutation({
-    actor: actor.actor,
-    actorVerified: true,
-    role: actor.role,
-    action: "update_rule_sync_hook_declaration",
-    resource,
-    outcome: "error",
-    changes: null,
-    reason: conflict ? "revision_conflict" : "invalid_declaration"
-  });
-  sendControlError(response, status, code, message);
-}
-
-/**
- * Write one hook event's action list to the canonical declaration.
- *
- * The write is a compare-and-swap on the declaration's revision, so a write
- * decided on an older declaration is refused rather than applied over a newer
- * one. The projection is applied afterwards and the applied state is read
- * again, so the response says what the Runtime published rather than what the
- * write asked for.
- */
-async function patchHookEvent(
-  request: IncomingMessage,
-  response: ServerResponse,
-  actor: ControlApiActor,
-  event: string,
-  repositoryRoot: string,
-  codexHome: string
-): Promise<void> {
-  const resource = `${CONTROL_API_PATHS.hooks}/${event}`;
-  if (actor.role !== "operator") {
-    auditMutation({
-      actor: actor.actor,
-      actorVerified: true,
-      role: actor.role,
-      action: "update_rule_sync_hook_declaration",
-      resource,
-      outcome: "denied",
-      changes: null,
-      reason: "operator_required"
-    });
-    sendControlError(
-      response,
-      403,
-      "autodev_control_api_forbidden",
-      "Updating the canonical hook declaration requires an operator."
-    );
-    return;
-  }
-  if (!isHookEvent(event)) {
-    auditMutation({
-      actor: actor.actor,
-      actorVerified: true,
-      role: actor.role,
-      action: "update_rule_sync_hook_declaration",
-      resource,
-      outcome: "error",
-      changes: null,
-      reason: "unknown_event"
-    });
-    sendControlError(
-      response,
-      400,
-      "autodev_control_hook_unknown_event",
-      `"${event}" is not a hook event the Codex runtime runs.`
-    );
-    return;
-  }
-  const parsed = await readControlApiJsonObject(request);
-  if (!parsed.ok) {
-    auditMutation({
-      actor: actor.actor,
-      actorVerified: true,
-      role: actor.role,
-      action: "update_rule_sync_hook_declaration",
-      resource,
-      outcome: "error",
-      changes: null,
-      reason: parsed.code
-    });
-    sendControlError(response, parsed.status, parsed.code, parsed.message);
-    return;
-  }
-  const { body } = parsed;
-  const actions = hookActionsFromBody(body.actions);
-  if (
-    Object.keys(body).length !== 2 ||
-    typeof body.expectedRevision !== "string" ||
-    actions === null
-  ) {
-    auditMutation({
-      actor: actor.actor,
-      actorVerified: true,
-      role: actor.role,
-      action: "update_rule_sync_hook_declaration",
-      resource,
-      outcome: "error",
-      changes: null,
-      reason: "invalid_body"
-    });
-    sendControlError(
-      response,
-      400,
-      "autodev_control_api_invalid_body",
-      "Hook declaration updates require exactly the expected revision and an action list."
-    );
-    return;
-  }
-
-  let updated;
-  try {
-    updated = await new RuleSyncRepository(repositoryRoot).updateHookEvent({
-      event,
-      target: HOOK_APPLIED_TARGET,
-      actions,
-      expectedRevision: body.expectedRevision
-    });
-  } catch (error) {
-    sendHookWriteFailure(response, actor, resource, error);
-    return;
-  }
-
-  try {
-    materializeCurrentHookProjections({ repositoryRoot, codexHome });
-  } catch {
-    // The declaration was written, so this is not a failed write: the applied
-    // state is older than the declaration, and the response says so.
-    auditMutation({
-      actor: actor.actor,
-      actorVerified: true,
-      role: actor.role,
-      action: "update_rule_sync_hook_declaration",
-      resource,
-      outcome: "error",
-      changes: { event, revision: updated.revision },
-      reason: "projection_apply_failed"
-    });
-    sendControlError(
-      response,
-      503,
-      "autodev_control_hook_apply_failed",
-      "Canonical declaration was updated, but the hook projection could not be applied. Reload the hooks before retrying."
-    );
-    return;
-  }
-
-  const applied = hooksAppliedState(repositoryRoot, codexHome);
-  const reconciliation = applied.reconciliation;
-  const desiredGeneration = applied.desiredGeneration;
-  const observedGeneration = applied.observedGeneration;
-  auditMutation({
-    actor: actor.actor,
-    actorVerified: true,
-    role: actor.role,
-    action: "update_rule_sync_hook_declaration",
-    resource,
-    outcome: "ok",
-    changes: {
-      event,
-      revision: updated.revision,
-      target: HOOK_APPLIED_TARGET
-    },
-    desiredGeneration,
-    observedGeneration
-  });
-  sendJson(
-    response,
-    200,
-    {
-      schema: "autodev-control-hook-event-patch-v1",
-      event,
-      target: HOOK_APPLIED_TARGET,
-      revision: updated.revision,
-      changed: updated.revision !== body.expectedRevision,
-      actions: updated.actions,
-      reconciliation
-    } satisfies ControlApiHookEventPatchResponse,
-    { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
-  );
 }
 
 /**
@@ -7687,56 +7437,6 @@ async function promptDetailRoute(
   return true;
 }
 
-/**
- * One MCP server's canonical declaration.
- *
- * The declaration is read through the MCP catalog, which carries every
- * server; the per-server path is the write, which is the only operation that
- * changes the canonical source.
- */
-async function hookEventRoute(
-  request: IncomingMessage,
-  response: ServerResponse,
-  actor: ControlApiActor,
-  method: string,
-  pathname: string,
-  event: string,
-  options: ControlApiRequestOptions
-): Promise<boolean> {
-  if (method === "PATCH") {
-    const home = process.env.HOME?.trim() || homedir();
-    const codexHome =
-      options.codexHome?.trim() ||
-      process.env.CODEX_HOME?.trim() ||
-      path.join(home, ".codex");
-    await patchHookEvent(
-      request,
-      response,
-      actor,
-      event,
-      options.repositoryRoot ?? DEFAULT_REPO_ROOT,
-      codexHome
-    );
-    return true;
-  }
-
-  auditRejectedRequest(
-    request,
-    method,
-    pathname,
-    AUDIT_REASON_METHOD_NOT_ALLOWED,
-    actor
-  );
-  response.setHeader("allow", "PATCH");
-  sendControlError(
-    response,
-    405,
-    "autodev_control_api_method_not_allowed",
-    "Hooks are read through the hook declaration, and the canonical declaration is written via PATCH."
-  );
-  return true;
-}
-
 async function mcpServerRoute(
   request: IncomingMessage,
   response: ServerResponse,
@@ -8531,17 +8231,6 @@ export async function handleControlApiRequest(
       method,
       pathname,
       mcpServerMatch[1]!,
-      options
-    );
-  const hookEventMatch = pathname.match(HOOK_EVENT_PATH);
-  if (hookEventMatch)
-    return hookEventRoute(
-      request,
-      response,
-      actor,
-      method,
-      pathname,
-      hookEventMatch[1]!,
       options
     );
   const workspaceMatch = pathname.match(WORKSPACE_DETAIL_PATH);

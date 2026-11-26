@@ -11809,7 +11809,7 @@ test("HooksView renders the target's effective hook events read-only", () => {
   const hooks = hooksFromControlApi({
     schema: "autodev-control-hooks-v2",
     source: "test",
-    readOnly: false,
+    readOnly: true,
     valid: true,
     issues: [],
     revision: "a".repeat(64),
@@ -13111,7 +13111,7 @@ test("Catalog collections fail closed on unreadable responses", async () => {
   const hooks = {
     schema: "autodev-control-hooks-v2",
     source: ".rulesync/hooks.jsonc",
-    readOnly: false,
+    readOnly: true,
     valid: null,
     issues: [],
     revision: "c".repeat(64),
@@ -13125,6 +13125,10 @@ test("Catalog collections fail closed on unreadable responses", async () => {
     ]
   };
   assert.equal((await fetchHooks(config, serve(hooks))).kind, "ok");
+  assert.equal(
+    (await fetchHooks(config, serve({ ...hooks, readOnly: false }))).kind,
+    "invalid-response"
+  );
   // A declaration that declares no events is a declaration, not a shape the
   // Console cannot read.
   assert.equal(
@@ -16298,6 +16302,14 @@ test("a catalog row missing the fields its view reads fails closed instead of th
     "ok",
     "a complete policy is accepted"
   );
+  assert.equal(
+    (await fetchPermissions(config, serve({
+      ...permissionsEnvelope(policyRow),
+      readOnly: false
+    }))).kind,
+    "invalid-response",
+    "a writable Permissions response must not reach the read-only view"
+  );
   for (const dropped of ["approvalPolicy", "approvalsReviewer", "webSearch"]) {
     const incomplete = await fetchPermissions(
       config,
@@ -19457,372 +19469,20 @@ test("the MCP declaration route writes the server's launch configuration through
   assert.equal(sent.launch.args, null);
 });
 
-test("the hook declaration route forwards the operator's action list to the Runtime", async () => {
-  // The route writes the canonical declaration, so it must address the
-  // Runtime's own path and carry the whole action list. A route that
-  // addressed anything else would let the Console answer for a declaration it
-  // does not hold.
-  const requests: { url: string; method: string; body: string }[] = [];
-  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    requests.push({
-      url: String(input),
-      method: init?.method ?? "GET",
-      body: String(init?.body ?? "")
-    });
-    return Response.json({
-      schema: "autodev-control-hook-event-patch-v1",
-      event: "preToolUse",
-      target: "codexcli",
-      revision: "b".repeat(64),
-      changed: true,
-      actions: [{ type: "command", command: "node edited.ts" }],
-      reconciliation: {
-        status: {
-          convergence: "converged",
-          desiredGeneration: "c".repeat(64),
-          observedGeneration: "c".repeat(64),
-          lastApplyAt: "2026-10-22T12:00:00.000Z",
-          lastObservationAt: "2026-10-22T12:00:00.000Z",
-          lastError: null,
-          explanation: "The runtime has observed the latest desired generation."
-        },
-        history: []
-      }
-    });
-  }) as typeof fetch;
-
-  await withControlRouteEnvironment(
-    "hook-declaration-token",
-    fetchImpl,
-    async () => {
-      const response = await hookEventRoute.POST(
-        sameOriginFormRequest(
-          "/api/hooks/preToolUse",
-          new URLSearchParams({
-            expectedRevision: "a".repeat(64),
-            "command-0": "node edited.ts",
-            "matcher-0": ".*",
-            "statusMessage-0": "Enforcing command policy",
-            "command-1": "node second.ts"
-          }).toString()
-        ),
-        { params: Promise.resolve({ event: "preToolUse" }) }
-      );
-      // The route answers with a redirect, because the Console's navigation
-      // owner moves the page and the page renders the outcome. A route that
-      // answered with a body would leave the page holding the state it had
-      // before the write.
-      assert.equal(response.status, 303);
-      const location = new URL(
-        response.headers.get("location") ?? "",
-        "http://console.test"
-      );
-      assert.equal(location.pathname, "/hooks");
-      assert.equal(location.searchParams.get("event"), "preToolUse");
-    }
-  );
-
-  assert.equal(requests.length, 1);
-  assert.equal(requests[0]?.method, "PATCH");
-  assert.equal(
-    requests[0]?.url,
-    "http://127.0.0.1:4101/control/hooks/preToolUse"
-  );
-  const sent = JSON.parse(requests[0]?.body ?? "{}") as {
-    expectedRevision: string;
-    actions: readonly {
-      type: string;
-      command: string;
-      matcher?: string;
-      statusMessage?: string;
-    }[];
-  };
-  assert.equal(sent.expectedRevision, "a".repeat(64));
-  // The list is complete: the declaration replaces an event's action list
-  // rather than adding to it.
-  assert.deepEqual(sent.actions, [
-    {
-      type: "command",
-      command: "node edited.ts",
-      matcher: ".*",
-      statusMessage: "Enforcing command policy"
-    },
-    { type: "command", command: "node second.ts" }
-  ]);
-});
-
-test("the hook declaration route answers to the page the write came from", async () => {
-  // The editor is on the list and on the event's own page, so the write has
-  // two destinations and has to answer to the one the operator used. A write
-  // that always answered to the list would take the operator off the event
-  // they were working on and leave them in front of every event.
-  const fetchImpl = (async () =>
-    Response.json({
-      schema: "autodev-control-hook-event-patch-v1",
-      event: "preToolUse",
-      target: "codexcli",
-      revision: "b".repeat(64),
-      changed: true,
-      actions: [{ type: "command", command: "node edited.ts" }],
-      reconciliation: {
-        status: {
-          convergence: "converged",
-          desiredGeneration: "c".repeat(64),
-          observedGeneration: "c".repeat(64),
-          lastApplyAt: "2026-10-22T12:00:00.000Z",
-          lastObservationAt: "2026-10-22T12:00:00.000Z",
-          lastError: null,
-          explanation: "The runtime has observed the latest desired generation."
-        },
-        history: []
-      }
-    })) as typeof fetch;
-
-  for (const destination of [
-    { returnTo: "/hooks", path: "/hooks" },
-    { returnTo: "/hooks/preToolUse", path: "/hooks/preToolUse" }
-  ]) {
-    await withControlRouteEnvironment(
-      "hook-declaration-token",
-      fetchImpl,
-      async () => {
-        const response = await hookEventRoute.POST(
-          sameOriginFormRequest(
-            "/api/hooks/preToolUse",
-            new URLSearchParams({
-              expectedRevision: "a".repeat(64),
-              "command-0": "node edited.ts",
-              returnTo: destination.returnTo
-            }).toString()
-          ),
-          { params: Promise.resolve({ event: "preToolUse" }) }
-        );
-        assert.equal(response.status, 303);
-        const location = new URL(
-          response.headers.get("location") ?? "",
-          "http://console.test"
-        );
-        assert.equal(location.pathname, destination.path);
-      }
-    );
-  }
-});
-
-test("the hook declaration route refuses a destination that is not a Hooks page", async () => {
-  // The destination is carried by the browser, so one it chose freely would
-  // be an open redirect, and one that named another event's page would take
-  // the operator to a declaration they did not write. The write still
-  // happened; the answer is the list.
-  const fetchImpl = (async () =>
-    Response.json({
-      schema: "autodev-control-hook-event-patch-v1",
-      event: "preToolUse",
-      target: "codexcli",
-      revision: "b".repeat(64),
-      changed: true,
-      actions: [{ type: "command", command: "node edited.ts" }],
-      reconciliation: {
-        status: {
-          convergence: "converged",
-          desiredGeneration: "c".repeat(64),
-          observedGeneration: "c".repeat(64),
-          lastApplyAt: "2026-10-22T12:00:00.000Z",
-          lastObservationAt: "2026-10-22T12:00:00.000Z",
-          lastError: null,
-          explanation: "The runtime has observed the latest desired generation."
-        },
-        history: []
-      }
-    })) as typeof fetch;
-
-  for (const returnTo of [
-    "https://example.test/hooks",
-    "//example.test/hooks",
-    "/hooks/sessionEnd",
-    "/api/hooks/preToolUse"
-  ]) {
-    await withControlRouteEnvironment(
-      "hook-declaration-token",
-      fetchImpl,
-      async () => {
-        const response = await hookEventRoute.POST(
-          sameOriginFormRequest(
-            "/api/hooks/preToolUse",
-            new URLSearchParams({
-              expectedRevision: "a".repeat(64),
-              "command-0": "node edited.ts",
-              returnTo
-            }).toString()
-          ),
-          { params: Promise.resolve({ event: "preToolUse" }) }
-        );
-        assert.equal(response.status, 303);
-        const location = new URL(
-          response.headers.get("location") ?? "",
-          "http://console.test"
-        );
-        assert.equal(location.pathname, "/hooks");
-        assert.equal(location.origin, "http://console.test");
-      }
-    );
-  }
-});
-
-test("the hook declaration route drops an action whose command is empty", async () => {
-  // An empty command is how the editor says the action is not there. Writing
-  // it would declare a hook that runs nothing.
-  const requests: { body: string }[] = [];
-  const fetchImpl = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-    requests.push({ body: String(init?.body ?? "") });
-    return Response.json({
-      schema: "autodev-control-hook-event-patch-v1",
-      event: "preToolUse",
-      target: "codexcli",
-      revision: "b".repeat(64),
-      changed: true,
-      actions: [],
-      reconciliation: {
-        status: {
-          convergence: "converged",
-          desiredGeneration: "c".repeat(64),
-          observedGeneration: "c".repeat(64),
-          lastApplyAt: null,
-          lastObservationAt: null,
-          lastError: null,
-          explanation: "The runtime has observed the latest desired generation."
-        },
-        history: []
-      }
-    });
-  }) as typeof fetch;
-
-  await withControlRouteEnvironment(
-    "hook-declaration-token",
-    fetchImpl,
-    async () => {
-      const response = await hookEventRoute.POST(
-        sameOriginFormRequest(
-          "/api/hooks/preToolUse",
-          new URLSearchParams({
-            expectedRevision: "a".repeat(64),
-            "command-0": "node edited.ts",
-            "command-1": "   "
-          }).toString()
-        ),
-        { params: Promise.resolve({ event: "preToolUse" }) }
-      );
-      assert.equal(response.status, 303);
-    }
-  );
-
-  const sent = JSON.parse(requests[0]?.body ?? "{}") as {
-    actions: readonly { command: string }[];
-  };
-  assert.deepEqual(sent.actions, [
-    { type: "command", command: "node edited.ts" }
-  ]);
-});
-
-test("the hook declaration route reports the Runtime's refusal as the outcome it was", async () => {
-  // The Runtime's verdict is the answer the operator needs: a conflict means
-  // the declaration moved, and a refused declaration means the action list
-  // could not be expressed. The redirect carries that verdict, so the page can
-  // say which one happened.
-  for (const refusal of [
-    {
-      status: 409,
-      code: "autodev_control_hook_revision_conflict",
-      outcome: "conflict"
-    },
-    {
-      status: 400,
-      code: "autodev_control_hook_invalid_declaration",
-      outcome: "validation"
-    },
-    {
-      status: 403,
-      code: "autodev_control_api_forbidden",
-      outcome: "failed"
-    }
-  ]) {
-    const fetchImpl = (async () =>
-      Response.json(
-        {
-          error: {
-            code: refusal.code,
-            message: "The Runtime refused the write.",
-            status: refusal.status
-          }
-        },
-        { status: refusal.status }
-      )) as typeof fetch;
-    await withControlRouteEnvironment(
-      "hook-declaration-token",
-      fetchImpl,
-      async () => {
-        const response = await hookEventRoute.POST(
-          sameOriginFormRequest(
-            "/api/hooks/preToolUse",
-            new URLSearchParams({
-              expectedRevision: "a".repeat(64),
-              "command-0": "node edited.ts"
-            }).toString()
-          ),
-          { params: Promise.resolve({ event: "preToolUse" }) }
-        );
-        assert.equal(response.status, 303);
-        const location = new URL(
-          response.headers.get("location") ?? "",
-          "http://console.test"
-        );
-        assert.equal(location.pathname, "/hooks");
-        assert.equal(location.searchParams.get("save"), refusal.outcome);
-        // A refused write leaves the browser holding the operator's edit, so
-        // the page keeps the revision that edit was written for rather than
-        // the revision the declaration has moved to.
-        if (refusal.outcome === "conflict") {
-          assert.equal(location.searchParams.get("based"), "a".repeat(64));
-        }
-      }
-    );
-  }
-});
-
-test("the hook declaration route refuses a request that is not same-origin before it reaches the Runtime", async () => {
-  // The route writes the canonical declaration. A request that did not come
-  // from this Console must not be able to make it write one, so the refusal
-  // happens before the Runtime is asked anything.
-  let asked = 0;
+test("the retired hook proxy does not forward requests even to an older Runtime", async () => {
   const fetchImpl = (async () => {
-    asked += 1;
-    return Response.json({});
+    assert.fail("The retired hook proxy must not contact the Runtime.");
   }) as typeof fetch;
   await withControlRouteEnvironment(
     "hook-declaration-token",
     fetchImpl,
     async () => {
-      const response = await hookEventRoute.POST(
-        sameOriginFormRequest(
-          "/api/hooks/preToolUse",
-          new URLSearchParams({
-            expectedRevision: "a".repeat(64),
-            "command-0": "node edited.ts"
-          }).toString(),
-          { fetchSite: "cross-site" }
-        ),
-        { params: Promise.resolve({ event: "preToolUse" }) }
-      );
-      assert.equal(response.status, 303);
-      const location = new URL(
-        response.headers.get("location") ?? "",
-        "http://console.test"
-      );
-      assert.equal(location.searchParams.get("save"), "failed");
+      const response = hookEventRoute.POST();
+      assert.equal(response.status, 410);
+      assert.equal(response.headers.get("location"), null);
     }
   );
-  assert.equal(asked, 0);
 });
-
 
 test("the MCP declaration route reports the Runtime's refusal as the outcome it was", async () => {
   // The Runtime's verdict is the answer the operator needs: a conflict means

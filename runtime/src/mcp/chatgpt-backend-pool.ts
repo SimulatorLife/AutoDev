@@ -46,7 +46,12 @@ import { createConnection } from "node:net";
 import path from "node:path";
 import { createInterface, type Interface } from "node:readline";
 
-import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
+import {
+  type JSONRPCMessage,
+  ProgressNotificationSchema,
+  type ProgressToken,
+  ProgressTokenSchema
+} from "@modelcontextprotocol/sdk/types.js";
 import { isRecord } from "@simulatorlife/autodev-core";
 import { z } from "zod";
 
@@ -215,6 +220,7 @@ interface PendingRpc {
   readonly clientId: JsonRpcId;
   readonly sessionId: string | null;
   readonly method: string;
+  readonly progressToken?: ProgressToken;
   readonly timer: NodeJS.Timeout;
   cancelled: boolean;
   resolve(message: JsonRecord): void;
@@ -462,17 +468,52 @@ class PooledBackendController {
     });
   }
 
-  private broadcastNotification(message: JsonRecord): void {
-    const payload = `event: message\ndata: ${JSON.stringify(message)}\n\n`;
-    for (const session of this.sessions.values()) {
-      const sse = session.sse;
-      if (!sse || sse.writableEnded || sse.destroyed) continue;
-      try {
-        sse.write(payload);
-      } catch {
-        session.sse = undefined;
-      }
+  private sendNotification(session: LogicalSession, message: JsonRecord): void {
+    const sse = session.sse;
+    if (!sse || sse.writableEnded || sse.destroyed) return;
+    try {
+      sse.write(`event: message\ndata: ${JSON.stringify(message)}\n\n`);
+    } catch {
+      session.sse = undefined;
     }
+  }
+
+  private broadcastNotification(message: JsonRecord): void {
+    for (const session of this.sessions.values()) {
+      this.sendNotification(session, message);
+    }
+  }
+
+  /**
+   * A progress token is request-scoped, not a globally unique client ID.
+   * Only forward progress for a still-pending request on this backend.
+   */
+  private routeProgress(backend: LiveBackend, message: JsonRecord): void {
+    if (message.jsonrpc !== "2.0") return;
+    const parsed = ProgressNotificationSchema.safeParse(message);
+    if (!parsed.success) return;
+    const { progressToken } = parsed.data.params;
+    if (typeof progressToken !== "string") return;
+    const pending = this.pending.get(progressToken);
+    if (
+      !pending ||
+      pending.backend !== backend ||
+      pending.cancelled ||
+      pending.progressToken === undefined ||
+      !pending.sessionId
+    ) {
+      return;
+    }
+    const session = this.sessions.get(pending.sessionId);
+    if (!session) return;
+    this.sendNotification(session, {
+      jsonrpc: "2.0",
+      method: parsed.data.method,
+      params: {
+        ...parsed.data.params,
+        progressToken: pending.progressToken
+      }
+    });
   }
 
   private clearIdleTimer(): void {
@@ -512,30 +553,41 @@ class PooledBackendController {
     this.idleTimer.unref();
   }
 
-  private handleBackendMessage(message: JsonRecord | null): void {
+  private handleBackendMessage(
+    backend: LiveBackend,
+    message: JsonRecord | null
+  ): void {
     if (!message) return;
     const rawId = message.id;
     const id =
       typeof rawId === "string" || typeof rawId === "number" ? rawId : null;
     if (typeof message.method === "string") {
       if (id !== null) {
-        this.live?.send(
+        backend.send(
           errorResponse(id, "MCP client capability is not externally approved")
         );
         return;
       }
-      if (message.method === "notifications/tools/list_changed") {
+      if (
+        message.method === "notifications/tools/list_changed" &&
+        this.live === backend
+      ) {
         this.cachedTools = null;
-        this.broadcastNotification(message);
+        // The shared catalogue changed, not the callers' private state.
+        // Never broadcast arbitrary backend metadata with this signal.
+        this.broadcastNotification({
+          jsonrpc: "2.0",
+          method: "notifications/tools/list_changed"
+        });
       } else if (message.method === "notifications/progress") {
-        this.broadcastNotification(message);
+        this.routeProgress(backend, message);
       }
       return;
     }
     if (id === null) return;
     const key = String(id);
     const pending = this.pending.get(key);
-    if (!pending) return;
+    if (!pending || pending.backend !== backend) return;
     this.pending.delete(key);
     clearTimeout(pending.timer);
     if (pending.cancelled) {
@@ -668,6 +720,7 @@ class PooledBackendController {
       };
       transport.onmessage = (message) => {
         this.handleBackendMessage(
+          live,
           publicRemoteMcpMessage(message) as unknown as JsonRecord
         );
       };
@@ -711,7 +764,7 @@ class PooledBackendController {
       }
     };
     lines.on("line", (line) => {
-      this.handleBackendMessage(parseJson(line));
+      this.handleBackendMessage(live, parseJson(line));
     });
     // Drain stderr without unbounded buffering so chatty servers never block on a full pipe.
     child.stderr?.resume();
@@ -747,6 +800,13 @@ class PooledBackendController {
     timeoutMs: number
   ): Promise<JsonRecord> {
     const internalId = `pool:${++this.nextInternalId}`;
+    const meta =
+      isRecord(params) && isRecord(params._meta) ? params._meta : null;
+    const progressToken = ProgressTokenSchema.safeParse(meta?.progressToken);
+    const forwardedParams =
+      progressToken.success && isRecord(params)
+        ? { ...params, _meta: { ...meta, progressToken: internalId } }
+        : params;
     return new Promise<JsonRecord>((resolve, reject) => {
       const timer = setTimeout(() => {
         const entry = this.pending.get(internalId);
@@ -776,6 +836,7 @@ class PooledBackendController {
         clientId,
         sessionId,
         method,
+        ...(progressToken.success ? { progressToken: progressToken.data } : {}),
         timer,
         cancelled: false,
         resolve,
@@ -785,7 +846,7 @@ class PooledBackendController {
         jsonrpc: "2.0",
         id: internalId,
         method,
-        ...(params !== undefined ? { params } : {})
+        ...(forwardedParams !== undefined ? { params: forwardedParams } : {})
       });
     });
   }
@@ -923,7 +984,7 @@ class PooledBackendController {
       if (entry.sessionId === sessionId && entry.clientId === requestId) {
         entry.cancelled = true;
         clearTimeout(entry.timer);
-        this.live?.send({
+        entry.backend.send({
           jsonrpc: "2.0",
           method: "notifications/cancelled",
           params: { requestId: entry.internalId }

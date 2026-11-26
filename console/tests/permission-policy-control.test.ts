@@ -6,22 +6,12 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
-  type PermissionPolicySaveOutcome,
-  permissionPolicySaveOutcomeFromQuery,
   PermissionsView
 } from "../src/features/permissions/index.ts";
 
-/**
- * The one control that writes the canonical permission policy.
- *
- * The policy is one surface, and these cases pin what it says: which route it
- * writes to, which revision it decides the write on, what it does when the
- * canonical source could not be read, and what it says about a role whose
- * sandbox was not observed.
- */
+/** Read-only permission-policy presentation and effective role evidence. */
 
 const REVISION = "a".repeat(64);
-const ACTION = "/api/permissions";
 
 const POLICY = {
   approvalPolicy: "never" as const,
@@ -42,7 +32,6 @@ function markup(
       readonly allowedMcpTools: Readonly<Record<string, readonly string[]>>;
     }[];
     readonly executionContractObserved?: boolean;
-    readonly saveOutcome?: PermissionPolicySaveOutcome;
   } = {}
 ): string {
   return renderToStaticMarkup(
@@ -67,44 +56,28 @@ function markup(
           allowedSkills: [],
           allowedMcpTools: {}
         }
-      ],
-      ...(overrides.saveOutcome === undefined
-        ? {}
-        : { saveOutcome: overrides.saveOutcome })
+      ]
     })
   );
 }
 
-test("the control writes the policy through the same-origin route", () => {
+test("the policy renders repository values without a mutation control", () => {
   const rendered = markup();
-  assert.match(rendered, new RegExp(`action="${ACTION}"`, "u"));
-  assert.match(rendered, /method="POST"/u);
-  // The write is decided on the revision the page was rendered with.
-  assert.match(rendered, new RegExp(`value="${REVISION}"`, "u"));
-  assert.match(rendered, /name="approvalPolicy"/u);
-  assert.match(rendered, /name="approvalsReviewer"/u);
-  assert.match(rendered, /name="webSearch"/u);
-  assert.doesNotMatch(rendered, /name="sandboxMode"/u);
-  assert.doesNotMatch(rendered, /name="networkAccess"/u);
-  // A select commits on change, so the policy has no second Apply control.
-  assert.doesNotMatch(rendered, /type="submit"/u);
+  assert.match(rendered, />never</u);
+  assert.match(rendered, />user</u);
+  assert.match(rendered, />Enabled</u);
+  assert.doesNotMatch(rendered, /<form|<select|<textarea|name="expectedRevision"|action="\/api\/permissions"/u);
 });
 
-test("a policy that could not be read leaves the control in place, disabled, with the reason", () => {
+test("an unreadable policy is not a fabricated default or disabled editor", () => {
   const rendered = markup({
     policy: null,
     revision: null,
     policyStatus: "unavailable"
   });
-  assert.match(rendered, /action="\/api\/permissions"/u);
-  assert.match(rendered, /disabled/u);
-  assert.match(
-    rendered,
-    /The canonical permission policy could not be read, so there is nothing to write\./u
-  );
-  // An unreadable policy is not a policy of defaults, so the page does not
-  // answer with one.
-  assert.doesNotMatch(rendered, /value="never"/u);
+  assert.match(rendered, /The canonical permission policy could not be read\./u);
+  assert.match(rendered, /Not observed/u);
+  assert.doesNotMatch(rendered, /<form|<select|<textarea|>never</u);
 });
 
 test("a role's access level is rendered from its readOnly flag", () => {
@@ -136,22 +109,9 @@ test("the applied state is shown beside the canonical source", () => {
   assert.match(rendered, /Canonical Source/u);
 });
 
-test("the view renders the save outcome notice from the query value", () => {
-  assert.equal(permissionPolicySaveOutcomeFromQuery("conflict"), "conflict");
-  assert.equal(permissionPolicySaveOutcomeFromQuery(["failed"]), "failed");
-  assert.equal(permissionPolicySaveOutcomeFromQuery("unknown"), undefined);
-  const conflict = markup({ saveOutcome: "conflict" });
-  assert.match(conflict, /data-permission-policy-save="conflict"/u);
-  assert.match(conflict, /role="status"/u);
-  const failed = markup({ saveOutcome: "failed" });
-  assert.match(failed, /data-permission-policy-save="failed"/u);
-  assert.match(failed, /role="alert"/u);
-});
-
-test("the Permissions page and route reach the feature through its entrypoint", () => {
+test("the Permissions page reaches the feature through its entrypoint", () => {
   const callers = [
-    new URL("../app/permissions/page.tsx", import.meta.url),
-    new URL("../app/api/permissions/route.ts", import.meta.url)
+    new URL("../app/permissions/page.tsx", import.meta.url)
   ];
   for (const caller of callers) {
     const source = readFileSync(caller, "utf8");

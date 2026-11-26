@@ -16,7 +16,7 @@ import type {
   HookEvent
 } from "../hooks/types.ts";
 import type { McpServerResource } from "../mcps/types.ts";
-import type { ApprovalPolicy, PermissionPolicy } from "../permissions/types.ts";
+import type { PermissionPolicy } from "../permissions/types.ts";
 import type {
   HumanPlaytestStudy,
   PlaytestBatch,
@@ -1193,7 +1193,7 @@ export interface ControlApiHookDeclaration extends ControlApiHookEvent {
 export interface ControlApiHooksResponse {
   readonly schema: "autodev-control-hooks-v2";
   readonly source: string;
-  readonly readOnly: boolean;
+  readonly readOnly: true;
   readonly valid: boolean | null;
   /**
    * Why the source is invalid; empty when it is valid or was not observed.
@@ -1204,11 +1204,7 @@ export interface ControlApiHooksResponse {
    */
   readonly issues: readonly ControlApiValidationIssue[];
   /**
-   * The revision of the canonical declaration, which a write compares against.
-   *
-   * `null` when the declaration could not be read, and a write against `null`
-   * has nothing to compare, so the editor stays disabled with the reason
-   * rather than offering a write that cannot be guarded.
+   * The observed canonical declaration revision, or null when unreadable.
    */
   readonly revision: string | null;
   /** The target whose effective declaration this read publishes. */
@@ -1251,47 +1247,11 @@ export interface ControlApiHooksAppliedResponse {
    * The events the canonical declaration gives the target.
    *
    * The declared side of the comparison. It is published so the page can show
-   * what was declared next to what was applied, and so a write has the
-   * declaration to edit.
+   * what was declared next to what was applied.
    */
   readonly declaredEvents: readonly ControlApiHookDeclaration[];
   /** The events the Runtime published. */
   readonly events: readonly ControlApiHookEvent[];
-  /** The shared reconciliation view of the declaration against the applied state. */
-  readonly reconciliation: ReconciliationView;
-}
-
-/**
- * A canonical hook declaration write.
- *
- * The write owns one event's action list: the whole of it, because the
- * declaration replaces an event's list rather than adding to it.
- */
-export interface ControlApiHookEventPatchRequest {
-  readonly expectedRevision: string;
-  readonly actions: readonly HookAction[];
-}
-
-/**
- * The result of a canonical hook declaration write.
- *
- * The write is a compare-and-swap on the declaration's revision, so the
- * response carries the revision the declaration now has, what the target
- * declares after the write, and the reconciliation the Runtime observed once
- * the projection was applied.
- */
-export interface ControlApiHookEventPatchResponse {
-  readonly schema: "autodev-control-hook-event-patch-v1";
-  /** The event whose actions were written. */
-  readonly event: HookEvent;
-  /** The target whose declaration was written. */
-  readonly target: string;
-  /** The revision of the canonical declaration after the write. */
-  readonly revision: string;
-  /** Whether the declaration's content changed. */
-  readonly changed: boolean;
-  /** The actions the target declares for the event after the write. */
-  readonly actions: readonly HookAction[];
   /** The shared reconciliation view of the declaration against the applied state. */
   readonly reconciliation: ReconciliationView;
 }
@@ -1380,44 +1340,6 @@ export interface ControlApiPermissionsResponse {
       }
     >
   >;
-}
-
-/**
- * A request to change the permission policy.
- *
- * The policy is written one setting at a time, because each setting is a
- * separate control on the surface: a request names the settings it changes and
- * the revision it decided on, and the rest of the policy is left as the
- * canonical source has it.
- */
-export interface ControlApiPermissionsPatchRequest {
-  /** The revision of the canonical policy file the change was decided on. */
-  readonly expectedRevision: string;
-  readonly approvalPolicy?: ApprovalPolicy;
-  readonly approvalsReviewer?: string;
-  readonly webSearch?: boolean;
-}
-
-/**
- * The result of a permission policy write.
- *
- * The write is a compare-and-swap on the policy file's revision, so the
- * response carries the revision the file now has, the policy it now states,
- * and the reconciliation the Runtime observed once the composed
- * configuration was refreshed.
- */
-export interface ControlApiPermissionsPatchResponse {
-  readonly schema: "autodev-control-permissions-patch-v1";
-  /** The revision of the canonical policy file after the write. */
-  readonly revision: string;
-  /** Whether the policy file's content changed. */
-  readonly changed: boolean;
-  /** The policy the canonical source states after the write. */
-  readonly policy: ControlApiPermissionPolicy;
-  /** The policy the Runtime applied, read from the composed configuration. */
-  readonly applied: ControlApiPermissionPolicy | null;
-  /** The shared reconciliation view of the policy against the applied state. */
-  readonly reconciliation: ReconciliationView;
 }
 
 export interface ControlApiPromptsResponse {

@@ -303,3 +303,50 @@ test(
     mkdirSync(path.join(scratch, "probe"), { mode: 0o700 });
   }
 );
+
+test(
+  "a commit made through the command surface is attributed to the agent",
+  {
+    skip: process.platform !== "darwin"
+  },
+  async (t) => {
+    const workspace = workspaceFixture();
+    t.after(() => rmSync(workspace, { recursive: true, force: true }));
+    const { client, close } = await connect(workspace, "worker");
+    t.after(() => close());
+
+    // The staged change the commit will carry.
+    const staged = await client.callTool({ name: "git_stage", arguments: {} });
+    assert.equal(
+      (staged.structuredContent as { status: string }).status,
+      "succeeded"
+    );
+
+    const committed = await client.callTool({
+      name: "git_commit",
+      arguments: { message: "fixture commit" }
+    });
+    const result = committed.structuredContent as {
+      status: string;
+      exitCode: number | null;
+      stderr: string;
+    };
+    assert.equal(result.status, "succeeded", result.stderr);
+    assert.equal(result.exitCode, 0);
+
+    // The commit exists and carries the Runtime's own agent identity, which
+    // is the only identity a confined command can be given.
+    const log = execFileSync("/usr/bin/git", ["log", "-1", "--format=%an <%ae>%n%cn <%ce>"], {
+      cwd: workspace,
+      encoding: "utf8"
+    }).trim();
+    assert.match(log, /^AutoDev Agent \(worker\) <autodev-worker-/u);
+    assert.match(log, /AutoDev Agent \(worker\) <autodev-worker-/u);
+    // The subject is the parameter the model supplied, carried literally.
+    const subject = execFileSync("/usr/bin/git", ["log", "-1", "--format=%s"], {
+      cwd: workspace,
+      encoding: "utf8"
+    }).trim();
+    assert.equal(subject, "fixture commit");
+  }
+);

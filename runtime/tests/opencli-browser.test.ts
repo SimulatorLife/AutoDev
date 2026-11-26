@@ -49,7 +49,12 @@ async function fixture(
     readonly children: FakeChild[];
     readonly activatedTargets: string[];
     readonly setListStatus: (status: number) => void;
+    readonly setVersionStatus: (status: number) => void;
     readonly setNewFailures: (count: number) => void;
+    readonly pauseNextRequest: (pathname: string) => {
+      entered: Promise<void>;
+      release(): void;
+    };
   }) => Promise<void>
 ): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "opencli-browser-test-"));
@@ -59,15 +64,26 @@ async function fixture(
   const children: FakeChild[] = [];
   const activatedTargets: string[] = [];
   let listStatus = 200;
+  let versionStatus = 200;
   let newFailures = 0;
   let nextId = 0;
   const port = 9333;
+  const pauses = new Map<string, () => Promise<void>>();
+  const releases = new Set<() => void>();
   const fetcher: typeof fetch = async (input) => {
     const url = new URL(typeof input === "string" ? input : input.toString());
+    // Capture the inventory at request time, not when a delayed response
+    // is released, so fixtures can reproduce stale CDP snapshots.
+    const snapshot = [...targets];
+    const pause = pauses.get(url.pathname);
+    if (pause) {
+      pauses.delete(url.pathname);
+      await pause();
+    }
     if (url.pathname === "/json/version")
-      return Response.json({}, { status: 200 });
+      return Response.json({}, { status: versionStatus });
     if (url.pathname === "/json/list") {
-      return Response.json(targets, { status: listStatus });
+      return Response.json(snapshot, { status: listStatus });
     }
     if (url.pathname === "/json/new") {
       if (newFailures > 0) {
@@ -125,11 +141,29 @@ async function fixture(
       setListStatus: (status) => {
         listStatus = status;
       },
+      setVersionStatus: (status) => {
+        versionStatus = status;
+      },
       setNewFailures: (count) => {
         newFailures = count;
+      },
+      pauseNextRequest(pathname) {
+        const entered = Promise.withResolvers<void>();
+        const resume = Promise.withResolvers<void>();
+        const release = (): void => {
+          releases.delete(release);
+          resume.resolve();
+        };
+        releases.add(release);
+        pauses.set(pathname, () => {
+          entered.resolve();
+          return resume.promise;
+        });
+        return { entered: entered.promise, release };
       }
     });
   } finally {
+    for (const release of releases) release();
     await browser.close();
     rmSync(root, { recursive: true, force: true });
   }
@@ -157,6 +191,112 @@ test("starts visible Chromium with a private profile, ephemeral loopback CDP, an
       ),
       new URL(assigned[0]!).port
     );
+  });
+});
+
+test("concurrent startup does not expose a partially created target pool", async () => {
+  await fixture(async ({ browser, pauseNextRequest, children, targets }) => {
+    const firstTarget = pauseNextRequest("/json/new");
+    const initializing = browser.initialize();
+    await firstTarget.entered;
+    const turn = browser.run(
+      "gemini",
+      AbortSignal.timeout(1000),
+      async (endpoint) => {
+        assert.equal(targets.length, 3);
+        return endpoint;
+      }
+    );
+    try {
+      assert.equal(browser.isReady, false);
+    } finally {
+      firstTarget.release();
+    }
+    await initializing;
+    assert.ok(await turn);
+    assert.equal(children.length, 1);
+    assert.equal(browser.isReady, true);
+  });
+});
+
+test("a failed health probe does not restart Chromium during an active turn", async () => {
+  await fixture(async ({ browser, children, setVersionStatus }) => {
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const active = browser.run(
+      "chatgpt",
+      AbortSignal.timeout(1000),
+      async () => {
+        entered.resolve();
+        await release.promise;
+        return "completed";
+      }
+    );
+    await entered.promise;
+    try {
+      setVersionStatus(503);
+      await assert.rejects(
+        browser.run("gemini", AbortSignal.timeout(1000), async () => "unexpected"),
+        /health probe failed while commands are active/u
+      );
+      assert.equal(children.length, 1);
+      assert.equal(children[0]?.killed, false);
+      setVersionStatus(200);
+      assert.equal(
+        await browser.run("gemini", AbortSignal.timeout(1000), async () => "ok"),
+        "ok"
+      );
+    } finally {
+      setVersionStatus(200);
+      release.resolve();
+    }
+    assert.equal(await active, "completed");
+    assert.equal(children.length, 1);
+  });
+});
+
+test("a stale target inventory cannot replace a concurrently recovered slot", async () => {
+  await fixture(async ({ browser, pauseNextRequest, targets }) => {
+    const original = await browser.run(
+      "gemini",
+      AbortSignal.timeout(1000),
+      async (endpoint) => endpoint
+    );
+    targets.splice(
+      targets.findIndex((target) => target.webSocketDebuggerUrl === original),
+      1
+    );
+    const staleList = pauseNextRequest("/json/list");
+    const first = browser.run(
+      "gemini",
+      AbortSignal.timeout(1000),
+      async (endpoint) => endpoint
+    );
+    await staleList.entered;
+    const entered = Promise.withResolvers<string>();
+    const release = Promise.withResolvers<void>();
+    const second = browser.run(
+      "gemini",
+      AbortSignal.timeout(1000),
+      async (endpoint) => {
+        entered.resolve(endpoint);
+        await release.promise;
+        return endpoint;
+      }
+    );
+    const replacement = await entered.promise;
+    try {
+      staleList.release();
+      // Let the stale response resume while the replacement is leased.
+      await delay(0);
+      assert.equal(targets.length, 3);
+    } finally {
+      staleList.release();
+      release.resolve();
+    }
+    assert.equal(await second, replacement);
+    assert.equal(await first, replacement);
+    assert.equal(targets.length, 3);
   });
 });
 

@@ -255,6 +255,22 @@ Workspace-wide admission still needs to converge on one trusted state root:
 prove cross-provider exclusivity. Resolve this with shared gateway ownership,
 not a second locking mechanism.
 
+### Command state admission (source review)
+
+The resolved command scope now owns the physical run-directory path used
+for its workspace lease, scratch and cache; startup no longer accepts a
+second independent run-directory argument. One directory-validation helper
+checks ownership, type and write permissions. The physical run path is
+checked for workspace overlap before provisioning, including aliases of
+existing ancestors. Symlinked run-directory leaves are rejected, and the
+admitted run, scratch and cache identities are checked during authorization.
+Lease acquisition and release refuse a replaced run directory. The checks
+assume trusted installed parent directories; they are not a race-free
+replacement for OS confinement. Regression fixtures cover redirected
+roots, writable state, replaced run/scratch directories and physical
+workspace overlap. Local test execution remains pending. The shared
+gateway cutover still must establish one state home across all providers.
+
 ### What is still open
 
 - **Deployment.** The installer has not been run. The installed tree, the

@@ -8,6 +8,7 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   utimesSync,
@@ -536,6 +537,19 @@ test("approved catalogue reads are bounded and private state directories cannot 
     const run = path.join(root, "run");
     const scratch = commandScratchRoot(run, workspaceKey);
     assert.equal(scratch, path.join(realpathSync(run), "command-scratch", workspaceKey));
+    const redirectedRun = path.join(root, "redirected-run");
+    symlinkSync(run, redirectedRun);
+    assert.throws(
+      () => commandScratchRoot(redirectedRun, workspaceKey),
+      /must not redirect/u
+    );
+    assert.throws(
+      () => createWorkspaceLease(redirectedRun, workspaceKey),
+      /must not redirect/u
+    );
+    chmodSync(run, 0o777);
+    assert.throws(() => createWorkspaceLease(run, workspaceKey), /must not redirect/u);
+    chmodSync(run, 0o700);
     assert.throws(() => commandCacheRoot(run, ".."), /workspace key/u);
     const outside = path.join(root, "outside");
     mkdirSync(outside, { mode: 0o700 });
@@ -580,6 +594,30 @@ test("an old lease is not proof that its command stopped", () => {
     writeFileSync(lock, "replacement");
     release();
     assert.equal(readFileSync(lock, "utf8"), "replacement");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a lease never acquires or removes a lock in a replacement run directory", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "autodev-command-replaced-run-"));
+  try {
+    const run = path.join(root, "run");
+    const retired = path.join(root, "retired");
+    const key = "workspace-key";
+    const lease = createWorkspaceLease(run, key);
+    const release = lease.tryAcquire();
+    assert.ok(release);
+    renameSync(run, retired);
+    mkdirSync(run, { mode: 0o700 });
+    const lock = path.join(run, `command-${key}.lock`);
+    writeFileSync(lock, "replacement");
+    assert.equal(lease.tryAcquire(), null);
+    release();
+    assert.equal(readFileSync(lock, "utf8"), "replacement");
+    rmSync(lock);
+    assert.equal(lease.tryAcquire(), null);
+    assert.equal(existsSync(lock), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -648,6 +686,15 @@ test("a command's environment carries no operator credentials and no host paths"
     }
     assert.equal(prepared.env.npm_config_update_notifier, "false");
     assert.equal(prepared.env.npm_config_audit, "false");
+    // Git is configured to read no host configuration at all: the operator's
+    // global file names credential helpers and commit templates outside every
+    // workspace, and the system file is host configuration.
+    assert.equal(prepared.env.GIT_CONFIG_NOSYSTEM, "1");
+    assert.equal(prepared.env.GIT_CONFIG_GLOBAL, "/dev/null");
+    assert.equal(prepared.env.GIT_TERMINAL_PROMPT, "0");
+    // Without an identity of its own, a confined command cannot commit.
+    assert.equal(prepared.env.GIT_AUTHOR_NAME, undefined);
+    assert.equal(prepared.env.GIT_COMMITTER_EMAIL, undefined);
     // The workspace root is not on the PATH of the confined process; only
     // the project's own tool directory is, so a project script can resolve
     // the tools it declares.
@@ -662,8 +709,63 @@ test("a command's environment carries no operator credentials and no host paths"
   }
 });
 
-test("a scope that overlaps a protected root, or an unapproved executable, is refused", () => {
-  const root = mkdtempSync(path.join(tmpdir(), "autodev-command-scope-"));
+test("the commit identity the Runtime supplies reaches the command", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "autodev-command-identity-"));
+  try {
+    const scope = scopeFixture(root);
+    const identity = {
+      GIT_AUTHOR_NAME: "AutoDev Agent (worker)",
+      GIT_AUTHOR_EMAIL: "autodev-worker-other@agents.autodev.local",
+      GIT_COMMITTER_NAME: "AutoDev Agent (worker)",
+      GIT_COMMITTER_EMAIL: "autodev-worker-other@agents.autodev.local"
+    };
+    const prepared = prepareCommand(
+      { ...scope, commitIdentityEnv: identity },
+      fixture
+    );
+    for (const [name, value] of Object.entries(identity)) {
+      assert.equal(prepared.env[name], value);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a confined command cannot read the operator's Git configuration", {
+  skip: process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec")
+}, async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "autodev-command-gitconfig-"));
+  try {
+    const scope = scopeFixture(root);
+    const home = process.env.HOME ?? "";
+    const globalConfiguration = path.join(home, ".gitconfig");
+    assert.ok(
+      existsSync(globalConfiguration),
+      "the operator's Git configuration is the subject of this test"
+    );
+    const definition: CommandDefinition = {
+      ...fixture,
+      executable: "sh",
+      args: ["-c", `cat ${JSON.stringify(globalConfiguration)}`]
+    };
+    const result = await runApprovedCommand(
+      "probe",
+      definition,
+      definition.args,
+      scope,
+      new AbortController().signal
+    );
+    // The file is outside every admitted root, so the read is refused and
+    // the configuration never reaches the command.
+    assert.equal(result.status, "failed");
+    assert.equal(result.stdout, "");
+    assert.doesNotMatch(result.stderr, /helper\s*=/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a scope that overlaps a protected root, or an unapproved executable, is refused", () => {  const root = mkdtempSync(path.join(tmpdir(), "autodev-command-scope-"));
   try {
     const scope = scopeFixture(root);
     assert.throws(
@@ -782,12 +884,29 @@ test("the admitted command workspace cannot be redirected after scope resolution
     }));
     const alias = path.join(root, "alias");
     symlinkSync(workspace, alias);
-    const resolved = resolveCommandsScope({
+    const options = {
       moduleDirectory,
       env: { HOME: root, AUTODEV_HOME: runtimeRoot },
       args: ["--role", "worker", "--workspace", alias]
-    });
+    };
+    assert.throws(
+      () => resolveCommandsScope({
+        ...options,
+        env: { HOME: root, AUTODEV_HOME: workspace }
+      }),
+      /overlaps the authorized workspace/u
+    );
+    assert.throws(
+      () => resolveCommandsScope({
+        ...options,
+        env: { HOME: root, AUTODEV_HOME: alias }
+      }),
+      /overlaps the authorized workspace/u
+    );
+    assert.equal(existsSync(path.join(workspace, "run")), false);
+    const resolved = resolveCommandsScope(options);
     assert.equal(resolved.workspace, realpathSync(workspace));
+    assert.equal(resolved.runDirectory, realpathSync(path.join(runtimeRoot, "run")));
     assert.ok(resolved.scope.executables.git);
     assert.equal(Object.hasOwn(resolved.scope.executables, "definitely-not-installed-xyz"), false);
     assert.equal(resolved.isAuthorized(), true);
@@ -795,6 +914,13 @@ test("the admitted command workspace cannot be redirected after scope resolution
     rmSync(alias);
     symlinkSync(other, alias);
     assert.equal(resolved.isAuthorized(), true);
+    // Replacing private command state also invalidates admission.
+    const retiredScratch = resolved.scope.scratch + "-retired";
+    renameSync(resolved.scope.scratch, retiredScratch);
+    mkdirSync(resolved.scope.scratch, { mode: 0o700 });
+    assert.equal(resolved.isAuthorized(), false);
+    rmSync(resolved.scope.scratch, { recursive: true });
+    renameSync(retiredScratch, resolved.scope.scratch);
     // Replacing the physical root itself revokes admission.
     rmSync(workspace, { recursive: true });
     symlinkSync(other, workspace);

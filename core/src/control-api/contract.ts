@@ -143,11 +143,13 @@
  * the obsolete shared-browser toggle (`browser` / `PATCH .../browser`) is removed.
  * v39: Permissions is repository-owned and GET-only; the canonical
  * collection advertises readOnly: true and rejects every mutation.
+ * v40: Hooks is repository-owned and GET-only; the hook event write path
+ * is removed and the collection requires readOnly: true.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 39
+  version: 40
 } as const;
 
 export type ControlApiContractResponse = {

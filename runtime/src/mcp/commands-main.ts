@@ -25,11 +25,12 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { isPathWithin } from "@simulatorlife/autodev-data/files";
+import { isPathWithin, pathsOverlap } from "@simulatorlife/autodev-data/files";
 import { autodevRunDirectory } from "@simulatorlife/autodev-runtime/shared/autodev-home";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
+import { gitCommitIdentityEnv } from "../telemetry/git-commit-identity.ts";
 import {
   type CommandCatalogue,
   parseCommandCatalogue
@@ -216,6 +217,91 @@ export function createApprovedCatalogueGrant(cataloguePath: string): {
 }
 
 /**
+Validate state directories using the same ownership and physical-path rules
+for leases, scratch and cache. A Runtime run directory may be readable by
+other users, but never writable by them; command-private children are 0700.
+*/
+function commandDirectoryIdentity(
+  directory: string,
+  privateDirectory: boolean
+) {
+  const stat = lstatSync(directory);
+  if (
+    !stat.isDirectory() ||
+    (stat.mode & (privateDirectory ? 0o077 : 0o022)) !== 0 ||
+    (process.getuid && stat.uid !== process.getuid())
+  ) {
+    throw new CommandsAdmissionError(
+      "Command state directory must be private and must not redirect."
+    );
+  }
+  return stat;
+}
+
+function ensureCommandRunDirectory(
+  runDirectory: string,
+  workspace?: string
+): string {
+  if (!path.isAbsolute(runDirectory)) {
+    throw new CommandsAdmissionError("Command state directory must be absolute.");
+  }
+  const absolute = path.resolve(runDirectory);
+  // A not-yet-created run directory has no realpath. Resolve its nearest
+  // existing ancestor first, so even /tmp aliases and redirected parents
+  // cannot cause us to create command state inside an admitted workspace.
+  let ancestor = absolute;
+  let physicalRun: string;
+  for (;;) {
+    try {
+      physicalRun = path.join(
+        realpathSync(ancestor),
+        path.relative(ancestor, absolute)
+      );
+      break;
+    } catch (error) {
+      const parent = path.dirname(ancestor);
+      if (
+        (error as NodeJS.ErrnoException).code !== "ENOENT" ||
+        parent === ancestor
+      ) {
+        throw error;
+      }
+      ancestor = parent;
+    }
+  }
+  if (workspace && pathsOverlap(physicalRun, workspace)) {
+    throw new CommandsAdmissionError(
+      "Command state directory overlaps the authorized workspace."
+    );
+  }
+  mkdirSync(absolute, { recursive: true, mode: 0o700 });
+  commandDirectoryIdentity(absolute, false);
+  if (realpathSync(absolute) !== physicalRun) {
+    throw new CommandsAdmissionError(
+      "Command state directory changed during admission."
+    );
+  }
+  return physicalRun;
+}
+
+function sameDirectory(
+  directory: string,
+  identity: ReturnType<typeof commandDirectoryIdentity>,
+  privateDirectory = false
+): boolean {
+  try {
+    const current = commandDirectoryIdentity(directory, privateDirectory);
+    return (
+      realpathSync(directory) === directory &&
+      current.dev === identity.dev &&
+      current.ino === identity.ino
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
 A workspace-wide exclusive lease.
 
 Two sessions in one workspace must not run commands against it at the same
@@ -229,13 +315,15 @@ export function createWorkspaceLease(
 ): {
   tryAcquire(): (() => void) | null;
 } {
-  mkdirSync(runDirectory, { recursive: true, mode: 0o700 });
+  const physicalRun = ensureCommandRunDirectory(runDirectory);
+  const runIdentity = commandDirectoryIdentity(physicalRun, false);
   const lockPath = path.join(
-    runDirectory,
+    physicalRun,
     `command-${workspaceKey.replaceAll(/[^A-Za-z0-9._-]/gu, "_")}.lock`
   );
   return {
     tryAcquire(): (() => void) | null {
+      if (!sameDirectory(physicalRun, runIdentity)) return null;
       // A timestamp cannot prove that a command or detached descendant
       // has stopped. An abandoned lease stays closed until the Runtime
       // can prove recovery (or the operator verifies it and removes it).
@@ -259,6 +347,7 @@ export function createWorkspaceLease(
         if (isReleased) return;
         isReleased = true;
         try {
+          if (!sameDirectory(physicalRun, runIdentity)) return;
           const current = lstatSync(lockPath);
           if (current.dev === identity.dev && current.ino === identity.ino) {
             unlinkSync(lockPath);
@@ -303,19 +392,13 @@ function privateCommandRoot(
   if (!/^[a-f0-9]{16}$/u.test(workspaceKey)) {
     throw new CommandsAdmissionError("Invalid command workspace key.");
   }
-  mkdirSync(runDirectory, { recursive: true, mode: 0o700 });
-  const physicalRun = realpathSync(runDirectory);
+  const physicalRun = ensureCommandRunDirectory(runDirectory);
   const parent = path.join(physicalRun, kind);
   const root = path.join(parent, workspaceKey);
   for (const directory of [parent, root]) {
     mkdirSync(directory, { recursive: true, mode: 0o700 });
-    const stat = lstatSync(directory);
-    if (
-      !stat.isDirectory() ||
-      (stat.mode & 0o077) !== 0 ||
-      (process.getuid && stat.uid !== process.getuid()) ||
-      realpathSync(directory) !== directory
-    ) {
+    commandDirectoryIdentity(directory, true);
+    if (realpathSync(directory) !== directory) {
       throw new CommandsAdmissionError("Command state directory must be private and must not redirect.");
     }
   }
@@ -358,6 +441,7 @@ export interface ResolvedCommandsScope {
   readonly digest: string;
   readonly isAuthorized: () => boolean;
   readonly workspaceKey: string;
+  readonly runDirectory: string;
 }
 
 /**
@@ -403,7 +487,11 @@ export function resolveCommandsScope(
     null;
   const cataloguePath = approvedCataloguePath(options.moduleDirectory, workspace);
   const approved = createApprovedCatalogueGrant(cataloguePath);
-  const runDirectory = autodevRunDirectory(environment, home);
+  const runDirectory = ensureCommandRunDirectory(
+    autodevRunDirectory(environment, home),
+    workspace
+  );
+  const runIdentity = commandDirectoryIdentity(runDirectory, false);
   const workspaceKey = commandWorkspaceKey(workspace);
   const effective = effectiveCommands({
     role,
@@ -411,7 +499,7 @@ export function resolveCommandsScope(
     catalogue: approved.catalogue
   });
   const executables = resolveTrustedExecutables(
-    [...new Set(effective.values().map((entry) => entry.executable))],
+    [...effective.values().map((entry) => entry.executable)],
     environment,
     home
   );
@@ -420,8 +508,15 @@ export function resolveCommandsScope(
     scratch: commandScratchRoot(runDirectory, workspaceKey),
     cache: commandCacheRoot(runDirectory, workspaceKey),
     toolchainRoots: executables.toolchainRoots,
-    executables: executables.executables
+    executables: executables.executables,
+    // A command that commits must attribute the commit to the agent that
+    // made it, exactly as the Runtime's other agent paths do. The provider
+    // is not part of a gateway scope, so the identity records the role and
+    // reports the provider as unknown.
+    commitIdentityEnv: gitCommitIdentityEnv({ role })
   };
+  const scratchIdentity = commandDirectoryIdentity(scope.scratch, true);
+  const cacheIdentity = commandDirectoryIdentity(scope.cache, true);
   return {
     role,
     workspace,
@@ -430,7 +525,14 @@ export function resolveCommandsScope(
     catalogue: approved.catalogue,
     digest: approved.digest,
     isAuthorized() {
-      if (!approved.isAuthorized()) return false;
+      if (
+        !approved.isAuthorized() ||
+        !sameDirectory(runDirectory, runIdentity) ||
+        !sameDirectory(scope.scratch, scratchIdentity, true) ||
+        !sameDirectory(scope.cache, cacheIdentity, true)
+      ) {
+        return false;
+      }
       try {
         const current = statSync(workspace);
         return (
@@ -442,7 +544,8 @@ export function resolveCommandsScope(
         return false;
       }
     },
-    workspaceKey
+    workspaceKey,
+    runDirectory
   };
 }
 
@@ -454,13 +557,18 @@ contains a dependency install, so a scope that may not install packages
 never opens a network path at all.
 */
 export async function startCommandsServer(
-  resolved: ResolvedCommandsScope,
-  runDirectory: string
+  resolved: ResolvedCommandsScope
 ): Promise<{
   readonly server: Awaited<ReturnType<typeof createCommandsMcpServer>>;
   close(): Promise<void>;
 }> {
-  const lease = createWorkspaceLease(runDirectory, resolved.workspaceKey);
+  if (!resolved.isAuthorized()) {
+    throw new CommandsAdmissionError("Command execution grant is unavailable or revoked.");
+  }
+  const lease = createWorkspaceLease(
+    resolved.runDirectory,
+    resolved.workspaceKey
+  );
   const effective = effectiveCommands(resolved);
   const needsRegistry = effective.values().some(
     (definition) =>
@@ -525,9 +633,8 @@ async function runCommandsMain(): Promise<void> {
       home,
       args: process.argv.slice(2)
     });
-    const runDirectory = autodevRunDirectory(environment, home);
     configureCommandExecutionTelemetry(resolved.role, resolved.workspaceId);
-    const running = await startCommandsServer(resolved, runDirectory);
+    const running = await startCommandsServer(resolved);
     const registered = new Set(running.server.commandIds);
     const unavailable = [...effectiveCommands(resolved).keys()].filter(
       (id) => !registered.has(id)

@@ -21,24 +21,19 @@ import {
   MONO_META_CLASS,
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
-import {
-  type PermissionPolicySaveOutcome
-} from "./configuration.ts";
 
 export interface PermissionsViewProps {
   /**
    * The policy the canonical source states.
    *
-   * Null when the source could not be read: the page says so and leaves the
-   * control disabled rather than filling the cards with a policy the operator
-   * never chose.
+   * Null when the source could not be read. Do not invent defaults.
    */
   readonly policy: PermissionPolicy | null;
   /** Whether the canonical source could be read, and whether it parsed. */
   readonly policyStatus: "valid" | "invalid" | "unavailable";
   /** Why the policy could not be read; null when it could. */
   readonly policyReason: string | null;
-  /** The revision of the canonical source a write is compared against. */
+  /** The observed revision of the canonical source. */
   readonly revision: string | null;
   /** The policy the Runtime applied, read from the composed configuration. */
   readonly applied: PermissionPolicy | null;
@@ -53,8 +48,6 @@ export interface PermissionsViewProps {
    * empty matrix set is a different claim from a contract nobody read.
    */
   readonly executionContractObserved: boolean;
-  /** How the last write to the canonical permission policy ended. */
-  readonly saveOutcome?: PermissionPolicySaveOutcome | undefined;
 }
 
 /**

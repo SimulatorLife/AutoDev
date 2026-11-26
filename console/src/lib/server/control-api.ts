@@ -38,8 +38,6 @@ import {
   type ControlApiGithubResponse,
   type ControlApiHookDeclaration,
   type ControlApiHookEvent,
-  type ControlApiHookEventPatchRequest,
-  type ControlApiHookEventPatchResponse,
   type ControlApiHooksAppliedResponse,
   type ControlApiHooksResponse,
   type ControlApiLiveSessions,
@@ -50,8 +48,6 @@ import {
   type ControlApiMcpsResponse,
   type ControlApiModelPatchResponse,
   type ControlApiModelsResponse,
-  type ControlApiPermissionsPatchRequest,
-  type ControlApiPermissionsPatchResponse,
   type ControlApiPermissionsResponse,
   type ControlApiPromptCommandPatchRequest,
   type ControlApiPromptCommandPatchResponse,
@@ -1951,7 +1947,7 @@ function isControlApiHooksResponse(
     isRecord(value) &&
     value.schema === "autodev-control-hooks-v2" &&
     typeof value.source === "string" &&
-    typeof value.readOnly === "boolean" &&
+    value.readOnly === true &&
     (value.valid === null || typeof value.valid === "boolean") &&
     // Required, not optional. `valid: false` with no issues renders as "the
     // source is invalid" and nothing else, which is the state this field exists
@@ -2857,27 +2853,6 @@ export async function fetchHooksApplied(
 }
 
 /**
- * Write one hook event's action list to the canonical declaration.
- *
- * The write is the Runtime's: the Console forwards the operator's edit and
- * never touches the declaration itself.
- */
-export function patchHookEvent(
-  event: string,
-  payload: ControlApiHookEventPatchRequest,
-  config: ControlApiConfig,
-  options: FetchControlApiOptions = {}
-): Promise<ControlApiResult<ControlApiHookEventPatchResponse>> {
-  return mutateControlApi<ControlApiHookEventPatchResponse>(
-    "PATCH",
-    `${CONTROL_API_PATHS.hooks}/${encodeURIComponent(event)}`,
-    payload,
-    config,
-    options
-  );
-}
-
-/**
  * Narrows the permissions policy.
  *
  * `isRecord(value.policy)` was the whole check, and a policy with no members at
@@ -2975,29 +2950,8 @@ export async function fetchPermissions(
     kind: INVALID_RESPONSE_KIND,
     code: "autodev_control_api_invalid_permissions_response",
     message:
-      "AutoDev Control API returned an incompatible Permissions response; the Console requires the effective capability-matrix contract."
+      "AutoDev Control API returned an incompatible Permissions response; the Console requires the read-only effective capability-matrix contract."
   };
-}
-
-/**
- * Change one setting of the canonical permission policy.
- *
- * The write names the setting it changes and the revision it decided on, so
- * the Runtime can refuse a change made against a policy that has since moved
- * instead of applying it over the newer one.
- */
-export function patchPermissions(
-  payload: ControlApiPermissionsPatchRequest,
-  config: ControlApiConfig,
-  options: FetchControlApiOptions = {}
-): Promise<ControlApiResult<ControlApiPermissionsPatchResponse>> {
-  return mutateControlApi<ControlApiPermissionsPatchResponse>(
-    "PATCH",
-    CONTROL_API_PATHS.permissions,
-    payload,
-    config,
-    options
-  );
 }
 
 function isControlApiPromptsResponse(

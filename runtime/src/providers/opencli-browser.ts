@@ -11,7 +11,10 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-import type { OpencliSite } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
+import {
+  OPENCLI_SITES,
+  type OpencliSite
+} from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 import { chromium } from "playwright-core";
 
 const ACTIVE_PORT_LINE_BREAK = /\r?\n/u;
@@ -162,6 +165,7 @@ export class OpencliBrowser {
   /** A command settled without process close; its target must not be leased. */
   private readonly quarantined = new Set<string>();
   private readonly waiters = new Set<() => void>();
+  private changeRevision = 0;
   private child: ChildProcess | null = null;
   private port: number | null = null;
   private browserWsUrl: string | null = null;
@@ -174,7 +178,12 @@ export class OpencliBrowser {
   private launchError: Error | null = null;
 
   get isReady(): boolean {
-    return this.port !== null && !this.closing && this.lastError === null;
+    return (
+      this.port !== null &&
+      this.slots.size === OPENCLI_SITES.length &&
+      !this.closing &&
+      this.lastError === null
+    );
   }
   get unavailableReason(): string | null {
     return this.lastError;
@@ -206,11 +215,17 @@ export class OpencliBrowser {
   }
 
   private notify(): void {
+    this.changeRevision += 1;
     for (const wake of [...this.waiters]) wake();
   }
 
-  private waitForChange(signal: AbortSignal): Promise<void> {
-    if (signal.aborted) return Promise.resolve();
+  private waitForChange(
+    signal: AbortSignal,
+    observedRevision: number
+  ): Promise<void> {
+    if (signal.aborted || this.changeRevision !== observedRevision) {
+      return Promise.resolve();
+    }
     return new Promise((resolve) => {
       const done = (): void => {
         this.waiters.delete(done);
@@ -267,6 +282,11 @@ export class OpencliBrowser {
         await this.activateTarget(endpoint, signal);
       }
       signal.throwIfAborted();
+      if (this.generation !== generation || this.closing) {
+        throw new OpencliBrowserUnavailableError(
+          "Dedicated Chromium stopped before command dispatch"
+        );
+      }
       return await command(endpoint, releaseForeground);
     } finally {
       // Keep the lease held if the CLI outlives its caller's cancellation, and
@@ -418,13 +438,34 @@ export class OpencliBrowser {
         "dedicated opencli browser is shutting down"
       );
     }
-    if (this.port !== null && (await this.version())) return;
-    if (!this.starting)
-      this.starting = this.start().finally(() => {
+    // Share the entire readiness transaction, including the health probe.
+    // The CDP port is published before the target pool is created; a caller
+    // must not bypass an in-progress start just because /json/version works.
+    if (!this.starting) {
+      this.starting = this.checkReady().finally(() => {
         this.starting = null;
         this.notify();
       });
+    }
     await this.starting;
+  }
+
+  private async checkReady(): Promise<void> {
+    if (
+      this.port !== null &&
+      this.slots.size === OPENCLI_SITES.length &&
+      (await this.version())
+    ) {
+      return;
+    }
+    // An unavailable health endpoint does not prove Chromium has exited.
+    // Do not terminate unrelated in-flight turns to recover a new caller.
+    if (this.busy.size > 0) {
+      throw new OpencliBrowserUnavailableError(
+        "Dedicated Chromium health probe failed while commands are active"
+      );
+    }
+    await this.start();
   }
 
   // Startup is intentionally one guarded transaction: any partial side effect is rolled back.
@@ -549,10 +590,12 @@ export class OpencliBrowser {
   }
 
   private async version(): Promise<boolean> {
-    if (this.port === null) return false;
+    const port = this.port;
+    const generation = this.generation;
+    if (port === null) return false;
     try {
       const response = await this.fetcher(
-        `http://127.0.0.1:${this.port}/json/version`,
+        `http://127.0.0.1:${port}/json/version`,
         { signal: AbortSignal.timeout(1000) }
       );
       if (!response.ok) return false;
@@ -560,6 +603,7 @@ export class OpencliBrowser {
         const payload = (await response.json()) as {
           webSocketDebuggerUrl?: unknown;
         };
+        if (generation !== this.generation || port !== this.port) return false;
         if (
           typeof payload.webSocketDebuggerUrl === "string" &&
           payload.webSocketDebuggerUrl.startsWith("ws://127.0.0.1:")
@@ -569,7 +613,7 @@ export class OpencliBrowser {
       } catch {
         // Test mocks may return `{}` or empty body for /json/version.
       }
-      return true;
+      return generation === this.generation && port === this.port;
     } catch {
       return false;
     }
@@ -661,13 +705,23 @@ export class OpencliBrowser {
   }
 
   private async createPool(): Promise<void> {
+    const generation = this.generation;
     this.slots.clear();
-    for (const site of ["chatgpt", "gemini"] as const) {
+    for (const site of OPENCLI_SITES) {
       const targets: string[] = [];
       for (let i = 0; i < this.options.siteTabs[site]; i++) {
         // One CDP window/tab must be confirmed before requesting the next.
         // eslint-disable-next-line no-await-in-loop -- CDP tabs must exist before slot state is committed.
         targets.push(await this.createTab(site));
+        if (
+          generation !== this.generation ||
+          this.closing ||
+          this.stopWhenIdle
+        ) {
+          throw new OpencliBrowserUnavailableError(
+            "Dedicated Chromium stopped during target pool creation"
+          );
+        }
       }
       this.slots.set(site, targets);
     }
@@ -688,13 +742,15 @@ export class OpencliBrowser {
         (this.visibleLease === null && this.visibleQueue[0] === ticket));
     try {
       while (!signal.aborted) {
+        const observedRevision = this.changeRevision;
         if (this.closing || this.stopWhenIdle) {
           throw new OpencliBrowserUnavailableError(
             "dedicated opencli browser is shutting down"
           );
         }
-        if (this.port === null) {
-          // Recover transparently if Chromium exited while waiting.
+        if (this.starting || this.port === null) {
+          // Recover transparently if Chromium exited while waiting, and
+          // await the entire replacement pool before inspecting slots.
           // eslint-disable-next-line no-await-in-loop -- recovery must precede slot lookup.
           await this.ensureReady();
         }
@@ -702,11 +758,12 @@ export class OpencliBrowser {
           // A visible native-input turn owns foreground activation during its
           // input/submission phase; wait cleanly until notified.
           // eslint-disable-next-line no-await-in-loop -- wait for the current lease.
-          await this.waitForChange(signal);
+          await this.waitForChange(signal, observedRevision);
           continue;
         }
         const gen = this.generation;
         const slots = this.slots.get(site) ?? [];
+        const snapshot = [...slots];
         // A fresh target list is required to detect tabs closed since the last turn.
         // eslint-disable-next-line no-await-in-loop -- every retry needs a fresh target inventory.
         const currentTargets = await this.targets();
@@ -717,18 +774,21 @@ export class OpencliBrowser {
         for (let i = 0; i < slots.length; i++) {
           if (!canLease() || signal.aborted || gen !== this.generation) break;
           let endpoint = slots[i]!;
+          // Another acquisition may have replaced a slot while our target
+          // inventory was in flight. Never replace a newly assigned or busy
+          // target based on that stale snapshot.
+          if (
+            endpoint !== snapshot[i] ||
+            this.busy.has(endpoint) ||
+            this.quarantined.has(endpoint)
+          ) {
+            continue;
+          }
           if (!existing.has(endpoint)) {
-            // Replace the lost slot before leasing it to a command.
-            // Creating a target activates it, which would hide the page a
-            // native-input turn is holding in the foreground and make that
-            // turn's click fail. A background command therefore waits for the
-            // foreground to be free before it replaces a target.
-            while (this.visibleLease !== null && !signal.aborted) {
-              // eslint-disable-next-line no-await-in-loop -- wait for the foreground lease.
-              await this.waitForChange(signal);
-            }
-            if (signal.aborted) break;
-            // eslint-disable-next-line no-await-in-loop -- replacement must finish before leasing.
+            // Creating a target activates it. Skip missing slots while a
+            // foreground turn owns native input; re-evaluate after release
+            // rather than resume this stale inventory inside a nested wait.
+            if (this.visibleLease !== null) continue;
             this.creatingTarget = true;
             try {
               // eslint-disable-next-line no-await-in-loop -- replacement must finish before leasing.
@@ -736,8 +796,10 @@ export class OpencliBrowser {
               if (gen !== this.generation) break;
               slots[i] = endpoint;
             } finally {
-              this.creatingTarget = false;
-              this.notify();
+              if (gen === this.generation) {
+                this.creatingTarget = false;
+                this.notify();
+              }
             }
           }
           if (
@@ -754,7 +816,7 @@ export class OpencliBrowser {
         }
         // Wait for a lease to free without spinning on target list fetches.
         // eslint-disable-next-line no-await-in-loop -- wait for another lease to become free.
-        await this.waitForChange(signal);
+        await this.waitForChange(signal, observedRevision);
       }
       throw new Error(
         "opencli browser command cancelled while waiting for a tab"
