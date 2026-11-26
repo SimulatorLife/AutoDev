@@ -25,13 +25,11 @@ import {
   type HooksAppliedUnavailable
 } from "./applied.ts";
 import {
-  hookDeclarationSaveNotice,
   type HookDeclarationSaveOutcome,
-  hookEditorDisabledReason,
   hookOriginLabel
 } from "./declaration.ts";
-import { HookEventEditor } from "./HookEventEditor.ts";
-import { hookEventPath, HOOKS_PATH } from "./paths.ts";
+import { HookActionsView } from "./HookActionsView.ts";
+import { HOOKS_PATH } from "./paths.ts";
 
 export interface HookEventDetailViewProps {
   /**
@@ -136,14 +134,9 @@ function appliedEventPanel(
 export function HookEventDetailView({
   hook,
   source,
-  sourceValidity,
-  revision,
-  editorRevision,
   applied,
-  appliedUnavailable = null,
-  saveOutcome
+  appliedUnavailable = null
 }: HookEventDetailViewProps): React.JSX.Element {
-  const disabledReason = hookEditorDisabledReason(revision, sourceValidity);
   return React.createElement(
     PageBody,
     {
@@ -155,7 +148,6 @@ export function HookEventDetailView({
     }),
     React.createElement(EntityTitle, { mono: true }, hook.event),
     React.createElement("p", { className: `${MONO_META_CLASS} -mt-2` }, source),
-    hookDeclarationSaveNotice(saveOutcome, hook.event),
     React.createElement(
       "section",
       {
@@ -195,20 +187,7 @@ export function HookEventDetailView({
         { className: SECTION_HEADING_CLASS },
         "Hook actions"
       ),
-      React.createElement(HookEventEditor, {
-        // The editor's identity is the event, and nothing else: a write moves
-        // the declaration's revision, and an editor that was remounted by that
-        // would throw away the operator's unfinished work.
-        key: hook.event,
-        event: hook.event,
-        actions: hook.actions,
-        revision: editorRevision ?? revision ?? "",
-        // A write made here answers to this page, so the operator comes back to
-        // the declaration they were working on rather than being moved to the
-        // list of every event.
-        returnTo: hookEventPath(hook.event),
-        ...(disabledReason === null ? {} : { disabledReason })
-      })
+      React.createElement(HookActionsView, { actions: hook.actions })
     ),
     React.createElement(
       "section",

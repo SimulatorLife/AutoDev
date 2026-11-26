@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import React from "react";
 
-import { skillSaveOutcome } from "../../src/features/skills/SkillRoleAssignment.ts";
 import { readSkillsFilters } from "../../src/features/skills/skills-list-url.ts";
 import { SkillsView } from "../../src/features/skills/SkillsView.ts";
 import {
@@ -68,7 +67,6 @@ export default async function SkillsPage({
   // The Runtime's skill telemetry, from the same read: whether any telemetry
   // has been observed at all, and what was observed for each skill.
   const telemetry = skillTelemetryFromControlApi(result.data);
-  const saveOutcome = skillSaveOutcome(query.save);
   const listFilters = readSkillsFilters(query);
   return React.createElement(
     ConsolePageShell,
@@ -98,8 +96,7 @@ export default async function SkillsPage({
       assignmentRoles: result.data.assignmentRoles,
       executionContractRevision: result.data.executionContractRevision,
       telemetry,
-      role: listFilters.role,
-      ...(saveOutcome ? { saveOutcome } : {})
+      role: listFilters.role
     })
   );
 }

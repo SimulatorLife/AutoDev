@@ -9,6 +9,7 @@ import {
   compose,
   loadPortable,
   renderBridgeMcpCatalogue,
+  renderRole,
   serializeToml,
   type TomlTable,
   validateProviderContracts
@@ -25,6 +26,94 @@ test("TOML serialization is parseable and ends with one newline", () => {
   // smol-toml returns null-prototype objects; structuredClone restores normal prototypes.
   const parsed = structuredClone(parse(output));
   assert.deepEqual(parsed, input);
+});
+
+test("native role rendering round-trips literal prompts and structured MCP configuration", async () => {
+  const root = await mkdtemp(join(tmpdir(), "autodev-role-render-"));
+  try {
+    const source = join(root, "fixture.toml");
+    const output = join(root, "rendered.toml");
+    const prompts = join(root, "roles");
+    mkdirSync(prompts);
+    const base = [
+      'Preserve """ and $& and $$ and \\n literally.',
+      "[mcp_servers.not-a-real-server]",
+      "# role-access: read-only",
+      "{{AUTODEV_LEAF_PROMPT}}"
+    ].join("\n");
+    const rolePrompt = "Literal role prompt.";
+    await writeFile(join(prompts, "fixture.md"), rolePrompt);
+    const template = [
+      "{{AUTODEV_BASE_PROMPT}}",
+      "{{AUTODEV_LEAF_PROMPT}}",
+      "{{AUTODEV_ROLE_PROMPT}}"
+    ].join("\n\n");
+    const config: TomlTable = {
+      name: "fixture",
+      developer_instructions: template,
+      mcp_servers: {
+        "server.with.dot": {
+          enabled: true,
+          enabled_tools: ["one"],
+          env: { ROLE: "fixture" }
+        },
+        stdio: { enabled: true, args: ["role-override"] }
+      },
+      skills: { config: [{ name: "example", enabled: false }] }
+    };
+    await writeFile(source, "# role-access: read-only\n" + serializeToml(config));
+    const servers: TomlTable = {
+      "server.with.dot": {
+        url: "https://example.invalid/mcp",
+        http_headers: { "X-Api-Key": "${TOKEN}" },
+        env_http_headers: { "X-Other": "OTHER_TOKEN" }
+      },
+      stdio: { command: "fixture-bin", args: ["canonical"] }
+    };
+    renderRole(source, output, root, base, "Leaf.", "Unused.", servers);
+    const rendered = readFileSync(output, "utf8");
+    assert.ok(rendered.startsWith("# role-access: read-only\n"));
+    assert.deepEqual(structuredClone(parse(rendered)), {
+      ...config,
+      developer_instructions: [base, "Leaf.", rolePrompt].join("\n\n"),
+      mcp_servers: {
+        "server.with.dot": {
+          enabled: true,
+          enabled_tools: ["one"],
+          env: { ROLE: "fixture" },
+          ...(servers["server.with.dot"] as TomlTable),
+          transport: "streamable_http"
+        },
+        stdio: {
+          enabled: true,
+          command: "fixture-bin",
+          args: ["role-override"]
+        }
+      }
+    });
+    // A second projection of the same sources must be deterministic.
+    renderRole(source, output, root, base, "Leaf.", "Unused.", servers);
+    assert.equal(readFileSync(output, "utf8"), rendered);
+    assert.throws(
+      () => renderRole(source, output, root, base, "Leaf.", "", {}),
+      /not declared in .rulesync/u
+    );
+    // Markers in other fields do not satisfy the developer prompt contract.
+    await writeFile(
+      source,
+      serializeToml({
+        ...config,
+        description: template,
+        developer_instructions: "{{AUTODEV_ROLE_PROMPT}}"
+      })
+    );
+    assert.throws(
+      () => renderRole(source, output, root, base, "Leaf.", "", servers),
+      /invalid prompt markers/u
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("composition preserves local state while AutoDev-owned keys win", () => {

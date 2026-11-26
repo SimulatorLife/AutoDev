@@ -8,7 +8,7 @@ import React from "react";
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
-import { StatGrid } from "../../components/panels/DetailGrid.ts";
+import { DetailGrid, DetailValue, StatGrid } from "../../components/panels/DetailGrid.ts";
 import { Tag } from "../../components/status/Tag.ts";
 import { CHIP_TONE_CLASS, chipList } from "../../components/tables/Chips.ts";
 import {
@@ -22,10 +22,8 @@ import {
   MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
 import {
-  permissionPolicySaveNotice,
   type PermissionPolicySaveOutcome
 } from "./configuration.ts";
-import { PermissionPolicyForm } from "./PermissionPolicyForm.ts";
 
 export interface PermissionsViewProps {
   /**
@@ -100,8 +98,7 @@ export function PermissionsView({
   applied,
   appliedSource,
   roleMatrices,
-  executionContractObserved,
-  saveOutcome
+  executionContractObserved
 }: PermissionsViewProps): React.JSX.Element {
   const columns: ColumnDef<DataTableFeatures, RoleCapabilityMatrix>[] = [
     {
@@ -160,7 +157,6 @@ export function PermissionsView({
   return React.createElement(
     PageBody,
     { feature: "permissions" },
-    permissionPolicySaveNotice(saveOutcome),
     React.createElement(
       "section",
       {
@@ -185,11 +181,13 @@ export function PermissionsView({
             },
             policyReason
           ),
-      React.createElement(PermissionPolicyForm, {
-        policy,
-        revision,
-        policyStatus
-      }),
+      React.createElement(
+        DetailGrid,
+        { columns: 3 },
+        React.createElement(DetailValue, { label: "Approval policy" }, policy?.approvalPolicy ?? NOT_OBSERVED),
+        React.createElement(DetailValue, { label: "Approvals reviewer" }, policy?.approvalsReviewer ?? NOT_OBSERVED),
+        React.createElement(DetailValue, { label: "Web search" }, policy === null ? NOT_OBSERVED : policy.webSearch ? "Enabled" : "Disabled")
+      ),
       React.createElement(
         StatGrid,
         { columns: 2 },

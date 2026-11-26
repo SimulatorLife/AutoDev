@@ -2569,10 +2569,9 @@ test("Prompt detail renders canonical text and reports an actually empty source"
   assert.doesNotMatch(markup, /<h[123][^>]*>Rendered Prompt<\/h[123]>/);
   assert.match(markup, /<strong>Use a dry run\.<\/strong>/);
   assert.match(markup, /\.rulesync\/commands\/dry\.md/);
-  assert.match(markup, /data-prompt-editor="canonical"/);
-  assert.match(markup, /action="\/api\/prompts\/dry"/);
-  assert.match(markup, /name="expectedRevision" value="a{64}"/);
-  assert.match(markup, /Save &amp; Apply/);
+  assert.match(markup, /data-prompt-source="read-only"/);
+  assert.match(markup, /data-source-view="rendered"/);
+  assert.doesNotMatch(markup, /<textarea|action="\/api\/prompts\/dry"|Save &amp; Apply/);
   assert.match(markup, /data-prompt-history="unavailable"/);
   assert.match(markup, /Git history unavailable in this test\./);
 
@@ -2617,17 +2616,6 @@ test("Prompt detail renders canonical text and reports an actually empty source"
   assert.match(comparisonMarkup, /Use the current source\./);
   assert.match(comparisonMarkup, /View committed source/);
 
-  const applyFailedMarkup = renderToStaticMarkup(
-    React.createElement(PromptDetailView, {
-      reconciliation: unobservedPromptReconciliation,
-      prompt,
-      history: unavailablePromptHistory,
-      saveOutcome: "apply-failed"
-    })
-  );
-  assert.match(applyFailedMarkup, /data-prompt-save-outcome="apply-failed"/);
-  assert.match(applyFailedMarkup, /source was saved, but RuleSync generation/);
-
   const roleMarkup = renderToStaticMarkup(
     React.createElement(PromptDetailView, {
       reconciliation: unobservedPromptReconciliation,
@@ -2642,17 +2630,17 @@ test("Prompt detail renders canonical text and reports an actually empty source"
       history: unavailablePromptHistory
     })
   );
-  assert.match(roleMarkup, /data-prompt-editor="read-only"/);
+  assert.match(roleMarkup, /data-prompt-source="read-only"/);
   assert.equal(roleMarkup.includes("/api/prompts/orchestrator"), false);
 
   const emptyMarkup = renderToStaticMarkup(
     React.createElement(PromptDetailView, {
       reconciliation: unobservedPromptReconciliation,
-      prompt: { ...prompt, content: "" },
+      prompt: { ...prompt, content: "", preview: "" },
       history: unavailablePromptHistory
     })
   );
-  assert.match(emptyMarkup, /data-prompt-content="empty"/);
+  assert.match(emptyMarkup, /The canonical Markdown body is empty\./);
   assert.equal(emptyMarkup.includes("# /dry"), false);
 });
 
@@ -11817,7 +11805,7 @@ test("Agents provider summaries stay not observed without provider configuration
   assert.equal(detail.includes(">Disabled<"), false);
 });
 
-test("HooksView renders the target's effective hook events and their editors", () => {
+test("HooksView renders the target's effective hook events read-only", () => {
   const hooks = hooksFromControlApi({
     schema: "autodev-control-hooks-v2",
     source: "test",
@@ -11861,7 +11849,8 @@ test("HooksView renders the target's effective hook events and their editors", (
   assert.match(markup, /Declared for Codex only/);
   // The write is a compare-and-swap on the declaration's revision, so the
   // editor carries the revision it was filled from.
-  assert.match(markup, /name="expectedRevision" value="a{64}"/);
+  assert.match(markup, /aria-label="Declared hook actions"/);
+  assert.doesNotMatch(markup, /<form|<textarea|name="expectedRevision"/);
   assert.doesNotMatch(
     markup,
     /data-validation-issue-count/,
@@ -11929,7 +11918,7 @@ test("HooksView names the applied state in the Console's word", () => {
     "the wire's own key is not the Console's word for a state"
   );
 });
-test("HooksView keeps the editor in place when the declaration could not be read", () => {
+test("HooksView has no editor when the declaration could not be read", () => {
   const markup = renderToStaticMarkup(
     React.createElement(HooksView, {
       hooks: [
@@ -11947,8 +11936,8 @@ test("HooksView keeps the editor in place when the declaration could not be read
       applied: null
     })
   );
-  assert.match(markup, /data-hook-editor-disabled="true"/);
-  assert.match(markup, /could not be read/);
+  assert.doesNotMatch(markup, /<form|<textarea|data-hook-event-editor/);
+  assert.match(markup, /Not observed/i);
   assert.match(markup, /data-hook-event="sessionStart"/);
 });
 
@@ -12045,7 +12034,7 @@ test("each hook event on the list links to its own page", () => {
   assert.match(markup, /name="returnTo" value="\/hooks"/);
 });
 
-test("the hook event's page carries the same editor the list carries", () => {
+test("the hook event's page shares the read-only action renderer with the list", () => {
   const markup = renderToStaticMarkup(
     React.createElement(HookEventDetailView, {
       hook: HOOK_DECLARATION,
@@ -12060,9 +12049,8 @@ test("the hook event's page carries the same editor the list carries", () => {
   assert.match(markup, /href="\/hooks"/);
   assert.match(markup, /aria-current="page"[^>]*>preToolUse</);
   // The editor is the shared one, and it writes back to this page.
-  assert.match(markup, /data-hook-event-editor="preToolUse"/);
-  assert.match(markup, /name="returnTo" value="\/hooks\/preToolUse"/);
-  assert.match(markup, /name="expectedRevision" value="a{64}"/);
+  assert.match(markup, /aria-label="Declared hook actions"/);
+  assert.doesNotMatch(markup, /<form|name="returnTo"|name="expectedRevision"/);
   // The origin is the same fact the card shows.
   assert.match(markup, /data-hook-origin="preToolUse"/);
   assert.match(markup, /Declared for every target/);
@@ -12152,7 +12140,7 @@ test("the hook event's page says when the Runtime published nothing for the even
   assert.match(markup, /published no action for this event/);
 });
 
-test("a refused hook write names the event it was about", () => {
+test("legacy hook save query state does not render mutation feedback", () => {
   // The list presents every event's declaration at once, so a notice that did
   // not name its event would leave the operator to work out which of the edits
   // on the page it was talking about.
@@ -12167,9 +12155,7 @@ test("a refused hook write names the event it was about", () => {
       savedEvent: "preToolUse"
     })
   );
-  assert.match(markup, /data-hook-declaration-save="conflict"/);
-  assert.match(markup, /for &quot;preToolUse&quot;/);
-  assert.match(markup, /your edit was not saved/);
+  assert.doesNotMatch(markup, /data-hook-declaration-save|your edit was not saved|<form/);
 });
 
 test("an empty list names its resource instead of inheriting a generic sentence", () => {
@@ -18612,7 +18598,7 @@ const SKILL_ASSIGNMENT_SKILL = {
   workspace: "SimulatorLife/AutoDev"
 };
 
-test("a skill assignment form posts the whole desired set, and an empty one clears it", () => {
+test("skill role assignments render observed and empty sets without mutation controls", () => {
   const markup = renderToStaticMarkup(
     React.createElement(SkillsView, {
       executionContractObserved: true,
@@ -18627,13 +18613,8 @@ test("a skill assignment form posts the whole desired set, and an empty one clea
     })
   );
 
-  const assigned = submittedAssignmentFields(markup, "release-checklist");
-  assert.deepEqual(assigned.get("expectedRevision"), ["d".repeat(64)]);
-  assert.deepEqual(
-    assigned.get("roles"),
-    ["worker"],
-    "only the checked role travels; the unchecked one is not in the submission"
-  );
+  assert.match(markup, /data-testid="skill-roles"/);
+  assert.doesNotMatch(markup, /action="\/api\/skills\/|type="checkbox"/);
 
   const cleared = renderToStaticMarkup(
     React.createElement(SkillsView, {
@@ -18648,24 +18629,11 @@ test("a skill assignment form posts the whole desired set, and an empty one clea
       telemetry: { observed: false, bySkill: new Map() }
     })
   );
-  // Unassigning is "check nothing", so the submission legitimately carries no
-  // `roles` at all. A route that required the field to be present would make the
-  // one operation that fixes an unreachable skill impossible to express. The
-  // workspace still travels: the assignment is made inside it either way.
-  const clearedFields = submittedAssignmentFields(cleared, "release-checklist");
-  assert.deepEqual(
-    [...clearedFields.keys()],
-    ["expectedRevision", "workspace"]
-  );
-  assert.deepEqual(clearedFields.get("workspace"), ["SimulatorLife/AutoDev"]);
-  assert.match(
-    cleared,
-    /Unassigned — no agent role can invoke this skill/,
-    "the operator has to be told why the skill is dead, not left to infer it"
-  );
+  assert.match(cleared, /No roles assigned/);
+  assert.doesNotMatch(cleared, /action="\/api\/skills\/|type="checkbox"/);
 });
 
-test("an unassigned skill is fixable from the page that reports it as unassigned", () => {
+test("an unassigned skill is reported without mutation controls", () => {
   const markup = renderToStaticMarkup(
     React.createElement(SkillsView, {
       executionContractObserved: true,
@@ -18680,15 +18648,8 @@ test("an unassigned skill is fixable from the page that reports it as unassigned
     })
   );
   assert.match(markup, /Not assigned/);
-  assert.match(
-    markup,
-    /action="\/api\/skills\/release-checklist"/,
-    "the page that says a skill is unreachable has to carry the control that assigns it"
-  );
-  // Every assignable role is offered, not just the ones already checked: an
-  // unassigned skill has none checked, so an unchecked-only list would leave the
-  // operator nothing to do.
-  assert.match(markup, /data-skill-role-option="orchestrator"/);
+  assert.match(markup, /No roles assigned/);
+  assert.doesNotMatch(markup, /action="\/api\/skills\/|type="checkbox"/);
 });
 
 test("no execution contract means no assignment form and a reason, not a broken control", () => {
@@ -18711,7 +18672,6 @@ test("no execution contract means no assignment form and a reason, not a broken 
     "a form with no revision would post an empty expectation and be refused every time"
   );
   assert.match(markup, /data-skill-assignment-revision="none"/);
-  assert.match(markup, /No execution contract was found/);
   assert.match(markup, /Not observed/);
   assert.doesNotMatch(
     markup,
@@ -18719,7 +18679,7 @@ test("no execution contract means no assignment form and a reason, not a broken 
   );
 });
 
-test("a refused assignment says what happened and claims nothing was written", () => {
+test("legacy skill save query state does not render mutation feedback", () => {
   const markup = renderToStaticMarkup(
     React.createElement(SkillsView, {
       executionContractObserved: true,
@@ -18734,12 +18694,7 @@ test("a refused assignment says what happened and claims nothing was written", (
       saveOutcome: "conflict"
     })
   );
-  assert.match(markup, /data-save-outcome="conflict"/);
-  assert.match(markup, /so nothing was written/);
-  assert.match(
-    markup,
-    /The execution contract changed after this page was loaded/
-  );
+  assert.doesNotMatch(markup, /data-save-outcome|nothing was written|type="checkbox"/);
 });
 
 test("skill assignment convergence maps to truthful return states", () => {
@@ -18839,7 +18794,7 @@ test("skill assignment route redirects with Runtime pending and not-observed evi
   }
 });
 
-test("an unobserved skill assignment result is a warning, not an empty assignment", () => {
+test("legacy skill assignment feedback cannot imply a new write", () => {
   const markup = renderToStaticMarkup(
     React.createElement(SkillsView, {
       executionContractObserved: true,
@@ -18854,11 +18809,7 @@ test("an unobserved skill assignment result is a warning, not an empty assignmen
       saveOutcome: "not-observed"
     })
   );
-  assert.match(markup, /data-testid="skill-assignment-status"/);
-  assert.match(markup, /role="status"/);
-  assert.match(markup, /The desired role set was written/);
-  assert.match(markup, /an empty role set is not a confirmed unassignment/);
-  assert.doesNotMatch(markup, /role="alert"/);
+  assert.doesNotMatch(markup, /skill-assignment-status|desired role set was written|type="checkbox"/);
 });
 
 test("patchSkillRoles PATCHes the skill resource and validates the assignment it reports", async () => {

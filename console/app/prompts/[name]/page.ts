@@ -6,11 +6,7 @@ import {
   type PromptHistoryState,
   promptHistoryState
 } from "../../../src/features/prompts/history-state.ts";
-import {
-  PromptDetailView,
-  type PromptSaveOutcome
-} from "../../../src/features/prompts/PromptDetailView.ts";
-import { editorBaseRevisionFromQuery } from "../../../src/lib/server/canonical-source.ts";
+import { PromptDetailView } from "../../../src/features/prompts/PromptDetailView.ts";
 import {
   controlApiFailureCode,
   fetchPromptDetail,
@@ -37,18 +33,6 @@ const UNAVAILABLE_PROMPT_HISTORY: PromptHistoryState = {
   status: "unavailable",
   message: "Committed version history is only available for RuleSync commands."
 };
-
-function promptSaveOutcome(
-  value: string | readonly string[] | undefined
-): PromptSaveOutcome | undefined {
-  const outcome = typeof value === "string" ? value : value?.[0];
-  return outcome === "conflict" ||
-    outcome === "validation" ||
-    outcome === "apply-failed" ||
-    outcome === "failed"
-    ? outcome
-    : undefined;
-}
 
 /**
  * The resource's own name, taken from the route parameter rather than from a
@@ -81,7 +65,6 @@ export default async function PromptDetailPage({
         {} as Record<string, string | readonly string[] | undefined>
       )
   ]);
-  const saveOutcome = promptSaveOutcome(query.save);
   const { section, config } = readNodeContext("/prompts");
   if (!config) {
     return React.createElement(
@@ -141,17 +124,10 @@ export default async function PromptDetailPage({
       prompt,
       reconciliation: result.data.reconciliation,
       history,
-      // The editor writes against the revision its content is based on. A
-      // refused write leaves the browser holding the operator's edit, so the
-      // page keeps the revision that edit was written for rather than the
-      // revision the source has moved to.
-      editorRevision:
-        editorBaseRevisionFromQuery(query.based) ?? result.data.revision,
       ...(selection.selectedVersion
         ? { selectedVersion: selection.selectedVersion }
         : {}),
-      ...(selection.error ? { versionSelectionError: selection.error } : {}),
-      ...(saveOutcome ? { saveOutcome } : {})
+      ...(selection.error ? { versionSelectionError: selection.error } : {})
     })
   );
 }

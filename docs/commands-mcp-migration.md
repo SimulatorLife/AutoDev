@@ -75,13 +75,20 @@ launchd services and the live provider surfaces still carry the previous state.
 
 - `config/commands.json` is the **proposed** catalogue and the single source
   of truth for executable/argv definitions. The installer copies it beside the
-  execution contract (`$AUTODEV_HOME/config/commands.json`) only when the
+  execution contract in each Runtime home that runs a Commands MCP
+  (`$AUTODEV_HOME/config/commands.json` for provider sessions,
+  `$CODEX_HOME/config/commands.json` for the ChatGPT gateway) only when the
   operator approved that exact revision on the installer's command line
   (`--approve-command-catalogue=sha256:<digest>`, never from `.env`; see
   `runtime/src/platform/command-catalogue-approval.ts`); a changed checkout
   catalogue is reported as pending by the installer and `install-check` and
   never approved by a reinstall. The approved copy is never read from a
-  workspace.
+  workspace. Until `$CODEX_HOME` holds an approved copy, the ChatGPT gateway
+  leaves the Commands backend out (the installer says so) instead of failing
+  its preflight; the approved revision is part of the gateway's policy digest,
+  so approving one re-reviews the grants. Gateway backends run from the
+  installed `$CODEX_HOME/src` generation, never from the checkout the
+  installer was started from.
   `runtime/src/mcp/commands-catalogue.ts` validates it: bounded fixed
   executable and argv, at most 64 definitions, narrowly typed string
   parameters, and no parameter that no argument uses or argument that names no
@@ -225,6 +232,10 @@ eliminate the inherent outbound package-name request channel.
 
 All changes in this pass have source regression fixtures, not executed
 host test evidence. No additional dependency or service was introduced.
+
+### Shared path and approval consistency (source review)
+
+Command execution and catalogue admission now reuse Data's existing lexical path containment helper; physical resolution remains with the callers. Installer approval status uses the same bounded protected-catalogue reader and Zod validation as the Commands backend, rather than treating matching digests alone as readiness. Both reject a redirected config directory; explicit approval refuses a symlinked destination before invoking the existing atomic-write dependency. This assumes the installed parent is independently protected against concurrent untrusted writes, and is not a substitute for that trust boundary. New regression fixtures cover approval status, redirected destinations and symmetric overlap. Tests and installed acceptance remain pending.
 
 ### What is still open
 

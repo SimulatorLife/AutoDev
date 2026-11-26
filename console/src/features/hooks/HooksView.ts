@@ -31,13 +31,11 @@ import {
   type HooksAppliedUnavailable
 } from "./applied.ts";
 import {
-  hookDeclarationSaveNotice,
   type HookDeclarationSaveOutcome,
-  hookEditorDisabledReason,
   hookOriginLabel
 } from "./declaration.ts";
-import { HookEventEditor } from "./HookEventEditor.ts";
-import { hookEventPath, HOOKS_PATH } from "./paths.ts";
+import { HookActionsView } from "./HookActionsView.ts";
+import { hookEventPath } from "./paths.ts";
 
 export interface HooksViewProps {
   readonly hooks: readonly HookDefinition[];
@@ -183,18 +181,13 @@ function sourceValidityCount(
 function declaredEvents(
   hooks: readonly HookDefinition[],
   sourceValidity: boolean | null,
-  validationIssues: readonly ControlApiValidationIssue[],
-  revision: string | null,
-  editorRevision: string | undefined,
-  disabledReason: string | null
+  validationIssues: readonly ControlApiValidationIssue[]
 ): React.JSX.Element {
   if (hooks.length > 0) {
     return React.createElement(
       "div",
       { className: "flex flex-col gap-4" },
-      hooks.map((hook) =>
-        hookEventPanel(hook, revision, editorRevision, disabledReason)
-      )
+      hooks.map(hookEventPanel)
     );
   }
   const state =
@@ -223,10 +216,7 @@ function declaredEvents(
  * One event, its declaration, and its editor.
  */
 function hookEventPanel(
-  hook: HookDefinition,
-  revision: string | null,
-  editorRevision: string | undefined,
-  disabledReason: string | null
+  hook: HookDefinition
 ): React.JSX.Element {
   return React.createElement(
     "div",
@@ -258,30 +248,7 @@ function hookEventPanel(
         dataAttributes: { "data-hook-origin": hook.event }
       })
     ),
-    React.createElement(HookEventEditor, {
-      // The editor's identity is the event, and nothing else. The key used to
-      // carry the revision the editor was based on, so a *successful* write --
-      // which moves the declaration's revision -- remounted every editor on
-      // the page and threw away the drafts in all of them. An operator editing
-      // one event, who then saved a different one, came back to find their
-      // unfinished work gone with no word about it.
-      //
-      // A draft is a draft: it is the operator's, and it is not discarded
-      // because the declaration moved for some other reason. The write it
-      // carries is a compare-and-swap on the revision it was written against,
-      // so a declaration that has moved under it is *refused* -- the operator's
-      // edit stays on screen and the refusal says why -- rather than the edit
-      // being overwritten or thrown away.
-      key: hook.event,
-      event: hook.event,
-      actions: hook.actions,
-      revision: editorRevision ?? revision ?? "",
-      // A write made from the list answers to the list, so the operator comes
-      // back to the page they were working on rather than being moved to the
-      // one event's own page.
-      returnTo: HOOKS_PATH,
-      ...(disabledReason === null ? {} : { disabledReason })
-    })
+    React.createElement(HookActionsView, { actions: hook.actions })
   );
 }
 
@@ -289,15 +256,10 @@ export function HooksView({
   hooks,
   validationIssues,
   sourceValidity = null,
-  revision,
-  editorRevision,
   applied,
-  appliedUnavailable = null,
-  saveOutcome,
-  savedEvent
+  appliedUnavailable = null
 }: HooksViewProps): React.JSX.Element {
   const totalActions = hooks.reduce((acc, h) => acc + h.actions.length, 0);
-  const disabledReason = hookEditorDisabledReason(revision, sourceValidity);
   // The declaration's own counts. An invalid or unreadable source publishes
   // an empty list of events, and the two cards above the table counted it as
   // a target that declares nothing -- a claim about the read rather than
@@ -345,7 +307,6 @@ export function HooksView({
       testId: "hook-validation-issues",
       subject: "Hook source"
     }),
-    hookDeclarationSaveNotice(saveOutcome, savedEvent),
     React.createElement(
       "div",
       { className: "flex flex-col gap-4" },
@@ -357,10 +318,7 @@ export function HooksView({
       declaredEvents(
         hooks,
         sourceValidity,
-        validationIssues,
-        revision,
-        editorRevision,
-        disabledReason
+        validationIssues
       )
     ),
     React.createElement(

@@ -40,6 +40,13 @@ export interface ExternalMcpBackendOptions {
   readonly role?: string;
   /** Optional explicit read-only skill roots to mount on the filesystem MCP. */
   readonly skillRoots?: readonly string[];
+  /**
+  The Runtime source tree the backends run from. The ChatGPT gateway passes
+  the installed `$CODEX_HOME/src`, so its backends never run the editable
+  checkout the installer itself was started from. Defaults to the tree this
+  module was loaded from.
+  */
+  readonly runtimeSource?: string;
 }
 
 const SUPPORTED_LOCAL_GATEWAY_SERVERS = new Set<string>([
@@ -76,11 +83,16 @@ function isWithin(child: string, parent: string): boolean {
 }
 
 /**
- * The MCP launcher beside this module: the confined backends run the Runtime
- * tree this module was loaded from, never one a caller-named root points at.
- */
-function resolveLauncherScript(): string {
-  return realpathSync(path.join(import.meta.dirname, "launcher.ts"));
+The Runtime source tree this module was loaded from.
+*/
+const OWN_RUNTIME_SOURCE = path.resolve(import.meta.dirname, "..");
+
+/**
+The MCP launcher of the Runtime tree the backends run from, in its physical
+form: a backend keeps running the generation it was rendered against.
+*/
+function resolveLauncherScript(runtimeSource: string): string {
+  return realpathSync(path.join(runtimeSource, "mcp", "launcher.ts"));
 }
 
 function resolveDirectNodeExecutable(node: string, cwd: string): string {
@@ -153,12 +165,15 @@ export function externalMcpBackend(
   const physicalHome = physicalPath(home);
   const physicalCodexHome = physicalPath(codexHome);
   const physicalWorkspace = physicalPath(workspace);
+  const runtimeSource = options.runtimeSource ?? OWN_RUNTIME_SOURCE;
 
   if (server === MCP_SERVER_FILESYSTEM) {
-    // The server package comes from the Runtime dependency tree this module
-    // resolves through (the installed protected closure), not from a root the
-    // caller names.
-    const packageDirectory = findRuntimePackageDirectory(packageName);
+    // The server package comes from the dependency closure of the Runtime
+    // tree the backends run from, never from the caller's checkout.
+    const packageDirectory = findRuntimePackageDirectory(
+      packageName,
+      path.join(runtimeSource, "mcp")
+    );
     if (!packageDirectory)
       throw new Error("Filesystem MCP package is not in the Runtime dependency tree");
     const packageRoot = realpathSync(packageDirectory);
@@ -198,7 +213,7 @@ export function externalMcpBackend(
     };
   }
 
-  const launcher = resolveLauncherScript();
+  const launcher = resolveLauncherScript(runtimeSource);
 
   if (server === MCP_SERVER_LSP) {
     return {

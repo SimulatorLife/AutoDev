@@ -16,6 +16,7 @@ import { createHash } from "node:crypto";
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
+import { isPathWithin, pathsOverlap } from "@simulatorlife/autodev-data/files";
 import {
   findExecutable,
   findPnpmGlobalBinary
@@ -127,7 +128,7 @@ function developerToolBinary(name: string, resolved: string): string {
     const found = realpathSync(
       execFileSync("/usr/bin/xcrun", ["--find", name], options).trim()
     );
-    return isWithin(found, developer) ? found : resolved;
+    return isPathWithin(developer, found) ? found : resolved;
   } catch {
     return resolved;
   }
@@ -182,18 +183,6 @@ function directory(value: string): string {
   const resolved = realpathSync(value);
   if (!statSync(resolved).isDirectory()) throw new Error("Command scope root is not a directory.");
   return resolved;
-}
-
-function isWithin(candidate: string, root: string): boolean {
-  const relative = path.relative(root, candidate);
-  return (
-    relative === "" ||
-    (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(".." + path.sep))
-  );
-}
-
-function isOverlapping(a: string, b: string): boolean {
-  return isWithin(a, b) || isWithin(b, a);
 }
 
 function subtree(value: string): string {
@@ -308,15 +297,15 @@ export function prepareCommand(
     workspace === path.parse(workspace).root ||
     scratch === path.parse(scratch).root ||
     cache === path.parse(cache).root ||
-    isOverlapping(workspace, scratch) ||
-    isOverlapping(workspace, cache) ||
-    isOverlapping(scratch, cache) ||
+    pathsOverlap(workspace, scratch) ||
+    pathsOverlap(workspace, cache) ||
+    pathsOverlap(scratch, cache) ||
     roots.length === 0 ||
     roots.some((root) =>
       root === path.parse(root).root ||
-      isOverlapping(root, workspace) ||
-      isOverlapping(root, scratch) ||
-      isOverlapping(root, cache)
+      pathsOverlap(root, workspace) ||
+      pathsOverlap(root, scratch) ||
+      pathsOverlap(root, cache)
     )
   ) {
     throw new Error("Command scope overlaps a protected toolchain or scratch root.");
@@ -328,7 +317,7 @@ export function prepareCommand(
     throw new Error("Command executable has not been approved.");
   }
   const executable = realpathSync(configured);
-  if (roots.every((root) => !isWithin(executable, root))) {
+  if (roots.every((root) => !isPathWithin(root, executable))) {
     throw new Error("Command executable is outside the approved toolchain.");
   }
   if (!statSync(executable).isFile()) throw new Error("Command executable is not a file.");
@@ -339,7 +328,7 @@ export function prepareCommand(
   const binDirectories = Object.values(scope.executables).map((entry) => {
     if (!path.isAbsolute(entry)) throw new Error("Invalid approved executable path.");
     const resolved = realpathSync(entry);
-    if (roots.every((root) => !isWithin(resolved, root))) {
+    if (roots.every((root) => !isPathWithin(root, resolved))) {
       throw new Error("Approved executable lies outside its toolchain.");
     }
     return path.dirname(resolved);

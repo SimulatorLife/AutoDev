@@ -34,7 +34,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
-  mkdtempSync,
+  mkdtempDisposableSync,
   readFileSync,
   readlinkSync,
   realpathSync,
@@ -45,7 +45,8 @@ import {
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 
-import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
+import { isRecord } from "@simulatorlife/autodev-core";
+import { atomicWriteSync, pathsOverlap } from "@simulatorlife/autodev-data/files";
 import { CANONICAL_TO_MCODE_TOOL_NAMES } from "@simulatorlife/autodev-runtime/shared/tool-names";
 
 import { runRulesyncGenerate } from "./runtime-files.ts";
@@ -114,10 +115,6 @@ interface McodePermissionEntry {
   };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
 function expandHome(pattern: string, home: string): string {
   if (pattern === "~") return home;
   return pattern.startsWith("~/")
@@ -154,8 +151,8 @@ export function toMcodePermissionEntry(
   const parsed = parseClaudePermissionRule(rule);
   if (!parsed) return null;
   const { tool: claudeTool, pattern } = parsed;
-  const toolName = MCODE_TOOL_NAMES[claudeTool];
-  if (!toolName) return null;
+  if (!Object.hasOwn(MCODE_TOOL_NAMES, claudeTool)) return null;
+  const toolName = MCODE_TOOL_NAMES[claudeTool]!;
   if (pattern === undefined) {
     return { tool_name: toolName, matcher: { kind: "tool" } };
   }
@@ -277,12 +274,11 @@ export function renderMcodePermissionDocument(
 
 function generateInto(
   repositoryRoot: string,
+  outputRoot: string,
   targets: readonly string[],
   features: readonly string[]
-): string {
-  const outputRoot = mkdtempSync(
-    path.join(tmpdir(), "autodev-mcode-rulesync-")
-  );
+): void {
+  mkdirSync(outputRoot);
   runRulesyncGenerate(repositoryRoot, {
     inputRoots: [path.join(repositoryRoot, ".rulesync")],
     targets: [...targets],
@@ -290,7 +286,6 @@ function generateInto(
     outputRoots: [outputRoot],
     silent: true
   });
-  return outputRoot;
 }
 
 /**
@@ -303,13 +298,19 @@ export function renderMcodeProfileArtifacts(options: {
 }): McodeProfileArtifacts {
   const repositoryRoot = path.resolve(options.repositoryRoot);
   const home = options.home ?? process.env.HOME?.trim() ?? homedir();
-  const rulesRoot = generateInto(repositoryRoot, ["agentsmd"], ["rules"]);
-  const claudeRoot = generateInto(
-    repositoryRoot,
-    ["claudecode"],
-    ["hooks", "permissions"]
+  const temporary = mkdtempDisposableSync(
+    path.join(tmpdir(), "autodev-mcode-rulesync-")
   );
   try {
+    const rulesRoot = path.join(temporary.path, "rules");
+    const claudeRoot = path.join(temporary.path, "claude");
+    generateInto(repositoryRoot, rulesRoot, ["agentsmd"], ["rules"]);
+    generateInto(
+      repositoryRoot,
+      claudeRoot,
+      ["claudecode"],
+      ["hooks", "permissions"]
+    );
     const agentsMdPath = path.join(rulesRoot, PROFILE_INSTRUCTIONS_FILE);
     if (!existsSync(agentsMdPath)) {
       throw new Error(
@@ -340,8 +341,7 @@ export function renderMcodeProfileArtifacts(options: {
       permissionJson: renderMcodePermissionDocument(permissions, home)
     };
   } finally {
-    rmSync(rulesRoot, { recursive: true, force: true });
-    rmSync(claudeRoot, { recursive: true, force: true });
+    temporary.remove();
   }
 }
 
@@ -464,19 +464,6 @@ function resolvedProfilePath(value: string): string {
   }
 }
 
-function profilesOverlap(left: string, right: string): boolean {
-  const within = (root: string, candidate: string): boolean => {
-    const relative = path.relative(root, candidate);
-    return (
-      relative === "" ||
-      (!path.isAbsolute(relative) &&
-        relative !== ".." &&
-        !relative.startsWith(".." + path.sep))
-    );
-  };
-  return within(left, right) || within(right, left);
-}
-
 /**
  * Materialize (or verify, with `check: true`) the AutoDev-managed MiniMax
  * Code profile. Never apply its destructive reconciliation rules to the
@@ -492,8 +479,8 @@ export function materializeMcodeProfile(options: {
   const operatorProfile = path.join(home, OPERATOR_PROFILE_DIRECTORY);
   const profileDirectory = path.resolve(options.profileDirectory);
   if (
-    profilesOverlap(profileDirectory, path.resolve(operatorProfile)) ||
-    profilesOverlap(
+    pathsOverlap(profileDirectory, path.resolve(operatorProfile)) ||
+    pathsOverlap(
       resolvedProfilePath(profileDirectory),
       resolvedProfilePath(operatorProfile)
     )

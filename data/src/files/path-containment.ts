@@ -24,3 +24,10 @@ export function isPathWithin(root: string, candidate: string): boolean {
       !path.isAbsolute(relative))
   );
 }
+
+/** Equal paths or an ancestor/descendant pair overlap. Like isPathWithin,
+ * this is lexical; callers resolve physical paths when needed.
+ */
+export function pathsOverlap(left: string, right: string): boolean {
+  return isPathWithin(left, right) || isPathWithin(right, left);
+}

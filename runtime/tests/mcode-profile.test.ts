@@ -24,6 +24,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   symlinkSync,
   writeFileSync
@@ -152,6 +153,26 @@ function canonicalDenyPatterns(home: string): Set<string> {
 // ---------------------------------------------------------------------------
 // Projection correctness
 // ---------------------------------------------------------------------------
+
+test("failed RuleSync profile generation disposes its temporary output", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "autodev-mcode-failed-"));
+  const previous = process.env.TMPDIR;
+  try {
+    process.env.TMPDIR = root;
+    assert.throws(
+      () =>
+        renderMcodeProfileArtifacts({
+          repositoryRoot: path.join(root, "missing-checkout")
+        }),
+      /missing-rulesync/u
+    );
+    assert.deepEqual(readdirSync(root), []);
+  } finally {
+    if (previous === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = previous;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("the MiniMax Code profile instructions carry the canonical rules", () => {
   const artifacts = renderMcodeProfileArtifacts({
@@ -526,7 +547,14 @@ test("Claude permission rules translate into MiniMax Code's native v2 rules", ()
   // MiniMax Code matches a rule by exact tool name and cannot express
   // "every tool of one MCP server", so a server selector stays with the
   // canonical role contract.
-  assert.equal(toMcodePermissionEntry("mcp__playwright", home), null);
+  for (const unsupported of [
+    "mcp__playwright",
+    "constructor",
+    "__proto__",
+    "toString"
+  ]) {
+    assert.equal(toMcodePermissionEntry(unsupported, home), null);
+  }
 });
 
 test("canonical hook matchers are projected onto MiniMax Code's tool names", () => {

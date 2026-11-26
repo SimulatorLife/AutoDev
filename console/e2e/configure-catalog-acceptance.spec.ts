@@ -1,8 +1,6 @@
 import {
   type APIRequestContext,
   expect,
-  type Locator,
-  type Page,
   test
 } from "@playwright/test";
 
@@ -11,10 +9,6 @@ import { documentFitsViewport } from "./acceptance-helpers.ts";
 const FIXTURE_BASE_URL = `http://127.0.0.1:${process.env.AUTODEV_PLAYTEST_FIXTURE_PORT ?? "4311"}`;
 const SKILL_NAME = "code-review";
 const NOT_OBSERVED = "Not observed";
-const CONFLICT_OUTCOME = "conflict";
-const PENDING_OUTCOME = "pending";
-const SKILL_CATALOG_URL = /\/skills\?save=/u;
-const SAVE_BUTTON_NAME = /save/iu;
 const STAT_GRID = "[data-stat-grid]";
 /**
  * The live agent count, read as the label and the value it carries.
@@ -25,37 +19,9 @@ const STAT_GRID = "[data-stat-grid]";
  * shapes rather than one of them.
  */
 const ACTIVE_INSTANCES_NOT_OBSERVED = /Active instances:?\s*Not observed/u;
-const REVISION_PATTERN = /^[a-f0-9]{64}$/u;
 const SKILL_SOURCE_PATTERN = /Review a diff for defects\./u;
 const PROMPT_SOURCE_PATTERN =
   /Review the pending diff and report what changed\./u;
-const CONFLICT_MESSAGE =
-  "The execution contract changed after this page was loaded, so nothing was written.";
-
-/** The role checkbox of one skill. */
-function roleCheckbox(page: Page, role: string): Locator {
-  return page
-    .locator(`[data-skill-assignment="${SKILL_NAME}"]`)
-    .locator(`[data-skill-role-option="${role}"] input[type="checkbox"]`);
-}
-
-/**
- * One click on a role checkbox, and the page it lands on.
- *
- * The assignment control submits the whole role set the moment a checkbox
- * changes, so the click is a navigation rather than a request the page waits
- * on: the Console answers the write with a redirect back to the catalog, and
- * the outcome it reports is the only evidence of what the write did.
- */
-async function changeRoleAssignment(
-  page: Page,
-  role: string,
-  checked: boolean
-): Promise<void> {
-  const checkbox = roleCheckbox(page, role);
-  await checkbox.setChecked(checked);
-  await expect(page).toHaveURL(SKILL_CATALOG_URL);
-}
 
 /**
  * The skill assignment the fixture starts from.
@@ -123,82 +89,15 @@ test("the Agents list keeps the enabled agent apart from the one the Runtime cou
   ).toBeDisabled();
 });
 
-test("the Skills catalog shows the assignment and saves the whole role set on change", async ({
-  page,
-  request
-}) => {
+test("the Skills catalog shows read-only role assignments", async ({ page, request }) => {
   await resetSkillAssignment(request);
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/skills");
-
-  await expect(page.locator("[data-skill-source-validity]")).toHaveAttribute(
-    "data-skill-source-validity",
-    "true"
-  );
-  // The Runtime has not reported the assignment back, so the page says so
-  // rather than claiming the catalog is empty.
-  await expect(page.locator("[data-skill-runtime-observed]")).toHaveAttribute(
-    "data-skill-runtime-observed",
-    "false"
-  );
-  await expect(page.locator("[data-skill-assignment-roles]")).toHaveAttribute(
-    "data-skill-assignment-roles",
-    "2"
-  );
-  await expect(
-    page.getByRole("link", { name: SKILL_NAME, exact: true })
-  ).toBeVisible();
-  await expect(page.getByText("Review a diff for defects.")).toBeVisible();
-
-  // There is no Save button: a change saves itself.
-  await expect(
-    page.getByRole("button", { name: SAVE_BUTTON_NAME })
-  ).toHaveCount(0);
-
-  // The role set the catalog holds is the one the checkboxes show.
-  await expect(roleCheckbox(page, "default")).not.toBeChecked();
-  await expect(roleCheckbox(page, "worker")).toBeChecked();
-
-  await changeRoleAssignment(page, "default", true);
-  await expect(page.locator("[data-save-outcome]")).toHaveAttribute(
-    "data-save-outcome",
-    PENDING_OUTCOME
-  );
-  // The whole set travelled, so the role that was already assigned is still
-  // assigned and the one that was added joined it.
-  await expect(roleCheckbox(page, "default")).toBeChecked();
-  await expect(roleCheckbox(page, "worker")).toBeChecked();
-
-  await changeRoleAssignment(page, "worker", false);
-  await expect(roleCheckbox(page, "default")).toBeChecked();
-  await expect(roleCheckbox(page, "worker")).not.toBeChecked();
-});
-
-test("a stale skill assignment is refused rather than overwriting somebody else's", async ({
-  page,
-  request
-}) => {
-  await resetSkillAssignment(request);
-  await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto("/skills");
-  const revision = await page
-    .locator("[data-skill-assignment-revision]")
-    .getAttribute("data-skill-assignment-revision");
-  expect(revision).toBeTruthy();
-
-  // Another operator writes the canonical roles while this page is open, so
-  // the revision this page holds is stale.
-  const bumped = await request.post(
-    `${FIXTURE_BASE_URL}/fixture/skills/revision`
-  );
-  expect(bumped.ok()).toBe(true);
-
-  await changeRoleAssignment(page, "default", true);
-  await expect(page.locator("[data-save-outcome]")).toHaveAttribute(
-    "data-save-outcome",
-    CONFLICT_OUTCOME
-  );
-  await expect(page.getByText(CONFLICT_MESSAGE)).toBeVisible();
+  await expect(page.locator("[data-skill-source-validity]")).toHaveAttribute("data-skill-source-validity", "true");
+  const row = page.getByRole("row").filter({ has: page.getByRole("link", { name: SKILL_NAME, exact: true }) });
+  await expect(row.getByText("worker", { exact: true })).toBeVisible();
+  await expect(row.locator('input[type="checkbox"]')).toHaveCount(0);
+  await expect(page.locator('form[method="POST"]')).toHaveCount(0);
 });
 
 test("the Hooks list shows the declaration it read", async ({ page }) => {
@@ -225,22 +124,10 @@ test("the Hooks list shows the declaration it read", async ({ page }) => {
   // and once in the projection the Runtime published, so the assertion names
   // the declaration's own row rather than the text.
   await expect(page.locator('[data-hook-event="preToolUse"]')).toBeVisible();
-  // The declaration is edited, so its matcher and its command are the editor's
-  // fields rather than prose. The assertion reads them the way an operator
-  // reads them: by what the field holds. Every event carries its own action,
-  // so the fields are read inside the event's own panel.
   const declared = page.locator('[data-hook-event="preToolUse"]');
-  await expect(
-    declared.locator('[data-hook-action="0"]').getByText("Matcher", {
-      exact: true
-    })
-  ).toBeVisible();
-  await expect(declared.locator('[data-hook-action-matcher="0"]')).toHaveValue(
-    "Bash"
-  );
-  await expect(declared.locator('[data-hook-action-command="0"]')).toHaveValue(
-    "echo guarded"
-  );
+  await expect(declared.getByText("Bash", { exact: true })).toBeVisible();
+  await expect(declared.getByLabel("Hook command")).toHaveText("echo guarded");
+  await expect(declared.locator("form, input, textarea")).toHaveCount(0);
   expect(await documentFitsViewport(page)).toBe(true);
 });
 
@@ -318,68 +205,34 @@ test("the agent detail shows the agent's own configuration and its convergence",
   expect(await documentFitsViewport(page)).toBe(true);
 });
 
-test("the skill detail is the canonical source, edited against the revision it loaded", async ({
-  page
-}) => {
-  await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto("/skills/code-review");
-
-  await expect(page.locator("[data-skill-content]")).toHaveAttribute(
-    "data-skill-content",
-    SKILL_NAME
-  );
-  const revision = await page
-    .locator("[data-skill-revision]")
-    .getAttribute("data-skill-revision");
-  expect(revision).toMatch(REVISION_PATTERN);
-  if (revision === null) {
-    throw new Error("The skill detail carries no source revision.");
-  }
-
-  // The editor carries the source the page loaded, and the revision it was
-  // loaded at, so a write can be checked against it.
-  const editor = page.locator("[data-skill-content-editor]");
-  await expect(editor).toHaveValue(SKILL_SOURCE_PATTERN);
-  // The write is a compare-and-swap, so the form carries the revision this
-  // page loaded rather than one it read at submit time.
-  await expect(page.locator('input[name="expectedRevision"]')).toHaveValue(
-    revision
-  );
-  await expect(
-    page.getByRole("heading", { name: "Canonical RuleSync source" })
-  ).toBeVisible();
-  expect(await documentFitsViewport(page)).toBe(true);
-});
-
-test("the prompt detail shows the canonical source beside its rendered preview", async ({
-  page
-}) => {
-  await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto("/prompts/review");
-
-  // The editor carries the canonical source the page loaded.
-  await expect(page.locator('[data-prompt-content="observed"]')).toHaveValue(
-    PROMPT_SOURCE_PATTERN
-  );
-  // The write is a compare-and-swap, so the form carries the revision this
-  // page loaded and the page reports that same revision.
-  const expectedRevision = page.locator('input[name="expectedRevision"]');
-  await expect(expectedRevision).toHaveValue(REVISION_PATTERN);
-  const revision = (await expectedRevision.getAttribute("value")) ?? "";
-  await expect(page.getByText(`rev ${revision.slice(0, 12)}`)).toBeVisible();
-  // The rendered preview is a disclosure, so it is opened rather than
-  // asserted to be on the page.
-  await page.getByText("Preview rendered Markdown").click();
-  await expect(
-    page.locator('[data-prompt-preview-body="observed"]')
-  ).toBeVisible();
-  await expect(
-    page
-      .locator('[data-prompt-preview-body="observed"]')
-      .getByText("Review the pending diff and report what changed.")
-  ).toBeVisible();
-  expect(await documentFitsViewport(page)).toBe(true);
-});
+for (const { path, pattern } of [
+  { path: "/skills/code-review", pattern: SKILL_SOURCE_PATTERN },
+  { path: "/prompts/review", pattern: PROMPT_SOURCE_PATTERN }
+]) {
+  test(`${path} switches between the same rendered and source document without mutation`, async ({ page }) => {
+    const mutations: string[] = [];
+    page.on("request", (request) => {
+      if (request.url().includes("/api/") && request.method() !== "GET") mutations.push(request.url());
+    });
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(path);
+    const view = page.locator("[data-source-view]");
+    await expect(view).toHaveAttribute("data-source-view", "rendered");
+    await expect(view.getByRole("button", { name: "Rendered", exact: true })).toHaveAttribute("aria-pressed", "true");
+    const url = page.url();
+    const source = view.getByRole("button", { name: "Source", exact: true });
+    await source.click();
+    await expect(view).toHaveAttribute("data-source-view", "source");
+    await expect(view.getByLabel("Canonical source")).toHaveText(pattern);
+    await expect(source).toBeFocused();
+    await view.getByRole("button", { name: "Rendered", exact: true }).click();
+    await expect(view.locator("[data-source-rendered]")).toBeVisible();
+    await expect(page.locator("textarea, form[method=POST]")).toHaveCount(0);
+    expect(page.url()).toBe(url);
+    expect(mutations).toEqual([]);
+    expect(await documentFitsViewport(page)).toBe(true);
+  });
+}
 
 test("the Permissions list shows the policy and the role capability matrix", async ({
   page
@@ -387,17 +240,11 @@ test("the Permissions list shows the policy and the role capability matrix", asy
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/permissions");
 
-  // The policy is the one the canonical source declares, not a default, and
-  // each of its settings is a control that shows that value.
-  await expect(
-    page.locator("[data-permission-policy-approval-policy]")
-  ).toHaveValue("on-request");
-  await expect(page.locator("[data-permission-policy-web-search]")).toHaveValue(
-    "false"
-  );
-  await expect(
-    page.locator("[data-permission-policy-approvals-reviewer]")
-  ).toHaveValue("operator");
+  const policy = page.getByRole("region", { name: "Permission Policy" });
+  await expect(policy.getByText("on-request", { exact: true })).toBeVisible();
+  await expect(policy.getByText("Disabled", { exact: true })).toBeVisible();
+  await expect(policy.getByText("operator", { exact: true })).toBeVisible();
+  await expect(policy.locator("form, input, select, textarea")).toHaveCount(0);
 
   // The capability matrix is a real projection: a role's reach into an MCP
   // server is not permission to call everything on it.

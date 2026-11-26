@@ -5,12 +5,9 @@ import type {
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
-import { CodeBlock, CodeEditor } from "../../components/code/CodeBlock.ts";
-import { Button } from "../../components/forms/Button.ts";
-import {
-  CALLOUT_ERROR_CLASS,
-  CALLOUT_WARNING_CLASS
-} from "../../components/layout/Callout.ts";
+import { CodeBlock } from "../../components/code/CodeBlock.ts";
+import { SourceView } from "../../components/code/SourceView.ts";
+import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import {
   ENTITY_EYEBROW_CLASS,
   EntityTitle,
@@ -32,20 +29,10 @@ import {
   MONO_META_CLASS,
   MUTED_BODY_CLASS,
   MUTED_META_CLASS,
-  MUTED_TEXT_CLASS,
-  SECTION_LABEL_CLASS
+  MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
 import type { PromptHistoryState } from "./history-state.ts";
 import { PromptMarkdown } from "./prompt-markdown.ts";
-import { PromptSourcePreview } from "./prompt-source-preview.ts";
-
-/**
- * The id of the canonical source editor.
- *
- * The preview island reads the editor's unsaved text out of the document, so
- * the two have to name the same control.
- */
-const PROMPT_EDITOR_ID = "prompt-content";
 
 export type PromptSaveOutcome =
   "conflict" | "validation" | "apply-failed" | "failed";
@@ -55,8 +42,7 @@ export interface PromptDetailViewProps {
   /**
    * Desired-vs-actual state the Runtime derived for this resource. The detail
    * payload always carries it (the v4 contract requires it); it is surfaced here
-   * because an operator editing canonical source needs to see whether the
-   * projection has actually caught up, not just whether the save returned.
+   * to distinguish the current source from its observed projection.
    */
   readonly reconciliation: ControlApiPromptDetailResponse["reconciliation"];
   readonly history: PromptHistoryState;
@@ -73,146 +59,6 @@ export interface PromptDetailViewProps {
    * stale edit with the revision the source has moved to.
    */
   readonly editorRevision?: string | undefined;
-}
-
-function saveOutcomeMessage(outcome: PromptSaveOutcome): string {
-  switch (outcome) {
-    case "conflict": {
-      return "This command changed after you loaded it, so your edit was not saved. Reload the editor to start from the current source; a save from this page would be refused.";
-    }
-    case "validation": {
-      return "The canonical command was not updated because its source is invalid. Review the frontmatter and try again.";
-    }
-    case "apply-failed": {
-      return "The canonical source was saved, but RuleSync generation or projection apply failed. The editor shows the current source; verify it before retrying.";
-    }
-    case "failed": {
-      return "The save and apply result could not be confirmed. Reload the canonical source before retrying.";
-    }
-  }
-  return "The save and apply result could not be confirmed.";
-}
-
-function renderSaveOutcome(
-  outcome: PromptSaveOutcome | undefined
-): React.ReactNode {
-  if (!outcome) return null;
-  const className =
-    outcome === "conflict" || outcome === "validation"
-      ? CALLOUT_WARNING_CLASS
-      : CALLOUT_ERROR_CLASS;
-  return React.createElement(
-    "p",
-    { className, role: "alert", "data-prompt-save-outcome": outcome },
-    saveOutcomeMessage(outcome)
-  );
-}
-
-function renderPromptSource(
-  prompt: PromptDocument,
-  editorRevision: string | undefined
-): React.ReactNode {
-  if (prompt.kind === "command") {
-    return React.createElement(
-      "form",
-      {
-        method: "POST",
-        action: `/api/prompts/${encodeURIComponent(prompt.name)}`,
-        className: "flex flex-col gap-3",
-        "aria-label": `Edit command ${prompt.name}`
-      },
-      React.createElement("input", {
-        type: "hidden",
-        name: "expectedRevision",
-        value: editorRevision ?? prompt.revision
-      }),
-      React.createElement(
-        "label",
-        { htmlFor: PROMPT_EDITOR_ID, className: "sr-only" },
-        "Canonical Markdown source"
-      ),
-      React.createElement(CodeEditor, {
-        id: PROMPT_EDITOR_ID,
-        name: "content",
-        defaultValue: prompt.content,
-        ariaLabel: "Canonical Markdown source",
-        dataAttributes: {
-          "data-prompt-content":
-            prompt.content.length === 0 ? "empty" : "observed"
-        }
-      }),
-      React.createElement(PromptSourcePreview, {
-        name: prompt.name,
-        editorId: PROMPT_EDITOR_ID
-      }),
-      React.createElement(
-        "div",
-        { className: "flex flex-wrap items-center justify-between gap-3" },
-        React.createElement(
-          "p",
-          { className: `max-w-2xl ${MUTED_META_CLASS}` },
-          "Saving validates the canonical RuleSync command, regenerates and applies the Codex prompt projection, and may require restarting Codex to load changed prompt files."
-        ),
-        React.createElement(
-          Button,
-          {
-            type: "submit",
-            variant: "primary",
-            testId: "prompt-save"
-          },
-          "Save & Apply"
-        )
-      )
-    );
-  }
-
-  if (prompt.content.length === 0) {
-    return React.createElement(
-      "p",
-      {
-        className: MUTED_BODY_CLASS,
-        "data-prompt-content": "empty"
-      },
-      "The canonical source file is empty."
-    );
-  }
-
-  return React.createElement(CodeBlock, {
-    content: prompt.content,
-    height: "primary",
-    dataAttributes: { "data-prompt-content": "observed" }
-  });
-}
-
-function renderPromptPreview(prompt: PromptDocument): React.ReactNode {
-  return React.createElement(
-    "details",
-    {
-      className: NESTED_PANEL_CLASS,
-      "data-prompt-preview": "markdown"
-    },
-    React.createElement(
-      "summary",
-      {
-        className: `cursor-pointer font-semibold ${SECTION_LABEL_CLASS}`
-      },
-      "Preview rendered Markdown"
-    ),
-    prompt.preview.length > 0
-      ? React.createElement(
-          "div",
-          { className: "mt-4", "data-prompt-preview-body": "observed" },
-          React.createElement(PromptMarkdown, { body: prompt.preview })
-        )
-      : React.createElement(
-          "p",
-          {
-            className: `mt-4 ${MUTED_BODY_CLASS}`,
-            "data-prompt-preview-body": "empty"
-          },
-          "The canonical Markdown body is empty."
-        )
-  );
 }
 
 /**
@@ -483,9 +329,7 @@ export function PromptDetailView({
   reconciliation,
   history,
   selectedVersion,
-  versionSelectionError,
-  saveOutcome,
-  editorRevision
+  versionSelectionError
 }: PromptDetailViewProps): React.JSX.Element {
   const lineCount = prompt.content ? prompt.content.split("\n").length : 0;
   const characterCount = prompt.content ? prompt.content.length : 0;
@@ -629,7 +473,6 @@ export function PromptDetailView({
         )
       )
     ),
-    renderSaveOutcome(saveOutcome),
     React.createElement(
       "section",
       {
@@ -651,12 +494,8 @@ export function PromptDetailView({
       "section",
       {
         className: DETAIL_PANEL_CLASS,
-        "aria-label":
-          prompt.kind === "command"
-            ? "Prompt source editor"
-            : "Prompt source preview",
-        "data-prompt-editor":
-          prompt.kind === "command" ? "canonical" : "read-only"
+        "aria-label": "Canonical prompt source",
+        "data-prompt-source": "read-only"
       },
       React.createElement(
         "div",
@@ -664,9 +503,7 @@ export function PromptDetailView({
         React.createElement(
           "h3",
           { className: SECTION_HEADING_CLASS },
-          prompt.kind === "command"
-            ? "Edit Canonical Markdown Source"
-            : "Canonical Markdown Source"
+          "Canonical Markdown Source"
         ),
         React.createElement(
           "span",
@@ -680,9 +517,14 @@ export function PromptDetailView({
           prompt.path
         )
       ),
-      renderPromptSource(prompt, editorRevision)
+      React.createElement(SourceView, {
+        source: prompt.content,
+        format: "Source",
+        rendered: prompt.preview.length > 0
+          ? React.createElement(PromptMarkdown, { body: prompt.preview })
+          : React.createElement("p", { className: MUTED_BODY_CLASS }, "The canonical Markdown body is empty.")
+      })
     ),
-    renderPromptPreview(prompt),
     renderPromptHistory(
       prompt,
       history,

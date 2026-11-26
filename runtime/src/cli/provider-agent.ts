@@ -13,6 +13,7 @@ import {
 import { homedir } from "node:os";
 import path from "node:path";
 
+import { isPathWithin } from "@simulatorlife/autodev-data/files";
 import {
   parseTomlFile,
   type TomlTable,
@@ -159,15 +160,7 @@ function resolveAnalystCodexHomes(
       "Playtest analyst dispatch requires isolated absolute HOME and CODEX_HOME paths."
     );
   }
-  const relativeCodexHome = path.relative(
-    path.resolve(requestedHome),
-    path.resolve(requestedCodexHome)
-  );
-  if (
-    relativeCodexHome === ".." ||
-    relativeCodexHome.startsWith(`..${path.sep}`) ||
-    path.isAbsolute(relativeCodexHome)
-  ) {
+  if (!isPathWithin(requestedHome, requestedCodexHome)) {
     throw new Error(
       "The playtest analyst CODEX_HOME must be inside its isolated HOME."
     );

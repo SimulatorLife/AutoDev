@@ -10,6 +10,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 import { isRecord } from "@simulatorlife/autodev-core";
+import { pathsOverlap } from "@simulatorlife/autodev-data/files";
 import { parse as parseToml } from "smol-toml";
 
 const MAX_BINDING_FILE_BYTES = 32 * 1024;
@@ -234,17 +235,6 @@ function configuredWorkspaces(
     });
   }
   return { ok: true, workspaces };
-}
-
-function pathsOverlap(left: string, right: string): boolean {
-  const leftToRight = path.relative(left, right);
-  const rightToLeft = path.relative(right, left);
-  const isWithin = (relative: string): boolean =>
-    relative === "" ||
-    (relative !== ".." &&
-      !relative.startsWith(`..${path.sep}`) &&
-      !path.isAbsolute(relative));
-  return isWithin(leftToRight) || isWithin(rightToLeft);
 }
 
 function isErrorCode(error: unknown, code: string): boolean {

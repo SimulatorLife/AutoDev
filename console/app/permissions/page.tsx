@@ -2,11 +2,9 @@ import type { Metadata } from "next";
 import React from "react";
 
 import {
-  permissionPolicySaveOutcomeFromQuery,
   PERMISSIONS_PATH,
   PermissionsView
 } from "../../src/features/permissions/index.ts";
-import { editorBaseRevisionFromQuery } from "../../src/lib/server/canonical-source.ts";
 import {
   controlApiFailureCode,
   fetchPermissions
@@ -25,16 +23,7 @@ export const metadata: Metadata = {
   title: "Permissions"
 };
 
-export default async function PermissionsPage({
-  searchParams
-}: {
-  readonly searchParams?: Promise<
-    Record<string, string | string[] | undefined>
-  >;
-}): Promise<React.JSX.Element> {
-  const resolvedSearchParams = searchParams
-    ? await searchParams
-    : ({} as Record<string, string | string[] | undefined>);
+export default async function PermissionsPage(): Promise<React.JSX.Element> {
   const { section, config } = readNodeContext(PERMISSIONS_PATH);
   if (!config) {
     return React.createElement(
@@ -65,13 +54,6 @@ export default async function PermissionsPage({
     roleMatrices,
     executionContractObserved
   } = permissionsFromControlApi(result.data);
-  const saveOutcome = permissionPolicySaveOutcomeFromQuery(
-    resolvedSearchParams.save
-  );
-  // A refused write leaves the control based on the revision it was filled
-  // from, so the operator's edit is not silently paired with a policy that
-  // has since moved.
-  const basedOn = editorBaseRevisionFromQuery(resolvedSearchParams.based);
   return React.createElement(
     ConsolePageShell,
     {
@@ -87,12 +69,11 @@ export default async function PermissionsPage({
       policy,
       policyStatus,
       policyReason,
-      revision: basedOn ?? revision,
+      revision,
       applied,
       appliedSource,
       roleMatrices,
-      executionContractObserved,
-      ...(saveOutcome === undefined ? {} : { saveOutcome })
+      executionContractObserved
     })
   );
 }

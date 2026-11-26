@@ -2,11 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import React from "react";
 
-import {
-  skillContentSaveOutcome,
-  SkillDetailView
-} from "../../../src/features/skills/SkillDetailView.ts";
-import { editorBaseRevisionFromQuery } from "../../../src/lib/server/canonical-source.ts";
+import { SkillDetailView } from "../../../src/features/skills/SkillDetailView.ts";
 import {
   controlApiFailureCode,
   fetchSkillContent,
@@ -32,21 +28,11 @@ export async function generateMetadata({
 }
 
 export default async function SkillDetailPage({
-  params,
-  searchParams
+  params
 }: {
   readonly params: Promise<{ readonly name: string }>;
-  readonly searchParams?: Promise<
-    Record<string, string | readonly string[] | undefined>
-  >;
 }): Promise<React.JSX.Element> {
-  const [{ name }, query] = await Promise.all([
-    params,
-    searchParams ??
-      Promise.resolve(
-        {} as Record<string, string | readonly string[] | undefined>
-      )
-  ]);
+  const { name } = await params;
   const { section, config } = readNodeContext("/skills");
   if (!config) {
     return React.createElement(
@@ -83,21 +69,12 @@ export default async function SkillDetailPage({
         ) ?? null)
       : null;
 
-  const saveOutcome = skillContentSaveOutcome(query.save);
-  // The editor writes against the revision its content is based on. A refused
-  // write leaves the browser holding the operator's edit, so the page keeps
-  // the revision that edit was written for rather than the revision the
-  // source has moved to.
-  const editorRevision =
-    editorBaseRevisionFromQuery(query.based) ?? result.data.revision;
   return React.createElement(
     ConsolePageShell,
     { section },
     React.createElement(SkillDetailView, {
       source: result.data,
-      editorRevision,
-      scopedSkill,
-      ...(saveOutcome ? { saveOutcome } : {})
+      scopedSkill
     })
   );
 }

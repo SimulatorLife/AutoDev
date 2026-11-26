@@ -1059,16 +1059,21 @@ function checkCommandCatalogueApproval(
   paths: RunInstallPaths,
   failures: { value: number }
 ): void {
-  const approval = commandCatalogueApproval(
-    paths.repositoryRoot,
-    autodevHome(process.env, paths.home)
-  );
-  if (approval.state === "approved") {
-    writeLine(`ok approved command catalogue ${approval.proposedDigest}`);
-    return;
+  const homes = new Set([
+    path.resolve(paths.codexHome),
+    path.resolve(autodevHome(process.env, paths.home))
+  ]);
+  for (const home of homes) {
+    const approval = commandCatalogueApproval(paths.repositoryRoot, home);
+    if (approval.state === "approved") {
+      writeLine(
+        `ok approved command catalogue ${approval.proposedDigest} in ${approval.approvedPath}`
+      );
+      continue;
+    }
+    writeLine(`pending ${pendingCommandCatalogueMessage(approval)}`);
+    failures.value = 1;
   }
-  writeLine(`pending ${pendingCommandCatalogueMessage(approval)}`);
-  failures.value = 1;
 }
 
 function checkMcodeProfile(

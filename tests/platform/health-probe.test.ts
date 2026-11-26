@@ -82,7 +82,8 @@ test("the probe keeps its own request bound even when a caller supplies a signal
   // be something a caller's options can drop.
   const stub = stubFetch(() => ({ ok: true }));
   try {
-    const callerSignal = new AbortController().signal;
+    const controller = new AbortController();
+    const callerSignal = controller.signal;
     const probe = httpHealthProbe("http://127.0.0.1:1/health", {
       signal: callerSignal
     });
@@ -90,6 +91,43 @@ test("the probe keeps its own request bound even when a caller supplies a signal
     const signal = stub.calls[0]?.init.signal;
     assert.ok(signal, "a probe must always carry a timeout signal");
     assert.notEqual(signal, callerSignal);
+    controller.abort();
+    assert.equal(signal.aborted, true);
+  } finally {
+    stub.restore();
+  }
+});
+
+test("a cancelled caller does not start a health request", async () => {
+  const stub = stubFetch(() => ({ ok: true }));
+  try {
+    const controller = new AbortController();
+    controller.abort();
+    const probe = httpHealthProbe("http://127.0.0.1:1/health", {
+      signal: controller.signal
+    });
+    assert.equal(await probe(), false);
+    assert.equal(stub.calls.length, 0);
+  } finally {
+    stub.restore();
+  }
+});
+
+test("a health probe refuses redirects and cancels its unread body", async () => {
+  let cancelled = false;
+  const body = new ReadableStream({
+    cancel() {
+      cancelled = true;
+    }
+  });
+  const stub = stubFetch(() => new Response(body));
+  try {
+    const probe = httpHealthProbe("http://127.0.0.1:1/health", {
+      redirect: "follow"
+    });
+    assert.equal(await probe(), true);
+    assert.equal(stub.calls[0]?.init.redirect, "error");
+    assert.equal(cancelled, true);
   } finally {
     stub.restore();
   }

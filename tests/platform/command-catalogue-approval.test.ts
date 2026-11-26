@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import {
+  chmodSync,
   copyFileSync,
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -100,6 +103,55 @@ test("an agent's edit to the checkout catalogue is not approved by a reinstall",
       assert.notEqual(result.proposedDigest, original);
       assert.deepEqual(readFileSync(approvedCommandCataloguePath(home)), approvedBefore);
     }
+  } finally {
+    cleanup();
+  }
+});
+
+test("approval status uses the backend's protected-file requirements", () => {
+  const { checkout, home, cleanup } = fixture();
+  try {
+    const proposed = commandCatalogueApproval(checkout, home).proposedDigest;
+    applyCommandCatalogueApproval(checkout, home, { approvedDigest: proposed });
+    const approved = approvedCommandCataloguePath(home);
+    chmodSync(approved, 0o666);
+    assert.equal(commandCatalogueApproval(checkout, home).state, "pending");
+    assert.equal(commandCatalogueApproval(checkout, home).approvedDigest, null);
+    chmodSync(approved, 0o644);
+    const alias = path.join(home, "alias.json");
+    linkSync(approved, alias);
+    assert.equal(commandCatalogueApproval(checkout, home).approvedDigest, null);
+    rmSync(alias);
+    assert.equal(commandCatalogueApproval(checkout, home).state, "approved");
+  } finally {
+    cleanup();
+  }
+});
+
+test("explicit approval cannot overwrite a symlink target", () => {
+  const { checkout, home, cleanup } = fixture();
+  try {
+    const proposed = commandCatalogueApproval(checkout, home).proposedDigest;
+    const approved = approvedCommandCataloguePath(home);
+    const outside = path.join(checkout, "unrelated.json");
+    writeFileSync(outside, "untouched");
+    mkdirSync(path.dirname(approved));
+    symlinkSync(outside, approved);
+    assert.equal(commandCatalogueApproval(checkout, home).approvedDigest, null);
+    assert.throws(
+      () => applyCommandCatalogueApproval(checkout, home, { approvedDigest: proposed }),
+      /symbolic link/u
+    );
+    assert.equal(readFileSync(outside, "utf8"), "untouched");
+    rmSync(path.dirname(approved), { recursive: true, force: true });
+    symlinkSync(path.join(checkout, "config"), path.dirname(approved));
+    // Even matching bytes through a redirected parent do not establish
+    // an approved installed revision.
+    assert.equal(commandCatalogueApproval(checkout, home).approvedDigest, null);
+    assert.throws(
+      () => applyCommandCatalogueApproval(checkout, home, { approvedDigest: proposed }),
+      /symbolic link/u
+    );
   } finally {
     cleanup();
   }

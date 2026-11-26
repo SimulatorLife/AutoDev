@@ -23,7 +23,8 @@ import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import { parseCommandCatalogue } from "../mcp/commands-catalogue.ts";
 import {
   APPROVED_CATALOGUE_FILE,
-  catalogueDigest
+  catalogueDigest,
+  readApprovedCatalogue
 } from "../mcp/commands-main.ts";
 
 /**
@@ -91,11 +92,22 @@ function approvalOf(
 
 function readApprovedDigest(approvedPath: string): string | null {
   try {
-    if (!lstatSync(approvedPath).isFile()) return null;
-    return catalogueDigest(readFileSync(approvedPath, "utf8"));
+    const content = readApprovedCatalogue(approvedPath);
+    parseCommandCatalogue(JSON.parse(content));
+    return catalogueDigest(content);
   } catch {
     return null;
   }
+}
+
+/**
+The digest of the approved catalogue installed in a Runtime home -- the
+revision its Commands MCP serves -- or null when it has none it would accept.
+*/
+export function installedCommandCatalogueDigest(
+  runtimeHome: string
+): string | null {
+  return readApprovedDigest(approvedCommandCataloguePath(runtimeHome));
 }
 
 /**
@@ -125,6 +137,21 @@ export function applyCommandCatalogueApproval(
   const current = approvalOf(proposed, runtimeHome);
   if (current.state === "approved") return current;
   if (approvedDigest?.trim() !== current.proposedDigest) return current;
+  // write-file-atomic resolves an existing target's realpath. Never let
+  // approval write through a symlink, even when the digest is explicit.
+  // The installed parent is owned by the trusted installer.
+  for (const candidate of [
+    path.dirname(current.approvedPath),
+    current.approvedPath
+  ]) {
+    try {
+      if (lstatSync(candidate).isSymbolicLink()) {
+        throw new Error("Refusing command catalogue approval through a symbolic link.");
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
   atomicWriteSync(current.approvedPath, proposed, { mode: 0o644 });
   return approvalOf(proposed, runtimeHome);
 }
@@ -136,7 +163,7 @@ export function pendingCommandCatalogueMessage(
   approval: CommandCatalogueApproval
 ): string {
   return [
-    `Command catalogue revision ${approval.proposedDigest} is not approved; the Commands MCP keeps serving ${approval.approvedDigest ?? "no catalogue (it refuses to start)"}.`,
+    `Command catalogue revision ${approval.proposedDigest} is not approved in ${approval.approvedPath}; the Commands MCP there keeps serving ${approval.approvedDigest ?? "no catalogue (it refuses to start)"}.`,
     `Review config/commands.json, then approve exactly this revision by rerunning the installer with ${APPROVE_COMMAND_CATALOGUE_FLAG}=${approval.proposedDigest}.`
   ].join("\n");
 }

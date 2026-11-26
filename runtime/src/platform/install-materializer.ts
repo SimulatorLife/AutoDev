@@ -2223,6 +2223,29 @@ export function ensureCodexAppMcpServerEnabled(codexHome: string): void {
   writeFileSync(sentinelPath, JSON.stringify(sentinel, null, 2) + "\n", "utf8");
 }
 
+/**
+Install the approved command catalogue in every Runtime home that runs a
+Commands MCP: the AutoDev home serves provider sessions, the Codex home the
+ChatGPT gateway. It lives beside the execution contract, in the Runtime's own
+configuration, outside every workspace. The checkout's copy is only a
+proposal: it replaces the approved one only when the operator approved exactly
+that revision (command-catalogue-approval.ts).
+*/
+function approveCommandCatalogue(
+  options: MaterializeOptions,
+  runtimeHomes: readonly string[]
+): void {
+  const pending = Array.from(
+    new Set(runtimeHomes.map((home) => path.resolve(home))),
+    (home) =>
+      applyCommandCatalogueApproval(options.repositoryRoot, home, {
+        approvedDigest: options.approvedCommandCatalogue
+      })
+  ).filter((approval) => approval.state === "pending");
+  for (const approval of pending)
+    writeErrorLine(pendingCommandCatalogueMessage(approval));
+}
+
 export function materializeInstallation(options: MaterializeOptions): void {
   const hooks = path.join(options.codexHome, "hooks"),
     rules = path.join(options.codexHome, "rules"),
@@ -2311,19 +2334,9 @@ export function materializeInstallation(options: MaterializeOptions): void {
       path.join(autodevHome, "config", "execution-contract.json"),
       0o644
     );
-    // The approved command catalogue lives beside the execution contract, in
-    // the Runtime's own configuration, outside every workspace. The checkout's
-    // copy is only a proposal: it replaces the approved one only when the
-    // operator approved exactly that revision (command-catalogue-approval.ts).
-    const approval = applyCommandCatalogueApproval(
-      options.repositoryRoot,
-      autodevHome,
-      { approvedDigest: options.approvedCommandCatalogue }
-    );
-    if (approval.state === "pending")
-      writeErrorLine(pendingCommandCatalogueMessage(approval));
     prepareRunLogs(autodevHome);
   }
+  approveCommandCatalogue(options, [options.codexHome, autodevHome]);
   // The MiniMax Code provider runs against the profile in the AutoDev home,
   // wherever that home is, so the profile is materialized either way.
   materializeMcodeProfile({

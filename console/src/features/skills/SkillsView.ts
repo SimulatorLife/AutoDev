@@ -9,10 +9,7 @@ import React from "react";
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { FilterBar } from "../../components/filters/FilterBar.ts";
 import { AutoSubmitSelectField } from "../../components/forms/AutoSubmitSelectField.ts";
-import {
-  CALLOUT_ERROR_CLASS,
-  CALLOUT_WARNING_CLASS
-} from "../../components/layout/Callout.ts";
+import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
@@ -32,7 +29,6 @@ import {
 import { PathText } from "../../components/tables/PathText.ts";
 import {
   ACTION_LINK_CLASS,
-  MONO_META_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
 import {
@@ -41,12 +37,7 @@ import {
   skillScopePlace
 } from "./skill-scope.ts";
 import type { SkillObservation, SkillTelemetry } from "./skill-telemetry.ts";
-import {
-  assignmentUnavailableReason,
-  SAVE_OUTCOME_MESSAGES,
-  type SkillAssignmentSaveOutcome
-} from "./SkillRoleAssignment.ts";
-import { SkillRoleAssignmentControl } from "./SkillRoleAssignmentControl.ts";
+import type { SkillAssignmentSaveOutcome } from "./SkillRoleAssignment.ts";
 import {
   filterSkills,
   SKILLS_LIST_PATH,
@@ -65,10 +56,7 @@ import {
  * catalogue and installed nowhere is a configuration defect, so the page says
  * so instead of listing it as though it were live.
  *
- * The catalog table and role assignment controls are merged into one view:
- * each row displays its identity and metadata alongside its assignment control.
- * Checkbox changes submit immediately through the canonical FormNavigationOwner
- * POST route with expectedRevision conflict protection.
+ * The catalogue and role assignments are a single read-only view.
  */
 
 export interface SkillsViewProps {
@@ -112,7 +100,7 @@ export interface SkillsViewProps {
    * it falls back to an empty contract when the read fails: an empty contract
    * and a contract nobody read look the same to a caller that only sees the
    * roles. They are not the same claim, and the card that counts the
-   * assignments -- and the roles an assignment form may offer -- depend on
+   * assignments -- and the roles the filter may offer -- depend on
    * which one it was.
    */
   readonly executionContractObserved: boolean;
@@ -124,29 +112,6 @@ export interface SkillsViewProps {
    * leaving it out rather than by passing an empty string.
    */
   readonly role?: string | undefined;
-}
-
-function skillAssignmentSaveNotice(
-  saveOutcome: SkillAssignmentSaveOutcome | undefined
-): React.JSX.Element | null {
-  if (saveOutcome === undefined) return null;
-  const isUnconfirmed =
-    saveOutcome === "failed" ||
-    saveOutcome === "pending" ||
-    saveOutcome === "not-observed" ||
-    saveOutcome === "unconfirmed";
-  return React.createElement(
-    "p",
-    {
-      className: isUnconfirmed ? CALLOUT_WARNING_CLASS : CALLOUT_ERROR_CLASS,
-      role: isUnconfirmed ? "status" : "alert",
-      "data-testid": isUnconfirmed
-        ? "skill-assignment-status"
-        : "skill-assignment-failure",
-      "data-save-outcome": saveOutcome
-    },
-    SAVE_OUTCOME_MESSAGES[saveOutcome]
-  );
 }
 
 /**
@@ -333,7 +298,6 @@ export function SkillsView({
   executionContractRevision,
   telemetry,
   executionContractObserved,
-  saveOutcome,
   role = ""
 }: SkillsViewProps): React.JSX.Element {
   const catalogNames = new Set(skills.map((skill) => skill.name));
@@ -383,12 +347,6 @@ export function SkillsView({
 
   const emptyMessage = skillEmptyMessage(sourceValidity, isNarrowed);
 
-  const unavailable = assignmentUnavailableReason({
-    executionContractRevision,
-    assignmentRoles,
-    skills,
-    sourceValidity
-  });
   const columns: ColumnDef<DataTableFeatures, ScopedSkillDefinition>[] = [
     {
       id: "name",
@@ -474,31 +432,13 @@ export function SkillsView({
       header: "Eligible Roles",
       cell: ({ row: { original: skill } }) => {
         const item = eligibility.find((e) => e.skill === skill.name);
-        if (executionContractRevision === null) {
-          return chipList({
-            items: [],
-            emptyLabel: NOT_OBSERVED_LABEL,
-            testId: "skill-roles"
-          });
-        }
-        if (unavailable !== null) {
-          return chipList({
-            items: item?.roles ?? [],
-            emptyLabel:
-              item === undefined ? NOT_OBSERVED_LABEL : "No roles assigned",
-            testId: "skill-roles"
-          });
-        }
-        return React.createElement(SkillRoleAssignmentControl, {
-          skill,
-          roles: item?.roles ?? [],
-          assignmentRoles,
-          executionContractRevision,
-          isObserved: item !== undefined,
-          // The narrowing travels on the assignment's action, so the redirect
-          // back from the POST lands the operator on the list they narrowed
-          // rather than on all sixteen rows.
-          listRole: listFilters.role
+        return chipList({
+          items: executionContractObserved && executionContractRevision !== null ? item?.roles ?? [] : [],
+          emptyLabel:
+            !executionContractObserved || executionContractRevision === null || item === undefined
+              ? NOT_OBSERVED_LABEL
+              : "No roles assigned",
+          testId: "skill-roles"
         });
       },
       meta: {
@@ -613,13 +553,6 @@ export function SkillsView({
         {
           label: "Skill filters",
           action: SKILLS_LIST_PATH,
-          // No submit button, and that is the point rather than an omission.
-          // Every control on this page applies the moment it changes -- a role
-          // assignment saves itself -- and a "Save" button beside them would
-          // be a second way to do the same thing, and one an operator could
-          // walk past believing the change had not been written. So the bar
-          // takes the shared primitive's on-change mode, whose single-choice
-          // control is exactly a role.
           submitMode: "on-change",
           // The count of what is in view belongs to the filter that narrowed
           // it, and only when something was narrowed: an unfiltered catalogue
@@ -650,27 +583,12 @@ export function SkillsView({
         },
         "Agent Skills"
       ),
-      skillAssignmentSaveNotice(saveOutcome),
-      unavailable === null
-        ? null
-        : React.createElement(
-            "p",
-            { className: CALLOUT_WARNING_CLASS, role: "status" },
-            unavailable
-          ),
       React.createElement<DataTableProps<ScopedSkillDefinition>>(DataTable, {
         data: narrowed,
         columns,
         keyExtractor: (s: ScopedSkillDefinition) => s.name,
         emptyMessage
-      }),
-      unavailable === null && narrowed.length > 0
-        ? React.createElement(
-            "p",
-            { className: MONO_META_CLASS },
-            "Checked boxes replace the whole set, so clearing the last one unassigns the skill. Roles come from the execution contract."
-          )
-        : null
+      })
     ),
     React.createElement(SourceValidationIssues, {
       issues: validationIssues,

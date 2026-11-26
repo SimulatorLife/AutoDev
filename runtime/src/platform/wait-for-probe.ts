@@ -1,49 +1,31 @@
-/**
- * The one readiness wait shared by the platform lifecycle ensure steps.
- *
- * Every managed service (router, console, Claude, Copilot, MiniMax, Antigravity)
- * is started by launchd or a detached fallback launcher and then has to be
- * observed answering its health endpoint before the caller may report it ready.
- * Each of those modules carried its own copy of that poll, and the copies had
- * already drifted apart: some took a timeout and derived the deadline, one took
- * a pre-computed deadline and gave up without a final check, so a service that
- * came up exactly at its timeout was ready for one caller and not-ready for
- * another. One helper keeps the deadline arithmetic, the poll interval, and the
- * terminal check identical everywhere.
- *
- * The wait stays bounded: it polls until the deadline, then performs one final
- * probe and returns that result. Returning the last probe rather than a hard
- * `false` is what keeps a service that became ready during the final sleep from
- * being reported as failed, and it means callers never have to re-probe after a
- * timeout to learn the outcome.
- */
-
-/** Gap between readiness probes. Short enough to stay inside typical budgets. */
+/** Gap between readiness probes, bounded by the remaining wait budget. */
 const PROBE_POLL_INTERVAL_MS = 100;
 
-/** The two members every ensure step's dependency bundle already carries. */
 export interface ProbeWaitDeps {
   readonly probe: () => Promise<boolean>;
   readonly sleep: (ms: number) => Promise<void>;
 }
 
-async function pollProbeUntilDeadline(
-  deps: ProbeWaitDeps,
-  deadline: number
-): Promise<boolean> {
-  if (Date.now() >= deadline) return deps.probe();
-  if (await deps.probe()) return true;
-  await deps.sleep(PROBE_POLL_INTERVAL_MS);
-  return pollProbeUntilDeadline(deps, deadline);
-}
-
 /**
- * Resolve true once `deps.probe` reports healthy, polling until `timeoutMs`
- * elapses and then returning the outcome of one last probe.
+ * Poll on a monotonic clock and perform one final observation at the deadline.
+ * Individual probes must be bounded by their owner; the last probe may finish
+ * after the wait budget. An invalid budget is a configuration error.
  */
-export function waitForProbe(
+export async function waitForProbe(
   deps: ProbeWaitDeps,
   timeoutMs: number
 ): Promise<boolean> {
-  return pollProbeUntilDeadline(deps, Date.now() + timeoutMs);
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
+    throw new RangeError("Readiness timeout must be finite and nonnegative.");
+  }
+  const deadline = performance.now() + timeoutMs;
+  while (performance.now() < deadline) {
+    // eslint-disable-next-line no-await-in-loop -- observe sequentially; never overlap probes.
+    if (await deps.probe()) return true;
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) break;
+    // eslint-disable-next-line no-await-in-loop -- respect the readiness budget.
+    await deps.sleep(Math.min(PROBE_POLL_INTERVAL_MS, Math.ceil(remaining)));
+  }
+  return deps.probe();
 }

@@ -420,6 +420,18 @@ test("the approved catalogue may not live inside the workspace it authorizes", (
       () => approvedCataloguePath(moduleDirectory, workspace),
       /inside the authorized workspace/u
     );
+    rmSync(cataloguePath);
+    rmSync(path.join(outside, "config"), { recursive: true });
+    mkdirSync(path.join(workspace, "config"));
+    writeFileSync(
+      path.join(workspace, "config", "commands.json"),
+      JSON.stringify(catalogue)
+    );
+    symlinkSync(path.join(workspace, "config"), path.join(outside, "config"));
+    assert.throws(
+      () => approvedCataloguePath(moduleDirectory, workspace),
+      /symbolic link/u
+    );
     // A catalogue inside the workspace is refused: an agent that can edit it
     // would be editing its own authority.
     const insideRoot = path.join(root, "inside-root");

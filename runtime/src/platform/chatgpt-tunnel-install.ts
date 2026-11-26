@@ -30,6 +30,10 @@ import { isEntryPoint } from "../shared/entry-point.ts";
 import { runtimeBinDirectory } from "../shared/executables.ts";
 import { RUNTIME_SOURCE_LINK } from "./runtime-source-generation.ts";
 import {
+  approvedCommandCataloguePath,
+  installedCommandCatalogueDigest
+} from "./command-catalogue-approval.ts";
+import {
   deleteKeychainSecret,
   readKeychainSecret,
   readRuntimeSecret,
@@ -42,6 +46,7 @@ import {
   roleContract
 } from "../shared/execution-contract.ts";
 import {
+  MCP_SERVER_COMMANDS,
   MCP_SERVER_FILESYSTEM,
   MCP_SERVER_XACPX
 } from "../shared/tool-names.ts";
@@ -60,7 +65,10 @@ import {
   type LaunchAgentValues
 } from "./macos/launchagent.ts";
 import { parseCliVersion } from "../providers/cli-versions.ts";
-import { writeLine } from "@simulatorlife/autodev-runtime/shared/output";
+import {
+  writeErrorLine,
+  writeLine
+} from "@simulatorlife/autodev-runtime/shared/output";
 
 import { readBridgeMcpCatalogue } from "../mcp/filesystem-server.ts";
 import {
@@ -800,6 +808,15 @@ function stateRevision(
     .digest("hex");
 }
 
+/**
+The installed Runtime tree the gateway and its backends run from. The
+installer itself runs from the editable checkout; nothing it renders for
+the service may point back there.
+*/
+function installedRuntimeSource(paths: Paths): string {
+  return path.join(paths.codexHome, RUNTIME_SOURCE_LINK);
+}
+
 function remoteSecretAvailability(
   catalogue: Record<string, Record<string, unknown>>,
   hasSecret: (name: string, currentEnv: NodeJS.ProcessEnv) => boolean,
@@ -822,7 +839,8 @@ function computePolicyDigest(
   rawContract: string,
   rawPolicy: string,
   catalogue: Record<string, Record<string, unknown>>,
-  secretAvailability: Record<string, boolean>
+  secretAvailability: Record<string, boolean>,
+  commandCatalogue: string | null
 ): string {
   return createHash("sha256")
     .update(role)
@@ -834,6 +852,8 @@ function computePolicyDigest(
     .update(JSON.stringify(catalogue))
     .update("\n")
     .update(JSON.stringify(secretAvailability))
+    .update("\n")
+    .update(commandCatalogue ?? "")
     .digest("hex");
 }
 
@@ -911,7 +931,7 @@ async function discoverServerTools(
             node,
             paths.home,
             paths.codexHome,
-            { role, readOnly }
+            { role, readOnly, runtimeSource: installedRuntimeSource(paths) }
           );
           return new StdioClientTransport({
             command: backend.command,
@@ -983,6 +1003,12 @@ async function resolveReviewedFromRoleContract(
         resolveManagedSecret(name, currentEnv) ??
         readRuntimeSecret(name, currentEnv)
       ));
+  // The Commands backend serves only the operator-approved catalogue of the
+  // Runtime home it runs from, and refuses to start without one. Its revision
+  // is part of the reviewed policy, so approving one re-reviews the grants.
+  const commandCatalogue = (
+    deps.commandCatalogue ?? installedCommandCatalogueDigest
+  )(paths.codexHome);
   const policyFile = canonicalPolicyPath(paths);
   const rawPolicy = readCanonicalPolicyRaw(paths);
   const rawContract = readCanonicalContractRaw(paths);
@@ -991,7 +1017,8 @@ async function resolveReviewedFromRoleContract(
     rawContract,
     rawPolicy,
     catalogue,
-    remoteSecretAvailability(catalogue, hasSecret, env)
+    remoteSecretAvailability(catalogue, hasSecret, env),
+    commandCatalogue
   );
   if (
     prior?.policyFile === policyFile &&
@@ -1049,6 +1076,8 @@ async function resolveReviewedFromRoleContract(
         );
         return !missingSecret;
       }
+      if (server === MCP_SERVER_COMMANDS && commandCatalogue === null)
+        return false;
       return (
         typeof descriptor.command === "string" &&
         Boolean(descriptor.command.trim()) &&
@@ -1056,6 +1085,14 @@ async function resolveReviewedFromRoleContract(
       );
     }
   );
+  if (
+    commandCatalogue === null &&
+    roleAllowedServers.has(MCP_SERVER_COMMANDS) &&
+    catalogue[MCP_SERVER_COMMANDS] !== undefined
+  )
+    writeErrorLine(
+      `ChatGPT gateway (${role}): Commands MCP unavailable -- no approved command catalogue in ${approvedCommandCataloguePath(paths.codexHome)}.`
+    );
 
   const resolvedEntries = await Promise.all(
     candidates.map(async ([server, descriptor]) => {
@@ -1322,6 +1359,8 @@ export interface ChatgptTunnelDependencies {
   supergateway(sourceRoot: string): string;
   backend: typeof externalMcpBackend;
   hasSecret?(name: string, env: NodeJS.ProcessEnv): boolean;
+  // The approved command catalogue digest installed in a Runtime home.
+  commandCatalogue?(runtimeHome: string): string | null;
   discoverTools?(
     server: string,
     descriptor: Record<string, unknown>,
@@ -1700,7 +1739,8 @@ async function reconcile(
       paths.codexHome,
       {
         role: backendRole,
-        readOnly: roleContract(backendRole).readOnly === true
+        readOnly: roleContract(backendRole).readOnly === true,
+        runtimeSource: installedRuntimeSource(paths)
       }
     );
   const org =
@@ -1721,9 +1761,7 @@ async function reconcile(
 
   const dependencyEnv = dependencyEnvironment(env);
   const binary = deps.tunnelBinary(dependencyEnv);
-  const supergateway = deps.supergateway(
-    path.join(paths.codexHome, RUNTIME_SOURCE_LINK)
-  );
+  const supergateway = deps.supergateway(installedRuntimeSource(paths));
   const port = healthPort(
     env.AUTODEV_CHATGPT_TUNNEL_PORT?.trim() || prior?.port
   );

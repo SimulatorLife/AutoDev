@@ -1,28 +1,11 @@
 import {
   type APIRequestContext,
   expect,
-  type Locator,
-  type Page,
   test
 } from "@playwright/test";
 
 const FIXTURE_BASE_URL = `http://127.0.0.1:${process.env.AUTODEV_PLAYTEST_FIXTURE_PORT ?? "4311"}`;
 const PERMISSIONS_URL = "/permissions";
-const CONFLICT_OUTCOME = "conflict";
-
-/**
- * The permission policy's controls.
- *
- * The policy is one surface with one control per setting, so a control is
- * addressed by the setting it writes rather than by where it is rendered.
- */
-function approvalPolicyControl(page: Page): Locator {
-  return page.locator("[data-permission-policy-approval-policy]");
-}
-
-function webSearchControl(page: Page): Locator {
-  return page.locator("[data-permission-policy-web-search]");
-}
 
 /**
  * Put the fixture's permission policy back where a test that writes starts.
@@ -72,66 +55,25 @@ test.afterEach(async ({ request }) => {
   await resetPermissionPolicy(request);
 });
 
-test("the policy control writes against the revision it loaded", async ({
-  page,
-  request
-}) => {
+test("the permission policy is read-only and reflects an observed source revision", async ({ page, request }) => {
   await resetPermissionPolicy(request);
-  await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto(PERMISSIONS_URL);
-
-  const approvalPolicy = approvalPolicyControl(page);
-  await expect(approvalPolicy).toHaveValue("on-request");
-  await expect(webSearchControl(page)).toHaveValue("false");
-
-  // The write is a form submission, so the page that comes back is the
-  // Runtime-confirmed value rather than an optimistic one.
-  await approvalPolicy.selectOption("never");
-
-  // The write is the Runtime's, and it lands after the browser has already
-  // changed the select, so the state is polled rather than read once.
-  await expect
-    .poll(async () => (await readPermissionPolicy(request)).approvalPolicy)
-    .toBe("never");
-  const held = await readPermissionPolicy(request);
-  // The revision moved with the policy, so the next write has to carry the
-  // new one.
-  expect(held.revision).not.toBe("9".repeat(64));
-  // The settings the write did not name are the ones the policy already had.
-  expect(held.approvalsReviewer).toBe("operator");
-});
-
-test("a stale policy write is refused rather than overwriting somebody else's change", async ({
-  page,
-  request
-}) => {
-  await resetPermissionPolicy(request);
-  await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto(PERMISSIONS_URL);
-
   const before = await readPermissionPolicy(request);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto(PERMISSIONS_URL);
+  const policy = page.getByRole("region", { name: "Permission Policy" });
+  await expect(policy.getByText(before.approvalPolicy, { exact: true })).toBeVisible();
+  await expect(policy.getByText(before.approvalsReviewer, { exact: true })).toBeVisible();
+  await expect(policy.getByText(before.webSearch ? "Enabled" : "Disabled", { exact: true })).toBeVisible();
+  await expect(policy.locator("form, input, select, textarea")).toHaveCount(0);
+  await expect(policy.getByText(`revision ${before.revision.slice(0, 12)}`)).toBeVisible();
 
-  // Somebody else writes while this page is open, so the page holds a
-  // revision the Runtime has already moved past.
-  const moved = await request.post(
-    `${FIXTURE_BASE_URL}/fixture/permissions/state?state=revision-moved`
-  );
+  const moved = await request.post(`${FIXTURE_BASE_URL}/fixture/permissions/state?state=revision-moved`);
   expect(moved.ok()).toBe(true);
-
-  await approvalPolicyControl(page).selectOption("never");
-
-  // The refusal says what happened: the canonical policy moved under the
-  // edit, so the edit was not saved and it is still here.
-  const notice = page.locator(
-    `[data-permission-policy-save="${CONFLICT_OUTCOME}"]`
-  );
-  await expect(notice).toBeVisible();
-  await expect(notice).toContainText("changed after the control was filled");
-
-  // And nothing was written: the policy is the one the Runtime held.
   const after = await readPermissionPolicy(request);
-  expect(after.approvalPolicy).toBe(before.approvalPolicy);
   expect(after.revision).not.toBe(before.revision);
+  await page.reload();
+  await expect(policy.getByText(`revision ${after.revision.slice(0, 12)}`)).toBeVisible();
+  expect(await readPermissionPolicy(request)).toEqual(after);
 });
 
 test("the role matrix names each role's access level", async ({

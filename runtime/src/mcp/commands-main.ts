@@ -25,6 +25,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { isPathWithin } from "@simulatorlife/autodev-data/files";
 import { autodevRunDirectory } from "@simulatorlife/autodev-runtime/shared/autodev-home";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
@@ -74,14 +75,6 @@ export class CommandsAdmissionError extends Error {
   }
 }
 
-function isWithin(child: string, parent: string): boolean {
-  const relative = path.relative(parent, child);
-  return (
-    relative === "" ||
-    (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(".." + path.sep))
-  );
-}
-
 /**
 The path the approved catalogue is read from.
 
@@ -100,12 +93,12 @@ export function approvedCataloguePath(
   // Both paths are compared in their physical form: a symlinked spelling of
   // the same directory is the same directory, and a spelling that hides it
   // must not be able to slip past the check.
-  let catalogueDirectory: string;
-  try {
-    catalogueDirectory = realpathSync(configDirectory);
-  } catch {
-    catalogueDirectory = path.resolve(configDirectory);
+  if (lstatSync(configDirectory).isSymbolicLink()) {
+    throw new CommandsAdmissionError(
+      "The approved command catalogue directory must not be a symbolic link."
+    );
   }
+  const catalogueDirectory = realpathSync(configDirectory);
   const catalogue = path.join(catalogueDirectory, APPROVED_CATALOGUE_FILE);
   // Resolve the file too, not just its parent. A link to an editable
   // catalogue must never be treated as an approved installed revision.
@@ -122,8 +115,8 @@ export function approvedCataloguePath(
     workspaceRoot = path.resolve(workspace);
   }
   if (
-    isWithin(catalogue, workspaceRoot) ||
-    isWithin(resolvedCatalogue, workspaceRoot)
+    isPathWithin(workspaceRoot, catalogue) ||
+    isPathWithin(workspaceRoot, resolvedCatalogue)
   ) {
     throw new CommandsAdmissionError(
       "The approved command catalogue resolves inside the authorized workspace; an agent that can edit it would be editing its own authority. Install the Runtime and run the command surface from the installed configuration."
@@ -142,7 +135,12 @@ directory must also be protected by the Runtime admission boundary.
 */
 const MAX_CATALOGUE_BYTES = 1024 * 1024;
 
-function readApprovedCatalogue(cataloguePath: string): string {
+export function readApprovedCatalogue(cataloguePath: string): string {
+  if (lstatSync(path.dirname(cataloguePath)).isSymbolicLink()) {
+    throw new CommandsAdmissionError(
+      "The approved command catalogue directory must not be a symbolic link."
+    );
+  }
   const descriptor = openSync(
     cataloguePath,
     constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK

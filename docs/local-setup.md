@@ -38,8 +38,10 @@ values, and `scripts/install.sh` continues normally when no `.env` file exists.
 Never commit `.env` (already ignored via `.gitignore`), log its credentials, or
 expose `.env` files through external MCP tools.
 
-The Commands MCP serves only the operator-approved command catalogue in
-`$AUTODEV_HOME/config/commands.json`. The checkout's `config/commands.json` is a
+The Commands MCP serves only the operator-approved command catalogue of the
+Runtime home it runs from: `$AUTODEV_HOME/config/commands.json` for provider
+sessions and `$CODEX_HOME/config/commands.json` for the ChatGPT gateway, which
+leaves Commands out until one is approved. The checkout's `config/commands.json` is a
 proposal: when it differs from the approved copy, the installer leaves the
 approved copy unchanged and prints the proposed revision's digest, and
 `bash scripts/install.sh --check` reports it as pending. After reviewing the

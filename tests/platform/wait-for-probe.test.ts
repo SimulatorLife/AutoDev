@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 
 import {
   type ProbeWaitDeps,
@@ -64,12 +65,30 @@ test("a service that never answers reports the final probe once, not forever", a
 });
 
 test("the wait stops at its timeout and returns the last probe's result", async () => {
-  const started = Date.now();
-  const deps = recorder(Number.MAX_SAFE_INTEGER);
+  const started = performance.now();
+  const sleeps: number[] = [];
+  const deps = recorder(Number.MAX_SAFE_INTEGER, {
+    sleep: async (ms) => {
+      sleeps.push(ms);
+      await delay(ms);
+    }
+  });
   assert.equal(await waitForProbe(deps, 40), false);
   assert.ok(
-    Date.now() - started >= 35,
+    performance.now() - started >= 39,
     "the wait must honour its timeout instead of returning immediately"
   );
   assert.ok(deps.probes >= 1);
+  assert.ok(
+    sleeps.every((ms) => ms <= 40),
+    "sleep cannot exceed the wait budget"
+  );
+});
+
+test("invalid readiness budgets fail instead of polling indefinitely", async () => {
+  const deps = recorder(1);
+  for (const timeout of [NaN, Infinity, -1]) {
+    await assert.rejects(waitForProbe(deps, timeout), RangeError);
+  }
+  assert.equal(deps.probes, 0);
 });

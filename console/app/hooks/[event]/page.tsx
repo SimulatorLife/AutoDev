@@ -2,9 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import React from "react";
 
-import { hookSaveOutcomeFromQuery } from "../../../src/features/hooks/declaration.ts";
 import { HookEventDetailView } from "../../../src/features/hooks/HookEventDetailView.ts";
-import { editorBaseRevisionFromQuery } from "../../../src/lib/server/canonical-source.ts";
 import {
   catalogueDetailOutcome,
   catalogueObservation
@@ -40,21 +38,11 @@ export async function generateMetadata({
 }
 
 export default async function HookEventDetailPage({
-  params,
-  searchParams
+  params
 }: {
   readonly params: Promise<{ readonly event: string }>;
-  readonly searchParams?: Promise<
-    Record<string, string | readonly string[] | undefined>
-  >;
 }): Promise<React.JSX.Element> {
-  const [{ event }, resolvedSearchParams] = await Promise.all([
-    params,
-    searchParams ??
-      Promise.resolve(
-        {} as Record<string, string | readonly string[] | undefined>
-      )
-  ]);
+  const { event } = await params;
   const { section, config } = readNodeContext("/hooks");
   if (!config) {
     return React.createElement(
@@ -87,7 +75,7 @@ export default async function HookEventDetailPage({
   // An event the target does not declare has no page. The Runtime publishes
   // the effective declaration for the target -- the shared one with the
   // target's own over it -- so an event that is not in it is not declared for
-  // this target, and there is nothing here to edit.
+  // this target, and there is nothing here to inspect.
   //
   // The answer is the not-found shell rather than a 404 status: the layout's
   // boundary flushes the shell before the page resolves, so the status is
@@ -132,12 +120,6 @@ export default async function HookEventDetailPage({
           message: appliedResult.message
         };
 
-  // The editor writes against the revision its content is based on. A refused
-  // write leaves the browser holding the operator's edit, so the page keeps
-  // the revision that edit was written for rather than the revision the
-  // declaration has moved to.
-  const basedOn = editorBaseRevisionFromQuery(resolvedSearchParams.based);
-  const saveOutcome = hookSaveOutcomeFromQuery(resolvedSearchParams.save);
 
   return React.createElement(
     ConsolePageShell,
@@ -155,10 +137,8 @@ export default async function HookEventDetailPage({
       source: result.data.source,
       sourceValidity: result.data.valid,
       revision: result.data.revision,
-      ...(basedOn === undefined ? {} : { editorRevision: basedOn }),
       applied,
-      ...(appliedUnavailable === null ? {} : { appliedUnavailable }),
-      ...(saveOutcome === undefined ? {} : { saveOutcome })
+      ...(appliedUnavailable === null ? {} : { appliedUnavailable })
     })
   );
 }

@@ -4,12 +4,9 @@ import type {
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
-import { CodeEditor } from "../../components/code/CodeBlock.ts";
-import { Button } from "../../components/forms/Button.ts";
-import {
-  CALLOUT_ERROR_CLASS,
-  CALLOUT_WARNING_CLASS
-} from "../../components/layout/Callout.ts";
+import { parseRuleSyncFrontmatter } from "@simulatorlife/autodev-data";
+import { SourceView } from "../../components/code/SourceView.ts";
+import { PromptMarkdown } from "../prompts/prompt-markdown.ts";
 import {
   EntityTitle,
   SECTION_HEADING_CLASS
@@ -68,33 +65,6 @@ export interface SkillDetailViewProps {
   readonly editorRevision?: string | undefined;
 }
 
-function saveNotice(
-  outcome: SkillContentSaveOutcome | undefined
-): React.ReactNode {
-  if (outcome === undefined) return null;
-  const warning = outcome === "conflict" || outcome === "validation";
-  const message = {
-    conflict:
-      "This skill changed after the editor loaded it, so your edit was not saved. Reload the editor to start from the current source; a save from this page would be refused.",
-    validation:
-      "RuleSync refused the submitted source. The canonical file was not changed; review its frontmatter and try again.",
-    "apply-failed":
-      "Canonical source was updated, but RuleSync projection generation or verification failed. The current source is shown; do not assume its projections are applied.",
-    failed:
-      "The save and projection result could not be confirmed. Reload the current canonical source before retrying."
-  }[outcome];
-
-  return React.createElement(
-    "p",
-    {
-      className: warning ? CALLOUT_WARNING_CLASS : CALLOUT_ERROR_CLASS,
-      role: warning ? "status" : "alert",
-      "data-skill-content-save": outcome
-    },
-    message
-  );
-}
-
 /**
  * Where the skill is installed, as the page says it.
  *
@@ -134,11 +104,10 @@ function skillInstallation(scopedSkill: ScopedSkillDefinition | null): {
 
 export function SkillDetailView({
   source,
-  saveOutcome,
-  scopedSkill = null,
-  editorRevision
+  scopedSkill = null
 }: SkillDetailViewProps): React.JSX.Element {
   const installation = skillInstallation(scopedSkill);
+  const parsed = parseRuleSyncFrontmatter(source.content);
   return React.createElement(
     PageBody,
     {
@@ -158,7 +127,6 @@ export function SkillDetailView({
       { className: `${MONO_META_CLASS} -mt-2` },
       source.path
     ),
-    saveNotice(saveOutcome),
     React.createElement(
       "section",
       {
@@ -220,53 +188,13 @@ export function SkillDetailView({
         { className: SECTION_HEADING_CLASS },
         "Canonical RuleSync source"
       ),
-      React.createElement(
-        "form",
-        {
-          method: "POST",
-          action: `/api/skills/${encodeURIComponent(source.name)}/content`,
-          className: "flex flex-col gap-3",
-          "aria-label": `Edit canonical skill ${source.name}`
-        },
-        React.createElement("input", {
-          type: "hidden",
-          name: "expectedRevision",
-          value: editorRevision ?? source.revision
-        }),
-        React.createElement(
-          "label",
-          {
-            htmlFor: "skill-content",
-            className: "text-sm font-medium text-fg"
-          },
-          "Complete SKILL.md source"
-        ),
-        React.createElement(CodeEditor, {
-          id: "skill-content",
-          name: "content",
-          defaultValue: source.content,
-          ariaLabel: `Complete SKILL.md source for ${source.name}`,
-          dataAttributes: { "data-skill-content-editor": "true" }
-        }),
-        React.createElement(
-          "div",
-          { className: "flex flex-wrap items-center justify-between gap-3" },
-          React.createElement(
-            "p",
-            { className: `max-w-2xl ${MUTED_META_CLASS}` },
-            "Save & Apply validates the existing skill source, writes it only if this revision is current, then regenerates and checks the configured RuleSync skill projections. Role assignments remain a separate setting."
-          ),
-          React.createElement(
-            Button,
-            {
-              type: "submit",
-              variant: "primary",
-              testId: "skill-content-save"
-            },
-            "Save & Apply"
-          )
-        )
-      )
+      React.createElement(SourceView, {
+        source: source.content,
+        format: "Source",
+        rendered: parsed.kind === "valid"
+          ? React.createElement(PromptMarkdown, { body: parsed.body })
+          : React.createElement("p", { className: MUTED_META_CLASS, role: "status" }, "Skill frontmatter could not be read. Inspect the source.")
+      })
     )
   );
 }

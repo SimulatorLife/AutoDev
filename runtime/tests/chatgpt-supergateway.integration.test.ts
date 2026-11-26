@@ -443,6 +443,66 @@ test("role-aware sandbox admits canonical AutoDev local MCP backends and enforce
   );
 });
 
+test("externalMcpBackend runs backends from the Runtime tree it is given, not the caller's checkout", () => {
+  // The installer runs from the editable checkout; the gateway it renders must
+  // run the installed tree. A tree is a `src` link to a generation, as
+  // installed: backends pin the generation's physical launcher.
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "autodev-runtime-tree-")));
+  try {
+    const generation = path.join(root, ".src-0000000000000000");
+    const packageDirectory = path.join(
+      generation,
+      "node_modules",
+      "@modelcontextprotocol",
+      "server-filesystem"
+    );
+    mkdirSync(path.join(generation, "mcp"), { recursive: true });
+    mkdirSync(path.join(packageDirectory, "dist"), { recursive: true });
+    writeFileSync(path.join(generation, "mcp", "launcher.ts"), "");
+    writeFileSync(
+      path.join(packageDirectory, "package.json"),
+      JSON.stringify({ bin: { "mcp-server-filesystem": "dist/index.js" } })
+    );
+    writeFileSync(path.join(packageDirectory, "dist", "index.js"), "");
+    const runtimeSource = path.join(root, "src");
+    symlinkSync(generation, runtimeSource);
+
+    for (const server of ["commands", "lsp", "xacpx", "github"]) {
+      const backend = externalMcpBackend(
+        server,
+        repo,
+        repo,
+        process.execPath,
+        undefined,
+        undefined,
+        { runtimeSource }
+      );
+      assert.ok(
+        backend.args.includes(path.join(generation, "mcp", "launcher.ts")),
+        server
+      );
+      assert.ok(
+        !backend.args.some((argument) =>
+          argument.startsWith(path.join(repo, "runtime") + path.sep)
+        ),
+        server
+      );
+    }
+    const filesystem = externalMcpBackend(
+      "filesystem",
+      repo,
+      repo,
+      process.execPath,
+      undefined,
+      undefined,
+      { runtimeSource }
+    );
+    assert.ok(filesystem.args.includes(path.join(packageDirectory, "dist", "index.js")));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("externalMcpBackend resolves wrapper Node shims to the direct Node binary for sandbox-exec", () => {
   const root = mkdtempSync(path.join(tmpdir(), "autodev-node-shim-"));
   try {
@@ -1264,6 +1324,7 @@ test(
           "cocoindex-code": { command: "/fixture/ccc", args: [] },
           codegraphcontext: { command: "/fixture/cgc", args: [] },
           xacpx: { command: "/fixture/xacpx", args: [] },
+          commands: { command: "/fixture/commands", args: [] },
           playwright: { command: "/fixture/playwright", args: [] },
           openaiDeveloperDocs: { url: "https://example.test/openai/mcp" },
           context7: {
@@ -1424,6 +1485,37 @@ test(
         ),
         /env:AUTODEV_CHATGPT_TUNNEL_API_KEY/
       );
+      // The Commands MCP refuses to start without an approved catalogue in
+      // the Runtime home it runs from, so until the operator approves one it
+      // is left out of the gateway rather than failing its preflight. An
+      // approval is a policy input: it re-reviews the grants.
+      const approvedHomes: string[] = [];
+      await ensureChatgptTunnel(
+        paths,
+        "reconcile",
+        { HOME: home, PATH: "/bin" },
+        undefined,
+        {
+          ...deps,
+          commandCatalogue: (runtimeHome) => {
+            approvedHomes.push(runtimeHome);
+            return "sha256:approved-fixture";
+          }
+        }
+      );
+      assert.deepEqual([...new Set(approvedHomes)], [codexHome]);
+      const commandsApproved = JSON.parse(privateRead(stateFile));
+      assert.notEqual(commandsApproved.policyDigest, policyUpgraded.policyDigest);
+      assert.deepEqual(commandsApproved.grants.commands, [
+        "install_dependencies",
+        "typecheck",
+        "test",
+        "lint_fix",
+        "git_status",
+        "git_diff",
+        "git_stage",
+        "git_commit"
+      ]);
       // Switching to the `smart` role (which enables googleDeveloperKnowledge and playwright
       // without xacpx) and supplying GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY invalidates policyDigest
       // and admits the exact smart-role MCP servers.

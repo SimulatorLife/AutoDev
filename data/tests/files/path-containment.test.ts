@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import test from "node:test";
 
-import { isPathWithin } from "../../src/files/path-containment.ts";
+import {
+  isPathWithin,
+  pathsOverlap
+} from "../../src/files/path-containment.ts";
 
 /**
  * The one owner of "this path stays beneath that root". Workspaces approvals,
@@ -29,4 +32,17 @@ test("a path that climbs out of the root is not within it", () => {
 test("relative paths are compared after resolution against the working directory", () => {
   assert.equal(isPathWithin("root", path.join("root", "child")), true);
   assert.equal(isPathWithin("root", path.join("root", "..", "other")), false);
+});
+
+test("overlap is symmetric and includes equal paths, not prefix siblings", () => {
+  for (const [left, right, expected] of [
+    ["/a/b", "/a/b", true],
+    ["/a/b", "/a/b/c", true],
+    ["/a/b", "/a/b/..c", true],
+    ["/a/b", "/a/bc", false],
+    ["/a/b", "/a/b/../c", false]
+  ] as const) {
+    assert.equal(pathsOverlap(left, right), expected);
+    assert.equal(pathsOverlap(right, left), expected);
+  }
 });

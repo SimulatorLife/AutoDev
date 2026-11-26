@@ -18,8 +18,9 @@ import { parseArgs, requiredArg } from "./cli-args.ts";
 import {
   ConfigError,
   parseTomlFile,
-  tomlValue,
-  type TomlTable
+  serializeToml,
+  type TomlTable,
+  type TomlValue
 } from "./config-files.ts";
 
 export const BASE_MARKER = "{{AUTODEV_BASE_PROMPT}}";
@@ -42,14 +43,11 @@ const LAUNCH_KEYS = [
   "env_http_headers"
 ] as const;
 const HTTP_URL_PATTERN = /^(http|https):\/\//;
-const TABLE = /^\[mcp_servers\.(?:"([^"]+)"|([A-Za-z0-9_-]+))\]\s*$/gm;
+const PROMPT_MARKER = /\{\{AUTODEV_[A-Z_]+_PROMPT\}\}/gu;
 
 function prompt(filePath: string, label: string): string {
   try {
-    return readPromptFileText(filePath, {
-      required: true,
-      disallowTomlDelimiter: true
-    });
+    return readPromptFileText(filePath, { required: true });
   } catch (error) {
     throw new ConfigError(
       `unable to read ${label} prompt ${filePath}: ${error}`
@@ -81,52 +79,43 @@ export function validateMcpServers(config: TomlTable, source: string): void {
   }
 }
 
-export function fillLaunchKeys(
-  text: string,
-  servers: TomlTable,
-  source: string
-): string {
-  const roleServers = parseTomlFileText(text).mcp_servers;
-  return text.replaceAll(
-    TABLE,
-    (header, quoted: string | undefined, bare: string | undefined) => {
-      const name = quoted ?? bare ?? "";
-      const generated = servers[name];
-      if (
-        !generated ||
-        typeof generated !== "object" ||
-        Array.isArray(generated)
-      )
-        throw new ConfigError(
-          `${source}: mcp_servers.${name} is not declared in .rulesync/mcp.jsonc`
-        );
-      const roleValue =
-        roleServers &&
-        typeof roleServers === "object" &&
-        !Array.isArray(roleServers) &&
-        !(roleServers instanceof Date)
-          ? (roleServers as TomlTable)[name]
-          : undefined;
-      const role =
-        roleValue && typeof roleValue === "object" && !Array.isArray(roleValue)
-          ? (roleValue as TomlTable)
-          : {};
-      const generatedTable = generated as TomlTable;
-      const lines: string[] = [];
-      for (const key of LAUNCH_KEYS) {
-        const value = generatedTable[key];
-        if (value !== undefined && !Object.hasOwn(role, key))
-          lines.push(`${key} = ${tomlValue(value)}`);
-      }
-      if ("url" in generated && !("transport" in role))
-        lines.push('transport = "streamable_http"');
-      return [header, ...lines].join("\n");
-    }
+function isTable(value: TomlValue | undefined): value is TomlTable {
+  return (
+    value !== undefined &&
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    !(value instanceof Date)
   );
 }
 
-function parseTomlFileText(text: string): TomlTable {
-  return parse(text) as TomlTable;
+/** Merge launch metadata into the parsed role; never interpret prompt text as TOML. */
+function fillLaunchKeys(
+  config: TomlTable,
+  servers: TomlTable,
+  source: string
+): void {
+  if (!isTable(config.mcp_servers)) {
+    throw new ConfigError(`${source}: mcp_servers must be a table`);
+  }
+  for (const [name, role] of Object.entries(config.mcp_servers)) {
+    const generated = Object.hasOwn(servers, name) ? servers[name] : undefined;
+    if (!isTable(generated)) {
+      throw new ConfigError(
+        `${source}: mcp_servers.${name} is not declared in .rulesync/mcp.jsonc`
+      );
+    }
+    if (!isTable(role)) {
+      throw new ConfigError(`${source}: mcp_servers.${name} must be a table`);
+    }
+    for (const key of LAUNCH_KEYS) {
+      const value = generated[key];
+      if (value !== undefined && !Object.hasOwn(role, key)) role[key] = value;
+    }
+    if (Object.hasOwn(generated, "url") && !Object.hasOwn(role, "transport")) {
+      role.transport = "streamable_http";
+    }
+  }
 }
 
 export function renderRole(
@@ -138,40 +127,47 @@ export function renderRole(
   codeSearch: string,
   servers: TomlTable
 ): void {
-  let text = readFileSync(source, "utf8");
+  const text = readFileSync(source, "utf8");
+  let config: TomlTable;
+  try {
+    config = parse(text) as TomlTable;
+  } catch (error) {
+    throw new ConfigError(
+      `role source is invalid TOML: ${source}: ${error}`
+    );
+  }
+  const template = config.developer_instructions;
   if (
+    typeof template !== "string" ||
     [BASE_MARKER, LEAF_MARKER, ROLE_MARKER].some(
-      (marker) => text.split(marker).length - 1 !== 1
+      (marker) => template.split(marker).length - 1 !== 1
     ) ||
-    text.split(CODE_SEARCH_MARKER).length - 1 > 1
-  )
+    template.split(CODE_SEARCH_MARKER).length - 1 > 1
+  ) {
     throw new ConfigError(`${source} contains invalid prompt markers`);
-  text = text
-    .replace(BASE_MARKER, base)
-    .replace(LEAF_MARKER, leaf)
-    .replace(CODE_SEARCH_MARKER, codeSearch)
-    .replace(
+  }
+  const prompts = new Map([
+    [BASE_MARKER, base],
+    [LEAF_MARKER, leaf],
+    [CODE_SEARCH_MARKER, codeSearch],
+    [
       ROLE_MARKER,
       prompt(
         path.join(promptDir, "roles", `${path.parse(source).name}.md`),
         path.parse(source).name
       )
-    );
-  if (
-    [BASE_MARKER, LEAF_MARKER, CODE_SEARCH_MARKER, ROLE_MARKER].some((marker) =>
-      text.includes(marker)
-    )
-  )
-    throw new ConfigError(`unrendered prompt marker remains in ${source}`);
-  text = fillLaunchKeys(text, servers, source);
-  let config: TomlTable;
-  try {
-    config = parseTomlFileText(text);
-  } catch (error) {
-    throw new ConfigError(
-      `rendered role config is invalid TOML: ${source}: ${error}`
-    );
-  }
+    ]
+  ]);
+  // A single replacement pass keeps dollar sequences, backslashes, TOML
+  // examples and literal marker examples in Markdown exactly as authored.
+  config.developer_instructions = template.replace(PROMPT_MARKER, (marker) => {
+    const replacement = prompts.get(marker);
+    if (replacement === undefined) {
+      throw new ConfigError(`unknown prompt marker ${marker} in ${source}`);
+    }
+    return replacement;
+  });
+  fillLaunchKeys(config, servers, source);
   validateMcpServers(config, source);
   if (
     config.model_reasoning_effort !== undefined &&
@@ -181,7 +177,18 @@ export function renderRole(
     throw new ConfigError(
       `${source}: unsupported model_reasoning_effort '${config.model_reasoning_effort}'`
     );
-  atomicWriteSync(output, text, { mode: 0o644, skipUnchanged: true });
+  // These declarations still have semantic meaning to Runtime readers.
+  // Other source comments remain in the canonical role rather than the projection.
+  const policyComments = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(
+      (line) =>
+        line === "# role-access: read-only" ||
+        line === "# role-kind: orchestrator"
+    );
+  const rendered = [...policyComments, serializeToml(config)].join("\n");
+  atomicWriteSync(output, rendered, { mode: 0o644, skipUnchanged: true });
 }
 
 export function renderAgentDirectory(
@@ -201,8 +208,7 @@ export function renderAgentDirectory(
   let shared: { base: string; leaf: string; codeSearch: string };
   try {
     shared = loadSharedRolePromptParts(promptDir, {
-      required: true,
-      disallowTomlDelimiter: true
+      required: true
     });
   } catch (error) {
     throw new ConfigError(

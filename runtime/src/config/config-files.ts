@@ -39,29 +39,6 @@ export function serializeToml(value: TomlTable): string {
   return stringify(value).replace(TRAILING_NEWLINES, "\n");
 }
 
-/**
- * A configuration value as TOML.
- *
- * A table is written as an inline table with quoted keys, because JSON is not
- * TOML: a header name such as `X-Goog-Api-Key` has to be quoted for the
- * rendered configuration to parse. Every other value is written as JSON,
- * which is TOML for a string, a number, a boolean and an array of them.
- */
-export function tomlValue(value: TomlValue): string {
-  if (
-    value &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    !(value instanceof Date)
-  ) {
-    const entries = Object.entries(value as TomlTable).map(
-      ([key, entry]) => `${JSON.stringify(key)} = ${tomlValue(entry)}`
-    );
-    return `{ ${entries.join(", ")} }`;
-  }
-  return JSON.stringify(value);
-}
-
 export function readJsonFile(
   filePath: string,
   label: string

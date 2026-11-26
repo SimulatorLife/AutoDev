@@ -20,14 +20,10 @@ export interface RolePromptParts {
 
 export function readPromptFileText(
   filePath: string,
-  options: { readonly required?: boolean; readonly disallowTomlDelimiter?: boolean } = {}
+  options: { readonly required?: boolean } = {}
 ): string {
   try {
-    const text = readFileSync(filePath, "utf8").trim();
-    if (options.disallowTomlDelimiter && text.includes('"""')) {
-      throw new Error("contains TOML multiline-string delimiter");
-    }
-    return text;
+    return readFileSync(filePath, "utf8").trim();
   } catch (error) {
     if (options.required) throw error;
     return "";
@@ -36,7 +32,7 @@ export function readPromptFileText(
 
 export function loadSharedRolePromptParts(
   promptDir: string,
-  options: { readonly required?: boolean; readonly disallowTomlDelimiter?: boolean } = {}
+  options: { readonly required?: boolean } = {}
 ): RolePromptParts {
   return {
     base: readPromptFileText(path.join(promptDir, "base.md"), options),
