@@ -1081,41 +1081,6 @@ export interface ControlApiSkillsResponse {
     | null;
 }
 
-/**
- * Assigns a skill to exactly the roles named.
- *
- * A complete desired set rather than an addition, so unassigning is the same
- * call with an empty list and there is no second verb to get wrong. The
- * revision is the contract's own digest, because the failure this guards
- * against is two operators assigning at once: last-writer-wins would discard
- * the first assignment and leave both of them believing theirs took.
- */
-export interface ControlApiSkillRolesPatchRequest {
-  readonly expectedRevision: string;
-  readonly roles: readonly string[];
-  /**
-   * The workspace the assignment belongs to.
-   *
-   * Absent for a global assignment. A skill installed inside a repository
-   * belongs to that repository's workspace alone, so its assignment is made
-   * there and nowhere else; a skill installed anywhere else is assigned
-   * globally and names no workspace. The Control API refuses an assignment
-   * whose workspace does not match where the skill is installed.
-   */
-  readonly workspace?: string;
-}
-
-export interface ControlApiSkillRolesPatchResponse {
-  readonly schema: "autodev-control-skill-assignment-v2";
-  readonly skill: string;
-  readonly desiredRoles: readonly string[];
-  /** Null means no runtime observation; an empty array is observed-empty. */
-  readonly actualRoles: readonly string[] | null;
-  readonly revision: string;
-  readonly reconciliation: ReconciliationView;
-  readonly diff: ReconciliationDiff;
-}
-
 /** Canonical RuleSync source for one existing skill. */
 export interface ControlApiSkillContentResponse {
   readonly schema: "autodev-control-skill-content-v2";
@@ -1133,22 +1098,6 @@ export interface ControlApiSkillContentResponse {
    * running this very source. The Console renders this view rather than
    * deriving its own, so the skill page cannot drift from the shared contract.
    */
-  readonly reconciliation: ReconciliationView;
-}
-
-/** Replaces one existing skill source against the revision the editor loaded. */
-export interface ControlApiSkillContentPatchRequest {
-  readonly expectedRevision: string;
-  readonly content: string;
-}
-
-export interface ControlApiSkillContentPatchResponse {
-  readonly schema: "autodev-control-skill-content-patch-v1";
-  readonly name: string;
-  readonly revision: string;
-  readonly changed: boolean;
-  /** RuleSync generation and its check both confirmed the source projection. */
-  readonly projectionApplied: true;
   readonly reconciliation: ReconciliationView;
 }
 
@@ -1207,6 +1156,14 @@ export interface ControlApiHooksResponse {
    * The observed canonical declaration revision, or null when unreadable.
    */
   readonly revision: string | null;
+  /**
+   * The canonical declaration's exact source text, or null when it was not read.
+   *
+   * It travels with the events it was read with, so the source an operator
+   * inspects and the declaration the page renders are one read rather than two
+   * that can straddle a change.
+   */
+  readonly sourceText: string | null;
   /** The target whose effective declaration this read publishes. */
   readonly target: string;
   /**
@@ -1288,6 +1245,14 @@ export interface ControlApiPermissionsResponse {
   readonly executionContractObserved: boolean;
   /** The revision of the canonical file: the sha256 of its exact bytes. */
   readonly revision: string | null;
+  /**
+   * The canonical source's exact text, or null when its text could not be read.
+   *
+   * The canonical source is a declaration, so it is published whole and the
+   * policy beside it is parsed from the same read. The applied configuration
+   * is never published as text.
+   */
+  readonly sourceText: string | null;
   /**
    * The policy the canonical source states.
    *
@@ -1419,21 +1384,6 @@ export interface ControlApiPromptVersionResponse {
   readonly updatedAt: string;
   readonly content: string;
   readonly diff: string;
-}
-
-export interface ControlApiPromptCommandPatchRequest {
-  readonly expectedRevision: string;
-  readonly content: string;
-}
-
-export interface ControlApiPromptCommandPatchResponse {
-  readonly schema: "autodev-control-prompt-command-patch-v2";
-  readonly name: string;
-  readonly revision: string;
-  readonly changed: boolean;
-  /** Bounded diff summary between the canonical and projected state. */
-  readonly diff: ReconciliationDiff;
-  readonly reconciliation: ReconciliationView;
 }
 
 /**

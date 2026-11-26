@@ -177,7 +177,13 @@ export function externalMcpBackend(
     if (!packageDirectory)
       throw new Error("Filesystem MCP package is not in the Runtime dependency tree");
     const packageRoot = realpathSync(packageDirectory);
-    const modules = path.dirname(path.dirname(packageDirectory));
+    // The server reads its own manifest and dependencies from where they
+    // physically live. pnpm's isolated layout links the package out of the
+    // `node_modules/.pnpm` virtual store, which holds it and every dependency;
+    // a flat closure holds them in the `node_modules` containing the package.
+    const modules =
+      /^(.*\/node_modules\/\.pnpm)\//u.exec(packageRoot)?.[1] ??
+      path.dirname(path.dirname(packageRoot));
     const manifest = manifestSchema.parse(
       JSON.parse(readFileSync(path.join(packageRoot, "package.json"), "utf8"))
     );
@@ -198,7 +204,7 @@ export function externalMcpBackend(
         "-p",
         filesystemSandboxProfile(
           physicalWorkspace,
-          realpathSync(modules),
+          modules,
           binary,
           { readOnly, readOnlySkillRoots: skillRoots }
         ),
@@ -376,7 +382,9 @@ function workspaceCodeToolSandboxProfile(
     subtree("/private/var/folders"),
     literal("/dev/null")
   ];
+  // The gateway's bearer key and the tunnel's private profile.
   const deniedSecrets = [
+    path.join(options.codexHome, "mcp-gateway"),
     path.join(options.codexHome, "chatgpt-tunnel"),
     path.join(options.home, ".ssh"),
     path.join(options.home, ".aws"),

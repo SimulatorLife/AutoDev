@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
 import {
   chatgptRoleEnvironment,
@@ -54,42 +53,16 @@ test("Supergateway config is generated from the canonical catalogue with loopbac
         apiKeyFile: "/var/run/autodev/supergateway.key",
         mcpServers: {
           "future-server": {
-            command: process.execPath,
-            args: [
-              fileURLToPath(
-                new URL("../../runtime/src/mcp/tool-filter.ts", import.meta.url)
-              ),
-              "example",
-              JSON.stringify(["--mcp", "a b"]),
-              JSON.stringify(["search"]),
-              "external",
-              "future-server"
-            ],
-            cwd: "/project",
-            env: {
-              AUTODEV_AGENT_ROLE: "orchestrator",
-              AUTODEV_XACPX_COORDINATOR_SESSION: "chatgpt:orchestrator:project"
-            },
+            url: "http://127.0.0.1:${AUTODEV_MCP_POOL_PORT}/mcp/orchestrator.future-server",
+            type: "streamableHttp",
+            oauth2Bearer: "${AUTODEV_MCP_POOL_TOKEN}",
             toolPrefix: "future_server__",
             tools: ["search"]
           },
           filesystem: {
-            command: process.execPath,
-            args: [
-              fileURLToPath(
-                new URL("../../runtime/src/mcp/tool-filter.ts", import.meta.url)
-              ),
-              "bash",
-              JSON.stringify(["-lc", "exec launcher filesystem"]),
-              JSON.stringify(["read_text_file"]),
-              "external",
-              "filesystem"
-            ],
-            cwd: "/project",
-            env: {
-              AUTODEV_AGENT_ROLE: "orchestrator",
-              AUTODEV_XACPX_COORDINATOR_SESSION: "chatgpt:orchestrator:project"
-            },
+            url: "http://127.0.0.1:${AUTODEV_MCP_POOL_PORT}/mcp/orchestrator.filesystem",
+            type: "streamableHttp",
+            oauth2Bearer: "${AUTODEV_MCP_POOL_TOKEN}",
             toolPrefix: "filesystem__",
             tools: ["read_text_file"]
           }
@@ -195,7 +168,7 @@ test("ungranted servers, unknown names, wildcard and empty grants fail closed", 
   );
 });
 
-test("remote Streamable HTTP descriptors render parameterized --remote filter entries without leaking secrets", () => {
+test("remote Streamable HTTP descriptors render credential-free pool routes and remote specs", () => {
   const remoteCatalogue = {
     ...catalogue,
     openaiDeveloperDocs: { url: "https://developers.openai.com/mcp" },
@@ -216,34 +189,42 @@ test("remote Streamable HTTP descriptors render parameterized --remote filter en
     context7: ["resolve-library-id", "query-docs"],
     googleDeveloperKnowledge: ["search_documents"]
   };
+  const surfaces = [
+    { role: "orchestrator", grants: remoteGrants, reviewed: remoteGrants }
+  ];
   const rendered = renderChatgptSupergatewayConfig(
     remoteCatalogue,
-    [{ role: "orchestrator", grants: remoteGrants, reviewed: remoteGrants }],
+    surfaces,
     "/project",
     http
   );
   assert.doesNotMatch(rendered, /Bearer\s+[A-Za-z0-9]/u);
-  const parsed = JSON.parse(rendered);
-  const servers = parsed.mcpServers.orchestrator.mcpServers;
-  assert.equal(servers.openaiDeveloperDocs.args[1], "--remote");
-  assert.deepEqual(JSON.parse(servers.openaiDeveloperDocs.args[2]), {
-    url: "https://developers.openai.com/mcp"
-  });
-  assert.equal(servers.openaiDeveloperDocs.toolPrefix, "openaiDeveloperDocs__");
-  assert.equal(servers.context7.args[1], "--remote");
-  assert.deepEqual(JSON.parse(servers.context7.args[2]), {
-    url: "https://mcp.context7.com/mcp",
-    bearer_token_env_var: "CONTEXT7_API_KEY"
-  });
+  assert.doesNotMatch(rendered, /CONTEXT7_API_KEY|GOOGLE_DEVELOPER_KNOWLEDGE/u);
+  const servers = JSON.parse(rendered).mcpServers.orchestrator.mcpServers;
   assert.equal(
-    servers.googleDeveloperKnowledge.args[2],
-    JSON.stringify({
-      url: "https://developerknowledge.googleapis.com/mcp",
-      http_headers: {
-        "X-Goog-Api-Key": "$${GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY}"
-      }
-    })
+    servers.openaiDeveloperDocs.url,
+    "http://127.0.0.1:${AUTODEV_MCP_POOL_PORT}/mcp/orchestrator.openaiDeveloperDocs"
   );
+  assert.equal(servers.openaiDeveloperDocs.toolPrefix, "openaiDeveloperDocs__");
+  // The pool resolves credentials from the named variables at call time; the
+  // manifest carries only their names and header templates.
+  const pool = JSON.parse(
+    renderChatgptBackendPoolConfig(remoteCatalogue, surfaces, "/project")
+  ).servers;
+  assert.deepEqual(pool["orchestrator.openaiDeveloperDocs"], {
+    kind: "remote",
+    url: "https://developers.openai.com/mcp",
+    tools: ["search_openai_docs"]
+  });
+  assert.deepEqual(pool["orchestrator.context7"], {
+    kind: "remote",
+    url: "https://mcp.context7.com/mcp",
+    bearer_token_env_var: "CONTEXT7_API_KEY",
+    tools: ["resolve-library-id", "query-docs"]
+  });
+  assert.deepEqual(pool["orchestrator.googleDeveloperKnowledge"].http_headers, {
+    "X-Goog-Api-Key": "${GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY}"
+  });
 });
 
 test("reject incompatible transports, credentials, workspace, HTTP options and colliding namespaces", () => {
@@ -471,39 +452,43 @@ test("local grants may narrow but not expand authorized role permissions", () =>
   );
 });
 
-test("canonical shell expressions and key paths survive Supergateway interpolation", () => {
+test("canonical shell expressions reach the pool verbatim and key paths survive Supergateway interpolation", () => {
+  const shellCatalogue = {
+    filesystem: {
+      command: "bash",
+      args: [
+        "-lc",
+        'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" filesystem'
+      ]
+    }
+  };
+  const surfaces = [
+    {
+      role: "orchestrator",
+      grants: { filesystem: ["read_text_file"] },
+      reviewed: { filesystem: ["read_text_file"] }
+    }
+  ];
   const result = JSON.parse(
-    renderChatgptSupergatewayConfig(
-      {
-        filesystem: {
-          command: "bash",
-          args: [
-            "-lc",
-            'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" filesystem'
-          ]
-        }
-      },
-      [
-        {
-          role: "orchestrator",
-          grants: { filesystem: ["read_text_file"] },
-          reviewed: { filesystem: ["read_text_file"] }
-        }
-      ],
-      "/a$b",
-      { port: 3312, apiKeyFile: "/a$b/supergateway.key" }
-    )
+    renderChatgptSupergatewayConfig(shellCatalogue, surfaces, "/a$b", {
+      port: 3312,
+      apiKeyFile: "/a$b/supergateway.key"
+    })
   );
-  const entry = result.mcpServers.orchestrator.mcpServers.filesystem;
-  assert.equal(
-    JSON.parse(entry.args[2])[1],
-    'exec "$${CODEX_HOME:-$$HOME/.codex}/hooks/run-autodev-mcp.sh" filesystem'
-  );
-  assert.equal(entry.cwd, "/a$$b");
   assert.equal(
     result.mcpServers.orchestrator.apiKeyFile,
     "/a$$b/supergateway.key"
   );
+  // The pool manifest is never interpolated, so it keeps the literal shell
+  // expression and workspace.
+  const entry = JSON.parse(
+    renderChatgptBackendPoolConfig(shellCatalogue, surfaces, "/a$b")
+  ).servers["orchestrator.filesystem"];
+  assert.equal(
+    entry.args[1],
+    'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" filesystem'
+  );
+  assert.equal(entry.cwd, "/a$b");
 });
 
 test("missing or malformed reviewed policy fails closed", () => {
@@ -600,11 +585,7 @@ test("pooled Supergateway config renders loopback Streamable HTTP upstreams pair
       mixedCatalogue,
       [{ role: "orchestrator", grants: grants, reviewed: grants }],
       "/project",
-      {
-        ...http,
-        sessionTimeout: DEFAULT_CHATGPT_SESSION_TIMEOUT_MS,
-        backendPool: true
-      }
+      { ...http, sessionTimeout: DEFAULT_CHATGPT_SESSION_TIMEOUT_MS }
     )
   );
   assert.equal(DEFAULT_CHATGPT_SESSION_TIMEOUT_MS, 60_000);

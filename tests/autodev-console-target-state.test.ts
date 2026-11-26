@@ -877,28 +877,32 @@ test("Usage cost and unavailable evidence remain honest", () => {
   );
 });
 
-test("skill-role mutation preserves desired, actual, and unobserved states", () => {
+test("the repository-owned resources expose no write path at all", () => {
   const target = readFileSync(targetStatePath, "utf8");
   const controlApi =
     /## 11\. Control API and authorization\n([\s\S]*?)(?=\n### )/u.exec(
       target
     )?.[1] ?? "";
+  // The skill, hook, prompt and permission resources are repository-owned, so
+  // the Control API reads them and writes nothing.
   assert.match(
     controlApi,
-    /`PATCH \/control\/skills\/:name` remains exclusively the complete desired role-assignment operation/u
-  );
-  assert.match(controlApi, /`actualRoles: \[\]` is an observed unassignment/u);
-  assert.match(
-    controlApi,
-    /`actualRoles: null` means the Runtime could not confirm/u
+    /Remove `PATCH \/control\/skills\/:name`, `PATCH \/control\/skills\/:name\/content`, `PATCH \/control\/prompts\/:name`, `PATCH \/control\/hooks\/:event`, `PATCH \/control\/permissions`/u
   );
   assert.match(
     controlApi,
-    /includes the shared reconciliation view and a bounded diff/u
+    /Existing resource routes reject non-GET methods with HTTP 405 and `Allow: GET`; removed write-only routes must be absent\./u
   );
+  // And no other route may become an alternate way to make the same change.
   assert.match(
     controlApi,
-    /accepts `converged` only when the confirmed actual set matches/u
+    /No alternate role-assignment or permission-grant mutation path may bypass this policy\./u
+  );
+  // The read side still separates an observed empty assignment from one that
+  // could not be observed.
+  assert.match(
+    controlApi,
+    /Skill assignment reads retain observed empty sets separately from unavailable\/unobserved assignments\./u
   );
 });
 

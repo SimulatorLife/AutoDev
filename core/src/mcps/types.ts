@@ -54,10 +54,49 @@ export interface McpServerDefinition {
   readonly defaultToolsApprovalMode?: string;
 }
 
+/**
+ * The operator-approved catalogue one Runtime home serves.
+ *
+ * A backend whose commands are catalogued has two copies of the catalogue: the
+ * proposal in the checkout and the approved copy outside every workspace. The
+ * approved copy is the one the backend serves, so its approval state is the
+ * operator's answer to "which revision is live?".
+ *
+ * The states are four because the two reads are independent. An installed copy
+ * with no proposal to compare it against is not pending approval; it is
+ * approved by nobody and known to be running.
+ */
+export interface McpServerApprovedCatalogue {
+  /** The Runtime home whose approved copy this is. */
+  readonly home: string;
+  /**
+   * `approved`: the installed copy is the checkout's proposal.
+   * `pending`: it is a different revision than the checkout's proposal.
+   * `unavailable`: no approved copy is installed, so the backend serves none.
+   * `unknown`: the proposal could not be read, so the two cannot be compared.
+   */
+  readonly state: "approved" | "pending" | "unavailable" | "unknown";
+  /** The digest of the approved copy, or null when none is installed. */
+  readonly approvedDigest: string | null;
+  /** The digest the checkout proposes, or null when it could not be read. */
+  readonly proposedDigest: string | null;
+  /** Where the approved copy lives. */
+  readonly approvedPath: string;
+}
+
 /** Combined canonical declaration and generated role-exposure projection. */
 export interface McpServerResource extends McpServerDefinition {
   readonly declared: boolean;
   readonly roles: readonly AgentRole[];
+  /**
+   * The operator-approved catalogues this backend serves, one per Runtime home.
+   *
+   * Absent for a backend with no catalogued commands: the declaration says
+   * nothing about approvals, so the field is absent rather than empty, and a
+   * reader does not have to tell "no approval exists" from "no approval was
+   * read".
+   */
+  readonly approvedCatalogues?: readonly McpServerApprovedCatalogue[] | undefined;
 }
 
 /**

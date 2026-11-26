@@ -9,7 +9,6 @@ import {
 import {
   buildPlaytestCoverageManifestDraft,
   buildPlaytestFindingIdentity,
-  buildReconciliationView,
   CONTROL_API_CONTRACT,
   CONTROL_API_PLAYTESTING_READINESS_SCHEMA,
   type ControlApiHookDeclaration,
@@ -41,8 +40,6 @@ import {
 } from "@simulatorlife/autodev-core";
 
 import {
-  applyCanonicalSourceWrite,
-  armCanonicalSourceApplyFailure,
   canonicalSource,
   type CanonicalSourceKind,
   moveCanonicalSource,
@@ -141,11 +138,29 @@ const INITIAL_WORKSPACE_REVISION = workspaceConfiguration.revision;
  * It is the ceiling every role runs under: a role may narrow the sandbox it
  * runs in, never widen it.
  */
+/**
+ * The canonical JSONC the fixture's permission policy holds.
+ */
+const FIXTURE_PERMISSION_SOURCE = `{
+  // The portable policy the session runs under.
+  "codexcli": {
+    "approval_policy": "on-request",
+    "approvals_reviewer": "operator",
+    "tools": { "web_search": false }
+  }
+}`;
+
 const permissionPolicy = {
   approvalPolicy: "on-request" as "never" | "on-request",
   approvalsReviewer: "operator",
   webSearch: false,
-  revision: "9".repeat(64)
+  // The revision names the bytes the policy is read from, which is what the
+  // Runtime publishes: the sha256 of the canonical source's exact text. A
+  // synthetic revision would let a page show a revision and a source that
+  // name different things.
+  revision: createHash("sha256")
+    .update(FIXTURE_PERMISSION_SOURCE, "utf8")
+    .digest("hex")
 };
 const INITIAL_PERMISSION_POLICY_REVISION = permissionPolicy.revision;
 
@@ -1045,6 +1060,37 @@ const FIXTURE_TARGET_HOOK: ControlApiHookDeclaration = {
 };
 
 /**
+ * The canonical JSONC the fixture's hook declaration holds.
+ *
+ * The comments are the point: a raw view that lost them would be a
+ * serialization of the declaration rather than its source.
+ */
+const FIXTURE_HOOK_SOURCE = `{
+  // The hook every target inherits.
+  "hooks": {
+    "preToolUse": [
+      {
+        "type": "command",
+        "matcher": "Bash",
+        "command": "echo guarded",
+        "statusMessage": "Bash is guarded in this fixture."
+      }
+    ]
+  },
+  // The hook this target declares alone.
+  "codexcli": {
+    "hooks": {
+      "sessionEnd": [
+        {
+          "type": "command",
+          "command": "echo session-end"
+        }
+      ]
+    }
+  }
+}`;
+
+/**
  * The collator the Runtime's own hook comparison uses.
  *
  * The fixture compares the two sides the way the Runtime compares them, so a
@@ -1112,8 +1158,12 @@ function initialHookDeclaration(): FixtureHookDeclaration {
     { event: FIXTURE_TARGET_HOOK.event, actions: FIXTURE_TARGET_HOOK.actions }
   ];
   return {
+    // The revision names the bytes the declaration is read from, which is what
+    // the Runtime publishes: the sha256 of the canonical source's exact text.
+    // A synthetic revision would let a page show a revision and a source that
+    // name different things.
     revision: createHash("sha256")
-      .update("hook-declaration", "utf8")
+      .update(FIXTURE_HOOK_SOURCE, "utf8")
       .digest("hex"),
     events,
     appliedEvents,
@@ -4487,6 +4537,7 @@ function handleHookCatalogRead(url: URL, response: ServerResponse): boolean {
       valid: true,
       issues: [],
       revision: hookDeclaration.revision,
+      sourceText: FIXTURE_HOOK_SOURCE,
       target: "codexcli",
       events: hookDeclaration.events
     };
@@ -4795,6 +4846,7 @@ function handleCatalogResourceRead(
       readOnly: true,
       executionContractObserved: true,
       revision: permissionPolicy.revision,
+      sourceText: FIXTURE_PERMISSION_SOURCE,
       policyStatus: "valid",
       policyReason: null,
       applied: null,
@@ -4954,136 +5006,14 @@ function handleCatalogResourceRead(
 }
 
 /**
- * The canonical source writes.
- *
- * The Runtime's write is a compare-and-swap against the revision the editor
- * loaded, and only then the projection apply. The fixture holds a real
- * canonical source, so the conflict it answers with is raised by the rule the
- * Runtime applies rather than by a fixture that re-implements the rule and can
- * drift from it.
- */
-async function handleCanonicalSourceMutation(
-  request: IncomingMessage,
-  response: ServerResponse,
-  url: URL
-): Promise<boolean> {
-  const prompt = url.pathname.match(PROMPT_DETAIL_ROUTE);
-  const skill = url.pathname.match(SKILL_CONTENT_ROUTE);
-  if (prompt === null && skill === null) return false;
-  // The same path is read as well as written, so a method that is not the
-  // write belongs to the read handler rather than to a refusal here.
-  if (request.method !== "PATCH") return false;
-  const kind: CanonicalSourceKind = prompt === null ? "skill" : "prompt";
-  const identifier = prompt?.[1] ?? skill?.[1] ?? "";
-  const name = decodeURIComponent(identifier);
-  const body = await readJsonBody(request);
-  const content = body?.content;
-  const expectedRevision = body?.expectedRevision;
-  if (typeof content !== "string" || typeof expectedRevision !== "string") {
-    sendCanonicalSourceError(
-      response,
-      400,
-      "autodev_control_api_invalid_body",
-      "A canonical source update requires exactly the expected revision and Markdown content."
-    );
-    return true;
-  }
-  const outcome = await applyCanonicalSourceWrite(kind, name, {
-    content,
-    expectedRevision
-  });
-  if (outcome.kind === "invalid-body") {
-    sendCanonicalSourceError(
-      response,
-      400,
-      "autodev_control_api_invalid_body",
-      "A canonical source update requires exactly the expected revision and Markdown content."
-    );
-    return true;
-  }
-  if (outcome.kind === "conflict") {
-    sendCanonicalSourceError(
-      response,
-      409,
-      kind === "prompt"
-        ? "autodev_control_prompt_revision_conflict"
-        : "autodev_control_skill_content_conflict",
-      outcome.message
-    );
-    return true;
-  }
-  if (outcome.kind === "invalid-source") {
-    sendCanonicalSourceError(
-      response,
-      400,
-      kind === "prompt"
-        ? "autodev_control_prompt_invalid_source"
-        : "autodev_control_skill_source_invalid",
-      outcome.message
-    );
-    return true;
-  }
-  if (outcome.kind === "apply-failed") {
-    sendCanonicalSourceError(
-      response,
-      503,
-      kind === "prompt"
-        ? "autodev_control_prompt_apply_failed"
-        : "autodev_control_skill_apply_failed",
-      outcome.message
-    );
-    return true;
-  }
-  const appliedAt = new Date().toISOString();
-  const reconciliation = buildReconciliationView({
-    evidence: {
-      desiredGeneration: outcome.source.revision,
-      observedGeneration: outcome.source.revision,
-      lastApplyAt: appliedAt,
-      lastObservationAt: appliedAt,
-      lastError: null
-    },
-    history: [],
-    hasObservation: true,
-    restartRequired: false
-  });
-  if (kind === "prompt") {
-    sendJson(response, {
-      schema: "autodev-control-prompt-command-patch-v2",
-      name: outcome.source.name,
-      revision: outcome.source.revision,
-      changed: outcome.changed,
-      diff: {
-        summary: "The canonical command source was updated.",
-        identifier: `prompt-${outcome.source.name}-2`
-      },
-      reconciliation
-    });
-    return true;
-  }
-  sendJson(response, {
-    schema: "autodev-control-skill-content-patch-v1",
-    name: outcome.source.name,
-    revision: outcome.source.revision,
-    changed: outcome.changed,
-    projectionApplied: true,
-    reconciliation
-  });
-  return true;
-}
-
-/**
  * The fixture's own control over the canonical source.
  *
  * `/fixture/canonical-source/move` changes a canonical source without this
  * Console knowing: the page that has the source open holds the revision it
  * was rendered with, so moving the source here is what makes its next write a
  * conflict rather than a silent overwrite of somebody else's edit.
- * `/fixture/canonical-source/apply-failure` arms the projection apply to fail
- * after the canonical source was saved -- the state the Runtime reports
- * separately, because the source was written and the projections were not.
- * `/fixture/canonical-source/reset` puts the sources back, so a test that
- * writes starts from the sources the fixture declares.
+ * `/fixture/canonical-source/reset` puts the sources back, so a test starts
+ * from the sources the fixture declares.
  */
 function configureCanonicalSourceFixture(
   request: IncomingMessage,
@@ -5104,11 +5034,6 @@ function configureCanonicalSourceFixture(
   const kind = url.searchParams.get("kind");
   if (kind !== "prompt" && kind !== "skill") {
     sendJson(response, { error: "A canonical source kind is required." }, 400);
-    return true;
-  }
-  if (action === "apply-failure") {
-    armCanonicalSourceApplyFailure(kind);
-    sendJson(response, { kind, armed: true });
     return true;
   }
   if (action !== "move") {
@@ -5358,7 +5283,6 @@ async function handleSyntheticMutationRoutes(
   if (await handleProviderRoleMutation(request, response, url)) return true;
   if (await handleAgentModelMutation(request, response, url)) return true;
   if (configureProviderRoleFixture(request, response, url)) return true;
-  if (await handleCanonicalSourceMutation(request, response, url)) return true;
   if (await applyMcpDeclarationWrite(response, request, url)) {
     return true;
   }
@@ -5371,6 +5295,26 @@ async function handleSyntheticMutationRoutes(
     return true;
   }
   if (await applyWorkspaceConfigurationWrite(request, response, url)) {
+    return true;
+  }
+  if (
+    (PROMPT_DETAIL_ROUTE.test(url.pathname) ||
+      SKILL_CONTENT_ROUTE.test(url.pathname)) &&
+    request.method !== "GET"
+  ) {
+    response.setHeader("allow", "GET");
+    sendJson(
+      response,
+      {
+        error: {
+          code: "autodev_control_api_method_not_allowed",
+          message: PROMPT_DETAIL_ROUTE.test(url.pathname)
+            ? "Prompt detail is read-only via GET."
+            : "Canonical skill content is read-only; a skill is changed in its repository source and reconciled by the standard workflow."
+        }
+      },
+      405
+    );
     return true;
   }
   if (["/control/permissions", "/control/hooks", "/control/hooks-applied"].includes(url.pathname) && request.method !== "GET") {

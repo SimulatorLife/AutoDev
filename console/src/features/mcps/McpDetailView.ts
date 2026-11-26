@@ -2,6 +2,7 @@ import type {
   ControlApiMcpAppliedResponse,
   ControlApiMcpRuntimeResponse,
   ControlApiMcpRuntimeServer,
+  McpServerApprovedCatalogue,
   McpServerResource,
   ToolCatalogItem
 } from "@simulatorlife/autodev-core";
@@ -64,6 +65,95 @@ export type McpDeclarationSaveOutcome =
 
 const CONFIGURED_STATUS = "configured" as const;
 const FLEX_COLUMN_DETAILS_CLASS = "flex flex-col gap-2";
+
+/**
+ * The operator-approved catalogue a backend serves.
+ *
+ * The catalogue is a proposal in the checkout and an approved copy outside
+ * every workspace, and the backend serves the approved copy. The state is
+ * therefore the operator's answer to "which revision is live?", and the four
+ * states are four different facts: a home with no approved copy serves
+ * nothing, a home whose proposal cannot be read cannot be compared, and only
+ * a home whose two copies differ is pending approval.
+ */
+function ApprovedCataloguePanel({
+  catalogues
+}: {
+  readonly catalogues: readonly McpServerApprovedCatalogue[];
+}): React.JSX.Element {
+  return React.createElement(
+    "div",
+    { "data-mcp-approved-catalogues": catalogues.length },
+    React.createElement(
+      "h4",
+      { className: SECTION_HEADING_CLASS },
+      "Approved command catalogue"
+    ),
+    React.createElement(
+      "ul",
+      { className: "mt-2 flex flex-col gap-3" },
+      catalogues.map((catalogue) =>
+        React.createElement(
+          "li",
+          {
+            key: catalogue.home,
+            className: "flex flex-col gap-1",
+            "data-mcp-approved-catalogue": catalogue.state
+          },
+          React.createElement(
+            StatusBadge,
+            {
+              status:
+                catalogue.state === "approved"
+                  ? "ready"
+                  : catalogue.state === "pending"
+                    ? "pending"
+                    : catalogue.state === "unavailable"
+                      ? "unavailable"
+                      : NOT_OBSERVED_STATUS,
+              label: {
+                approved: "Approved",
+                pending: "Pending approval",
+                unavailable: "Unavailable",
+                unknown: "Not observed"
+              }[catalogue.state]
+            }
+          ),
+          React.createElement(
+            "span",
+            { className: MONO_META_CLASS },
+            catalogue.home
+          ),
+          React.createElement(
+            "span",
+            { className: MUTED_META_CLASS },
+            catalogue.state === "approved"
+              ? "The installed copy is the revision the checkout proposes; the backend serves it."
+              : catalogue.state === "pending"
+                ? "The installed copy is a different revision than the checkout proposes, so the backend serves the older approved revision."
+                : catalogue.state === "unavailable"
+                  ? "No approved copy is installed here, so the backend serves no catalogue until the operator approves one."
+                  : "The checkout's proposal could not be read, so the installed copy cannot be compared against it."
+          ),
+          React.createElement(
+            "span",
+            { className: MONO_META_CLASS },
+            catalogue.approvedDigest === null
+              ? "Approved revision: none installed"
+              : `Approved revision: ${catalogue.approvedDigest.slice(0, 12)}`
+          ),
+          catalogue.proposedDigest === null
+            ? null
+            : React.createElement(
+                "span",
+                { className: MONO_META_CLASS },
+                `Proposed revision: ${catalogue.proposedDigest.slice(0, 12)}`
+              )
+        )
+      )
+    )
+  );
+}
 
 /**
  * MCP detail tabs in the target-state-mandated order. The id values are the
@@ -685,6 +775,15 @@ export function McpDetailView({
           serverName: server.name
         })
       ),
+      server.approvedCatalogues && server.approvedCatalogues.length > 0
+        ? React.createElement(
+            "div",
+            { className: "mt-4" },
+            React.createElement(ApprovedCataloguePanel, {
+              catalogues: server.approvedCatalogues
+            })
+          )
+        : null,
       React.createElement(
         "div",
         { className: "mt-4" },

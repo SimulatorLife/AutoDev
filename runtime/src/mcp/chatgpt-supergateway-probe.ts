@@ -110,11 +110,6 @@ export async function probeSupergateway(
     path.dirname(configFile),
     "backend-pool.json"
   );
-  const usesBackendPool = surfaces.some(([, surface]) =>
-    Object.values(surface.mcpServers).some(
-      (entry) => "type" in entry && entry.type === "streamableHttp"
-    )
-  );
   let probeXacpxIpc: XacpxOrchestrationIpcHandle | undefined;
   let effectiveEnv = env;
   if (
@@ -139,22 +134,18 @@ export async function probeSupergateway(
       AUTODEV_XACPX_COORDINATOR_SESSION: "chatgpt:policy-probe"
     };
   }
-  let pool: ChatgptBackendPoolHandle | undefined;
-  let gatewayEnv = effectiveEnv;
-  if (usesBackendPool && existsSync(poolConfigPath)) {
-    const poolConfig = chatgptBackendPoolConfigSchema.parse(
+  // Every gateway member is a route on the sibling backend pool.
+  const pool: ChatgptBackendPoolHandle = await startChatgptBackendPool(
+    chatgptBackendPoolConfigSchema.parse(
       JSON.parse(readFileSync(poolConfigPath, "utf8"))
-    );
-    pool = await startChatgptBackendPool(poolConfig, {
-      gatewayEnv: effectiveEnv,
-      secretEnv: process.env
-    });
-    gatewayEnv = {
-      ...effectiveEnv,
-      [CHATGPT_MCP_POOL_PORT_ENV]: String(pool.port),
-      [CHATGPT_MCP_POOL_TOKEN_ENV]: pool.token
-    };
-  }
+    ),
+    { gatewayEnv: effectiveEnv, secretEnv: env }
+  );
+  const gatewayEnv = {
+    ...effectiveEnv,
+    [CHATGPT_MCP_POOL_PORT_ENV]: String(pool.port),
+    [CHATGPT_MCP_POOL_TOKEN_ENV]: pool.token
+  };
   const child = spawn(
     executable,
     ["--config", configFile, "--port", String(probePort)],
@@ -271,7 +262,7 @@ export async function probeSupergateway(
         await once(child, "exit").catch(() => {});
       }
     }
-    if (pool) await pool.close().catch(() => {});
+    await pool.close().catch(() => {});
     if (probeXacpxIpc) await probeXacpxIpc.close().catch(() => {});
   }
 }

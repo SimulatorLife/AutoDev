@@ -1110,7 +1110,8 @@ function checkMcodeProfile(
 function checkGitExcludes(
   paths: RunInstallPaths,
   failures: { value: number }
-): void {  try {
+): void {
+  try {
     const exclude = execFileSync(
       "git",
       [
@@ -1315,24 +1316,29 @@ export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
       failures
     );
     checkLaunchAgents(paths, failures);
-    try {
-      execFileSync(
-        process.execPath,
-        [
-          resolveRuntimeSourcePath(
+    for (const [name, module] of [
+      ["MCP gateway readiness", "platform/mcp-gateway-service.ts"],
+      [
+        "configured ChatGPT tunnel readiness",
+        "platform/chatgpt-tunnel-install.ts"
+      ]
+    ] as const) {
+      try {
+        execFileSync(
+          process.execPath,
+          [
+            resolveRuntimeSourcePath(paths.repositoryRoot, module),
+            "check",
             paths.repositoryRoot,
-            "platform/chatgpt-tunnel-install.ts"
-          ),
-          "check",
-          paths.repositoryRoot,
-          paths.home,
-          paths.codexHome
-        ],
-        { stdio: "ignore", timeout: 30_000 }
-      );
-      check("configured ChatGPT tunnel readiness", true, failures);
-    } catch {
-      check("configured ChatGPT tunnel readiness", false, failures);
+            paths.home,
+            paths.codexHome
+          ],
+          { stdio: "ignore", timeout: 30_000 }
+        );
+        check(name, true, failures);
+      } catch {
+        check(name, false, failures);
+      }
     }
     return failures.value;
   } finally {

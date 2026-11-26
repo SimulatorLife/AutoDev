@@ -18,6 +18,7 @@ import { OpencliCommandError } from "@simulatorlife/autodev-runtime/providers/op
 import {
   OpencliBrowser,
   OpencliBrowserUnavailableError,
+  type OpencliCdpCommand,
   resolveOpencliBrowserExecutable
 } from "../src/providers/opencli-browser.ts";
 
@@ -55,7 +56,8 @@ async function fixture(
       entered: Promise<void>;
       release(): void;
     };
-  }) => Promise<void>
+  }) => Promise<void>,
+  fixtureOptions: { readonly cdpCommand?: OpencliCdpCommand } = {}
 ): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "opencli-browser-test-"));
   const profile = join(root, "private-profile");
@@ -114,6 +116,9 @@ async function fixture(
     profileDirectory: profile,
     readinessTimeoutMs: 200,
     fetch: fetcher,
+    ...(fixtureOptions.cdpCommand && {
+      cdpCommand: fixtureOptions.cdpCommand
+    }),
     spawnBrowser: ((
       command: string,
       commandArgs: readonly string[],
@@ -724,4 +729,79 @@ test("unexpected Chromium exit clears stale leases and recovers on the next run"
     // Late completion of crashed-generation callback does not drop ready state.
     assert.equal(browser.isReady, true);
   });
+});
+
+test("a foreground lease raises the leased page so native input is dispatched", async () => {
+  const cdpCalls: Array<{ wsUrl: string; method: string }> = [];
+  await fixture(
+    async ({ browser }) => {
+      const leased = await browser.run(
+        "chatgpt",
+        AbortSignal.timeout(2000),
+        async (endpoint) => endpoint,
+        true
+      );
+      const raised = cdpCalls.find(
+        (call) => call.method === "Page.bringToFront"
+      );
+      assert.ok(raised, "the leased page must be raised before native input");
+      assert.equal(raised.wsUrl, leased);
+    },
+    {
+      cdpCommand: async (wsUrl, method) => {
+        cdpCalls.push({ wsUrl, method });
+        if (method === "Runtime.evaluate") {
+          return { result: { value: "visible" } };
+        }
+        return {};
+      }
+    }
+  );
+});
+
+test("a foreground lease reports a page that stayed hidden", async () => {
+  await fixture(
+    async ({ browser }) => {
+      await assert.rejects(
+        browser.run(
+          "chatgpt",
+          AbortSignal.timeout(2000),
+          async () => "ok",
+          true
+        ),
+        (error: unknown) => {
+          assert.ok(error instanceof OpencliBrowserUnavailableError);
+          assert.match(error.message, /not visible/u);
+          assert.match(error.message, /visibilityState is "hidden"/u);
+          return true;
+        }
+      );
+    },
+    {
+      cdpCommand: async (_wsUrl, method) =>
+        method === "Runtime.evaluate" ? { result: { value: "hidden" } } : {}
+    }
+  );
+});
+
+test("a foreground lease continues when the page visibility cannot be observed", async () => {
+  await fixture(
+    async ({ browser }) => {
+      const result = await browser.run(
+        "chatgpt",
+        AbortSignal.timeout(2000),
+        async () => "ok",
+        true
+      );
+      assert.equal(result, "ok");
+    },
+    {
+      cdpCommand: async (_wsUrl, method) => {
+        if (method === "Runtime.evaluate") {
+          throw new Error("CDP transport closed");
+        }
+        return {};
+      }
+    }
+  );
 });

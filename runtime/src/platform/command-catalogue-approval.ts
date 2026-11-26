@@ -16,9 +16,11 @@ this boundary makes a catalogue change visible and explicit, it does not
 make unreviewed installer code trustworthy.
 */
 import { lstatSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 
 import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
+import { autodevHome } from "@simulatorlife/autodev-runtime/shared/autodev-home";
 
 import { parseCommandCatalogue } from "../mcp/commands-catalogue.ts";
 import {
@@ -154,6 +156,96 @@ export function applyCommandCatalogueApproval(
   }
   atomicWriteSync(current.approvedPath, proposed, { mode: 0o644 });
   return approvalOf(proposed, runtimeHome);
+}
+
+/**
+The approval state as the Control API and the Console publish it.
+
+The proposal and the approved copy are two independent reads, and either can
+fail. A state that merged them would have to call a catalogue nobody could
+read "pending", which is a claim about an approval rather than about a read.
+*/
+export interface CommandCataloguePublication {
+  /**
+  `approved`: the installed copy is the checkout's proposal.
+  `pending`: it is a different revision than the checkout's proposal.
+  `unavailable`: no approved copy is installed, so the backend serves none.
+  `unknown`: the proposal could not be read, so the two cannot be compared.
+  */
+  readonly state: "approved" | "pending" | "unavailable" | "unknown";
+  /**
+  The digest of the approved copy, or null when none is installed.
+  */
+  readonly approvedDigest: string | null;
+  /**
+  The digest the checkout proposes, or null when it could not be read.
+  */
+  readonly proposedDigest: string | null;
+  /**
+  Where the approved copy lives.
+  */
+  readonly approvedPath: string;
+}
+
+/**
+Publish the approval state of one Runtime home's approved copy, read-only.
+
+The proposal is a proposal: it may be unreadable, and it is never trusted. The
+approved copy is the one the backend serves, so its absence is what makes the
+backend unavailable rather than what makes it pending.
+*/
+export function publishedCommandCatalogueApproval(
+  repositoryRoot: string,
+  runtimeHome: string
+): CommandCataloguePublication {
+  const approvedPath = approvedCommandCataloguePath(runtimeHome);
+  const approvedDigest = readApprovedDigest(approvedPath);
+  let proposedDigest: string | null = null;
+  try {
+    proposedDigest = catalogueDigest(readProposed(repositoryRoot));
+  } catch {
+    proposedDigest = null;
+  }
+  if (approvedDigest === null) {
+    return {
+      state: "unavailable",
+      approvedDigest: null,
+      proposedDigest,
+      approvedPath
+    };
+  }
+  if (proposedDigest === null) {
+    return {
+      state: "unknown",
+      approvedDigest,
+      proposedDigest: null,
+      approvedPath
+    };
+  }
+  return {
+    state: approvedDigest === proposedDigest ? "approved" : "pending",
+    approvedDigest,
+    proposedDigest,
+    approvedPath
+  };
+}
+
+/**
+The Runtime homes that serve a Commands MCP.
+
+The AutoDev home serves the provider sessions' MCP launchers and the Codex
+home serves the ChatGPT gateway's, and each home holds its own approved copy.
+The same catalogue is therefore approved twice, and an operator looking at one
+backend needs to know about both.
+*/
+export function commandCatalogueHomes(
+  environment: NodeJS.ProcessEnv = process.env,
+  home = environment.HOME?.trim() || homedir()
+): readonly string[] {
+  return [
+    autodevHome(environment, home),
+    environment.CODEX_HOME?.trim() || path.join(home, ".codex")
+  ];
 }
 
 /**

@@ -33,7 +33,6 @@ import {
   type ControlApiModelsResponse,
   type ControlApiPermissionPolicy,
   type ControlApiPermissionsResponse,
-  type ControlApiPromptCommandPatchResponse,
   type ControlApiPromptDetailResponse,
   type ControlApiPromptsResponse,
   type ControlApiPromptVersionResponse,
@@ -54,9 +53,7 @@ import {
   type ControlApiProviderVersionsResponse,
   type ControlApiRoutingResponse,
   type ControlApiRuntimeResponse,
-  type ControlApiSkillContentPatchResponse,
   type ControlApiSkillContentResponse,
-  type ControlApiSkillRolesPatchResponse,
   type ControlApiSkillsResponse,
   type ControlApiToolsResponse,
   type ControlApiWorkspacePatchResponse,
@@ -65,6 +62,7 @@ import {
   type HookEvent,
   isAntigravityProvider,
   LOCAL_CONTROL_API_ACTOR,
+  type McpServerApprovedCatalogue,
   type McpServerResource,
   type OperationHistoryEntry,
   PROVIDER_ROLES,
@@ -82,29 +80,24 @@ import {
   type WorkspaceRuntimeAvailability
 } from "@simulatorlife/autodev-core";
 import {
-  assignSkillRoles,
   auditEnvelopesToHistory,
   boundReconciliationError,
   ConfigRepository,
   contractSkillRoles,
   EvaluationRepository,
   EvaluationSourceUnavailableError,
-  ExecutionContractConflictError,
   executionContractRevision,
-  ExecutionContractValidationError,
   getDefaultRestrictedHumanResponseRepository,
   PlaytestRepository,
   readAppliedPermissionPolicyFile,
-  readPermissionPolicyFile,
+  readPermissionPolicySource,
   reconcileDiffSummary,
   reconcileDiffWithIdentifier,
   resolveSkillScopes,
   type RestrictedHumanResponseRepository,
   RULE_SYNC_COMMAND_HISTORY_MAX_PAGE_SIZE,
   RULE_SYNC_COMMAND_HISTORY_PAGE_SIZE,
-  RuleSyncCommandConflictError,
   type RuleSyncCommandHistoryPage,
-  RuleSyncCommandValidationError,
   RuleSyncMcpConflictError,
   RuleSyncMcpValidationError,
   RuleSyncRepository,
@@ -123,11 +116,11 @@ import {
 } from "@simulatorlife/autodev-data";
 import {
   chatgptTunnelStatus,
+  commandCatalogueHomes,
   dependencyEnvironment,
   installedSkillMatches,
-  materializeCurrentCommandProjections,
   materializeCurrentMcpConfiguration,
-  materializeRuleSyncSkillProjections,
+  publishedCommandCatalogueApproval,
   tunnelMutationSchema
 } from "@simulatorlife/autodev-runtime/platform";
 import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
@@ -143,6 +136,7 @@ import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import { readRuntimeSecret } from "@simulatorlife/autodev-runtime/shared/runtime-secrets";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 import {
+  MCP_SERVER_COMMANDS,
   WEB_FETCH_TOOL,
   WEB_SEARCH_TOOL
 } from "@simulatorlife/autodev-runtime/shared/tool-names";
@@ -154,8 +148,7 @@ import { errorBody, ROUTER_INSTANCE_ID, sendJson } from "../router/proxy.ts";
 import {
   executionContractFile,
   executionContractObserved,
-  getDefaultExecutionContract,
-  reloadExecutionContract
+  getDefaultExecutionContract
 } from "../router/subagents.ts";
 import { routerTelemetryTracer } from "../router/telemetry.ts";
 import { readControlApiJsonObject } from "./body.ts";
@@ -437,9 +430,7 @@ const MCP_SERVER_PATH =
  * key from the pair the catalog is indexed by.
  */
 const WORKSPACE_DETAIL_PATH = /^\/control\/workspaces\/([^/\s]+)\/([^/\s]+)$/u;
-const SKILL_ROLES_PATH = /^\/control\/skills\/([a-zA-Z0-9._-]+)$/u;
 const SKILL_CONTENT_PATH = /^\/control\/skills\/([a-z0-9-]{1,64})\/content$/u;
-const SKILL_CONTENT_REQUEST_MAX_BYTES = 300_000;
 const routerStateMutationTails = new Map<string, Promise<void>>();
 
 /**
@@ -1598,6 +1589,29 @@ function mcpAppliedView(
   };
 }
 
+/**
+The approval state of the catalogues the Commands backend serves, one per
+Runtime home.
+
+A home whose approved copy is missing is unavailable rather than pending: the
+backend there serves no catalogue at all, and the operator has to approve one
+before it serves anything.
+*/
+function commandCatalogueApprovals(
+  repositoryRoot: string
+): readonly McpServerApprovedCatalogue[] {
+  return commandCatalogueHomes().map((home) => {
+    const publication = publishedCommandCatalogueApproval(repositoryRoot, home);
+    return {
+      home,
+      state: publication.state,
+      approvedDigest: publication.approvedDigest,
+      proposedDigest: publication.proposedDigest,
+      approvedPath: publication.approvedPath
+    };
+  });
+}
+
 function mcpsView(
   repositoryRoot: string = DEFAULT_REPO_ROOT
 ): Record<string, unknown> {
@@ -1626,10 +1640,16 @@ function mcpsView(
     exposures.map(({ name, roles }) => [name, roles])
   );
   const declaredNames = new Set(state.servers.map((server) => server.name));
+  // The Commands backend serves an operator-approved catalogue, and the
+  // approval is the operator's answer to "which revision is live?". It is
+  // published on the backend's own entry rather than as a second resource
+  // family, because the backend is the thing the approval is about.
+  const approvedCatalogues = commandCatalogueApprovals(repositoryRoot);
   const declared = state.servers.map((server) => ({
     ...server,
     declared: true,
-    roles: rolesByServer.get(server.name) ?? []
+    roles: rolesByServer.get(server.name) ?? [],
+    ...(server.name === MCP_SERVER_COMMANDS ? { approvedCatalogues } : {})
   }));
   // Typed rather than left to inference: `transport: "unknown"` in an inferred
   // array widens to `string`, which quietly stopped satisfying the declared
@@ -2073,12 +2093,11 @@ function skillsView(
   return {
     schema: "autodev-control-skills-v2",
     source: `${catalog.source}+${EXECUTION_CONTRACT_SOURCE}`,
-    // The skills collection has canonical write paths -- role assignment at
-    // `PATCH /control/skills/:name` and the canonical source at
-    // `PATCH /control/skills/:name/content` -- so it is not read-only. This
-    // used to say it was, which was a stale constant: the write paths arrived
-    // after it and the flag was never revisited.
-    readOnly: false,
+    // The skill catalogue is repository-owned. Its role assignments live in
+    // the execution contract and its canonical source lives in the RuleSync
+    // catalogue; both are changed in the repository and reconciled by the
+    // standard workflow, so this collection is read-only.
+    readOnly: true,
     valid: catalog.valid,
     issues: catalog.issues,
     // The role assignments come from the execution contract, and the accessor
@@ -3090,15 +3109,18 @@ function hooksView(
   repositoryRoot: string = DEFAULT_REPO_ROOT
 ): Record<string, unknown> {
   const repository = new RuleSyncRepository(repositoryRoot);
+  // One read carries the events, the source text and the revision that names
+  // the bytes both came from, so the rendered declaration and the source the
+  // operator inspects cannot describe different declarations.
   const state = repository.loadHooksState(HOOK_APPLIED_TARGET);
-  const revision = repository.loadHooksRevision().revision;
   return {
     schema: "autodev-control-hooks-v2",
     source: state.source,
     readOnly: true,
     valid: state.valid,
     issues: state.issues,
-    revision,
+    revision: state.revision,
+    sourceText: state.content,
     target: state.target,
     events: state.events
   } satisfies ControlApiHooksResponse;
@@ -3413,6 +3435,7 @@ function permissionPolicyState(
 ): {
   readonly source: string;
   readonly revision: string | null;
+  readonly sourceText: string | null;
   readonly policy: ControlApiPermissionPolicy | null;
   readonly policyStatus: "valid" | "invalid" | "unavailable";
   readonly policyReason: string | null;
@@ -3422,12 +3445,17 @@ function permissionPolicyState(
 } {
   const repository = new ConfigRepository(repositoryRoot);
   const source = ".rulesync/permissions.jsonc";
-  const read = readPermissionPolicyFile(repository.permissionPolicyPath());
+  // One read of the canonical source, so the source text and the policy
+  // beside it are parsed from the same bytes. The applied configuration is a
+  // separate read and is published as the policy it states, never as text.
+  const canonical = readPermissionPolicySource(repository.permissionPolicyPath());
+  const read = canonical.read;
   const appliedSource = path.join(codexHome, CODEX_USER_CONFIG_FILE);
   const appliedRead = readAppliedPermissionPolicyFile(appliedSource);
   return {
     source,
     revision: read.status === "unavailable" ? null : read.revision,
+    sourceText: canonical.content,
     policy: read.status === "valid" ? read.policy : null,
     policyStatus: read.status,
     policyReason: read.status === "valid" ? null : read.reason,
@@ -3483,6 +3511,7 @@ function permissionsView(
     source: state.source,
     readOnly: true,
     revision: state.revision,
+    sourceText: state.sourceText,
     policy: state.policy,
     policyStatus: state.policyStatus,
     policyReason: state.policyReason,
@@ -3547,11 +3576,10 @@ function promptsView(
   return {
     schema: "autodev-control-prompts-v2",
     source: commandState.source,
-    // The prompts collection has a canonical write path -- the command's own
-    // source at `PATCH /control/prompts/:name` -- so it is not read-only. This
-    // used to say it was, which was a stale constant: the write path arrived
-    // after it and the flag was never revisited.
-    readOnly: false,
+    // The commands are repository-owned: a canonical command is changed in its
+    // repository source and reconciled by the standard workflow, so this
+    // collection is read-only.
+    readOnly: true,
     valid: commandState.valid,
     issues: commandState.issues,
     totalCommands: commandState.valid === true ? commands.length : null,
@@ -3754,29 +3782,6 @@ function skillReconciliationView(args: {
     history: historyForResource(resource),
     hasObservation: installed,
     restartRequired: false
-  });
-}
-
-function promptDiffSummary(args: {
-  readonly name: string;
-  readonly codexHome: string;
-  readonly projectionUpdated: boolean;
-}): ReconciliationDiff {
-  const observed = observePromptProjection(args.name, args.codexHome);
-  if (args.projectionUpdated && observed === null) {
-    return reconcileDiffSummary({
-      summary:
-        "Canonical source updated; Rulesync projection is pending observation."
-    });
-  }
-  if (args.projectionUpdated) {
-    return reconcileDiffWithIdentifier({
-      summary: "Canonical source updated; Rulesync projection applied.",
-      identifier: observed ?? ""
-    });
-  }
-  return reconcileDiffSummary({
-    summary: "Canonical source unchanged."
   });
 }
 
@@ -5799,186 +5804,6 @@ const PROMPT_DETAIL_ROUTE: ReadOnlyDetailRoute = {
   read: promptDetailView
 };
 
-async function patchPromptCommand(
-  request: IncomingMessage,
-  response: ServerResponse,
-  actor: ControlApiActor,
-  name: string,
-  repositoryRoot: string,
-  codexHome: string
-): Promise<void> {
-  const resource = `${CONTROL_API_PATHS.prompts}/${name}`;
-  if (actor.role !== "operator") {
-    auditMutation({
-      actor: actor.actor,
-      actorVerified: true,
-      role: actor.role,
-      action: "update_rule_sync_command",
-      resource,
-      outcome: "denied",
-      changes: null,
-      reason: "operator_required"
-    });
-    sendControlError(
-      response,
-      403,
-      "autodev_control_api_forbidden",
-      "Updating canonical RuleSync commands requires an operator."
-    );
-    return;
-  }
-  const parsed = await readControlApiJsonObject(request);
-  if (!parsed.ok) {
-    auditMutation({
-      actor: actor.actor,
-      actorVerified: true,
-      role: actor.role,
-      action: "update_rule_sync_command",
-      resource,
-      outcome: "error",
-      changes: null,
-      reason: parsed.code
-    });
-    sendControlError(response, parsed.status, parsed.code, parsed.message);
-    return;
-  }
-  const { body } = parsed;
-  if (
-    Object.keys(body).length !== 2 ||
-    typeof body.content !== "string" ||
-    typeof body.expectedRevision !== "string"
-  ) {
-    auditMutation({
-      actor: actor.actor,
-      actorVerified: true,
-      role: actor.role,
-      action: "update_rule_sync_command",
-      resource,
-      outcome: "error",
-      changes: null,
-      reason: "invalid_body"
-    });
-    sendControlError(
-      response,
-      400,
-      "autodev_control_api_invalid_body",
-      "Command updates require exactly the expected revision and Markdown content."
-    );
-    return;
-  }
-
-  let updated;
-  try {
-    updated = await new RuleSyncRepository(repositoryRoot).updateCommand({
-      name,
-      expectedRevision: body.expectedRevision,
-      content: body.content
-    });
-  } catch (error) {
-    const conflict = error instanceof RuleSyncCommandConflictError;
-    const validation = error instanceof RuleSyncCommandValidationError;
-    if (!conflict && !validation) throw error;
-    const status = conflict ? 409 : 400;
-    const code = conflict
-      ? "autodev_control_prompt_revision_conflict"
-      : "autodev_control_prompt_invalid_source";
-    const message =
-      error instanceof Error ? error.message : "Command source is invalid.";
-    auditMutation({
-      actor: actor.actor,
-      actorVerified: true,
-      role: actor.role,
-      action: "update_rule_sync_command",
-      resource,
-      outcome: "error",
-      changes: null,
-      reason: conflict ? "revision_conflict" : "invalid_source"
-    });
-    sendControlError(response, status, code, message);
-    return;
-  }
-
-  let updatedPrompts: readonly string[];
-  try {
-    updatedPrompts = materializeCurrentCommandProjections({
-      repositoryRoot,
-      codexHome
-    });
-  } catch {
-    auditMutation({
-      actor: actor.actor,
-      actorVerified: true,
-      role: actor.role,
-      action: "update_rule_sync_command",
-      resource,
-      outcome: "error",
-      changes: { name, revision: updated.revision },
-      reason: "projection_apply_failed"
-    });
-    sendControlError(
-      response,
-      503,
-      "autodev_control_prompt_apply_failed",
-      "Canonical source was updated, but RuleSync generation or projection apply failed. Reload the prompt before retrying."
-    );
-    return;
-  }
-
-  const projectionUpdated = updatedPrompts.includes(name);
-  // Observed means "the projection on disk was generated from this canonical
-  // revision and is still present", so it is expressed in the same revision
-  // domain as the desired generation.
-  const projectionPresent = observePromptProjection(name, codexHome) !== null;
-  const desiredGeneration = promptGeneration(updated.revision);
-  const observedGeneration =
-    projectionUpdated && projectionPresent ? desiredGeneration : null;
-  const restartRequired = projectionUpdated && !projectionPresent;
-  const resourceKey = `${CONTROL_API_PATHS.prompts}/${name}`;
-  auditMutation({
-    actor: actor.actor,
-    actorVerified: true,
-    role: actor.role,
-    action: "update_rule_sync_command",
-    resource: resourceKey,
-    outcome: "ok",
-    changes: {
-      name,
-      revision: updated.revision,
-      projectionUpdated
-    },
-    desiredGeneration,
-    observedGeneration,
-    restartRequired
-  });
-  const reconciliation = buildReconciliationView({
-    evidence: {
-      desiredGeneration,
-      observedGeneration,
-      lastApplyAt: new Date().toISOString(),
-      lastObservationAt:
-        observedGeneration === null ? null : new Date().toISOString(),
-      lastError: null
-    },
-    history: historyForResource(resourceKey),
-    hasObservation: observedGeneration !== null,
-    restartRequired
-  });
-  const diff = promptDiffSummary({ name, codexHome, projectionUpdated });
-  sendJson(
-    response,
-    200,
-    {
-      schema: "autodev-control-prompt-command-patch-v2",
-      name,
-      revision: updated.revision,
-      changed: updated.revision !== body.expectedRevision,
-      diff,
-      reconciliation
-    } satisfies ControlApiPromptCommandPatchResponse,
-    { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
-  );
-}
-
 /**
  * The launch configuration one request sets.
  *
@@ -6412,506 +6237,15 @@ function promptVersionsRoute(
     route
   );
 }
-/**
- * `PATCH /control/skills/:name` — assign a skill to exactly the roles named.
- *
- * This is the operation the memory system needed and did not have. A procedural
- * memory promoted to a skill lands in the catalog with no role assignment, and
- * because role assignment lives in the execution contract while this collection
- * was read-only, the Console had no way to finish the job: the promotion
- * succeeded, the skill appeared, and no agent could reach it.
- *
- * The body carries the *complete* desired set rather than an addition, so
- * unassigning is the same call with an empty list and there is no second verb to
- * get wrong. `expectedRevision` is the contract's own digest, because the failure
- * this protects against is two operators assigning at once — a last-writer-wins
- * merge would discard the first assignment and leave both of them believing
- * theirs took.
- *
- * `workspace` says where the assignment belongs. A skill installed inside a
- * repository belongs to that repository's workspace alone, so its assignment is
- * written into the workspace's section of the contract; every other skill is
- * assigned globally and names no workspace.
- */
-interface SkillRolesRequestBody {
-  readonly expectedRevision: string;
-  readonly roles: readonly string[];
-  /** The workspace the assignment belongs to; absent for a global one. */
-  readonly workspace?: string | undefined;
-}
 
 /**
- * The body of a skill assignment, or the reason it is not one.
+ * The one answer to a canonical skill source that could not be read.
  *
- * Exactly the revision, the roles, and at most one workspace, checked exactly.
- * A body carrying a key this route does not understand is refused rather than
- * ignored, because an operator whose tooling sent something this route does not
- * understand should be told so instead of watching the assignment they asked for
- * happen to some subset of what they sent.
+ * A skill the catalogue does not hold is a wrong answer, not an empty one:
+ * the caller would render a panel for a skill that does not exist. A catalogue
+ * that was read and found broken is a different claim, and it answers with the
+ * catalogue's own reason.
  */
-function isSkillRolesBodyKey(key: string): boolean {
-  return key === "expectedRevision" || key === "roles" || key === "workspace";
-}
-
-function isStringList(value: unknown): value is string[] {
-  return (
-    Array.isArray(value) &&
-    value.every((entry): entry is string => typeof entry === "string")
-  );
-}
-
-function readSkillRolesBody(
-  body: Record<string, unknown>
-): SkillRolesRequestBody | null {
-  const keys = Object.keys(body);
-  if (keys.length < 2 || keys.length > 3) return null;
-  if (!keys.every(isSkillRolesBodyKey)) return null;
-  if (typeof body.expectedRevision !== "string") return null;
-  if (!isStringList(body.roles)) return null;
-  if (body.workspace !== undefined && typeof body.workspace !== "string") {
-    return null;
-  }
-  return {
-    expectedRevision: body.expectedRevision,
-    roles: body.roles,
-    workspace: body.workspace
-  };
-}
-
-/**
- * Why an assignment cannot be written where the caller asked for.
- *
- * The scope is read live from the machine, so the refusal follows where the
- * skill actually is: a skill inside a repository is that repository's
- * workspace's alone, and a skill anywhere else belongs to no workspace. The
- * scope is never the operator's to say.
- */
-interface SkillScopeRefusal {
-  readonly reason: string;
-  readonly message: string;
-}
-
-function skillScopeRefusal(
-  facts: SkillScopeFacts | null,
-  requestedWorkspace: string | null
-): SkillScopeRefusal | null {
-  if (facts?.scope === "repo") {
-    if (facts.workspace === null) {
-      return {
-        reason: "workspace_unattributed",
-        message:
-          "This skill is installed inside the repository, and the repository is not one of the configured workspaces, so there is nowhere to assign it."
-      };
-    }
-    if (requestedWorkspace !== facts.workspace) {
-      return {
-        reason: "workspace_required",
-        message: `This skill belongs to the workspace "${facts.workspace}" and can only be assigned inside it.`
-      };
-    }
-    return null;
-  }
-  if (requestedWorkspace !== null) {
-    return {
-      reason: "workspace_not_allowed",
-      message:
-        "This skill is not installed inside the repository, so it is assigned to agent roles globally rather than to one workspace."
-    };
-  }
-  return null;
-}
-
-/**
- * Where a skill is installed, and whether an assignment may be made there.
- *
- * The scope is read live from the machine, so the answer follows where the
- * skill actually is rather than what the request says about it.
- */
-interface SkillAssignmentScope {
-  /** Where the skill is installed, or null when it is installed nowhere. */
-  readonly facts: SkillScopeFacts | null;
-  /** The workspace the assignment was asked for, or null for a global one. */
-  readonly workspace: string | null;
-  /** Why the assignment cannot be made where it was asked for. */
-  readonly refusal: SkillScopeRefusal | null;
-}
-
-function resolveSkillAssignmentScope(
-  name: string,
-  repositoryRoot: string,
-  assignment: SkillRolesRequestBody
-): SkillAssignmentScope {
-  const facts = liveSkillScopes([name], repositoryRoot).get(name) ?? null;
-  const workspace = assignment.workspace ?? null;
-  return { facts, workspace, refusal: skillScopeRefusal(facts, workspace) };
-}
-
-/**
- * The roles the contract now carries for a skill, or null when they are not
- * observed.
- *
- * The roles are read from the place the skill belongs to: a repo-scoped
- * skill's roles are its workspace's roles, and every other skill's are the
- * global ones. Reading the global list for a workspace-scoped assignment would
- * report an empty assignment for a write that took.
- *
- * An empty assignment is observed only when the just-written source revision is
- * the one the Runtime reloaded; otherwise absence from that projection stays
- * unknown instead of becoming an observed empty set.
- */
-function observedSkillAssignmentRoles(
-  name: string,
-  scope: SkillAssignmentScope,
-  contractFile: string,
-  writtenRevision: string
-): string[] | null {
-  const observedRoles = assignedSkillRoles(
-    name,
-    scope.facts?.scope === "repo" ? scope.facts.workspace : null
-  );
-  if (observedRoles.length > 0) return observedRoles;
-  const content = readContract(contractFile);
-  const revision =
-    content.length > 0 ? executionContractRevision(content) : null;
-  return revision === writtenRevision ? [] : null;
-}
-
-/**
- * Refuse an assignment whose workspace does not match where the skill is.
- *
- * The refusal is audited with the reason it was refused, so a later reader can
- * tell a workspace mismatch from a body the route did not understand.
- */
-function refuseSkillScope(
-  response: ServerResponse,
-  actor: ControlApiActor,
-  resource: string,
-  refusal: SkillScopeRefusal
-): void {
-  auditMutation({
-    actor: actor.actor,
-    actorVerified: true,
-    role: actor.role,
-    action: "assign_skill_roles",
-    resource,
-    outcome: "error",
-    changes: null,
-    reason: refusal.reason
-  });
-  sendControlError(
-    response,
-    400,
-    "autodev_control_execution_contract_invalid",
-    refusal.message
-  );
-}
-
-/** The write itself, mapped onto the two refusals it can legitimately return. */
-async function applySkillRoles(
-  file: string,
-  skill: string,
-  assignment: SkillRolesRequestBody
-): Promise<
-  | {
-      readonly ok: true;
-      readonly assigned: Awaited<ReturnType<typeof assignSkillRoles>>;
-    }
-  | {
-      readonly ok: false;
-      readonly status: number;
-      readonly code: string;
-      readonly message: string;
-    }
-> {
-  try {
-    return {
-      ok: true,
-      assigned: await assignSkillRoles({
-        file,
-        expectedRevision: assignment.expectedRevision,
-        skill,
-        roles: assignment.roles,
-        workspace: assignment.workspace
-      })
-    };
-  } catch (error) {
-    const conflict = error instanceof ExecutionContractConflictError;
-    const validation = error instanceof ExecutionContractValidationError;
-    // Anything else is a defect rather than a refusal, and is left to throw:
-    // reporting it as "the assignment was refused" would turn a bug into a
-    // message that tells an operator their valid request was wrong.
-    if (!conflict && !validation) throw error;
-    return {
-      ok: false,
-      status: conflict ? 409 : 400,
-      code: conflict
-        ? "autodev_control_execution_contract_conflict"
-        : "autodev_control_execution_contract_invalid",
-      message:
-        error instanceof Error
-          ? error.message
-          : "The role assignment was refused."
-    };
-  }
-}
-
-async function patchSkillRoles(
-  request: IncomingMessage,
-  response: ServerResponse,
-  actor: ControlApiActor,
-  name: string,
-  options: ControlApiRequestOptions
-): Promise<void> {
-  const resource = `${CONTROL_API_PATHS.skills}/${name}`;
-  if (actor.role !== "operator") {
-    auditMutation({
-      actor: actor.actor,
-      actorVerified: true,
-      role: actor.role,
-      action: "assign_skill_roles",
-      resource,
-      outcome: "denied",
-      changes: null,
-      reason: "operator_required"
-    });
-    sendControlError(
-      response,
-      403,
-      "autodev_control_api_forbidden",
-      "Assigning skills to agent roles requires an operator."
-    );
-    return;
-  }
-
-  // The skill has to exist before it can be exposed. Assigning one that is not
-  // in the catalog would produce exactly the `unresolvedAssignments` this page
-  // already reports as a configuration defect.
-  const catalog = new RuleSyncRepository(
-    options.repositoryRoot ?? DEFAULT_REPO_ROOT
-  ).loadSkills();
-  const skill = catalog.skills.find((entry) => entry.name === name);
-  if (!skill) {
-    // A catalogue that was read and found broken does not name this skill,
-    // and that is not the same as the catalogue naming it absent: a 404 would
-    // say the skill does not exist when nobody could read the file that would
-    // have said whether it does. An absent catalogue holds no skill, so the
-    // skill is genuinely not there.
-    if (catalog.valid === false) {
-      auditMutation({
-        actor: actor.actor,
-        actorVerified: true,
-        role: actor.role,
-        action: "assign_skill_roles",
-        resource,
-        outcome: "error",
-        changes: null,
-        reason: "skill_catalogue_invalid"
-      });
-      sendControlError(
-        response,
-        503,
-        "autodev_control_skill_catalogue_invalid",
-        catalog.issues[0]?.message ??
-          "The RuleSync skill catalog is invalid, so no skill could be assigned."
-      );
-      return;
-    }
-    auditMutation({
-      actor: actor.actor,
-      actorVerified: true,
-      role: actor.role,
-      action: "assign_skill_roles",
-      resource,
-      outcome: "error",
-      changes: null,
-      reason: "unknown_skill"
-    });
-    sendControlError(
-      response,
-      404,
-      "autodev_control_skill_not_found",
-      `No RuleSync skill named "${name}" exists.`
-    );
-    return;
-  }
-
-  const contractFile = executionContractFile();
-  if (contractFile === null) {
-    auditMutation({
-      actor: actor.actor,
-      actorVerified: true,
-      role: actor.role,
-      action: "assign_skill_roles",
-      resource,
-      outcome: "error",
-      changes: null,
-      reason: "no_execution_contract"
-    });
-    sendControlError(
-      response,
-      409,
-      "autodev_control_execution_contract_missing",
-      "No execution contract file was found, so no role assignment was made."
-    );
-    return;
-  }
-
-  const parsed = await readControlApiJsonObject(request);
-  if (!parsed.ok) {
-    auditMutation({
-      actor: actor.actor,
-      actorVerified: true,
-      role: actor.role,
-      action: "assign_skill_roles",
-      resource,
-      outcome: "error",
-      changes: null,
-      reason: parsed.code
-    });
-    sendControlError(response, parsed.status, parsed.code, parsed.message);
-    return;
-  }
-  const { body } = parsed;
-  const assignment = readSkillRolesBody(body);
-  if (assignment === null) {
-    auditMutation({
-      actor: actor.actor,
-      actorVerified: true,
-      role: actor.role,
-      action: "assign_skill_roles",
-      resource,
-      outcome: "error",
-      changes: null,
-      reason: "invalid_body"
-    });
-    sendControlError(
-      response,
-      400,
-      "autodev_control_api_invalid_body",
-      "Skill role assignment requires exactly the expected execution-contract revision, a roles array of strings, and at most one workspace."
-    );
-    return;
-  }
-
-  // Where the skill is installed decides where it may be assigned. The scope is
-  // read from the machine rather than taken from the request, so a skill that
-  // lives inside a repository cannot be claimed by a workspace it does not
-  // belong to.
-  const scope = resolveSkillAssignmentScope(
-    skill.name,
-    options.repositoryRoot ?? DEFAULT_REPO_ROOT,
-    assignment
-  );
-  if (scope.refusal !== null) {
-    refuseSkillScope(response, actor, resource, scope.refusal);
-    return;
-  }
-
-  const written = await applySkillRoles(contractFile, skill.name, assignment);
-  if (!written.ok) {
-    auditMutation({
-      actor: actor.actor,
-      actorVerified: true,
-      role: actor.role,
-      action: "assign_skill_roles",
-      resource,
-      outcome: "error",
-      changes: null,
-      reason:
-        written.status === 409 ? "revision_conflict" : "invalid_assignment"
-    });
-    sendControlError(response, written.status, written.code, written.message);
-    return;
-  }
-  const assigned = written.assigned;
-
-  // The read path caches the contract in the router. Without dropping that cache
-  // the write would succeed, this response would report the new roles, and the
-  // next `/control/skills` read would show the old ones — an assignment that
-  // reports working and does nothing.
-  reloadExecutionContract();
-  const actualRoles = observedSkillAssignmentRoles(
-    name,
-    scope,
-    contractFile,
-    assigned.revision
-  );
-  const roleGeneration = (roles: readonly string[]): string =>
-    createHash("sha256")
-      .update(
-        JSON.stringify({
-          skill: name,
-          workspace: scope.workspace,
-          roles: [...roles].sort()
-        }),
-        "utf8"
-      )
-      .digest("hex");
-  const desiredGeneration = roleGeneration(assigned.roles);
-  const observedGeneration =
-    actualRoles === null ? null : roleGeneration(actualRoles);
-  auditMutation({
-    actor: actor.actor,
-    actorVerified: true,
-    role: actor.role,
-    action: "assign_skill_roles",
-    resource,
-    outcome: "ok",
-    changes: {
-      name,
-      desiredRoles: assigned.roles,
-      actualRoles,
-      // Where the assignment was made. The skill's scope decides it, and the
-      // audit says so rather than leaving a workspace-scoped write looking
-      // like a global one.
-      workspace: scope.workspace,
-      revision: assigned.revision
-    },
-    desiredGeneration,
-    observedGeneration
-  });
-  const latest = findLatestAuditFor(resource);
-  const reconciliation = buildReconciliationView({
-    evidence: {
-      desiredGeneration,
-      observedGeneration,
-      lastApplyAt: latest?.timestamp ?? null,
-      lastObservationAt:
-        actualRoles === null ? null : (latest?.timestamp ?? null),
-      lastError: boundReconciliationError(latest?.reason ?? null)
-    },
-    history: historyForResource(resource),
-    hasObservation: actualRoles !== null
-  });
-  const diff = reconcileDiffWithIdentifier({
-    summary:
-      actualRoles === null
-        ? "Skill role assignment was written; runtime roles are not observed."
-        : desiredGeneration === observedGeneration
-          ? "Desired and observed skill role assignments match."
-          : "Desired and observed skill role assignments differ.",
-    identifier: desiredGeneration
-  });
-  sendJson(response, 200, {
-    schema: "autodev-control-skill-assignment-v2",
-    skill: assigned.skill,
-    desiredRoles: assigned.roles,
-    actualRoles,
-    revision: assigned.revision,
-    reconciliation,
-    diff
-  } satisfies ControlApiSkillRolesPatchResponse);
-}
-
-interface SkillContentPatchBody {
-  readonly expectedRevision: string;
-  readonly content: string;
-}
-
-type UpdatedRuleSyncSkillSource = Awaited<
-  ReturnType<RuleSyncRepository["updateSkillSource"]>
->;
-
 interface SkillContentError {
   readonly status: number;
   readonly code: string;
@@ -6981,197 +6315,6 @@ function readSkillContent(
   }
 }
 
-function auditSkillContentError(
-  actor: ControlApiActor,
-  resource: string,
-  reason: string
-): void {
-  auditMutation({
-    actor: actor.actor,
-    actorVerified: true,
-    role: actor.role,
-    action: "update_rule_sync_skill",
-    resource,
-    outcome: "error",
-    changes: null,
-    reason
-  });
-}
-
-async function readSkillContentPatchBody(
-  request: IncomingMessage,
-  response: ServerResponse,
-  actor: ControlApiActor,
-  resource: string
-): Promise<SkillContentPatchBody | null> {
-  const parsed = await readControlApiJsonObject(
-    request,
-    SKILL_CONTENT_REQUEST_MAX_BYTES
-  );
-  if (!parsed.ok) {
-    auditSkillContentError(actor, resource, parsed.code);
-    sendControlError(response, parsed.status, parsed.code, parsed.message);
-    return null;
-  }
-  const { body } = parsed;
-  if (
-    Object.keys(body).length === 2 &&
-    typeof body.content === "string" &&
-    typeof body.expectedRevision === "string" &&
-    CONTROL_API_REVISION_PATTERN.test(body.expectedRevision)
-  ) {
-    return {
-      content: body.content,
-      expectedRevision: body.expectedRevision
-    };
-  }
-  auditSkillContentError(actor, resource, "invalid_body");
-  sendControlError(
-    response,
-    400,
-    "autodev_control_api_invalid_body",
-    "Skill content updates require exactly the expected source revision and Markdown content."
-  );
-  return null;
-}
-
-function skillContentUpdateError(error: unknown): SkillContentError | null {
-  if (error instanceof RuleSyncSkillConflictError) {
-    return {
-      status: 409,
-      code: "autodev_control_skill_content_conflict",
-      message: error.message,
-      reason: "revision_conflict"
-    };
-  }
-  if (error instanceof RuleSyncSkillValidationError) {
-    return {
-      status: 400,
-      code: "autodev_control_skill_source_invalid",
-      message: error.message,
-      reason: "invalid_source"
-    };
-  }
-  if (error instanceof RuleSyncSkillSourceUnavailableError) {
-    return {
-      status: 503,
-      code: "autodev_control_skill_source_unavailable",
-      message: error.message,
-      reason: "source_unavailable"
-    };
-  }
-  return null;
-}
-
-async function updateSkillContent(
-  response: ServerResponse,
-  actor: ControlApiActor,
-  resource: string,
-  name: string,
-  body: SkillContentPatchBody,
-  repository: RuleSyncRepository
-): Promise<UpdatedRuleSyncSkillSource | null> {
-  try {
-    return await repository.updateSkillSource({
-      name,
-      expectedRevision: body.expectedRevision,
-      content: body.content
-    });
-  } catch (error) {
-    const failure = skillContentUpdateError(error);
-    if (failure === null) throw error;
-    auditSkillContentError(actor, resource, failure.reason);
-    sendControlError(response, failure.status, failure.code, failure.message);
-    return null;
-  }
-}
-
-function applySkillContent(
-  response: ServerResponse,
-  actor: ControlApiActor,
-  resource: string,
-  repositoryRoot: string,
-  updated: UpdatedRuleSyncSkillSource
-): boolean {
-  try {
-    materializeRuleSyncSkillProjections(repositoryRoot);
-    return true;
-  } catch {
-    auditMutation({
-      actor: actor.actor,
-      actorVerified: true,
-      role: actor.role,
-      action: "update_rule_sync_skill",
-      resource,
-      outcome: "error",
-      changes: { name: updated.name, revision: updated.revision },
-      reason: "projection_apply_failed",
-      desiredGeneration: updated.revision,
-      observedGeneration: null
-    });
-    sendControlError(
-      response,
-      503,
-      "autodev_control_skill_apply_failed",
-      "Canonical skill source was updated, but RuleSync projection generation or verification failed. Reload the current source before retrying."
-    );
-    return false;
-  }
-}
-
-function confirmSkillContentApplied(
-  response: ServerResponse,
-  actor: ControlApiActor,
-  resource: string,
-  name: string,
-  body: SkillContentPatchBody,
-  updated: UpdatedRuleSyncSkillSource
-): void {
-  const appliedAt = new Date().toISOString();
-  const changed = updated.revision !== body.expectedRevision;
-  auditMutation({
-    actor: actor.actor,
-    actorVerified: true,
-    role: actor.role,
-    action: "update_rule_sync_skill",
-    resource,
-    outcome: "ok",
-    changes: {
-      name,
-      revision: updated.revision,
-      contentBytes: Buffer.byteLength(body.content, "utf8"),
-      changed
-    },
-    desiredGeneration: updated.revision,
-    observedGeneration: updated.revision
-  });
-  const reconciliation = buildReconciliationView({
-    evidence: {
-      desiredGeneration: updated.revision,
-      observedGeneration: updated.revision,
-      lastApplyAt: appliedAt,
-      lastObservationAt: appliedAt,
-      lastError: null
-    },
-    history: historyForResource(resource),
-    hasObservation: true,
-    restartRequired: false
-  });
-  sendJson(
-    response,
-    200,
-    {
-      schema: "autodev-control-skill-content-patch-v1",
-      name,
-      revision: updated.revision,
-      changed,
-      projectionApplied: true,
-      reconciliation
-    } satisfies ControlApiSkillContentPatchResponse,
-    { "cache-control": "no-store", vary: CONTROL_VARY_HEADER }
-  );
-}
-
 function rejectSkillContentMethod(
   request: IncomingMessage,
   response: ServerResponse,
@@ -7185,66 +6328,21 @@ function rejectSkillContentMethod(
     AUDIT_REASON_METHOD_NOT_ALLOWED,
     actor
   );
-  response.setHeader("allow", ALLOWED_METHODS_READ_AND_PATCH);
+  response.setHeader("allow", "GET");
   sendControlError(
     response,
     405,
     "autodev_control_api_method_not_allowed",
-    "Canonical skill content accepts GET and PATCH."
+    "Canonical skill content is read-only; a skill is changed in its repository source and reconciled by the standard workflow."
   );
 }
 
-async function patchSkillContent(
-  request: IncomingMessage,
-  response: ServerResponse,
-  actor: ControlApiActor,
-  name: string,
-  resource: string,
-  repository: RuleSyncRepository,
-  repositoryRoot: string
-): Promise<void> {
-  if (actor.role !== "operator") {
-    auditMutation({
-      actor: actor.actor,
-      actorVerified: true,
-      role: actor.role,
-      action: "update_rule_sync_skill",
-      resource,
-      outcome: "denied",
-      changes: null,
-      reason: "operator_required"
-    });
-    sendControlError(
-      response,
-      403,
-      "autodev_control_api_forbidden",
-      "Updating canonical RuleSync skills requires an operator."
-    );
-    return;
-  }
-
-  const body = await readSkillContentPatchBody(
-    request,
-    response,
-    actor,
-    resource
-  );
-  if (body === null) return;
-  const updated = await updateSkillContent(
-    response,
-    actor,
-    resource,
-    name,
-    body,
-    repository
-  );
-  if (updated === null) return;
-  if (!applySkillContent(response, actor, resource, repositoryRoot, updated))
-    return;
-  confirmSkillContentApplied(response, actor, resource, name, body, updated);
-}
-
-/** Read or update one canonical RuleSync `SKILL.md`, never its assignments. */
+/** Read one canonical RuleSync `SKILL.md`.
+ *
+ * The canonical source is repository-owned, so this route reads it and nothing
+ * else: a skill is changed in its repository source and reconciled by the
+ * standard workflow.
+ */
 async function skillContentRoute(
   request: IncomingMessage,
   response: ServerResponse,
@@ -7257,84 +6355,11 @@ async function skillContentRoute(
   const repositoryRoot = options.repositoryRoot ?? DEFAULT_REPO_ROOT;
   const repository = new RuleSyncRepository(repositoryRoot);
   const home = options.home ?? defaultHomeForReconciliation();
-  const resource = `${CONTROL_API_PATHS.skills}/${name}/content`;
   if (method === "GET") {
     readSkillContent(response, name, repository, repositoryRoot, home);
     return true;
   }
-  if (method === "PATCH") {
-    await patchSkillContent(
-      request,
-      response,
-      actor,
-      name,
-      resource,
-      repository,
-      repositoryRoot
-    );
-    return true;
-  }
   rejectSkillContentMethod(request, response, actor, pathname);
-  return true;
-}
-
-async function skillRolesRoute(
-  request: IncomingMessage,
-  response: ServerResponse,
-  actor: ControlApiActor,
-  method: string,
-  pathname: string,
-  name: string,
-  options: ControlApiRequestOptions
-): Promise<boolean> {
-  const catalog = new RuleSyncRepository(
-    options.repositoryRoot ?? DEFAULT_REPO_ROOT
-  ).loadSkills();
-  const skill = catalog.skills.find((entry) => entry.name === name);
-  // A request for a skill that is not there is a wrong answer, not an empty
-  // one: the caller would render a panel for a skill that does not exist. A
-  // catalogue that was read and found broken is a different claim, and it
-  // answers 503 with the catalogue's own reason: a 404 would say the skill
-  // does not exist when nobody could read the file that would have said
-  // whether it does. An absent catalogue holds no skill, so the skill is
-  // genuinely not there.
-  if (!skill) {
-    if (catalog.valid === false) {
-      sendControlError(
-        response,
-        503,
-        "autodev_control_skill_catalogue_invalid",
-        catalog.issues[0]?.message ??
-          "The RuleSync skill catalog is invalid, so no skill could be read."
-      );
-      return true;
-    }
-    sendControlError(
-      response,
-      404,
-      "autodev_control_skill_not_found",
-      `No RuleSync skill named "${name}" exists.`
-    );
-    return true;
-  }
-  if (method === "PATCH") {
-    await patchSkillRoles(request, response, actor, name, options);
-    return true;
-  }
-  auditRejectedRequest(
-    request,
-    method,
-    pathname,
-    AUDIT_REASON_METHOD_NOT_ALLOWED,
-    actor
-  );
-  response.setHeader("allow", "PATCH");
-  sendControlError(
-    response,
-    405,
-    "autodev_control_api_method_not_allowed",
-    "Skill role assignment accepts PATCH. Read canonical source from /control/skills/:name/content."
-  );
   return true;
 }
 
@@ -7355,19 +6380,6 @@ async function skillControlApiRoute(
       method,
       pathname,
       contentMatch[1]!,
-      options
-    );
-    return true;
-  }
-  const rolesMatch = pathname.match(SKILL_ROLES_PATH);
-  if (rolesMatch) {
-    await skillRolesRoute(
-      request,
-      response,
-      actor,
-      method,
-      pathname,
-      rolesMatch[1]!,
       options
     );
     return true;
@@ -7403,23 +6415,6 @@ async function promptDetailRoute(
       route
     );
   }
-  if (method === "PATCH") {
-    const home = process.env.HOME?.trim() || homedir();
-    const codexHome =
-      options.codexHome?.trim() ||
-      process.env.CODEX_HOME?.trim() ||
-      path.join(home, ".codex");
-    await patchPromptCommand(
-      request,
-      response,
-      actor,
-      name,
-      options.repositoryRoot ?? DEFAULT_REPO_ROOT,
-      codexHome
-    );
-    return true;
-  }
-
   auditRejectedRequest(
     request,
     method,
@@ -7427,12 +6422,12 @@ async function promptDetailRoute(
     AUDIT_REASON_METHOD_NOT_ALLOWED,
     actor
   );
-  response.setHeader("allow", ALLOWED_METHODS_READ_AND_PATCH);
+  response.setHeader("allow", "GET");
   sendControlError(
     response,
     405,
     "autodev_control_api_method_not_allowed",
-    "Prompt details are read via GET and canonical commands are updated via PATCH."
+    "Prompt details are read-only; a canonical command is changed in its repository source and reconciled by the standard workflow."
   );
   return true;
 }

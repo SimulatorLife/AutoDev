@@ -120,7 +120,6 @@ export default async function HookEventDetailPage({
           message: appliedResult.message
         };
 
-
   return React.createElement(
     ConsolePageShell,
     {
@@ -137,6 +136,7 @@ export default async function HookEventDetailPage({
       source: result.data.source,
       sourceValidity: result.data.valid,
       revision: result.data.revision,
+      sourceText: result.data.sourceText,
       applied,
       ...(appliedUnavailable === null ? {} : { appliedUnavailable })
     })

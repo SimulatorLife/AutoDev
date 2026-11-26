@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import {
-  chmodSync,
   cpSync,
   mkdirSync,
   mkdtempSync,
@@ -162,73 +160,36 @@ function harness(options: { readonly installed?: boolean } = {}): Harness {
   };
 }
 
-test("skill source PATCH validates, applies, and verifies the RuleSync skill projections", async () => {
+test("the canonical skill source is read-only: a write is refused and the source is untouched", async () => {
   const h = harness();
   const sourceUrl = `/control/skills/${SKILL_NAME}/content`;
-  const updatedSource =
-    "---\nname: release-checklist\ndescription: Updated release steps.\n---\n\n# Updated release checklist\n\nRun the checks.\n";
   try {
     const read = await h.call("GET", sourceUrl);
     assert.equal(read.status, 200);
     assert.equal(read.body?.schema, "autodev-control-skill-content-v2");
-    assert.equal(read.body?.path, SKILL_PATH);
-    assert.equal(read.body?.content, ORIGINAL_SOURCE);
-    const revision = read.body?.revision;
-    assert.equal(typeof revision, "string");
 
-    const updated = await h.call("PATCH", sourceUrl, {
-      expectedRevision: revision,
-      content: updatedSource
+    // The canonical source is repository-owned. A write on this route is
+    // refused with the one method it does have, and the file on disk is not
+    // touched: a refused write must not half-apply.
+    const written = await h.call("PATCH", sourceUrl, {
+      expectedRevision: read.body?.revision,
+      content: "---\nname: release-checklist\ndescription: Edited.\n---\n\nEdited.\n"
     });
-    assert.equal(updated.status, 200);
+    assert.equal(written.status, 405);
+    assert.equal(written.headers.allow, "GET");
     assert.equal(
-      updated.body?.schema,
-      "autodev-control-skill-content-patch-v1"
+      (written.body?.error as { code?: string })?.code,
+      "autodev_control_api_method_not_allowed"
     );
-    assert.equal(
-      updated.body?.revision,
-      createHash("sha256").update(updatedSource, "utf8").digest("hex")
-    );
-    assert.equal(updated.body?.changed, true);
-    assert.equal(updated.body?.projectionApplied, true);
-    assert.equal(
-      (updated.body?.reconciliation as { status?: { convergence?: string } })
-        ?.status?.convergence,
-      "converged"
-    );
-    assert.equal(readFileSync(h.skillPath, "utf8"), updatedSource);
-    for (const projection of [
-      ".agents/skills",
-      ".claude/skills",
-      ".github/skills"
-    ]) {
-      const projectedSource = readFileSync(
-        path.join(h.repositoryRoot, projection, SKILL_NAME, "SKILL.md"),
-        "utf8"
-      );
-      assert.match(projectedSource, /name: release-checklist/u);
-      assert.match(projectedSource, /description: Updated release steps\./u);
-      assert.match(projectedSource, /# Updated release checklist/u);
-      assert.match(projectedSource, /Run the checks\./u);
-      assert.doesNotMatch(projectedSource, /Check the release\./u);
+    assert.equal(readFileSync(h.skillPath, "utf8"), ORIGINAL_SOURCE);
+
+    // Every other verb is refused the same way.
+    for (const method of ["POST", "PUT", "DELETE"]) {
+      const refused = await h.call(method, sourceUrl, {});
+      assert.equal(refused.status, 405, method);
+      assert.equal(refused.headers.allow, "GET", method);
     }
-
-    const skills = await h.call("GET", "/control/skills");
-    const skill = (
-      skills.body?.skills as { name: string; roles: string[] }[]
-    ).find((entry) => entry.name === SKILL_NAME);
-    assert.deepEqual(skill?.roles, ["worker"]);
-
-    const stale = await h.call("PATCH", sourceUrl, {
-      expectedRevision: revision,
-      content: ORIGINAL_SOURCE
-    });
-    assert.equal(stale.status, 409);
-    assert.equal(
-      (stale.body?.error as { code?: string })?.code,
-      "autodev_control_skill_content_conflict"
-    );
-    assert.equal(readFileSync(h.skillPath, "utf8"), updatedSource);
+    assert.equal(readFileSync(h.skillPath, "utf8"), ORIGINAL_SOURCE);
   } finally {
     h.restore();
   }
@@ -282,81 +243,5 @@ test("the skill read reports the runtime's observation of the canonical source",
     assert.equal(status?.observedGeneration, null);
   } finally {
     missing.restore();
-  }
-});
-
-test("skill source writes require an operator and reject invalid or oversized input without replacing the source", async () => {
-  const h = harness();
-  const sourceUrl = `/control/skills/${SKILL_NAME}/content`;
-  try {
-    const revision = (await h.call("GET", sourceUrl)).body?.revision as string;
-    const denied = await h.call(
-      "PATCH",
-      sourceUrl,
-      { expectedRevision: revision, content: ORIGINAL_SOURCE },
-      "viewer"
-    );
-    assert.equal(denied.status, 403);
-    assert.equal(readFileSync(h.skillPath, "utf8"), ORIGINAL_SOURCE);
-
-    const invalid = await h.call("PATCH", sourceUrl, {
-      expectedRevision: revision,
-      content: "---\nname: other\ndescription: Wrong directory.\n---\nBody\n"
-    });
-    assert.equal(invalid.status, 400);
-    assert.equal(
-      (invalid.body?.error as { code?: string })?.code,
-      "autodev_control_skill_source_invalid"
-    );
-    assert.equal(readFileSync(h.skillPath, "utf8"), ORIGINAL_SOURCE);
-
-    const oversized = await h.call("PATCH", sourceUrl, {
-      expectedRevision: revision,
-      content: `---\nname: release-checklist\ndescription: Oversized.\n---\n${"x".repeat(300_001)}`
-    });
-    assert.equal(oversized.status, 413);
-    assert.match(
-      String((oversized.body?.error as { message?: string })?.message),
-      /300000 bytes/u
-    );
-    assert.equal(readFileSync(h.skillPath, "utf8"), ORIGINAL_SOURCE);
-  } finally {
-    h.restore();
-  }
-});
-
-test("failed RuleSync skill projection apply is explicit after the canonical write", async () => {
-  const h = harness();
-  const sourceUrl = `/control/skills/${SKILL_NAME}/content`;
-  const updatedSource =
-    "---\nname: release-checklist\ndescription: Updated but unapplied.\n---\n\nBody.\n";
-  try {
-    const binary = path.join(
-      h.repositoryRoot,
-      "node_modules",
-      ".bin",
-      "rulesync"
-    );
-    rmSync(path.join(h.repositoryRoot, "node_modules"), {
-      recursive: true,
-      force: true
-    });
-    mkdirSync(path.dirname(binary), { recursive: true });
-    writeFileSync(binary, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
-    chmodSync(binary, 0o755);
-    const revision = (await h.call("GET", sourceUrl)).body?.revision as string;
-    const result = await h.call("PATCH", sourceUrl, {
-      expectedRevision: revision,
-      content: updatedSource
-    });
-    assert.equal(result.status, 503);
-    assert.equal(
-      (result.body?.error as { code?: string })?.code,
-      "autodev_control_skill_apply_failed"
-    );
-    assert.equal(readFileSync(h.skillPath, "utf8"), updatedSource);
-    assert.equal(result.body?.projectionApplied, undefined);
-  } finally {
-    h.restore();
   }
 });

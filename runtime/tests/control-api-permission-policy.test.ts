@@ -166,6 +166,36 @@ test("the permissions read publishes the policy the canonical source states", as
   assert.equal(Object.hasOwn(policy ?? {}, "networkAccess"), false);
 });
 
+test("the permissions read publishes the canonical source beside the policy", async (t) => {
+  const options = fixture();
+  t.after(() => rmSync(options.root, { recursive: true, force: true }));
+  const result = await call("GET", "/control/permissions", options);
+  assert.equal(result.statusCode, 200);
+
+  // The canonical source is a declaration, so it is published whole and with
+  // its comments.
+  assert.equal(result.body?.sourceText, POLICY_SOURCE);
+  // The revision names the bytes the source text and the policy came from.
+  assert.equal(result.body?.revision, sha256(POLICY_SOURCE));
+
+  // The composed user configuration beside it is published as the policy it
+  // states and never as text: it is the file that can hold credentials.
+  const applied = path.join(options.codexHome, "config.toml");
+  writeFileSync(
+    applied,
+    'approval_policy = "never"\n',
+    "utf8"
+  );
+  const withApplied = await call("GET", "/control/permissions", options);
+  assert.equal(withApplied.statusCode, 200);
+  assert.equal(withApplied.body?.sourceText, POLICY_SOURCE);
+  assert.equal(
+    JSON.stringify(withApplied.body).includes("approval_policy = "),
+    false,
+    "the composed configuration's text must not reach the payload"
+  );
+});
+
 test("role permissions expose contract readOnly flags", async () => {
   const options = fixture();
   const result = await call("GET", "/control/permissions", options);

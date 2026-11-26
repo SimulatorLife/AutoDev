@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   rmSync
 } from "node:fs";
 import { createServer } from "node:http";
@@ -235,6 +236,71 @@ test("ACP gateway profiles reject unauthenticated or conflicting MCP configurati
         mcpConfigPath: "/tmp/independent-mcp.json"
       }),
     /independent MCP configuration/u
+  );
+});
+
+test("transitional ACP launchers are resolved from their own Runtime, not a repository override", () => {
+  const spec = buildAcpProviderLaunchSpec({
+    provider: "claude",
+    role: "worker",
+    model: "sonnet",
+    cwd: REPO_ROOT,
+    systemPrompt: "Worker",
+    sessionId: "launcher-scope",
+    env: { AUTODEV_REPO_ROOT: "/not-the-runtime" }
+  });
+  const launcher = realpathSync(
+    new URL("../src/mcp/launcher.ts", import.meta.url)
+  );
+  for (const server of spec.acpMcpServers) {
+    if ("command" in server) assert.equal(server.args[0], launcher);
+  }
+  assert.ok(spec.acpMcpServers.some((server) => "command" in server));
+});
+
+test("ACP gateway-qualified tools preserve canonical permissions", () => {
+  const options = [
+    { optionId: "allow", name: "Allow", kind: "allow_once" as const },
+    { optionId: "reject", name: "Reject", kind: "reject_once" as const }
+  ];
+  const cases = [
+    ["worker", "mcp__autodev__filesystem__write_file", "allow"],
+    ["explorer", "mcp__autodev__filesystem__write_file", "reject"],
+    ["explorer", "mcp__autodev__filesystem__read_text_file", "allow"],
+    ["worker", "mcp__autodev__cocoindex_code__search", "allow"],
+    ["worker", "mcp__autodev__codegraphcontext__delete_repository", "reject"],
+    ["worker", "mcp__autodev__commands__test", "allow"],
+    ["explorer", "mcp__autodev__commands__test", "reject"],
+    ["worker", "mcp__autodev__playwright__browser_navigate", "reject"],
+    ["worker", "mcp__autodev__filesystem", "reject"],
+    ["worker", "mcp__malformed", "reject"],
+    ["worker", "   ", "reject"]
+  ] as const;
+  for (const [role, name, expected] of cases) {
+    assert.deepEqual(
+      resolveAcpPermissionResponse(role, {
+        sessionId: "fixture",
+        toolCall: { toolCallId: name, name },
+        options
+      }),
+      { outcome: { outcome: "selected", optionId: expected } },
+      name
+    );
+  }
+  const request = {
+    sessionId: "fixture",
+    toolCall: { toolCallId: "read", name: "mcp__filesystem__read_text_file" }
+  };
+  assert.deepEqual(
+    resolveAcpPermissionResponse("worker", {
+      ...request,
+      options: [options[1]!]
+    }),
+    { outcome: { outcome: "selected", optionId: "reject" } }
+  );
+  assert.deepEqual(
+    resolveAcpPermissionResponse("worker", { ...request, options: [] }),
+    { outcome: { outcome: "cancelled" } }
   );
 });
 

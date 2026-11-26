@@ -49,15 +49,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { ResourceUnavailable } from "../app/_console.ts";
 import * as chatgptTunnelRoute from "../app/api/chatgpt-tunnel/route.ts";
-import * as hookEventRoute from "../app/api/hooks/[event]/route.ts";
 import * as mcpServerRoute from "../app/api/mcps/[name]/route.ts";
 import * as modelRoute from "../app/api/models/[model]/route.ts";
-import * as promptMutationRoute from "../app/api/prompts/[name]/route.ts";
 import * as providerCheckRoute from "../app/api/providers/[provider]/check/route.ts";
 import * as providerLimitsRoute from "../app/api/providers/[provider]/limits/route.ts";
 import * as providerRoleRoute from "../app/api/providers/[provider]/roles/[role]/route.ts";
 import * as providerRoute from "../app/api/providers/[provider]/route.ts";
-import * as skillRoleAssignmentRoute from "../app/api/skills/[name]/route.ts";
 import EvaluationsPage from "../app/evaluations/page.ts";
 import { FilterNotice } from "../src/components/filters/FilterNotice.ts";
 import {
@@ -125,7 +122,6 @@ import { providerUsageView } from "../src/features/providers/provider-usage/view
 import { ProviderLimitsControls } from "../src/features/providers/ProviderLimitsControls.ts";
 import { ProviderRoleControls } from "../src/features/providers/ProviderRoleControls.ts";
 import { ChatgptTunnelPanel } from "../src/features/mcps/ChatgptTunnelPanel.ts";
-import { saveOutcomeForConvergence } from "../src/features/skills/SkillRoleAssignment.ts";
 import { toolUsageView } from "../src/features/tools/tool-usage-view.ts";
 import {
   AgentDetailView,
@@ -165,9 +161,7 @@ import {
   formatTokenCount,
   GithubView,
   HookEventDetailView,
-  hookEventPath,
   HooksView,
-  hookWriteReturnPath,
   isProvidersReturnPath,
   MCP_DETAIL_TABS,
   McpDetailView,
@@ -234,7 +228,6 @@ import {
   fetchSkills,
   fetchTools,
   fetchWorkspaces,
-  patchSkillRoles,
   postControlApi,
   readControlApiConfig
 } from "../src/lib/server/control-api.ts";
@@ -5158,6 +5151,68 @@ test("McpsView reports an observation of nothing as nothing, not as an unavailab
   assert.match(markup, />0</);
 });
 
+test("McpDetailView states which approved catalogue revision each Runtime home serves", () => {
+  const server: McpServerResource = {
+    name: "commands",
+    enabled: true,
+    transport: "stdio",
+    targetOverrides: [],
+    declared: true,
+    roles: ["worker"],
+    approvedCatalogues: [
+      {
+        home: "/home/operator/.autodev",
+        state: "approved",
+        approvedDigest: "a".repeat(64),
+        proposedDigest: "a".repeat(64),
+        approvedPath: "/home/operator/.autodev/config/commands.json"
+      },
+      {
+        home: "/home/operator/.codex",
+        state: "pending",
+        approvedDigest: "b".repeat(64),
+        proposedDigest: "c".repeat(64),
+        approvedPath: "/home/operator/.codex/config/commands.json"
+      }
+    ]
+  };
+  const markup = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
+      sourceValidity: true,
+      runtime: NO_MCP_OBSERVATIONS,
+      applied: null,
+      configuredTools: null,
+      server,
+      activeTab: "configuration"
+    })
+  );
+  // The approval is the operator's answer to "which revision is live?", and
+  // the two homes are two different answers.
+  assert.match(markup, /Approved command catalogue/);
+  assert.match(markup, /data-mcp-approved-catalogue="approved"/);
+  assert.match(markup, /data-mcp-approved-catalogue="pending"/);
+  assert.match(markup, /Approved/);
+  assert.match(markup, /Pending approval/);
+  assert.match(markup, /\/home\/operator\/\.autodev/);
+  assert.match(markup, /Approved revision: aaaaaaaaaaaa/);
+  assert.match(markup, /Proposed revision: cccccccccccc/);
+
+  // A backend with no catalogued commands carries no approval section at all.
+  const withoutCatalogue = renderToStaticMarkup(
+    React.createElement(McpDetailView, {
+      revision: "b".repeat(64),
+      sourceValidity: true,
+      runtime: NO_MCP_OBSERVATIONS,
+      applied: null,
+      configuredTools: null,
+      server: { ...server, approvedCatalogues: undefined },
+      activeTab: "configuration"
+    })
+  );
+  assert.doesNotMatch(withoutCatalogue, /Approved command catalogue/);
+});
+
 test("McpDetailView combines canonical desired state with unknown runtime health", () => {
   const server: McpServerResource = {
     name: "context7",
@@ -6304,7 +6359,11 @@ test("SkillsView distinguishes declared role scope from missing eligibility evid
   assert.match(markup, /Role-assigned/);
   assert.match(markup, /of 3 in the catalog/);
   assert.match(markup, /orchestrator/);
-  assert.match(markup, /Unassigned — no agent role can invoke this skill\./);
+  // A skill the contract assigns to nobody says so in the roles cell and in
+  // the state cell: the roles cell names the empty set, the state cell says
+  // nothing can invoke it.
+  assert.match(markup, /No roles assigned/);
+  assert.match(markup, /Not assigned/);
   assert.match(markup, /Not observed/);
   assert.equal(markup.includes("Universal / All"), false);
   assert.match(markup, /Unresolved role assignments/);
@@ -11805,6 +11864,31 @@ test("Agents provider summaries stay not observed without provider configuration
   assert.equal(detail.includes(">Disabled<"), false);
 });
 
+/**
+ * The canonical JSONC a hook declaration holds.
+ *
+ * The comments are the point: a raw view that lost them would be a
+ * serialization of the declaration rather than its source.
+ */
+const HOOKS_SOURCE_TEXT = `{
+  // The session's own start hook.
+  "hooks": {
+    "sessionStart": [{ "type": "command", "command": "echo hi" }]
+  }
+}`;
+
+/**
+ * The canonical JSONC a permission policy holds.
+ */
+const PERMISSIONS_SOURCE_TEXT = `{
+  // The portable policy the session runs under.
+  "codexcli": {
+    "approval_policy": "on-request",
+    "approvals_reviewer": "operator",
+    "tools": { "web_search": false }
+  }
+}`;
+
 test("HooksView renders the target's effective hook events read-only", () => {
   const hooks = hooksFromControlApi({
     schema: "autodev-control-hooks-v2",
@@ -11813,6 +11897,7 @@ test("HooksView renders the target's effective hook events read-only", () => {
     valid: true,
     issues: [],
     revision: "a".repeat(64),
+    sourceText: HOOKS_SOURCE_TEXT,
     target: "codexcli",
     events: [
       {
@@ -11833,22 +11918,25 @@ test("HooksView renders the target's effective hook events read-only", () => {
       sourceValidity: true,
       validationIssues: [],
       revision: "a".repeat(64),
+      sourceText: HOOKS_SOURCE_TEXT,
       applied: null
     })
   );
   assert.match(markup, /echo hi/);
   assert.match(markup, /echo bye/);
   assert.match(markup, /Source validation/);
-  // Each event carries its own editor, and the editor says where the event is
-  // declared, because that is what decides who else an edit reaches.
+  // The source card names the source and the revision it was read at, so the
+  // list identifies the same declaration the event's own page does.
+  assert.match(markup, /\.rulesync\/hooks\.jsonc revision aaaaaaaaaaaa/);
+  // Each event carries its own declaration, and it says where the event is
+  // declared, because that is what decides who else the declaration reaches.
   assert.match(markup, /data-hook-event="sessionStart"/);
   assert.match(markup, /data-hook-event="sessionEnd"/);
   assert.match(markup, /data-hook-origin="sessionStart"/);
   assert.match(markup, /Declared for every target/);
   assert.match(markup, /data-hook-origin="sessionEnd"/);
   assert.match(markup, /Declared for Codex only/);
-  // The write is a compare-and-swap on the declaration's revision, so the
-  // editor carries the revision it was filled from.
+  // The actions are the shared read-only renderer.
   assert.match(markup, /aria-label="Declared hook actions"/);
   assert.doesNotMatch(markup, /<form|<textarea|name="expectedRevision"/);
   assert.doesNotMatch(
@@ -11858,12 +11946,76 @@ test("HooksView renders the target's effective hook events read-only", () => {
   );
 });
 
+test("the hooks and permissions pages offer one JSONC view of the canonical source", () => {
+  const hooks = renderToStaticMarkup(
+    React.createElement(HooksView, {
+      hooks: [],
+      sourceValidity: true,
+      validationIssues: [],
+      revision: "a".repeat(64),
+      sourceText: HOOKS_SOURCE_TEXT,
+      applied: null
+    })
+  );
+  // One selector over one declaration: the rendered side is the declaration
+  // the target receives, and the JSONC side is that source with its comments.
+  assert.match(hooks, /aria-label="Source representation"/);
+  assert.match(hooks, />JSONC</);
+  assert.match(hooks, />Rendered</);
+  // The page opens on the rendered side; the raw view is a switch, not a
+  // separate page, and switching it writes nothing.
+  assert.match(hooks, /data-source-view="rendered"/);
+
+  const permissions = renderToStaticMarkup(
+    React.createElement(PermissionsView, {
+      executionContractObserved: true,
+      policy: {
+        approvalPolicy: "on-request",
+        approvalsReviewer: "user",
+        webSearch: true
+      },
+      policyStatus: "valid",
+      policyReason: null,
+      revision: "a".repeat(64),
+      sourceText: PERMISSIONS_SOURCE_TEXT,
+      applied: null,
+      appliedSource: "/tmp/codex/config.toml",
+      roleMatrices: []
+    })
+  );
+  assert.match(permissions, /aria-label="Source representation"/);
+  assert.match(permissions, />JSONC</);
+  assert.match(permissions, /data-source-view="rendered"/);
+});
+
+test("a canonical source that was not read has no raw view to open", () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(PermissionsView, {
+      executionContractObserved: true,
+      policy: null,
+      policyStatus: "unavailable",
+      policyReason: "The canonical permission policy is missing.",
+      revision: null,
+      sourceText: null,
+      applied: null,
+      appliedSource: "/tmp/codex/config.toml",
+      roleMatrices: []
+    })
+  );
+  // The control that would open the raw source is disabled rather than
+  // answering with an empty document, so "not observed" is never rendered as
+  // "empty".
+  assert.match(markup, /disabled[^>]*>JSONC</);
+  assert.match(markup, /aria-label="Source representation"/);
+});
+
 test("HooksView reports source validity as unknown when no validation is available", () => {
   const markup = renderToStaticMarkup(
     React.createElement(HooksView, {
       hooks: [],
       validationIssues: [],
       revision: null,
+      sourceText: null,
       applied: null
     })
   );
@@ -11883,6 +12035,7 @@ test("HooksView names the applied state in the Console's word", () => {
       sourceValidity: true,
       validationIssues: [],
       revision: "a".repeat(64),
+      sourceText: HOOKS_SOURCE_TEXT,
       applied: {
         schema: "autodev-control-hooks-applied-v1",
         source: "test",
@@ -11933,6 +12086,7 @@ test("HooksView has no editor when the declaration could not be read", () => {
       // write against, so the editor stays in place, disabled, with the
       // reason.
       revision: null,
+      sourceText: null,
       applied: null
     })
   );
@@ -11946,6 +12100,7 @@ test("HooksView names the fault the Runtime located instead of only calling the 
     React.createElement(HooksView, {
       hooks: [],
       sourceValidity: false,
+      sourceText: HOOKS_SOURCE_TEXT,
       validationIssues: [
         {
           location: "SessionStart action 2",
@@ -11983,38 +12138,6 @@ const HOOK_DECLARATION = {
   actions: [{ type: "command" as const, command: "echo guarded" }]
 };
 
-test("a hook write answers to the surface it was made from, and to nothing else", () => {
-  // The editor is on the list and on the event's own page, so the write has
-  // two destinations. It is not allowed a third: a destination the browser
-  // chose would be an open redirect, and another event's page would take the
-  // operator to a declaration they did not write.
-  assert.equal(hookEventPath("preToolUse"), "/hooks/preToolUse");
-  assert.equal(hookWriteReturnPath("/hooks", "preToolUse"), "/hooks");
-  assert.equal(
-    hookWriteReturnPath("/hooks/preToolUse", "preToolUse"),
-    "/hooks/preToolUse"
-  );
-  assert.equal(
-    hookWriteReturnPath("/hooks/sessionEnd", "preToolUse"),
-    "/hooks",
-    "another event's page is not a destination"
-  );
-  assert.equal(
-    hookWriteReturnPath("https://example.test/hooks", "preToolUse"),
-    "/hooks",
-    "a destination off this Console is not a destination"
-  );
-  assert.equal(
-    hookWriteReturnPath("//example.test/hooks", "preToolUse"),
-    "/hooks"
-  );
-  assert.equal(
-    hookWriteReturnPath(null, "preToolUse"),
-    "/hooks",
-    "a write that names no destination answers to the list"
-  );
-});
-
 test("each hook event on the list links to its own page", () => {
   const markup = renderToStaticMarkup(
     React.createElement(HooksView, {
@@ -12022,6 +12145,7 @@ test("each hook event on the list links to its own page", () => {
       sourceValidity: true,
       validationIssues: [],
       revision: "a".repeat(64),
+      sourceText: HOOKS_SOURCE_TEXT,
       applied: null
     })
   );
@@ -12029,9 +12153,11 @@ test("each hook event on the list links to its own page", () => {
   // header is where the operator opens it.
   assert.match(markup, /href="\/hooks\/preToolUse"/);
   assert.match(markup, /data-hook-event-link="preToolUse"/);
-  // The write made from the list answers to the list, so the operator comes
-  // back to the page they were working on.
-  assert.match(markup, /name="returnTo" value="\/hooks"/);
+  // The list is read-only, so it carries no write and no return target for
+  // one: a declaration is changed in the canonical file and reconciled by the
+  // standard workflow, not posted from the list.
+  assert.doesNotMatch(markup, /name="returnTo"/);
+  assert.doesNotMatch(markup, /<form\b/);
 });
 
 test("the hook event's page shares the read-only action renderer with the list", () => {
@@ -12041,6 +12167,7 @@ test("the hook event's page shares the read-only action renderer with the list",
       source: ".rulesync/hooks.jsonc",
       sourceValidity: true,
       revision: "a".repeat(64),
+      sourceText: HOOKS_SOURCE_TEXT,
       applied: null
     })
   );
@@ -12054,6 +12181,49 @@ test("the hook event's page shares the read-only action renderer with the list",
   // The origin is the same fact the card shows.
   assert.match(markup, /data-hook-origin="preToolUse"/);
   assert.match(markup, /Declared for every target/);
+});
+
+test("the hook event's page names the canonical source's own state and revision", () => {
+  const read = renderToStaticMarkup(
+    React.createElement(HookEventDetailView, {
+      hook: HOOK_DECLARATION,
+      source: ".rulesync/hooks.jsonc",
+      sourceValidity: true,
+      revision: "a".repeat(64),
+      applied: null,
+      sourceText: null
+    })
+  );
+  // A source that was read and found sound is valid, and the revision
+  // identifies the exact declaration the page describes.
+  assert.match(read, /Canonical source<\/dt><dd[^>]*>Valid/u);
+  assert.match(read, new RegExp("a".repeat(64), "u"));
+  const unread = renderToStaticMarkup(
+    React.createElement(HookEventDetailView, {
+      hook: HOOK_DECLARATION,
+      source: ".rulesync/hooks.jsonc",
+      sourceValidity: null,
+      revision: null,
+      sourceText: null,
+      applied: null
+    })
+  );
+  // A source that could not be read has no state and no revision, and the
+  // page says "not observed" rather than claiming a valid declaration.
+  assert.match(unread, /Canonical source<\/dt><dd[^>]*>Not observed/u);
+  assert.doesNotMatch(unread, new RegExp("a".repeat(64), "u"));
+  const invalid = renderToStaticMarkup(
+    React.createElement(HookEventDetailView, {
+      hook: HOOK_DECLARATION,
+      source: ".rulesync/hooks.jsonc",
+      sourceValidity: false,
+      revision: "b".repeat(64),
+      applied: null,
+      sourceText: null
+    })
+  );
+  // A source that was read and found invalid is a third fact, not a valid one.
+  assert.match(invalid, /Canonical source<\/dt><dd[^>]*>Invalid/u);
 });
 
 test("the hook event's page shows what the Runtime published for that event", () => {
@@ -12095,7 +12265,8 @@ test("the hook event's page shows what the Runtime published for that event", ()
           },
           history: []
         }
-      }
+      },
+      sourceText: null
     })
   );
   assert.match(markup, /data-hook-applied-event="preToolUse"/);
@@ -12133,17 +12304,18 @@ test("the hook event's page says when the Runtime published nothing for the even
           },
           history: []
         }
-      }
+      },
+      sourceText: null
     })
   );
   assert.match(markup, /data-hook-applied-missing="preToolUse"/);
   assert.match(markup, /published no action for this event/);
 });
 
-test("legacy hook save query state does not render mutation feedback", () => {
-  // The list presents every event's declaration at once, so a notice that did
-  // not name its event would leave the operator to work out which of the edits
-  // on the page it was talking about.
+test("the hook list renders no mutation feedback and no write surface", () => {
+  // A declaration is repository-owned: the list presents what the source
+  // declares and nothing else. There is no write, so there is no write outcome
+  // to report, and no form that could report one.
   const markup = renderToStaticMarkup(
     React.createElement(HooksView, {
       hooks: [HOOK_DECLARATION],
@@ -12151,11 +12323,13 @@ test("legacy hook save query state does not render mutation feedback", () => {
       validationIssues: [],
       revision: "a".repeat(64),
       applied: null,
-      saveOutcome: "conflict",
-      savedEvent: "preToolUse"
+      sourceText: null
     })
   );
-  assert.doesNotMatch(markup, /data-hook-declaration-save|your edit was not saved|<form/);
+  assert.doesNotMatch(
+    markup,
+    /data-hook-declaration-save|your edit was not saved|<form/
+  );
 });
 
 test("an empty list names its resource instead of inheriting a generic sentence", () => {
@@ -12184,6 +12358,7 @@ test("an empty list names its resource instead of inheriting a generic sentence"
       policyStatus: "valid",
       policyReason: null,
       revision: "a".repeat(64),
+      sourceText: PERMISSIONS_SOURCE_TEXT,
       applied: null,
       appliedSource: "/tmp/codex/config.toml",
       roleMatrices: []
@@ -12346,6 +12521,7 @@ test("View adapters translate Control API responses without inventing data", () 
     source: "test",
     readOnly: true,
     revision: "b".repeat(64),
+    sourceText: PERMISSIONS_SOURCE_TEXT,
     policyStatus: "valid",
     policyReason: null,
     applied: null,
@@ -12406,7 +12582,8 @@ test("the matrix shows each role's access level", () => {
           allowedSkills: [],
           allowedMcpTools: {}
         }
-      ]
+      ],
+      sourceText: null
     })
   );
   assert.match(markup, /data-permission-access="read-write"/u);
@@ -12426,6 +12603,7 @@ test("the capability matrix lists the fixed roles in the one order the app uses"
     source: "test",
     readOnly: true,
     revision: "c".repeat(64),
+    sourceText: PERMISSIONS_SOURCE_TEXT,
     policyStatus: "valid",
     policyReason: null,
     applied: null,
@@ -12456,11 +12634,12 @@ test("the capability matrix lists the fixed roles in the one order the app uses"
   ]);
 });
 
-test("the policy reads as prose rather than raw config values", () => {
-  for (const [approvalPolicy, expected] of [
-    ["on-request", "On request"],
-    ["never", "Never"]
-  ] as const) {
+test("the policy shows the canonical value the repository states", () => {
+  // The policy is repository-owned and read-only here, so the page states the
+  // value the canonical source holds: the same token an operator reads in
+  // `.rulesync/permissions.jsonc`. A reworded spelling would be a second
+  // vocabulary to keep in step with the file it describes.
+  for (const approvalPolicy of ["on-request", "never"] as const) {
     const markup = renderToStaticMarkup(
       React.createElement(PermissionsView, {
         executionContractObserved: true,
@@ -12474,11 +12653,12 @@ test("the policy reads as prose rather than raw config values", () => {
         revision: "1".repeat(64),
         applied: null,
         appliedSource: "/tmp/codex/config.toml",
-        roleMatrices: []
-      })
+        roleMatrices: [],
+      sourceText: null
+    })
     );
-    assert.match(markup, new RegExp(`>${expected}<`, "u"));
-    assert.doesNotMatch(markup, new RegExp(`>${approvalPolicy}<`, "u"));
+    assert.match(markup, new RegExp(`>${approvalPolicy}<`, "u"));
+    assert.doesNotMatch(markup, /<form|<select|name="expectedRevision"/u);
   }
 });
 
@@ -13115,6 +13295,7 @@ test("Catalog collections fail closed on unreadable responses", async () => {
     valid: null,
     issues: [],
     revision: "c".repeat(64),
+    sourceText: HOOKS_SOURCE_TEXT,
     target: "codexcli",
     events: [
       {
@@ -14309,225 +14490,6 @@ test("Providers toggles may only return to Providers pages", () => {
     withControlFailure("/providers/claude"),
     "/providers/claude?control=failed"
   );
-});
-
-test("Prompt edit form submits only source content and its revision through the typed Control API", async () => {
-  const previousFetch = globalThis.fetch;
-  const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
-  const previousBaseUrl = process.env.AUTODEV_CONTROL_API_BASE_URL;
-  const token = "prompt-route-server-token";
-  const content =
-    '---\ntargets: ["*"]\ndescription: Updated command.\n---\n\n# Updated\n\nSave canonical text.\n';
-  const requests: Array<{
-    readonly url: string;
-    readonly method: string | undefined;
-    readonly headers: Headers;
-    readonly body: string;
-  }> = [];
-  process.env.AUTODEV_CONTROL_API_TOKEN = token;
-  process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
-  globalThis.fetch = async (input, init) => {
-    requests.push({
-      url: String(input),
-      method: init?.method,
-      headers: new Headers(init?.headers),
-      body: String(init?.body ?? "")
-    });
-    return Response.json({
-      schema: "autodev-control-prompt-command-patch-v2",
-      name: "dry",
-      revision: "b".repeat(64),
-      changed: true,
-      diff: {
-        summary: "Canonical source updated.",
-        identifier: "c".repeat(64)
-      },
-      reconciliation: {
-        status: {
-          convergence: "converged",
-          desiredGeneration: "c".repeat(64),
-          observedGeneration: "c".repeat(64),
-          lastApplyAt: "2026-01-01T00:00:00.000Z",
-          lastObservationAt: "2026-01-01T00:00:00.000Z",
-          lastError: null,
-          explanation: "Converged."
-        },
-        history: []
-      }
-    });
-  };
-
-  try {
-    const request = new NextRequest("http://console.test/api/prompts/dry", {
-      method: "POST",
-      headers: {
-        origin: "http://console.test",
-        host: "console.test",
-        "sec-fetch-site": "same-origin",
-        "content-type": "application/x-www-form-urlencoded"
-      },
-      body: new URLSearchParams({
-        expectedRevision: "a".repeat(64),
-        content
-      }).toString()
-    });
-    const response = await promptMutationRoute.POST(request, {
-      params: Promise.resolve({ name: "dry" })
-    });
-
-    assert.equal(response.status, 303);
-    assert.equal(response.headers.get("location"), "/prompts/dry");
-    assert.equal(requests.length, 1);
-    assert.equal(requests[0]?.url, "http://127.0.0.1:4101/control/prompts/dry");
-    assert.equal(requests[0]?.method, "PATCH");
-    assert.equal(requests[0]?.headers.get("authorization"), `Bearer ${token}`);
-    assert.equal(
-      requests[0]?.headers.get("x-autodev-actor"),
-      LOCAL_CONTROL_API_ACTOR
-    );
-    assert.deepEqual(JSON.parse(requests[0]?.body ?? "{}"), {
-      expectedRevision: "a".repeat(64),
-      content
-    });
-    assert.equal(response.headers.get("location")?.includes(token), false);
-  } finally {
-    globalThis.fetch = previousFetch;
-    if (previousToken === undefined)
-      delete process.env.AUTODEV_CONTROL_API_TOKEN;
-    else process.env.AUTODEV_CONTROL_API_TOKEN = previousToken;
-    if (previousBaseUrl === undefined)
-      delete process.env.AUTODEV_CONTROL_API_BASE_URL;
-    else process.env.AUTODEV_CONTROL_API_BASE_URL = previousBaseUrl;
-  }
-});
-
-test("Prompt edit route returns an explicit apply-failed state without a success claim", async () => {
-  const previousFetch = globalThis.fetch;
-  const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
-  process.env.AUTODEV_CONTROL_API_TOKEN = "prompt-apply-failure-token";
-  globalThis.fetch = async () =>
-    Response.json(
-      {
-        error: {
-          code: "autodev_control_prompt_apply_failed",
-          message: "The canonical source was saved, but apply failed."
-        }
-      },
-      { status: 503 }
-    );
-  try {
-    const request = new NextRequest("http://console.test/api/prompts/dry", {
-      method: "POST",
-      headers: {
-        origin: "http://console.test",
-        host: "console.test",
-        "sec-fetch-site": "same-origin",
-        "content-type": "application/x-www-form-urlencoded"
-      },
-      body: new URLSearchParams({
-        expectedRevision: "a".repeat(64),
-        content: '---\ntargets: ["*"]\ndescription: Save me.\n---\n\nBody\n'
-      }).toString()
-    });
-    const response = await promptMutationRoute.POST(request, {
-      params: Promise.resolve({ name: "dry" })
-    });
-    assert.equal(response.status, 303);
-    assert.equal(
-      response.headers.get("location"),
-      "/prompts/dry?save=apply-failed"
-    );
-    assert.equal(
-      response.headers.get("location")?.includes("prompt-apply-failure-token"),
-      false
-    );
-  } finally {
-    globalThis.fetch = previousFetch;
-    if (previousToken === undefined)
-      delete process.env.AUTODEV_CONTROL_API_TOKEN;
-    else process.env.AUTODEV_CONTROL_API_TOKEN = previousToken;
-  }
-});
-
-test("Prompt edit route rejects CSRF, malformed forms, and exposes no mutation methods", async () => {
-  const previousFetch = globalThis.fetch;
-  const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
-  process.env.AUTODEV_CONTROL_API_TOKEN = "prompt-route-no-fetch-token";
-  let fetchCalls = 0;
-  globalThis.fetch = async () => {
-    fetchCalls += 1;
-    return Response.json({ error: "unexpected mutation" }, { status: 500 });
-  };
-
-  const validForm = new URLSearchParams({
-    expectedRevision: "a".repeat(64),
-    content: '---\ntargets: ["*"]\ndescription: Valid.\n---\n\nPrompt\n'
-  }).toString();
-  const cases = [
-    {
-      name: "cross-origin origin",
-      origin: "http://attacker.test",
-      fetchSite: "cross-site",
-      contentType: "application/x-www-form-urlencoded",
-      body: validForm
-    },
-    {
-      name: "non-same-origin fetch",
-      origin: "http://console.test",
-      fetchSite: "same-site",
-      contentType: "application/x-www-form-urlencoded",
-      body: validForm
-    },
-    {
-      name: "extra form field",
-      origin: "http://console.test",
-      fetchSite: "same-origin",
-      contentType: "application/x-www-form-urlencoded",
-      body: `${validForm}&extra=value`
-    },
-    {
-      name: "oversized body",
-      origin: "http://console.test",
-      fetchSite: "same-origin",
-      contentType: "application/x-www-form-urlencoded",
-      body: "x".repeat(160_001)
-    }
-  ];
-
-  try {
-    for (const testCase of cases) {
-      const request = new NextRequest("http://console.test/api/prompts/dry", {
-        method: "POST",
-        headers: {
-          origin: testCase.origin,
-          host: "console.test",
-          "sec-fetch-site": testCase.fetchSite,
-          "content-type": testCase.contentType
-        },
-        body: testCase.body
-      });
-      const response = await promptMutationRoute.POST(request, {
-        params: Promise.resolve({ name: "dry" })
-      });
-      assert.equal(response.status, 303, testCase.name);
-      assert.equal(
-        response.headers.get("location"),
-        "/prompts/dry?save=failed",
-        testCase.name
-      );
-    }
-    assert.equal(fetchCalls, 0);
-  } finally {
-    globalThis.fetch = previousFetch;
-    if (previousToken === undefined)
-      delete process.env.AUTODEV_CONTROL_API_TOKEN;
-    else process.env.AUTODEV_CONTROL_API_TOKEN = previousToken;
-  }
-
-  assert.equal("GET" in promptMutationRoute, false);
-  assert.equal("PATCH" in promptMutationRoute, false);
-  assert.equal("PUT" in promptMutationRoute, false);
-  assert.equal("DELETE" in promptMutationRoute, false);
 });
 
 const CONTROL_ROUTE_ENV_KEYS = [
@@ -16289,6 +16251,7 @@ test("a catalog row missing the fields its view reads fails closed instead of th
     source: ".rulesync/permissions",
     readOnly: true,
     revision: "d".repeat(64),
+    sourceText: PERMISSIONS_SOURCE_TEXT,
     policyStatus: "valid",
     policyReason: null,
     applied: null,
@@ -18245,6 +18208,10 @@ test("client behavior stays in explicitly approved interaction islands", () => {
 
   const approvedClientModules = new Map<string, string>([
     [
+      join("src", "components", "code", "SourceView.ts"),
+      "Switches between the rendered reading of one already loaded canonical source and its raw text; it fetches nothing and writes nothing."
+    ],
+    [
       join("src", "components", "forms", "HierarchicalSelect.ts"),
       "Mounts the closed hierarchical model menu's option DOM only when the operator opens it; native server-rendered forms still own submissions."
     ],
@@ -18259,18 +18226,6 @@ test("client behavior stays in explicitly approved interaction islands", () => {
     [
       join("src", "components", "navigation", "LiveCountRefresh.ts"),
       "Requests five-second live-count refreshes through the shared router owner without moving data fetching client-side."
-    ],
-    [
-      join("src", "features", "skills", "SkillRoleAssignmentControl.ts"),
-      "Submits the complete role set immediately through the existing same-origin Skills mutation route."
-    ],
-    [
-      join("src", "features", "hooks", "HookEventEditor.ts"),
-      "Holds the action list an operator is editing and submits it through the same-origin hook declaration route; it never drives the router."
-    ],
-    [
-      join("src", "features", "prompts", "prompt-source-preview.ts"),
-      "Asks the Console's own server what the unsaved canonical source would render as, and renders that answer beside the editor; the page's reads and the save stay server-owned."
     ],
     [
       join("src", "components", "navigation", "AppNav.ts"),
@@ -18311,10 +18266,6 @@ test("client behavior stays in explicitly approved interaction islands", () => {
     [
       join("src", "features", "workspaces", "WorkspaceConfigurationForm.ts"),
       "Holds the canonical configuration an operator is editing and submits it through the same-origin workspace configuration route; it never drives the router."
-    ],
-    [
-      join("src", "features", "permissions", "PermissionPolicyForm.ts"),
-      "Holds the canonical permission policy an operator is editing and submits it through the same-origin permission policy route; it never drives the router."
     ],
     [
       join(
@@ -18568,7 +18519,7 @@ test("skill role assignments render observed and empty sets without mutation con
     })
   );
 
-  assert.match(markup, /data-testid="skill-roles"/);
+  assert.match(markup, /data-chips="skill-roles"/);
   assert.doesNotMatch(markup, /action="\/api\/skills\/|type="checkbox"/);
 
   const cleared = renderToStaticMarkup(
@@ -18634,277 +18585,13 @@ test("no execution contract means no assignment form and a reason, not a broken 
   );
 });
 
-test("legacy skill save query state does not render mutation feedback", () => {
-  const markup = renderToStaticMarkup(
-    React.createElement(SkillsView, {
-      executionContractObserved: true,
-      skills: [SKILL_ASSIGNMENT_SKILL],
-      eligibility: [{ skill: "release-checklist", roles: [] }],
-      unresolvedAssignments: [],
-      sourceValidity: true,
-      validationIssues: [],
-      assignmentRoles: ["orchestrator"],
-      executionContractRevision: "f".repeat(64),
-      telemetry: { observed: false, bySkill: new Map() },
-      saveOutcome: "conflict"
-    })
-  );
-  assert.doesNotMatch(markup, /data-save-outcome|nothing was written|type="checkbox"/);
-});
-
-test("skill assignment convergence maps to truthful return states", () => {
-  assert.equal(saveOutcomeForConvergence("converged"), undefined);
-  assert.equal(saveOutcomeForConvergence("pending"), "pending");
-  assert.equal(saveOutcomeForConvergence("not-observed"), "not-observed");
-  assert.equal(saveOutcomeForConvergence("error"), "unconfirmed");
-});
-
-test("skill assignment route redirects with Runtime pending and not-observed evidence", async () => {
-  const previousFetch = globalThis.fetch;
-  const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
-  process.env.AUTODEV_CONTROL_API_TOKEN = "skill-assignment-route-token";
-  const outcomes: Array<{
-    readonly convergence: "pending" | "not-observed";
-    readonly actualRoles: readonly string[] | null;
-    readonly observedGeneration: string | null;
-  }> = [
-    {
-      convergence: "pending",
-      actualRoles: ["orchestrator"],
-      observedGeneration: "b".repeat(64)
-    },
-    {
-      convergence: "not-observed",
-      actualRoles: null,
-      observedGeneration: null
-    }
-  ];
-
-  globalThis.fetch = async () => {
-    const outcome = outcomes.shift();
-    assert.ok(outcome, "each route call consumes one bounded fake response");
-    const desiredGeneration = "a".repeat(64);
-    return Response.json({
-      schema: "autodev-control-skill-assignment-v2",
-      skill: "release-checklist",
-      desiredRoles: ["worker"],
-      actualRoles: outcome.actualRoles,
-      revision: "2".repeat(64),
-      reconciliation: {
-        status: {
-          convergence: outcome.convergence,
-          desiredGeneration,
-          observedGeneration: outcome.observedGeneration,
-          lastApplyAt: "2026-10-13T12:00:00.000Z",
-          lastObservationAt:
-            outcome.actualRoles === null ? null : "2026-10-13T12:00:00.000Z",
-          lastError: null,
-          explanation: "Runtime reconciliation fixture."
-        },
-        history: []
-      },
-      diff: {
-        summary: "Assignment observation fixture.",
-        identifier: desiredGeneration
-      }
-    });
-  };
-
-  try {
-    const locations: string[] = [];
-    for (const expected of [
-      "/skills?save=pending",
-      "/skills?save=not-observed"
-    ]) {
-      const response = await skillRoleAssignmentRoute.POST(
-        new NextRequest("http://console.test/api/skills/release-checklist", {
-          method: "POST",
-          headers: {
-            host: "console.test",
-            origin: "http://console.test",
-            "sec-fetch-site": "same-origin",
-            "content-type": "application/x-www-form-urlencoded"
-          },
-          body: new URLSearchParams({
-            expectedRevision: "1".repeat(64),
-            roles: "worker"
-          }).toString()
-        }),
-        { params: Promise.resolve({ name: "release-checklist" }) }
-      );
-      assert.equal(response.status, 303);
-      const location = response.headers.get("location");
-      assert.equal(location, expected);
-      locations.push(location ?? "");
-    }
-    assert.deepEqual(locations, [
-      "/skills?save=pending",
-      "/skills?save=not-observed"
-    ]);
-  } finally {
-    globalThis.fetch = previousFetch;
-    if (previousToken === undefined)
-      delete process.env.AUTODEV_CONTROL_API_TOKEN;
-    else process.env.AUTODEV_CONTROL_API_TOKEN = previousToken;
-  }
-});
-
-test("legacy skill assignment feedback cannot imply a new write", () => {
-  const markup = renderToStaticMarkup(
-    React.createElement(SkillsView, {
-      executionContractObserved: true,
-      skills: [SKILL_ASSIGNMENT_SKILL],
-      eligibility: [{ skill: "release-checklist", roles: [] }],
-      unresolvedAssignments: [],
-      sourceValidity: true,
-      validationIssues: [],
-      assignmentRoles: ["orchestrator"],
-      executionContractRevision: "f".repeat(64),
-      telemetry: { observed: false, bySkill: new Map() },
-      saveOutcome: "not-observed"
-    })
-  );
-  assert.doesNotMatch(markup, /skill-assignment-status|desired role set was written|type="checkbox"/);
-});
-
-test("patchSkillRoles PATCHes the skill resource and validates the assignment it reports", async () => {
-  const config = {
-    baseUrl: "http://127.0.0.1:4101",
-    serviceToken: "server-only"
-  };
-  const calls: Array<{ url: string; method: string; body: unknown }> = [];
-  const generation = "a".repeat(64);
-  const assigned = await patchSkillRoles(
-    "release-checklist",
-    { expectedRevision: "1".repeat(64), roles: ["worker"] },
-    config,
-    {
-      fetchImpl: async (input, init) => {
-        calls.push({
-          url: String(input),
-          method: init?.method ?? "GET",
-          body: init?.body === undefined ? null : JSON.parse(String(init.body))
-        });
-        return Response.json({
-          schema: "autodev-control-skill-assignment-v2",
-          skill: "release-checklist",
-          desiredRoles: ["worker"],
-          actualRoles: ["worker"],
-          revision: "2".repeat(64),
-          reconciliation: {
-            status: {
-              convergence: "converged",
-              desiredGeneration: generation,
-              observedGeneration: generation,
-              lastApplyAt: "2026-10-13T12:00:00.000Z",
-              lastObservationAt: "2026-10-13T12:00:00.000Z",
-              lastError: null,
-              explanation: "Observed."
-            },
-            history: []
-          },
-          diff: { summary: "Role set applied.", identifier: generation }
-        });
-      }
-    }
-  );
-  assert.equal(assigned.kind, "ok");
-  if (assigned.kind === "ok") {
-    assert.deepEqual(assigned.data.desiredRoles, ["worker"]);
-    assert.deepEqual(assigned.data.actualRoles, ["worker"]);
-    assert.equal(assigned.data.reconciliation.status.convergence, "converged");
-  }
-  assert.deepEqual(calls, [
-    {
-      url: "http://127.0.0.1:4101/control/skills/release-checklist",
-      method: "PATCH",
-      body: { expectedRevision: "1".repeat(64), roles: ["worker"] }
-    }
-  ]);
-
-  // A response whose desired set does not match this request cannot confirm
-  // this operation, even if the envelope is otherwise structurally valid.
-  const lying = await patchSkillRoles(
-    "release-checklist",
-    { expectedRevision: "1".repeat(64), roles: ["worker"] },
-    config,
-    {
-      fetchImpl: async () =>
-        Response.json({
-          schema: "autodev-control-skill-assignment-v2",
-          skill: "release-checklist",
-          desiredRoles: [],
-          actualRoles: [],
-          revision: "2".repeat(64),
-          reconciliation: {
-            status: {
-              convergence: "converged",
-              desiredGeneration: generation,
-              observedGeneration: generation,
-              lastApplyAt: "2026-10-13T12:00:00.000Z",
-              lastObservationAt: "2026-10-13T12:00:00.000Z",
-              lastError: null,
-              explanation: "Observed."
-            },
-            history: []
-          },
-          diff: { summary: "Role set applied.", identifier: generation }
-        })
-    }
-  );
-  assert.equal(lying.kind, "invalid-response");
-  if (lying.kind === "invalid-response") {
-    assert.equal(
-      lying.code,
-      "autodev_control_api_invalid_skill_assignment_response"
-    );
-  }
-});
-
-test("patchSkillRoles preserves unobserved actual roles instead of converting them to empty", async () => {
-  const generation = "b".repeat(64);
-  const result = await patchSkillRoles(
-    "release-checklist",
-    { expectedRevision: "1".repeat(64), roles: ["worker"] },
-    { baseUrl: "http://127.0.0.1:4101", serviceToken: "server-only" },
-    {
-      fetchImpl: async () =>
-        Response.json({
-          schema: "autodev-control-skill-assignment-v2",
-          skill: "release-checklist",
-          desiredRoles: ["worker"],
-          actualRoles: null,
-          revision: "2".repeat(64),
-          reconciliation: {
-            status: {
-              convergence: "not-observed",
-              desiredGeneration: generation,
-              observedGeneration: null,
-              lastApplyAt: "2026-10-13T12:00:00.000Z",
-              lastObservationAt: null,
-              lastError: null,
-              explanation: "Runtime state is not observed."
-            },
-            history: []
-          },
-          diff: { summary: "Observation pending.", identifier: generation }
-        })
-    }
-  );
-
-  assert.equal(result.kind, "ok");
-  if (result.kind === "ok") {
-    assert.equal(result.data.actualRoles, null);
-    assert.equal(result.data.reconciliation.status.convergence, "not-observed");
-  }
-});
-
 test("the permissions page answers which tools a role may call, not only which servers it reaches", () => {
   const {
     policy,
     policyStatus,
     policyReason,
     revision,
+    sourceText,
     applied,
     appliedSource,
     roleMatrices
@@ -18914,6 +18601,7 @@ test("the permissions page answers which tools a role may call, not only which s
     source: "test",
     readOnly: true,
     revision: "e".repeat(64),
+    sourceText: PERMISSIONS_SOURCE_TEXT,
     policyStatus: "valid",
     policyReason: null,
     applied: null,
@@ -18954,6 +18642,7 @@ test("the permissions page answers which tools a role may call, not only which s
       policyStatus,
       policyReason,
       revision,
+      sourceText,
       applied,
       appliedSource,
       roleMatrices
@@ -18987,6 +18676,7 @@ test("the permissions view says the execution contract was not read", () => {
     policyStatus: "valid" as const,
     policyReason: null,
     revision: "a".repeat(64),
+    sourceText: PERMISSIONS_SOURCE_TEXT,
     applied: null,
     appliedSource: "/tmp/codex/config.toml",
     roleMatrices: []
@@ -18994,7 +18684,8 @@ test("the permissions view says the execution contract was not read", () => {
   const unobserved = renderToStaticMarkup(
     React.createElement(PermissionsView, {
       ...props,
-      executionContractObserved: false
+      executionContractObserved: false,
+      sourceText: null
     })
   );
   assert.match(
@@ -19009,7 +18700,8 @@ test("the permissions view says the execution contract was not read", () => {
   const observed = renderToStaticMarkup(
     React.createElement(PermissionsView, {
       ...props,
-      executionContractObserved: true
+      executionContractObserved: true,
+      sourceText: null
     })
   );
   assert.match(observed, /No role capability matrices were observed\./u);
@@ -19034,6 +18726,7 @@ test("a permissions page where no role has a tool grant says so instead of rende
     source: "test",
     readOnly: true,
     revision: "f".repeat(64),
+    sourceText: PERMISSIONS_SOURCE_TEXT,
     policyStatus: "valid",
     policyReason: null,
     applied: null,
@@ -19062,7 +18755,8 @@ test("a permissions page where no role has a tool grant says so instead of rende
       revision,
       applied,
       appliedSource,
-      roleMatrices
+      roleMatrices,
+      sourceText: null
     })
   );
   assert.match(markup, /No role has an MCP tool grant recorded/u);
@@ -19082,6 +18776,7 @@ test("a permissions payload whose tool grants are unreadable fails closed", asyn
     source: "test",
     readOnly: true,
     revision: "0".repeat(64),
+    sourceText: PERMISSIONS_SOURCE_TEXT,
     policyStatus: "valid",
     policyReason: null,
     applied: null,
@@ -19467,21 +19162,6 @@ test("the MCP declaration route writes the server's launch configuration through
   // A field the operator cleared removes that key from the declaration.
   assert.equal(sent.launch.command, null);
   assert.equal(sent.launch.args, null);
-});
-
-test("the retired hook proxy does not forward requests even to an older Runtime", async () => {
-  const fetchImpl = (async () => {
-    assert.fail("The retired hook proxy must not contact the Runtime.");
-  }) as typeof fetch;
-  await withControlRouteEnvironment(
-    "hook-declaration-token",
-    fetchImpl,
-    async () => {
-      const response = hookEventRoute.POST();
-      assert.equal(response.status, 410);
-      assert.equal(response.headers.get("location"), null);
-    }
-  );
 });
 
 test("the MCP declaration route reports the Runtime's refusal as the outcome it was", async () => {

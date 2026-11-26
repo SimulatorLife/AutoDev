@@ -167,7 +167,13 @@ export function runInstallCommand(
         );
       }
       const dependencyOptions = resolveDependencyOptions(process.env);
-      if ((installCocoIndex(dependencyOptions) !== 0) || (installCodeGraphContext(dependencyOptions) !== 0) || (installPythonLanguageServer(dependencyOptions) !== 0) || (installOpencliBrowser({ repositoryRoot, codexHome }) !== 0)) return 1;
+      if (
+        installCocoIndex(dependencyOptions) !== 0 ||
+        installCodeGraphContext(dependencyOptions) !== 0 ||
+        installPythonLanguageServer(dependencyOptions) !== 0 ||
+        installOpencliBrowser({ repositoryRoot, codexHome }) !== 0
+      )
+        return 1;
     }
     materializeInstallation({
       repositoryRoot,
@@ -182,6 +188,16 @@ export function runInstallCommand(
         "Materialized AutoDev integration without restarting services."
       );
     } else {
+      // The shared MCP gateway is mandatory and independent of the optional
+      // ChatGPT tunnel, which only publishes it.
+      runNodeModule(
+        resolveRuntimeSourcePath(
+          repositoryRoot,
+          "platform/mcp-gateway-service.ts"
+        ),
+        ["reconcile", repositoryRoot, home, codexHome],
+        environment
+      );
       runNodeModule(
         resolveRuntimeSourcePath(
           repositoryRoot,

@@ -1,14 +1,11 @@
 /**
- * Direct `opencli` site adapters and output parsing for `github-worker` web
- * tasks and model discovery.
+ * OpenCLI's site adapters: the models each site offers, and the parsing of
+ * what it answers.
+ *
+ * The role turn itself is composed in `opencli-role.ts`. This module owns
+ * only what both the turn and the model discovery share.
  */
-
-import { randomBytes } from "node:crypto";
-import path from "node:path";
-
 import { isRecord } from "@simulatorlife/autodev-core";
-import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
-import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   OPENCLI_SITES,
   type OpencliSite
@@ -16,60 +13,22 @@ import {
 
 type JsonRecord = Record<string, unknown>;
 
-export function attachedPromptFileName(): string {
-  return `turn-${randomBytes(6).toString("hex")}.md`;
-}
-
-export function attachedPromptMessage(fileName: string): string {
-  return `Read the attached file ${fileName} and respond exactly as it instructs.`;
-}
-
-export function typedPromptMarker(fileName: string): string {
-  return `AutoDev turn ${path.basename(fileName, path.extname(fileName))}.`;
-}
-
-const UPLOADS_REFUSED =
-  /\b0 of \d+ file input\(s\) on the page accept this file/u;
-
-export function uploadsRefused(error: unknown): boolean {
-  return (
-    error instanceof OpencliCommandError && UPLOADS_REFUSED.test(error.message)
-  );
-}
-
-export const UPLOADS_EXHAUSTED = "UPLOADS_EXHAUSTED";
-
-export interface OpencliInvocation {
-  readonly prompt: string;
-  readonly promptFile: string;
-  readonly typed: boolean;
-  readonly conversationId: string | null;
-  readonly siteModel: string;
-  readonly selectModel: boolean;
-  readonly siteThinking: string | null;
-  readonly timeoutSeconds: number;
-}
-
-export const GEMINI_THINKING_LEVELS = Object.freeze(["low", "medium", "high"]);
-
 export type OpencliExec = (args: readonly string[]) => Promise<JsonRecord[]>;
 
 export interface OpencliReply {
   readonly response: string;
   readonly conversationId: string | null;
-  readonly thinking?: string | null;
-  readonly modelSelected: boolean;
 }
 
 export interface OpencliSiteSpec {
   readonly site: OpencliSite;
-  readonly attachesPrompt: boolean;
   readonly models:
-    readonly string[] | ((exec: OpencliExec) => Promise<string[]>);
-  turn(invocation: OpencliInvocation, exec: OpencliExec): Promise<OpencliReply>;
+    | readonly string[]
+    | ((exec: OpencliExec) => Promise<string[]>);
 }
 
 export const GEMINI_REPLY_PREFIX = "💬 ";
+export const GEMINI_THINKING_LEVELS = Object.freeze(["low", "medium", "high"]);
 const GEMINI_CONVERSATION_PATTERN = /\/app\/([\w-]+)/u;
 const JSON_FORMAT = ["-f", "json"] as const;
 
@@ -83,40 +42,6 @@ export const CHATGPT_MODELS = Object.freeze([
 ]);
 
 export const CHAT_MISMATCH = "CHAT_MISMATCH";
-
-/**
- * Whether one opencli invocation needs the browser's foreground.
- *
- * OpenCLI refuses native input -- a real mouse or key event -- on a page the
- * browser does not consider visible, so an operation that opens a menu with a
- * native click needs the browser's active tab. Most operations do not:
- * ChatGPT's composer accepts inserted text and its submit button is a
- * scripted click, Gemini's adapter never clicks natively at all, and only the
- * operations that open the composer's menu -- attaching an app, enabling a
- * site tool, picking a model -- need a visible page.
- *
- * Serializing every command behind the foreground would make the dedicated
- * browser's tab pool meaningless and would let a read-only discovery command
- * block a live turn, so the requirement is derived from the command itself.
- */
-export function opencliCommandRequiresForeground(
-  args: readonly string[]
-): boolean {
-  const site = args[0];
-  const command = args[1];
-  if (site !== "chatgpt") return false;
-  if (command === "model") return true;
-  if (command !== "ask" && command !== "ask-file" && command !== "send") {
-    return false;
-  }
-  // Attaching an app and enabling a site tool both open the composer's menu
-  // with a native click.
-  return (
-    args.includes("--app") ||
-    args.includes("--deep-research") ||
-    args.includes("--web-search")
-  );
-}
 
 export function answeredIn(
   site: string,
@@ -135,6 +60,41 @@ export function answeredIn(
     );
   }
   return reply;
+}
+
+/**
+ * Whether one opencli invocation needs the browser's foreground.
+ *
+ * OpenCLI refuses native input -- a real mouse or key event -- on a page the
+ * browser does not consider visible, so an operation that changes something
+ * chosen from the ChatGPT composer's own UI needs the browser's active tab.
+ *
+ * Three ChatGPT operations are chosen that way. Attaching an app and enabling
+ * a site tool open the composer's menu and click an entry in it, with no
+ * other way to reach them. Selecting a model opens the reasoning slider or the
+ * model menu; the site can also be told its level through its own settings
+ * API, but only for the models that API covers -- for the rest the visible
+ * picker is the only path, and the command fails without one.
+ *
+ * Everything else runs without the foreground. The plain prompt is typed
+ * through the page's own input with a scripted fallback when the page is not
+ * visible, and Gemini's adapter never clicks natively at all. Serializing
+ * every command behind the foreground would make the dedicated browser's tab
+ * pool meaningless and would let a read-only discovery command block a live
+ * turn, so the requirement is derived from the command itself.
+ */
+export function opencliCommandRequiresForeground(
+  args: readonly string[]
+): boolean {
+  // Only the ChatGPT adapter clicks natively, and only when it is asked to
+  // change the conversation's model, its attached app or a site tool.
+  if (args[0] !== "chatgpt" || args[1] !== "ask") return false;
+  return (
+    args.includes("--model") ||
+    args.includes("--app") ||
+    args.includes("--deep-research") ||
+    args.includes("--web-search")
+  );
 }
 
 const GEMINI_MODEL_SELECTION_FAILURE =
@@ -235,131 +195,20 @@ export function geminiConversationId(url: unknown): string | null {
     : null;
 }
 
-function firstRow(rows: JsonRecord[]): JsonRecord {
-  const row = rows[0];
-  if (!row) {
-    throw new OpencliCommandError(
-      "opencli returned no result row",
-      "INVALID_OUTPUT",
-      null
-    );
-  }
-  return row;
-}
-
 export const OPENCLI_SITE_SPECS: Readonly<
   Record<OpencliSite, OpencliSiteSpec>
 > = {
   chatgpt: {
     site: "chatgpt",
-    attachesPrompt: true,
-    models: CHATGPT_MODELS,
-    turn: async (invocation, exec) => {
-      let modelSelected = true;
-      if (invocation.selectModel) {
-        try {
-          await exec([
-            "chatgpt",
-            "model",
-            invocation.siteModel,
-            ...JSON_FORMAT
-          ]);
-        } catch (error) {
-          writeErrorLine(
-            `opencli chatgpt could not switch to ${invocation.siteModel}: ${errorMessage(error)}`
-          );
-          modelSelected = false;
-        }
-      }
-      const reply = replyFromRow(
-        firstRow(
-          await exec([
-            "chatgpt",
-            "ask-file",
-            invocation.typed
-              ? typedPromptMarker(invocation.promptFile)
-              : attachedPromptMessage(path.basename(invocation.promptFile)),
-            "--file",
-            invocation.promptFile,
-            ...(invocation.typed ? ["--inline", "true"] : []),
-            ...(invocation.conversationId
-              ? ["--conversation", invocation.conversationId]
-              : ["--new", "true"]),
-            "--timeout",
-            String(invocation.timeoutSeconds),
-            ...JSON_FORMAT
-          ])
-        )
-      );
-      return answeredIn("ChatGPT", invocation.conversationId, {
-        ...reply,
-        modelSelected
-      });
-    }
+    models: CHATGPT_MODELS
   },
   gemini: {
     site: "gemini",
-    attachesPrompt: false,
     models: async (exec) => {
       const rows = await exec(["gemini", "models", ...JSON_FORMAT]);
       return rows
         .map((row) => (typeof row.model === "string" ? row.model.trim() : ""))
         .filter((model) => model !== "");
-    },
-    turn: async (invocation, exec) => {
-      const ask = (model: string | null, thinking: string | null) =>
-        exec([
-          "gemini",
-          "ask",
-          invocation.prompt,
-          ...(model === null ? [] : ["--model", model]),
-          ...(thinking == null ? [] : ["--thinking", thinking]),
-          ...(invocation.conversationId
-            ? ["--conversation", invocation.conversationId]
-            : ["--new", "true"]),
-          "--timeout",
-          String(invocation.timeoutSeconds),
-          ...JSON_FORMAT
-        ]);
-      let rows: JsonRecord[];
-      let thinking: string | null = invocation.siteThinking;
-      let modelSelected = true;
-      try {
-        rows = await ask(
-          invocation.selectModel ? invocation.siteModel : null,
-          invocation.siteThinking
-        );
-      } catch (error) {
-        if (isGeminiThinkingSelectionFailure(error)) {
-          writeErrorLine(
-            `opencli gemini could not switch to ${invocation.siteThinking}: ${errorMessage(error)}`
-          );
-          rows = await ask(
-            invocation.selectModel ? invocation.siteModel : null,
-            null
-          );
-          thinking = null;
-        } else if (isGeminiModelSelectionFailure(error)) {
-          writeErrorLine(
-            `opencli gemini could not switch to ${invocation.siteModel}: ${errorMessage(error)}`
-          );
-          rows = await ask(null, null);
-          thinking = null;
-          modelSelected = false;
-        } else {
-          throw geminiModelLimit(error) ?? error;
-        }
-      }
-      const row = firstRow(rows);
-      const { response } = replyFromRow(row);
-      return answeredIn("Gemini", invocation.conversationId, {
-        response: response.startsWith(GEMINI_REPLY_PREFIX)
-          ? response.slice(GEMINI_REPLY_PREFIX.length)
-          : response,
-        conversationId: geminiConversationId(row.url),
-        thinking,
-        modelSelected
-      });
     }
   }
 };

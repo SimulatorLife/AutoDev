@@ -6,17 +6,12 @@ import {
   LOCAL_CONTROL_API_ACTOR,
   type ReconciliationView
 } from "@simulatorlife/autodev-core";
-import { NextRequest } from "next/server.js";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { POST as skillContentMutation } from "../app/api/skills/[name]/content/route.ts";
 import { SkillDetailView } from "../src/features/skills/SkillDetailView.ts";
 import { SkillsView } from "../src/features/skills/SkillsView.ts";
-import {
-  fetchSkillContent,
-  patchSkillContent
-} from "../src/lib/server/control-api.ts";
+import { fetchSkillContent } from "../src/lib/server/control-api.ts";
 
 const CONFIG = {
   baseUrl: "http://127.0.0.1:4101",
@@ -56,18 +51,6 @@ function sourceResponse(overrides: Record<string, unknown> = {}) {
     path: PATH,
     content: SOURCE,
     revision: REVISION,
-    reconciliation: RECONCILIATION,
-    ...overrides
-  };
-}
-
-function patchResponse(overrides: Record<string, unknown> = {}) {
-  return {
-    schema: "autodev-control-skill-content-patch-v1",
-    name: NAME,
-    revision: UPDATED_REVISION,
-    changed: true,
-    projectionApplied: true,
     reconciliation: RECONCILIATION,
     ...overrides
   };
@@ -121,49 +104,7 @@ test("skill source fetcher uses the typed server route and rejects mismatched id
   }
 });
 
-test("skill content mutation uses the source subresource and requires a confirmed projection response", async () => {
-  const requests: Array<{
-    url: string;
-    method: string | undefined;
-    body: unknown;
-  }> = [];
-  const result = await patchSkillContent(
-    NAME,
-    { expectedRevision: REVISION, content: SOURCE },
-    CONFIG,
-    {
-      fetchImpl: async (input, init) => {
-        requests.push({
-          url: String(input),
-          method: init?.method,
-          body: JSON.parse(String(init?.body))
-        });
-        return Response.json(patchResponse());
-      }
-    }
-  );
-  assert.equal(result.kind, "ok");
-  assert.deepEqual(requests, [
-    {
-      url: `http://127.0.0.1:4101/control/skills/${NAME}/content`,
-      method: "PATCH",
-      body: { expectedRevision: REVISION, content: SOURCE }
-    }
-  ]);
-
-  const unconfirmed = await patchSkillContent(
-    NAME,
-    { expectedRevision: REVISION, content: SOURCE },
-    CONFIG,
-    {
-      fetchImpl: async () =>
-        Response.json(patchResponse({ projectionApplied: false }))
-    }
-  );
-  assert.equal(unconfirmed.kind, "invalid-response");
-});
-
-test("Skills rows link to one canonical source editor and editor posts the exact revision and source", () => {
+test("Skills rows link to the canonical source detail, and the detail is read-only", () => {
   const list = renderToStaticMarkup(
     React.createElement(SkillsView, {
       executionContractObserved: true,
@@ -193,17 +134,24 @@ test("Skills rows link to one canonical source editor and editor posts the exact
       source: DETAIL_SOURCE
     })
   );
-  assert.match(detail, /aria-label="Edit canonical skill release-checklist"/u);
-  assert.match(detail, new RegExp(`action="/api/skills/${NAME}/content"`, "u"));
-  assert.match(
-    detail,
-    new RegExp(`name="expectedRevision" value="${REVISION}"`, "u")
-  );
-  assert.match(detail, /name="content"[^>]*Complete SKILL\.md source/u);
-  assert.match(detail, /Save &amp; Apply/u);
-  assert.match(detail, /configured RuleSync skill projections/u);
+  // The canonical source is shown, with the shared Rendered | Source selector
+  // over it, and the breadcrumb the operator came in by. The page opens on the
+  // rendered reading; the raw text is one click away in the same view.
   assert.match(detail, /aria-label="Breadcrumb"/u);
+  assert.match(detail, /aria-label="Source representation"/u);
+  assert.match(detail, /Canonical RuleSync source/u);
+  assert.match(detail, /data-source-view="rendered"/u);
+  assert.match(detail, /data-source-rendered="true"/u);
+  assert.match(detail, /Release/u);
   assert.doesNotMatch(detail, /Skill content is active/u);
+
+  // The skill is repository-owned: the detail offers no editor, no revision to
+  // write against, and no way to submit a changed source. A change is made in
+  // the canonical file and reconciled by the standard workflow.
+  assert.doesNotMatch(detail, /<form\b/u);
+  assert.doesNotMatch(detail, /name="expectedRevision"/u);
+  assert.doesNotMatch(detail, /Save &amp; Apply/u);
+  assert.doesNotMatch(detail, /configured RuleSync skill projections/u);
 });
 
 test("the skill detail renders the reconciliation the Runtime reported", () => {
@@ -225,136 +173,4 @@ test("the skill detail renders the reconciliation the Runtime reported", () => {
     new RegExp(`data-field="observed-generation">${UPDATED_REVISION}<`, "u")
   );
   assert.match(detail, /No recorded operations for this resource\./u);
-});
-
-test("same-origin skill editor form keeps the Runtime credential server-side and redirects to confirmed source", async () => {
-  const previousFetch = globalThis.fetch;
-  const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
-  const previousBaseUrl = process.env.AUTODEV_CONTROL_API_BASE_URL;
-  const requests: Array<{
-    url: string;
-    method: string | undefined;
-    headers: Headers;
-    body: string;
-  }> = [];
-  process.env.AUTODEV_CONTROL_API_TOKEN = "server-only-skill-token";
-  process.env.AUTODEV_CONTROL_API_BASE_URL = CONFIG.baseUrl;
-  globalThis.fetch = async (input, init) => {
-    requests.push({
-      url: String(input),
-      method: init?.method,
-      headers: new Headers(init?.headers),
-      body: String(init?.body ?? "")
-    });
-    return Response.json(patchResponse());
-  };
-
-  const makeRequest = (): NextRequest =>
-    new NextRequest(`http://console.test/api/skills/${NAME}/content`, {
-      method: "POST",
-      headers: {
-        origin: "http://console.test",
-        host: "console.test",
-        "sec-fetch-site": "same-origin",
-        "content-type": "application/x-www-form-urlencoded"
-      },
-      body: new URLSearchParams({
-        expectedRevision: REVISION,
-        content: SOURCE
-      }).toString()
-    });
-
-  try {
-    const response = await skillContentMutation(makeRequest(), {
-      params: Promise.resolve({ name: NAME })
-    });
-
-    assert.equal(response.status, 303);
-    assert.equal(response.headers.get("location"), `/skills/${NAME}`);
-    assert.equal(requests.length, 1);
-    assert.equal(
-      requests[0]?.url,
-      `${CONFIG.baseUrl}/control/skills/${NAME}/content`
-    );
-    assert.equal(requests[0]?.method, "PATCH");
-    assert.equal(
-      requests[0]?.headers.get("authorization"),
-      "Bearer server-only-skill-token"
-    );
-    assert.deepEqual(JSON.parse(requests[0]?.body ?? "{}"), {
-      expectedRevision: REVISION,
-      content: SOURCE
-    });
-    assert.equal(
-      response.headers.get("location")?.includes("server-only-skill-token"),
-      false
-    );
-
-    globalThis.fetch = async () =>
-      Response.json(
-        {
-          error: {
-            code: "autodev_control_skill_apply_failed",
-            message: "Canonical source changed, but projection apply failed."
-          }
-        },
-        { status: 503 }
-      );
-    const failed = await skillContentMutation(makeRequest(), {
-      params: Promise.resolve({ name: NAME })
-    });
-    assert.equal(failed.status, 303);
-    assert.equal(
-      failed.headers.get("location"),
-      `/skills/${NAME}?save=apply-failed`
-    );
-  } finally {
-    globalThis.fetch = previousFetch;
-    if (previousToken === undefined)
-      delete process.env.AUTODEV_CONTROL_API_TOKEN;
-    else process.env.AUTODEV_CONTROL_API_TOKEN = previousToken;
-    if (previousBaseUrl === undefined)
-      delete process.env.AUTODEV_CONTROL_API_BASE_URL;
-    else process.env.AUTODEV_CONTROL_API_BASE_URL = previousBaseUrl;
-  }
-});
-
-test("skill source form rejects cross-origin, duplicate, and malformed submissions", async () => {
-  const request = (headers: Record<string, string>, body: string) =>
-    new NextRequest(`http://console.test/api/skills/${NAME}/content`, {
-      method: "POST",
-      headers,
-      body
-    });
-  const headers = {
-    origin: "http://console.test",
-    host: "console.test",
-    "sec-fetch-site": "same-origin",
-    "content-type": "application/x-www-form-urlencoded"
-  };
-
-  const crossOrigin = await skillContentMutation(
-    request({ ...headers, origin: "http://evil.test" }, ""),
-    { params: Promise.resolve({ name: NAME }) }
-  );
-  assert.equal(
-    crossOrigin.headers.get("location"),
-    `/skills/${NAME}?save=failed`
-  );
-
-  const duplicate = await skillContentMutation(
-    request(
-      headers,
-      new URLSearchParams([
-        ["expectedRevision", REVISION],
-        ["content", SOURCE],
-        ["content", SOURCE]
-      ]).toString()
-    ),
-    { params: Promise.resolve({ name: NAME }) }
-  );
-  assert.equal(
-    duplicate.headers.get("location"),
-    `/skills/${NAME}?save=failed`
-  );
 });

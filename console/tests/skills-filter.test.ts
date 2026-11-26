@@ -13,23 +13,22 @@ import {
 import { SkillsView } from "../src/features/skills/SkillsView.ts";
 
 /**
- * The skill catalogue can be narrowed, and the narrowing survives the
- * round-trip a role assignment makes.
+ * The skill catalogue can be narrowed, and the narrowing survives a reload.
  *
- * Sixteen entries in the live instance, each row carrying a role-assignment
- * control, so the table runs to about three screenfuls. The question the page
- * is about -- which skills may role X invoke -- had no answer on it: the
- * operator had to read the Eligible Roles column of every row, sixty-four
- * role chips spread down three screenfuls, to find out.
+ * Sixteen entries in the live instance, so the table runs to about three
+ * screenfuls. The question the page is about -- which skills may role X
+ * invoke -- had no answer on it: the operator had to read the Eligible Roles
+ * column of every row, sixty-four role chips spread down three screenfuls, to
+ * find out.
  *
  * The narrowing is by role rather than by name, because the catalogue is
  * sorted by name and sixteen short names in one column are a cheap scan,
  * while the role question is the expensive one.
  *
- * And it is by role rather than a text search for a second reason: every
+ * And it is by role rather than a text search for a second reason: the only
  * control on this page applies the moment it changes, so the page must not
- * carry a submit button, and a text search has nowhere to put its Apply.
- * A role is a bounded set, so the control that chooses one is a single-choice
+ * carry a submit button, and a text search has nowhere to put its Apply. A
+ * role is a bounded set, so the control that chooses one is a single-choice
  * select -- which is what the shared filter bar's on-change mode is for.
  */
 
@@ -187,22 +186,18 @@ test("an empty catalogue still says the catalogue is empty", () => {
   assert.match(markup, /No skills configured in RuleSync/u);
 });
 
-test("a role assignment carries the list's address on its action", () => {
+test("the list carries no assignment control: the catalogue is read-only", () => {
   const markup = renderSkills("worker");
 
-  // The narrowing travels on the form's action, so the redirect back from the
-  // POST returns the operator to the rows they narrowed. It is not a body
-  // field: the body carries the desired role set and nothing else, and a
-  // third field there would be one the route has to be told to ignore.
-  assert.match(markup, /action="\/api\/skills\/code-review\?role=worker"/u);
-  assert.doesNotMatch(markup, /name="returnTo"/u);
-});
-
-test("an unfiltered list's assignment posts nothing extra", () => {
-  const markup = renderSkills();
-
-  // The address is only carried when there is a narrowing to carry.
-  assert.match(markup, /action="\/api\/skills\/code-review"/u);
+  // The catalogue is repository-owned. Its role assignments come from the
+  // execution contract and are changed there, not here, so a row offers no
+  // write surface at all: no form that posts a desired role set, no revision
+  // to write against, and no submit control.
+  assert.doesNotMatch(markup, /action="\/api\/skills/u);
+  assert.doesNotMatch(markup, /name="expectedRevision"/u);
+  assert.doesNotMatch(markup, /data-skill-assignment=/u);
+  // The filter bar is the only form on the page, and it only narrows.
+  assert.equal(markup.match(/<form\b/gu)?.length, 1);
 });
 
 test("the narrowing is carried as a query, never as a path", () => {

@@ -3,18 +3,15 @@ export * from "./config/config-repository.ts";
 export {
   type AntigravityCliPermissionDefaults,
   approvalPolicyFromConfig,
-  PermissionPolicyConflictError,
   permissionPolicyGeneration,
   type PermissionPolicyKey,
   type PermissionPolicyRead,
   permissionPolicyRevision,
-  type PermissionPolicyUpdate,
-  PermissionPolicyValidationError,
-  type PermissionPolicyWrite,
   readAntigravityCliPermissionDefaults,
   readAppliedPermissionPolicyFile,
   readPermissionPolicyFile,
-  updatePermissionPolicy
+  readPermissionPolicySource,
+  type PermissionPolicySource
 } from "./config/permission-policy.ts";
 export {
   readWorkspaceCatalogRevision,

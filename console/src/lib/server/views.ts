@@ -208,6 +208,10 @@ export function permissionsFromControlApi(
   readonly policyStatus: "valid" | "invalid" | "unavailable";
   readonly policyReason: string | null;
   readonly revision: string | null;
+  /**
+   * The canonical source's exact text, or null when it was not read.
+   */
+  readonly sourceText: string | null;
   readonly applied: PermissionPolicy | null;
   readonly appliedSource: string;
   readonly roleMatrices: readonly RoleCapabilityMatrix[];
@@ -236,6 +240,7 @@ export function permissionsFromControlApi(
     policyStatus: response.policyStatus,
     policyReason: response.policyReason,
     revision: response.revision,
+    sourceText: response.sourceText,
     applied: response.applied,
     appliedSource: response.appliedSource,
     roleMatrices,

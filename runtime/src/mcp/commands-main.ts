@@ -29,8 +29,8 @@ import { isPathWithin, pathsOverlap } from "@simulatorlife/autodev-data/files";
 import { autodevRunDirectory } from "@simulatorlife/autodev-runtime/shared/autodev-home";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
+import { gitCommitIdentityEnv } from "@simulatorlife/autodev-runtime/telemetry";
 
-import { gitCommitIdentityEnv } from "../telemetry/git-commit-identity.ts";
 import {
   type CommandCatalogue,
   parseCommandCatalogue
@@ -384,17 +384,52 @@ export function commandCacheRoot(
   return privateCommandRoot(runDirectory, "command-cache", workspaceKey);
 }
 
-function privateCommandRoot(
+/**
+The key one scope's durable task records are named by.
+
+A task belongs to a role and a workspace, so its records live in their own
+directory: one role's tasks are never readable by another role's, even when
+both serve the same workspace.
+*/
+export function commandScopeKey(role: string, workspaceKey: string): string {
+  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/u.test(role)) {
+    throw new CommandsAdmissionError("Invalid command role.");
+  }
+  if (!/^[a-f0-9]{16}$/u.test(workspaceKey)) {
+    throw new CommandsAdmissionError("Invalid command workspace key.");
+  }
+  return `${role}-${workspaceKey}`;
+}
+
+/**
+The private directory one scope's durable task records live in.
+
+The records outlive the backend process, so they are kept in the Runtime's
+own run directory, never in the workspace and never in a shared cache.
+*/
+export function commandTaskRoot(
   runDirectory: string,
-  kind: "command-scratch" | "command-cache",
+  role: string,
   workspaceKey: string
 ): string {
-  if (!/^[a-f0-9]{16}$/u.test(workspaceKey)) {
+  return privateCommandRoot(
+    runDirectory,
+    "command-tasks",
+    commandScopeKey(role, workspaceKey)
+  );
+}
+
+function privateCommandRoot(
+  runDirectory: string,
+  kind: "command-scratch" | "command-cache" | "command-tasks",
+  scopeKey: string
+): string {
+  if (!/^(?:[a-f0-9]{16}|[a-z0-9][a-z0-9_-]{0,63}-[a-f0-9]{16})$/u.test(scopeKey)) {
     throw new CommandsAdmissionError("Invalid command workspace key.");
   }
   const physicalRun = ensureCommandRunDirectory(runDirectory);
   const parent = path.join(physicalRun, kind);
-  const root = path.join(parent, workspaceKey);
+  const root = path.join(parent, scopeKey);
   for (const directory of [parent, root]) {
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     commandDirectoryIdentity(directory, true);
@@ -442,6 +477,10 @@ export interface ResolvedCommandsScope {
   readonly isAuthorized: () => boolean;
   readonly workspaceKey: string;
   readonly runDirectory: string;
+  /**
+  The private directory this scope's durable task records live in.
+  */
+  readonly taskDirectory: string;
 }
 
 /**
@@ -517,6 +556,8 @@ export function resolveCommandsScope(
   };
   const scratchIdentity = commandDirectoryIdentity(scope.scratch, true);
   const cacheIdentity = commandDirectoryIdentity(scope.cache, true);
+  const taskDirectory = commandTaskRoot(runDirectory, role, workspaceKey);
+  const taskIdentity = commandDirectoryIdentity(taskDirectory, true);
   return {
     role,
     workspace,
@@ -529,7 +570,8 @@ export function resolveCommandsScope(
         !approved.isAuthorized() ||
         !sameDirectory(runDirectory, runIdentity) ||
         !sameDirectory(scope.scratch, scratchIdentity, true) ||
-        !sameDirectory(scope.cache, cacheIdentity, true)
+        !sameDirectory(scope.cache, cacheIdentity, true) ||
+        !sameDirectory(taskDirectory, taskIdentity, true)
       ) {
         return false;
       }
@@ -545,7 +587,8 @@ export function resolveCommandsScope(
       }
     },
     workspaceKey,
-    runDirectory
+    runDirectory,
+    taskDirectory
   };
 }
 
@@ -591,6 +634,7 @@ export async function startCommandsServer(
       workspaceId: resolved.workspaceId,
       catalogue: resolved.catalogue,
       scope,
+      taskDirectory: resolved.taskDirectory,
       isAuthorized: resolved.isAuthorized,
       tryAcquireWorkspace: lease.tryAcquire
     });

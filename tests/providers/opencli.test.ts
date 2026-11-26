@@ -10,17 +10,12 @@ import {
   routedSiteTabs
 } from "@simulatorlife/autodev-runtime/providers/opencli";
 import {
-  attachedPromptFileName,
-  attachedPromptMessage,
   CHATGPT_MODELS,
   geminiConversationId,
   geminiModelLimit,
-  OPENCLI_SITE_SPECS,
   OpencliCommandError,
   parseOpencliOutput,
-  replyFromRow,
-  typedPromptMarker,
-  uploadsRefused
+  replyFromRow
 } from "@simulatorlife/autodev-runtime/providers/opencli-turn";
 import { ROUTES } from "@simulatorlife/autodev-runtime/router/routing";
 
@@ -102,21 +97,7 @@ test("opencli output parsing, conversation id extraction, and limit helpers beha
     geminiConversationId("https://gemini.google.com/app/abc123def"),
     "abc123def"
   );
-  assert.ok(OPENCLI_SITE_SPECS.chatgpt.attachesPrompt);
   assert.ok(CHATGPT_MODELS.includes("balanced"));
-  assert.match(attachedPromptFileName(), /^turn-[0-9a-f]+\.md$/u);
-  assert.match(attachedPromptMessage("turn-1.md"), /turn-1\.md/u);
-  assert.match(typedPromptMarker("turn-1.md"), /turn-1/u);
-  assert.equal(
-    uploadsRefused(
-      new OpencliCommandError(
-        "0 of 1 file input(s) on the page accept this file",
-        "COMMAND_EXEC",
-        1
-      )
-    ),
-    true
-  );
   const limited = geminiModelLimit(
     new OpencliCommandError(
       'Gemini model "3.1-pro" is out of usage: Limit resets Nov 9, 9:26 PM',

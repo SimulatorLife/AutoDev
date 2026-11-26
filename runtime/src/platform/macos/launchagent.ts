@@ -26,18 +26,32 @@ export interface LaunchAgentValues {
   readonly codexBin: string;
   /** The loopback port the Console binds; see resolveConsolePort. */
   readonly consolePort: string;
-  readonly tunnel?: {
+  /**
+  The command line and environment of a Runtime-owned service job.
+  */
+  readonly service?: {
     node: string;
     runner: string;
     repositoryRoot: string;
     codexHome: string;
-    workspace: string;
+    workingDirectory: string;
     servicePath: string;
     logDirectory: string;
   };
 }
 
 const PLACEHOLDER_PATTERN = /__[A-Z0-9_]+__/gu;
+const SERVICE_PLACEHOLDERS: Readonly<
+  Record<string, keyof NonNullable<LaunchAgentValues["service"]>>
+> = {
+  NODE: "node",
+  RUNNER: "runner",
+  REPOSITORY_ROOT: "repositoryRoot",
+  CODEX_HOME: "codexHome",
+  WORKING_DIRECTORY: "workingDirectory",
+  PATH: "servicePath",
+  LOG_DIRECTORY: "logDirectory"
+};
 
 /**
  * Build the single value set every service LaunchAgent renders from. Both the
@@ -77,38 +91,13 @@ function renderedTemplate(
     .replaceAll("__AUTODEV_NODE_BIN__", () => values.nodeBin)
     .replaceAll("__CODEX_BIN__", () => values.codexBin)
     .replaceAll("__AUTODEV_CONSOLE_PORT__", () => values.consolePort)
-    .replaceAll("__TUNNEL_HOME__", () => escapeXml(values.home))
-    .replaceAll("__TUNNEL_NODE__", () =>
-      values.tunnel ? escapeXml(values.tunnel.node) : "__TUNNEL_NODE__"
-    )
-    .replaceAll("__TUNNEL_RUNNER__", () =>
-      values.tunnel ? escapeXml(values.tunnel.runner) : "__TUNNEL_RUNNER__"
-    )
-    .replaceAll("__TUNNEL_REPOSITORY_ROOT__", () =>
-      values.tunnel
-        ? escapeXml(values.tunnel.repositoryRoot)
-        : "__TUNNEL_REPOSITORY_ROOT__"
-    )
-    .replaceAll("__TUNNEL_CODEX_HOME__", () =>
-      values.tunnel
-        ? escapeXml(values.tunnel.codexHome)
-        : "__TUNNEL_CODEX_HOME__"
-    )
-    .replaceAll("__TUNNEL_WORKSPACE__", () =>
-      values.tunnel
-        ? escapeXml(values.tunnel.workspace)
-        : "__TUNNEL_WORKSPACE__"
-    )
-    .replaceAll("__TUNNEL_SERVICE_PATH__", () =>
-      values.tunnel
-        ? escapeXml(values.tunnel.servicePath)
-        : "__TUNNEL_SERVICE_PATH__"
-    )
-    .replaceAll("__TUNNEL_LOG_DIRECTORY__", () =>
-      values.tunnel
-        ? escapeXml(values.tunnel.logDirectory)
-        : "__TUNNEL_LOG_DIRECTORY__"
-    );
+    .replaceAll("__SERVICE_HOME__", () => escapeXml(values.home))
+    .replaceAll(/__SERVICE_([A-Z_]+)__/gu, (placeholder, name: string) => {
+      const field = SERVICE_PLACEHOLDERS[name];
+      return values.service && field
+        ? escapeXml(values.service[field])
+        : placeholder;
+    });
   const unresolved = rendered.match(PLACEHOLDER_PATTERN);
   // An unrendered placeholder is not a cosmetic defect: it ships verbatim into
   // a launchd job, where the service dies on its first command line. Refuse to

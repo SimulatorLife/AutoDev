@@ -27,24 +27,8 @@ import {
   skillScopePlace
 } from "./skill-scope.ts";
 
-export type SkillContentSaveOutcome =
-  "conflict" | "validation" | "apply-failed" | "failed";
-
-export function skillContentSaveOutcome(
-  value: string | readonly string[] | undefined
-): SkillContentSaveOutcome | undefined {
-  const outcome = typeof value === "string" ? value : value?.[0];
-  return outcome === "conflict" ||
-    outcome === "validation" ||
-    outcome === "apply-failed" ||
-    outcome === "failed"
-    ? outcome
-    : undefined;
-}
-
 export interface SkillDetailViewProps {
   readonly source: ControlApiSkillContentResponse;
-  readonly saveOutcome?: SkillContentSaveOutcome | undefined;
   /**
    * Where the skill is installed, read from the catalogue.
    *
@@ -53,16 +37,6 @@ export interface SkillDetailViewProps {
    * which one it is looking at.
    */
   readonly scopedSkill?: ScopedSkillDefinition | null | undefined;
-  /**
-   * The revision the editor's content is based on.
-   *
-   * A browser restores the text an operator typed into a form control when the
-   * write it submitted is redirected back to the page, so after a refused
-   * write the editor still holds the edit while the source has moved on. The
-   * write carries this revision, which keeps a second save from pairing that
-   * stale edit with the revision the source has moved to.
-   */
-  readonly editorRevision?: string | undefined;
 }
 
 /**

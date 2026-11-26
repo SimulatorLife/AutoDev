@@ -34,9 +34,6 @@ import {
 import type { PromptHistoryState } from "./history-state.ts";
 import { PromptMarkdown } from "./prompt-markdown.ts";
 
-export type PromptSaveOutcome =
-  "conflict" | "validation" | "apply-failed" | "failed";
-
 export interface PromptDetailViewProps {
   readonly prompt: PromptDocument;
   /**
@@ -48,17 +45,6 @@ export interface PromptDetailViewProps {
   readonly history: PromptHistoryState;
   readonly selectedVersion?: ControlApiPromptVersionResponse | undefined;
   readonly versionSelectionError?: string | undefined;
-  readonly saveOutcome?: PromptSaveOutcome | undefined;
-  /**
-   * The revision the editor's content is based on.
-   *
-   * A browser restores the text an operator typed into a form control when the
-   * write it submitted is redirected back to the page, so after a refused
-   * write the editor still holds the edit while the source has moved on. The
-   * write carries this revision, which keeps a second save from pairing that
-   * stale edit with the revision the source has moved to.
-   */
-  readonly editorRevision?: string | undefined;
 }
 
 /**

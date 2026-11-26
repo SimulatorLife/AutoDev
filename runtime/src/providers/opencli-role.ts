@@ -303,8 +303,7 @@ export async function executeOpencliRoleTurn(
     task.conversationId,
     {
       response: outputText,
-      conversationId: rawConversationId,
-      modelSelected: true
+      conversationId: rawConversationId
     }
   );
   if (!verified.conversationId) {

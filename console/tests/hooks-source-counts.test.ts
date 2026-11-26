@@ -32,7 +32,8 @@ function renderHooks(sourceValidity: boolean | null): string {
       sourceValidity,
       validationIssues: [],
       revision: "a".repeat(64),
-      applied: null
+      applied: null,
+      sourceText: null
     })
   );
 }

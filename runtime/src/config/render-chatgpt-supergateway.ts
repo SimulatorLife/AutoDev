@@ -1,6 +1,5 @@
 import { realpathSync, statSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import {
   isPathWithin,
@@ -61,16 +60,7 @@ export interface RulesyncExternalMcpPermissions {
   readonly allowedTools: Record<string, string[]>;
   readonly deniedTools: Record<string, Set<string>>;
 }
-const stdioServerSchema = z
-  .object({
-    command: z.string().min(1),
-    args: z.array(z.string()),
-    cwd: z.string(),
-    env: z.record(z.string(), z.string()).optional(),
-    toolPrefix: identifier,
-    tools: z.array(toolIdentifier).min(1)
-  })
-  .strict();
+// Every gateway member is a backend-pool route.
 const streamableHttpServerSchema = z
   .object({
     url: z.string().min(1),
@@ -80,10 +70,7 @@ const streamableHttpServerSchema = z
     tools: z.array(toolIdentifier).min(1)
   })
   .strict();
-const gatewayServerSchema = z.union([
-  stdioServerSchema,
-  streamableHttpServerSchema
-]);
+const gatewayServerSchema = streamableHttpServerSchema;
 /**
  * One role's published surface.
  *
@@ -129,8 +116,6 @@ export interface ChatgptSupergatewayHttpOptions {
   port: number;
   apiKeyFile: string;
   sessionTimeout?: number;
-  /** Route combined members through the loopback pooled MCP backend host instead of spawning per-session stdio trees. */
-  backendPool?: boolean;
 }
 
 export function qualifiedToolNames(
@@ -152,8 +137,6 @@ interface ValidatedExternalServer {
   readonly toolPrefix: string;
   readonly tools: string[];
   readonly poolSpec: PooledBackendSpec;
-  readonly filterTargetCommand: string;
-  readonly filterTargetArgs: string;
 }
 
 /**
@@ -258,15 +241,7 @@ function resolveValidatedExternalServers(
             : {}),
           ...(httpHeaders !== undefined ? { http_headers: httpHeaders } : {}),
           tools: uniqueTools
-        },
-        filterTargetCommand: "--remote",
-        filterTargetArgs: JSON.stringify({
-          url: descriptor.url,
-          ...(bearerVar !== undefined
-            ? { bearer_token_env_var: bearerVar }
-            : {}),
-          ...(httpHeaders !== undefined ? { http_headers: httpHeaders } : {})
-        })
+        }
       });
     } else {
       if (
@@ -311,9 +286,7 @@ function resolveValidatedExternalServers(
           ...(name === MCP_SERVER_XACPX
             ? { conversationScopedEnv: XACPX_COORDINATOR_SESSION_ENV }
             : {})
-        },
-        filterTargetCommand: backend.command,
-        filterTargetArgs: JSON.stringify(backend.args)
+        }
       });
     }
   }
@@ -376,10 +349,6 @@ export function renderChatgptSupergatewayConfig(
   surfaces: ChatgptRoleSurface[],
   workspace: string,
   http: ChatgptSupergatewayHttpOptions,
-  filter = {
-    command: process.execPath,
-    script: fileURLToPath(new URL("../mcp/tool-filter.ts", import.meta.url))
-  },
   confinedBackend?: ChatgptConfinedBackend
 ): string {
   if (!path.isAbsolute(workspace))
@@ -392,12 +361,6 @@ export function renderChatgptSupergatewayConfig(
     throw new Error("ChatGPT Supergateway API key file must be absolute");
   if (!surfaces.length)
     throw new Error("No ChatGPT MCP role surface to publish");
-  const roleEnv = new Map(
-    surfaces.map((surface) => [
-      surface.role,
-      chatgptRoleEnvironment(surface.role, workspace)
-    ])
-  );
   const published = Object.fromEntries(
     surfaces.map((surface) => {
       const resolvedServers = resolveValidatedExternalServers(
@@ -408,47 +371,19 @@ export function renderChatgptSupergatewayConfig(
         confinedBackend,
         surface.role
       );
+      // Every member is served by the loopback backend pool: one backend
+      // per role and server, shared by every Supergateway session.
       const entries: Array<[string, GatewayServer]> = resolvedServers.map(
-        (entry) => {
-          const env = roleEnv.get(surface.role)!;
-          if (http.backendPool) {
-            return [
-              entry.name,
-              {
-                url: `http://127.0.0.1:\${${CHATGPT_MCP_POOL_PORT_ENV}}/mcp/${chatgptPoolServerKey(surface.role, entry.name)}`,
-                type: "streamableHttp",
-                oauth2Bearer: `\${${CHATGPT_MCP_POOL_TOKEN_ENV}}`,
-                toolPrefix: entry.toolPrefix,
-                tools: entry.tools
-              }
-            ];
+        (entry) => [
+          entry.name,
+          {
+            url: `http://127.0.0.1:\${${CHATGPT_MCP_POOL_PORT_ENV}}/mcp/${chatgptPoolServerKey(surface.role, entry.name)}`,
+            type: "streamableHttp",
+            oauth2Bearer: `\${${CHATGPT_MCP_POOL_TOKEN_ENV}}`,
+            toolPrefix: entry.toolPrefix,
+            tools: entry.tools
           }
-          return [
-            entry.name,
-            {
-              // Supergateway interpolates ${VAR} in config strings. Preserve the
-              // canonical shell argument and header templates using its literal-dollar escape.
-              command: escapeInterpolation(filter.command),
-              args: [
-                filter.script,
-                entry.filterTargetCommand,
-                entry.filterTargetArgs,
-                JSON.stringify(entry.tools),
-                "external",
-                entry.name
-              ].map(escapeInterpolation),
-              cwd: escapeInterpolation(workspace),
-              env: Object.fromEntries(
-                Object.entries(env).map(([key, value]) => [
-                  key,
-                  escapeInterpolation(value)
-                ])
-              ),
-              toolPrefix: entry.toolPrefix,
-              tools: entry.tools
-            }
-          ];
-        }
+        ]
       );
       return [
         surface.role,

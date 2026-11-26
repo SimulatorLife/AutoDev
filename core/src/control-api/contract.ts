@@ -145,11 +145,15 @@
  * collection advertises readOnly: true and rejects every mutation.
  * v40: Hooks is repository-owned and GET-only; the hook event write path
  * is removed and the collection requires readOnly: true.
+ * v41: the Hooks and Permissions collections publish the canonical source's
+ * exact text (`sourceText`) beside the values parsed from it, so the Console
+ * can show the JSONC source with its comments and the rendered view from one
+ * read. The revision names the bytes both views came from.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 40
+  version: 41
 } as const;
 
 export type ControlApiContractResponse = {

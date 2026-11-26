@@ -49,7 +49,6 @@ export * from "./features/providers/provider-status.ts";
 export * from "./features/providers/provider-usage/index.ts";
 export * from "./features/providers/ProviderDetailView.ts";
 export * from "./features/providers/ProvidersView.ts";
-export * from "./features/skills/SkillRoleAssignment.ts";
 export * from "./features/skills/SkillsView.ts";
 export * from "./features/tools/index.ts";
 export * from "./features/usage/usage-api.ts";

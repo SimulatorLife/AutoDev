@@ -93,8 +93,7 @@ test("runtime targets preserve relative depth for scripts and source files", () 
   );
   for (const mcpSource of [
     "runtime/src/mcp/mcp-telemetry.ts",
-    "runtime/src/mcp/launcher.ts",
-    "runtime/src/mcp/tool-filter.ts"
+    "runtime/src/mcp/launcher.ts"
   ]) {
     assert.equal(
       runtimeTarget(mcpSource, "/runtime"),

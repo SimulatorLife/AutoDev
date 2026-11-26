@@ -36,10 +36,10 @@ test("repositoryRoot resolves the Runtime source tree without a configured overr
     assert.equal(
       resolveRuntimeSourcePath(
         hookRoots.repositoryRoot(),
-        "mcp/tool-filter.ts"
+        "mcp/launcher.ts"
       ),
       path.resolve(
-        fileURLToPath(new URL("../src/mcp/tool-filter.ts", import.meta.url))
+        fileURLToPath(new URL("../src/mcp/launcher.ts", import.meta.url))
       )
     );
   } finally {
@@ -71,8 +71,8 @@ test("repositoryRoot falls back to CODEX_HOME for an installed hook copy", async
     const installed = await import(pathToFileURL(installedModule).href);
     assert.equal(installed.repositoryRoot(), realpathSync(codexHome));
     assert.equal(
-      resolveRuntimeSourcePath(realpathSync(codexHome), "mcp/tool-filter.ts"),
-      path.join(realpathSync(codexHome), "src", "mcp", "tool-filter.ts")
+      resolveRuntimeSourcePath(realpathSync(codexHome), "mcp/launcher.ts"),
+      path.join(realpathSync(codexHome), "src", "mcp", "launcher.ts")
     );
   } finally {
     if (previousRepositoryRoot === undefined)

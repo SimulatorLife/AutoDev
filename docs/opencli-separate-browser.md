@@ -31,10 +31,21 @@ XACPX role turns use the same authenticated loopback browser service as
 other OpenCLI turns. The dedicated browser activates the exact leased CDP
 target before foreground-sensitive operations and releases foreground after
 confirmed submission or process settlement; cancellation quarantine retains
-ownership when necessary. This does not bypass visibility checks or guarantee
-macOS visibility when the window is covered, minimized, or on another Space.
+ownership when necessary.
+
+Activation raises the leased page itself. The browser-level
+`Target.activateTarget` only focuses the target inside its own window, so the
+page-domain `Page.bringToFront` follows it: that call is what un-minimizes the
+window and brings it forward when it was covered or on another macOS Space.
+Nothing spoofs `document.visibilityState`, the upstream native-input guard
+stays intact, and the site still decides whether it accepts the input. After
+activation the browser reads the page's own `document.visibilityState` and
+reports a page that stayed hidden, naming the operator action, instead of
+letting the native click fail later with an opaque message. A page whose
+visibility cannot be observed at all is left to the site's own guard.
+
 The most recent observed live probe still failed the native visible-page
-guard.
+guard; that probe predates the page-level activation.
 
 The owner now shares startup and health checks as one readiness transaction,
 publishes readiness only after the target pool is built, refuses to restart
@@ -46,7 +57,11 @@ the missing slot is still leased. Regression fixtures cover concurrent
 startup, concurrent recovery of a lost slot, and failed health checks during
 active execution. These new fixtures have not been executed locally.
 
-The foreground lease is required only by the operations that actually use native input. Reading the installed opencli 2.0.3 shows that attaching a ChatGPT app, enabling a site tool and picking a model open a menu with an unguarded native click, which a hidden page refuses, while ChatGPT's prompt path inserts text and clicks submit programmatically and Gemini's adapter never clicks natively at all. The requirement is therefore derived from the command (`opencliCommandRequiresForeground`), so a Gemini turn and a plain ChatGPT turn do not take the foreground from each other, and the foreground is released as soon as the prompt has been submitted rather than being held for the whole turn. A background command also waits for the foreground to be free before it replaces a lost tab, because creating a target activates it and would hide the page a native-input turn is holding.
+The foreground lease is required only by the operations that actually use native input. Reading the installed opencli 2.0.3 shows that attaching a ChatGPT app and enabling a site tool open the composer's menu with an unguarded native click, which a hidden page refuses, while ChatGPT's prompt path inserts text and clicks submit programmatically and Gemini's adapter never clicks natively at all.
+
+Model selection is the subtle case, and it is the one that produced the reported failure. `selectChatGPTModel` tries the reasoning slider and the model menu with native input. AutoDev's patch catches exactly the visibility refusal and falls back to the site's own settings API (`user_last_used_model_config`), which needs no visible page -- but only the models that API covers. `advanced`, `pro` and `gpt-5.6-pro` carry a settings-API configuration; `fast`, `balanced` and `very-high`/`xhigh` do not, and for those the visible picker is the only path and the command fails without one. A model switch therefore always takes the foreground, whatever the model.
+
+The requirement is derived from the command (`opencliCommandRequiresForeground`), so a Gemini turn and a plain ChatGPT turn do not take the foreground from each other, and the foreground is released as soon as the prompt has been submitted rather than being held for the whole turn. A background command also waits for the foreground to be free before it replaces a lost tab, because creating a target activates it and would hide the page a native-input turn is holding.
 
 Automated tests cover browser process/readiness, target leasing/replacement,
 per-command endpoint isolation, transport-failure health and recovery, bridge
@@ -198,9 +213,11 @@ Not tested:
 2. **The extension transport cannot be headless.** The Browser Bridge lives in
    the user's running, visible Chrome profile; one window of a running Chrome
    cannot be made headless.
-3. **Some site actions need a visible page.** ChatGPT's model picker needs
-   native input on a visible page. AutoDev's patch falls back to the site's
-   settings API, so this matters less than (1).
+3. **Some site actions need a visible page.** ChatGPT's model picker and its
+   app and tool menus need native input on a visible page. AutoDev's patch
+   falls back to the site's settings API for the models that API covers, so
+   this matters less than (1) -- but not for every model, and never for
+   attaching an app or enabling a site tool.
 
 Gemini did load headless, but a design that serves one site headless and the
 other headful buys nothing over running both headful in a separate browser.

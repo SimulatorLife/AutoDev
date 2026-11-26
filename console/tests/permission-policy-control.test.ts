@@ -56,7 +56,8 @@ function markup(
           allowedSkills: [],
           allowedMcpTools: {}
         }
-      ]
+      ],
+      sourceText: null
     })
   );
 }

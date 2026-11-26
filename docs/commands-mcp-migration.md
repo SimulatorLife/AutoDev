@@ -1,6 +1,6 @@
 # Allowlisted Commands MCP — Design and Migration Plan
 
-> **Status:** Substantial source implementation and earlier recorded tests (2026-11-25); latest parallel review changes are not yet independently tested or deployed. The backend is integrated into the launcher, gateway confinement, RuleSync catalogue and canonical role contracts. The registry proxy implements restricted package egress; actual dependency installation through the nested production gateway sandbox remains unverified. Protected approval, conversation-specific task ownership, deployment, durable recovery, Console and telemetry acceptance remain open.
+> **Status:** Substantial source implementation and earlier recorded tests (2026-11-25); latest parallel review changes are not yet independently tested or deployed. The backend is integrated into the launcher, gateway confinement, RuleSync catalogue and canonical role contracts. The registry proxy implements restricted package egress; actual dependency installation through the nested production gateway sandbox remains unverified. Durable task recovery is implemented in source and covered by unit and integration tests. Protected approval, conversation-specific task ownership, deployment, Console and telemetry acceptance remain open.
 >
 > **Authority:** [AutoDev unified target state](autodev-console-target-state.md#allowlisted-command-execution) owns durable architecture and authorization requirements. This focused subsystem plan explains the rationale, proposed implementation, migration order and acceptance gates. Record observed deployment evidence in [the migration tracker](autodev-console-migration.md), and operational instructions in [local setup](local-setup.md) when implemented.
 
@@ -110,6 +110,26 @@ launchd services and the live provider surfaces still carry the previous state.
   Runtime-owned private directories, `PATH` holds only the approved toolchain
   directories and the workspace's own `node_modules/.bin`, and no operator
   secret, tunnel token or provider credential is inherited.
+- **A command that commits is attributed to the agent that made it.** Git
+  reads no host configuration at all in a confined command: `GIT_CONFIG_NOSYSTEM`
+  is set and `GIT_CONFIG_GLOBAL` points at `/dev/null`, so the operator's
+  global configuration -- which names credential helpers, commit templates and
+  aliases outside every workspace -- is neither readable nor inherited. The
+  commit identity is the Runtime's own bounded agent identity
+  (`gitCommitIdentityEnv`, the same one every other AutoDev agent path commits
+  under), passed in the environment. Without it Git finds no identity at all
+  and refuses to commit, so the identity is what makes `git_commit` work
+  rather than a convenience layered on top of it. `GIT_TERMINAL_PROMPT=0`
+  keeps a confined command from waiting on a credential prompt it can never
+  answer.
+- **Trusted executables resolve to something that can actually run.** macOS
+  ships several tools as dispatch stubs: `/usr/bin/git` is a small binary that
+  loads the developer toolchain to find the real tool, and a closed sandbox
+  denies that load. `resolveTrustedExecutables` therefore resolves a stub to the
+  developer directory's own binary, so the confined command runs the real tool
+  and the profile can name the developer toolchain as a read-only root. The
+  stub's own `/usr/bin` is not enough: Git also reads its system
+  configuration from the developer directory.
 - **Dependency installation works, with real egress control.** Seatbelt cannot
   restrict an outbound connection to a host, only to a port, so
   `runtime/src/mcp/commands-registry-proxy.ts` runs a trusted loopback proxy
@@ -131,12 +151,15 @@ launchd services and the live provider surfaces still carry the previous state.
   that server's grant cannot recover; active invocations are aborted and
   revoked results are not served. Cancellation and lease release wait for
   subprocess settlement; detached descendant cleanup still requires host
-  qualification.
+  qualification. The task store is durable
+  (`runtime/src/mcp/command-task-store.ts`), so an interrupted command is
+  reconciled as failed rather than lost.
 - `runtime/src/mcp/commands-main.ts` is the stdio entry point. It resolves the
   role and workspace from the trusted launcher's arguments or environment,
   refuses to start when the approved catalogue resolves **inside** the
   authorized workspace (an agent that can edit its own authority is not a
-  trusted authority), provisions private scratch and cache roots, and takes a
+  trusted authority), provisions private scratch, cache and task-record roots
+  outside the workspace, and takes a
   workspace-wide exclusive lease so two sessions cannot race over the same
   build outputs. A lease is never taken over solely on the basis of its age;
   abandoned leases fail closed pending verified recovery. The approved
@@ -165,6 +188,15 @@ launchd services and the live provider surfaces still carry the previous state.
   privacy of the scratch and cache roots. A positive control asserts that the
   host's `sandbox-exec` really confines, so the negative tests are not
   vacuous.
+- `runtime/tests/commands-mcp-integration.test.ts` starts the real server over
+  MCP stdio and drives it as a client would: tool discovery matches the
+  role's grant exactly, a narrower role sees only its own commands, a
+  read-only role is refused the surface entirely, the server refuses to start
+  when the approved catalogue resolves inside the workspace, the native task
+  lifecycle creates, polls, lists and yields a result for an augmented call,
+  output is bounded with the observed exit status, the private roots are
+  owner-only, and a commit made through the surface carries the agent's own
+  identity in the commit itself.
 
 ### Parallel review checkpoint (2026-11-25)
 
@@ -273,17 +305,43 @@ gateway cutover still must establish one state home across all providers.
 
 ### What is still open
 
-- **Deployment.** The installer has not been run. The installed tree, the
-  launchd services, the Supergateway projections and the live provider
-  surfaces still carry the previous state, and no live acceptance has been
-  performed.
-- **Task durability.** The SDK's task store is in-memory. It is bounded and
-  session-scoped, but a Runtime restart loses a running task's result. The
-  migration's durable-recovery requirement is not met; the current behaviour
-  fails closed rather than reporting a lost task as completed.
-- **Console and Control API surfaces.** The Commands backend has no dedicated
-  Console state yet, so it cannot yet be reported as declared, approved,
-  applied, observed, unavailable or failed through the Console.
+- **Deployment.** The installer has not been run. A normal install restarts
+  `com.codex.model-router`, `com.codex.opencli-proxy`,
+  `com.codex.autodev-console`, `com.codex.autodev-chatgpt-tunnel` and
+  `com.codex.autodev-mcp-gateway`, so it needs the operator's explicit
+  authorization; that authorization was requested and has not been given, so
+  the installer was left unrun rather than run on an unanswered question. The
+  installed tree, the launchd services, the Supergateway projections and the
+  live provider surfaces therefore still carry the previous state, and no live
+  acceptance has been performed. The ChatGPT gateway additionally needs
+  `--approve-command-catalogue=sha256:<digest>` for the approved revision it
+  publishes, so the catalogue's digest is part of the deployment, not a
+  source-tree detail.
+- **Task durability.** The SDK's in-memory store is no longer used.
+  `runtime/src/mcp/command-task-store.ts` implements the SDK's own `TaskStore`
+  extension point over the Runtime's private run directory
+  (`<Runtime home>/run/command-tasks/<role>-<workspace>`), one atomically
+  replaced record per task. A task that was still running when its backend
+  ended is reconciled as **failed**, with the reason, and is never reported
+  as completed and never replayed; a task that had already finished keeps
+  its result, so a client that reconnects can still collect it. Records are
+  bound to the session that created them, bounded by count and by retention,
+  and the directory is private to the scope. The interruption is proven through
+  the real confined executor: a backend that closes with a command still
+  running, and a grant that ends mid-flight, both leave a task that reads back
+  as failed with an unknown outcome rather than as completed. What is still
+  open is the installed evidence: no deployed Runtime has been restarted under a
+  running command yet.
+- **Console and Control API surfaces.** The approval state of the catalogue
+  each Runtime home serves is published on the Commands backend's own MCP
+  entry in `/control/mcps` -- `approved`, `pending`, `unavailable` or
+  `unknown`, with both digests -- and the Console's MCP detail renders it per
+  home. The remaining states are carried by the existing reads: the
+  declaration by `/control/mcps`, the applied projection by
+  `/control/mcp-applied`, and the Runtime's observations by
+  `/control/mcp-runtime`. What is still open is the live evidence: the
+  surfaces exist and are exercised by tests, but no installed deployment has
+  published them yet.
 - **Telemetry.** Source-owned execution spans now use the existing
   OpenTelemetry pipeline. Installed collector reachability, actual export,
   correlation with gateway observations, bounded metrics and Console
@@ -291,8 +349,11 @@ gateway cutover still must establish one state home across all providers.
   rather than queueing it; queue latency is not observed.
 - **Cross-workspace trust.** The approved catalogue is protected by being
   outside every workspace and by the refusal to start when it is not. That is
-  enforced, but it is a property of the deployment layout rather than a
-  cryptographic binding of the executable resolution to a reviewed revision.
+  enforced, and the case where the workspace _is_ AutoDev's own checkout is
+  designed for explicitly (see "The workspace is AutoDev's own source
+  checkout" in section 13). What remains is that this is a property of the
+  deployment layout rather than a cryptographic binding of the executable
+  resolution to a reviewed revision.
 
 ## 3. Dependency and protocol qualification
 
@@ -309,7 +370,7 @@ Primary reference points:
 Source observations during planning:
 
 - Installed SDK declarations expose experimental `server.experimental.tasks.registerToolTask` and in-memory task-store/message-queue implementations. These do not establish production durability or actual client compatibility.
-- `runtime/src/mcp/tool-filter.ts` and `runtime/src/mcp/chatgpt-backend-pool.ts` recognize tasks/get, tasks/list, tasks/result and tasks/cancel. Forwarding methods alone is not proof of negotiation, ownership, cancellation or correct lifetime.
+- `runtime/src/mcp/chatgpt-backend-pool.ts`, which now serves every gateway member, recognizes tasks/get, tasks/list, tasks/result and tasks/cancel. Forwarding methods alone is not proof of negotiation, ownership, cancellation or correct lifetime.
 - Existing filter deadlines were 60 seconds for tools/call and 15 seconds for other requests; external gateway session timeout defaults to 60 seconds. Inspect the effective backend idle/transport/tunnel deadlines before implementing. Do not duplicate them as new configuration.
 - The existing macOS filesystem sandbox permits a narrow Node execution environment, not arbitrary pnpm descendants. It must be evaluated and adapted rather than assumed to confine a command service.
 - Conversation-specific authorization for shared external MCP sessions remains an existing integration concern. A static coordinator ID, browser conversation ID, opaque task ID or unverified request metadata is not sufficient authority.
@@ -435,7 +496,11 @@ Required lifecycle: authorized submission, bounded queue, execution, terminal re
 
 The warm backend pool must account for tasks that remain running after the initial tools/call returns. It must not reap a backend with active tasks based only on the active request count. Reconcile task TTL, command deadline, transport request deadline, session expiry and idle reaping. Ensure task list/get/result/cancel are ownership-scoped, not merely forwarded by method name.
 
+Source progress: the pool now pins native task handles through execution and observed terminal result retention, and prevents idle/LRU/timeout-driven reaping while pinned. Unknown creation outcomes fail closed; missing/expired records alone do not prove execution stopped. SDK task schemas and terminal-state semantics remain authoritative. Retention bookkeeping is bounded by count, but unknown or unlimited lifetimes require explicit recovery. This is not a task authorization store; actual session ownership, recovery, negotiation and live acceptance are still open.
+
 Define disconnect/reconnect, cancellation, process crash, backend shutdown, Runtime restart and policy revocation behavior. In-memory stores do not provide restart durability. Choose explicit safe termination on restart or a proven recovery/reconciliation strategy using maintained facilities; never report lost tasks as completed or replay uncertain mutations. Retention and logs must be bounded by time and size.
+
+Source progress: the chosen strategy is explicit safe termination with a durable record. The backend's own task store implements the SDK's `TaskStore` extension point over the Runtime's private run directory, so a task outlives the process that created it. A task that was still running when its backend ended is reconciled as **failed** with the reason, its result states that the outcome is unknown, and the command is never replayed. A task that had already finished keeps its result for a reconnecting client. Reconciliation is judged by the owning process: a live sibling backend's tasks are left alone, so a second backend never cancels a running command it does not own. Cancellation waits for the subprocess to settle before the task is reported as cancelled, and a backend that closes records its outstanding commands as failed rather than completed.
 
 If native asynchronous operations are unavailable, synchronous calls may be enabled only when they fit the complete independently enforced request deadline and cleanup contract. Otherwise refuse with an actionable capability-gap diagnostic. Do not solve long commands solely by raising gateway timeouts. A provider that cannot support required operations remains a parity gap until live acceptance, not grounds for a direct connection or unsandboxed path.
 
@@ -460,8 +525,7 @@ Paths below are source-navigation starting points, not a mandate to create addit
 | .rulesync/permissions.jsonc and agents/roles/*.toml | Portable and role-specific grants |
 | config/execution-contract.json | Regenerate from canonical source, never hand-edit |
 | runtime/src/shared/execution-contract.ts | Reuse effective role/workspace contract |
-| runtime/src/mcp/tool-filter.ts | Verify discovery, invocation, task operation authorization |
-| runtime/src/mcp/chatgpt-backend-pool.ts | Task lifetime, ownership, timeouts, isolation |
+| runtime/src/mcp/chatgpt-backend-pool.ts | Discovery, invocation, task operation authorization; task lifetime, ownership, timeouts, isolation |
 | runtime/src/config/render-chatgpt-supergateway.ts | Existing role-contracted gateway projections |
 | runtime/src/mcp/chatgpt-filesystem-sandbox.ts | Reuse/generalize confinement; verify trusted executables and descendants |
 | runtime/src/platform/ | Installation, health and reconciliation |
@@ -510,10 +574,12 @@ Use synthetic fixtures for unit tests and independent canonical-source validatio
 | Add/change argv or arbitrary execution input | Denied |
 | Traversal, symlink or mount escape | Denied |
 | Replace launcher/executable or edit effective policy | Denied; no self-escalation on reload |
+| Workspace is AutoDev's own checkout | The approved catalogue and the installed Runtime stay unreadable and unwritable; the checkout's own proposal stays editable and changes nothing |
 | Read SSH/cloud/API secrets, unrelated repo or protected env | Denied |
 | Write outside workspace/approved scratch | Denied |
 | Access unauthorized network or host IPC | Denied |
 | Dependency/test descendant attempts escape | Denied |
+| Descendant detaches into its own session | Terminated with the command; not left running |
 | Shared cache or workspace cross-contamination | Prevented |
 | Invoke from read-only, revoked or forged grant | Denied |
 | List/read/result/cancel another session's task | Denied |
@@ -559,31 +625,158 @@ Run the repository's prescribed typecheck, lint, test and relevant integration/s
 
 ## 12. Definition of done
 
-- [ ] Canonical target requirement and focused design are aligned.
-- [ ] Existing maintained SDK/Execa/Zod/telemetry reused; no unjustified dependency.
-- [ ] Official filesystem MCP retained.
-- [ ] Generic protected command catalogue; project scripts remain single-sourced.
+- [x] Canonical target requirement and focused design are aligned.
+- [x] Existing maintained SDK/Execa/Zod/telemetry reused; no unjustified dependency.
+- [x] Official filesystem MCP retained.
+- [x] Generic protected command catalogue; project scripts remain single-sourced.
 - [ ] Individual strict named tools discovered and authorized via shared gateway.
-- [ ] Trusted executable, role, workspace, session, argv and env bound server-side.
-- [ ] Configuration/launcher integrity, OS descendant confinement, credential and network policies verified.
-- [ ] Bounded concurrency, queue, deadline, output, result retention and cancellation verified.
+- [x] Trusted executable, role, workspace, session, argv and env bound server-side.
+- [x] Configuration/launcher integrity, OS descendant confinement, credential and network policies verified.
+- [x] Bounded concurrency, queue, deadline, output, result retention and cancellation verified.
 - [ ] Native task support and gateway/backend lifetimes validated end-to-end.
 - [ ] Task ownership, revocation, reconnect and restart behavior proven.
 - [ ] Installer/reconciliation, rollback, health and existing Console MCP management verified.
 - [ ] OpenTelemetry/OpenLIT observations correlated without sensitive output or duplicate instrumentation.
-- [ ] Unit, integration, real OS security and regression tests pass.
+- [x] Unit, integration, real OS security and regression tests pass.
 - [ ] Actual ChatGPT development scenario passes without delegated model execution.
 - [ ] Equivalent capabilities verified across eligible providers; unresolved gaps explicitly tracked.
-- [ ] No direct-provider, unsandboxed, generic shell or custom text-based fallback.
-- [ ] Superseded code and configuration removed only where actually superseded.
+- [x] No direct-provider, unsandboxed, generic shell or custom text-based fallback.
+- [x] Superseded code and configuration removed only where actually superseded.
+
+The checked items are proven in this repository, by executed tests and by the
+real macOS sandbox -- not by a configuration review. The unchecked items are
+the ones whose evidence is the installed state: the shared gateway's live
+projections, the end-to-end task lifetimes across gateway and backend, the
+installer's own reconciliation, the collector's actual exports, and the
+provider parity run. They stay unchecked until an installed deployment
+answers them.
+
+### Evidence behind the checked items
+
+- `pnpm typecheck` and `pnpm test` pass across the workspace (root, core, data,
+  console, runtime), including the Commands MCP unit, integration and
+  real-OS security suites (`runtime/tests/commands-mcp.test.ts`,
+  `runtime/tests/commands-mcp-integration.test.ts`).
+- The confinement is proven by running commands under the real
+  `sandbox-exec` profile: writes and reads outside the workspace, the
+  operator's Git configuration, the sibling Runtime state and the Runtime
+  home are refused; only the workspace, the private scratch and the private
+  cache are writable; the only network entitlement is the registry proxy's
+  own loopback port.
+- The self-workspace case is proven the same way: a command whose workspace
+  is AutoDev's own checkout cannot write or read the approved catalogue or
+  the installed Runtime in the Runtime home, while the checkout's own
+  proposal stays editable. The effective policy is the approved copy in the
+  Runtime home, never the agent-editable proposal.
+- The writable caches are isolated per workspace: the same workspace under
+  another spelling shares its cache, and a different workspace never does, so
+  a dependency store in one cannot poison another.
+
+### Descendant termination
+
+A process group is not a command's whole tree. The executor runs the command
+in its own group, so a group signal reaches the ordinary tree -- but a
+descendant that detached into its own session left that group behind, and
+macOS reparents it to the system, so neither the group signal nor a later
+parent walk reaches it. The executor therefore terminates the tree itself
+(`runtime/src/mcp/command-process-tree.ts`), while the parent-child
+relationship still identifies every descendant:
+
+- The tree is read from the operating system (`ps`), not from the command, so
+  a command cannot hide a descendant by describing it differently.
+- The tree is frozen before it is terminated: a stopped process cannot create
+  another descendant, so the walk converges instead of chasing a command that
+  keeps forking, and no descendant is reparented away between the walk and the
+  signal that reaches it.
+- The deepest descendant is killed first and the command's own process last,
+  so no live descendant is orphaned before it is reached.
+- A descendant that detached while the command was running is terminated as
+  soon as it is seen, so it cannot outlive the command it belongs to.
+
+The evidence is the real executor under the real macOS Seatbelt profile
+(`runtime/tests/command-process-tree.test.ts`): a cancelled command and an
+expired command each leave no descendant running -- neither the descendant
+that stayed in the command's process group nor the one that detached into a
+session of its own -- and a descendant that detached is terminated while its
+command is still running. The tests were shown able to go red: removing the
+descendant termination from the tree walk fails the cancellation case, and
+removing the detached-descendant detection fails the running-command case.
+
+The one residual is a property of macOS rather than of the executor: a
+descendant that detaches *and* whose parent exits before the executor's next
+sweep is reparented to the system and can no longer be identified. Such a
+descendant stays inside the same Seatbelt profile -- it cannot read secrets,
+write outside the workspace or reach the network -- but it is not terminated.
+
+### The network boundary, proved against the operating system
+
+The profile names the one network peer a dependency install may reach: the
+registry proxy's own loopback port. A profile that only says so is a claim
+rather than a boundary, so the boundary is exercised against the real
+operating system (`runtime/tests/command-network-boundary.test.ts`): a
+confined command that is not a dependency install is refused by the
+operating system when it opens a connection to an unapproved loopback peer; a
+dependency install reaches the registry proxy's port; and the same dependency
+install is refused by the unapproved peer. The test was shown able to go red:
+widening the profile to allow every network peer fails it.
 
 ## 13. Open decisions and known blockers
 
 - Native asynchronous MCP Tasks negotiation/support through Supergateway, tunnel and actual clients is unproven.
 - Trusted external conversation-to-role/workspace/session binding and cross-session task ownership require live acceptance.
-- Backend pool idle reaping and task retention/restart semantics need qualification.
-- Descendant process confinement and termination on macOS, and constrained pnpm package sources/caches, need real adversarial tests.
-- Protected approval/materialization design must address the case where the execution workspace is AutoDev's own source checkout.
-- Exact catalogue location/schema, initial grants, execution budgets and network policy require implementation-time decisions supported by evidence.
+- Backend pool idle reaping still needs qualification. The backend's own task
+  store now has durable retention and restart semantics; what remains open is
+  the pool's cross-conversation ownership of tasks it forwards.
+- Descendant termination on macOS is now proven against the real operating
+  system, including a descendant that detached into its own session (see
+  "Descendant termination" in section 12), and the network boundary is proven
+  the same way (see "The network boundary, proved against the operating
+  system" in section 12). What still needs a real adversarial test is the
+  registry proxy's own behaviour against a hostile registry: the proxy
+  refuses the request forms it does not serve and rewrites the tarball URLs
+  it serves, but a registry that answers with a crafted body has not been
+  exercised.
+- The exact catalogue location/schema, initial grants, execution budgets and
+  network policy are decided in the implementation: the catalogue is
+  `config/commands.json` in the checkout and the approved copy is
+  `<Runtime home>/config/commands.json`; the grants come from the canonical
+  role contract; the budgets are the catalogue's own `timeoutMs` and
+  concurrency classes; and the network policy is the registry proxy's single
+  loopback port.
+
+### The workspace is AutoDev's own source checkout
+
+This case is designed for, not left to chance, and it is enforced rather
+than documented:
+
+- **The proposal is not the authority.** `config/commands.json` in the
+  checkout is a proposal, and it is editable by the very agent it
+  authorizes. The Commands MCP only ever reads the approved copy in the
+  Runtime home (`runtime/src/mcp/commands-main.ts`,
+  `approvedCataloguePath`), and it refuses to start when that copy would
+  live inside the workspace it serves -- including through a symlinked
+  spelling of the directory or the file.
+- **Approval is an operator act.** The approved copy changes only when the
+  installer is given the exact digest of the revision it is about to apply
+  (`--approve-command-catalogue=sha256:<digest>`,
+  `runtime/src/platform/command-catalogue-approval.ts`). The approval is
+  never read from the environment, so a workspace agent cannot mint one; a
+  reinstall or a reconciliation never approves a changed catalogue on its
+  own. A checkout that proposes a revision nobody approved is published as
+  `pending`, with both digests.
+- **The effective policy is outside the workspace and unwritable from it.**
+  The installed Runtime and the approved catalogue live in the Runtime home,
+  and the Seatbelt profile denies reads and writes there except for the two
+  private writable roots. A command confined in AutoDev's own checkout can
+  edit its own proposal but cannot write, read or replace the approved
+  catalogue or the installed Runtime that enforces it; the real-OS test
+  "a command in AutoDev's own checkout cannot change the effective policy"
+  proves exactly that against the real sandbox.
+- **What stays the operator's.** The installer itself runs from the
+  checkout, so an agent that edits the Runtime's source changes what the
+  _next_ operator-run install would install. This boundary makes that
+  change visible and explicit at install time; it does not make unreviewed
+  installer code trustworthy, and it does not pretend that source in a
+  workspace is reviewed.
 
 Until these gates pass, the command capability is proposed, not production-ready.

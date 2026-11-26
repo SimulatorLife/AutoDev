@@ -17,15 +17,8 @@ ordinary call creates the native task and polls it to its terminal state,
 while an augmented call receives the task immediately and drives the native
 lifecycle -- creation, status, result and cancellation -- itself.
 */
-import { InMemoryTaskStore } from "@modelcontextprotocol/sdk/experimental/tasks/stores/in-memory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import {
-  CallToolResultSchema,
-  type Request,
-  type RequestId,
-  type Result,
-  type Task
-} from "@modelcontextprotocol/sdk/types.js";
+import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 
 import { roleContract } from "../shared/execution-contract.ts";
 import {
@@ -42,16 +35,13 @@ import {
   prepareCommand,
   runApprovedCommand
 } from "./commands-execution.ts";
+import { DurableCommandTaskStore } from "./command-task-store.ts";
 import { recordCommandExecutionSpan } from "./mcp-telemetry.ts";
 
 /**
 How long a finished task's result is kept before the store drops it.
 */
 const RETENTION_MS = 120_000;
-/**
-The most tasks this scope may hold at once.
-*/
-const MAX_RETAINED_TASKS = 32;
 /** Bound the active revocation detection interval without another protocol. */
 const REVOCATION_CHECK_MS = 250;
 
@@ -69,6 +59,11 @@ export interface CommandsServerGrant {
   readonly workspaceId: string | null;
   readonly catalogue: CommandCatalogue;
   readonly scope: ApprovedCommandScope;
+  /**
+  The private directory this scope's task records live in. It belongs to
+  the Runtime's own run directory, never to the workspace.
+  */
+  readonly taskDirectory: string;
   /**
   Recheck the operator-approved revision and trusted session grant.
   */
@@ -128,96 +123,6 @@ function resultPayload(result: CommandResult) {
   };
 }
 
-/**
-The SDK's store, with the bounds and the revocation checks the generic
-store cannot own.
-
-The SDK's default store treats a missing session ID as a wildcard.
-Normalize every operation to a nonempty, collision-free session key,
-including the sole stdio session. This is transport-level isolation only:
-the gateway must still admit a distinct backend scope for each trusted
-conversation. The store also enforces operator approval and retention.
-*/
-export class CommandTaskStore extends InMemoryTaskStore {
-  readonly authorize: () => void;
-  readonly active: Map<string, ActiveCommand>;
-
-  constructor(authorize: () => void, active: Map<string, ActiveCommand>) {
-    super();
-    this.authorize = authorize;
-    this.active = active;
-  }
-
-  private sessionKey(sessionId?: string): string {
-    return sessionId === undefined ? "stdio" : `session:${sessionId}`;
-  }
-
-  override createTask(
-    parameters: Parameters<InMemoryTaskStore["createTask"]>[0],
-    requestId: RequestId,
-    request: Request,
-    sessionId?: string
-  ): Promise<Task> {
-    this.authorize();
-    if (this.getAllTasks().length >= MAX_RETAINED_TASKS) {
-      throw new Error("Command task retention limit reached.");
-    }
-    return super.createTask(parameters, requestId, request, this.sessionKey(sessionId));
-  }
-
-  override getTask(taskId: string, sessionId?: string): Promise<Task | null> {
-    this.authorize();
-    return super.getTask(taskId, this.sessionKey(sessionId));
-  }
-
-  override getTaskResult(taskId: string, sessionId?: string): Promise<Result> {
-    this.authorize();
-    return super.getTaskResult(taskId, this.sessionKey(sessionId));
-  }
-
-  override storeTaskResult(
-    taskId: string,
-    status: "completed" | "failed",
-    result: Result,
-    sessionId?: string
-  ): Promise<void> {
-    this.authorize();
-    return super.storeTaskResult(taskId, status, result, this.sessionKey(sessionId));
-  }
-
-  override listTasks(
-    cursor?: string,
-    sessionId?: string
-  ): ReturnType<InMemoryTaskStore["listTasks"]> {
-    this.authorize();
-    return super.listTasks(cursor, this.sessionKey(sessionId));
-  }
-
-  override async updateTaskStatus(
-    taskId: string,
-    status: Task["status"],
-    statusMessage?: string,
-    sessionId?: string
-  ) {
-    this.authorize();
-    const key = this.sessionKey(sessionId);
-    if (status === "cancelled" && (await super.getTask(taskId, key))) {
-      const execution = this.active.get(taskId);
-      if (execution) {
-        execution.cancelling = true;
-        execution.controller.abort();
-        // Do not release the lease or acknowledge cancellation before the
-        // subprocess invocation has settled. A cancelled command may still
-        // have descendants running, and reporting it as finished early would
-        // let a second command start against the same workspace.
-        await execution.done;
-      }
-    }
-    this.authorize();
-    await super.updateTaskStatus(taskId, status, statusMessage, key);
-  }
-}
-
 export interface CommandsServer {
   readonly server: McpServer;
   /**
@@ -253,7 +158,21 @@ export function createCommandsMcpServer(grant: CommandsServerGrant): CommandsSer
   authorize();
   const effective = effectiveCommands(grant);
   const commandIds: string[] = [];
-  const store = new CommandTaskStore(authorize, active);
+  const store = new DurableCommandTaskStore({
+    directory: grant.taskDirectory,
+    authorize,
+    cancel: async (taskId: string): Promise<void> => {
+      const execution = active.get(taskId);
+      if (!execution) return;
+      execution.cancelling = true;
+      execution.controller.abort();
+      // Do not release the lease or acknowledge cancellation before the
+      // subprocess invocation has settled. A cancelled command may still
+      // have descendants running, and reporting it as finished early would
+      // let a second command start against the same workspace.
+      await execution.done;
+    }
+  });
   const server = new McpServer(
     { name: "commands", version: "1.0.0" },
     {
@@ -355,10 +274,24 @@ export function createCommandsMcpServer(grant: CommandsServerGrant): CommandsSer
                     outputTruncated: false
                   };
                 }
-                if (isAuthorized() && !execution.cancelling) {
+                if (execution.cancelling) {
+                  // The client cancelled the task, and the SDK's cancel path
+                  // owns the terminal state it reports.
+                } else if (!isAuthorized()) {
+                  // The grant ended while the command ran. Its outcome is
+                  // unknown, so the task is failed rather than left running
+                  // or reported as completed.
+                  store.interrupt(
+                    task.taskId,
+                    "The command was aborted when the execution grant ended."
+                  );
+                } else {
+                  // Only a command that succeeded is a completed task. Every
+                  // other outcome keeps its own reason in the payload, and
+                  // the task itself never claims a success it did not have.
                   await extra.taskStore.storeTaskResult(
                     task.taskId,
-                    result.status === "infrastructure_error" ? "failed" : "completed",
+                    result.status === "succeeded" ? "completed" : "failed",
                     resultPayload(result)
                   );
                 }
@@ -396,13 +329,21 @@ export function createCommandsMcpServer(grant: CommandsServerGrant): CommandsSer
       if (closing) return closing;
       isClosed = true;
       const executions = [...active.values()];
+      const outstanding = [...active.keys()];
       for (const execution of executions) {
         execution.cancelling = true;
         execution.controller.abort();
       }
       closing = Promise.allSettled(executions.map((execution) => execution.done))
         .then(async () => {
-          store.cleanup();
+          // A command that was still running when the backend closed has an
+          // unknown outcome. It is recorded as failed, never as completed.
+          for (const taskId of outstanding) {
+            store.interrupt(
+              taskId,
+              "The command was interrupted when the backend closed before it produced a result."
+            );
+          }
           await server.close();
         });
       return closing;

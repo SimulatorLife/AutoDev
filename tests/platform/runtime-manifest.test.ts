@@ -550,8 +550,7 @@ test("MCP implementations are Runtime-owned and installed at canonical paths", (
 
   const mcpModules = [
     "mcp-telemetry.ts",
-    "launcher.ts",
-    "tool-filter.ts"
+    "launcher.ts"
   ];
   const runtimeModules = RUNTIME_MODULES as readonly string[];
   const mcpExports = readFileSync(
@@ -962,10 +961,7 @@ test("Agents implementations are Runtime-owned behind the workspace package", ()
   ) as { exports: Record<string, string> };
   assert.equal(runtimePackage.exports["./agents"], "./src/agents/index.ts");
 
-  const agentFiles = [
-    "agent-activity.ts",
-    "role-mcp-environment.ts"
-  ];
+  const agentFiles = ["agent-activity.ts"];
   const runtimeModules = RUNTIME_MODULES as readonly string[];
   const agentsIndex = readFileSync(
     join(repositoryRoot, "runtime/src/agents/index.ts"),

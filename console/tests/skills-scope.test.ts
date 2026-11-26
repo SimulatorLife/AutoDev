@@ -7,7 +7,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import type { SkillTelemetry } from "../src/features/skills/skill-telemetry.ts";
 import { SkillDetailView } from "../src/features/skills/SkillDetailView.ts";
-import { SkillRoleAssignmentControl } from "../src/features/skills/SkillRoleAssignmentControl.ts";
 import { SkillsView } from "../src/features/skills/SkillsView.ts";
 import {
   skillsFromControlApi,
@@ -120,8 +119,11 @@ test("a repo-scoped skill shows the workspace it belongs to", () => {
   const markup = renderSkills([REPO_SKILL]);
   assert.match(markup, /SimulatorLife\/AutoDev/);
   assert.match(markup, /data-skill-scope="repo"/);
-  // The workspace is where the roles are assigned, so the row says so as well.
-  assert.match(markup, /Roles apply inside SimulatorLife\/AutoDev\./);
+  // The workspace is a fact about the install, not a setting: the row names it
+  // and offers no control over it. There is no assignment control on this
+  // catalogue, so there is nothing that would apply roles inside one.
+  assert.doesNotMatch(markup, /Roles apply inside/u);
+  assert.doesNotMatch(markup, /data-skill-assignment-workspace/u);
 });
 
 test("a skill installed outside a repository shows the directory it was found in", () => {
@@ -149,38 +151,6 @@ test("a skill installed nowhere cannot be invoked by anybody", () => {
   // skills that are installed, not the entries in the catalogue.
   assert.match(markup, /Configured<\/dt>[\s\S]*?>0</u);
   assert.match(markup, /of 1 in the catalog/);
-});
-
-test("the assignment for a repo-scoped skill carries its workspace", () => {
-  const markup = renderToStaticMarkup(
-    React.createElement(SkillRoleAssignmentControl, {
-      skill: REPO_SKILL,
-      roles: ["worker"],
-      assignmentRoles: ["worker"],
-      executionContractRevision: "a".repeat(64)
-    })
-  );
-  assert.match(
-    markup,
-    /<input type="hidden" name="workspace" value="SimulatorLife\/AutoDev"/u
-  );
-  assert.match(
-    markup,
-    /data-skill-assignment-workspace="SimulatorLife\/AutoDev"/u
-  );
-});
-
-test("the assignment for a skill outside a workspace carries no workspace", () => {
-  const markup = renderToStaticMarkup(
-    React.createElement(SkillRoleAssignmentControl, {
-      skill: USER_SKILL,
-      roles: ["worker"],
-      assignmentRoles: ["worker"],
-      executionContractRevision: "a".repeat(64)
-    })
-  );
-  assert.doesNotMatch(markup, /name="workspace"/u);
-  assert.doesNotMatch(markup, /data-skill-assignment-workspace/u);
 });
 
 test("the control API mapping carries the scope facts through", () => {

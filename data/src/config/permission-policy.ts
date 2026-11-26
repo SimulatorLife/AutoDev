@@ -16,16 +16,11 @@ import {
   type PermissionPolicy
 } from "@simulatorlife/autodev-core";
 import {
-  applyEdits,
-  type FormattingOptions,
-  modify,
   parse as parseJsonc,
   type ParseError,
   printParseErrorCode
 } from "jsonc-parser";
 import { parse as parseToml } from "smol-toml";
-
-import { atomicWriteSync } from "../files/atomic-write.ts";
 
 /**
 The permission policy's one owner.
@@ -33,6 +28,10 @@ The permission policy's one owner.
 The permission policy of a Codex session is declared in `.rulesync/permissions.jsonc`
 under `codexcli` (`approval_policy`, `approvals_reviewer`, `tools.web_search`),
 and applied into `$CODEX_HOME/config.toml` via RuleSync + `compose-user-config`.
+
+It is read, never written: the declaration is edited in the repository and the
+policy is applied from it, so a process that could rewrite the policy could
+rewrite the authority that constrains it.
 */
 
 const POLICY_KEYS = {
@@ -44,25 +43,6 @@ const POLICY_KEYS = {
 export type PermissionPolicyKey = keyof typeof POLICY_KEYS;
 
 const POLICY_MAX_BYTES = 1_000_000;
-const JSONC_FORMATTING: FormattingOptions = {
-  tabSize: 2,
-  insertSpaces: true,
-  eol: "\n"
-};
-
-export class PermissionPolicyConflictError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "PermissionPolicyConflictError";
-  }
-}
-
-export class PermissionPolicyValidationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "PermissionPolicyValidationError";
-  }
-}
 
 /**
 What a read of a policy source found.
@@ -88,18 +68,23 @@ export type PermissionPolicyRead =
     };
 
 /**
-The policy keys a write may change.
-*/
-export interface PermissionPolicyUpdate {
-  readonly approvalPolicy?: ApprovalPolicy | undefined;
-  readonly approvalsReviewer?: string | undefined;
-  readonly webSearch?: boolean | undefined;
-}
+The canonical policy source and the policy it states.
 
-export interface PermissionPolicyWrite {
-  readonly revision: string;
-  readonly policy: PermissionPolicy;
-  readonly changed: boolean;
+The source travels with the policy it was parsed from, so the text an
+operator inspects and the values the page renders are one read rather than
+two that can straddle a change.
+*/
+export interface PermissionPolicySource {
+  readonly read: PermissionPolicyRead;
+  /**
+   * The canonical source's exact text, or null when its text could not be
+   * read.
+   *
+   * A source that was read and did not parse still has its text, so the
+   * fault can be seen where it is rather than described from outside. A
+   * source that was never read has none.
+   */
+  readonly content: string | null;
 }
 
 export function permissionPolicyRevision(content: string): string {
@@ -321,11 +306,24 @@ export function readAntigravityCliPermissionDefaults(
 
 /**
 Read the canonical permission policy from `.rulesync/permissions.jsonc`.
+
+The source travels with the policy it states, so a reader that shows the
+source and a reader that shows the values describe the same bytes.
+*/
+export function readPermissionPolicySource(file: string): PermissionPolicySource {
+  const read = readRegularPolicyFile(file);
+  if (!read.ok) return { read: read.result, content: null };
+  return {
+    read: parsePermissionPolicyContent(read.content),
+    content: read.content
+  };
+}
+
+/**
+Read the canonical permission policy from `.rulesync/permissions.jsonc`.
 */
 export function readPermissionPolicyFile(file: string): PermissionPolicyRead {
-  const read = readRegularPolicyFile(file);
-  if (!read.ok) return read.result;
-  return parsePermissionPolicyContent(read.content);
+  return readPermissionPolicySource(file).read;
 }
 
 function parsePermissionPolicyContent(content: string): PermissionPolicyRead {
@@ -355,6 +353,11 @@ function parsePermissionPolicyContent(content: string): PermissionPolicyRead {
 
 /**
 Read the applied permission policy from `$CODEX_HOME/config.toml`.
+
+The composed user configuration is published as the policy it states and never
+as text: it is the file that can hold credentials, and a browser payload has
+no place for them. The canonical source beside it is a declaration and is
+published whole.
 */
 export function readAppliedPermissionPolicyFile(
   file: string
@@ -386,142 +389,4 @@ export function readAppliedPermissionPolicyFile(
     return { status: "invalid", reason, revision };
   }
   return { status: "valid", policy, revision };
-}
-
-function validateKeyValue(
-  key: PermissionPolicyKey,
-  value: unknown
-): ApprovalPolicy | string | boolean {
-  if (key === "approvalPolicy") {
-    const parsed = approvalPolicyFromConfig(value);
-    if (parsed === null) {
-      throw new PermissionPolicyValidationError(
-        "codexcli.approval_policy must be one of never or on-request"
-      );
-    }
-    return parsed;
-  }
-  if (key === "approvalsReviewer") {
-    if (typeof value !== "string" || value.trim() === "") {
-      throw new PermissionPolicyValidationError(
-        "codexcli.approvals_reviewer must be a non-empty string"
-      );
-    }
-    return value;
-  }
-  if (typeof value !== "boolean") {
-    throw new PermissionPolicyValidationError(
-      "codexcli.tools.web_search must be a boolean"
-    );
-  }
-  return value;
-}
-
-/**
-Change the permission policy in `.rulesync/permissions.jsonc`.
-
-Uses compare-and-swap on the file's sha256 revision and edits via `jsonc-parser`
-so existing comments and formatting outside the changed values survive.
-*/
-export function updatePermissionPolicy(input: {
-  readonly file: string;
-  readonly expectedRevision: string;
-  readonly update: PermissionPolicyUpdate;
-}): PermissionPolicyWrite {
-  const keys = Object.entries(input.update).filter(
-    ([, value]) => value !== undefined
-  );
-  if (keys.length === 0) {
-    throw new PermissionPolicyValidationError(
-      "A permission policy update must change at least one setting."
-    );
-  }
-  for (const [key] of keys) {
-    if (!Object.hasOwn(POLICY_KEYS, key)) {
-      throw new PermissionPolicyValidationError(
-        `Unknown permission policy setting: ${key}`
-      );
-    }
-  }
-
-  const read = readRegularPolicyFile(input.file);
-  if (!read.ok) {
-    throw new PermissionPolicyValidationError(read.result.reason);
-  }
-  const { content } = read;
-  if (permissionPolicyRevision(content) !== input.expectedRevision) {
-    throw new PermissionPolicyConflictError(
-      "The permission policy changed since it was loaded."
-    );
-  }
-
-  const current = parsePermissionPolicyContent(content);
-  const currentPolicy = current.status === "valid" ? current.policy : null;
-
-  const changed = keys.filter(([key]) => {
-    if (currentPolicy === null) return true;
-    const value = input.update[key as PermissionPolicyKey];
-    if (value === undefined) return false;
-    return currentPolicy[key as PermissionPolicyKey] !== value;
-  });
-  if (currentPolicy !== null && changed.length === 0) {
-    return {
-      revision: permissionPolicyRevision(content),
-      policy: currentPolicy,
-      changed: false
-    };
-  }
-
-  let next = content;
-  for (const [key, rawValue] of changed) {
-    const typedKey = key as PermissionPolicyKey;
-    const validated = validateKeyValue(typedKey, rawValue);
-    const edits = modify(next, [...POLICY_KEYS[typedKey]], validated, {
-      formattingOptions: JSONC_FORMATTING
-    });
-    next = applyEdits(next, edits);
-  }
-
-  const parsed = parseJsoncObject(next);
-  if (parsed.value === null || !isRecord(parsed.value.codexcli)) {
-    throw new PermissionPolicyValidationError(
-      "The permission policy change would not produce a valid codexcli section."
-    );
-  }
-  const { policy, reason } = policyFromCodexSection(parsed.value.codexcli);
-  if (reason !== undefined) {
-    throw new PermissionPolicyValidationError(
-      `The permission policy change would not produce a valid policy: ${reason}`
-    );
-  }
-
-  if (next === content) {
-    return {
-      revision: permissionPolicyRevision(content),
-      policy,
-      changed: false
-    };
-  }
-
-  if (Buffer.byteLength(next, "utf8") > POLICY_MAX_BYTES) {
-    throw new PermissionPolicyValidationError(
-      "The permission policy change exceeds its safe size bound."
-    );
-  }
-  persistPolicyFile(input.file, next);
-  return {
-    revision: permissionPolicyRevision(next),
-    policy,
-    changed: true
-  };
-}
-
-function persistPolicyFile(file: string, next: string): void {
-  atomicWriteSync(file, next, { mode: 0o644 });
-  const persisted = readRegularPolicyFile(file);
-  if (!persisted.ok || persisted.content !== next) {
-    throw new PermissionPolicyConflictError(
-      "The permission policy changed during the update."
-    );
-  }
 }

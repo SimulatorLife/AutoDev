@@ -56,6 +56,7 @@ import {
 import { runtimeBinDirectory } from "@simulatorlife/autodev-runtime/shared/executables";
 import { resolveChatgptMcpApp } from "@simulatorlife/autodev-runtime/shared/opencli-mcp-app";
 import { composeRoleSystemPrompt } from "@simulatorlife/autodev-runtime/shared/role-prompts";
+import { mcpToolName } from "@simulatorlife/autodev-runtime/shared/tool-names";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 import { execa } from "execa";
 
@@ -180,13 +181,18 @@ function rejectPermissionResponse(
 
 function parseQualifiedMcpTool(
   rawName: string
-): { server: string; tool: string } | null {
+): { server: string; tool: string; gateway: boolean } | null {
   const normalized = rawName.trim();
-  const prefixed = /^mcp__([a-zA-Z0-9_-]+)__([a-zA-Z0-9_.-]+)$/u.exec(
-    normalized
+  // ACP exposes the combined gateway as "autodev". Its tools are
+  // namespaced by backend, with hyphens normalized to underscores.
+  const gateway = normalized.startsWith("mcp__autodev__");
+  const prefix = gateway ? "mcp__autodev__" : "mcp__";
+  if (!normalized.startsWith(prefix)) return null;
+  const qualified = /^([a-zA-Z0-9_-]+?)__([a-zA-Z0-9_.-]+)$/u.exec(
+    normalized.slice(prefix.length)
   );
-  if (prefixed?.[1] && prefixed[2]) {
-    return { server: prefixed[1], tool: prefixed[2] };
+  if (qualified?.[1] && qualified[2]) {
+    return { server: qualified[1], tool: qualified[2], gateway };
   }
   return null;
 }
@@ -269,22 +275,34 @@ export function resolveAcpPermissionResponse(
     return rejectPermissionResponse(request);
   }
   const contract = roleContract(role);
-  const toolName = request.toolCall.name ?? request.toolCall.title ?? "";
-  if (isDisabledNativeFileTool(toolName)) {
+  const toolName = (request.toolCall.name ?? request.toolCall.title ?? "").trim();
+  if (!toolName || isDisabledNativeFileTool(toolName)) {
     return rejectPermissionResponse(request);
   }
   if (contract.shell === false && isShellToolName(normalizeToolName(toolName))) {
     return rejectPermissionResponse(request);
   }
   const mcpTool = parseQualifiedMcpTool(toolName);
+  let policyToolName = toolName;
+  if (toolName.trim().startsWith("mcp__") && !mcpTool) {
+    return rejectPermissionResponse(request);
+  }
   if (mcpTool) {
-    if (!contract.mcp.includes(mcpTool.server)) {
+    const matches = contract.mcp.filter((server) =>
+      mcpTool.gateway
+        ? server.replaceAll("-", "_") === mcpTool.server
+        : server === mcpTool.server
+    );
+    if (matches.length !== 1) {
       return rejectPermissionResponse(request);
     }
-    const roleTools = contract.mcpTools as
-      | Record<string, string[]>
-      | undefined;
-    const serverAllowlist = roleTools?.[mcpTool.server];
+    const server = matches[0]!;
+    policyToolName = mcpToolName(server, mcpTool.tool);
+    const roleTools = contract.mcpTools;
+    const serverAllowlist =
+      roleTools && Object.hasOwn(roleTools, server)
+        ? roleTools[server]
+        : undefined;
     if (
       Array.isArray(serverAllowlist) &&
       !serverAllowlist.includes(mcpTool.tool)
@@ -295,7 +313,7 @@ export function resolveAcpPermissionResponse(
   const isReadOnly = contract.readOnly === true;
   if (isReadOnly) {
     const decision = evaluateReadOnlyToolCall({
-      toolName,
+      toolName: policyToolName,
       toolInput: request.toolCall.rawInput
     });
     if (!decision.allowed) {
@@ -304,10 +322,9 @@ export function resolveAcpPermissionResponse(
   }
   const allowOption =
     request.options.find((option) => option.kind === "allow_once") ??
-    request.options.find((option) => option.kind === "allow_always") ??
-    request.options[0];
+    request.options.find((option) => option.kind === "allow_always");
   if (!allowOption) {
-    return { outcome: { outcome: "cancelled" } };
+    return rejectPermissionResponse(request);
   }
   return { outcome: { outcome: "selected", optionId: allowOption.optionId } };
 }

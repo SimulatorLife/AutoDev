@@ -41,7 +41,8 @@ function renderHooks(appliedUnavailable?: {
       validationIssues: [],
       revision: "a".repeat(64),
       applied: null,
-      ...(appliedUnavailable === undefined ? {} : { appliedUnavailable })
+      ...(appliedUnavailable === undefined ? {} : { appliedUnavailable }),
+      sourceText: null
     })
   );
 }

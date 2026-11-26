@@ -3,7 +3,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  symlinkSync,
+  rmSync,
   writeFileSync
 } from "node:fs";
 import type { IncomingMessage } from "node:http";
@@ -11,18 +11,19 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
 import { handleControlApiRequest } from "../src/control-api/request-handler.ts";
 import {
+  errorCode,
   makeRequest,
   responseBody,
   responseRecorder
 } from "./support/control-api-harness.ts";
+import { sha256 } from "./support/hash.ts";
 
-const REPOSITORY_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const SERVICE_TOKEN = "h".repeat(64);
 const OPERATOR_ACTOR = "hook-mutation-operator";
+const VIEWER_ACTOR = "hook-mutation-viewer";
 
 /**
  * The canonical declaration the write starts from.
@@ -55,18 +56,6 @@ const DECLARATION = `{
   }
 }`;
 
-/**
- * The projection configuration the write generates against.
- *
- * Only the Codex target is configured, because the Runtime installs one hook
- * projection and a projection for a target it does not install would be a
- * second thing to keep in step.
- */
-const PROJECTION_CONFIG = `{
-  "targets": { "codexcli": ["hooks"] },
-  "outputRoots": ["."]
-}`;
-
 function request(
   method: string,
   url: string,
@@ -88,14 +77,12 @@ function request(
 }
 
 /**
- * A repository root and a Codex home.
- *
- * The projection is generated from the declaration by RuleSync, so the
- * fixture carries the repository's own copy of RuleSync.
+ * Isolated repository and applied-state directories. No generation is required.
  */
 function fixture(): {
   readonly repositoryRoot: string;
   readonly codexHome: string;
+  readonly root: string;
 } {
   const root = mkdtempSync(path.join(tmpdir(), "autodev-hook-mutation-"));
   const repositoryRoot = path.join(root, "repo");
@@ -106,17 +93,8 @@ function fixture(): {
     DECLARATION,
     "utf8"
   );
-  writeFileSync(
-    path.join(repositoryRoot, "rulesync.jsonc"),
-    PROJECTION_CONFIG,
-    "utf8"
-  );
-  symlinkSync(
-    path.join(REPOSITORY_ROOT, "node_modules"),
-    path.join(repositoryRoot, "node_modules"),
-    "dir"
-  );
-  return { repositoryRoot, codexHome };
+  mkdirSync(codexHome);
+  return { repositoryRoot, codexHome, root };
 }
 
 /**
@@ -126,8 +104,10 @@ function fixture(): {
 async function withControlApiCredential<T>(run: () => Promise<T>): Promise<T> {
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   const previousOperators = process.env.AUTODEV_CONTROL_OPERATORS;
+  const previousViewers = process.env.AUTODEV_CONTROL_VIEWERS;
   process.env.AUTODEV_CONTROL_API_TOKEN = SERVICE_TOKEN;
   process.env.AUTODEV_CONTROL_OPERATORS = OPERATOR_ACTOR;
+  process.env.AUTODEV_CONTROL_VIEWERS = VIEWER_ACTOR;
   return run().finally(() => {
     if (previousToken === undefined)
       delete process.env.AUTODEV_CONTROL_API_TOKEN;
@@ -135,6 +115,9 @@ async function withControlApiCredential<T>(run: () => Promise<T>): Promise<T> {
     if (previousOperators === undefined)
       delete process.env.AUTODEV_CONTROL_OPERATORS;
     else process.env.AUTODEV_CONTROL_OPERATORS = previousOperators;
+    if (previousViewers === undefined)
+      delete process.env.AUTODEV_CONTROL_VIEWERS;
+    else process.env.AUTODEV_CONTROL_VIEWERS = previousViewers;
   });
 }
 
@@ -147,7 +130,11 @@ async function call(
   },
   body?: unknown,
   actor: string = OPERATOR_ACTOR
-): Promise<{ statusCode: number; body: Record<string, unknown> | null }> {
+): Promise<{
+  statusCode: number;
+  headers: Record<string, string | number>;
+  body: Record<string, unknown> | null;
+}> {
   const response = responseRecorder();
   await withControlApiCredential(async () => {
     await handleControlApiRequest(
@@ -159,16 +146,18 @@ async function call(
   });
   return {
     statusCode: response.statusCode,
+    headers: response.headers,
     body: responseBody(response) as Record<string, unknown> | null
   };
 }
 
-test("the hook declaration publishes the target's effective events and the revision a write compares against", async () => {
+test("the hook declaration publishes the target's effective events and observed revision", async () => {
   const options = fixture();
   const result = await call("GET", "/control/hooks", options);
   assert.equal(result.statusCode, 200);
   assert.equal(result.body?.schema, "autodev-control-hooks-v2");
   assert.equal(result.body?.target, "codexcli");
+  assert.equal(result.body?.readOnly, true);
   assert.match(String(result.body?.revision), /^[a-f0-9]{64}$/u);
 
   const events = result.body?.events as readonly {
@@ -187,159 +176,92 @@ test("the hook declaration publishes the target's effective events and the revis
   assert.equal(events[0]?.actions[0]?.command, "node session-start.ts");
 });
 
-test("a canonical hook write changes the declaration and the applied projection", async () => {
+test("the hook declaration publishes the canonical source beside the events", async (t) => {
   const options = fixture();
-  const declaration = await call("GET", "/control/hooks", options);
-  const revision = String(declaration.body?.revision);
-
-  const result = await call("PATCH", "/control/hooks/sessionStart", options, {
-    expectedRevision: revision,
-    actions: [
-      { type: "command", command: "node other-session-start.ts" },
-      { type: "command", matcher: ".*", command: "node extra.ts" }
-    ]
-  });
+  t.after(() => rmSync(options.root, { recursive: true, force: true }));
+  const result = await call("GET", "/control/hooks", options);
   assert.equal(result.statusCode, 200);
-  assert.equal(result.body?.schema, "autodev-control-hook-event-patch-v1");
-  assert.equal(result.body?.event, "sessionStart");
-  assert.equal(result.body?.target, "codexcli");
-  assert.equal(result.body?.changed, true);
-  assert.notEqual(result.body?.revision, revision);
 
-  // The canonical declaration carries the new action list, and the comment
-  // outside the edited event is still there.
-  const written = readFileSync(
-    path.join(options.repositoryRoot, ".rulesync", "hooks.jsonc"),
-    "utf8"
-  );
-  assert.match(written, /node other-session-start\.ts/u);
-  assert.match(written, /node extra\.ts/u);
-  assert.match(written, /The shared declaration\./u);
-  // The event the target declares alone is not touched by a write to the
-  // event it inherits.
-  assert.match(written, /node session-end\.ts/u);
-
-  // The applied projection is the new one, and the Runtime observed it.
-  const projection = JSON.parse(
-    readFileSync(path.join(options.codexHome, "hooks.json"), "utf8")
-  ) as {
-    hooks: Record<string, { matcher?: string; hooks: { command: string }[] }[]>;
-  };
-  assert.equal(
-    projection.hooks.SessionStart?.[0]?.hooks[0]?.command,
-    "node other-session-start.ts"
-  );
-  const reconciliation = result.body?.reconciliation as {
-    status: { convergence: string };
-  };
-  assert.equal(reconciliation.status.convergence, "converged");
+  // The source is published as the repository holds it, comments included: a
+  // raw view that lost them would be a serialization of the declaration
+  // rather than its source.
+  assert.equal(result.body?.sourceText, DECLARATION);
+  // The revision names the bytes the source text and the events came from,
+  // so the two views of the declaration cannot describe different
+  // declarations.
+  assert.equal(result.body?.revision, sha256(DECLARATION));
 });
 
-test("a canonical hook write is refused when the declaration changed since it was read", async () => {
+test("hook collections are GET-only and former event mutation paths are absent", async (t) => {
   const options = fixture();
-  const declaration = await call("GET", "/control/hooks", options);
-  const revision = String(declaration.body?.revision);
-
-  // Another writer changes the declaration first.
-  const declarationPath = path.join(
-    options.repositoryRoot,
-    ".rulesync",
-    "hooks.jsonc"
-  );
-  writeFileSync(declarationPath, `${DECLARATION}\n`, "utf8");
-
-  const result = await call("PATCH", "/control/hooks/sessionStart", options, {
-    expectedRevision: revision,
-    actions: [{ type: "command", command: "node other.ts" }]
+  t.after(() => rmSync(options.root, { recursive: true, force: true }));
+  const declarationPath = path.join(options.repositoryRoot, ".rulesync", "hooks.jsonc");
+  const appliedPath = path.join(options.codexHome, "hooks.json");
+  const applied = JSON.stringify({
+    hooks: {
+      SessionStart: [{ matcher: ".*", hooks: [{ type: "command", command: "node session-start.ts" }] }]
+    }
   });
-  assert.equal(result.statusCode, 409);
-  assert.equal(
-    (result.body?.error as { code?: string } | undefined)?.code,
-    "autodev_control_hook_revision_conflict"
-  );
-  // The declaration the other writer left is untouched.
-  assert.match(
-    readFileSync(declarationPath, "utf8"),
-    /node session-start\.ts/u
-  );
+  writeFileSync(appliedPath, applied);
+  for (const actor of [OPERATOR_ACTOR, VIEWER_ACTOR]) {
+    const read = await call("GET", "/control/hooks", options, undefined, actor);
+    assert.equal(read.statusCode, 200);
+    assert.equal(read.body?.readOnly, true);
+    const body = {
+      expectedRevision: read.body?.revision,
+      actions: [{ type: "command", command: "node changed.ts" }]
+    };
+    for (const resource of ["/control/hooks", "/control/hooks-applied"]) {
+      assert.equal((await call("GET", resource, options, undefined, actor)).statusCode, 200);
+      for (const method of ["PATCH", "POST", "PUT", "DELETE", "HEAD", "OPTIONS"]) {
+        const denied = await call(method, resource, options, body, actor);
+        assert.equal(denied.statusCode, 405, `${actor} ${method} ${resource}`);
+        assert.equal(denied.headers.allow, "GET");
+        assert.equal(errorCode(denied.body), "autodev_control_api_method_not_allowed");
+      }
+    }
+    for (const resource of ["/control/hooks/sessionStart", "/control/hooks/sessionStartt"]) {
+      for (const method of ["GET", "PATCH", "POST", "DELETE"]) {
+        const removed = await call(method, resource, options, body, actor);
+        assert.equal(removed.statusCode, 404, `${actor} ${method} ${resource}`);
+        assert.equal(errorCode(removed.body), "autodev_control_api_unknown_path");
+      }
+    }
+    assert.equal(readFileSync(declarationPath, "utf8"), DECLARATION);
+    assert.equal(readFileSync(appliedPath, "utf8"), applied);
+  }
 });
 
-test("a canonical hook write is refused for a body that is not an action list", async () => {
+test("external hook changes update the declared side without generating a projection", async (t) => {
   const options = fixture();
-  const declaration = await call("GET", "/control/hooks", options);
-  const result = await call("PATCH", "/control/hooks/sessionStart", options, {
-    expectedRevision: String(declaration.body?.revision),
-    actions: [{ type: "script", command: "node other.ts" }]
+  t.after(() => rmSync(options.root, { recursive: true, force: true }));
+  const before = await call("GET", "/control/hooks", options);
+  const changed = DECLARATION.replace("node session-start.ts", "node changed.ts");
+  writeFileSync(path.join(options.repositoryRoot, ".rulesync", "hooks.jsonc"), changed);
+  const after = await call("GET", "/control/hooks", options);
+  assert.equal(after.statusCode, 200);
+  assert.notEqual(after.body?.revision, before.body?.revision);
+  const events = after.body?.events as readonly { actions: readonly { command: string }[] }[];
+  assert.equal(events[0]?.actions[0]?.command, "node changed.ts");
+  const applied = await call("GET", "/control/hooks-applied", options);
+  assert.equal(applied.body?.available, false);
+  assert.deepEqual(applied.body?.events, []);
+});
+
+test("hook reads and retired writes require authentication", async (t) => {
+  const options = fixture();
+  t.after(() => rmSync(options.root, { recursive: true, force: true }));
+  await withControlApiCredential(async () => {
+    for (const [method, resource] of [
+      ["GET", "/control/hooks"],
+      ["GET", "/control/hooks-applied"],
+      ["PATCH", "/control/hooks/sessionStart"]
+    ] as const) {
+      const response = responseRecorder();
+      await handleControlApiRequest(makeRequest(method, resource), response, resource, options);
+      assert.equal(response.statusCode, 401);
+    }
   });
-  assert.equal(result.statusCode, 400);
-  assert.equal(
-    (result.body?.error as { code?: string } | undefined)?.code,
-    "autodev_control_api_invalid_body"
-  );
-});
-
-test("a canonical hook write is refused for an event the Runtime does not run", async () => {
-  const options = fixture();
-  const declaration = await call("GET", "/control/hooks", options);
-  const result = await call("PATCH", "/control/hooks/sessionStartt", options, {
-    expectedRevision: String(declaration.body?.revision),
-    actions: [{ type: "command", command: "node other.ts" }]
-  });
-  // The event is refused by name, because "that is not a hook event" and
-  // "that body is not an action list" are different facts.
-  assert.equal(result.statusCode, 400);
-  assert.equal(
-    (result.body?.error as { code?: string } | undefined)?.code,
-    "autodev_control_hook_unknown_event"
-  );
-});
-
-test("a canonical hook write is refused without the operator credential", async () => {
-  const options = fixture();
-  const response = responseRecorder();
-  await handleControlApiRequest(
-    makeRequest("PATCH", "/control/hooks/sessionStart"),
-    response,
-    "/control/hooks/sessionStart",
-    options
-  );
-  assert.notEqual(response.statusCode, 200);
-  // The declaration is unchanged, because the request was never authorized.
-  assert.match(
-    readFileSync(
-      path.join(options.repositoryRoot, ".rulesync", "hooks.jsonc"),
-      "utf8"
-    ),
-    /node session-start\.ts/u
-  );
-
-  // A caller that may read the declaration but may not write it is refused as
-  // well, and the refusal says that the write needs an operator.
-  const declaration = await call("GET", "/control/hooks", options);
-  const viewer = await call(
-    "PATCH",
-    "/control/hooks/sessionStart",
-    options,
-    {
-      expectedRevision: String(declaration.body?.revision),
-      actions: [{ type: "command", command: "node viewer.ts" }]
-    },
-    "hook-mutation-viewer"
-  );
-  assert.equal(viewer.statusCode, 403);
-  // The actor is refused by the authorization layer before the write is
-  // reached, so the declaration is never touched.
-  assert.equal(
-    (viewer.body?.error as { code?: string } | undefined)?.code,
-    "autodev_control_api_actor_forbidden"
-  );
-  assert.match(
-    readFileSync(
-      path.join(options.repositoryRoot, ".rulesync", "hooks.jsonc"),
-      "utf8"
-    ),
-    /node session-start\.ts/u
-  );
 });
 
 test("the applied hook read publishes the projection beside the declared side", async () => {

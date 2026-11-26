@@ -75,6 +75,7 @@ export default async function HooksPage(): Promise<React.JSX.Element> {
       // the canonical source rather than re-deriving a reason from the flag.
       validationIssues: result.data.issues,
       revision: result.data.revision,
+      sourceText: result.data.sourceText,
       applied,
       ...(appliedUnavailable === null ? {} : { appliedUnavailable })
     })

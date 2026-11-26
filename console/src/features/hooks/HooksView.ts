@@ -6,6 +6,7 @@ import type {
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { SourceView } from "../../components/code/SourceView.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { LIST_PANEL_CLASS } from "../../components/layout/Panel.ts";
@@ -30,10 +31,8 @@ import {
   hookAppliedUnavailableNotice,
   type HooksAppliedUnavailable
 } from "./applied.ts";
-import {
-  type HookDeclarationSaveOutcome,
-  hookOriginLabel
-} from "./declaration.ts";
+
+import { hookOriginLabel } from "./declaration.ts";
 import { HookActionsView } from "./HookActionsView.ts";
 import { hookEventPath } from "./paths.ts";
 
@@ -51,21 +50,18 @@ export interface HooksViewProps {
   /**
    * The revision of the canonical declaration.
    *
-   * A write is compared against it, so the editor has to be filled from the
-   * revision it was read at. `null` means the declaration could not be read,
-   * and the editor stays disabled with the reason rather than offering a write
-   * that has nothing to compare.
+   * `null` means the declaration could not be read, so there is no revision to
+   * name. The revision identifies the exact source this page describes, and it
+   * is the same revision the event's own page names.
    */
   readonly revision: string | null;
   /**
-   * The revision the editor is based on.
+   * The canonical declaration's exact text, or null when it was not read.
    *
-   * It is the page's own revision unless a refused write says otherwise: a
-   * write that was refused against a declaration that has since moved leaves
-   * the editor based on the revision it was filled from, so the edit the
-   * operator made is not silently paired with a newer declaration.
+   * It is the source the events above were read with, so the two views of the
+   * declaration are one read rather than two that can straddle a change.
    */
-  readonly editorRevision?: string | undefined;
+  readonly sourceText: string | null;
   /**
    * The hook projection the Runtime published.
    *
@@ -77,16 +73,6 @@ export interface HooksViewProps {
    * Why the applied projection could not be read, when it could not be read.
    */
   readonly appliedUnavailable?: HooksAppliedUnavailable | null | undefined;
-  readonly saveOutcome?: HookDeclarationSaveOutcome | undefined;
-  /**
-   * The event the last write was about.
-   *
-   * The list presents every event's declaration at once, so a notice that did
-   * not name its event would leave the operator to work out which of the edits
-   * on the page it was talking about. It is absent when the write's event is
-   * not one of the declared ones, and the notice then says what it can.
-   */
-  readonly savedEvent?: string | undefined;
 }
 
 /**
@@ -213,11 +199,9 @@ function declaredEvents(
 }
 
 /**
- * One event, its declaration, and its editor.
+ * One event and its declaration.
  */
-function hookEventPanel(
-  hook: HookDefinition
-): React.JSX.Element {
+function hookEventPanel(hook: HookDefinition): React.JSX.Element {
   return React.createElement(
     "div",
     {
@@ -256,6 +240,8 @@ export function HooksView({
   hooks,
   validationIssues,
   sourceValidity = null,
+  revision,
+  sourceText,
   applied,
   appliedUnavailable = null
 }: HooksViewProps): React.JSX.Element {
@@ -284,7 +270,13 @@ export function HooksView({
       React.createElement(StatCard, {
         title: "Source validation",
         value: sourceValidityLabel(sourceValidity),
-        subtitle: ".rulesync/hooks.jsonc"
+        // The source and its revision, the way the Permissions view names
+        // them: the path says where the declaration lives, and the revision
+        // says which one this page describes.
+        subtitle:
+          revision === null
+            ? ".rulesync/hooks.jsonc"
+            : `.rulesync/hooks.jsonc revision ${revision.slice(0, 12)}`
       }),
       React.createElement(StatCard, {
         title: "Applied hooks",
@@ -315,11 +307,14 @@ export function HooksView({
         { className: SECTION_HEADING_CLASS },
         "Configured Lifecycle Hooks"
       ),
-      declaredEvents(
-        hooks,
-        sourceValidity,
-        validationIssues
-      )
+      // One selector over one declaration: the rendered side is the
+      // declaration the target receives, and the JSONC side is that source
+      // with its comments.
+      React.createElement(SourceView, {
+        source: sourceText,
+        format: "JSONC",
+        rendered: declaredEvents(hooks, sourceValidity, validationIssues)
+      })
     ),
     React.createElement(
       "div",

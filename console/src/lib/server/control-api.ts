@@ -49,8 +49,6 @@ import {
   type ControlApiModelPatchResponse,
   type ControlApiModelsResponse,
   type ControlApiPermissionsResponse,
-  type ControlApiPromptCommandPatchRequest,
-  type ControlApiPromptCommandPatchResponse,
   type ControlApiPromptDetailResponse,
   type ControlApiPromptsResponse,
   type ControlApiPromptVersionResponse,
@@ -69,11 +67,7 @@ import {
   type ControlApiProvidersResponse,
   type ControlApiProviderVersionsResponse,
   type ControlApiRuntimeResponse,
-  type ControlApiSkillContentPatchRequest,
-  type ControlApiSkillContentPatchResponse,
   type ControlApiSkillContentResponse,
-  type ControlApiSkillRolesPatchRequest,
-  type ControlApiSkillRolesPatchResponse,
   type ControlApiSkillsResponse,
   type ControlApiToolsResponse,
   type ControlApiWorkspacePatchRequest,
@@ -93,7 +87,6 @@ import {
   PROVIDER_ROLES,
   type ProviderRole,
   type ProviderRolePriority,
-  type ReconciliationDiff,
   type ReconciliationStatus,
   safeAutoDevSessionId,
   type SessionDiagnosticsReport,
@@ -1660,6 +1653,28 @@ function isMcpHealthVerdict(value: unknown): boolean {
  * Checking the identifier alone let an incomplete payload reach the view and
  * throw instead of failing closed.
  */
+/**
+Narrows one approved-catalogue publication.
+
+The approval state is the operator's answer to "which revision is live?", so
+every field the Console renders has to be present and typed. A publication
+whose state is not one of the four known states is refused rather than
+rendered as an unknown word.
+*/
+function isMcpApprovedCatalogue(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.home === "string" &&
+    (value.state === "approved" ||
+      value.state === "pending" ||
+      value.state === "unavailable" ||
+      value.state === "unknown") &&
+    (value.approvedDigest === null || typeof value.approvedDigest === "string") &&
+    (value.proposedDigest === null || typeof value.proposedDigest === "string") &&
+    typeof value.approvedPath === "string"
+  );
+}
+
 function isMcpServerRow(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -1669,7 +1684,12 @@ function isMcpServerRow(value: unknown): boolean {
     Array.isArray(value.targetOverrides) &&
     value.targetOverrides.every(isMcpTargetOverride) &&
     typeof value.declared === "boolean" &&
-    isStringList(value.roles)
+    isStringList(value.roles) &&
+    // Absent for a backend with no catalogued commands; present, every
+    // publication in it has to be one the Console can render.
+    (value.approvedCatalogues === undefined ||
+      (Array.isArray(value.approvedCatalogues) &&
+        value.approvedCatalogues.every(isMcpApprovedCatalogue)))
   );
 }
 
@@ -1955,6 +1975,10 @@ function isControlApiHooksResponse(
     // and the reason away.
     isValidationIssueList(value.issues) &&
     (value.revision === null || typeof value.revision === "string") &&
+    // The canonical source's text. Required, not optional: the Console shows
+    // it beside the rendered declaration, and a response without it would
+    // leave the page showing a declaration whose source it cannot name.
+    (value.sourceText === null || typeof value.sourceText === "string") &&
     typeof value.target === "string" &&
     Array.isArray(value.events) &&
     value.events.every(isControlApiHookDeclaration)
@@ -2688,133 +2712,6 @@ export async function fetchSkillContent(
  * role evidence as `null`. A response is converged only when the Runtime's
  * observed set and generations confirm the requested assignment.
  */
-function sameStringSet(
-  left: readonly string[],
-  right: readonly string[]
-): boolean {
-  if (left.length !== right.length) return false;
-  const sortedLeft = [...left].sort();
-  const sortedRight = [...right].sort();
-  return sortedLeft.every((value, index) => value === sortedRight[index]);
-}
-
-function isControlApiSkillRolesPatchResponse(
-  value: unknown,
-  skillName: string,
-  requestedRoles: readonly string[]
-): value is ControlApiSkillRolesPatchResponse {
-  if (
-    !isRecord(value) ||
-    value.schema !== "autodev-control-skill-assignment-v2" ||
-    value.skill !== skillName ||
-    !isStringList(value.desiredRoles) ||
-    !sameStringSet(value.desiredRoles, requestedRoles) ||
-    (value.actualRoles !== null && !isStringList(value.actualRoles)) ||
-    typeof value.revision !== "string" ||
-    !CONTROL_API_REVISION_PATTERN.test(value.revision) ||
-    !isReconciliationBundle(value.reconciliation) ||
-    !isReconciliationDiff(value.diff)
-  ) {
-    return false;
-  }
-
-  const reconciliation = value.reconciliation as {
-    readonly status: ReconciliationStatus;
-  };
-  const status = reconciliation.status;
-  const actualRoles = value.actualRoles as readonly string[] | null;
-  const diff = value.diff as ReconciliationDiff;
-  if (
-    status.desiredGeneration === null ||
-    diff.identifier !== status.desiredGeneration ||
-    (actualRoles === null && status.convergence === "converged") ||
-    (actualRoles !== null && status.convergence === "not-observed")
-  ) {
-    return false;
-  }
-
-  return (
-    status.convergence !== "converged" ||
-    (actualRoles !== null &&
-      sameStringSet(actualRoles, value.desiredRoles) &&
-      status.observedGeneration === status.desiredGeneration)
-  );
-}
-
-/**
- * Assigns a skill to exactly the roles named, or to none when the list is empty.
- *
- * The whole desired set travels rather than an addition, so an operator who
- * unchecks a role is not silently appending to what is already there. That is
- * also why there is no separate unassign verb to get wrong.
- */
-export async function patchSkillRoles(
-  name: string,
-  payload: ControlApiSkillRolesPatchRequest,
-  config: ControlApiConfig,
-  options: FetchControlApiOptions = {}
-): Promise<ControlApiResult<ControlApiSkillRolesPatchResponse>> {
-  const result = await mutateControlApi<unknown>(
-    "PATCH",
-    `${CONTROL_API_PATHS.skills}/${encodeURIComponent(name)}`,
-    payload,
-    config,
-    options
-  );
-  if (result.kind !== "ok") return result;
-  if (isControlApiSkillRolesPatchResponse(result.data, name, payload.roles)) {
-    return { kind: "ok", data: result.data };
-  }
-  return {
-    kind: INVALID_RESPONSE_KIND,
-    code: "autodev_control_api_invalid_skill_assignment_response",
-    message:
-      "AutoDev Control API returned an incompatible skill assignment response; the Console cannot tell which roles were written."
-  };
-}
-
-function isControlApiSkillContentPatchResponse(
-  value: unknown,
-  name: string
-): value is ControlApiSkillContentPatchResponse {
-  return (
-    isRecord(value) &&
-    value.schema === "autodev-control-skill-content-patch-v1" &&
-    value.name === name &&
-    typeof value.revision === "string" &&
-    CONTROL_API_REVISION_PATTERN.test(value.revision) &&
-    typeof value.changed === "boolean" &&
-    value.projectionApplied === true &&
-    isReconciliationBundle(value.reconciliation)
-  );
-}
-
-/** Server-only revision-checked update of an existing canonical skill. */
-export async function patchSkillContent(
-  name: string,
-  payload: ControlApiSkillContentPatchRequest,
-  config: ControlApiConfig,
-  options: FetchControlApiOptions = {}
-): Promise<ControlApiResult<ControlApiSkillContentPatchResponse>> {
-  const result = await mutateControlApi<unknown>(
-    "PATCH",
-    `${CONTROL_API_PATHS.skills}/${encodeURIComponent(name)}/content`,
-    payload,
-    config,
-    options
-  );
-  if (result.kind !== "ok") return result;
-  if (isControlApiSkillContentPatchResponse(result.data, name)) {
-    return { kind: "ok", data: result.data };
-  }
-  return {
-    kind: INVALID_RESPONSE_KIND,
-    code: "autodev_control_api_invalid_skill_content_patch_response",
-    message:
-      "AutoDev Control API returned an incompatible skill update response; the Console cannot confirm that the projections were applied."
-  };
-}
-
 export async function fetchHooks(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
@@ -2891,6 +2788,11 @@ function isControlApiPermissionsResponse(
     // an empty matrix set is indistinguishable from a contract nobody read.
     typeof value.executionContractObserved !== "boolean" ||
     (value.revision !== null && typeof value.revision !== "string") ||
+    // The canonical source's text, beside the policy parsed from it. Required,
+    // not optional: the Console shows it with the rendered policy, and a
+    // response without it would leave the page showing a policy whose source
+    // it cannot name.
+    (value.sourceText !== null && typeof value.sourceText !== "string") ||
     (value.policy !== null && !isPermissionsPolicy(value.policy)) ||
     (value.applied !== null && !isPermissionsPolicy(value.applied)) ||
     typeof value.appliedSource !== "string" ||
@@ -3198,21 +3100,6 @@ export async function fetchPromptVersion(
     message:
       "AutoDev Control API returned an incompatible Prompt version response."
   };
-}
-
-export function patchPromptCommand(
-  name: string,
-  payload: ControlApiPromptCommandPatchRequest,
-  config: ControlApiConfig,
-  options: FetchControlApiOptions = {}
-): Promise<ControlApiResult<ControlApiPromptCommandPatchResponse>> {
-  return mutateControlApi<ControlApiPromptCommandPatchResponse>(
-    "PATCH",
-    `${CONTROL_API_PATHS.prompts}/${encodeURIComponent(name)}`,
-    payload,
-    config,
-    options
-  );
 }
 
 /**

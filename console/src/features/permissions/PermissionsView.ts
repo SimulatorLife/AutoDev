@@ -6,9 +6,14 @@ import { type ColumnDef } from "@tanstack/react-table";
 import React from "react";
 
 import { StatCard } from "../../components/cards/StatCard.ts";
+import { SourceView } from "../../components/code/SourceView.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
-import { DetailGrid, DetailValue, StatGrid } from "../../components/panels/DetailGrid.ts";
+import {
+  DetailGrid,
+  DetailValue,
+  StatGrid
+} from "../../components/panels/DetailGrid.ts";
 import { Tag } from "../../components/status/Tag.ts";
 import { CHIP_TONE_CLASS, chipList } from "../../components/tables/Chips.ts";
 import {
@@ -35,6 +40,13 @@ export interface PermissionsViewProps {
   readonly policyReason: string | null;
   /** The observed revision of the canonical source. */
   readonly revision: string | null;
+  /**
+   * The canonical source's exact text, or null when it was not read.
+   *
+   * It is the source the policy above was parsed from, so the two views of the
+   * declaration are one read rather than two that can straddle a change.
+   */
+  readonly sourceText: string | null;
   /** The policy the Runtime applied, read from the composed configuration. */
   readonly applied: PermissionPolicy | null;
   /** Where the applied policy was read from. */
@@ -88,6 +100,7 @@ export function PermissionsView({
   policyStatus,
   policyReason,
   revision,
+  sourceText,
   applied,
   appliedSource,
   roleMatrices,
@@ -174,13 +187,35 @@ export function PermissionsView({
             },
             policyReason
           ),
-      React.createElement(
-        DetailGrid,
-        { columns: 3 },
-        React.createElement(DetailValue, { label: "Approval policy" }, policy?.approvalPolicy ?? NOT_OBSERVED),
-        React.createElement(DetailValue, { label: "Approvals reviewer" }, policy?.approvalsReviewer ?? NOT_OBSERVED),
-        React.createElement(DetailValue, { label: "Web search" }, policy === null ? NOT_OBSERVED : policy.webSearch ? "Enabled" : "Disabled")
-      ),
+      // One selector over one declaration: the rendered side is the policy the
+      // source states, and the JSONC side is that source with its comments.
+      React.createElement(SourceView, {
+        source: sourceText,
+        format: "JSONC",
+        rendered: React.createElement(
+          DetailGrid,
+          { columns: 3 },
+          React.createElement(
+            DetailValue,
+            { label: "Approval policy" },
+            policy?.approvalPolicy ?? NOT_OBSERVED
+          ),
+          React.createElement(
+            DetailValue,
+            { label: "Approvals reviewer" },
+            policy?.approvalsReviewer ?? NOT_OBSERVED
+          ),
+          React.createElement(
+            DetailValue,
+            { label: "Web search" },
+            policy === null
+              ? NOT_OBSERVED
+              : policy.webSearch
+                ? "Enabled"
+                : "Disabled"
+          )
+        )
+      }),
       React.createElement(
         StatGrid,
         { columns: 2 },

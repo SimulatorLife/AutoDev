@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
 import {
   mkdir,
   mkdtemp,
@@ -26,12 +25,8 @@ import {
   parseRuleSyncCommand,
   parseRuleSyncFrontmatter,
   readPermissionPolicyFile,
-  RuleSyncCommandConflictError,
   RuleSyncCommandValidationError,
-  RuleSyncHooksConflictError,
-  RuleSyncHooksValidationError,
   RuleSyncRepository,
-  RuleSyncSkillConflictError,
   RuleSyncSkillSourceUnavailableError,
   RuleSyncSkillValidationError
 } from "../src/index.ts";
@@ -456,9 +451,9 @@ test("RuleSyncRepository reports a committed repository whose command file has n
   }
 });
 
-test("RuleSyncRepository updates an existing command with revision checks", async () => {
+test("RuleSyncRepository reads a canonical command and exposes no write surface", async () => {
   const repositoryRoot = await mkdtemp(
-    path.join(tmpdir(), "autodev-rulesync-command-update-")
+    path.join(tmpdir(), "autodev-rulesync-command-read-")
   );
   try {
     const commandsDir = path.join(repositoryRoot, ".rulesync", "commands");
@@ -466,79 +461,43 @@ test("RuleSyncRepository updates an existing command with revision checks", asyn
     const commandPath = path.join(commandsDir, "audit.md");
     const original =
       "---\ntargets: [codexcli]\ndescription: Inspect the repository.\n---\n\n# Audit\n\nReview the source.\n";
-    const updated =
-      "---\ntargets: [codexcli, claudecode]\ndescription: Audit canonical input.\n---\n\n# Audit\n\nReview canonical source and verify the generated result.\n";
     await writeFile(commandPath, original);
 
     const repo = new RuleSyncRepository(repositoryRoot);
-    const originalCommand = repo.loadCommands().commands[0];
-    assert.ok(originalCommand);
-    const saved = await repo.updateCommand({
-      name: "audit",
-      expectedRevision: originalCommand.revision,
-      content: updated
-    });
-    assert.equal(saved.content, updated);
-    assert.equal(saved.description, "Audit canonical input.");
-    assert.deepEqual(saved.targets, ["codexcli", "claudecode"]);
-    assert.notEqual(saved.revision, originalCommand.revision);
-    assert.equal(await readFile(commandPath, "utf8"), updated);
-
-    await assert.rejects(
-      repo.updateCommand({
-        name: "audit",
-        expectedRevision: originalCommand.revision,
-        content: original
-      }),
-      RuleSyncCommandConflictError
-    );
-    await assert.rejects(
-      repo.updateCommand({
-        name: "../outside",
-        expectedRevision: saved.revision,
-        content: updated
-      }),
-      RuleSyncCommandValidationError
-    );
-    await assert.rejects(
-      repo.updateCommand({
-        name: "audit",
-        expectedRevision: saved.revision,
-        content: "Invalid frontmatter"
-      }),
-      RuleSyncCommandValidationError
-    );
-    assert.equal(await readFile(commandPath, "utf8"), updated);
-
-    const competingContents = ["First writer.", "Second writer."].map(
-      (description) =>
-        `---\ntargets: [codexcli]\ndescription: ${description}\n---\n\n# Audit\n${description}\n`
-    );
-    const competingUpdates = competingContents.map((content) =>
-      repo.updateCommand({
-        name: "audit",
-        expectedRevision: saved.revision,
-        content
-      })
-    );
-    const outcomes = await Promise.allSettled(competingUpdates);
+    const catalogue = repo.loadCommands();
+    assert.equal(catalogue.valid, true);
+    const command = catalogue.commands[0];
+    assert.ok(command);
+    assert.equal(command.name, "audit");
+    assert.equal(command.description, "Inspect the repository.");
+    assert.deepEqual(command.targets, ["codexcli"]);
+    assert.equal(command.content, original);
     assert.equal(
-      outcomes.filter((outcome) => outcome.status === "fulfilled").length,
-      1
+      command.revision,
+      createHash("sha256").update(original, "utf8").digest("hex")
     );
-    const rejected = outcomes.find(
-      (outcome): outcome is PromiseRejectedResult =>
-        outcome.status === "rejected"
-    );
-    assert.ok(rejected?.reason instanceof RuleSyncCommandConflictError);
-    const finalSource = await readFile(commandPath, "utf8");
-    assert.ok(competingContents.includes(finalSource));
+
+    const read = repo.loadCommand("audit");
+    assert.equal(read.status, "found");
+
+    // The canonical command is read, never written. A repository that could
+    // rewrite it could rewrite the prompt every role is given.
+    const surface = repo as unknown as Record<string, unknown>;
+    for (const writer of [
+      "updateCommand",
+      "updateSkillSource",
+      "createSkill",
+      "updateHookEvent"
+    ]) {
+      assert.equal(surface[writer], undefined);
+    }
+    assert.equal(await readFile(commandPath, "utf8"), original);
   } finally {
     await rm(repositoryRoot, { recursive: true, force: true });
   }
 });
 
-test("RuleSyncRepository rejects a symlinked canonical command root before writes", async () => {
+test("RuleSyncRepository refuses a symlinked canonical command root", async () => {
   const repositoryRoot = await mkdtemp(
     path.join(tmpdir(), "autodev-rulesync-command-root-")
   );
@@ -558,15 +517,11 @@ test("RuleSyncRepository rejects a symlinked canonical command root before write
     );
 
     const repo = new RuleSyncRepository(repositoryRoot);
-    assert.equal(repo.loadCommands().valid, false);
-    await assert.rejects(
-      repo.updateCommand({
-        name: "audit",
-        expectedRevision: "0".repeat(64),
-        content
-      }),
-      RuleSyncCommandValidationError
-    );
+    const catalogue = repo.loadCommands();
+    assert.equal(catalogue.valid, false);
+    // The command outside the workspace is not offered as the workspace's own.
+    assert.equal(catalogue.commands.length, 0);
+    assert.notEqual(repo.loadCommand("audit").status, "found");
   } finally {
     await rm(repositoryRoot, { recursive: true, force: true });
     await rm(externalRoot, { recursive: true, force: true });
@@ -1095,7 +1050,7 @@ test("RuleSync skill catalog distinguishes an absent, empty, and invalid source"
   }
 });
 
-test("RuleSyncRepository reads and revision-checks exact canonical skill source", async () => {
+test("RuleSyncRepository reads the exact canonical skill source", async () => {
   const repositoryRoot = await mkdtemp(
     path.join(tmpdir(), "autodev-skill-source-")
   );
@@ -1105,8 +1060,6 @@ test("RuleSyncRepository reads and revision-checks exact canonical skill source"
     const skillPath = path.join(skillDir, "SKILL.md");
     const original =
       '---\nname: audit\ndescription: "An exact description."\ncustom: [one, two]\n---\n\n# Audit\n\nPreserve  exact markdown.\n';
-    const updated =
-      '---\r\nname: audit\r\ndescription: "Updated description."\r\ncustom: [two, one]\r\n---\r\n\r\n# Audit\r\n\r\nPreserve  every space and CRLF.\r\n';
     await writeFile(skillPath, original);
     const repo = new RuleSyncRepository(repositoryRoot);
     const detail = repo.readSkillSource("audit");
@@ -1116,89 +1069,17 @@ test("RuleSyncRepository reads and revision-checks exact canonical skill source"
       detail.revision,
       createHash("sha256").update(original, "utf8").digest("hex")
     );
-
-    const saved = await repo.updateSkillSource({
-      name: "audit",
-      expectedRevision: detail.revision,
-      content: updated
-    });
-    assert.equal(saved.content, updated);
-    assert.equal(
-      saved.revision,
-      createHash("sha256").update(updated, "utf8").digest("hex")
-    );
-    assert.equal(await readFile(skillPath, "utf8"), updated);
     assert.equal(
       repo.loadSkills().skills[0]?.description,
-      "Updated description."
+      "An exact description."
     );
-    await assert.rejects(
-      repo.updateSkillSource({
-        name: "audit",
-        expectedRevision: detail.revision,
-        content: original
-      }),
-      RuleSyncSkillConflictError
-    );
-    await assert.rejects(
-      repo.updateSkillSource({
-        name: "audit",
-        expectedRevision: "invalid",
-        content: updated
-      }),
-      RuleSyncSkillValidationError
-    );
-    await assert.rejects(
-      repo.updateSkillSource({
-        name: "missing",
-        expectedRevision: saved.revision,
-        content: updated.replace("name: audit", "name: missing")
-      }),
-      RuleSyncSkillConflictError
-    );
-
-    const unchanged = await readFile(skillPath, "utf8");
-    for (const content of [
-      "not frontmatter",
-      "---\nname: other\ndescription: Valid description.\n---\nBody\n",
-      '---\nname: audit\ndescription: "  "\n---\nBody\n',
-      `---\nname: audit\ndescription: Valid description.\n---\n${"x".repeat(48_001)}`,
-      "---\nname: audit\ndescription: Valid description.\n---\nBad\u0000control\n"
-    ]) {
-      await assert.rejects(
-        repo.updateSkillSource({
-          name: "audit",
-          expectedRevision: saved.revision,
-          content
-        }),
-        RuleSyncSkillValidationError
-      );
-      assert.equal(await readFile(skillPath, "utf8"), unchanged);
-    }
-
-    const contenders = ["First edit.", "Second edit."].map((body) =>
-      repo.updateSkillSource({
-        name: "audit",
-        expectedRevision: saved.revision,
-        content: `---\nname: audit\ndescription: Concurrent edit.\n---\n${body}\n`
-      })
-    );
-    const outcomes = await Promise.allSettled(contenders);
-    assert.equal(
-      outcomes.filter((outcome) => outcome.status === "fulfilled").length,
-      1
-    );
-    const rejected = outcomes.find(
-      (outcome): outcome is PromiseRejectedResult =>
-        outcome.status === "rejected"
-    );
-    assert.ok(rejected?.reason instanceof RuleSyncSkillConflictError);
+    assert.equal(await readFile(skillPath, "utf8"), original);
   } finally {
     await rm(repositoryRoot, { recursive: true, force: true });
   }
 });
 
-test("RuleSync skill source updates refuse invalid catalogs and symlinked source files", async () => {
+test("RuleSync skill source reads refuse symlinked source files", async () => {
   const repositoryRoot = await mkdtemp(
     path.join(tmpdir(), "autodev-skill-source-safe-")
   );
@@ -1219,23 +1100,13 @@ test("RuleSync skill source updates refuse invalid catalogs and symlinked source
         error instanceof Error &&
         !(error instanceof RuleSyncSkillValidationError)
     );
-    await assert.rejects(
-      repo.updateSkillSource({
-        name: "audit",
-        expectedRevision: "0".repeat(64),
-        content: source
-      }),
-      (error: unknown) =>
-        error instanceof Error &&
-        !(error instanceof RuleSyncSkillValidationError)
-    );
     assert.equal(await readFile(outside, "utf8"), source);
   } finally {
     await rm(repositoryRoot, { recursive: true, force: true });
   }
 });
 
-test("RuleSync skill source reads and writes preserve an unobserved catalog as unavailable", async () => {
+test("RuleSync skill source reads preserve an unobserved catalog as unavailable", async () => {
   const repositoryRoot = await mkdtemp(
     path.join(tmpdir(), "autodev-skill-source-unobserved-")
   );
@@ -1243,15 +1114,6 @@ test("RuleSync skill source reads and writes preserve an unobserved catalog as u
     const repository = new RuleSyncRepository(repositoryRoot);
     assert.throws(
       () => repository.readSkillSource("audit"),
-      RuleSyncSkillSourceUnavailableError
-    );
-    await assert.rejects(
-      repository.updateSkillSource({
-        name: "audit",
-        expectedRevision: "0".repeat(64),
-        content:
-          "---\nname: audit\ndescription: Valid description.\n---\nBody.\n"
-      }),
       RuleSyncSkillSourceUnavailableError
     );
   } finally {
@@ -1534,13 +1396,15 @@ test("RuleSync hook state is the declaration the target actually receives", asyn
       "shared"
     );
 
-    // The revision is the handle a write compares against, so it is read from
-    // the document itself.
-    const revision = repo.loadHooksRevision();
-    assert.equal(revision.source, ".rulesync/hooks.jsonc");
-    assert.equal(revision.valid, true);
+    // The revision and the source text travel with the state, read from the
+    // document itself, so the events and the source they were read with
+    // describe the same bytes.
+    const state = repo.loadHooksState("codexcli");
+    assert.equal(state.source, ".rulesync/hooks.jsonc");
+    assert.equal(state.valid, true);
+    assert.equal(state.content, await readFile(sourcePath, "utf8"));
     assert.equal(
-      revision.revision,
+      state.revision,
       createHash("sha256")
         .update(await readFile(sourcePath, "utf8"), "utf8")
         .digest("hex")
@@ -1550,34 +1414,18 @@ test("RuleSync hook state is the declaration the target actually receives", asyn
   }
 });
 
-test("RuleSync hook writes are revision-guarded and land where the event lives", async () => {
+test("RuleSync hook state reports where each event is declared and exposes no write surface", async () => {
   const repositoryRoot = await mkdtemp(
-    path.join(tmpdir(), "autodev-hooks-write-")
+    path.join(tmpdir(), "autodev-hooks-read-")
   );
   const sourcePath = path.join(repositoryRoot, ".rulesync", "hooks.jsonc");
   const repo = new RuleSyncRepository(repositoryRoot);
-  const write = async (
-    event: "sessionStart" | "preToolUse" | "sessionEnd",
-    actions: readonly {
-      readonly type: "command";
-      readonly command: string;
-      readonly matcher?: string;
-      readonly statusMessage?: string;
-    }[],
-    expectedRevision: string
-  ) =>
-    repo.updateHookEvent({
-      event,
-      target: "codexcli",
-      actions,
-      expectedRevision
-    });
   try {
     await mkdir(path.dirname(sourcePath), { recursive: true });
     await writeFile(
       sourcePath,
       `{
-        // A comment the write must not eat.
+        // A comment the read must not lose.
         "hooks": {
           "sessionStart": [{
             "type": "command",
@@ -1596,69 +1444,33 @@ test("RuleSync hook writes are revision-guarded and land where the event lives",
       "utf8"
     );
 
-    const first = repo.loadHooksRevision().revision;
-    assert.ok(first);
-
-    // A stale revision is refused rather than applied over a newer document.
-    await assert.rejects(
-      write(
-        "sessionStart",
-        [{ type: "command", command: "node other.ts" }],
-        "0".repeat(64)
-      ),
-      RuleSyncHooksConflictError
+    const state = repo.loadHooksState("codexcli");
+    assert.equal(state.valid, true);
+    assert.deepEqual(state.issues, []);
+    assert.ok(state.revision);
+    // The source text and the revision name the same bytes the events came
+    // from, so the two views of the declaration cannot disagree.
+    assert.equal(
+      state.revision,
+      createHash("sha256").update(state.content ?? "", "utf8").digest("hex")
     );
 
-    // An action the declaration cannot hold is refused before the document is
-    // touched.
-    await assert.rejects(
-      write("sessionStart", [{ type: "command", command: "  " }], first),
-      RuleSyncHooksValidationError
-    );
+    // The event every target inherits is declared in the shared block, and the
+    // event only this target declares is declared in the target's own block.
+    const shared = state.events.find((event) => event.event === "sessionStart");
+    assert.equal(shared?.origin, "shared");
+    assert.equal(shared?.actions[0]?.command, "node shared-session-start.ts");
+    const own = state.events.find((event) => event.event === "sessionEnd");
+    assert.equal(own?.origin, "target");
+    assert.equal(own?.actions[0]?.command, "node codex-session-end.ts");
 
-    // The event the target inherits is written to the shared declaration,
-    // because that is where it lives.
-    const shared = await write(
-      "sessionStart",
-      [
-        {
-          type: "command",
-          command: "node shared-session-start.ts",
-          statusMessage: "Starting the session"
-        }
-      ],
-      first
-    );
-    assert.equal(shared.origin, "shared");
-    assert.notEqual(shared.revision, first);
-    const afterShared = await readFile(sourcePath, "utf8");
-    assert.match(afterShared, /A comment the write must not eat\./u);
-    assert.match(afterShared, /"statusMessage": "Starting the session"/u);
-    // The target's own block is not touched by a write to the shared one.
-    assert.match(afterShared, /"codexcli": \{\s*"hooks": \{\s*"sessionEnd"/u);
-
-    // The event the target declares is written to the target's own
-    // declaration, and the shared one is left alone.
-    const target = await write(
-      "sessionEnd",
-      [{ type: "command", command: "node codex-session-end.ts" }],
-      shared.revision
-    );
-    assert.equal(target.origin, "target");
-    assert.deepEqual(target.actions, [
-      { type: "command", command: "node codex-session-end.ts" }
-    ]);
-    const afterTarget = await readFile(sourcePath, "utf8");
-    assert.match(afterTarget, /"codexcli"/u);
-    assert.match(afterTarget, /"sessionEnd"/u);
-
-    // An empty action list removes the event rather than declaring an event
-    // with nothing in it.
-    const removed = await write("sessionEnd", [], target.revision);
-    assert.deepEqual(removed.actions, []);
-    const afterRemoval = await readFile(sourcePath, "utf8");
-    assert.doesNotMatch(afterRemoval, /"sessionEnd"/u);
-    assert.match(afterRemoval, /"sessionStart"/u);
+    // The canonical hook declaration is read, never written: a target that
+    // could rewrite it would be able to run its own command in every session.
+    const surface = repo as unknown as Record<string, unknown>;
+    assert.equal(surface.updateHookEvent, undefined);
+    const source = await readFile(sourcePath, "utf8");
+    assert.match(source, /A comment the read must not lose\./u);
+    assert.match(source, /node codex-session-end\.ts/u);
   } finally {
     await rm(repositoryRoot, { recursive: true, force: true });
   }
@@ -1953,51 +1765,39 @@ test("ClickHouseTelemetryClient constructs safe parameterized queries", () => {
   assert.equal(pq.params.f_0, "openai");
 });
 
-test("RuleSyncRepository promotes skills by creating an idempotent canonical source file", async () => {
+test("RuleSyncRepository loads a canonical skill from the repository's own source", async () => {
   const repositoryRoot = await mkdtemp(
     path.join(tmpdir(), "autodev-skill-promotion-")
   );
   try {
+    const skillDir = path.join(
+      repositoryRoot,
+      ".rulesync",
+      "skills",
+      "verified-memory-workflow"
+    );
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(
+      path.join(skillDir, "SKILL.md"),
+      "---\nname: verified-memory-workflow\ndescription: Validate current evidence before changing memory.\n---\n\n## Steps\n\n1. Re-check the repository evidence.\n",
+      "utf8"
+    );
     const repo = new RuleSyncRepository(repositoryRoot);
-    const input = {
-      name: "verified-memory-workflow",
-      description: "Validate current evidence before changing memory.",
-      content:
-        "## Steps\n\n1. Re-check the repository evidence.\n2. Run the focused tests."
-    };
-    const artifact = await repo.createSkill(input);
-    assert.equal(
-      artifact.path,
-      ".rulesync/skills/verified-memory-workflow/SKILL.md"
+    const catalogue = repo.loadSkills();
+    assert.equal(catalogue.valid, true);
+    const promoted = catalogue.skills.find(
+      (skill) => skill.name === "verified-memory-workflow"
     );
     assert.equal(
-      artifact.uri,
-      "rulesync://skills/verified-memory-workflow/SKILL.md"
-    );
-    assert.match(artifact.revision, /^[a-f0-9]{64}$/u);
-    assert.equal(
-      (
-        await readFile(path.join(repositoryRoot, artifact.path), "utf8")
-      ).includes(input.content),
-      true
-    );
-    const promoted = repo
-      .loadSkills()
-      .skills.find((skill) => skill.name === input.name);
-    assert.equal(promoted?.description, input.description);
-
-    const repeated = await repo.createSkill(input);
-    assert.deepEqual(repeated, artifact);
-    await assert.rejects(
-      repo.createSkill({ ...input, content: "Different instructions." }),
-      RuleSyncSkillConflictError
+      promoted?.description,
+      "Validate current evidence before changing memory."
     );
   } finally {
     await rm(repositoryRoot, { recursive: true, force: true });
   }
 });
 
-test("RuleSyncRepository refuses unsafe skill names and symlinked canonical directories", async () => {
+test("RuleSyncRepository refuses a symlinked canonical skills directory", async () => {
   const repositoryRoot = await mkdtemp(
     path.join(tmpdir(), "autodev-skill-promotion-safe-")
   );
@@ -2005,23 +1805,24 @@ test("RuleSyncRepository refuses unsafe skill names and symlinked canonical dire
     path.join(tmpdir(), "autodev-skill-external-")
   );
   try {
-    const repo = new RuleSyncRepository(repositoryRoot);
-    const valid = {
-      name: "safe-skill",
-      description: "A safe skill.",
-      content: "Do the documented safe steps."
-    };
-    await assert.rejects(
-      repo.createSkill({ ...valid, name: "../escape" }),
-      TypeError
+    const externalSkill = path.join(externalRoot, "safe-skill");
+    await mkdir(externalSkill, { recursive: true });
+    await writeFile(
+      path.join(externalSkill, "SKILL.md"),
+      "---\nname: safe-skill\ndescription: A safe skill.\n---\nDo the documented safe steps.\n",
+      "utf8"
     );
     await mkdir(path.join(repositoryRoot, ".rulesync"), { recursive: true });
     await symlink(
       externalRoot,
       path.join(repositoryRoot, ".rulesync", "skills")
     );
-    await assert.rejects(repo.createSkill(valid), RuleSyncSkillConflictError);
-    assert.equal(existsSync(path.join(externalRoot, "safe-skill")), false);
+    const repo = new RuleSyncRepository(repositoryRoot);
+    const catalogue = repo.loadSkills();
+    assert.equal(catalogue.valid, false);
+    // The skill outside the workspace is not offered as the workspace's own.
+    assert.equal(catalogue.skills.length, 0);
+    assert.throws(() => repo.readSkillSource("safe-skill"));
   } finally {
     await rm(repositoryRoot, { recursive: true, force: true });
     await rm(externalRoot, { recursive: true, force: true });

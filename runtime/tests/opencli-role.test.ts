@@ -91,6 +91,9 @@ test("delegation uses the authenticated browser owner with native role argv and 
     "chatgpt", "ask", task.prompt, "--model", "balanced", "--app", task.mcpApp,
     "--new", "true", "--timeout", String(task.timeoutSeconds), "-f", "json"
   ]);
+  // The turn selects a model and attaches an app, both of which the ChatGPT
+  // adapter can only do natively, so the turn must hold the foreground.
+  assert.equal(opencliCommandRequiresForeground(calls[0]!), true);
   error = new OpencliCommandError("App unavailable (Connect the role app)", "APP_NOT_FOUND", 1);
   await assert.rejects(
     runOpencliRoleTurn(task),
@@ -292,8 +295,27 @@ test("only the operations that open a menu natively need the browser's foregroun
     ]),
     true
   );
+  // Selecting a model opens the reasoning slider or the model menu. The
+  // settings API covers only some models, and for the rest the visible
+  // picker is the only path, so a model switch always needs the foreground.
   assert.equal(
-    opencliCommandRequiresForeground(["chatgpt", "model", "advanced"]),
+    opencliCommandRequiresForeground([
+      "chatgpt",
+      "ask",
+      "hello",
+      "--model",
+      "balanced"
+    ]),
+    true
+  );
+  assert.equal(
+    opencliCommandRequiresForeground([
+      "chatgpt",
+      "ask",
+      "hello",
+      "--model",
+      "advanced"
+    ]),
     true
   );
 });

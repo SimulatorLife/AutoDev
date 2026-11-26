@@ -2512,23 +2512,38 @@ test("a skill whose catalogue could not be read is not an unknown skill", async 
   try {
     configure();
     // A skill whose SKILL.md cannot be parsed. The catalogue is invalid, and
-    // the route used to answer 404 with a message that said the catalogue was
-    // invalid -- a status that contradicted its own message.
+    // a read that answered 404 would say the skill does not exist when nobody
+    // could read the file that would have said whether it does.
     const skillsDir = join(repositoryRoot, ".rulesync", "skills", "audit");
     mkdirSync(skillsDir, { recursive: true });
     writeFileSync(join(skillsDir, "SKILL.md"), "No skill frontmatter.");
-    const skill = await call(
+
+    // The collection says the catalogue could not be applied, and says why.
+    const catalogue = await call(
       "GET",
-      `${CONTROL_API_PATHS.skills}/audit`,
+      CONTROL_API_PATHS.skills,
       { actor: "viewer-a" },
       { repositoryRoot }
     );
-    assert.equal(skill.response.statusCode, 503);
-    assert.equal(
-      skill.body.error.code,
-      "autodev_control_skill_catalogue_invalid"
+    assert.equal(catalogue.response.statusCode, 200);
+    assert.equal(catalogue.body.valid, false);
+    assert.ok(catalogue.body.issues.length > 0);
+    assert.match(
+      catalogue.body.issues.map((issue: { message: string }) => issue.message).join("\n"),
+      /frontmatter/u
     );
-    assert.match(skill.body.error.message, /audit/u);
+
+    // And the skill's own source read names the skill's own fault, rather
+    // than reporting that the skill is not there.
+    const skill = await call(
+      "GET",
+      `${CONTROL_API_PATHS.skills}/audit/content`,
+      { actor: "viewer-a" },
+      { repositoryRoot }
+    );
+    assert.equal(skill.response.statusCode, 409);
+    assert.equal(skill.body.error.code, "autodev_control_skill_source_invalid");
+    assert.match(skill.body.error.message, /catalog is invalid/u);
   } finally {
     restoreEnv(saved);
     rmSync(repositoryRoot, { recursive: true, force: true });
@@ -3117,10 +3132,11 @@ test("Control API surfaces all 13 typed resource families", async () => {
     assert.equal(skills.response.statusCode, 200);
     assert.equal(skills.body.schema, "autodev-control-skills-v2");
     assert.equal(skills.body.source, ".rulesync/skills+execution-contract");
-    // The skills collection has canonical write paths -- role assignment and
-    // the canonical source -- so the Runtime must not claim it is read-only.
-    // The flag used to be a stale constant that predated both write paths.
-    assert.equal(skills.body.readOnly, false);
+    // The skill catalogue is repository-owned: its role assignments live in
+    // the execution contract and its canonical source lives in the RuleSync
+    // catalogue, and both are changed in the repository. The collection is
+    // read-only.
+    assert.equal(skills.body.readOnly, true);
     const canonicalSkills = new RuleSyncRepository().loadSkills();
     assert.equal(canonicalSkills.valid, true);
     assert.equal(skills.body.valid, true);
@@ -3164,6 +3180,7 @@ test("Control API surfaces all 13 typed resource families", async () => {
     });
     assert.equal(hooks.response.statusCode, 200);
     assert.equal(hooks.body.schema, "autodev-control-hooks-v2");
+    assert.equal(hooks.body.readOnly, true);
     assert.equal(hooks.body.valid, true);
     assert.equal(hooks.body.target, "codexcli");
     assert.ok(
@@ -3471,10 +3488,10 @@ test("Control API prompts listing projects the canonical RuleSyncRepository.load
     assert.equal(prompts.body.schema, "autodev-control-prompts-v2");
     assert.equal(prompts.body.source, ".rulesync/commands");
     assert.equal(prompts.body.valid, true);
-    // The prompts collection has a canonical write path -- the command's own
-    // source -- so the Runtime must not claim it is read-only. The flag used
-    // to be a stale constant that predated the write path.
-    assert.equal(prompts.body.readOnly, false);
+    // The commands are repository-owned: a canonical command is changed in
+    // its repository source and reconciled by the standard workflow, so the
+    // collection is read-only.
+    assert.equal(prompts.body.readOnly, true);
     assert.equal(prompts.body.totalCommands, expectedCommands.length);
     assert.deepEqual(prompts.body.commands, expectedCommands);
 
@@ -3820,7 +3837,7 @@ test("Control API prompt detail serves the canonical command content from RuleSy
   }
 });
 
-test("operator Prompt PATCH validates source, applies the Rulesync projection, and audits only metadata", async () => {
+test("a canonical command is read-only: a write is refused and the source is untouched", async () => {
   const saved = saveEnv();
   const repositoryRoot = mkdtempSync(
     join(tmpdir(), "autodev-prompt-control-repository-")
@@ -3850,124 +3867,30 @@ test("operator Prompt PATCH validates source, applies the Rulesync projection, a
       '---\ntargets: ["*"]\ndescription: Edited through AutoDev Console.\n---\n\n# Edited command\n\nA canonical edit reaches the generated Codex prompt.\n';
     const runtimeOptions = { repositoryRoot, codexHome };
 
-    const viewerAttempt = await call(
-      "PATCH",
-      CONTROL_API_PATHS.prompts + "/dry",
-      {
-        actor: "viewer-a",
-        body: { content, expectedRevision: current.revision }
-      },
-      runtimeOptions
-    );
-    assert.equal(viewerAttempt.response.statusCode, 403);
-    assert.equal(
-      new RuleSyncRepository(repositoryRoot)
-        .loadCommands()
-        .commands.find((command) => command.name === "dry")?.revision,
-      current.revision
-    );
-
-    const { result, lines } = await captureAudit(() =>
-      call(
+    // A canonical command is repository-owned, so the route reads it and
+    // refuses every write. The refusal is the same for every actor: there is
+    // no operator role that may write it, because the repository is.
+    for (const actor of ["viewer-a", "operator-a"]) {
+      const attempt = await call(
         "PATCH",
         CONTROL_API_PATHS.prompts + "/dry",
-        {
-          actor: "operator-a",
-          body: { content, expectedRevision: current.revision }
-        },
+        { actor, body: { content, expectedRevision: current.revision } },
         runtimeOptions
-      )
-    );
-    assert.equal(result.response.statusCode, 200);
-    assert.equal(result.body.schema, "autodev-control-prompt-command-patch-v2");
-    assert.equal(result.body.name, "dry");
-    assert.match(result.body.revision, /^[a-f0-9]{64}$/u);
-    assert.equal(result.body.changed, true);
-    assert.equal(result.body.diff.summary.length > 0, true);
-    assert.equal(result.body.diff.identifier.length, 64);
-    assert.equal(result.body.reconciliation.status.convergence, "converged");
-    assert.equal(
-      result.body.reconciliation.status.desiredGeneration,
-      result.body.reconciliation.status.observedGeneration
-    );
-    assert.equal(result.body.reconciliation.status.lastError, null);
-    assert.equal(result.body.reconciliation.history.length > 0, true);
-    assert.doesNotMatch(lines.join(""), /A canonical edit reaches/u);
-    assert.equal(
-      new RuleSyncRepository(repositoryRoot)
-        .loadCommands()
-        .commands.find((command) => command.name === "dry")?.content,
-      content
-    );
-    assert.match(
-      readFileSync(join(codexHome, "prompts", "dry.md"), "utf8"),
-      /A canonical edit reaches the generated Codex prompt\./u
-    );
+      );
+      assert.equal(attempt.response.statusCode, 405, actor);
+      assert.equal(attempt.response.headers.allow, "GET", actor);
+      assert.equal(
+        attempt.body.error.code,
+        "autodev_control_api_method_not_allowed"
+      );
+    }
 
-    const detail = await call(
-      "GET",
-      CONTROL_API_PATHS.prompts + "/dry",
-      { actor: "viewer-a" },
-      runtimeOptions
-    );
-    assert.equal(detail.response.statusCode, 200);
-    assert.equal(detail.body.schema, "autodev-control-prompt-detail-v4");
-    assert.equal(detail.body.revision, result.body.revision);
-    assert.equal(detail.body.content, content);
-    assert.equal(
-      detail.body.preview,
-      "# Edited command\n\nA canonical edit reaches the generated Codex prompt."
-    );
-
-    const invalidSource = await call(
-      "PATCH",
-      CONTROL_API_PATHS.prompts + "/dry",
-      {
-        actor: "operator-a",
-        body: {
-          content: "not frontmatter",
-          expectedRevision: result.body.revision
-        }
-      },
-      runtimeOptions
-    );
-    assert.equal(invalidSource.response.statusCode, 400);
-    assert.equal(
-      invalidSource.body.error.code,
-      "autodev_control_prompt_invalid_source"
-    );
-    assert.equal(
-      new RuleSyncRepository(repositoryRoot)
-        .loadCommands()
-        .commands.find((command) => command.name === "dry")?.content,
-      content
-    );
-
-    const stale = await call(
-      "PATCH",
-      CONTROL_API_PATHS.prompts + "/dry",
-      {
-        actor: "operator-a",
-        body: { content: current.content, expectedRevision: current.revision }
-      },
-      runtimeOptions
-    );
-    assert.equal(stale.response.statusCode, 409);
-    assert.equal(
-      stale.body.error.code,
-      "autodev_control_prompt_revision_conflict"
-    );
-    const wrongMethod = await call(
-      "POST",
-      CONTROL_API_PATHS.prompts + "/dry",
-      {
-        actor: "operator-a",
-        body: { content, expectedRevision: result.body.revision }
-      },
-      runtimeOptions
-    );
-    assert.equal(wrongMethod.response.statusCode, 405);
-    assert.equal(wrongMethod.response.headers.allow, "GET, PATCH");
+    // And the canonical source on disk is exactly as it was.
+    const after = new RuleSyncRepository(repositoryRoot)
+      .loadCommands()
+      .commands.find((command) => command.name === "dry");
+    assert.equal(after?.revision, current.revision);
+    assert.equal(after?.description, current.description);
   } finally {
     restoreEnv(saved);
     rmSync(repositoryRoot, { recursive: true, force: true });

@@ -4,6 +4,7 @@ import type {
 } from "@simulatorlife/autodev-core";
 import React from "react";
 
+import { SourceView } from "../../components/code/SourceView.ts";
 import {
   EntityTitle,
   SECTION_HEADING_CLASS
@@ -13,6 +14,7 @@ import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
 import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
 import { ReconciliationPanel } from "../../components/status/ConvergenceBadge.ts";
+import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import { Tag } from "../../components/status/Tag.ts";
 import {
   MONO_META_CLASS,
@@ -24,10 +26,8 @@ import {
   hookAppliedUnavailableNotice,
   type HooksAppliedUnavailable
 } from "./applied.ts";
-import {
-  type HookDeclarationSaveOutcome,
-  hookOriginLabel
-} from "./declaration.ts";
+
+import { hookOriginLabel } from "./declaration.ts";
 import { HookActionsView } from "./HookActionsView.ts";
 import { HOOKS_PATH } from "./paths.ts";
 
@@ -46,26 +46,28 @@ export interface HookEventDetailViewProps {
   readonly source: string;
   /**
    * Whether the canonical declaration was read and found sound.
+   *
+   * A declaration that could not be read is a different fact from one that was
+   * read and found invalid, and the page says which one it is looking at
+   * instead of showing the actions of a source it could not confirm.
    */
   readonly sourceValidity: boolean | null;
   /**
    * The revision of the canonical declaration.
    *
-   * A write is compared against it, so the editor has to be filled from the
-   * revision it was read at. `null` means the declaration could not be read,
-   * and the editor stays disabled with the reason rather than offering a write
-   * that has nothing to compare.
+   * `null` means the declaration could not be read, so there is no revision to
+   * name. The revision identifies the exact source this page describes, which
+   * is the same revision a source view would show.
    */
   readonly revision: string | null;
   /**
-   * The revision the editor is based on.
+   * The canonical declaration's exact text, or null when it was not read.
    *
-   * It is the page's own revision unless a refused write says otherwise: a
-   * write that was refused against a declaration that has since moved leaves
-   * the editor based on the revision it was filled from, so the edit the
-   * operator made is not silently paired with a newer declaration.
+   * The declaration is one source and the event is one of the events it holds,
+   * so the raw view shows the whole declaration rather than a document
+   * assembled around the event.
    */
-  readonly editorRevision?: string | undefined;
+  readonly sourceText: string | null;
   /**
    * The hook projection the Runtime published.
    *
@@ -77,7 +79,6 @@ export interface HookEventDetailViewProps {
    * Why the applied projection could not be read, when it could not be read.
    */
   readonly appliedUnavailable?: HooksAppliedUnavailable | null | undefined;
-  readonly saveOutcome?: HookDeclarationSaveOutcome | undefined;
 }
 
 /**
@@ -126,14 +127,16 @@ function appliedEventPanel(
  * One hook event's own page.
  *
  * It is the second placement of the one control the Hooks resource owns. The
- * list already carries the editor on the event's card; this page carries the
- * same editor for the same event, so the operator who opens one event gets
- * the same edit surface, the same states and the same write as the operator
- * working down the list.
+ * list already carries the event's actions on its card; this page carries the
+ * same read-only actions for the same event, so the operator who opens one
+ * event gets the same facts as the operator working down the list.
  */
 export function HookEventDetailView({
   hook,
   source,
+  sourceValidity,
+  revision,
+  sourceText,
   applied,
   appliedUnavailable = null
 }: HookEventDetailViewProps): React.JSX.Element {
@@ -160,20 +163,41 @@ export function HookEventDetailView({
         { className: SECTION_HEADING_CLASS },
         "Canonical declaration"
       ),
-      React.createElement(
-        DetailGrid,
-        { columns: 2 },
-        React.createElement(
-          DetailValue,
-          { label: "Declared for" },
-          hookOriginLabel(hook.origin)
-        ),
-        React.createElement(
-          DetailValue,
-          { label: "Actions" },
-          String(hook.actions.length)
+      React.createElement(SourceView, {
+        source: sourceText,
+        format: "JSONC",
+        rendered: React.createElement(
+          DetailGrid,
+          { columns: 2 },
+          React.createElement(
+            DetailValue,
+            { label: "Declared for" },
+            hookOriginLabel(hook.origin)
+          ),
+          React.createElement(
+            DetailValue,
+            { label: "Actions" },
+            String(hook.actions.length)
+          ),
+          React.createElement(
+            DetailValue,
+            { label: "Canonical source" },
+            // The source's own state is a fact about the read: a declaration
+            // that was not read has no state, and one that was read and found
+            // invalid is not the same as one that was read and found sound.
+            sourceValidity === null
+              ? NOT_OBSERVED_LABEL
+              : sourceValidity
+                ? "Valid"
+                : "Invalid"
+          ),
+          React.createElement(
+            DetailValue,
+            { label: "Revision" },
+            revision ?? NOT_OBSERVED_LABEL
+          )
         )
-      ),
+      }),
       React.createElement(Tag, {
         children: hookOriginLabel(hook.origin),
         dataAttributes: { "data-hook-origin": hook.event }

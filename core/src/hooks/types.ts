@@ -138,4 +138,20 @@ export interface RuleSyncHooksState {
   /** The target whose effective declaration this is. */
   readonly target: string;
   readonly events: readonly HookEventDeclaration[];
+  /**
+   * The canonical declaration's exact source text, or null when it was not read.
+   *
+   * It travels with the events it belongs to rather than beside them, so the
+   * source a reader inspects and the declaration it describes are one read and
+   * not two that can straddle a change.
+   */
+  readonly content: string | null;
+  /**
+   * The sha256 of the canonical declaration's exact bytes, or null when it was
+   * not read.
+   *
+   * The revision names the declaration the events and the source text came
+   * from, so a reader can tell whether the two views describe the same bytes.
+   */
+  readonly revision: string | null;
 }

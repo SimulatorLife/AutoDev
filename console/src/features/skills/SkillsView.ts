@@ -9,7 +9,10 @@ import React from "react";
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { FilterBar } from "../../components/filters/FilterBar.ts";
 import { AutoSubmitSelectField } from "../../components/forms/AutoSubmitSelectField.ts";
-import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
+import {
+  CALLOUT_ERROR_CLASS,
+  CALLOUT_WARNING_CLASS
+} from "../../components/layout/Callout.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
@@ -37,7 +40,6 @@ import {
   skillScopePlace
 } from "./skill-scope.ts";
 import type { SkillObservation, SkillTelemetry } from "./skill-telemetry.ts";
-import type { SkillAssignmentSaveOutcome } from "./SkillRoleAssignment.ts";
 import {
   filterSkills,
   SKILLS_LIST_PATH,
@@ -104,7 +106,6 @@ export interface SkillsViewProps {
    * which one it was.
    */
   readonly executionContractObserved: boolean;
-  readonly saveOutcome?: SkillAssignmentSaveOutcome | undefined;
   /**
    * The role the list is narrowed to.
    *

@@ -10,6 +10,7 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  statSync,
   symlinkSync,
   utimesSync,
   writeFileSync
@@ -24,9 +25,11 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace";
 import { z } from "zod";
 
+import { DurableCommandTaskStore } from "../src/mcp/command-task-store.ts";
 import {
   CommandCatalogueError,
   type CommandDefinition,
@@ -48,6 +51,7 @@ import {
   catalogueDigest,
   commandCacheRoot,
   commandScratchRoot,
+  commandTaskRoot,
   createApprovedCatalogueGrant,
   createWorkspaceLease,
   resolveCommandsScope
@@ -58,7 +62,6 @@ import {
   startRegistryProxy
 } from "../src/mcp/commands-registry-proxy.ts";
 import {
-  CommandTaskStore,
   isCommandEligibleInWorkspace,
   createCommandsMcpServer,
   effectiveCommands
@@ -284,6 +287,7 @@ test("a role's grant decides the effective command set, and a read-only role get
         workspaceId: null,
         catalogue: parseCommandCatalogue(catalogue),
         scope: scopeFixture("/tmp"),
+        taskDirectory: taskDirectoryFixture(),
         isAuthorized: () => true,
         tryAcquireWorkspace: () => null
       }),
@@ -297,12 +301,191 @@ test("a role's grant decides the effective command set, and a read-only role get
         workspaceId: null,
         catalogue: parseCommandCatalogue(catalogue),
         scope: scopeFixture("/tmp"),
+        taskDirectory: taskDirectoryFixture(),
         isAuthorized: () => false,
         tryAcquireWorkspace: () => null
       }),
     /revoked/u
   );
 });
+
+/**
+A private directory for one scope's durable task records.
+*/
+function taskDirectoryFixture(): string {
+  return mkdtempSync(path.join(tmpdir(), "autodev-command-tasks-"));
+}
+
+/**
+The augmented call's answer: the task it created.
+*/
+const createdTask = z
+  .object({ task: z.object({ taskId: z.string() }).passthrough() })
+  .passthrough();
+
+/**
+Wait for a file the confined command creates, so a test can act on a command
+that has actually started rather than on a guess.
+*/
+async function isFilePresent(file: string): Promise<boolean> {
+  for (let attempt = 0; attempt < 200 && !existsSync(file); attempt += 1) {
+    await delay(25);
+  }
+  return existsSync(file);
+}
+
+test(
+  "a command that is still running when the backend closes is failed, never completed",
+  {
+    skip: process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec")
+  },
+  async () => {
+    const root = mkdtempSync(
+      path.join(tmpdir(), "autodev-command-interrupted-")
+    );
+    const scope = scopeFixture(root);
+    const taskDirectory = taskDirectoryFixture();
+    const created = createCommandsMcpServer({
+      role: "worker",
+      workspaceId: null,
+      catalogue: parseCommandCatalogue({
+        version: 1,
+        commands: {
+          typecheck: {
+            ...fixture,
+            executable: "sh",
+            args: [
+              "-c",
+              "printf started > started; sleep 30; printf late > late"
+            ],
+            timeoutMs: 40_000
+          }
+        }
+      }),
+      scope,
+      taskDirectory,
+      isAuthorized: () => true,
+      tryAcquireWorkspace: () => () => {}
+    });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const client = new Client({
+      name: "interrupted-task-test",
+      version: "1.0.0"
+    });
+    try {
+      await created.server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const augmented = await client.request(
+        {
+          method: "tools/call",
+          params: { name: "typecheck", arguments: {}, task: { ttl: 60_000 } }
+        },
+        createdTask
+      );
+      const taskId = augmented.task.taskId;
+      const started = path.join(scope.workspace, "started");
+      assert.ok(await isFilePresent(started), "the command actually started");
+      // The backend goes away with the command still running.
+      await created.close();
+      assert.equal(existsSync(path.join(scope.workspace, "late")), false);
+      // A later backend reads the record the interrupted command left behind.
+      const store = new DurableCommandTaskStore({
+        directory: taskDirectory,
+        authorize: () => {}
+      });
+      const interrupted = await store.getTask(taskId);
+      assert.equal(interrupted?.status, "failed");
+      assert.match(interrupted?.statusMessage ?? "", /interrupted/u);
+      const result = await store.getTaskResult(taskId);
+      assert.equal(result.isError, true);
+      assert.match(JSON.stringify(result.content), /unknown/u);
+    } finally {
+      await client.close();
+      rmSync(root, { recursive: true, force: true });
+      rmSync(taskDirectory, { recursive: true, force: true });
+    }
+  }
+);
+
+test(
+  "a command whose grant ends mid-flight is failed, not left running",
+  {
+    skip: process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec")
+  },
+  async () => {
+    const root = mkdtempSync(
+      path.join(tmpdir(), "autodev-command-revoked-task-")
+    );
+    const scope = scopeFixture(root);
+    const taskDirectory = taskDirectoryFixture();
+    let isAuthorized = true;
+    const created = createCommandsMcpServer({
+      role: "worker",
+      workspaceId: null,
+      catalogue: parseCommandCatalogue({
+        version: 1,
+        commands: {
+          typecheck: {
+            ...fixture,
+            executable: "sh",
+            args: [
+              "-c",
+              "printf started > started; sleep 30; printf late > late"
+            ],
+            timeoutMs: 40_000
+          }
+        }
+      }),
+      scope,
+      taskDirectory,
+      isAuthorized: () => isAuthorized,
+      tryAcquireWorkspace: () => () => {}
+    });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "revoked-task-test", version: "1.0.0" });
+    try {
+      await created.server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const augmented = await client.request(
+        {
+          method: "tools/call",
+          params: { name: "typecheck", arguments: {}, task: { ttl: 60_000 } }
+        },
+        createdTask
+      );
+      const taskId = augmented.task.taskId;
+      const started = path.join(scope.workspace, "started");
+      assert.ok(await isFilePresent(started), "the command actually started");
+      isAuthorized = false;
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        const store = new DurableCommandTaskStore({
+          directory: taskDirectory,
+          authorize: () => {}
+        });
+        const observed = await store.getTask(taskId);
+        if (observed?.status === "failed") break;
+        await delay(25);
+      }
+      assert.equal(existsSync(path.join(scope.workspace, "late")), false);
+      const store = new DurableCommandTaskStore({
+        directory: taskDirectory,
+        authorize: () => {}
+      });
+      const observed = await store.getTask(taskId);
+      assert.equal(observed?.status, "failed");
+      assert.match(observed?.statusMessage ?? "", /grant ended/u);
+      const result = await store.getTaskResult(taskId);
+      assert.equal(result.isError, true);
+    } finally {
+      await created.close();
+      await client.close();
+      rmSync(root, { recursive: true, force: true });
+      rmSync(taskDirectory, { recursive: true, force: true });
+    }
+  }
+);
 
 test("registered commands match discovery, and request cancellation and revocation stop execution", {
   skip: process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec")
@@ -327,6 +510,7 @@ test("registered commands match discovery, and request cancellation and revocati
       }
     }),
     scope,
+    taskDirectory: taskDirectoryFixture(),
     isAuthorized: () => authorized,
     tryAcquireWorkspace: () => {
       if (held) return null;
@@ -388,6 +572,82 @@ test("registered commands match discovery, and request cancellation and revocati
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test(
+  "a command that fails is a failed task, and never a completed one",
+  {
+    skip: process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec")
+  },
+  async () => {
+    const root = mkdtempSync(
+      path.join(tmpdir(), "autodev-command-failed-task-")
+    );
+    const scope = scopeFixture(root);
+    const created = createCommandsMcpServer({
+      role: "worker",
+      workspaceId: null,
+      catalogue: parseCommandCatalogue({
+        version: 1,
+        commands: {
+          typecheck: {
+            ...fixture,
+            executable: "sh",
+            args: ["-c", "exit 3"],
+            timeoutMs: 15_000
+          }
+        }
+      }),
+      scope,
+      taskDirectory: taskDirectoryFixture(),
+      isAuthorized: () => true,
+      tryAcquireWorkspace: () => () => {}
+    });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "failed-task-test", version: "1.0.0" });
+    try {
+      await created.server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const augmented = await client.request(
+        {
+          method: "tools/call",
+          params: { name: "typecheck", arguments: {}, task: { ttl: 30_000 } }
+        },
+        createdTask
+      );
+      const taskId = augmented.task.taskId;
+      let status = "";
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        const observed = await client.experimental.tasks.getTask(taskId);
+        status = observed.status;
+        if (
+          status === "completed" ||
+          status === "failed" ||
+          status === "cancelled"
+        )
+          break;
+        await delay(25);
+      }
+      assert.equal(status, "failed");
+      const result = await client.experimental.tasks.getTaskResult(
+        taskId,
+        CallToolResultSchema
+      );
+      const payload = result.structuredContent as {
+        commandId: string;
+        status: string;
+        exitCode: number | null;
+      };
+      assert.equal(payload.commandId, "typecheck");
+      assert.equal(payload.status, "failed");
+      assert.equal(payload.exitCode, 3);
+    } finally {
+      await created.close();
+      await client.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+);
 
 test("a command may be restricted to the workspaces it names", () => {
   const definition = {
@@ -451,30 +711,6 @@ test("the approved catalogue may not live inside the workspace it authorizes", (
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("native task store isolates explicit and absent transport sessions", async () => {
-  const store = new CommandTaskStore(() => {}, new Map());
-  const request = { method: "tools/call", params: { name: "test", arguments: {} } };
-  try {
-    const stdio = await store.createTask({ ttl: 10_000 }, 1, request);
-    const explicit = await store.createTask({ ttl: 10_000 }, 2, request, "stdio");
-    assert.equal((await store.getTask(stdio.taskId))?.taskId, stdio.taskId);
-    assert.equal(await store.getTask(stdio.taskId, "stdio"), null);
-    assert.equal(await store.getTask(explicit.taskId), null);
-    assert.equal(await store.getTask(explicit.taskId, "other"), null);
-    assert.deepEqual((await store.listTasks()).tasks.map((task) => task.taskId), [stdio.taskId]);
-    assert.deepEqual((await store.listTasks(undefined, "stdio")).tasks.map((task) => task.taskId), [explicit.taskId]);
-    const result = { content: [{ type: "text", text: "fixture" }] };
-    await assert.rejects(store.storeTaskResult(explicit.taskId, "completed", result), /not found/u);
-    await assert.rejects(store.updateTaskStatus(explicit.taskId, "cancelled"), /not found/u);
-    assert.equal((await store.getTask(explicit.taskId, "stdio"))?.status, "working");
-    await store.storeTaskResult(explicit.taskId, "completed", result, "stdio");
-    await assert.rejects(store.getTaskResult(explicit.taskId), /not found/u);
-    assert.deepEqual(await store.getTaskResult(explicit.taskId, "stdio"), result);
-  } finally {
-    store.cleanup();
   }
 });
 
@@ -558,6 +794,21 @@ test("approved catalogue reads are bounded and private state directories cannot 
     rmSync(scratch, { recursive: true });
     symlinkSync(outside, scratch);
     assert.throws(() => commandScratchRoot(run, workspaceKey), /must not redirect/u);
+
+    // The durable task records live in their own private scope, named by the
+    // role and the workspace, so one role's records are never another's.
+    const tasks = commandTaskRoot(run, "worker", workspaceKey);
+    assert.equal(
+      tasks,
+      path.join(realpathSync(run), "command-tasks", `worker-${workspaceKey}`)
+    );
+    assert.equal(statSync(tasks).mode & 0o077, 0);
+    assert.notEqual(commandTaskRoot(run, "validator", workspaceKey), tasks);
+    assert.throws(
+      () => commandTaskRoot(run, "../escape", workspaceKey),
+      /role/u
+    );
+    assert.throws(() => commandTaskRoot(run, "worker", ".."), /workspace key/u);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -738,15 +989,15 @@ test("a confined command cannot read the operator's Git configuration", {
   try {
     const scope = scopeFixture(root);
     const home = process.env.HOME ?? "";
-    const globalConfiguration = path.join(home, ".gitconfig");
+    const globalConfig = path.join(home, ".gitconfig");
     assert.ok(
-      existsSync(globalConfiguration),
+      existsSync(globalConfig),
       "the operator's Git configuration is the subject of this test"
     );
     const definition: CommandDefinition = {
       ...fixture,
       executable: "sh",
-      args: ["-c", `cat ${JSON.stringify(globalConfiguration)}`]
+      args: ["-c", `cat ${JSON.stringify(globalConfig)}`]
     };
     const result = await runApprovedCommand(
       "probe",
@@ -1122,6 +1373,79 @@ test("confined commands can use private Runtime roots without reading sibling Ru
 });
 
 test(
+  "a command in AutoDev's own checkout cannot change the effective policy",
+  {
+    skip: process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec")
+  },
+  async (t) => {
+    const root = mkdtempSync(
+      path.join(tmpdir(), "autodev-command-self-policy-")
+    );
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    // The checkout is the workspace, and it holds the catalogue proposal the
+    // agent is allowed to edit.
+    const workspace = path.join(root, "AutoDev");
+    mkdirSync(path.join(workspace, "config"), { recursive: true });
+    const proposal = path.join(workspace, "config", "commands.json");
+    writeFileSync(proposal, JSON.stringify(catalogue));
+    // The Runtime home holds the operator-approved revision and the installed
+    // Runtime that enforces it. Both are outside the workspace.
+    const home = path.join(root, ".autodev");
+    const approved = path.join(home, "config", "commands.json");
+    mkdirSync(path.dirname(approved), { recursive: true });
+    writeFileSync(approved, JSON.stringify(catalogue));
+    const policy = path.join(home, "src", "mcp", "commands-main.ts");
+    mkdirSync(path.dirname(policy), { recursive: true });
+    writeFileSync(policy, "installed policy\n");
+    const approvedDigest = catalogueDigest(readFileSync(approved, "utf8"));
+
+    const scope = scopeFixture(root);
+    const run = path.join(home, "run");
+    const key = commandWorkspaceKey(workspace);
+    const scratch = commandScratchRoot(run, key);
+    const cache = commandCacheRoot(run, key);
+    const approvedScope = { ...scope, workspace, scratch, cache };
+    const command = {
+      ...fixture,
+      executable: "sh",
+      timeoutMs: 20_000,
+      args: [
+        "-c",
+        '{ : > "$1"; } 2>/dev/null || echo denied-write-approved; ' +
+          '{ : > "$2"; } 2>/dev/null || echo denied-write-policy; ' +
+          'cat "$1" 2>/dev/null || echo denied-read-approved; ' +
+          'printf proposal > "$3"',
+        "sh",
+        approved,
+        policy,
+        proposal
+      ]
+    } satisfies CommandDefinition;
+    const result = await runApprovedCommand(
+      "fixture",
+      command,
+      command.args,
+      approvedScope,
+      AbortSignal.timeout(20_000)
+    );
+    assert.equal(result.status, "succeeded", result.stderr);
+    assert.match(result.stdout, /denied-write-approved/u);
+    assert.match(result.stdout, /denied-write-policy/u);
+    assert.match(result.stdout, /denied-read-approved/u);
+    // The effective policy is unchanged: the approved copy and the installed
+    // Runtime that enforces it are outside the workspace and unwritable.
+    assert.equal(
+      catalogueDigest(readFileSync(approved, "utf8")),
+      approvedDigest
+    );
+    assert.equal(readFileSync(policy, "utf8"), "installed policy\n");
+    // The workspace's own proposal is the agent's to edit. Editing it is a
+    // development action, not an authority change.
+    assert.equal(readFileSync(proposal, "utf8"), "proposal");
+  }
+);
+
+test(
   "a symlink in the workspace cannot be used to reach outside it",
   {
     skip:
@@ -1314,6 +1638,31 @@ test("the command scratch and cache are private", () => {
     }
     chmodSync(scope.scratch, 0o755);
     assert.throws(() => prepareCommand(scope, fixture), /private/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("two workspaces never share a writable cache", () => {
+  const root = mkdtempSync(
+    path.join(tmpdir(), "autodev-command-cache-isolation-")
+  );
+  try {
+    const one = path.join(root, "one");
+    const two = path.join(root, "two");
+    const alias = path.join(root, "alias");
+    for (const directory of [one, two]) mkdirSync(directory, { mode: 0o700 });
+    symlinkSync(one, alias);
+    const run = path.join(root, "run");
+    const first = commandCacheRoot(run, commandWorkspaceKey(one));
+    const second = commandCacheRoot(run, commandWorkspaceKey(two));
+    const aliased = commandCacheRoot(run, commandWorkspaceKey(alias));
+    // The same workspace under another spelling is the same workspace and
+    // shares its cache; a different workspace never does, so a dependency
+    // store in one cannot poison the other.
+    assert.equal(aliased, first);
+    assert.equal(path.dirname(first), path.dirname(second));
+    assert.notEqual(first, second);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

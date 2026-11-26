@@ -15,14 +15,12 @@ import test from "node:test";
 
 import {
   approvalPolicyFromConfig,
-  PermissionPolicyConflictError,
   permissionPolicyGeneration,
   permissionPolicyRevision,
-  PermissionPolicyValidationError,
   readAntigravityCliPermissionDefaults,
   readAppliedPermissionPolicyFile,
   readPermissionPolicyFile,
-  updatePermissionPolicy
+  readPermissionPolicySource
 } from "../src/config/permission-policy.ts";
 import * as dataExports from "../src/index.ts";
 
@@ -70,6 +68,47 @@ test("readPermissionPolicyFile reads codexcli settings and revision from .rulesy
     assert.equal(read.policy.approvalsReviewer, "user");
     assert.equal(read.policy.webSearch, true);
     assert.equal(read.revision, permissionPolicyRevision(POLICY_SOURCE));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("the canonical policy source travels with the policy it states", async () => {
+  const { directory, file } = await policyFixture();
+  try {
+    const source = readPermissionPolicySource(file);
+    assert.equal(source.read.status, "valid");
+    // The text is the source as the repository holds it, comments included,
+    // and the revision names the same bytes the policy was parsed from.
+    assert.equal(source.content, POLICY_SOURCE);
+    assert.equal(source.read.revision, permissionPolicyRevision(POLICY_SOURCE));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a canonical policy that was read and did not parse still has its text", async () => {
+  const { directory, file } = await policyFixture("{ invalid jsonc\n");
+  try {
+    const source = readPermissionPolicySource(file);
+    assert.equal(source.read.status, "invalid");
+    // The fault is in the source, and the source is there to look at.
+    assert.equal(source.content, "{ invalid jsonc\n");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a canonical policy that could not be read has no text", async () => {
+  const directory = await mkdtemp(
+    path.join(tmpdir(), "autodev-missing-policy-source-")
+  );
+  try {
+    const source = readPermissionPolicySource(
+      path.join(directory, "permissions.jsonc")
+    );
+    assert.equal(source.read.status, "unavailable");
+    assert.equal(source.content, null);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -148,15 +187,6 @@ test("permission reads refuse oversized sources without inventing a revision", a
     agentMode: null,
     toolPermission: null
   });
-
-  assert.throws(
-    () => updatePermissionPolicy({
-      file,
-      expectedRevision: permissionPolicyRevision(POLICY_SOURCE),
-      update: { webSearch: false }
-    }),
-    /size bound/u
-  );
 });
 
 test("permission reads accept the inclusive UTF-8 byte limit and reject malformed bytes", async (t) => {
@@ -213,14 +243,6 @@ test("permission reads reject nonregular files and symlinked canonical sources",
     agentMode: null,
     toolPermission: null
   });
-  assert.throws(
-    () => updatePermissionPolicy({
-      file: linkedFile,
-      expectedRevision: permissionPolicyRevision(POLICY_SOURCE),
-      update: { webSearch: false }
-    }),
-    PermissionPolicyValidationError
-  );
   assert.equal(await readFile(file, "utf8"), POLICY_SOURCE);
 });
 
@@ -261,25 +283,18 @@ test("applied permission parse errors never include private configuration text",
   assert.doesNotMatch(JSON.stringify(read), /private-fixture-secret/u);
 });
 
-test("a policy update cannot persist a source above its read limit", async (t) => {
-  const { directory, file } = await policyFixture();
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  assert.throws(
-    () => updatePermissionPolicy({
-      file,
-      expectedRevision: permissionPolicyRevision(POLICY_SOURCE),
-      update: { approvalsReviewer: "x".repeat(1_000_000) }
-    }),
-    /size bound/u
-  );
-  assert.equal(await readFile(file, "utf8"), POLICY_SOURCE);
-});
-
 test("the approval policy vocabulary is translated in one place", () => {
   assert.equal(approvalPolicyFromConfig("never"), "never");
   assert.equal(approvalPolicyFromConfig("on-request"), "on-request");
   assert.equal(approvalPolicyFromConfig("on-demand"), null);
   assert.equal(approvalPolicyFromConfig("always"), null);
+});
+
+test("the permission policy has no write surface in @simulatorlife/autodev-data", () => {
+  const exported = Object.keys(dataExports);
+  assert.equal(exported.includes("updatePermissionPolicy"), false);
+  assert.equal(exported.includes("PermissionPolicyConflictError"), false);
+  assert.equal(exported.includes("PermissionPolicyValidationError"), false);
 });
 
 test("legacy role sandbox readers are not exported from @simulatorlife/autodev-data", () => {
@@ -288,100 +303,6 @@ test("legacy role sandbox readers are not exported from @simulatorlife/autodev-d
   assert.equal(exported.includes("roleSandboxMode"), false);
   assert.equal(exported.includes("sandboxModeFromConfig"), false);
   assert.equal(exported.includes("sandboxModeToConfig"), false);
-});
-
-test("a write changes the requested key while preserving comments in JSONC", async () => {
-  const { directory, file } = await policyFixture();
-  try {
-    const before = await readFile(file, "utf8");
-    const revision = permissionPolicyRevision(before);
-    const written = updatePermissionPolicy({
-      file,
-      expectedRevision: revision,
-      update: { approvalPolicy: "on-request" }
-    });
-    assert.equal(written.changed, true);
-    assert.equal(written.policy.approvalPolicy, "on-request");
-    const after = await readFile(file, "utf8");
-    assert.match(after, /\/\/ Codex defaults for AutoDev/u);
-    assert.match(after, /"approval_policy": "on-request"/u);
-    assert.match(after, /"approvals_reviewer": "user"/u);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("a write reaches nested tools.web_search cleanly", async () => {
-  const { directory, file } = await policyFixture();
-  try {
-    const revision = permissionPolicyRevision(await readFile(file, "utf8"));
-    const written = updatePermissionPolicy({
-      file,
-      expectedRevision: revision,
-      update: { webSearch: false, approvalsReviewer: "guardian_subagent" }
-    });
-    assert.equal(written.changed, true);
-    assert.equal(written.policy.webSearch, false);
-    assert.equal(written.policy.approvalsReviewer, "guardian_subagent");
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("a write decided on a policy file that has moved is refused", async () => {
-  const { directory, file } = await policyFixture();
-  try {
-    const revision = permissionPolicyRevision(await readFile(file, "utf8"));
-    await writeFile(file, `${POLICY_SOURCE}\n`, "utf8");
-    assert.throws(
-      () =>
-        updatePermissionPolicy({
-          file,
-          expectedRevision: revision,
-          update: { approvalPolicy: "on-request" }
-        }),
-      PermissionPolicyConflictError
-    );
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("a value outside the vocabulary is refused before the file is touched", async () => {
-  const { directory, file } = await policyFixture();
-  try {
-    const revision = permissionPolicyRevision(await readFile(file, "utf8"));
-    assert.throws(
-      () =>
-        updatePermissionPolicy({
-          file,
-          expectedRevision: revision,
-          update: {
-            approvalPolicy: "sometimes" as never
-          }
-        }),
-      PermissionPolicyValidationError
-    );
-    assert.equal(await readFile(file, "utf8"), POLICY_SOURCE);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("a write that changes nothing says so and writes nothing", async () => {
-  const { directory, file } = await policyFixture();
-  try {
-    const revision = permissionPolicyRevision(await readFile(file, "utf8"));
-    const written = updatePermissionPolicy({
-      file,
-      expectedRevision: revision,
-      update: { approvalPolicy: "never" }
-    });
-    assert.equal(written.changed, false);
-    assert.equal(await readFile(file, "utf8"), POLICY_SOURCE);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
 });
 
 test("the generation of a policy is its values, not its bytes", () => {

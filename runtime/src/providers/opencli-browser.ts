@@ -51,6 +51,9 @@ export function resolveOpencliBrowserExecutable(
 }
 
 const DEFAULT_CDP_COMMAND_TIMEOUT_MS = 3000;
+// macOS raises the window asynchronously, so visibility is read more than once.
+const VISIBILITY_READ_ATTEMPTS = 3;
+const VISIBILITY_READ_DELAY_MS = 150;
 
 export type OpencliCdpCommand = (
   wsUrl: string,
@@ -343,6 +346,11 @@ export class OpencliBrowser {
         // Fall through to HTTP /json/activate for older/mock CDP targets.
       }
     }
+    // Target.activateTarget only focuses the target inside its own window. The
+    // page domain raises that window as well, which is what a native click
+    // needs: Chromium reports the page as hidden while its window is
+    // minimised, covered by another window, or on another Space.
+    await this.bringPageToFront(endpoint, signal);
     const response = await this.fetcher(
       `http://127.0.0.1:${this.port}/json/activate/${encodeURIComponent(target)}`,
       { signal: combinedSignal }
@@ -351,6 +359,73 @@ export class OpencliBrowser {
       throw new OpencliBrowserUnavailableError(
         "Could not activate the leased browser tab."
       );
+    }
+    await this.assertPageVisible(endpoint, signal);
+  }
+
+  // Raise the leased page so Chromium really considers it visible.
+  //
+  // This is the genuine activation primitive; it is not a visibility spoof.
+  // A target that does not expose the page domain is left to the
+  // browser-level activation and the HTTP endpoint.
+  private async bringPageToFront(
+    endpoint: string,
+    signal: AbortSignal
+  ): Promise<void> {
+    try {
+      await this.cdpCommand(
+        endpoint,
+        "Page.bringToFront",
+        {},
+        AbortSignal.any([signal, AbortSignal.timeout(3000)])
+      );
+    } catch (error) {
+      if (signal.aborted) throw error;
+    }
+  }
+
+  // Report the leased page's own visibility instead of letting the native
+  // input guard fail later with an opaque message.
+  //
+  // The read is only a diagnosis: when the state cannot be observed the turn
+  // continues and the site's own guard decides.
+  private async assertPageVisible(
+    endpoint: string,
+    signal: AbortSignal
+  ): Promise<void> {
+    for (let attempt = 1; attempt <= VISIBILITY_READ_ATTEMPTS; attempt += 1) {
+      // eslint-disable-next-line no-await-in-loop -- each attempt must observe the window raise.
+      const visibility = await this.readPageVisibility(endpoint, signal);
+      if (visibility === null || visibility === "visible") return;
+      if (attempt < VISIBILITY_READ_ATTEMPTS) {
+        // eslint-disable-next-line no-await-in-loop -- the retry delay is the point of the loop.
+        await delay(VISIBILITY_READ_DELAY_MS);
+        continue;
+      }
+      throw new OpencliBrowserUnavailableError(
+        `The leased browser page is not visible (document.visibilityState is "${visibility}"), so native input cannot be dispatched. Restore the dedicated browser window (un-minimize it and bring it to the front) and retry.`
+      );
+    }
+  }
+
+  // The page's own visibility state, or null when it cannot be observed.
+  private async readPageVisibility(
+    endpoint: string,
+    signal: AbortSignal
+  ): Promise<string | null> {
+    try {
+      const evaluated = await this.cdpCommand(
+        endpoint,
+        "Runtime.evaluate",
+        { expression: "document.visibilityState", returnByValue: true },
+        AbortSignal.any([signal, AbortSignal.timeout(3000)])
+      );
+      const value = (evaluated as { result?: { value?: unknown } })?.result
+        ?.value;
+      return typeof value === "string" ? value : null;
+    } catch (error) {
+      if (signal.aborted) throw error;
+      return null;
     }
   }
 

@@ -52,6 +52,35 @@ catalogue, approve exactly that revision on the command line (never through
 bash scripts/install.sh --approve-command-catalogue=sha256:<digest>
 ```
 
+A command that runs long enough to outlive the request is exposed as a native
+MCP task. Its lifecycle is kept in the Runtime home's private run directory,
+under `run/command-tasks/<role>-<workspace>/`, one owner-only record per task:
+a task that was still running when its backend ended is reconciled as **failed**
+with the reason, never as completed, and its command is never replayed, while a
+task that had already finished keeps its result so a reconnecting client can
+still collect it. Records are visible only to the session that created them and
+are dropped once their retention window passes. A task id is a handle, not a
+credential: a session that presents another session's task id is refused.
+
+Verifying the Commands surface after an install uses the existing Control API
+reads, not a separate dashboard. `GET /control/mcps` carries the Commands
+backend's own entry with the approval state of each Runtime home -- `approved`,
+`pending`, `unavailable` or `unknown`, with both digests -- while
+`GET /control/mcp-applied` carries the applied projection and
+`GET /control/mcp-runtime` carries what the Runtime observed. The Console's MCP
+detail renders the same approval state per home.
+
+Two failures are worth recognising in the gateway's log. `Commands MCP
+unavailable -- no approved command catalogue in <home>` means the backend has
+no approved copy in that Runtime home and refused to start; approve the
+revision as above. `The approved command catalogue resolves inside the
+authorized workspace` means the approved copy was found inside the workspace
+being served, which would let an agent edit its own authority; the backend
+refuses to start and the approved copy must be installed outside the
+workspace. A command that cannot reach the network is expected to fail:
+dependency installation goes through the backend's own loopback registry proxy,
+and every other command runs with the network denied.
+
 The installed Runtime resolves its dependencies from a protected closure that
 the installer deploys with `pnpm deploy --prod` into
 `$CODEX_HOME/.deps-<hash>/node_modules`; it no longer links the checkout's
@@ -1123,6 +1152,16 @@ reporting healthy, and Provider status in the Console reports browser
 startup/transport failures separately from a site's Sign-in required state.
 Site login is not a prerequisite for the bridge to start.
 
+**"Native input requires a visible browser page".** Only ChatGPT's app menu,
+site-tool menu and model picker need native input, and the dedicated browser
+raises the leased tab's own window before those turns (`Page.bringToFront`),
+so a minimized, fully covered or other-Space window is brought forward
+automatically. If the turn still reports the page as hidden, macOS refused
+the activation: un-minimize the Chrome for Testing window, move it to the
+current Space, bring it to the front and retry the turn. AutoDev never fakes
+`document.visibilityState`, and it never replays a turn whose submission is
+uncertain.
+
 **What an opencli change has to refresh.** An opencli change lives in up to
 three places, and each one is live at a different moment:
 
@@ -1168,6 +1207,16 @@ normal installer later, when no active task depends on the local router, to
 restart the supervisors and enforce the token on live requests. It is
 intentionally an explicit migration flag rather than an implicit install-time
 change so an existing Desktop session is not disconnected unexpectedly.
+
+Every normal install also reconciles the shared MCP gateway service
+(`com.codex.autodev-mcp-gateway`, Supergateway plus the backend pool on
+`127.0.0.1:3312`, one authenticated surface per published role at
+`/<role>/mcp`). It runs whether or not the optional ChatGPT tunnel is
+enabled; disabling the tunnel never stops it. Its workspace and roles come
+from `AUTODEV_MCP_GATEWAY_WORKSPACE`, `AUTODEV_MCP_GATEWAY_ROLE` and
+`AUTODEV_MCP_GATEWAY_ROLES` (see [ChatGPT Secure MCP
+Tunnel](chatgpt-secure-mcp-tunnel.md)), and `install --check` verifies its
+readiness.
 
 For a live Desktop session, use `--materialize-only` to synchronize hooks,
 role files, MCP launchers, and rendered LaunchAgents without cycling any running

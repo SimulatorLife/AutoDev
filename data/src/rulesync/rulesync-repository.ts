@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
   type Dirent,
   existsSync,
@@ -8,22 +8,12 @@ import {
   readFileSync,
   realpathSync
 } from "node:fs";
-import {
-  link,
-  lstat,
-  mkdir,
-  readFile,
-  realpath,
-  unlink,
-  writeFile
-} from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
   type HookAction,
-  type HookDeclarationOrigin,
-  type HookEvent,
   type HookEventDeclaration,
   isHookEvent,
   isRecord,
@@ -106,8 +96,6 @@ const GIT_REVISION_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
 const SKILLS_SOURCE = ".rulesync/skills" as const;
 const CURATED_SKILLS_DIRECTORY = ".curated" as const;
 const SKILL_NAME_PATTERN = /^[a-z0-9-]{1,64}$/u;
-const SKILL_DESCRIPTION_MAX = 512;
-const SKILL_CONTENT_MAX = 20_000;
 const SOURCE_UPDATE_QUEUES = new Map<string, Promise<void>>();
 const COMMAND_PARSED_CACHE = new Map<
   string,
@@ -182,25 +170,6 @@ function skillFrontmatterProblem(
     return "The skill frontmatter targets must be a string array.";
   }
   return null;
-}
-
-function validateSkillSource(name: string, content: string): void {
-  const frontmatter = parseRuleSyncFrontmatter(content);
-  if (frontmatter.kind === "missing") {
-    throw new RuleSyncSkillValidationError(
-      "Skill source must have YAML frontmatter."
-    );
-  }
-  if (frontmatter.kind === "invalid_yaml") {
-    throw new RuleSyncSkillValidationError(
-      "Skill source frontmatter is not valid YAML."
-    );
-  }
-  const problem = skillFrontmatterProblem(
-    frontmatter.kind === "valid" ? frontmatter.metadata : null,
-    name
-  );
-  if (problem !== null) throw new RuleSyncSkillValidationError(problem);
 }
 
 /** One located fault in the skill catalog. */
@@ -352,12 +321,6 @@ export interface RuleSyncCommandsState {
   /** Why the source is invalid; empty when valid or not observed. */
   readonly issues: readonly RuleSyncValidationIssue[];
   readonly commands: readonly RuleSyncCommand[];
-}
-
-export interface RuleSyncCommandUpdateInput {
-  readonly name: string;
-  readonly expectedRevision: string;
-  readonly content: string;
 }
 
 /**
@@ -555,13 +518,6 @@ function commandHistoryFallback(
     : UNAVAILABLE_COMMAND_HISTORY;
 }
 
-export class RuleSyncCommandConflictError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "RuleSyncCommandConflictError";
-  }
-}
-
 export interface RuleSyncSkillsState {
   readonly source: typeof SKILLS_SOURCE;
   readonly valid: boolean | null;
@@ -570,29 +526,10 @@ export interface RuleSyncSkillsState {
   readonly skills: readonly SkillDefinition[];
 }
 
-export interface RuleSyncSkillPromotionInput {
-  readonly name: string;
-  readonly description: string;
-  readonly content: string;
-}
-
 export interface RuleSyncSkillSource {
   readonly name: string;
   readonly path: string;
   readonly content: string;
-  readonly revision: string;
-}
-
-export interface RuleSyncSkillSourceUpdateInput {
-  readonly name: string;
-  readonly expectedRevision: string;
-  readonly content: string;
-}
-
-export interface RuleSyncSkillArtifact {
-  readonly name: string;
-  readonly path: string;
-  readonly uri: string;
   readonly revision: string;
 }
 
@@ -646,55 +583,6 @@ export class RuleSyncMcpValidationError extends Error {
  * declaration first, and the caller has to load it again to see what it now
  * says.
  */
-export class RuleSyncHooksConflictError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "RuleSyncHooksConflictError";
-  }
-}
-
-/** The requested hook declaration change cannot be expressed. */
-export class RuleSyncHooksValidationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "RuleSyncHooksValidationError";
-  }
-}
-
-export interface RuleSyncHookEventUpdateInput {
-  /** The event whose action list is written. */
-  readonly event: HookEvent;
-  /** The target whose declaration is written. */
-  readonly target: string;
-  /**
-   * The event's complete action list.
-   *
-   * Complete, because the declaration replaces an event's list rather than
-   * adding to it: a partial list would be read as the whole list and would
-   * drop the actions it left out.
-   */
-  readonly actions: readonly HookAction[];
-  /** The revision of the canonical declaration the caller loaded. */
-  readonly expectedRevision: string;
-}
-
-export interface RuleSyncHookEventUpdateResult {
-  readonly source: ".rulesync/hooks.jsonc";
-  readonly event: HookEvent;
-  readonly target: string;
-  /** The revision of the declaration after the write. */
-  readonly revision: string;
-  /**
-   * Where the written declaration lives.
-   *
-   * `shared` means the shared declaration holds it and every target inherits
-   * it; `target` means the target's own declaration holds it.
-   */
-  readonly origin: HookDeclarationOrigin;
-  /** The action list the target now declares for the event. */
-  readonly actions: readonly HookAction[];
-}
-
 /**
  * The launch configuration one write sets.
  *
@@ -1126,7 +1014,6 @@ const MCP_LAUNCH_FILE_KEYS = [
 
 const MCP_SERVER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const MCP_TARGET_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
-const HOOK_TARGET_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 
 /**
  * How the canonical declaration is written back.
@@ -1403,42 +1290,6 @@ function parseHookAction(value: unknown): HookAction | null {
   };
 }
 
-/**
- * The action list one write sets.
- *
- * The list is written complete, so every action is checked here rather than
- * when it is read: an action the declaration cannot hold must be refused
- * before the document is touched, not after.
- */
-function normalizeHookActions(
-  actions: readonly HookAction[]
-): readonly HookAction[] | null {
-  const normalized: HookAction[] = [];
-  for (const action of actions) {
-    if (
-      action.type !== "command" ||
-      typeof action.command !== "string" ||
-      action.command.trim().length === 0 ||
-      (action.matcher !== undefined && typeof action.matcher !== "string") ||
-      (action.statusMessage !== undefined &&
-        typeof action.statusMessage !== "string")
-    ) {
-      return null;
-    }
-    normalized.push({
-      type: "command",
-      command: action.command,
-      ...(typeof action.matcher === "string"
-        ? { matcher: action.matcher }
-        : {}),
-      ...(typeof action.statusMessage === "string"
-        ? { statusMessage: action.statusMessage }
-        : {})
-    });
-  }
-  return normalized;
-}
-
 function parseHookActions(value: unknown): HookAction[] | null {
   if (!Array.isArray(value)) return null;
   const actions: HookAction[] = [];
@@ -1609,52 +1460,8 @@ function hookEventIssues(
   return issues;
 }
 
-function hasControlCharacters(value: string): boolean {
-  for (const character of value) {
-    const code = character.codePointAt(0) ?? 0;
-    if (code < 32 && character !== "\n" && character !== "\t") return true;
-  }
-  return false;
-}
-
-function hasUnsafeSkillSourceControls(value: string): boolean {
-  for (const character of value) {
-    const code = character.codePointAt(0) ?? 0;
-    if (
-      code < 32 &&
-      character !== "\n" &&
-      character !== "\r" &&
-      character !== "\t"
-    )
-      return true;
-  }
-  return false;
-}
-
-async function ensureChildDirectory(
-  parent: string,
-  name: string
-): Promise<string> {
-  const directory = path.join(parent, name);
-  try {
-    await mkdir(directory);
-  } catch (error) {
-    if (!isExistingFileError(error)) throw error;
-  }
-  const metadata = await lstat(directory);
-  if (!metadata.isDirectory() || metadata.isSymbolicLink())
-    throw new RuleSyncSkillConflictError(
-      "RuleSync skill directory is not a real directory."
-    );
-  return directory;
-}
-
 function isMissingFileError(error: unknown): boolean {
   return isNodeError(error) && error.code === "ENOENT";
-}
-
-function isExistingFileError(error: unknown): boolean {
-  return isNodeError(error) && error.code === "EEXIST";
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
@@ -2220,110 +2027,6 @@ export class RuleSyncRepository {
     }
   }
 
-  updateCommand(input: RuleSyncCommandUpdateInput): Promise<RuleSyncCommand> {
-    const name = input.name;
-    if (!COMMAND_NAME_PATTERN.test(name)) {
-      return Promise.reject(
-        new RuleSyncCommandValidationError(
-          "Command name must be a lowercase hyphenated slug."
-        )
-      );
-    }
-    if (!COMMAND_REVISION_PATTERN.test(input.expectedRevision)) {
-      return Promise.reject(
-        new RuleSyncCommandValidationError(
-          "Expected command revision is invalid."
-        )
-      );
-    }
-    const content = input.content
-      .replaceAll("\r\n", "\n")
-      .replaceAll("\r", "\n");
-    if (
-      Buffer.byteLength(content, "utf8") > COMMAND_CONTENT_MAX_BYTES ||
-      hasControlCharacters(content)
-    ) {
-      return Promise.reject(
-        new RuleSyncCommandValidationError(
-          "Command content contains unsafe controls or exceeds its safe size bound."
-        )
-      );
-    }
-
-    const directory = resolveCanonicalRuleSyncDirectory(
-      this.repositoryRoot,
-      "commands"
-    );
-    if (directory.valid !== true || directory.path === null) {
-      return Promise.reject(
-        new RuleSyncCommandValidationError(
-          "Canonical RuleSync command source is not valid."
-        )
-      );
-    }
-    const commandsDir = directory.path;
-    const commandPath = path.join(commandsDir, `${name}.md`);
-    let updated: RuleSyncCommand;
-    try {
-      updated = parseRuleSyncCommand(name, content);
-    } catch (error) {
-      return Promise.reject(error);
-    }
-    return withSourceUpdateLock(commandPath, async () => {
-      const state = this.loadCommands();
-      if (state.valid !== true) {
-        throw new RuleSyncCommandValidationError(
-          "Canonical RuleSync command source is not valid."
-        );
-      }
-      const current = state.commands.find((command) => command.name === name);
-      if (!current) {
-        throw new RuleSyncCommandConflictError(
-          `Canonical command "${name}" no longer exists.`
-        );
-      }
-      if (current.revision !== input.expectedRevision) {
-        throw new RuleSyncCommandConflictError(
-          `Canonical command "${name}" changed since it was loaded.`
-        );
-      }
-
-      if (updated.revision === current.revision) return current;
-
-      const commandStat = await lstat(commandPath);
-      if (!commandStat.isFile() || commandStat.isSymbolicLink()) {
-        throw new RuleSyncCommandConflictError(
-          `Canonical command "${name}" is not a regular file.`
-        );
-      }
-      const latestContent = await readFile(commandPath, "utf8");
-      if (
-        createHash("sha256").update(latestContent, "utf8").digest("hex") !==
-        input.expectedRevision
-      ) {
-        throw new RuleSyncCommandConflictError(
-          `Canonical command "${name}" changed before the update was written.`
-        );
-      }
-
-      await atomicWrite(commandPath, content, { mode: 0o644 });
-
-      const persistedContent = await readFile(commandPath, "utf8");
-      if (persistedContent !== content) {
-        throw new RuleSyncCommandConflictError(
-          `Canonical command "${name}" changed during the update.`
-        );
-      }
-      const updatedCommand = parseRuleSyncCommand(name, persistedContent);
-      COMMAND_PARSED_CACHE.set(commandPath, {
-        content: persistedContent,
-        command: updatedCommand
-      });
-      COMMAND_HISTORY_CACHE.delete(`${this.repositoryRoot}:${name}`);
-      return updatedCommand;
-    });
-  }
-
   /**
    * The canonical hook declaration, read as one target receives it.
    *
@@ -2338,7 +2041,15 @@ export class RuleSyncRepository {
     const source = HOOKS_SOURCE;
     const hooksPath = path.join(this.repositoryRoot, source);
     if (!existsSync(hooksPath))
-      return { source, valid: null, issues: [], target, events: [] };
+      return {
+        source,
+        valid: null,
+        issues: [],
+        target,
+        events: [],
+        content: null,
+        revision: null
+      };
 
     let content: string;
     try {
@@ -2346,8 +2057,21 @@ export class RuleSyncRepository {
     } catch {
       // Unreadable is not invalid. The file is there and the system has not
       // read it, so nothing about its contents may be claimed.
-      return { source, valid: null, issues: [], target, events: [] };
+      return {
+        source,
+        valid: null,
+        issues: [],
+        target,
+        events: [],
+        content: null,
+        revision: null
+      };
     }
+
+    // The revision names the exact bytes the events and the source text were
+    // read from. It is computed here, from the read that produced them, so the
+    // two views of the declaration cannot describe different bytes.
+    const revision = createHash("sha256").update(content, "utf8").digest("hex");
 
     const errors: ParseError[] = [];
     const document: unknown = parse(content, errors, {
@@ -2364,7 +2088,15 @@ export class RuleSyncRepository {
     if (issues.length > 0) {
       // No events are returned: the first issue is why the rest of the document
       // was never examined, and a partial list would read as the whole file.
-      return { source, valid: false, issues, target, events: [] };
+      return {
+        source,
+        valid: false,
+        issues,
+        target,
+        events: [],
+        content,
+        revision
+      };
     }
 
     // No issues means the document parsed, is an object, has a `hooks` object,
@@ -2392,170 +2124,7 @@ export class RuleSyncRepository {
         actions
       });
     }
-    return { source, valid: true, issues: [], target, events };
-  }
-
-  /**
-   * The revision of the canonical hook declaration.
-   *
-   * It is the handle a write compares against, so it is read with the
-   * declaration it belongs to rather than on its own.
-   */
-  loadHooksRevision(): {
-    readonly source: ".rulesync/hooks.jsonc";
-    readonly revision: string | null;
-    readonly valid: boolean | null;
-  } {
-    const source = HOOKS_SOURCE;
-    const hooksPath = path.join(this.repositoryRoot, source);
-    if (!existsSync(hooksPath)) return { source, revision: null, valid: null };
-    let content: string;
-    try {
-      content = readFileSync(hooksPath, "utf8");
-    } catch {
-      return { source, revision: null, valid: null };
-    }
-    const errors: ParseError[] = [];
-    const document: unknown = parse(content, errors, {
-      allowTrailingComma: true
-    });
-    return {
-      source,
-      revision: createHash("sha256").update(content, "utf8").digest("hex"),
-      valid: errors.length === 0 && isRecord(document) ? true : false
-    };
-  }
-
-  /**
-   * Write one event's action list to the canonical hook declaration.
-   *
-   * The write goes to the declaration that currently holds the event for the
-   * target: the target's own declaration when it declares the event, and the
-   * shared declaration when the target inherits it. That is where the value
-   * lives, and writing it anywhere else would leave a second copy of the same
-   * event in the document -- a shared list the target no longer inherits and a
-   * target list that shadows it.
-   *
-   * The write is a compare-and-swap on the document's revision, and it edits
-   * the document in place: the comments and the formatting outside the edited
-   * event are preserved.
-   */
-  updateHookEvent(
-    input: RuleSyncHookEventUpdateInput
-  ): Promise<RuleSyncHookEventUpdateResult> {
-    const { event, target, expectedRevision } = input;
-    if (!isHookEvent(event)) {
-      return Promise.reject(
-        new RuleSyncHooksValidationError(
-          "Hook event must be a hook event the Codex runtime runs."
-        )
-      );
-    }
-    if (!HOOK_TARGET_NAME_PATTERN.test(target)) {
-      return Promise.reject(
-        new RuleSyncHooksValidationError(
-          "Hook target name must be a non-empty name of letters, digits, dots, dashes or underscores."
-        )
-      );
-    }
-    if (!COMMAND_REVISION_PATTERN.test(expectedRevision)) {
-      return Promise.reject(
-        new RuleSyncHooksValidationError("Expected hook revision is invalid.")
-      );
-    }
-    const actions = normalizeHookActions(input.actions);
-    if (actions === null) {
-      return Promise.reject(
-        new RuleSyncHooksValidationError(
-          "A hook action must be a command hook with a non-empty command string."
-        )
-      );
-    }
-
-    const source = HOOKS_SOURCE;
-    const hooksPath = path.join(this.repositoryRoot, source);
-    if (!existsSync(hooksPath)) {
-      return Promise.reject(
-        new RuleSyncHooksConflictError(
-          "The canonical hook declaration does not exist."
-        )
-      );
-    }
-
-    return withSourceUpdateLock(hooksPath, async () => {
-      let content: string;
-      try {
-        content = await readFile(hooksPath, "utf8");
-      } catch {
-        throw new RuleSyncHooksConflictError(
-          "The canonical hook declaration could not be read."
-        );
-      }
-      const revision = createHash("sha256")
-        .update(content, "utf8")
-        .digest("hex");
-      if (revision !== expectedRevision) {
-        throw new RuleSyncHooksConflictError(
-          "The canonical hook declaration changed since it was loaded."
-        );
-      }
-      const errors: ParseError[] = [];
-      const document: unknown = parse(content, errors, {
-        allowTrailingComma: true
-      });
-      if (errors.length > 0 || !isRecord(document)) {
-        throw new RuleSyncHooksValidationError(
-          "The canonical hook declaration could not be applied."
-        );
-      }
-
-      const targetDeclaration = document[target];
-      const targetBlock = isRecord(targetDeclaration)
-        ? targetDeclaration
-        : undefined;
-      const override =
-        targetBlock !== undefined && isRecord(targetBlock.hooks)
-          ? targetBlock.hooks
-          : undefined;
-      const origin: HookDeclarationOrigin =
-        override !== undefined && Object.hasOwn(override, event)
-          ? "target"
-          : "shared";
-      // RuleSync replaces an event's whole action list when a target declares
-      // that event, so the list is written complete: a list carrying only the
-      // changed actions would take the event's other actions with it.
-      const eventPath =
-        origin === "target" ? [target, "hooks", event] : ["hooks", event];
-      const edits = modify(
-        content,
-        eventPath,
-        actions.length === 0 ? undefined : actions,
-        { formattingOptions: JSONC_FORMATTING }
-      );
-      const updated = applyEdits(content, edits);
-      if (updated === content) {
-        // The declaration already says this, so there is nothing to write.
-        // A write that changes nothing is a successful write, not a conflict.
-        return { source, event, target, revision, origin, actions };
-      }
-
-      await atomicWrite(hooksPath, updated, { mode: 0o644 });
-      const persisted = await readFile(hooksPath, "utf8");
-      if (persisted !== updated) {
-        throw new RuleSyncHooksConflictError(
-          "The canonical hook declaration changed during the update."
-        );
-      }
-
-      return {
-        source,
-        event,
-        target,
-        revision: createHash("sha256").update(persisted, "utf8").digest("hex"),
-        origin,
-        actions
-      };
-    });
+    return { source, valid: true, issues: [], target, events, content, revision };
   }
 
   loadMcpState(): RuleSyncMcpState {
@@ -2880,113 +2449,6 @@ export class RuleSyncRepository {
     });
   }
 
-  async createSkill(
-    input: RuleSyncSkillPromotionInput
-  ): Promise<RuleSyncSkillArtifact> {
-    const name = input.name.trim();
-    const description = input.description.trim();
-    const content = input.content
-      .trim()
-      .replaceAll("\r\n", "\n")
-      .replaceAll("\r", "\n");
-    if (
-      !SKILL_NAME_PATTERN.test(name) ||
-      name.startsWith("-") ||
-      name.endsWith("-") ||
-      name.includes("--")
-    )
-      throw new TypeError("Skill name must be a lowercase hyphenated slug.");
-    if (
-      !description ||
-      description.length > SKILL_DESCRIPTION_MAX ||
-      hasControlCharacters(description)
-    ) {
-      throw new TypeError("Skill description is invalid.");
-    }
-    if (
-      !content ||
-      content.length > SKILL_CONTENT_MAX ||
-      hasControlCharacters(content)
-    ) {
-      throw new TypeError("Skill content is empty or exceeds its size bound.");
-    }
-
-    const root = await realpath(this.repositoryRoot);
-    const rulesyncDir = await ensureChildDirectory(root, ".rulesync");
-    const skillsDir = await ensureChildDirectory(rulesyncDir, "skills");
-    const skillDir = await ensureChildDirectory(skillsDir, name);
-    const skillPath = path.join(skillDir, "SKILL.md");
-    const source = [
-      "---",
-      `name: ${name}`,
-      `description: ${JSON.stringify(description)}`,
-      "---",
-      "",
-      "<!-- Promoted from verified AutoDev procedural memory. -->",
-      "",
-      content,
-      ""
-    ].join("\n");
-    const revision = createHash("sha256").update(source, "utf8").digest("hex");
-
-    try {
-      const existing = await lstat(skillPath);
-      if (!existing.isFile() || existing.isSymbolicLink())
-        throw new RuleSyncSkillConflictError(
-          "Skill destination is not a regular file."
-        );
-      const existingSource = await readFile(skillPath, "utf8");
-      if (existingSource !== source)
-        throw new RuleSyncSkillConflictError(
-          "A different canonical skill already uses this name."
-        );
-    } catch (error) {
-      if (!isMissingFileError(error)) throw error;
-      const temporaryPath = path.join(skillDir, `.${name}.${randomUUID()}.tmp`);
-      try {
-        await writeFile(temporaryPath, source, {
-          encoding: "utf8",
-          flag: "wx",
-          mode: 0o644
-        });
-        try {
-          // A hard link publishes the fully-written file atomically without
-          // replacing a skill another process created concurrently.
-          await link(temporaryPath, skillPath);
-        } catch (writeError) {
-          if (!isExistingFileError(writeError)) throw writeError;
-          const existingSource = await readFile(skillPath, "utf8");
-          if (existingSource !== source)
-            throw new RuleSyncSkillConflictError(
-              "A different canonical skill already uses this name."
-            );
-        }
-      } finally {
-        await unlink(temporaryPath).catch(() => undefined);
-      }
-    }
-
-    const canonicalPath = await realpath(skillPath);
-    const relativePath = path.relative(root, canonicalPath);
-    if (
-      !relativePath ||
-      relativePath === ".." ||
-      relativePath.startsWith(`..${path.sep}`) ||
-      path.isAbsolute(relativePath)
-    ) {
-      throw new RuleSyncSkillConflictError(
-        "Skill destination escaped the repository root."
-      );
-    }
-    SKILL_ENTRY_CACHE.delete(canonicalPath);
-    return {
-      name,
-      path: `.rulesync/skills/${name}/SKILL.md`,
-      uri: `rulesync://skills/${name}/SKILL.md`,
-      revision
-    };
-  }
-
   readSkillSource(name: string): RuleSyncSkillSource {
     if (!SKILL_NAME_PATTERN.test(name)) {
       throw new RuleSyncSkillValidationError(
@@ -3036,101 +2498,6 @@ export class RuleSyncRepository {
       content,
       revision
     };
-  }
-
-  updateSkillSource(
-    input: RuleSyncSkillSourceUpdateInput
-  ): Promise<RuleSyncSkillSource> {
-    const { name, expectedRevision, content } = input;
-    try {
-      if (!SKILL_NAME_PATTERN.test(name)) {
-        throw new RuleSyncSkillValidationError(
-          "Skill name must contain lowercase letters, digits, and hyphens."
-        );
-      }
-      if (!COMMAND_REVISION_PATTERN.test(expectedRevision)) {
-        throw new RuleSyncSkillValidationError(
-          "Expected skill revision is invalid."
-        );
-      }
-      if (
-        Buffer.byteLength(content, "utf8") > SKILL_SOURCE_MAX_BYTES ||
-        hasUnsafeSkillSourceControls(content)
-      ) {
-        throw new RuleSyncSkillValidationError(
-          "Skill source contains unsafe controls or exceeds its safe size bound."
-        );
-      }
-      validateSkillSource(name, content);
-    } catch (error) {
-      return Promise.reject(error);
-    }
-
-    const directory = resolveCanonicalRuleSyncDirectory(
-      this.repositoryRoot,
-      "skills"
-    );
-    if (directory.valid !== true || directory.path === null) {
-      return Promise.reject(skillDirectoryError(directory));
-    }
-    const skillsDir = directory.path;
-    const skillDir = path.join(skillsDir, name);
-    const skillPath = path.join(skillDir, "SKILL.md");
-    return withSourceUpdateLock(skillPath, async () => {
-      let directoryStat: Awaited<ReturnType<typeof lstat>>;
-      let fileStat: Awaited<ReturnType<typeof lstat>>;
-      try {
-        directoryStat = await lstat(skillDir);
-        fileStat = await lstat(skillPath);
-      } catch (error) {
-        if (!isMissingFileError(error)) throw error;
-        const state = this.loadSkills();
-        if (state.valid !== true) throw skillCatalogError(state);
-        throw new RuleSyncSkillConflictError(
-          `Canonical skill "${name}" no longer exists.`
-        );
-      }
-      if (
-        !directoryStat.isDirectory() ||
-        directoryStat.isSymbolicLink() ||
-        !fileStat.isFile() ||
-        fileStat.isSymbolicLink()
-      ) {
-        throw new Error(SKILL_SOURCE_UNSAFE_MESSAGE);
-      }
-      const state = this.loadSkills();
-      if (state.valid !== true) throw skillCatalogError(state);
-      if (!state.skills.some((skill) => skill.name === name)) {
-        throw new RuleSyncSkillConflictError(
-          `Canonical skill "${name}" no longer exists.`
-        );
-      }
-      const latestContent = await readFile(skillPath, "utf8");
-      const latestRevision = createHash("sha256")
-        .update(latestContent, "utf8")
-        .digest("hex");
-      if (latestRevision !== expectedRevision) {
-        throw new RuleSyncSkillConflictError(
-          `Canonical skill "${name}" changed since it was loaded.`
-        );
-      }
-      await atomicWrite(skillPath, content, { mode: 0o644 });
-      const persistedContent = await readFile(skillPath, "utf8");
-      if (persistedContent !== content) {
-        throw new RuleSyncSkillConflictError(
-          `Canonical skill "${name}" changed during the update.`
-        );
-      }
-      SKILL_ENTRY_CACHE.delete(skillPath);
-      return {
-        name,
-        path: `${SKILLS_SOURCE}/${name}/SKILL.md`,
-        content: persistedContent,
-        revision: createHash("sha256")
-          .update(persistedContent, "utf8")
-          .digest("hex")
-      };
-    });
   }
 
   loadSkills(): RuleSyncSkillsState {

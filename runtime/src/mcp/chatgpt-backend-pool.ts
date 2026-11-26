@@ -35,7 +35,7 @@ import {
   timingSafeEqual
 } from "node:crypto";
 import { once } from "node:events";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import {
   createServer,
   type IncomingMessage,
@@ -46,16 +46,22 @@ import { createConnection } from "node:net";
 import path from "node:path";
 import { createInterface, type Interface } from "node:readline";
 
+import { isTerminal } from "@modelcontextprotocol/sdk/experimental/tasks/interfaces.js";
 import {
+  CreateTaskResultSchema,
+  GetTaskPayloadResultSchema,
   type JSONRPCMessage,
+  ListTasksResultSchema,
   ProgressNotificationSchema,
   type ProgressToken,
-  ProgressTokenSchema
+  ProgressTokenSchema,
+  type Task,
+  TaskSchema,
+  TaskStatusNotificationSchema
 } from "@modelcontextprotocol/sdk/types.js";
 import { isRecord } from "@simulatorlife/autodev-core";
 import { z } from "zod";
 
-import { isEntryPoint } from "../shared/entry-point.ts";
 import {
   KEYCHAIN_SECRET_NAMES,
   readRuntimeSecret
@@ -70,10 +76,13 @@ import {
   publicRemoteMcpMessage,
   remoteTransportErrorMessage
 } from "./remote-transport.ts";
-import { errorResponse } from "./tool-filter.ts";
 
 type JsonRecord = Record<string, unknown>;
 type JsonRpcId = string | number;
+
+function errorResponse(id: JsonRpcId, message: string): JsonRecord {
+  return { jsonrpc: "2.0", id, error: { code: -32_601, message } };
+}
 
 const identifier = z.string().regex(/^[a-zA-Z0-9_.-]+$/u);
 const toolIdentifier = z.string().regex(/^[a-zA-Z0-9_.-]+$/u);
@@ -85,6 +94,9 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const TOOL_CALL_TIMEOUT_MS = 60_000;
 const MAX_BODY_BYTES = 16 * 1024 * 1024;
 const MAX_SESSIONS_PER_SERVER = 256;
+// Limit gateway lifetime bookkeeping, not the backend's own task store.
+const MAX_PINNED_TASKS = 256;
+const MAX_TIMER_MS = 2_147_483_647;
 const PROCESS_KILL_GRACE_MS = 5_000;
 
 const CLIENT_METHODS = new Set([
@@ -203,6 +215,8 @@ export interface ChatgptBackendPoolHandle {
       running: boolean;
       spawns: number;
       activeCalls: number;
+      retainedTasks: number;
+      uncertainTaskCreation: boolean;
       sessions: number;
       cachedTools: boolean;
       /**
@@ -221,6 +235,10 @@ interface PendingRpc {
   readonly sessionId: string | null;
   readonly method: string;
   readonly progressToken?: ProgressToken;
+  readonly createsTask: boolean;
+  readonly taskId?: string;
+  // Who may see the task this request creates or names.
+  readonly taskOwner: string | null;
   readonly timer: NodeJS.Timeout;
   cancelled: boolean;
   resolve(message: JsonRecord): void;
@@ -232,6 +250,17 @@ interface LiveBackend {
   setProtocolVersion?(version: string): void;
   close(): Promise<void>;
   kill(): void;
+}
+
+interface TaskPin {
+  readonly backend: LiveBackend;
+  // The conversation (or, without one, the MCP session) that created the
+  // task. A task ID is a handle, never a credential: only its owner may read,
+  // cancel or list it.
+  readonly owner: string;
+  readonly ttl: number | null;
+  // Null means execution or retention is not yet known to have ended.
+  expiresAt: number | null;
 }
 
 interface LogicalSession {
@@ -377,6 +406,10 @@ class PooledBackendController {
   private activeCalls = 0;
   private closing = false;
   private readonly pending = new Map<string, PendingRpc>();
+  private readonly taskPins = new Map<string, TaskPin>();
+  // A lost creation acknowledgement may hide a running mutation. Do not
+  // reap or admit more task creations on that backend until explicit close.
+  private uncertainTaskBackend: LiveBackend | null = null;
   private readonly sessions = new Map<string, LogicalSession>();
 
   constructor(
@@ -395,18 +428,130 @@ class PooledBackendController {
     this.requestTimeoutMs = options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
   }
 
-  /**
-  True while a request is in flight, so the backend must not be reaped.
-  */
+  private pruneTaskPins(): void {
+    const now = performance.now();
+    for (const [id, pin] of this.taskPins) {
+      if (pin.expiresAt !== null && pin.expiresAt <= now) {
+        this.taskPins.delete(id);
+      }
+    }
+  }
+
+  /** Include task execution and result retention, not just pending RPCs. */
   busy(): boolean {
-    return this.activeCalls > 0 || this.pending.size > 0;
+    this.pruneTaskPins();
+    return (
+      this.activeCalls > 0 ||
+      this.pending.size > 0 ||
+      this.taskPins.size > 0 ||
+      this.uncertainTaskBackend !== null
+    );
+  }
+
+  private canCreateTask(): boolean {
+    this.pruneTaskPins();
+    let pendingCreations = 0;
+    for (const request of this.pending.values()) {
+      if (request.createsTask) pendingCreations += 1;
+    }
+    return (
+      this.uncertainTaskBackend === null &&
+      this.taskPins.size + pendingCreations < MAX_PINNED_TASKS
+    );
+  }
+
+  private forgetBackendTasks(backend: LiveBackend): void {
+    for (const [id, pin] of this.taskPins) {
+      if (pin.backend === backend) this.taskPins.delete(id);
+    }
+    if (this.uncertainTaskBackend === backend) this.uncertainTaskBackend = null;
+  }
+
+  private observeTask(backend: LiveBackend, task: Task): void {
+    const pin = this.taskPins.get(task.taskId);
+    if (!pin || pin.backend !== backend || !isTerminal(task.status)) return;
+    this.markTaskTerminal(pin);
+  }
+
+  private markTaskTerminal(pin: TaskPin): void {
+    // The SDK resets its result TTL when a task becomes terminal. Measure
+    // from the first observed terminal state, not creation or repeated polls.
+    if (pin.expiresAt === null && pin.ttl !== null) {
+      pin.expiresAt = performance.now() + pin.ttl;
+    }
+  }
+
+  private observeTaskReply(pending: PendingRpc, message: JsonRecord): void {
+    if (message.error) return;
+    if (pending.createsTask) {
+      const parsed = CreateTaskResultSchema.safeParse(message.result);
+      if (!parsed.success || this.taskPins.has(parsed.data.task.taskId)) {
+        this.uncertainTaskBackend = pending.backend;
+        return;
+      }
+      const task = parsed.data.task;
+      const ttl =
+        // The installed SDK store treats zero as unlimited too.
+        task.ttl !== null && Number.isFinite(task.ttl) && task.ttl > 0
+          ? task.ttl
+          : null;
+      if (pending.taskOwner === null) return;
+      this.taskPins.set(task.taskId, {
+        backend: pending.backend,
+        owner: pending.taskOwner,
+        ttl,
+        expiresAt: null
+      });
+      this.observeTask(pending.backend, task);
+    } else if (pending.method === "tasks/list") {
+      const parsed = ListTasksResultSchema.safeParse(message.result);
+      if (parsed.success) {
+        for (const task of parsed.data.tasks) {
+          this.observeTask(pending.backend, task);
+        }
+      }
+    } else if (pending.taskId !== undefined) {
+      const pin = this.taskPins.get(pending.taskId);
+      if (!pin || pin.backend !== pending.backend) return;
+      if (pending.method === "tasks/result") {
+        if (GetTaskPayloadResultSchema.safeParse(message.result).success) {
+          this.markTaskTerminal(pin);
+        }
+      } else if (
+        pending.method === "tasks/get" ||
+        pending.method === "tasks/cancel"
+      ) {
+        const parsed = TaskSchema.safeParse(message.result);
+        if (parsed.success && parsed.data.taskId === pending.taskId) {
+          this.observeTask(pending.backend, parsed.data);
+        }
+      }
+    }
+  }
+
+  // A backend lists every task it holds; a caller sees only its own.
+  private ownedTaskList(response: JsonRecord, owner: string): JsonRecord {
+    const parsed = ListTasksResultSchema.safeParse(response.result);
+    if (!parsed.success) return response;
+    return {
+      ...response,
+      result: {
+        ...parsed.data,
+        tasks: parsed.data.tasks.filter(
+          (task) => this.taskPins.get(task.taskId)?.owner === owner
+        )
+      }
+    };
   }
 
   stats() {
+    this.pruneTaskPins();
     return {
       running: this.live !== null,
       spawns: this.spawns,
       activeCalls: this.activeCalls,
+      retainedTasks: this.taskPins.size,
+      uncertainTaskCreation: this.uncertainTaskBackend !== null,
       sessions: this.sessions.size,
       cachedTools: this.cachedTools !== null
     };
@@ -534,16 +679,29 @@ class PooledBackendController {
     ) {
       return;
     }
+    this.pruneTaskPins();
+    if (this.uncertainTaskBackend !== null) return;
+    if (this.taskPins.size > 0) {
+      // A terminal task still owns its advertised result-retention window.
+      // Active/unobserved tasks never expire merely because of elapsed time.
+      const deadlines = [...this.taskPins.values()]
+        .map((pin) => pin.expiresAt)
+        .filter((deadline): deadline is number => deadline !== null);
+      if (deadlines.length > 0) {
+        this.idleTimer = setTimeout(
+          () => this.armIdleTimer(),
+          Math.min(
+            MAX_TIMER_MS,
+            Math.max(1, Math.ceil(Math.min(...deadlines) - performance.now()))
+          )
+        );
+        this.idleTimer.unref();
+      }
+      return;
+    }
     this.idleTimer = setTimeout(() => {
       this.idleTimer = null;
-      if (
-        this.closing ||
-        !this.live ||
-        this.activeCalls > 0 ||
-        this.pending.size > 0
-      ) {
-        return;
-      }
+      if (this.closing || !this.live || this.busy()) return;
       const backend = this.live;
       this.live = null;
       // Preserve cachedInitialize and cachedTools across idle reaps so
@@ -581,6 +739,12 @@ class PooledBackendController {
         });
       } else if (message.method === "notifications/progress") {
         this.routeProgress(backend, message);
+      } else if (message.method === "notifications/tasks/status") {
+        const parsed = TaskStatusNotificationSchema.safeParse(message);
+        if (message.jsonrpc === "2.0" && parsed.success) {
+          this.observeTask(backend, parsed.data.params);
+          this.armIdleTimer();
+        }
       }
       return;
     }
@@ -594,11 +758,13 @@ class PooledBackendController {
       this.armIdleTimer();
       return;
     }
+    this.observeTaskReply(pending, message);
     pending.resolve({ ...message, id: pending.clientId });
     this.armIdleTimer();
   }
 
   private handleBackendExit(backend: LiveBackend, reason: string): void {
+    this.forgetBackendTasks(backend);
     if (this.live === backend) {
       this.live = null;
       this.clearIdleTimer();
@@ -691,7 +857,8 @@ class PooledBackendController {
                   : null;
               if (id) {
                 const entry = this.pending.get(id);
-                if (entry) {
+                if (entry && entry.backend === live) {
+                  if (entry.createsTask) this.uncertainTaskBackend = live;
                   this.pending.delete(id);
                   clearTimeout(entry.timer);
                   entry.resolve(
@@ -797,8 +964,20 @@ class PooledBackendController {
     params: unknown,
     clientId: JsonRpcId,
     sessionId: string | null,
-    timeoutMs: number
+    timeoutMs: number,
+    taskOwner: string | null = null
   ): Promise<JsonRecord> {
+    const createsTask =
+      method === "tools/call" && isRecord(params) && params.task !== undefined;
+    if (createsTask && !this.canCreateTask()) {
+      return Promise.resolve(
+        errorResponse(clientId, "Backend task retention capacity unavailable")
+      );
+    }
+    const taskId =
+      isRecord(params) && typeof params.taskId === "string"
+        ? params.taskId
+        : undefined;
     const internalId = `pool:${++this.nextInternalId}`;
     const meta =
       isRecord(params) && isRecord(params._meta) ? params._meta : null;
@@ -812,6 +991,7 @@ class PooledBackendController {
         const entry = this.pending.get(internalId);
         if (!entry) return;
         this.pending.delete(internalId);
+        if (entry.createsTask) this.uncertainTaskBackend = backend;
         if (!entry.cancelled) {
           backend.send({
             jsonrpc: "2.0",
@@ -822,7 +1002,13 @@ class PooledBackendController {
         resolve(errorResponse(clientId, "External MCP request timed out"));
         // If no other calls are active, recycle a backend that timed out so a
         // wedged server does not poison subsequent requests.
-        if (this.live === backend && this.pending.size === 0) {
+        this.pruneTaskPins();
+        if (
+          this.live === backend &&
+          this.pending.size === 0 &&
+          this.taskPins.size === 0 &&
+          this.uncertainTaskBackend === null
+        ) {
           this.live = null;
           this.cachedInitialize = null;
           this.cachedTools = null;
@@ -836,6 +1022,9 @@ class PooledBackendController {
         clientId,
         sessionId,
         method,
+        createsTask,
+        ...(taskId !== undefined ? { taskId } : {}),
+        taskOwner,
         ...(progressToken.success ? { progressToken: progressToken.data } : {}),
         timer,
         cancelled: false,
@@ -983,6 +1172,7 @@ class PooledBackendController {
     for (const entry of this.pending.values()) {
       if (entry.sessionId === sessionId && entry.clientId === requestId) {
         entry.cancelled = true;
+        if (entry.createsTask) this.uncertainTaskBackend = entry.backend;
         clearTimeout(entry.timer);
         entry.backend.send({
           jsonrpc: "2.0",
@@ -1076,11 +1266,15 @@ class PooledBackendController {
       }
     }
 
+    const owner = taskOwner(message.params, sessionId);
     if (method === "tools/call") {
       const params = isRecord(message.params) ? message.params : null;
       const toolName = params?.name;
       if (typeof toolName !== "string" || !this.allowed.has(toolName)) {
         return errorResponse(id, "Tool is not enabled for this role");
+      }
+      if (params?.task !== undefined && owner === null) {
+        return errorResponse(id, TASK_OWNER_REQUIRED);
       }
       this.activeCalls += 1;
       this.clearIdleTimer();
@@ -1096,7 +1290,8 @@ class PooledBackendController {
             params,
             id,
             sessionId,
-            this.toolCallTimeoutMs
+            this.toolCallTimeoutMs,
+            owner
           );
           const resultObj = isRecord(response.result) ? response.result : null;
           const outcome: ToolCallOutcome =
@@ -1137,19 +1332,35 @@ class PooledBackendController {
       }
     }
 
-    // tasks/* methods forwarded to the warm backend
+    // tasks/* methods forwarded to the warm backend, each confined to the
+    // tasks its caller created.
+    if (owner === null) return errorResponse(id, TASK_OWNER_REQUIRED);
+    const named =
+      isRecord(message.params) && typeof message.params.taskId === "string"
+        ? message.params.taskId
+        : undefined;
+    if (method !== "tasks/list") {
+      this.pruneTaskPins();
+      // Not found, whether it never existed or belongs to someone else.
+      if (named === undefined || this.taskPins.get(named)?.owner !== owner)
+        return errorResponse(id, "Task not found");
+    }
     this.activeCalls += 1;
     this.clearIdleTimer();
     try {
       const backend = await this.ensureStarted();
-      return await this.sendRawRequest(
+      const response = await this.sendRawRequest(
         backend,
         method,
         message.params,
         id,
         sessionId,
-        this.requestTimeoutMs
+        this.requestTimeoutMs,
+        owner
       );
+      return method === "tasks/list"
+        ? this.ownedTaskList(response, owner)
+        : response;
     } catch (error) {
       return errorResponse(
         id,
@@ -1179,12 +1390,27 @@ class PooledBackendController {
     const backend = this.live;
     this.live = null;
     if (backend) {
+      this.forgetBackendTasks(backend);
       await backend.close().catch(() => {});
     }
   }
 }
 
 const DEFAULT_MAX_CONVERSATIONS = 32;
+const TASK_OWNER_REQUIRED =
+  "MCP tasks belong to one conversation or session, and this request carries neither";
+
+/**
+Who owns the tasks a request creates or names: the ChatGPT conversation when
+the platform supplies one, otherwise the MCP session the request arrived on.
+*/
+function taskOwner(params: unknown, sessionId: string | null): string | null {
+  const conversation = isRecord(params)
+    ? chatgptConversationKey(params._meta)
+    : null;
+  if (conversation) return `conversation:${conversation}`;
+  return sessionId ? `session:${sessionId}` : null;
+}
 const MAX_CONVERSATION_IDENTITY_LENGTH = 512;
 /**
 The platform-supplied conversation identity ChatGPT attaches to every tool
@@ -1369,6 +1595,13 @@ class ConversationScopedController {
         (total, conversation) => total + conversation.activeCalls,
         0
       ),
+      retainedTasks: conversations.reduce(
+        (total, conversation) => total + conversation.retainedTasks,
+        catalogue.retainedTasks
+      ),
+      uncertainTaskCreation:
+        catalogue.uncertainTaskCreation ||
+        conversations.some((conversation) => conversation.uncertainTaskCreation),
       conversations: conversations.length
     };
   }
@@ -1623,50 +1856,4 @@ export async function startChatgptBackendPool(
       }
     }
   };
-}
-
-if (isEntryPoint(import.meta.url)) {
-  const configFile = process.argv[2];
-  if (!configFile) {
-    process.stderr.write("Expected backend-pool.json path\n");
-    process.exit(2);
-  }
-  const token = process.env[CHATGPT_MCP_POOL_TOKEN_ENV]?.trim();
-  if (!token) {
-    process.stderr.write(`Missing ${CHATGPT_MCP_POOL_TOKEN_ENV}\n`);
-    process.exit(2);
-  }
-  void (async () => {
-    const rl = createInterface({ input: process.stdin });
-    const firstLine = await new Promise<string>((resolve, reject) => {
-      rl.once("line", resolve);
-      rl.once("close", () => reject(new Error("Missing gatewayEnv handshake")));
-    });
-    const parsed = JSON.parse(firstLine) as {
-      gatewayEnv?: Record<string, string>;
-    };
-    const gatewayEnv = parsed.gatewayEnv ?? {};
-    const config = chatgptBackendPoolConfigSchema.parse(
-      JSON.parse(readFileSync(configFile, "utf8"))
-    );
-    const pool = await startChatgptBackendPool(config, {
-      gatewayEnv,
-      secretEnv: process.env,
-      token
-    });
-    process.stdout.write(`${JSON.stringify({ port: pool.port })}\n`);
-    let closing = false;
-    const shutdown = (): void => {
-      if (closing) return;
-      closing = true;
-      rl.close();
-      void pool.close().finally(() => process.exit(0));
-    };
-    rl.once("close", shutdown);
-    process.once("SIGTERM", shutdown);
-    process.once("SIGINT", shutdown);
-  })().catch(() => {
-    process.stderr.write("ChatGPT MCP backend pool failed to start\n");
-    process.exit(1);
-  });
 }

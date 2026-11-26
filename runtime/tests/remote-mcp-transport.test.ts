@@ -1,11 +1,9 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { createServer } from "node:http";
-import path from "node:path";
 import test from "node:test";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import {
   StreamableHTTPClientTransport,
   StreamableHTTPError
@@ -193,32 +191,4 @@ test("the warm MCP pool redacts upstream HTTP and JSON-RPC diagnostics", { timeo
     await pool?.close();
     await fixture.close();
   }
-});
-
-test("the stdio MCP filter redacts upstream diagnostics from replies and stderr", { timeout: 30_000 }, async () => {
-  const fixture = await remoteFixture();
-  const client = new Client({ name: "remote-error-filter-test", version: "1" });
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [
-      path.resolve(import.meta.dirname, "../src/mcp/tool-filter.ts"),
-      "--remote",
-      JSON.stringify({ url: fixture.url, bearer_token_env_var: "FIXTURE_TOKEN" }),
-      JSON.stringify(["fixture"]),
-      "external",
-      "fixture"
-    ],
-    env: { FIXTURE_TOKEN: SECRET },
-    stderr: "pipe"
-  });
-  let stderr = "";
-  transport.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
-  try {
-    await client.connect(transport);
-    await assertRemoteBehavior(client);
-  } finally {
-    await client.close().catch(() => {});
-    await fixture.close();
-  }
-  assert.ok(!stderr.includes(SECRET), "remote error logs must not expose credentials");
 });

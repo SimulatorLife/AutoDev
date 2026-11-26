@@ -11,14 +11,13 @@ AutoDev's ACP `session/request_permission` boundary enforces the canonical role
 contract uniformly across all providers.
 */
 
-import { existsSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import path from "node:path";
 
 import type { McpServer } from "@agentclientprotocol/sdk";
 import { autodevHome } from "@simulatorlife/autodev-runtime/shared/autodev-home";
 import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { resolveManagedSecret } from "@simulatorlife/autodev-runtime/shared/runtime-secrets";
-import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
 export const ACP_PROVIDER_IDS = [
   "claude",
@@ -153,14 +152,9 @@ function sharedIsolationEnvironment(
   };
 }
 
-function resolveLauncherPath(env?: NodeJS.ProcessEnv): string {
-  const repoRoot = resolveRuntimeSourceRoot(
-    import.meta.dirname,
-    env?.AUTODEV_REPO_ROOT
-  );
-  const checkout = path.join(repoRoot, "runtime/src/mcp/launcher.ts");
-  if (existsSync(checkout)) return checkout;
-  return path.join(repoRoot, "src/mcp/launcher.ts");
+/** Transitional direct projection: pin to the executing Runtime generation. */
+function resolveLauncherPath(): string {
+  return realpathSync(new URL("../mcp/launcher.ts", import.meta.url));
 }
 
 function buildAcpMcpServers(
@@ -205,10 +199,12 @@ function buildAcpMcpServers(
         ];
   }
 
-  const launcherPath = resolveLauncherPath(options.env);
+  const launcherPath = resolveLauncherPath();
   const servers: McpServer[] = [];
   for (const name of contract.mcp) {
-    const remote = REMOTE_MCP_URLS[name];
+    const remote = Object.hasOwn(REMOTE_MCP_URLS, name)
+      ? REMOTE_MCP_URLS[name]
+      : undefined;
     if (remote) {
       const secretValue = remote.secret
         ? resolveManagedSecret(remote.secret, options.env)

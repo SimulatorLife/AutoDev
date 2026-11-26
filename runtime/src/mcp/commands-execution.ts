@@ -28,12 +28,22 @@ import {
   type CommandDefinition,
   type CommandResult
 } from "./commands-catalogue.ts";
+import {
+  terminateCommandProcessTree,
+  terminateDetachedCommandDescendants
+} from "./command-process-tree.ts";
 
 const SANDBOX = "/usr/bin/sandbox-exec";
 /**
 The most output a single command may return, in either stream.
 */
 const OUTPUT_LIMIT_BYTES = 256 * 1024;
+/**
+How often a running command is checked for a descendant that left its process
+group. Such a descendant is terminated as soon as it is seen, so it cannot
+outlive the command it belongs to.
+*/
+const STRAY_SWEEP_INTERVAL_MS = 250;
 
 /**
 The stable key one workspace's command scope is named by.
@@ -417,9 +427,11 @@ export function prepareCommand(
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_CONFIG_GLOBAL: "/dev/null",
     // A confined command has no terminal to answer a credential prompt on.
-    GIT_TERMINAL_PROMPT: "0"
+    GIT_TERMINAL_PROMPT: "0",
+    // The Runtime's own commit identity, and nothing else from the operator's
+    // Git configuration.
+    ...scope.commitIdentityEnv
   };
-  Object.assign(environment, scope.commitIdentityEnv ?? {});
   if (scope.registryEndpoint && definition.executionClass === "dependency_install") {
     environment.npm_config_registry = scope.registryEndpoint;
   }
@@ -444,6 +456,11 @@ Run one approved command and report what actually happened.
 The exit status is the one the process reported. A failed test is a
 completed command with a nonzero status, not a transport failure, and the
 result never claims a status that was not observed.
+
+Cancellation and the command's own deadline are handled here rather than by
+the executor's process-group signal, because a group signal does not reach a
+descendant that detached into its own session. The tree is terminated while
+the parent-child relationship still identifies every descendant.
 */
 export async function runApprovedCommand(
   commandId: string,
@@ -454,23 +471,54 @@ export async function runApprovedCommand(
 ): Promise<CommandResult> {
   const started = performance.now();
   const prepared = prepareCommand(scope, definition, arguments_);
-  const result = await execa(prepared.executable, prepared.args, {
+  const child = execa(prepared.executable, prepared.args, {
     cwd: prepared.cwd,
     env: prepared.env,
     extendEnv: false,
     shell: false,
     stdin: "ignore",
     reject: false,
-    timeout: definition.timeoutMs,
-    cancelSignal: signal,
     maxBuffer: OUTPUT_LIMIT_BYTES,
     killDescendants: true
   });
+  let termination: "cancelled" | "timed_out" | null = null;
+  const terminate = async (
+    reason: "cancelled" | "timed_out"
+  ): Promise<void> => {
+    if (termination !== null) return;
+    termination = reason;
+    await terminateCommandProcessTree(child.pid);
+    // The group's own signal is the backstop for anything the walk did not
+    // reach, such as a descendant that started between two walks.
+    child.kill("SIGKILL");
+  };
+  const deadline = setTimeout(() => {
+    void terminate("timed_out");
+  }, definition.timeoutMs);
+  const onAbort = (): void => {
+    void terminate("cancelled");
+  };
+  signal.addEventListener("abort", onAbort, { once: true });
+  if (signal.aborted) onAbort();
+  // A descendant that detached while the command was running is terminated as
+  // soon as it is seen, so it cannot outlive the command it belongs to.
+  const strays = setInterval(() => {
+    terminateDetachedCommandDescendants(child.pid);
+  }, STRAY_SWEEP_INTERVAL_MS);
+  strays.unref();
+  let result: Awaited<typeof child>;
+  try {
+    result = await child;
+  } finally {
+    clearTimeout(deadline);
+    clearInterval(strays);
+    signal.removeEventListener("abort", onAbort);
+  }
   const status: CommandResult["status"] = result.isMaxBuffer
     ? "output_limit"
-    : result.timedOut
+    : termination === "timed_out"
       ? "timed_out"
-      : result.isCanceled || signal.aborted
+      : termination === "cancelled"
         ? "cancelled"
         : result.exitCode === 0 && !result.failed
           ? "succeeded"
