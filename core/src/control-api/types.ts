@@ -1309,14 +1309,14 @@ export type ControlApiPermissionPolicy = PermissionPolicy;
  * The permission policy as the Runtime published it and the Console reads it.
  *
  * The policy is the portable source's, read from it: the response names the
- * file it was read from, and publishes the revision a write is compared
- * against.
+ * file it was read from, and publishes the observed source revision.
+ * The repository is the only change authority.
  */
 export interface ControlApiPermissionsResponse {
   readonly schema: "autodev-control-permissions-v2";
   /** The canonical file the policy was read from. */
   readonly source: string;
-  readonly readOnly: boolean;
+  readonly readOnly: true;
   /**
    * Whether the execution contract was read.
    *

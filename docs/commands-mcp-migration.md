@@ -237,6 +237,24 @@ host test evidence. No additional dependency or service was introduced.
 
 Command execution and catalogue admission now reuse Data's existing lexical path containment helper; physical resolution remains with the callers. Installer approval status uses the same bounded protected-catalogue reader and Zod validation as the Commands backend, rather than treating matching digests alone as readiness. Both reject a redirected config directory; explicit approval refuses a symlinked destination before invoking the existing atomic-write dependency. This assumes the installed parent is independently protected against concurrent untrusted writes, and is not a substitute for that trust boundary. New regression fixtures cover approval status, redirected destinations and symmetric overlap. Tests and installed acceptance remain pending.
 
+### Executable availability and PATH consistency (source review)
+
+The command resolver now uses the catalogue's Zod executable-name schema and
+omits missing or invalid executable files without blocking independent tools.
+The server reports unavailable eligible command IDs on stderr and does not
+start a registry listener for a dependency-install definition whose executable
+is unavailable. An admitted Runtime Node directory precedes workspace tool
+shims in the confined PATH; OS binaries also precede workspace shims. No
+additional filesystem roots, dependencies or fallback executables are granted.
+Regression fixtures cover partial executable availability, invalid dot names,
+scope resolution and PATH precedence. Local execution remains pending.
+
+Workspace-wide admission still needs to converge on one trusted state root:
+`autodevRunDirectory()` can use `CODEX_HOME` in gateway launches and
+`AUTODEV_HOME` in managed launches. Independent locks in those homes do not
+prove cross-provider exclusivity. Resolve this with shared gateway ownership,
+not a second locking mechanism.
+
 ### What is still open
 
 - **Deployment.** The installer has not been run. The installed tree, the

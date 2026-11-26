@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -43,6 +49,8 @@ const POLICY_SOURCE = `{
 interface Fixture {
   readonly repositoryRoot: string;
   readonly policyPath: string;
+  readonly codexHome: string;
+  readonly root: string;
 }
 
 function fixture(): Fixture {
@@ -57,7 +65,9 @@ function fixture(): Fixture {
     "permissions.jsonc"
   );
   writeFileSync(policyPath, POLICY_SOURCE, "utf8");
-  return { repositoryRoot, policyPath };
+  const codexHome = path.join(root, "codex");
+  mkdirSync(codexHome);
+  return { repositoryRoot, policyPath, codexHome, root };
 }
 
 async function withControlApiCredential<T>(run: () => Promise<T>): Promise<T> {
@@ -105,11 +115,15 @@ function request(
 async function call(
   method: string,
   url: string,
-  options: { readonly repositoryRoot: string },
+  options: { readonly repositoryRoot: string; readonly codexHome: string },
   body?: unknown,
   actor: string | null = OPERATOR_ACTOR,
   token: string | null = SERVICE_TOKEN
-): Promise<{ statusCode: number; body: Record<string, unknown> | null }> {
+): Promise<{
+  statusCode: number;
+  headers: Record<string, string | number>;
+  body: Record<string, unknown> | null;
+}> {
   const response = responseRecorder();
   await withControlApiCredential(async () => {
     await handleControlApiRequest(
@@ -121,6 +135,7 @@ async function call(
   });
   return {
     statusCode: response.statusCode,
+    headers: response.headers,
     body: responseBody(response) as Record<string, unknown> | null
   };
 }
@@ -131,6 +146,7 @@ test("the permissions read publishes the policy the canonical source states", as
   assert.equal(result.statusCode, 200);
   assert.equal(result.body?.schema, "autodev-control-permissions-v2");
   assert.equal(result.body?.source, ".rulesync/permissions.jsonc");
+  assert.equal(result.body?.readOnly, true);
   assert.equal(result.body?.policyStatus, "valid");
   const policy = result.body?.policy as
     | {
@@ -170,133 +186,54 @@ test("a policy that cannot be read is reported as not observed, not as defaults"
   assert.equal(typeof result.body?.policyReason, "string");
 });
 
-test("a policy write changes the canonical source and answers with the new revision", async () => {
+test("Permissions rejects every non-GET method for both authorized roles without changing sources", async (t) => {
   const options = fixture();
-  const read = await call("GET", "/control/permissions", options);
-  const revision = String(read.body?.revision);
+  t.after(() => rmSync(options.root, { recursive: true, force: true }));
+  const appliedPath = path.join(options.codexHome, "config.toml");
+  const applied = 'approval_policy = "never"\napprovals_reviewer = "user"\n[tools]\nweb_search = true\n';
+  writeFileSync(appliedPath, applied);
 
-  const result = await call("PATCH", "/control/permissions", options, {
-    expectedRevision: revision,
-    approvalPolicy: "on-request",
-    approvalsReviewer: "operator",
-    webSearch: false
-  });
-  assert.ok(
-    result.statusCode === 200 || result.statusCode === 503,
-    `unexpected status ${result.statusCode}`
-  );
-  if (result.statusCode === 503) {
-    assert.equal(
-      errorCode(result.body),
-      "autodev_control_permission_policy_apply_failed"
-    );
+  for (const actor of [OPERATOR_ACTOR, VIEWER_ACTOR]) {
+    const read = await call("GET", "/control/permissions", options, undefined, actor);
+    assert.equal(read.statusCode, 200);
+    assert.equal(read.body?.readOnly, true);
+    assert.deepEqual(read.body?.applied, read.body?.policy);
+    for (const method of ["PATCH", "POST", "PUT", "DELETE", "HEAD", "OPTIONS"]) {
+      const result = await call(method, "/control/permissions", options, {
+        expectedRevision: read.body?.revision,
+        approvalPolicy: "on-request",
+        webSearch: false
+      }, actor);
+      assert.equal(result.statusCode, 405, `${actor} ${method}`);
+      assert.equal(result.headers.allow, "GET");
+      assert.equal(errorCode(result.body), "autodev_control_api_method_not_allowed");
+      assert.equal(readFileSync(options.policyPath, "utf8"), POLICY_SOURCE);
+      assert.equal(readFileSync(appliedPath, "utf8"), applied);
+    }
   }
-
-  const written = readFileSync(options.policyPath, "utf8");
-  assert.match(written, /"approval_policy": "on-request"/u);
-  assert.match(written, /"approvals_reviewer": "operator"/u);
-  assert.match(written, /"web_search": false/u);
-  assert.match(written, /\/\/ Codex CLI defaults for AutoDev/u);
 });
 
-test("a policy write that carries the whole policy changes only what differs", async () => {
+test("Permissions reports an external repository edit without applying it", async (t) => {
   const options = fixture();
-  const read = await call("GET", "/control/permissions", options);
-  const revision = String(read.body?.revision);
-
-  const result = await call("PATCH", "/control/permissions", options, {
-    expectedRevision: revision,
-    approvalPolicy: "never",
-    approvalsReviewer: "user",
-    webSearch: false
-  });
-  assert.ok(
-    result.statusCode === 200 || result.statusCode === 503,
-    `unexpected status ${result.statusCode}`
-  );
-  const after = readFileSync(options.policyPath, "utf8");
-  assert.match(after, /"approval_policy": "never"/u);
-  assert.match(after, /"approvals_reviewer": "user"/u);
-  assert.match(after, /"web_search": false/u);
+  t.after(() => rmSync(options.root, { recursive: true, force: true }));
+  const before = await call("GET", "/control/permissions", options);
+  const changed = POLICY_SOURCE.replace('"approval_policy": "never"', '"approval_policy": "on-request"');
+  writeFileSync(options.policyPath, changed);
+  const after = await call("GET", "/control/permissions", options);
+  assert.equal(after.statusCode, 200);
+  assert.equal(after.body?.readOnly, true);
+  assert.notEqual(after.body?.revision, before.body?.revision);
+  assert.equal(after.body?.revision, sha256(Buffer.from(changed)));
+  assert.equal((after.body?.policy as { approvalPolicy: string }).approvalPolicy, "on-request");
+  assert.equal(after.body?.applied, null);
 });
 
-test("a policy write is refused when the canonical source moved since it was read", async () => {
+test("Permissions rejects unauthenticated reads and writes", async (t) => {
   const options = fixture();
-  const read = await call("GET", "/control/permissions", options);
-  const revision = String(read.body?.revision);
-
-  // Another writer changes the policy first.
-  writeFileSync(
-    options.policyPath,
-    POLICY_SOURCE.replace(
-      '"approval_policy": "never"',
-      '"approval_policy": "on-request"'
-    ),
-    "utf8"
-  );
-
-  const result = await call("PATCH", "/control/permissions", options, {
-    expectedRevision: revision,
-    approvalPolicy: "on-request"
-  });
-  assert.equal(result.statusCode, 409);
-  assert.equal(
-    errorCode(result.body),
-    "autodev_control_permission_policy_revision_conflict"
-  );
-  // The file is as the other writer left it.
-  assert.match(
-    readFileSync(options.policyPath, "utf8"),
-    /"approval_policy": "on-request"/u
-  );
-});
-
-test("a policy write that cannot be expressed is refused before the file is touched", async () => {
-  const options = fixture();
-  const read = await call("GET", "/control/permissions", options);
-  const revision = String(read.body?.revision);
-
-  const result = await call("PATCH", "/control/permissions", options, {
-    expectedRevision: revision,
-    approvalPolicy: "somewhere-else"
-  });
-  assert.equal(result.statusCode, 400);
-  assert.equal(
-    errorCode(result.body),
-    "autodev_control_permission_policy_invalid_update"
-  );
-  assert.equal(readFileSync(options.policyPath, "utf8"), POLICY_SOURCE);
-});
-
-test("a policy write needs a viewer to be an operator", async () => {
-  const options = fixture();
-  const read = await call("GET", "/control/permissions", options);
-  const revision = String(read.body?.revision);
-
-  const result = await call(
-    "PATCH",
-    "/control/permissions",
-    options,
-    { expectedRevision: revision, approvalPolicy: "on-request" },
-    VIEWER_ACTOR
-  );
-  assert.equal(result.statusCode, 403);
-  assert.equal(readFileSync(options.policyPath, "utf8"), POLICY_SOURCE);
-});
-
-test("a policy write without a credential is refused", async () => {
-  const options = fixture();
-  const read = await call("GET", "/control/permissions", options);
-  const revision = String(read.body?.revision);
-
-  const result = await call(
-    "PATCH",
-    "/control/permissions",
-    options,
-    { expectedRevision: revision, approvalPolicy: "on-request" },
-    OPERATOR_ACTOR,
-    null
-  );
-  assert.equal(result.statusCode, 401);
+  t.after(() => rmSync(options.root, { recursive: true, force: true }));
+  for (const method of ["GET", "PATCH"]) {
+    const result = await call(method, "/control/permissions", options, undefined, OPERATOR_ACTOR, null);
+    assert.equal(result.statusCode, 401);
+  }
   assert.equal(readFileSync(options.policyPath, "utf8"), POLICY_SOURCE);
 });

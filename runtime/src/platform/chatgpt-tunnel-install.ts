@@ -82,7 +82,7 @@ import {
   type ChatgptBackendPoolHandle,
   startChatgptBackendPool
 } from "../mcp/chatgpt-backend-pool.ts";
-import { resolveRemoteMcpHeaders } from "../mcp/tool-filter.ts";
+import { resolveRemoteMcpHeaders } from "../shared/mcp-headers.ts";
 import {
   type ChatgptRoleSurface,
   CANONICAL_CHATGPT_POLICY_RELATIVE,

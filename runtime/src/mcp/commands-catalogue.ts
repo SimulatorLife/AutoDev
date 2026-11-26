@@ -44,10 +44,15 @@ export const commandParameterSchema = z.strictObject({
   maxLength: z.number().int().min(1).max(4096)
 });
 
+/** A bare executable name, never a path or a dot-directory. */
+export const commandExecutableNameSchema = z
+  .string()
+  .regex(/^[a-zA-Z0-9][a-zA-Z0-9_.+-]{0,127}$/u);
+
 export const commandDefinitionSchema = z
   .strictObject({
     description: z.string().trim().min(1).max(500),
-    executable: z.string().min(1).max(128).regex(/^[a-zA-Z0-9_.+-]+$/u),
+    executable: commandExecutableNameSchema,
     args: z.array(argvElement).max(64),
     parameters: z.record(parameterName, commandParameterSchema).default({}),
     timeoutMs: z.number().int().positive().max(900_000),

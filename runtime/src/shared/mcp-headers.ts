@@ -1,61 +1,136 @@
-/*
-HTTP headers whose value comes from the environment.
+/**
+ * Canonical MCP HTTP header references and backend-only credential resolution.
+ * RuleSync projections keep references; only the remote transport resolves them.
+ */
+import { validateHeaderName, validateHeaderValue } from "node:http";
 
-AutoDev's MCP surfaces spell an environment-sourced header
-`{"<Header>": "${VAR}"}`. Codex reads the same header natively as
-`env_http_headers = { "<Header>" = "VAR" }`, so the two spellings meet where
-a Codex projection is read: the role configuration keeps Codex's spelling,
-and every AutoDev-owned surface keeps the reference, so no surface ever
-holds the credential itself.
-*/
+import { isRecord } from "@simulatorlife/autodev-core";
 
-// A header value that is exactly one environment reference.
+import { readRuntimeSecret, resolveManagedSecret } from "./runtime-secrets.ts";
+
+const ENVIRONMENT_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 const ENVIRONMENT_REFERENCE = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/u;
+// Match malformed/unclosed placeholders too, so they cannot escape validation.
+const ENVIRONMENT_TEMPLATE = /\$\{[^}]*(?:\}|$)/gu;
 
-/*
-The environment variable a header value names, or null when the value is a
-literal the server receives as it is.
-*/
+// The MCP SDK owns these protocol/stream headers, and the HTTP client owns
+// connection and message framing. Configuration must not override either.
+const TRANSPORT_HEADERS = new Set([
+  "accept",
+  "connection",
+  "content-length",
+  "content-type",
+  "host",
+  "keep-alive",
+  "last-event-id",
+  "mcp-protocol-version",
+  "mcp-session-id",
+  "proxy-authorization",
+  "proxy-connection",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade"
+]);
+
+export interface RemoteBackendSpec {
+  url: string;
+  bearer_token_env_var?: string | undefined;
+  http_headers?: Record<string, string> | undefined;
+}
+
 export function environmentVariableName(value: string): string | null {
   return ENVIRONMENT_REFERENCE.exec(value)?.[1] ?? null;
 }
 
-/*
-Codex's `env_http_headers` table as AutoDev's environment references.
+/** Use native HTTP validation and case-insensitive Headers semantics. */
+function addDeclaredHeader(headers: Headers, name: string, value: string): void {
+  try {
+    validateHeaderName(name);
+    validateHeaderValue(name, value);
+    if (TRANSPORT_HEADERS.has(name.toLowerCase()) || headers.has(name)) {
+      throw new Error("Conflicting header");
+    }
+    headers.set(name, value);
+  } catch {
+    // Native exceptions can contain header names/values. Do not propagate
+    // them across the tool boundary, even as a nested cause.
+    throw new Error("Invalid or conflicting remote MCP header declaration.");
+  }
+}
 
-Null when the value is not a table of strings: a half-read table would
-publish a header the operator never declared, so it is refused instead.
-*/
+/** Codex's env_http_headers table as unresolved AutoDev references. */
 export function codexEnvironmentHeaders(
   value: unknown
 ): Record<string, string> | null {
-  if (value === null || typeof value !== "object" || Array.isArray(value))
+  if (!isRecord(value)) return null;
+  const checked = new Headers();
+  const entries: Array<[string, string]> = [];
+  try {
+    for (const [name, variable] of Object.entries(value)) {
+      if (typeof variable !== "string" || !ENVIRONMENT_NAME.test(variable)) {
+        return null;
+      }
+      const reference = `\${${variable}}`;
+      addDeclaredHeader(checked, name, reference);
+      entries.push([name, reference]);
+    }
+    return Object.fromEntries(entries);
+  } catch {
     return null;
-  const headers: Record<string, string> = {};
-  for (const [name, header] of Object.entries(value)) {
-    if (typeof header !== "string") return null;
-    headers[name] = `\${${header}}`;
   }
-  return headers;
 }
 
-/*
-The headers a table carries, with every environment reference resolved
-against the environment the caller owns.
-
-A reference the environment does not answer is kept as it is: the server
-then receives a reference rather than a credential, which is the outcome the
-credential being absent would have produced anyway.
-*/
-export function resolveEnvironmentHeaders(
-  headers: Record<string, string>,
-  environment: NodeJS.ProcessEnv = process.env
-): Record<string, string> {
-  const resolved: Record<string, string> = {};
-  for (const [name, value] of Object.entries(headers)) {
-    const variable = environmentVariableName(value);
-    const credential = variable ? environment[variable]?.trim() : undefined;
-    resolved[name] = credential || value;
+/**
+ * Resolve credentials immediately before opening the SDK transport. Missing
+ * credentials, invalid references, case-insensitive collisions and attempts
+ * to override SDK-owned headers fail closed, never yielding a partial table.
+ */
+export function resolveRemoteMcpHeaders(
+  spec: RemoteBackendSpec,
+  server: string,
+  env: NodeJS.ProcessEnv = process.env
+): Headers {
+  // Do not let a variable lookup fall through to Object.prototype.
+  const environment: NodeJS.ProcessEnv = Object.assign(
+    Object.create(null),
+    env
+  );
+  const resolveSecret = (name: string): string => {
+    if (!ENVIRONMENT_NAME.test(name)) {
+      throw new Error("Invalid remote MCP credential reference.");
+    }
+    let value: string | null;
+    try {
+      value =
+        resolveManagedSecret(name, environment) ??
+        readRuntimeSecret(name, environment);
+    } catch {
+      throw new Error("Remote MCP credential resolution failed.");
+    }
+    if (!value) {
+      const label = /^[A-Za-z0-9_.-]+$/u.test(server) ? server : "unknown";
+      throw new Error(
+        `Missing credential for remote MCP server ${label}: ${name}`
+      );
+    }
+    return value;
+  };
+  const headers = new Headers();
+  if (spec.bearer_token_env_var !== undefined) {
+    addDeclaredHeader(
+      headers,
+      "Authorization",
+      `Bearer ${resolveSecret(spec.bearer_token_env_var)}`
+    );
   }
-  return resolved;
+  for (const [name, declared] of Object.entries(spec.http_headers ?? {})) {
+    const resolved = declared.replaceAll(ENVIRONMENT_TEMPLATE, (reference) => {
+      const variable = environmentVariableName(reference);
+      if (!variable) throw new Error("Invalid remote MCP credential reference.");
+      return resolveSecret(variable);
+    });
+    addDeclaredHeader(headers, name, resolved);
+  }
+  return headers;
 }

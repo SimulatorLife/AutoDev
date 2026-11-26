@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
+import { isRecord } from "@simulatorlife/autodev-core";
 import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
@@ -57,12 +58,11 @@ function prompt(filePath: string, label: string): string {
 
 export function validateMcpServers(config: TomlTable, source: string): void {
   const servers = config.mcp_servers;
-  if (!servers || typeof servers !== "object" || Array.isArray(servers))
+  if (!isTable(servers))
     throw new ConfigError(`${source}: mcp_servers must be a table`);
-  for (const [name, raw] of Object.entries(servers)) {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw))
+  for (const [name, server] of Object.entries(servers)) {
+    if (!isTable(server))
       throw new ConfigError(`${source}: mcp_servers.${name} must be a table`);
-    const server = raw as TomlTable;
     const stdio =
       typeof server.command === "string" &&
       !!server.command &&
@@ -80,13 +80,7 @@ export function validateMcpServers(config: TomlTable, source: string): void {
 }
 
 function isTable(value: TomlValue | undefined): value is TomlTable {
-  return (
-    value !== undefined &&
-    value !== null &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    !(value instanceof Date)
-  );
+  return isRecord(value) && !(value instanceof Date);
 }
 
 /** Merge launch metadata into the parsed role; never interpret prompt text as TOML. */
@@ -198,12 +192,7 @@ export function renderAgentDirectory(
   mcpSource: string
 ): string[] {
   const servers = parseTomlFile(mcpSource, "MCP source").mcp_servers;
-  if (
-    !servers ||
-    typeof servers !== "object" ||
-    Array.isArray(servers) ||
-    Object.keys(servers).length === 0
-  )
+  if (!isTable(servers) || Object.keys(servers).length === 0)
     throw new ConfigError(`MCP source declares no mcp_servers: ${mcpSource}`);
   let shared: { base: string; leaf: string; codeSearch: string };
   try {
@@ -229,7 +218,7 @@ export function renderAgentDirectory(
       base,
       leaf,
       code,
-      servers as TomlTable
+      servers
     );
   return sources.map((name) => path.join(outputDir, name));
 }

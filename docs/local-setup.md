@@ -259,7 +259,7 @@ Codex user-level configuration is managed via a composed model rather than a dir
 The tracked Codex role files under `agents/roles/` contain role-specific
 configuration plus shared-prompt composition markers. The installer renders
 `base.md`, `leaf.md`, and the optional `code-search.md` piece into regular files
-under `$CODEX_HOME/agents/` before Codex loads them; provider identity remains configured in the provider
+under `$CODEX_HOME/agents/` before Codex loads them. The renderer composes prompts and merges MCP launch metadata in parsed TOML, then uses `smol-toml` to serialize the projection. Markdown examples, literal escape sequences and quotes are prompt content, not TOML syntax. Generated formatting need not match the source; semantic role-access markers are preserved. Provider identity remains configured in the provider
 profiles/catalogs, while role names stay stable and codebase-agnostic. Agent
 configurations do not hardcode `model_reasoning_effort` so child
 agents inherit their configured model reasoning effort; this ensures compatibility

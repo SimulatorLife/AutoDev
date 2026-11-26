@@ -164,6 +164,8 @@ test("the catalogue is strict, and a parameter is only ever a whole argument", (
   }));
   for (const definition of [
     { ...fixture, executable: "../shell" },
+    { ...fixture, executable: "." },
+    { ...fixture, executable: ".." },
     { ...fixture, args: ["a\0b"] },
     { ...fixture, cwd: "/tmp" },
     { ...fixture, env: { SECRET: "value" } },
@@ -716,7 +718,31 @@ test("trusted executables never resolve out of the workspace", () => {
   assert.ok(resolved.toolchainRoots.length > 0);
   const filesystemRoot = path.parse(path.resolve("/")).root;
   assert.ok(!resolved.toolchainRoots.includes(filesystemRoot));
-  assert.throws(() => resolveTrustedExecutables(["definitely-not-installed-xyz"]));
+  const partial = resolveTrustedExecutables(["git", "definitely-not-installed-xyz", ".", ".."]);
+  assert.equal(partial.executables.git, resolved.executables.git);
+  assert.deepEqual(Object.keys(partial.executables), ["git"]);
+  assert.deepEqual(partial.toolchainRoots, resolved.toolchainRoots);
+});
+
+test("the confined PATH prefers an admitted Runtime Node over workspace shims", {
+  skip: process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec")
+}, () => {
+  const root = mkdtempSync(path.join(tmpdir(), "autodev-command-node-path-"));
+  try {
+    const scope = scopeFixture(root);
+    const nodeDirectory = path.dirname(realpathSync(process.execPath));
+    const prepared = prepareCommand(
+      { ...scope, toolchainRoots: [...scope.toolchainRoots, nodeDirectory] },
+      fixture
+    );
+    const entries = prepared.env.PATH!.split(path.delimiter);
+    const workspaceBin = path.join(realpathSync(scope.workspace), "node_modules", ".bin");
+    assert.equal(entries[0], nodeDirectory);
+    assert.ok(entries.indexOf(workspaceBin) > entries.indexOf("/usr/bin"));
+    assert.ok(entries.indexOf(workspaceBin) > entries.indexOf(nodeDirectory));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("workspace keys are physical, stable and shared across symlink aliases", () => {
@@ -749,7 +775,10 @@ test("the admitted command workspace cannot be redirected after scope resolution
     mkdirSync(path.join(runtimeRoot, "config"));
     writeFileSync(path.join(runtimeRoot, "config", "commands.json"), JSON.stringify({
       version: 1,
-      commands: { git_status: { ...fixture, executable: "git", args: ["status"] } }
+      commands: {
+        git_status: { ...fixture, executable: "git", args: ["status"] },
+        test: { ...fixture, executable: "definitely-not-installed-xyz" }
+      }
     }));
     const alias = path.join(root, "alias");
     symlinkSync(workspace, alias);
@@ -759,6 +788,8 @@ test("the admitted command workspace cannot be redirected after scope resolution
       args: ["--role", "worker", "--workspace", alias]
     });
     assert.equal(resolved.workspace, realpathSync(workspace));
+    assert.ok(resolved.scope.executables.git);
+    assert.equal(Object.hasOwn(resolved.scope.executables, "definitely-not-installed-xyz"), false);
     assert.equal(resolved.isAuthorized(), true);
     // Replacing the caller's alias does not change the pinned workspace.
     rmSync(alias);

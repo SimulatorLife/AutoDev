@@ -3330,6 +3330,142 @@ test(
 );
 
 test(
+  "a conversation-scoped pooled backend gives each ChatGPT conversation its own coordinator and refuses calls without one",
+  { timeout: 30_000 },
+  async () => {
+    const root = realpathSync(
+      mkdtempSync(path.join(tmpdir(), "autodev-conversation-pool-"))
+    );
+    const serverScript = path.join(root, "coordinator-fixture.mjs");
+    writeFileSync(
+      serverScript,
+      String.raw`import { createInterface } from "node:readline";
+const lines = createInterface({ input: process.stdin });
+const send = (m) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...m }) + "\n");
+lines.on("line", (line) => {
+  const m = JSON.parse(line);
+  if (m.method === "initialize") {
+    send({ id: m.id, result: { protocolVersion: "2025-03-26", capabilities: { tools: {} }, serverInfo: { name: "coordinator-fixture", version: "1" } } });
+  } else if (m.method === "tools/list") {
+    send({ id: m.id, result: { tools: [{ name: "whoami", inputSchema: { type: "object" } }] } });
+  } else if (m.method === "tools/call") {
+    send({ id: m.id, result: { content: [{ type: "text", text: process.env.AUTODEV_XACPX_COORDINATOR_SESSION + "|" + process.argv.slice(2).join(" ") }] } });
+  }
+});
+`,
+      { mode: 0o600 }
+    );
+    const pool = await startChatgptBackendPool(
+      {
+        version: 1,
+        servers: {
+          "orchestrator.xacpx": {
+            kind: "stdio",
+            server: "xacpx",
+            env: {
+              AUTODEV_AGENT_ROLE: "orchestrator",
+              AUTODEV_XACPX_COORDINATOR_SESSION: "chatgpt:orchestrator:project"
+            },
+            conversationScopedEnv: "AUTODEV_XACPX_COORDINATOR_SESSION",
+            command: process.execPath,
+            args: [serverScript],
+            cwd: root,
+            tools: ["whoami"]
+          }
+        }
+      },
+      {
+        gatewayEnv: { HOME: root, PATH: process.env.PATH ?? "/usr/bin:/bin" },
+        idleTimeoutMs: 60_000,
+        maxConversations: 2
+      }
+    );
+    try {
+      const url = `http://127.0.0.1:${pool.port}/mcp/orchestrator.xacpx`;
+      const headers = {
+        "content-type": "application/json",
+        authorization: `Bearer ${pool.token}`
+      };
+      const post = async (sessionId: string | null, body: unknown) => {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: sessionId ? { ...headers, "mcp-session-id": sessionId } : headers,
+          body: JSON.stringify(body)
+        });
+        return {
+          sessionId: response.headers.get("mcp-session-id"),
+          body: (await response.json()) as {
+            result?: { content: Array<{ text: string }>; tools?: unknown[] };
+            error?: { message: string };
+          }
+        };
+      };
+      // ChatGPT opens a fresh MCP session per tool call; only the
+      // conversation identity in the call's metadata ties calls together.
+      const call = async (meta: Record<string, unknown> | undefined) => {
+        const init = await post(null, {
+          jsonrpc: "2.0",
+          id: 0,
+          method: "initialize",
+          params: { protocolVersion: "2025-03-26", capabilities: {} }
+        });
+        assert.ok(init.sessionId);
+        assert.ok(init.body.result, JSON.stringify(init.body));
+        return (
+          await post(init.sessionId, {
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: { name: "whoami", arguments: {}, ...(meta ? { _meta: meta } : {}) }
+          })
+        ).body;
+      };
+      const identity = (body: Awaited<ReturnType<typeof call>>) =>
+        body.result?.content[0]?.text.split("|")[0];
+
+      const a1 = await call({ "openai/session": "conversation-A" });
+      const a2 = await call({ "openai/session": "conversation-A", "openai/locale": "en" });
+      const b = await call({ "openai/session": "conversation-B" });
+      assert.ok(identity(a1), JSON.stringify(a1));
+      assert.equal(identity(a1), identity(a2));
+      assert.notEqual(identity(a1), identity(b));
+      for (const body of [a1, b]) {
+        assert.match(
+          identity(body)!,
+          /^chatgpt:orchestrator:project:conversation-[0-9a-f]{24}$/u
+        );
+        // The raw platform identifier never reaches the backend.
+        assert.doesNotMatch(body.result!.content[0]!.text, /conversation-[AB]/u);
+      }
+      // Discovery never needs a conversation; delegation always does.
+      const listed = await post(
+        (await post(null, {
+          jsonrpc: "2.0",
+          id: 0,
+          method: "initialize",
+          params: { protocolVersion: "2025-03-26", capabilities: {} }
+        })).sessionId,
+        { jsonrpc: "2.0", id: 1, method: "tools/list" }
+      );
+      assert.equal(listed.body.result?.tools?.length, 1);
+      for (const meta of [undefined, {}, { "openai/session": "" }, { "openai/session": 7 }]) {
+        const refused = await call(meta);
+        assert.equal(refused.result, undefined);
+        assert.match(refused.error?.message ?? "", /conversation identity/u);
+      }
+      assert.equal(pool.stats()["orchestrator.xacpx"]?.conversations, 2);
+      // A third conversation evicts the least recently used idle one.
+      const c = await call({ "openai/session": "conversation-C" });
+      assert.notEqual(identity(c), identity(a1));
+      assert.equal(pool.stats()["orchestrator.xacpx"]?.conversations, 2);
+    } finally {
+      await pool.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+);
+
+test(
   "pooled loopback backend host coalesces many one-shot sessions onto one backend process, enforces auth/grants, reaps idle backends, and cleans up process groups",
   { timeout: 30_000 },
   async () => {

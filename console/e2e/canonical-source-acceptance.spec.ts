@@ -3,7 +3,6 @@
 import {
   type APIRequestContext,
   expect,
-  type Page,
   test
 } from "@playwright/test";
 

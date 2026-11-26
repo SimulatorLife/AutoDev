@@ -16,8 +16,17 @@ import {
   type PooledBackendSpec
 } from "../mcp/chatgpt-backend-pool.ts";
 import { hasRoleContract, roleContract } from "../shared/execution-contract.ts";
-import { MCP_FILESYSTEM_READ_ONLY_ENV } from "../shared/tool-names.ts";
+import {
+  MCP_FILESYSTEM_READ_ONLY_ENV,
+  MCP_SERVER_XACPX
+} from "../shared/tool-names.ts";
 import { resolveXacpxOrchestrationSocketPath } from "../xacpx/orchestration-ipc.ts";
+
+/**
+The variable carrying the XACPX delegation coordinator identity to `xacpx
+mcp-stdio` (the launcher turns it into `--coordinator-session`).
+*/
+export const XACPX_COORDINATOR_SESSION_ENV = "AUTODEV_XACPX_COORDINATOR_SESSION";
 
 type Catalogue = Record<string, Record<string, unknown>>;
 
@@ -295,7 +304,13 @@ function resolveValidatedExternalServers(
           args: backend.args,
           cwd: workspace,
           tools: uniqueTools,
-          env: chatgptRoleEnvironment(role, workspace)
+          env: chatgptRoleEnvironment(role, workspace),
+          // Delegation acts for one ChatGPT conversation: each conversation
+          // gets its own coordinator, so it can see and steer only the
+          // children it delegated.
+          ...(name === MCP_SERVER_XACPX
+            ? { conversationScopedEnv: XACPX_COORDINATOR_SESSION_ENV }
+            : {})
         },
         filterTargetCommand: backend.command,
         filterTargetArgs: JSON.stringify(backend.args)
@@ -638,7 +653,7 @@ export function chatgptRoleEnvironment(
     AUTODEV_AGENT_ROLE: normalized,
     // Each surface owns its own coordinator, so a conversation bound to one
     // role delegates under that role's identity and never another's.
-    AUTODEV_XACPX_COORDINATOR_SESSION: `chatgpt:${normalized}:${workspaceName}`,
+    [XACPX_COORDINATOR_SESSION_ENV]: `chatgpt:${normalized}:${workspaceName}`,
     ...(roleContract(normalized).readOnly === true
       ? { [MCP_FILESYSTEM_READ_ONLY_ENV]: "1" }
       : {})

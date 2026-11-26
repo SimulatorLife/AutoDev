@@ -73,6 +73,11 @@ test("native role rendering round-trips literal prompts and structured MCP confi
     renderRole(source, output, root, base, "Leaf.", "Unused.", servers);
     const rendered = readFileSync(output, "utf8");
     assert.ok(rendered.startsWith("# role-access: read-only\n"));
+    assert.equal(
+      rendered.split("\n").filter((line) => line === "# role-access: read-only")
+        .length,
+      1
+    );
     assert.deepEqual(structuredClone(parse(rendered)), {
       ...config,
       developer_instructions: [base, "Leaf.", rolePrompt].join("\n\n"),

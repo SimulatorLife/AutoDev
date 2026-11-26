@@ -365,10 +365,17 @@ function ensureXacpxConfig(
   });
 }
 
+/**
+Run one AutoDev MCP server. `serverArguments` are the arguments the launcher's
+caller supplied after the server name -- the trusted renderer that wrote the
+launch command (the ChatGPT gateway passes the Commands MCP its role and
+workspace this way); they are passed to the server unchanged.
+*/
 export function runMcp(
   name: string,
   repoRoot: string,
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  serverArguments: readonly string[] = []
 ): number {
   const command = resolveMcpCommand(name, env);
   const workspace = resolveMcpWorkspace(env);
@@ -426,12 +433,15 @@ export function runMcp(
         `AutoDev cocoindex-code has no project under ${workspace}; run \`ccc init\` there or point AUTODEV_MCP_WORKSPACE at an initialized project directory.`
       );
   }
-  const args =
-    name === MCP_SERVER_FILESYSTEM
-      ? [...command.args, ...(env[MCP_FILESYSTEM_WORKSPACE_ONLY_ENV] === "1"
-          ? ["--confine-roots", "--", physicalPath(workspace)]
-          : filesystemDirectoryArgs(workspace, repoRoot))]
-      : command.args;
+  const args = [
+    ...command.args,
+    ...serverArguments,
+    ...(name === MCP_SERVER_FILESYSTEM
+      ? env[MCP_FILESYSTEM_WORKSPACE_ONLY_ENV] === "1"
+        ? ["--confine-roots", "--", physicalPath(workspace)]
+        : filesystemDirectoryArgs(workspace, repoRoot)
+      : [])
+  ];
   const result = spawnSync(command.binary, args, {
     cwd: workspace,
     env: childEnv,
@@ -447,7 +457,12 @@ if (isEntryPoint(import.meta.url)) {
       import.meta.dirname,
       process.env.AUTODEV_REPO_ROOT
     );
-    process.exitCode = runMcp(process.argv[2] ?? "", repoRoot);
+    process.exitCode = runMcp(
+      process.argv[2] ?? "",
+      repoRoot,
+      process.env,
+      process.argv.slice(3)
+    );
   } catch (error) {
     writeErrorLine(
       `autodev mcp: ${error instanceof Error ? error.message : error}`

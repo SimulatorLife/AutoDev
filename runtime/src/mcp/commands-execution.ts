@@ -23,7 +23,11 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/executables";
 import { execa } from "execa";
 
-import type { CommandDefinition, CommandResult } from "./commands-catalogue.ts";
+import {
+  commandExecutableNameSchema,
+  type CommandDefinition,
+  type CommandResult
+} from "./commands-catalogue.ts";
 
 const SANDBOX = "/usr/bin/sandbox-exec";
 /**
@@ -138,26 +142,38 @@ function developerToolBinary(name: string, resolved: string): string {
 Resolve the executables a catalogue names, from trusted locations only.
 
 The resolution never consults the workspace and never trusts a PATH the
-workspace could influence. A name that cannot be resolved is an error
-rather than a fallback: a command whose executable is missing must fail
-closed, not run something else.
+workspace could influence. Missing or invalid executables are omitted, so
+the affected commands fail closed at registration without preventing
+independent commands from being discovered. Never substitute a different
+executable for an unavailable definition.
 */
 export function resolveTrustedExecutables(
   names: readonly string[],
   environment: NodeJS.ProcessEnv = process.env,
   home: string = environment.HOME?.trim() || ""
 ): TrustedExecutables {
-  const executables: Record<string, string> = {};
+  const entries: Array<[string, string]> = [];
   const roots = new Set<string>();
-  for (const name of names) {
-    const resolved =
-      findPnpmGlobalBinary(name, home, environment) ??
-      findExecutable(name, TRUSTED_EXECUTABLE_PATH);
-    if (!resolved) {
-      throw new Error(`Command executable "${name}" is not installed.`);
+  for (const name of new Set(names)) {
+    try {
+      if (!commandExecutableNameSchema.safeParse(name).success) continue;
+      const resolved =
+        findPnpmGlobalBinary(name, home, environment) ??
+        findExecutable(name, TRUSTED_EXECUTABLE_PATH);
+      if (!resolved || !path.isAbsolute(resolved)) {
+        throw new Error("Executable is unavailable.");
+      }
+      const executable = developerToolBinary(name, realpathSync(resolved));
+      if (!statSync(executable).isFile()) {
+        throw new Error("Executable is not a regular file.");
+      }
+      accessSync(executable, constants.X_OK);
+      entries.push([name, executable]);
+    } catch {
+      // Omit an unavailable executable, not the entire role's command surface.
     }
-    executables[name] = developerToolBinary(name, realpathSync(resolved));
   }
+  const executables = Object.fromEntries(entries);
   for (const entry of Object.values(executables)) {
     roots.add(path.dirname(entry));
     const parent = path.dirname(path.dirname(entry));
@@ -322,9 +338,9 @@ export function prepareCommand(
   }
   if (!statSync(executable).isFile()) throw new Error("Command executable is not a file.");
   accessSync(executable, constants.X_OK);
-  // PATH holds only the approved executable directories, the workspace's own
-  // tool directory (a project's scripts resolve their tools from it) and the
-  // OS binaries. Everything else a child resolves is confined by the profile.
+  // PATH holds only approved executable directories, OS binaries and the
+  // workspace's own tool directory. Everything else a child resolves is
+  // confined by the profile.
   const binDirectories = Object.values(scope.executables).map((entry) => {
     if (!path.isAbsolute(entry)) throw new Error("Invalid approved executable path.");
     const resolved = realpathSync(entry);
@@ -353,13 +369,21 @@ export function prepareCommand(
   if (!registryPort && definition.executionClass === "dependency_install") {
     throw new Error("Dependency installation requires an approved package-registry boundary.");
   }
+  // pnpm and other installed scripts may use /usr/bin/env node. Include
+  // the running Runtime's Node directory when it is already admitted,
+  // before workspace shims. Do not broaden the profile to discover Node.
+  const nodeDirectory = path.dirname(realpathSync(process.execPath));
+  const runtimeNode = roots.some((root) => isPathWithin(root, nodeDirectory))
+    ? [nodeDirectory]
+    : [];
   const environment: Record<string, string> = {
     PATH: [
       ...new Set([
+        ...runtimeNode,
         ...binDirectories,
-        path.join(workspace, "node_modules", ".bin"),
         "/usr/bin",
-        "/bin"
+        "/bin",
+        path.join(workspace, "node_modules", ".bin")
       ])
     ].join(path.delimiter),
     HOME: scratch,

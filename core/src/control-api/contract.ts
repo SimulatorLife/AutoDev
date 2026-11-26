@@ -141,11 +141,13 @@
  * User-Agent surface was observed.
  * v38: opencli providers run exclusively in dedicated Chrome for Testing;
  * the obsolete shared-browser toggle (`browser` / `PATCH .../browser`) is removed.
+ * v39: Permissions is repository-owned and GET-only; the canonical
+ * collection advertises readOnly: true and rejects every mutation.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 38
+  version: 39
 } as const;
 
 export type ControlApiContractResponse = {

@@ -2910,7 +2910,7 @@ function isControlApiPermissionsResponse(
     !isRecord(value) ||
     value.schema !== "autodev-control-permissions-v2" ||
     typeof value.source !== "string" ||
-    value.readOnly !== false ||
+    value.readOnly !== true ||
     // The role matrices are the execution contract's roles, and the matrices
     // cannot say whether the contract was read. The response has to say it, or
     // an empty matrix set is indistinguishable from a contract nobody read.

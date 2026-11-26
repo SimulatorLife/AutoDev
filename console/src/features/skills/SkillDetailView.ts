@@ -2,11 +2,10 @@ import type {
   ControlApiSkillContentResponse,
   ScopedSkillDefinition
 } from "@simulatorlife/autodev-core";
+import { parseRuleSyncFrontmatter } from "@simulatorlife/autodev-data/rulesync-parser";
 import React from "react";
 
-import { parseRuleSyncFrontmatter } from "@simulatorlife/autodev-data";
 import { SourceView } from "../../components/code/SourceView.ts";
-import { PromptMarkdown } from "../prompts/prompt-markdown.ts";
 import {
   EntityTitle,
   SECTION_HEADING_CLASS
@@ -21,6 +20,7 @@ import {
   MONO_META_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
+import { PromptMarkdown } from "../prompts/prompt-markdown.ts";
 import {
   NOT_INSTALLED_LABEL,
   SKILL_SCOPE_LABEL,

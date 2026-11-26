@@ -12344,7 +12344,7 @@ test("View adapters translate Control API responses without inventing data", () 
     schema: "autodev-control-permissions-v2",
     executionContractObserved: true,
     source: "test",
-    readOnly: false,
+    readOnly: true,
     revision: "b".repeat(64),
     policyStatus: "valid",
     policyReason: null,
@@ -12424,7 +12424,7 @@ test("the capability matrix lists the fixed roles in the one order the app uses"
     schema: "autodev-control-permissions-v2",
     executionContractObserved: true,
     source: "test",
-    readOnly: false,
+    readOnly: true,
     revision: "c".repeat(64),
     policyStatus: "valid",
     policyReason: null,
@@ -16283,7 +16283,7 @@ test("a catalog row missing the fields its view reads fails closed instead of th
     schema: "autodev-control-permissions-v2",
     executionContractObserved: true,
     source: ".rulesync/permissions",
-    readOnly: false,
+    readOnly: true,
     revision: "d".repeat(64),
     policyStatus: "valid",
     policyReason: null,
@@ -18530,63 +18530,6 @@ test("DataTable renders no row-level handler, and has no way to ask for one", ()
   assert.doesNotMatch(markup, /onclick|onClick|cursor-pointer/);
 });
 
-/**
- * The fields a browser would actually submit for one skill's assignment form.
- *
- * Derived from the markup rather than asserted against it directly, because the
- * bug this guards against is invisible to a test that only checks that the
- * inputs exist. An unchecked checkbox contributes nothing to a submission, so
- * the empty desired set -- which is exactly how a skill gets unassigned -- posts
- * zero `roles` fields. A route that demanded one occurrence of `roles` would
- * reject every unassignment while a test that counted inputs would call it
- * correct.
- *
- * The form is located by its `action` and then bounded by scanning out to the
- * surrounding `<form>` and `</form>`, because React emits attributes in its own
- * order: matching a fixed opening tag made this helper find nothing at all
- * while reporting an empty field set, which reads as "the form submitted
- * nothing" rather than as "the helper is broken".
- *
- * `disabled` is matched only outside the class attribute: every styled control
- * in the Console carries `disabled:` variants in its class list, so a naive
- * `/\bdisabled\b/` scan reports all of them as disabled.
- */
-function submittedAssignmentFields(
-  markup: string,
-  skillName: string
-): Map<string, string[]> {
-  const actionAt = markup.indexOf(`action="/api/skills/${skillName}"`);
-  assert.notEqual(actionAt, -1, `no assignment form for ${skillName}`);
-  const formStart = markup.lastIndexOf("<form", actionAt);
-  assert.notEqual(
-    formStart,
-    -1,
-    `assignment form for ${skillName} has no start`
-  );
-  const formEnd = markup.indexOf("</form>", actionAt);
-  assert.notEqual(formEnd, -1, `assignment form for ${skillName} never closes`);
-  const body = markup.slice(formStart, formEnd);
-  const fields = new Map<string, string[]>();
-  for (const [, attributes] of body.matchAll(/<input\b([^>]*?)\/?>/gu)) {
-    const withoutClass = (attributes ?? "").replaceAll(/\sclass="[^"]*"/gu, "");
-    // A browser omits a disabled control from the submission entirely, so a
-    // hidden input standing in for one would submit nothing.
-    if (/(?:^|\s)disabled(?=[\s/>=]|$)/u.test(withoutClass)) continue;
-    const name = /\sname="([^"]*)"/u.exec(withoutClass)?.[1];
-    if (name === undefined || name === "") continue;
-    const type = /\stype="([^"]*)"/u.exec(withoutClass)?.[1] ?? "text";
-    // An unchecked checkbox is not a successful control and submits nothing.
-    if (type === "checkbox" && !/\schecked(?=[\s/>=]|$)/u.test(withoutClass)) {
-      continue;
-    }
-    const fieldValue =
-      /\svalue="([^"]*)"/u.exec(withoutClass)?.[1] ??
-      (type === "checkbox" ? "on" : "");
-    fields.set(name, [...(fields.get(name) ?? []), fieldValue]);
-  }
-  return fields;
-}
-
 const SKILL_ASSIGNMENT_SKILL = {
   name: "release-checklist",
   description: "Steps for cutting a release.",
@@ -18957,7 +18900,7 @@ test("the permissions page answers which tools a role may call, not only which s
     schema: "autodev-control-permissions-v2",
     executionContractObserved: true,
     source: "test",
-    readOnly: false,
+    readOnly: true,
     revision: "e".repeat(64),
     policyStatus: "valid",
     policyReason: null,
@@ -19077,7 +19020,7 @@ test("a permissions page where no role has a tool grant says so instead of rende
     schema: "autodev-control-permissions-v2",
     executionContractObserved: true,
     source: "test",
-    readOnly: false,
+    readOnly: true,
     revision: "f".repeat(64),
     policyStatus: "valid",
     policyReason: null,
@@ -19125,7 +19068,7 @@ test("a permissions payload whose tool grants are unreadable fails closed", asyn
     schema: "autodev-control-permissions-v2",
     executionContractObserved: true,
     source: "test",
-    readOnly: false,
+    readOnly: true,
     revision: "0".repeat(64),
     policyStatus: "valid",
     policyReason: null,

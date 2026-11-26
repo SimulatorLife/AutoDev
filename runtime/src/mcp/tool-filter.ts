@@ -7,16 +7,21 @@ import { createInterface } from "node:readline";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { isRecord } from "@simulatorlife/autodev-core";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
+import type { RemoteBackendSpec } from "../shared/mcp-headers.ts";
 import {
   KEYCHAIN_SECRET_NAMES,
-  readRuntimeSecret,
-  resolveManagedSecret
+  readRuntimeSecret
 } from "../shared/runtime-secrets.ts";
 import {
   MCP_SERVER_COCOINDEX,
   MCP_SERVER_FILESYSTEM
 } from "../shared/tool-names.ts";
 import type { ToolCallOutcome } from "./mcp-telemetry.ts";
+import {
+  createRemoteMcpTransport,
+  publicRemoteMcpMessage,
+  remoteTransportErrorMessage
+} from "./remote-transport.ts";
 
 function signalProcessGroup(
   child: ChildProcess,
@@ -40,50 +45,6 @@ function signalProcessGroup(
 
 type JsonRecord = Record<string, unknown>;
 type JsonRpcId = string | number;
-
-export interface RemoteBackendSpec {
-  url: string;
-  bearer_token_env_var?: string;
-  http_headers?: Record<string, string>;
-}
-
-/** Resolve declared credentials for one remote MCP server without exposing secrets to siblings. */
-export function resolveRemoteMcpHeaders(
-  spec: RemoteBackendSpec,
-  server: string,
-  env: NodeJS.ProcessEnv = process.env
-): Record<string, string> {
-  const resolveSecret = (name: string): string | null =>
-    resolveManagedSecret(name, env) ?? readRuntimeSecret(name, env);
-  const headers: Record<string, string> = {};
-  if (spec.bearer_token_env_var) {
-    const token = resolveSecret(spec.bearer_token_env_var);
-    if (!token) {
-      throw new Error(
-        `Missing credential for remote MCP server ${server}: ${spec.bearer_token_env_var}`
-      );
-    }
-    headers.Authorization = `Bearer ${token}`;
-  }
-  if (spec.http_headers) {
-    for (const [headerName, template] of Object.entries(spec.http_headers)) {
-      const resolved = template.replaceAll(
-        /\$\{([A-Za-z0-9_]+)\}/gu,
-        (_match, envName: string) => {
-          const value = resolveSecret(envName);
-          if (!value) {
-            throw new Error(
-              `Missing credential for remote MCP server ${server}: ${envName}`
-            );
-          }
-          return value;
-        }
-      );
-      headers[headerName] = resolved;
-    }
-  }
-  return headers;
-}
 
 interface BackendConnection {
   send(message: JsonRecord): void;
@@ -142,7 +103,12 @@ function runToolFilter(args: string[]): void {
   let remoteSpec: RemoteBackendSpec | null = null;
   let backendArgs: string[] = [];
   if (isRemote) {
-    const parsed: unknown = JSON.parse(argsJson ?? "null");
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(argsJson ?? "null");
+    } catch {
+      throw new Error("remote MCP descriptor is invalid");
+    }
     if (
       !isRecord(parsed) ||
       typeof parsed.url !== "string" ||
@@ -340,38 +306,24 @@ function runToolFilter(args: string[]): void {
   let connection: BackendConnection;
   if (remoteSpec) {
     const spec = remoteSpec;
-    const headers = resolveRemoteMcpHeaders(
-      spec,
-      server ?? "",
-      process.env
-    );
+    const transport = createRemoteMcpTransport(spec, server ?? "", process.env);
     let closed = false;
-    type RemoteTransport =
-      import("@modelcontextprotocol/sdk/client/streamableHttp.js").StreamableHTTPClientTransport;
-    let transportInstance: RemoteTransport | null = null;
-    const transportPromise: Promise<RemoteTransport> = import(
-      "@modelcontextprotocol/sdk/client/streamableHttp.js"
-    ).then(({ StreamableHTTPClientTransport }) => {
-      const transport = new StreamableHTTPClientTransport(new URL(spec.url), {
-        requestInit: { headers }
-      });
-      transport.onmessage = (message) => {
-        handleBackendMessage(message as unknown as JsonRecord);
-      };
-      transport.onerror = (error) => {
-        process.stderr.write(
-          `external remote MCP error: ${error instanceof Error ? error.message : String(error)}\n`
-        );
-      };
-      transport.onclose = () => {
-        if (!closed) {
-          closed = true;
-          shutdownFromBackend(0);
-        }
-      };
-      transportInstance = transport;
-      return transport;
-    });
+    transport.onmessage = (message) => {
+      handleBackendMessage(
+        publicRemoteMcpMessage(message) as unknown as JsonRecord
+      );
+    };
+    transport.onerror = (error) => {
+      process.stderr.write(
+        `external remote MCP error: ${remoteTransportErrorMessage(error)}\n`
+      );
+    };
+    transport.onclose = () => {
+      if (!closed) {
+        closed = true;
+        shutdownFromBackend(0);
+      }
+    };
     let sendChain: Promise<void> = Promise.resolve();
     connection = {
       send(message) {
@@ -379,7 +331,6 @@ function runToolFilter(args: string[]): void {
         sendChain = sendChain.then(async () => {
           if (closed) return;
           try {
-            const transport = await transportPromise;
             await transport.send(message as unknown as JSONRPCMessage);
           } catch (error) {
             const id =
@@ -395,9 +346,7 @@ function runToolFilter(args: string[]): void {
                 jsonLine(
                   errorResponse(
                     id,
-                    error instanceof Error
-                      ? error.message
-                      : "Remote MCP request failed"
+                    remoteTransportErrorMessage(error)
                   )
                 )
               );
@@ -408,11 +357,6 @@ function runToolFilter(args: string[]): void {
       close() {
         if (closed) return;
         closed = true;
-        const transport = transportInstance;
-        if (!transport) {
-          shutdownFromBackend(0, true);
-          return;
-        }
         void Promise.race([
           transport.terminateSession().catch(() => {}),
           new Promise((resolve) => setTimeout(resolve, 300).unref())

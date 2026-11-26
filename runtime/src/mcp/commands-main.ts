@@ -462,10 +462,12 @@ export async function startCommandsServer(
 }> {
   const lease = createWorkspaceLease(runDirectory, resolved.workspaceKey);
   const effective = effectiveCommands(resolved);
-  const isNeedsRegistry = effective
-    .values()
-    .some((definition) => definition.executionClass === "dependency_install");
-  const registry = isNeedsRegistry
+  const needsRegistry = effective.values().some(
+    (definition) =>
+      definition.executionClass === "dependency_install" &&
+      Object.hasOwn(resolved.scope.executables, definition.executable)
+  );
+  const registry = needsRegistry
     ? await startRegistryProxy({
         registry:
           process.env[COMMANDS_REGISTRY_ENV]?.trim() || "https://registry.npmjs.org"
@@ -526,6 +528,15 @@ async function runCommandsMain(): Promise<void> {
     const runDirectory = autodevRunDirectory(environment, home);
     configureCommandExecutionTelemetry(resolved.role, resolved.workspaceId);
     const running = await startCommandsServer(resolved, runDirectory);
+    const registered = new Set(running.server.commandIds);
+    const unavailable = [...effectiveCommands(resolved).keys()].filter(
+      (id) => !registered.has(id)
+    );
+    if (unavailable.length > 0) {
+      process.stderr.write(
+        `autodev commands mcp: unavailable command tools: ${unavailable.join(", ")}\n`
+      );
+    }
     // The SDK's stdio transport does not close on stdin EOF by itself.
     // Do not leave active commands and a listening registry proxy behind
     // when the trusted gateway closes or stops this backend.

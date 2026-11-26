@@ -596,3 +596,31 @@ test("the LSP server finds the language servers AutoDev pins, whatever PATH Code
     join(import.meta.dirname, "..", "..", "runtime", "node_modules", ".bin", "typescript-language-server")
   );
 });
+
+test("the launcher passes its caller's server arguments to the server", () => {
+  // The ChatGPT gateway hands the Commands MCP its role and workspace as
+  // launcher arguments. Dropping them leaves the server without a role scope;
+  // forwarded, it reaches its catalogue admission check, which refuses the
+  // checkout's own catalogue for the checkout workspace.
+  const result = spawnSync(
+    process.execPath,
+    [
+      join(repositoryRoot, "runtime/src/mcp/launcher.ts"),
+      "commands",
+      "--role",
+      "validator",
+      "--workspace",
+      repositoryRoot
+    ],
+    {
+      cwd: repositoryRoot,
+      env: { HOME: tmpdir(), PATH: "/usr/bin:/bin" },
+      encoding: "utf8",
+      input: "",
+      timeout: 30_000
+    }
+  );
+  assert.doesNotMatch(result.stderr, /requires AUTODEV_MCP_ROLE/u);
+  assert.match(result.stderr, /resolves inside the authorized workspace/u);
+  assert.notEqual(result.status, 0);
+});

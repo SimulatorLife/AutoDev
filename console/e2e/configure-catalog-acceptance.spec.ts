@@ -4,7 +4,7 @@ import {
   test
 } from "@playwright/test";
 
-import { documentFitsViewport } from "./acceptance-helpers.ts";
+import { documentFitsViewport, waitForPageContent } from "./acceptance-helpers.ts";
 
 const FIXTURE_BASE_URL = `http://127.0.0.1:${process.env.AUTODEV_PLAYTEST_FIXTURE_PORT ?? "4311"}`;
 const SKILL_NAME = "code-review";
@@ -216,6 +216,7 @@ for (const { path, pattern } of [
     });
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto(path);
+    await waitForPageContent(page);
     const view = page.locator("[data-source-view]");
     await expect(view).toHaveAttribute("data-source-view", "rendered");
     await expect(view.getByRole("button", { name: "Rendered", exact: true })).toHaveAttribute("aria-pressed", "true");

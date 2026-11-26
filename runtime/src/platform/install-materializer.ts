@@ -224,6 +224,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/mcp/commands-server.ts",
   "runtime/src/mcp/commands-main.ts",
   "runtime/src/mcp/tool-filter.ts",
+  "runtime/src/mcp/remote-transport.ts",
   "runtime/src/mcp/filesystem-server.ts",
   "runtime/src/mcp/mcp-telemetry.ts",
   "runtime/src/mcp/launcher.ts",

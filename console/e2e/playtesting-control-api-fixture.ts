@@ -3928,9 +3928,7 @@ async function applyWorkspaceConfigurationWrite(
 /**
  * The canonical permission policy, as the Runtime reports it.
  *
- * The read and the write answer from the same state, so a write that lands is
- * the same fact on both surfaces rather than two the fixture keeps in step by
- * hand.
+ * The read and external source-change fixture share the same observed state.
  */
 function permissionPolicyRecord(): {
   approvalPolicy: string;
@@ -3942,108 +3940,6 @@ function permissionPolicyRecord(): {
     approvalsReviewer: permissionPolicy.approvalsReviewer,
     webSearch: permissionPolicy.webSearch
   };
-}
-
-/**
- * Write one setting of the canonical permission policy.
- *
- * The write is a compare-and-swap on the policy's revision, so a write
- * decided on a policy that has since moved is refused rather than applied over
- * the newer one -- which is what the Console's own conflict path reports.
- */
-async function applyPermissionPolicyWrite(
-  request: IncomingMessage,
-  response: ServerResponse,
-  url: URL
-): Promise<boolean> {
-  if (url.pathname !== "/control/permissions") return false;
-  if (request.method !== "PATCH") return false;
-
-  const body = await readJsonBody(request);
-  const expectedRevision = body?.expectedRevision;
-  if (typeof expectedRevision !== "string") {
-    sendJson(
-      response,
-      {
-        code: "autodev_control_permission_policy_invalid_update",
-        message: "The fixture needs an expectedRevision."
-      },
-      400
-    );
-    return true;
-  }
-  if (expectedRevision !== permissionPolicy.revision) {
-    sendJson(
-      response,
-      {
-        code: "autodev_control_permission_policy_revision_conflict",
-        message:
-          "The permission policy changed after it was read, so the write was not applied."
-      },
-      409
-    );
-    return true;
-  }
-
-  const before = JSON.stringify(permissionPolicyRecord());
-  const settings: readonly string[] = [
-    "approvalPolicy",
-    "approvalsReviewer",
-    "webSearch"
-  ];
-  for (const setting of settings) {
-    if (!(setting in body)) continue;
-    const value = body[setting];
-    if (setting === "webSearch") {
-      if (typeof value !== "boolean") {
-        sendJson(
-          response,
-          {
-            code: "autodev_control_permission_policy_invalid_update",
-            message: `The fixture needs ${setting} to be a boolean.`
-          },
-          400
-        );
-        return true;
-      }
-    } else if (typeof value !== "string" || value.trim().length === 0) {
-      sendJson(
-        response,
-        {
-          code: "autodev_control_permission_policy_invalid_update",
-          message: `The fixture needs ${setting} to be a non-empty string.`
-        },
-        400
-      );
-      return true;
-    }
-    Object.assign(permissionPolicy, { [setting]: value });
-  }
-  const after = JSON.stringify(permissionPolicyRecord());
-  const changed = before !== after;
-  if (changed) {
-    permissionPolicy.revision = nextRevision(permissionPolicy.revision);
-  }
-  sendJson(response, {
-    schema: "autodev-control-permissions-patch-v1",
-    revision: permissionPolicy.revision,
-    changed,
-    policy: permissionPolicyRecord(),
-    applied: null,
-    reconciliation: {
-      status: {
-        convergence: changed ? "pending" : "converged",
-        desiredGeneration: null,
-        observedGeneration: null,
-        restartRequired: false,
-        lastApplyAt: null,
-        lastObservationAt: null,
-        lastError: null
-      },
-      history: []
-    }
-  });
-  return true;
 }
 
 /**
@@ -5005,8 +4901,8 @@ function handleCatalogResourceRead(
   if (url.pathname === "/control/permissions") {
     sendJson(response, {
       schema: "autodev-control-permissions-v2",
-      source: "config/config.autodev.toml",
-      readOnly: false,
+      source: ".rulesync/permissions.jsonc",
+      readOnly: true,
       executionContractObserved: true,
       revision: permissionPolicy.revision,
       policyStatus: "valid",
@@ -5582,7 +5478,18 @@ async function handleSyntheticMutationRoutes(
   if (await applyWorkspaceConfigurationWrite(request, response, url)) {
     return true;
   }
-  if (await applyPermissionPolicyWrite(request, response, url)) {
+  if (url.pathname === "/control/permissions" && request.method !== "GET") {
+    response.setHeader("allow", "GET");
+    sendJson(
+      response,
+      {
+        error: {
+          code: "autodev_control_api_method_not_allowed",
+          message: "Permissions is read-only via GET."
+        }
+      },
+      405
+    );
     return true;
   }
   return configureAgentEnablementFixture(request, response, url);

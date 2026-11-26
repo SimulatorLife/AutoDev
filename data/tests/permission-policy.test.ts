@@ -1,5 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { execFileSync, spawnSync } from "node:child_process";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  truncate,
+  writeFile
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -119,6 +128,151 @@ test("readPermissionPolicyFile reports missing files as unavailable", async () =
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("permission reads refuse oversized sources without inventing a revision", async (t) => {
+  const { directory, file } = await policyFixture();
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  // A sparse file demonstrates why the bound must be enforced before reading.
+  await truncate(file, 64 * 1024 * 1024);
+  for (const read of [
+    readPermissionPolicyFile(file),
+    readAppliedPermissionPolicyFile(file)
+  ]) {
+    assert.equal(read.status, "invalid");
+    assert.equal(read.revision, null);
+    assert.match(read.reason, /size bound/u);
+  }
+  assert.deepEqual(readAntigravityCliPermissionDefaults(file), {
+    agentMode: null,
+    toolPermission: null
+  });
+
+  assert.throws(
+    () => updatePermissionPolicy({
+      file,
+      expectedRevision: permissionPolicyRevision(POLICY_SOURCE),
+      update: { webSearch: false }
+    }),
+    /size bound/u
+  );
+});
+
+test("permission reads accept the inclusive UTF-8 byte limit and reject malformed bytes", async (t) => {
+  const { directory, file } = await policyFixture();
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  const prefix = POLICY_SOURCE + "\n// ";
+  const remaining = 1_000_000 - Buffer.byteLength(prefix);
+  const content =
+    prefix + "é".repeat(Math.floor(remaining / 2)) + "x".repeat(remaining % 2);
+  assert.equal(Buffer.byteLength(content), 1_000_000);
+  await writeFile(file, content);
+  const valid = readPermissionPolicyFile(file);
+  assert.equal(valid.status, "valid");
+  assert.equal(valid.revision, permissionPolicyRevision(content));
+
+  await writeFile(file, content + "x");
+  const oversized = readPermissionPolicyFile(file);
+  assert.equal(oversized.status, "invalid");
+  assert.equal(oversized.revision, null);
+
+  await writeFile(
+    file,
+    Buffer.concat([Buffer.from(POLICY_SOURCE + "\n// "), Buffer.from([0xff])])
+  );
+  const malformed = readPermissionPolicyFile(file);
+  assert.equal(malformed.status, "invalid");
+  assert.equal(malformed.revision, null);
+  assert.match(malformed.reason, /UTF-8/u);
+});
+
+test("permission reads reject nonregular files and symlinked canonical sources", async (t) => {
+  const { directory, file } = await policyFixture();
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const linkedFile = path.join(directory, "linked.jsonc");
+  await symlink(file, linkedFile);
+  const linkedDirectory = path.join(directory, "linked-directory");
+  const sourceDirectory = path.join(directory, "real-directory");
+  await mkdir(sourceDirectory);
+  await writeFile(path.join(sourceDirectory, "permissions.jsonc"), POLICY_SOURCE);
+  await symlink(sourceDirectory, linkedDirectory, "dir");
+
+  for (const candidate of [
+    linkedFile,
+    sourceDirectory,
+    path.join(linkedDirectory, "permissions.jsonc")
+  ]) {
+    const read = readPermissionPolicyFile(candidate);
+    assert.equal(read.status, "unavailable");
+    assert.equal(read.revision, null);
+  }
+  assert.equal(readAppliedPermissionPolicyFile(linkedFile).status, "unavailable");
+  assert.deepEqual(readAntigravityCliPermissionDefaults(linkedFile), {
+    agentMode: null,
+    toolPermission: null
+  });
+  assert.throws(
+    () => updatePermissionPolicy({
+      file: linkedFile,
+      expectedRevision: permissionPolicyRevision(POLICY_SOURCE),
+      update: { webSearch: false }
+    }),
+    PermissionPolicyValidationError
+  );
+  assert.equal(await readFile(file, "utf8"), POLICY_SOURCE);
+});
+
+test("permission reads reject a FIFO without waiting for a writer", {
+  skip: process.platform !== "darwin" && process.platform !== "linux"
+}, async (t) => {
+  const { directory } = await policyFixture();
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const fifo = path.join(directory, "policy-fifo");
+  execFileSync("mkfifo", [fifo]);
+  const moduleUrl = new URL(
+    "../src/config/permission-policy.ts",
+    import.meta.url
+  );
+  // Isolate the read so a regression to a blocking open cannot hang the suite.
+  const child = spawnSync(process.execPath, [
+    "--input-type=module",
+    "--eval",
+    `import { readPermissionPolicyFile } from ${JSON.stringify(moduleUrl.href)};
+     process.stdout.write(JSON.stringify(readPermissionPolicyFile(process.argv[1])));`,
+    fifo
+  ], { encoding: "utf8", timeout: 10_000 });
+  assert.ifError(child.error);
+  assert.equal(child.status, 0, child.stderr);
+  const read = JSON.parse(child.stdout);
+  assert.equal(read.status, "unavailable");
+  assert.equal(read.revision, null);
+});
+
+test("applied permission parse errors never include private configuration text", async (t) => {
+  const { directory, file } = await policyFixture(
+    'credential = "private-fixture-secret'
+  );
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const read = readAppliedPermissionPolicyFile(file);
+  assert.equal(read.status, "invalid");
+  assert.equal(read.reason, "The applied permission policy is not valid TOML.");
+  assert.doesNotMatch(JSON.stringify(read), /private-fixture-secret/u);
+});
+
+test("a policy update cannot persist a source above its read limit", async (t) => {
+  const { directory, file } = await policyFixture();
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  assert.throws(
+    () => updatePermissionPolicy({
+      file,
+      expectedRevision: permissionPolicyRevision(POLICY_SOURCE),
+      update: { approvalsReviewer: "x".repeat(1_000_000) }
+    }),
+    /size bound/u
+  );
+  assert.equal(await readFile(file, "utf8"), POLICY_SOURCE);
 });
 
 test("the approval policy vocabulary is translated in one place", () => {
