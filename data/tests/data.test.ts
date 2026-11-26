@@ -24,6 +24,7 @@ import {
   ClickHouseTelemetryClient,
   ConfigRepository,
   parseRuleSyncCommand,
+  parseRuleSyncFrontmatter,
   readPermissionPolicyFile,
   RuleSyncCommandConflictError,
   RuleSyncCommandValidationError,
@@ -57,6 +58,31 @@ test("the canonical parser answers what a command's source says", () => {
     () => parseRuleSyncCommand("dry", "# Audit\n\nNo frontmatter.\n"),
     RuleSyncCommandValidationError
   );
+});
+
+test("the shared RuleSync frontmatter decoder uses YAML semantics", () => {
+  const result = parseRuleSyncFrontmatter(
+    '---\r\nname: audit\r\n"targets":\r\n  - copilot\r\ndescription: >-\r\n  Review\r\n  changes.\r\n---\r\nBody.\r\n'
+  );
+  assert.equal(result.kind, "valid");
+  if (result.kind !== "valid") assert.fail("expected valid metadata");
+  assert.deepEqual(result.metadata.targets, ["copilot"]);
+  assert.equal(result.metadata.description, "Review changes.");
+  assert.equal(result.body, "Body.\r\n");
+  for (const [source, kind] of [
+    ["No frontmatter.", "missing"],
+    ["---\nname: [\n---\n", "invalid_yaml"],
+    ["---\n- audit\n---\n", "not_mapping"],
+    ["---\ntargets: []\ntargets: [copilot]\n---\n", "invalid_yaml"]
+  ] as const) {
+    assert.equal(parseRuleSyncFrontmatter(source).kind, kind);
+  }
+  for (const targets of ["null", "copilot", "[1]"]) {
+    assert.throws(
+      () => parseRuleSyncCommand("audit", `---\ntargets: ${targets}\n---\nBody.\n`),
+      RuleSyncCommandValidationError
+    );
+  }
 });
 
 test("RuleSyncRepository loads canonical RuleSync sources", () => {
@@ -922,6 +948,15 @@ test("RuleSync skill frontmatter faults name the field that is wrong", async () 
     assert.equal(
       repo.loadSkills().issues[0]?.message,
       "The skill frontmatter must be a mapping of fields."
+    );
+
+    await writeFile(
+      skillPath,
+      "---\nname: audit\ndescription: Review.\ntargets: copilot\n---\n"
+    );
+    assert.equal(
+      repo.loadSkills().issues[0]?.message,
+      "The skill frontmatter targets must be a string array."
     );
 
     // Frontmatter that is not YAML names the file, like every other fault here.

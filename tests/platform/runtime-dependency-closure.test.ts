@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import {
   cpSync,
   lstatSync,
@@ -51,6 +52,7 @@ function fixtureCheckout(): string {
 function fakeDeploy(calls: string[]) {
   return (_root: string, target: string): void => {
     calls.push(target);
+    mkdirSync(path.join(target, "node_modules", ".pnpm"), { recursive: true });
     mkdirSync(path.join(target, "node_modules", "zod"), { recursive: true });
     writeFileSync(path.join(target, "node_modules", "zod", "package.json"), "{}\n");
     mkdirSync(path.join(target, "src"));
@@ -182,6 +184,23 @@ test("the deployed closure shares no file or link with the editable checkout", (
       );
       assert.ok(injected.startsWith(closureRoot), injected);
       assert.ok(!injected.startsWith(`${checkoutRoot}${path.sep}`), injected);
+    }
+    // Node refuses to strip types under node_modules, so the workspace
+    // packages' TypeScript must load from a real path outside it -- and must
+    // actually load, with their own dependencies, from the closure alone.
+    const imported = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        'await import("@simulatorlife/autodev-core"); await import("@simulatorlife/autodev-data/files");'
+      ],
+      { cwd: path.dirname(nodeModules), encoding: "utf8" }
+    );
+    assert.equal(imported.status, 0, imported.stderr);
+    for (const name of ["autodev-core", "autodev-data"]) {
+      const real = realpathSync(path.join(nodeModules, "@simulatorlife", name));
+      assert.ok(!real.split(path.sep).includes("node_modules"), real);
     }
     // Third-party files are not hard links shared with the checkout's tree.
     for (const relative of ["zod/package.json", "supergateway/package.json"]) {

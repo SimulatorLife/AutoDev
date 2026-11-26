@@ -2,8 +2,15 @@ import { createHash } from "node:crypto";
 
 import type { PromptAsset } from "@simulatorlife/autodev-core";
 
-import { parseRuleSyncFrontmatter } from "./frontmatter.ts";
-export { parseRuleSyncFrontmatter } from "./frontmatter.ts";
+import {
+  isRuleSyncTargetList,
+  parseRuleSyncFrontmatter
+} from "./frontmatter.ts";
+
+export {
+  isRuleSyncTargetList,
+  parseRuleSyncFrontmatter
+} from "./frontmatter.ts";
 
 /**
  * The canonical RuleSync command parser.
@@ -68,11 +75,10 @@ export function parseRuleSyncCommand(
   }
   const { metadata, body } = frontmatter;
   const description = metadata.description;
-  const targets = metadata.targets ?? ["*"];
+  const targets = Object.hasOwn(metadata, "targets") ? metadata.targets : ["*"];
   if (
     (description !== undefined && typeof description !== "string") ||
-    !Array.isArray(targets) ||
-    !targets.every((target) => typeof target === "string") ||
+    !isRuleSyncTargetList(targets) ||
     (metadata.name !== undefined && metadata.name !== name)
   ) {
     throw new RuleSyncCommandValidationError(

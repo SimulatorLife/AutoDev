@@ -48,7 +48,6 @@ import {
   printParseErrorCode
 } from "jsonc-parser";
 
-
 import { atomicWrite } from "../files/atomic-write.ts";
 import {
   COMMANDS_SOURCE,
@@ -56,7 +55,10 @@ import {
   type RuleSyncCommand,
   RuleSyncCommandValidationError
 } from "./command-parser.ts";
-import { parseRuleSyncFrontmatter } from "./frontmatter.ts";
+import {
+  isRuleSyncTargetList,
+  parseRuleSyncFrontmatter
+} from "./frontmatter.ts";
 
 const DEFAULT_REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const COLLATOR = new Intl.Collator();
@@ -172,6 +174,12 @@ function skillFrontmatterProblem(
   }
   if (metadata.description.trim().length === 0) {
     return "The skill frontmatter declares an empty description.";
+  }
+  if (
+    Object.hasOwn(metadata, "targets") &&
+    !isRuleSyncTargetList(metadata.targets)
+  ) {
+    return "The skill frontmatter targets must be a string array.";
   }
   return null;
 }

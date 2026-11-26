@@ -1,7 +1,10 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-import { parseRuleSyncFrontmatter } from "@simulatorlife/autodev-data/rulesync-parser";
+import {
+  isRuleSyncTargetList,
+  parseRuleSyncFrontmatter
+} from "@simulatorlife/autodev-data/rulesync-parser";
 
 /**
  * The canonical skills the installer links into `$HOME/.agents/skills`.
@@ -37,10 +40,7 @@ function declaresTargets(document: string): boolean {
   }
   const { metadata } = frontmatter;
   if (!Object.hasOwn(metadata, "targets")) return false;
-  if (
-    !Array.isArray(metadata.targets) ||
-    !metadata.targets.every((target) => typeof target === "string")
-  ) {
+  if (!isRuleSyncTargetList(metadata.targets)) {
     throw new Error("invalid-skill-document: targets must be a string array");
   }
   return true;

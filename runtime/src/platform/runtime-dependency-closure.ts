@@ -18,15 +18,25 @@ cannot reach the closure. The closure is named by the hash of everything the
 deploy reads -- the lockfile, the workspace and patch configuration, the
 Runtime manifest and the injected workspace packages -- so a read-only check
 can name the closure an install would produce without running pnpm.
+
+The workspace packages ship TypeScript sources, and Node refuses to strip
+types from any file whose real path is under `node_modules`
+(`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`). After the deploy each
+injected workspace package is therefore moved to `<closure>/workspace/` and
+linked back into place, with its own dependencies linked beside it, so it
+resolves exactly as pnpm laid it out while its sources load from a real path
+outside `node_modules`.
 */
 import { createHash } from "node:crypto";
 import {
   lstatSync,
+  mkdirSync,
   readdirSync,
   readFileSync,
   readlinkSync,
   renameSync,
-  rmSync
+  rmSync,
+  symlinkSync
 } from "node:fs";
 import path from "node:path";
 
@@ -37,6 +47,21 @@ A fixed order for the hashed inputs; a different order (a new ICU) only names
 a new closure, which the next install deploys.
 */
 const PATH_ORDER = new Intl.Collator("en");
+/**
+The closure's on-disk layout revision; part of its name, so a layout change
+deploys a new closure instead of reusing one laid out the old way.
+*/
+const CLOSURE_LAYOUT = 2;
+/**
+Where injected workspace packages live inside a closure, outside
+`node_modules`.
+*/
+const WORKSPACE_DIRECTORY = "workspace";
+/**
+pnpm's virtual store entries for local (`file:`) packages, which is how
+`pnpm deploy` injects workspace dependencies.
+*/
+const INJECTED_ENTRY = "@file+";
 /**
 Every closure's directory name starts with this.
 */
@@ -93,6 +118,7 @@ export function runtimeDependencyClosureName(repositoryRoot: string): string {
   for (const directory of CLOSURE_INPUT_DIRECTORIES)
     collectInputFiles(repositoryRoot, directory, files);
   const hash = createHash("sha256");
+  hash.update(`layout:${CLOSURE_LAYOUT}\0`);
   files.sort(PATH_ORDER.compare);
   for (const relativePath of files) {
     const filePath = path.join(repositoryRoot, relativePath);
@@ -182,6 +208,7 @@ export function materializeRuntimeDependencyClosure(
         rmSync(path.join(build, entry), { recursive: true, force: true });
     if (!doesExist(path.join(build, "node_modules")))
       throw new Error(`pnpm deploy produced no node_modules in ${build}`);
+    relocateWorkspacePackages(build);
     try {
       renameSync(build, target);
     } catch (error) {
@@ -193,6 +220,72 @@ export function materializeRuntimeDependencyClosure(
     rmSync(build, { recursive: true, force: true });
   }
   return { nodeModules, deployed: true };
+}
+
+/**
+Re-create `link` (an absolute-target symlink's location) at `location`,
+pointing at the same target with a relative path, so the tree stays
+self-contained.
+*/
+function relinkBeside(link: string, location: string): void {
+  const target = path.resolve(path.dirname(link), readlinkSync(link));
+  mkdirSync(path.dirname(location), { recursive: true });
+  symlinkSync(path.relative(path.dirname(location), target), location);
+}
+
+/**
+The real package directories of one virtual-store entry's `node_modules`
+(`name` or `@scope/name`), and the dependency links beside them.
+*/
+function entryContents(modules: string): {
+  readonly packages: string[];
+  readonly links: string[];
+} {
+  const packages: string[] = [];
+  const links: string[] = [];
+  for (const name of readdirSync(modules)) {
+    if (name === ".bin") continue;
+    const scoped = name.startsWith("@")
+      ? readdirSync(path.join(modules, name)).map((child) => `${name}/${child}`)
+      : [name];
+    for (const packageName of scoped) {
+      const entryPath = path.join(modules, packageName);
+      if (lstatSync(entryPath).isSymbolicLink()) links.push(packageName);
+      else packages.push(packageName);
+    }
+  }
+  return { packages, links };
+}
+
+/**
+Move every injected workspace package out of `node_modules` (see the module
+documentation) and link it back where pnpm placed it.
+*/
+function relocateWorkspacePackages(closureRoot: string): void {
+  const store = path.join(closureRoot, "node_modules", ".pnpm");
+  for (const entry of readdirSync(store)) {
+    if (!entry.includes(INJECTED_ENTRY)) continue;
+    const modules = path.join(store, entry, "node_modules");
+    const { packages, links } = entryContents(modules);
+    for (const packageName of packages) {
+      const placed = path.join(modules, packageName);
+      const relocated = path.join(
+        closureRoot,
+        WORKSPACE_DIRECTORY,
+        packageName.replace("/", "+")
+      );
+      mkdirSync(path.dirname(relocated), { recursive: true });
+      renameSync(placed, relocated);
+      symlinkSync(path.relative(path.dirname(placed), relocated), placed);
+      // The package resolves its dependencies from its own node_modules now
+      // that the virtual-store directory is no longer above it.
+      for (const dependency of links)
+        relinkBeside(
+          path.join(modules, dependency),
+          path.join(relocated, "node_modules", dependency)
+        );
+    }
+  }
 }
 
 /**

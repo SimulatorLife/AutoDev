@@ -663,6 +663,29 @@ test("every file a skill names exists where an agent resolves it", () => {
   assert.deepEqual(missing, []);
 });
 
+test("user-level skill selection follows YAML target declarations, not formatting", () => {
+  const root = mkdtempSync(join(tmpdir(), "autodev-skill-targets-"));
+  try {
+    const writeSkill = (name: string, metadata: string): void => {
+      const directory = join(root, name);
+      mkdirSync(directory, { recursive: true });
+      writeFileSync(
+        join(directory, "SKILL.md"),
+        `---\nname: ${name}\n${metadata}\n---\nBody.\n`
+      );
+    };
+    writeSkill("default", "description: Repository only.");
+    writeSkill("quoted", 'description: Shared.\n"targets": []');
+    writeSkill("block", "description: Shared.\ntargets:\n  - copilot");
+    writeSkill("nested", "description: Shared?\nextra:\n  targets: []");
+    assert.deepEqual(userLevelSkills(root), ["block", "quoted"]);
+    writeSkill("invalid", "description: Invalid.\ntargets: copilot");
+    assert.throws(() => userLevelSkills(root), /targets must be a string array/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a user skill link into the canonical source is stale once the skill is not user-level", () => {
   const root = mkdtempSync(join(tmpdir(), "autodev-stale-skill-links-"));
   try {
