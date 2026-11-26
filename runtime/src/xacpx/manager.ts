@@ -32,7 +32,6 @@ import { isPathWithin } from "@simulatorlife/autodev-data/files";
 import {
   type AcpProviderId,
   type AcpProviderLaunchSpec,
-  type AcpSupergatewayEndpoint,
   buildAcpProviderLaunchSpec,
   resolveAcpProviderId
 } from "@simulatorlife/autodev-runtime/acp/provider-profiles";
@@ -122,8 +121,6 @@ export interface PlanSessionRequest {
   readonly promptOrTask: string;
   readonly repository?: string;
   readonly parentSessionId?: string | null;
-  readonly mcpConfigPath?: string;
-  readonly supergateway?: AcpSupergatewayEndpoint;
   readonly authorizedWorkspaceRoot?: string | null;
 }
 
@@ -158,8 +155,6 @@ interface LiveAcpSessionHandle {
   readonly activeSession: ActiveSession;
   readonly acpSessionId: string;
   readonly systemPrompt: string;
-  readonly mcpConfigPath?: string;
-  readonly supergateway?: AcpSupergatewayEndpoint;
   readonly injectSystemPromptOnFirstTurn: boolean;
   promptSent: boolean;
 }
@@ -179,22 +174,16 @@ function rejectPermissionResponse(
   return { outcome: { outcome: "cancelled" } };
 }
 
+// ACP sessions see each AutoDev MCP server under its own canonical name.
 function parseQualifiedMcpTool(
   rawName: string
-): { server: string; tool: string; gateway: boolean } | null {
-  const normalized = rawName.trim();
-  // ACP exposes the combined gateway as "autodev". Its tools are
-  // namespaced by backend, with hyphens normalized to underscores.
-  const gateway = normalized.startsWith("mcp__autodev__");
-  const prefix = gateway ? "mcp__autodev__" : "mcp__";
-  if (!normalized.startsWith(prefix)) return null;
-  const qualified = /^([a-zA-Z0-9_-]+?)__([a-zA-Z0-9_.-]+)$/u.exec(
-    normalized.slice(prefix.length)
+): { server: string; tool: string } | null {
+  const qualified = /^mcp__([a-zA-Z0-9_-]+?)__([a-zA-Z0-9_.-]+)$/u.exec(
+    rawName.trim()
   );
-  if (qualified?.[1] && qualified[2]) {
-    return { server: qualified[1], tool: qualified[2], gateway };
-  }
-  return null;
+  return qualified?.[1] && qualified[2]
+    ? { server: qualified[1], tool: qualified[2] }
+    : null;
 }
 
 /**
@@ -288,11 +277,7 @@ export function resolveAcpPermissionResponse(
     return rejectPermissionResponse(request);
   }
   if (mcpTool) {
-    const matches = contract.mcp.filter((server) =>
-      mcpTool.gateway
-        ? server.replaceAll("-", "_") === mcpTool.server
-        : server === mcpTool.server
-    );
+    const matches = contract.mcp.filter((server) => server === mcpTool.server);
     if (matches.length !== 1) {
       return rejectPermissionResponse(request);
     }
@@ -442,8 +427,6 @@ async function connectLiveAcpSession(
       activeSession,
       acpSessionId: activeSession.sessionId,
       systemPrompt: launch.systemPrompt,
-      ...(request.mcpConfigPath && { mcpConfigPath: request.mcpConfigPath }),
-      ...(request.supergateway && { supergateway: request.supergateway }),
       injectSystemPromptOnFirstTurn:
         launch.isolation.systemPromptInjection === "initial_turn",
       promptSent: false
@@ -726,9 +709,7 @@ export class XacpxSessionManager {
         cwd,
         systemPrompt,
         sessionId: request.sessionId,
-        ...(request.mcpConfigPath && { mcpConfigPath: request.mcpConfigPath }),
-        ...(request.supergateway && { supergateway: request.supergateway }),
-        reasoningEffort: chosen.reasoningEffort ?? null,
+            reasoningEffort: chosen.reasoningEffort ?? null,
         env: environment
       })
     };
@@ -901,9 +882,7 @@ export class XacpxSessionManager {
         promptOrTask: promptText,
         ...(pinned.parentSessionId && {
           parentSessionId: pinned.parentSessionId
-        }),
-        ...(live?.mcpConfigPath && { mcpConfigPath: live.mcpConfigPath }),
-        ...(live?.supergateway && { supergateway: live.supergateway })
+        })
       },
       environment,
       signal

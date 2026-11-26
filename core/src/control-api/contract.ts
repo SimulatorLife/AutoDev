@@ -149,11 +149,20 @@
  * exact text (`sourceText`) beside the values parsed from it, so the Console
  * can show the JSONC source with its comments and the rendered view from one
  * read. The revision names the bytes both views came from.
+ * v42: the MCP catalog (`autodev-control-mcps-v3`) carries the shared MCP
+ * gateway as a required `gateway` object: service label, installed and ready
+ * verdicts, readiness URL, generation, workspace, published role surfaces and
+ * the primary role's reviewed and effective grants. It is read-only. The
+ * ChatGPT tunnel status (`autodev-chatgpt-tunnel-v2`) carries tunnel facts
+ * only, and its mutations are lifecycle and credential operations
+ * (enable, disable, rotate, forget): the `configure` mutation that rewrote
+ * the gateway's published roles and grants is removed, because those are
+ * repository-owned.
  */
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",
-  version: 41
+  version: 42
 } as const;
 
 export type ControlApiContractResponse = {

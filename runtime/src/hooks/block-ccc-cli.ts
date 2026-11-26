@@ -291,6 +291,7 @@ export function runBlockCccCli(raw = readFileSync(0, "utf8")): number {
       logPreToolUseDenial({
         hook: "block-ccc-cli",
         policy: "block-ccc-cli",
+        origin: context.origin,
         role: context.role,
         model: context.model,
         session: context.sessionId,

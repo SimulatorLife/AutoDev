@@ -4599,8 +4599,28 @@ function handleCatalogResourceRead(
     // target projection (so its default state is not observed), and a
     // declared http server with no target overrides at all.
     sendJson(response, {
-      schema: "autodev-control-mcps-v2",
+      schema: "autodev-control-mcps-v3",
       source: ".rulesync/mcp.jsonc",
+      gateway: {
+        label: "com.codex.autodev-mcp-gateway",
+        installed: true,
+        ready: true,
+        port: 3312,
+        readinessUrl: "http://127.0.0.1:3312/readyz",
+        generation: "generation-1",
+        workspace: "/workspace",
+        role: "orchestrator",
+        roles: ["orchestrator"],
+        surfaces: [
+          {
+            role: "orchestrator",
+            url: "http://127.0.0.1:3312/orchestrator/mcp"
+          }
+        ],
+        reviewed: { lsp: ["lsp_hover"] },
+        grants: { lsp: ["lsp_hover"] },
+        error: null
+      },
       revision: mcpDeclaration.revision,
       readOnly: false,
       valid: true,
@@ -5289,7 +5309,12 @@ async function handleSyntheticMutationRoutes(
   if (url.pathname.startsWith("/control/hooks/")) {
     sendJson(
       response,
-      { error: { code: "autodev_control_api_unknown_path", message: "Unknown Control API path." } },
+      {
+        error: {
+          code: "autodev_control_api_unknown_path",
+          message: "Unknown Control API path."
+        }
+      },
       404
     );
     return true;
@@ -5317,7 +5342,14 @@ async function handleSyntheticMutationRoutes(
     );
     return true;
   }
-  if (["/control/permissions", "/control/hooks", "/control/hooks-applied"].includes(url.pathname) && request.method !== "GET") {
+  if (
+    [
+      "/control/permissions",
+      "/control/hooks",
+      "/control/hooks-applied"
+    ].includes(url.pathname) &&
+    request.method !== "GET"
+  ) {
     response.setHeader("allow", "GET");
     sendJson(
       response,

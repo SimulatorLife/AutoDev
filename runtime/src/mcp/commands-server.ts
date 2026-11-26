@@ -111,8 +111,16 @@ export function effectiveCommands(
   return effective;
 }
 
+/**
+A command that did not succeed is a tool-level error: the native task that
+ran it is `failed`, and its result says so too, so a client that reads only
+the result and a client that reads only the task status agree. It is still a
+result -- the observed exit status and bounded output -- not a protocol
+error.
+*/
 function resultPayload(result: CommandResult) {
   return {
+    isError: result.status !== "succeeded",
     content: [
       {
         type: "text" as const,

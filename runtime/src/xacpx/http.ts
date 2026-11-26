@@ -100,7 +100,6 @@ async function handleSessionsCollection(
     }
     const repository = optionalTrimmedField(body, "repository");
     const parentSessionId = optionalTrimmedField(body, "parentSessionId");
-    const mcpConfigPath = optionalTrimmedField(body, "mcpConfigPath");
     const planRequest: PlanSessionRequest = {
       sessionId: optionalTrimmedField(body, "sessionId") ?? randomUUID(),
       role,
@@ -109,8 +108,7 @@ async function handleSessionsCollection(
         typeof body.systemPrompt === "string" ? body.systemPrompt : "",
       promptOrTask,
       ...(repository && { repository }),
-      ...(parentSessionId && { parentSessionId }),
-      ...(mcpConfigPath && { mcpConfigPath })
+      ...(parentSessionId && { parentSessionId })
     };
     const result = await manager.executeTurn(planRequest);
     writeJson(response, 200, result);

@@ -36,6 +36,7 @@ import {
   type CommandResult,
   commandInputSchema,
   parseCommandCatalogue,
+  parseCommandCatalogueText,
   resolveCommandArguments
 } from "../src/mcp/commands-catalogue.ts";
 import {
@@ -158,6 +159,50 @@ test("command execution spans reuse the MCP tracer without double-counting or le
     await shutdownTelemetryForTest();
     setTestExporter(null);
   }
+});
+
+test("a catalogue that declares one key twice is rejected, not silently resolved", () => {
+  const text = JSON.stringify(catalogue, null, 2);
+  assert.deepEqual(parseCommandCatalogueText(text), parseCommandCatalogue(catalogue));
+  // JSON.parse alone keeps the last of two equal keys: the reviewed first
+  // definition would not be the effective one.
+  const duplicateCommand = text.replace(
+    '"commands": {',
+    `"commands": {\n    "fixture": ${JSON.stringify({ ...fixture, args: ["first"] })},`
+  );
+  assert.equal(JSON.parse(duplicateCommand).commands.fixture.args[0], "%s");
+  const duplicateField = text.replace(
+    '"executable": "printf",',
+    '"executable": "sh", "executable": "printf",'
+  );
+  // An escaped spelling of the same key is the same key.
+  const escapedDuplicate = text.replace('"version": 1,', '"version": 1, "vers\\u0069on": 1,');
+  for (const [duplicated, key] of [
+    [duplicateCommand, "fixture"],
+    [duplicateField, "executable"],
+    [escapedDuplicate, "version"]
+  ] as const) {
+    assert.throws(
+      () => parseCommandCatalogueText(duplicated),
+      (error: unknown) =>
+        error instanceof CommandCatalogueError &&
+        error.code === "DUPLICATE_CATALOGUE_KEY" &&
+        error.message.includes(`"${key}"`)
+    );
+  }
+  // Equal keys in different objects, or equal strings that are values, are
+  // not duplicates.
+  assert.doesNotThrow(() => parseCommandCatalogueText(JSON.stringify({
+    version: 1,
+    commands: {
+      fixture: { ...fixture, description: "fixture" },
+      other: { ...fixture, description: "fixture", args: ["description", "{fixture}"], parameters: { fixture: { description: "x", minLength: 1, maxLength: 2 } } }
+    }
+  })));
+  assert.throws(
+    () => parseCommandCatalogueText("{"),
+    (error: unknown) => error instanceof CommandCatalogueError && error.code === "INVALID_CATALOGUE"
+  );
 });
 
 test("the catalogue is strict, and a parameter is only ever a whole argument", () => {
@@ -333,6 +378,44 @@ async function isFilePresent(file: string): Promise<boolean> {
   }
   return existsSync(file);
 }
+
+test(
+  "an approved executable that disappeared is a startup failure, not a command that ran",
+  {
+    skip: process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec")
+  },
+  async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "autodev-command-startup-"));
+    try {
+      const scope = scopeFixture(root);
+      const tools = mkdtempSync(path.join(root, "tools-"));
+      const tool = path.join(tools, "fixture-tool");
+      writeFileSync(tool, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      const toolScope: ApprovedCommandScope = {
+        ...scope,
+        toolchainRoots: [...scope.toolchainRoots, tools],
+        executables: { ...scope.executables, "fixture-tool": tool }
+      };
+      const definition = { ...fixture, executable: "fixture-tool", args: [] };
+      // The scope admitted the executable; it is gone by the time it runs.
+      prepareCommand(toolScope, definition);
+      rmSync(tool);
+      const result = await runApprovedCommand(
+        "fixture",
+        definition,
+        [],
+        toolScope,
+        new AbortController().signal
+      );
+      assert.equal(result.status, "startup_failure");
+      // No process ran, so no exit status is claimed.
+      assert.equal(result.exitCode, null);
+      assert.doesNotMatch(result.stderr, new RegExp(tools, "u"));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+);
 
 test(
   "a command that is still running when the backend closes is failed, never completed",
@@ -641,6 +724,9 @@ test(
       assert.equal(payload.commandId, "typecheck");
       assert.equal(payload.status, "failed");
       assert.equal(payload.exitCode, 3);
+      // The result agrees with the failed task: a tool-level error carrying
+      // the observed exit status, not a protocol error.
+      assert.equal(result.isError, true);
     } finally {
       await created.close();
       await client.close();
@@ -737,6 +823,28 @@ test("replacing the approved catalogue revokes the grant", () => {
     assert.equal(grant.isAuthorized(), false);
     rmSync(cataloguePath);
     assert.equal(grant.isAuthorized(), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an approved catalogue that declares a key twice grants nothing", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "autodev-command-duplicate-"));
+  try {
+    const cataloguePath = path.join(root, "commands.json");
+    writeFileSync(
+      cataloguePath,
+      JSON.stringify(catalogue).replace(
+        '"commands":{',
+        `"commands":{"fixture":${JSON.stringify({ ...fixture, executable: "sh" })},`
+      ),
+      { mode: 0o600 }
+    );
+    assert.throws(
+      () => createApprovedCatalogueGrant(cataloguePath),
+      (error: unknown) =>
+        error instanceof CommandCatalogueError && error.code === "DUPLICATE_CATALOGUE_KEY"
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -873,6 +981,52 @@ test("a lease never acquires or removes a lock in a replacement run directory", 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+const NOTIFYUTIL = "/usr/bin/notifyutil";
+
+test(
+  "a confined command cannot reach a host IPC service",
+  {
+    skip:
+      process.platform !== "darwin" ||
+      !existsSync("/usr/bin/sandbox-exec") ||
+      !existsSync(NOTIFYUTIL)
+  },
+  async () => {
+    // Positive control: the host's notification service answers outside the
+    // sandbox, so a refusal inside it is the profile's doing.
+    const host = spawnSync(NOTIFYUTIL, ["-g", "com.apple.system.timezone"], {
+      encoding: "utf8"
+    });
+    assert.match(host.stdout, /^com\.apple\.system\.timezone \d+$/mu);
+    const root = mkdtempSync(path.join(tmpdir(), "autodev-command-ipc-"));
+    try {
+      const scope = scopeFixture(root);
+      const ipcScope: ApprovedCommandScope = {
+        ...scope,
+        executables: { ...scope.executables, notifyutil: realpathSync(NOTIFYUTIL) }
+      };
+      const definition = {
+        ...fixture,
+        executable: "notifyutil",
+        args: ["-g", "com.apple.system.timezone"]
+      };
+      const result = await runApprovedCommand(
+        "fixture",
+        definition,
+        definition.args,
+        ipcScope,
+        new AbortController().signal
+      );
+      // notifyutil exits 0 either way; the Mach lookup's failure is what
+      // it reports.
+      assert.doesNotMatch(result.stdout, /^com\.apple\.system\.timezone \d+$/mu);
+      assert.match(result.stdout + result.stderr, /Failed/u);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+);
 
 test("the command profile denies the network, the host and the credentials", () => {
   const profile = commandSandboxProfile("/workspace", "/scratch", "/cache", [
@@ -1576,9 +1730,7 @@ test("the installed catalogue is a valid, generic catalogue", () => {
     "config",
     "commands.json"
   );
-  const parsed = parseCommandCatalogue(
-    JSON.parse(readFileSync(cataloguePath, "utf8"))
-  );
+  const parsed = parseCommandCatalogueText(readFileSync(cataloguePath, "utf8"));
   const ids = Object.keys(parsed.commands);
   for (const required of [
     "install_dependencies",

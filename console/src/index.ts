@@ -38,6 +38,7 @@ export * from "./features/hooks/HookEventDetailView.ts";
 export * from "./features/hooks/HooksView.ts";
 export * from "./features/hooks/paths.ts";
 export * from "./features/mcps/McpDetailView.ts";
+export * from "./features/mcps/McpGatewayPanel.ts";
 export * from "./features/mcps/McpsView.ts";
 export * from "./features/permissions/index.ts";
 export * from "./features/prompts/PromptDetailView.ts";

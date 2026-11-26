@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempDisposableSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import {
   isPathWithin,
-  pathsOverlap
+  pathsOverlap,
+  resolvePathWithExistingAncestor
 } from "../../src/files/path-containment.ts";
 
 /**
@@ -32,6 +35,25 @@ test("a path that climbs out of the root is not within it", () => {
 test("relative paths are compared after resolution against the working directory", () => {
   assert.equal(isPathWithin("root", path.join("root", "child")), true);
   assert.equal(isPathWithin("root", path.join("root", "..", "other")), false);
+});
+
+test("uncreated paths resolve physical ancestors and reject dangling redirects", () => {
+  using root = mkdtempDisposableSync(path.join(tmpdir(), "autodev-path-ancestor-"));
+  const base = realpathSync(root.path);
+  const directory = path.join(base, "directory");
+  mkdirSync(directory);
+  const alias = path.join(base, "alias");
+  symlinkSync(directory, alias);
+  assert.equal(
+    resolvePathWithExistingAncestor(path.join(alias, "future", "child")),
+    path.join(directory, "future", "child")
+  );
+  const dangling = path.join(base, "dangling");
+  symlinkSync(path.join(base, "missing"), dangling);
+  assert.throws(() => resolvePathWithExistingAncestor(path.join(dangling, "child")));
+  const file = path.join(base, "file");
+  writeFileSync(file, "");
+  assert.throws(() => resolvePathWithExistingAncestor(path.join(file, "child")));
 });
 
 test("overlap is symmetric and includes equal paths, not prefix siblings", () => {

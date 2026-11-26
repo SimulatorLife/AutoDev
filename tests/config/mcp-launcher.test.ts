@@ -136,11 +136,10 @@ function installHook(root: string, directory: string): string {
   return hook;
 }
 
-test("the MCP launcher hook finds the launcher in both Runtime layouts", () => {
+test("the MCP launcher hook finds the gateway client in both Runtime layouts", () => {
   // The hook is the OS boundary the installed Codex configuration calls, and it
   // is copied into CODEX_HOME/hooks, where its root is the materialized tree.
-  // Resolving only the checkout layout made the playtest MCP server fail to
-  // start, which the analyst reported as no reachable playtest tools.
+  // Resolving only the checkout layout made MCP servers fail to start.
   const checkout = createIsolatedTempDir("autodev-mcp-hook-checkout-");
   const materialized = createIsolatedTempDir("autodev-mcp-hook-materialized-");
   try {
@@ -149,13 +148,13 @@ test("the MCP launcher hook finds the launcher in both Runtime layouts", () => {
       "runtime",
       "src",
       "mcp",
-      "launcher.ts"
+      "gateway-client.ts"
     );
     const materializedLauncher = join(
       materialized,
       "src",
       "mcp",
-      "launcher.ts"
+      "gateway-client.ts"
     );
     mkdirSync(dirname(checkoutLauncher), { recursive: true });
     mkdirSync(dirname(materializedLauncher), { recursive: true });
@@ -176,7 +175,7 @@ test("the MCP launcher hook finds the launcher in both Runtime layouts", () => {
 
       // An inherited root names some other tree; the hook ignores it and
       // runs the Runtime it was installed beside.
-      const result = spawnSync("bash", [hook, "playtest"], {
+      const result = spawnSync("bash", [hook, "filesystem"], {
         env: {
           ...process.env,
           AUTODEV_REPO_ROOT: repositoryRoot,
@@ -187,7 +186,7 @@ test("the MCP launcher hook finds the launcher in both Runtime layouts", () => {
       assert.equal(result.status, 0, result.stderr);
       assert.deepEqual(readFileSync(seen, "utf8").trim().split("\n"), [
         expected,
-        "playtest"
+        "filesystem"
       ]);
     }
   } finally {
@@ -199,7 +198,7 @@ test("the MCP launcher hook finds the launcher in both Runtime layouts", () => {
 test("the MCP launcher hook finds pnpm Node with a minimal PATH", () => {
   const root = createIsolatedTempDir("autodev-mcp-hook-pnpm-node-");
   try {
-    const launcher = join(root, "runtime", "src", "mcp", "launcher.ts");
+    const launcher = join(root, "runtime", "src", "mcp", "gateway-client.ts");
     const pnpmBin = join(root, "pnpm", "bin");
     const seen = join(root, "seen-args");
     mkdirSync(dirname(launcher), { recursive: true });
@@ -209,7 +208,7 @@ test("the MCP launcher hook finds pnpm Node with a minimal PATH", () => {
     writeFileSync(pnpmNode, `#!/bin/sh\nprintf '%s\\n' "$@" > "${seen}"\n`);
     chmodSync(pnpmNode, 0o755);
 
-    const result = spawnSync("bash", [installHook(root, "scripts"), "playtest"], {
+    const result = spawnSync("bash", [installHook(root, "scripts"), "filesystem"], {
       env: {
         HOME: root,
         PATH: "/usr/bin:/bin",
@@ -220,20 +219,20 @@ test("the MCP launcher hook finds pnpm Node with a minimal PATH", () => {
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(readFileSync(seen, "utf8").trim().split("\n"), [
       launcher,
-      "playtest"
+      "filesystem"
     ]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("the MCP launcher hook reports a root that holds no launcher", () => {
+test("the MCP launcher hook reports a root that holds no gateway client", () => {
   const empty = createIsolatedTempDir("autodev-mcp-hook-empty-");
   try {
     const fakeNode = join(empty, "fake-node");
     writeFileSync(fakeNode, "#!/usr/bin/env bash\nexit 0\n");
     chmodSync(fakeNode, 0o755);
-    const result = spawnSync("bash", [installHook(empty, "hooks"), "playtest"], {
+    const result = spawnSync("bash", [installHook(empty, "hooks"), "filesystem"], {
       env: {
         ...process.env,
         AUTODEV_NODE_BIN: fakeNode
@@ -241,9 +240,36 @@ test("the MCP launcher hook reports a root that holds no launcher", () => {
       encoding: "utf8"
     });
     assert.equal(result.status, 127);
-    assert.match(result.stderr, /launcher module not found/);
+    assert.match(result.stderr, /mcp\/gateway-client\.ts not found/);
   } finally {
     rmSync(empty, { recursive: true, force: true });
+  }
+});
+
+test("the MCP launcher hook runs a Playtesting run's server itself, never through the gateway", () => {
+  // The playtest server's trusted run context arrives in this process's
+  // environment, under the run's isolated CODEX_HOME; the gateway has neither.
+  const root = createIsolatedTempDir("autodev-mcp-hook-playtest-");
+  try {
+    const launcher = join(root, "src", "mcp", "launcher.ts");
+    mkdirSync(dirname(launcher), { recursive: true });
+    writeFileSync(launcher, "export {};\n");
+    writeFileSync(join(root, "src", "mcp", "gateway-client.ts"), "export {};\n");
+    const seen = join(root, "seen-args");
+    const fakeNode = join(root, "fake-node");
+    writeFileSync(fakeNode, `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${seen}"\n`);
+    chmodSync(fakeNode, 0o755);
+    const result = spawnSync("bash", [installHook(root, "hooks"), "playtest"], {
+      env: { ...process.env, AUTODEV_NODE_BIN: fakeNode },
+      encoding: "utf8"
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(readFileSync(seen, "utf8").trim().split("\n"), [
+      launcher,
+      "playtest"
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

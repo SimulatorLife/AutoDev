@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import React from "react";
 
 import { ChatgptTunnelPanel } from "../../src/features/mcps/ChatgptTunnelPanel.ts";
+import { McpGatewayPanel } from "../../src/features/mcps/McpGatewayPanel.ts";
 import { McpsView } from "../../src/features/mcps/McpsView.ts";
 import {
   controlApiFailureCode,
@@ -22,7 +23,11 @@ export const metadata: Metadata = {
   title: "MCPs"
 };
 
-export default async function McpsPage({ searchParams }: { searchParams?: Promise<{ tunnel?: string | string[] }> } = {}): Promise<React.JSX.Element> {
+export default async function McpsPage({
+  searchParams
+}: {
+  searchParams?: Promise<{ tunnel?: string | string[] }>;
+} = {}): Promise<React.JSX.Element> {
   const tunnelOutcome = (await searchParams)?.tunnel;
   const { section, config } = readNodeContext("/mcps");
   if (!config) {
@@ -61,8 +66,21 @@ export default async function McpsPage({ searchParams }: { searchParams?: Promis
       section,
       counts: result.data.valid ? { MCPs: servers.length } : {}
     },
-    tunnelOutcome === "ok" || tunnelOutcome === "failed" ? React.createElement("p", { role: "status" }, tunnelOutcome === "ok" ? "ChatGPT tunnel settings updated." : "ChatGPT tunnel update failed; review status and installer diagnostics.") : null,
-    React.createElement(ChatgptTunnelPanel, { status: tunnelResult.kind === "ok" ? tunnelResult.data : null }),
+    tunnelOutcome === "ok" || tunnelOutcome === "failed"
+      ? React.createElement(
+          "p",
+          { role: "status" },
+          tunnelOutcome === "ok"
+            ? "ChatGPT tunnel settings updated."
+            : "ChatGPT tunnel update failed; review status and installer diagnostics."
+        )
+      : null,
+    // Gateway health comes first and stands alone: the optional ChatGPT tunnel
+    // is a client of the gateway, and losing it never disables local MCP access.
+    React.createElement(McpGatewayPanel, { gateway: result.data.gateway }),
+    React.createElement(ChatgptTunnelPanel, {
+      status: tunnelResult.kind === "ok" ? tunnelResult.data : null
+    }),
     React.createElement(McpsView, {
       servers,
       runtime,

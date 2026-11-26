@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -37,7 +37,10 @@ import {
   extractHookToolCall
 } from "../src/hooks/hook-payload.ts";
 import { evaluateRoleSandboxHook } from "../src/hooks/role-sandbox.ts";
+import { ensureLocalAdmission, readLocalAdmission } from "../src/mcp/gateway-admission.ts";
+import { MCP_GRANT_ENV } from "../src/mcp/gateway-client.ts";
 import { resolveMcpCommand } from "../src/mcp/launcher.ts";
+import { verifySessionGrant } from "../src/mcp/session-grant.ts";
 import { COOLDOWNS } from "../src/router/cooldown/index.ts";
 import { ROUTING_POLICY, RoutingPolicy } from "../src/router/routing.ts";
 import { autodevHome, autodevStateHome } from "../src/shared/autodev-home.ts";
@@ -59,6 +62,9 @@ import {
 import { startXacpxOrchestrationIpcServer } from "../src/xacpx/orchestration-ipc.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
+// ACP sessions are admitted to the shared MCP gateway: give this run's
+// isolated CODEX_HOME the gateway's admission files.
+ensureLocalAdmission(process.env.CODEX_HOME!);
 
 test("autodevHome resolves $AUTODEV_HOME and autodevStateHome honors transition fallback", () => {
   assert.equal(
@@ -134,19 +140,37 @@ test("hook payload normalization handles Antigravity toolCall and call_mcp_tool 
   );
 
   const hookContext = extractHookContext(agyDirect, {
+    AUTODEV_SESSION_ID: "runtime-session-1",
     AUTODEV_AGENT_ROLE: "explorer",
     AUTODEV_PROVIDER: "antigravity"
   });
-  assert.equal(hookContext.sessionId, "agy-session-1");
+  assert.equal(hookContext.origin, "runtime");
+  assert.equal(hookContext.sessionId, "runtime-session-1");
   assert.equal(hookContext.role, "explorer");
   assert.equal(hookContext.provider, "antigravity");
+
+  // The same payload in a native Antigravity chat carries no AutoDev role.
+  const nativeContext = extractHookContext(agyDirect, {});
+  assert.equal(nativeContext.origin, "unmanaged");
+  assert.equal(nativeContext.sessionId, "agy-session-1");
+  assert.equal(nativeContext.role, null);
 });
 
 test("Antigravity PreToolUse payloads enforce file-surface, ccc block, and read-only sandbox", () => {
+  const runtimeEnvironment = {
+    AUTODEV_SESSION_ID: "runtime-session-1",
+    AUTODEV_AGENT_ROLE: "explorer",
+    AUTODEV_PROVIDER: "antigravity"
+  };
   const nativeWrite = JSON.stringify({
     toolCall: { name: "write_to_file", arguments: { TargetFile: "a.ts" } }
   });
-  assert.equal(evaluateFileSurfaceHook(nativeWrite).denied, true);
+  assert.equal(
+    evaluateFileSurfaceHook(nativeWrite, runtimeEnvironment).denied,
+    true
+  );
+  // A native Antigravity chat keeps its own file tools.
+  assert.equal(evaluateFileSurfaceHook(nativeWrite, {}).denied, false);
 
   const cccRun = JSON.stringify({
     toolCall: { name: "run_command", arguments: { command: "ccc search foo" } }
@@ -164,7 +188,11 @@ test("Antigravity PreToolUse payloads enforce file-surface, ccc block, and read-
       }
     }
   });
-  assert.equal(evaluateRoleSandboxHook(readonlyMcpWrite).denied, true);
+  assert.equal(
+    evaluateRoleSandboxHook(readonlyMcpWrite, runtimeEnvironment).denied,
+    true
+  );
+  assert.equal(evaluateRoleSandboxHook(readonlyMcpWrite, {}).denied, false);
 });
 
 test("MCP launcher resolves newly added github and xacpx servers", () => {
@@ -185,7 +213,7 @@ test("MCP launcher resolves newly added github and xacpx servers", () => {
   ]);
 });
 
-test("ACP gateway profiles reject unauthenticated or conflicting MCP configuration and withhold remote backend credentials", () => {
+test("ACP sessions reach their role's MCP servers only through the gateway client under their own grant", () => {
   const options = {
     provider: "claude" as const,
     role: "docs-researcher",
@@ -194,85 +222,63 @@ test("ACP gateway profiles reject unauthenticated or conflicting MCP configurati
     systemPrompt: "Research",
     sessionId: "sess-gateway",
     env: {
+      ...process.env,
+      AUTODEV_REPO_ROOT: "/not-the-runtime",
       CONTEXT7_API_KEY: "context7-secret",
       GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY: "google-secret"
     }
   };
-  const gateway = {
-    url: "http://127.0.0.1:4199/mcp",
-    bearerToken: "gateway-token"
-  };
-  const spec = buildAcpProviderLaunchSpec({
-    ...options,
-    supergateway: gateway
-  });
+  const spec = buildAcpProviderLaunchSpec(options);
+  // Backend credentials stay with the gateway.
   assert.equal(spec.env.CONTEXT7_API_KEY, undefined);
   assert.equal(spec.env.GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY, undefined);
-  assert.deepEqual(spec.acpMcpServers, [
-    {
-      type: "http",
-      name: "autodev",
-      url: gateway.url,
-      headers: [{ name: "Authorization", value: "Bearer gateway-token" }]
-    }
-  ]);
-  for (const supergateway of [
-    { url: gateway.url },
-    { url: "", bearerToken: gateway.bearerToken },
-    { ...gateway, url: "https://example.com/mcp" },
-    { ...gateway, url: "http://user@127.0.0.1:4199/mcp" },
-    { ...gateway, bearerToken: "invalid token" }
-  ]) {
-    assert.throws(
-      () => buildAcpProviderLaunchSpec({ ...options, supergateway }),
-      /authenticated loopback Supergateway endpoint/u
-    );
-  }
-  assert.throws(
-    () =>
-      buildAcpProviderLaunchSpec({
-        ...options,
-        supergateway: gateway,
-        mcpConfigPath: "/tmp/independent-mcp.json"
-      }),
-    /independent MCP configuration/u
-  );
-});
-
-test("transitional ACP launchers are resolved from their own Runtime, not a repository override", () => {
-  const spec = buildAcpProviderLaunchSpec({
-    provider: "claude",
-    role: "worker",
-    model: "sonnet",
-    cwd: REPO_ROOT,
-    systemPrompt: "Worker",
-    sessionId: "launcher-scope",
-    env: { AUTODEV_REPO_ROOT: "/not-the-runtime" }
-  });
-  const launcher = realpathSync(
-    new URL("../src/mcp/launcher.ts", import.meta.url)
+  // The gateway client of this Runtime, never one a repository override names.
+  const client = realpathSync(new URL("../src/mcp/gateway-client.ts", import.meta.url));
+  assert.deepEqual(
+    spec.acpMcpServers.map((server) => server.name),
+    roleContract("docs-researcher").mcp
   );
   for (const server of spec.acpMcpServers) {
-    if ("command" in server) assert.equal(server.args[0], launcher);
+    assert.ok("command" in server);
+    assert.equal(server.command, process.execPath);
+    assert.deepEqual(server.args, [client, server.name]);
+    assert.equal(JSON.stringify(server).includes("context7-secret"), false);
+    const grant = server.env.find((entry) => entry.name === MCP_GRANT_ENV)?.value;
+    // The session's grant names its own workspace, role and session.
+    assert.deepEqual(
+      { ...verifySessionGrant(readLocalAdmission(process.env.CODEX_HOME!)!.secret, grant), expiresAt: 0 },
+      { workspace: realpathSync(REPO_ROOT), role: "docs-researcher", session: "sess-gateway", expiresAt: 0 }
+    );
   }
-  assert.ok(spec.acpMcpServers.some((server) => "command" in server));
+  // Without an installed gateway, or in the home directory, no MCP is offered.
+  const empty = mkdtempSync(path.join(tmpdir(), "autodev-no-gateway-"));
+  assert.throws(
+    () => buildAcpProviderLaunchSpec({ ...options, env: { ...options.env, CODEX_HOME: empty } }),
+    /MCP gateway is not installed/u
+  );
+  assert.throws(
+    () => buildAcpProviderLaunchSpec({ ...options, cwd: homedir() }),
+    /AutoDev MCP is unavailable here/u
+  );
+  rmSync(empty, { recursive: true, force: true });
 });
 
-test("ACP gateway-qualified tools preserve canonical permissions", () => {
+test("ACP MCP tools are checked against canonical role permissions", () => {
   const options = [
     { optionId: "allow", name: "Allow", kind: "allow_once" as const },
     { optionId: "reject", name: "Reject", kind: "reject_once" as const }
   ];
   const cases = [
-    ["worker", "mcp__autodev__filesystem__write_file", "allow"],
-    ["explorer", "mcp__autodev__filesystem__write_file", "reject"],
-    ["explorer", "mcp__autodev__filesystem__read_text_file", "allow"],
-    ["worker", "mcp__autodev__cocoindex_code__search", "allow"],
-    ["worker", "mcp__autodev__codegraphcontext__delete_repository", "reject"],
-    ["worker", "mcp__autodev__commands__test", "allow"],
-    ["explorer", "mcp__autodev__commands__test", "reject"],
-    ["worker", "mcp__autodev__playwright__browser_navigate", "reject"],
-    ["worker", "mcp__autodev__filesystem", "reject"],
+    ["worker", "mcp__filesystem__write_file", "allow"],
+    ["explorer", "mcp__filesystem__write_file", "reject"],
+    ["explorer", "mcp__filesystem__read_text_file", "allow"],
+    ["worker", "mcp__cocoindex-code__search", "allow"],
+    ["worker", "mcp__codegraphcontext__delete_repository", "reject"],
+    ["worker", "mcp__commands__test", "allow"],
+    ["explorer", "mcp__commands__test", "reject"],
+    ["worker", "mcp__playwright__browser_navigate", "reject"],
+    ["worker", "mcp__filesystem", "reject"],
+    ["worker", "mcp__cocoindex_code__search", "reject"],
     ["worker", "mcp__malformed", "reject"],
     ["worker", "   ", "reject"]
   ] as const;
@@ -312,25 +318,17 @@ test("ACP provider profiles project canonical role capabilities, native mcpServe
       model: `${provider}-model`,
       cwd: REPO_ROOT,
       systemPrompt: "Static role prompt",
-      sessionId: `sess-${provider}`,
-      supergateway: {
-        url: "http://127.0.0.1:4199/mcp",
-        bearerToken: "gw-token"
-      }
+      sessionId: `sess-${provider}`
     });
     assert.equal(spec.compactionManagedByProvider, true);
     assert.equal(spec.readOnly, false);
     assert.equal(spec.shell, true);
     assert.equal(spec.hooks, true);
     assert.ok(spec.mcpServers.includes("filesystem"));
-    assert.deepEqual(spec.acpMcpServers, [
-      {
-        type: "http",
-        name: "autodev",
-        url: "http://127.0.0.1:4199/mcp",
-        headers: [{ name: "Authorization", value: "Bearer gw-token" }]
-      }
-    ]);
+    assert.deepEqual(
+      spec.acpMcpServers.map((server) => server.name),
+      roleContract("worker").mcp
+    );
     assert.ok(spec.isolation.nativeTools);
     if (provider === "claude") {
       assert.equal(spec.isolation.nativeTools, "enforced");
@@ -888,6 +886,7 @@ test("XacpxSessionManager executes live ACP turns, enforces read-only permission
     systemPrompt: "Worker",
     sessionId: "sess-mcode-1",
     env: {
+      CODEX_HOME: process.env.CODEX_HOME!,
       MINIMAX_API_KEY: "minimax-secret",
       CONTEXT7_API_KEY: "context7-secret"
     }
@@ -912,6 +911,7 @@ test("XacpxSessionManager executes live ACP turns, enforces read-only permission
     systemPrompt: "Worker",
     sessionId: "sess-claude-worker",
     env: {
+      CODEX_HOME: process.env.CODEX_HOME!,
       MINIMAX_API_KEY: "minimax-secret",
       CONTEXT7_API_KEY: "context7-secret"
     }
@@ -927,12 +927,15 @@ test("XacpxSessionManager executes live ACP turns, enforces read-only permission
     systemPrompt: "Docs",
     sessionId: "sess-docs-1",
     env: {
+      CODEX_HOME: process.env.CODEX_HOME!,
       MINIMAX_API_KEY: "minimax-secret",
       CONTEXT7_API_KEY: "context7-secret"
     }
   });
   assert.equal(documentationResearcher.env.MINIMAX_API_KEY, undefined);
-  assert.equal(documentationResearcher.env.CONTEXT7_API_KEY, "context7-secret");
+  // Documentation servers are reached through the gateway, which alone holds
+  // their credentials.
+  assert.equal(documentationResearcher.env.CONTEXT7_API_KEY, undefined);
   assert.equal(findMcodeBinary({ PATH: "", HOME: "/nonexistent-home" }), null);
 });
 
@@ -1124,23 +1127,17 @@ test("XACPX role permissions, anti-escalation, workspace confinement, and orches
     role: "worker",
     cwd: workspace,
     systemPrompt: "CANONICAL_ROLE_INSTRUCTIONS",
-    promptOrTask: "first turn",
-    supergateway: {
-      url: "http://127.0.0.1:4199/mcp",
-      bearerToken: "gw-secret"
-    }
+    promptOrTask: "first turn"
   });
   await acpManager.promptSession("sess-mcp-gw-1", "second turn");
   await acpManager.closeSession("sess-mcp-gw-1");
   assert.equal(observedSessionNew.length, 1);
-  assert.deepEqual(observedSessionNew[0]?.mcpServers, [
-    {
-      type: "http",
-      name: "autodev",
-      url: "http://127.0.0.1:4199/mcp",
-      headers: [{ name: "Authorization", value: "Bearer gw-secret" }]
-    }
-  ]);
+  assert.deepEqual(
+    observedSessionNew[0]?.mcpServers.map(
+      (server) => (server as { name: string }).name
+    ),
+    roleContract("worker").mcp
+  );
   assert.equal(observedPrompts.length, 2);
   assert.match(observedPrompts[1] ?? "", /^second turn$/u);
 

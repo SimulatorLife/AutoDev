@@ -12,10 +12,12 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { isEntryPoint } from "../shared/entry-point.ts";
 import { MCP_SERVER_XACPX } from "../shared/tool-names.ts";
 import {
+  localPoolServerKey,
   qualifiedToolNames,
   supergatewayConfigSchema
 } from "../config/render-chatgpt-supergateway.ts";
 import { XacpxSessionManager } from "../xacpx/manager.ts";
+import { createGatewayAdmission } from "./gateway-admission.ts";
 import {
   startXacpxOrchestrationIpcServer,
   type XacpxOrchestrationIpcHandle
@@ -85,6 +87,60 @@ function assertApprovedCapabilities(client: Client): void {
   }
 }
 
+function requiredEnv(env: Record<string, string>, name: string): string {
+  const value = env[name];
+  if (!value) throw new Error(`The gateway probe needs ${name}`);
+  return value;
+}
+
+/**
+A local surface refuses requests without its own key -- including the
+ChatGPT ingress key -- and lists exactly its role's granted tools.
+*/
+async function probeLocalSurface(
+  endpoint: URL,
+  keyFile: string,
+  ingressKey: string,
+  expected: readonly string[],
+  reportPhase: (phase: string) => void
+): Promise<void> {
+  reportPhase("local endpoint authentication");
+  const key = readFileSync(keyFile, "utf8").trim();
+  for (const presented of [null, ingressKey]) {
+    const refused = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(presented ? { authorization: `Bearer ${presented}` } : {})
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })
+    });
+    if (refused.status !== 401)
+      throw new Error(
+        `Expected local surface ${endpoint.pathname} to refuse ${presented ? "the ingress key" : "no key"}, got ${refused.status}`
+      );
+  }
+  const client = new Client({ name: "autodev-install-check", version: "1.0.0" });
+  try {
+    reportPhase("local endpoint initialize");
+    await client.connect(
+      new StreamableHTTPClientTransport(endpoint, {
+        requestInit: { headers: { Authorization: `Bearer ${key}` } }
+      }),
+      { timeout: 20_000 }
+    );
+    reportPhase("local endpoint tools/list and capability validation");
+    assertApprovedCapabilities(client);
+    const tools = await listAllTools(client);
+    if (JSON.stringify(tools) !== JSON.stringify([...expected].sort()))
+      throw new Error(
+        `Local surface ${endpoint.pathname} does not list its role's granted tools`
+      );
+  } finally {
+    await client.close().catch(() => {});
+  }
+}
+
 /** A real Streamable HTTP MCP round trip using the official SDK across independent sessions. */
 export async function probeSupergateway(
   executable: string,
@@ -93,12 +149,20 @@ export async function probeSupergateway(
     Object.entries(process.env).filter(
       (entry): entry is [string, string] => entry[1] !== undefined
     )
-  )
+  ),
+  reportPhase: (phase: string) => void = () => {}
 ): Promise<void> {
+  reportPhase("read staged gateway configuration");
   const config = supergatewayConfigSchema.parse(
     JSON.parse(readFileSync(configFile, "utf8"))
   );
-  const surfaces = Object.entries(config.mcpServers);
+  const surfaces = Object.entries(config.mcpServers).flatMap(
+    ([name, surface]) =>
+      "mcpServers" in surface ? [[name, surface] as const] : []
+  );
+  const localSurfaces = Object.values(config.mcpServers).flatMap((surface) =>
+    "mcpServers" in surface ? [] : [surface]
+  );
   if (!surfaces.length)
     throw new Error("Supergateway publishes no role surface");
   const apiKeyFile = surfaces[0]![1].apiKeyFile.replaceAll("$$", "$");
@@ -110,6 +174,7 @@ export async function probeSupergateway(
     path.dirname(configFile),
     "backend-pool.json"
   );
+  reportPhase("prepare XACPX discovery coordinator");
   let probeXacpxIpc: XacpxOrchestrationIpcHandle | undefined;
   let effectiveEnv = env;
   if (
@@ -134,18 +199,37 @@ export async function probeSupergateway(
       AUTODEV_XACPX_COORDINATOR_SESSION: "chatgpt:policy-probe"
     };
   }
-  // Every gateway member is a route on the sibling backend pool.
+  // Every gateway member is a route on the sibling backend pool, admitting
+  // local sessions exactly as the service does.
+  reportPhase("start admitted backend pool");
+  const poolConfig = chatgptBackendPoolConfigSchema.parse(
+    JSON.parse(readFileSync(poolConfigPath, "utf8"))
+  );
   const pool: ChatgptBackendPoolHandle = await startChatgptBackendPool(
-    chatgptBackendPoolConfigSchema.parse(
-      JSON.parse(readFileSync(poolConfigPath, "utf8"))
-    ),
-    { gatewayEnv: effectiveEnv, secretEnv: env }
+    poolConfig,
+    {
+      gatewayEnv: effectiveEnv,
+      secretEnv: env,
+      ...(localSurfaces.length > 0
+        ? {
+            admission: createGatewayAdmission({
+              repositoryRoot: requiredEnv(env, "AUTODEV_REPO_ROOT"),
+              node: requiredEnv(env, "AUTODEV_NODE_BIN"),
+              home: requiredEnv(env, "HOME"),
+              codexHome: requiredEnv(env, "CODEX_HOME"),
+              catalogueWorkspace: requiredEnv(env, "AUTODEV_MCP_WORKSPACE"),
+              runtimeSource: path.resolve(import.meta.dirname, "..")
+            })
+          }
+        : {})
+    }
   );
   const gatewayEnv = {
     ...effectiveEnv,
     [CHATGPT_MCP_POOL_PORT_ENV]: String(pool.port),
     [CHATGPT_MCP_POOL_TOKEN_ENV]: pool.token
   };
+  reportPhase("start Supergateway and wait for readiness");
   const child = spawn(
     executable,
     ["--config", configFile, "--port", String(probePort)],
@@ -178,6 +262,8 @@ export async function probeSupergateway(
     if (!ready) throw new Error("Supergateway probe did not become ready");
 
     for (const [role, surface] of surfaces) {
+      const label = /^[a-z0-9-]+$/u.test(role) ? role : "unknown";
+      reportPhase(`external role ${label}: authentication`);
       const endpoint = new URL(
         `http://127.0.0.1:${probePort}${surface.path}${surface.streamableHttpPath}`
       );
@@ -219,6 +305,7 @@ export async function probeSupergateway(
         requestInit
       });
       try {
+        reportPhase(`external role ${label}: initialize`);
         await primary.connect(transportA, { timeout: 20_000 });
         await secondary.connect(transportB, { timeout: 20_000 });
         if (
@@ -231,6 +318,7 @@ export async function probeSupergateway(
           );
         }
 
+        reportPhase(`external role ${label}: tools/list and capability validation`);
         assertApprovedCapabilities(primary);
         assertApprovedCapabilities(secondary);
 
@@ -249,6 +337,26 @@ export async function probeSupergateway(
       } finally {
         await Promise.allSettled([primary.close(), secondary.close()]);
       }
+    }
+    for (const surface of localSurfaces) {
+      await probeLocalSurface(
+        new URL(
+          `http://127.0.0.1:${probePort}${surface.path}${surface.streamableHttpPath}`
+        ),
+        surface.apiKeyFile.replaceAll("$$", "$"),
+        token,
+        poolConfig.servers[
+          localPoolServerKey(
+            ...(surface.path.split("/").slice(2) as [string, string])
+          )
+        ]?.tools ?? [],
+        (phase) => {
+          const label = /^\/local\/[a-z0-9-]+\/[a-zA-Z0-9_.-]+$/u.test(surface.path)
+            ? surface.path
+            : "unknown local surface";
+          reportPhase(`${label}: ${phase}`);
+        }
+      );
     }
   } finally {
     if (child.exitCode === null && child.signalCode === null) {
@@ -271,10 +379,14 @@ if (isEntryPoint(import.meta.url)) {
   const [, , executable, configFile] = process.argv;
   if (!executable || !configFile)
     throw new Error("Expected Supergateway executable and config");
-  probeSupergateway(executable, configFile).catch(() => {
-    // Never print protocol payloads, upstream arguments or file contents.
+  let phase = "startup";
+  probeSupergateway(executable, configFile, undefined, (current) => {
+    phase = current;
+  }).catch(() => {
+    // Only locally constructed phase labels; never print upstream errors,
+    // protocol payloads, arguments, credential values or file contents.
     process.stderr.write(
-      "Supergateway MCP initialize/tools/list preflight failed\n"
+      `Supergateway MCP preflight failed (${phase})\n`
     );
     process.exitCode = 1;
   });

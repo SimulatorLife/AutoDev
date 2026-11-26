@@ -68,9 +68,14 @@ import {
 } from "../shared/runtime-secrets.ts";
 import {
   MCP_SERVER_COCOINDEX,
-  MCP_SERVER_FILESYSTEM
+  MCP_SERVER_FILESYSTEM,
+  MCP_SERVER_XACPX
 } from "../shared/tool-names.ts";
-import type { ToolCallOutcome } from "./mcp-telemetry.ts";
+import type {
+  McpToolCallCorrelation,
+  ToolCallOutcome
+} from "./mcp-telemetry.ts";
+import { SESSION_GRANT_META_KEY, verifySessionGrant } from "./session-grant.ts";
 import {
   createRemoteMcpTransport,
   publicRemoteMcpMessage,
@@ -165,6 +170,21 @@ const pooledRemoteBackendSchema = z
   })
   .strict();
 
+/**
+A role's server for locally admitted sessions. It has no fixed workspace:
+each request's session grant names the workspace its backend runs in, and
+the gateway's admission provisions that backend on first use.
+*/
+const admittedBackendSchema = z
+  .object({
+    kind: z.literal("admitted"),
+    role: z.string().regex(/^[a-z0-9-]+$/u),
+    server: z.string().min(1),
+    tools: z.array(toolIdentifier).min(1)
+  })
+  .strict();
+export type AdmittedBackendSpec = z.infer<typeof admittedBackendSchema>;
+
 export const chatgptBackendPoolConfigSchema = z
   .object({
     version: z.literal(1),
@@ -172,15 +192,17 @@ export const chatgptBackendPoolConfigSchema = z
       identifier,
       z.discriminatedUnion("kind", [
         pooledLocalBackendSchema,
-        pooledRemoteBackendSchema
+        pooledRemoteBackendSchema,
+        admittedBackendSchema
       ])
     )
   })
   .strict();
 
-export type PooledBackendSpec = z.infer<
-  typeof chatgptBackendPoolConfigSchema
->["servers"][string];
+export type PooledBackendSpec = Exclude<
+  z.infer<typeof chatgptBackendPoolConfigSchema>["servers"][string],
+  AdmittedBackendSpec
+>;
 export type ChatgptBackendPoolConfig = z.infer<
   typeof chatgptBackendPoolConfigSchema
 >;
@@ -202,6 +224,31 @@ export interface ChatgptBackendPoolOptions {
   Most concurrently retained conversations per conversation-scoped backend.
   */
   readonly maxConversations?: number;
+  /** Admits locally granted sessions to `admitted` servers. */
+  readonly admission?: GatewayAdmission;
+}
+
+export interface GatewayAdmission {
+  /** The private secret session grants are signed with. */
+  readonly secret: string;
+  /** Reviewed workspace for discovery-only backends; never a client execution grant. */
+  readonly catalogueWorkspace: string;
+  /**
+  The confined launch of one role's server in an admitted workspace. A
+  delegation backend also receives the session it acts for.
+  */
+  provision(
+    server: string,
+    role: string,
+    workspace: string,
+    session?: string
+  ): {
+    server: string;
+    command: string;
+    args: string[];
+    cwd: string;
+    env?: Record<string, string>;
+  };
 }
 
 export interface ChatgptBackendPoolHandle {
@@ -530,16 +577,27 @@ class PooledBackendController {
   }
 
   // A backend lists every task it holds; a caller sees only its own.
-  private ownedTaskList(response: JsonRecord, owner: string): JsonRecord {
+  private ownedTaskList(
+    response: JsonRecord,
+    owner: string,
+    id: JsonRpcId
+  ): JsonRecord {
     const parsed = ListTasksResultSchema.safeParse(response.result);
-    if (!parsed.success) return response;
+    if (response.error || !parsed.success) {
+      // A malformed list or upstream error may contain another owner's
+      // private task data. Never bypass the ownership projection.
+      return errorResponse(id, "Backend task list unavailable");
+    }
+    this.pruneTaskPins();
+    const { tasks, nextCursor } = parsed.data;
     return {
-      ...response,
+      jsonrpc: "2.0",
+      id,
       result: {
-        ...parsed.data,
-        tasks: parsed.data.tasks.filter(
+        tasks: tasks.filter(
           (task) => this.taskPins.get(task.taskId)?.owner === owner
-        )
+        ),
+        ...(nextCursor !== undefined ? { nextCursor } : {})
       }
     };
   }
@@ -1191,7 +1249,11 @@ class PooledBackendController {
 
   async handleRequest(
     message: JsonRecord,
-    sessionId: string | null
+    sessionId: string | null,
+    // Set when the caller's scope already established who owns its tasks.
+    ownerOverride?: string,
+    // The admission facts the caller verified, for the call's span.
+    correlation?: McpToolCallCorrelation
   ): Promise<JsonRecord | null> {
     const method = message.method;
     const rawId = message.id;
@@ -1266,7 +1328,7 @@ class PooledBackendController {
       }
     }
 
-    const owner = taskOwner(message.params, sessionId);
+    const owner = ownerOverride ?? taskOwner(message.params, sessionId);
     if (method === "tools/call") {
       const params = isRecord(message.params) ? message.params : null;
       const toolName = params?.name;
@@ -1312,7 +1374,8 @@ class PooledBackendController {
                 callResult = response;
                 return outcome;
               },
-              params?._meta
+              params?._meta,
+              correlation
             );
           } else {
             callResult = (await executeCall()).response;
@@ -1359,7 +1422,7 @@ class PooledBackendController {
         owner
       );
       return method === "tasks/list"
-        ? this.ownedTaskList(response, owner)
+        ? this.ownedTaskList(response, owner, id)
         : response;
     } catch (error) {
       return errorResponse(
@@ -1449,71 +1512,76 @@ type ConversationScopedSpec = Extract<
 };
 
 /**
-A backend whose identity is the ChatGPT conversation it serves (the XACPX
-delegation coordinator). Discovery -- `initialize`, `tools/list` and the
-logical sessions that carry them -- is answered by one catalogue backend;
-every tool call and MCP task request runs in the backend of the conversation
-it carries, started lazily and reaped like any pooled backend. Conversations
-beyond the retention bound evict the least recently used idle one.
+Where one tool call or task request runs: the backend scope it belongs to, how
+to start that scope's backend, who owns the tasks it creates, and the request
+as the backend should see it. A string is the refusal sent instead.
 */
-class ConversationScopedController {
-  private readonly spec: ConversationScopedSpec;
+type ScopeResolution =
+  | {
+      readonly key: string;
+      readonly spec: () => PooledBackendSpec;
+      readonly owner?: string;
+      /** The verified admission facts the call's span carries. */
+      readonly correlation?: McpToolCallCorrelation;
+      readonly message: JsonRecord;
+    }
+  | string;
+
+/**
+A server whose tool calls and MCP task requests each run in a backend of
+their own scope -- one ChatGPT conversation (the XACPX delegation
+coordinator), or one admitted workspace (and, for delegation, session).
+Discovery -- `initialize`, `tools/list` and the logical sessions that carry
+them -- is answered by one catalogue backend. Scoped backends start lazily and
+are reaped like any pooled backend; scopes beyond the retention bound evict
+the least recently used idle one.
+*/
+class ScopedController {
   private readonly options: ChatgptBackendPoolOptions;
-  private readonly maxConversations: number;
+  private readonly maxScopes: number;
   private readonly catalogue: PooledBackendController;
-  private readonly conversations = new Map<string, PooledBackendController>();
+  private readonly scopes = new Map<string, PooledBackendController>();
+  private readonly resolve: (message: JsonRecord) => ScopeResolution;
   readonly name: string;
 
   constructor(
     name: string,
-    spec: ConversationScopedSpec,
+    catalogueSpec: PooledBackendSpec,
+    resolve: (message: JsonRecord) => ScopeResolution,
     options: ChatgptBackendPoolOptions
   ) {
     this.name = name;
-    this.spec = spec;
+    this.resolve = resolve;
     this.options = options;
-    this.maxConversations =
-      options.maxConversations ?? DEFAULT_MAX_CONVERSATIONS;
-    this.catalogue = new PooledBackendController(
-      name,
-      this.scopedSpec("catalogue"),
-      options
-    );
+    this.maxScopes = options.maxConversations ?? DEFAULT_MAX_CONVERSATIONS;
+    this.catalogue = new PooledBackendController(name, catalogueSpec, options);
   }
 
-  private scopedSpec(scope: string): PooledBackendSpec {
-    const variable = this.spec.conversationScopedEnv;
-    return {
-      ...this.spec,
-      env: {
-        ...this.spec.env,
-        [variable]: `${this.spec.env[variable] ?? ""}:${scope}`
-      }
-    };
-  }
-
-  private conversation(key: string): PooledBackendController | null {
-    const existing = this.conversations.get(key);
+  private scope(
+    key: string,
+    spec: () => PooledBackendSpec
+  ): PooledBackendController | null {
+    const existing = this.scopes.get(key);
     if (existing) {
       // Map order is recency order.
-      this.conversations.delete(key);
-      this.conversations.set(key, existing);
+      this.scopes.delete(key);
+      this.scopes.set(key, existing);
       return existing;
     }
-    if (this.conversations.size >= this.maxConversations) {
-      const idle = this.conversations
+    if (this.scopes.size >= this.maxScopes) {
+      const idle = this.scopes
         .entries()
         .find(([, controller]) => !controller.busy());
       if (!idle) return null;
-      this.conversations.delete(idle[0]);
+      this.scopes.delete(idle[0]);
       void idle[1].close();
     }
     const controller = new PooledBackendController(
       this.name,
-      this.scopedSpec(`conversation-${key}`),
+      spec(),
       this.options
     );
-    this.conversations.set(key, controller);
+    this.scopes.set(key, controller);
     return controller;
   }
 
@@ -1539,10 +1607,10 @@ class ConversationScopedController {
   ): Promise<JsonRecord | null> {
     const method = message.method;
     if (method === "notifications/cancelled") {
-      // The request being cancelled ran in exactly one conversation's
-      // backend; the others hold no matching pending request.
+      // The request being cancelled ran in exactly one scope's backend; the
+      // others hold no matching pending request.
       await Promise.all(
-        this.conversations
+        this.scopes
           .values()
           .map((controller) => controller.handleRequest(message, sessionId))
       );
@@ -1556,78 +1624,148 @@ class ConversationScopedController {
     const rawId = message.id;
     const id =
       typeof rawId === "string" || typeof rawId === "number" ? rawId : null;
-    const parameters = isRecord(message.params) ? message.params : null;
-    const key = chatgptConversationKey(parameters?._meta);
-    if (!key)
-      return id === null
-        ? null
-        : errorResponse(
-            id,
-            `${this.name} acts for one ChatGPT conversation, and this request carries no conversation identity (_meta "${CHATGPT_CONVERSATION_META_KEY}").`
-          );
-    const controller = this.conversation(key);
+    const resolution = this.resolve(message);
+    if (typeof resolution === "string")
+      return id === null ? null : errorResponse(id, resolution);
+    const controller = this.scope(resolution.key, resolution.spec);
     if (!controller)
       return id === null
         ? null
         : errorResponse(
             id,
-            `${this.name} is busy in ${this.maxConversations} other conversations; retry when one finishes.`
+            `${this.name} is busy in ${this.maxScopes} other scopes; retry when one finishes.`
           );
-    return controller.handleRequest(message, sessionId);
+    return controller.handleRequest(
+      resolution.message,
+      sessionId,
+      resolution.owner,
+      resolution.correlation
+    );
   }
 
   stats() {
     const catalogue = this.catalogue.stats();
-    const conversations = this.conversations
+    const scopes = this.scopes
       .values()
       .map((controller) => controller.stats())
       .toArray();
     return {
       ...catalogue,
-      running:
-        catalogue.running ||
-        conversations.some((conversation) => conversation.running),
-      spawns: conversations.reduce(
-        (total, conversation) => total + conversation.spawns,
-        catalogue.spawns
-      ),
-      activeCalls: conversations.reduce(
-        (total, conversation) => total + conversation.activeCalls,
-        0
-      ),
-      retainedTasks: conversations.reduce(
-        (total, conversation) => total + conversation.retainedTasks,
+      running: catalogue.running || scopes.some((scope) => scope.running),
+      spawns: scopes.reduce((total, scope) => total + scope.spawns, catalogue.spawns),
+      activeCalls: scopes.reduce((total, scope) => total + scope.activeCalls, 0),
+      retainedTasks: scopes.reduce(
+        (total, scope) => total + scope.retainedTasks,
         catalogue.retainedTasks
       ),
       uncertainTaskCreation:
         catalogue.uncertainTaskCreation ||
-        conversations.some((conversation) => conversation.uncertainTaskCreation),
-      conversations: conversations.length
+        scopes.some((scope) => scope.uncertainTaskCreation),
+      conversations: scopes.length
     };
   }
 
   async close(): Promise<void> {
     await Promise.all([
       this.catalogue.close(),
-      ...this.conversations.values().map((controller) => controller.close())
+      ...this.scopes.values().map((controller) => controller.close())
     ]);
-    this.conversations.clear();
+    this.scopes.clear();
   }
 }
 
-type BackendRoute = PooledBackendController | ConversationScopedController;
+// One backend per ChatGPT conversation, named by its digest.
+function conversationScoped(
+  name: string,
+  spec: ConversationScopedSpec,
+  options: ChatgptBackendPoolOptions
+): ScopedController {
+  const scoped = (scope: string): PooledBackendSpec => {
+    const variable = spec.conversationScopedEnv;
+    return {
+      ...spec,
+      env: { ...spec.env, [variable]: `${spec.env[variable] ?? ""}:${scope}` }
+    };
+  };
+  return new ScopedController(
+    name,
+    scoped("catalogue"),
+    (message) => {
+      const key = chatgptConversationKey(
+        isRecord(message.params) ? message.params._meta : undefined
+      );
+      return key
+        ? { key, spec: () => scoped(`conversation-${key}`), message }
+        : `${name} acts for one ChatGPT conversation, and this request carries no conversation identity (_meta "${CHATGPT_CONVERSATION_META_KEY}").`;
+    },
+    options
+  );
+}
+
+// One backend per admitted workspace -- and, for delegation, per session --
+// started in that workspace from the grant every request carries.
+function admitted(
+  name: string,
+  spec: AdmittedBackendSpec,
+  options: ChatgptBackendPoolOptions
+): ScopedController {
+  const admission = options.admission;
+  if (!admission)
+    throw new Error(`${name} needs gateway admission, which is not configured`);
+  const provisioned = (workspace: string, session?: string): PooledBackendSpec => ({
+    kind: "stdio",
+    tools: spec.tools,
+    ...admission.provision(spec.server, spec.role, workspace, session)
+  });
+  return new ScopedController(
+    name,
+    provisioned(admission.catalogueWorkspace),
+    (message) => {
+      const params = isRecord(message.params) ? message.params : {};
+      const meta = isRecord(params._meta) ? params._meta : {};
+      const claims = verifySessionGrant(
+        admission.secret,
+        meta[SESSION_GRANT_META_KEY]
+      );
+      if (!claims)
+        return `${name} needs a valid AutoDev session grant (_meta "${SESSION_GRANT_META_KEY}").`;
+      if (claims.role !== spec.role)
+        return `This session's grant is for the ${claims.role} role, not ${spec.role}.`;
+      // The grant never reaches the backend.
+      const { [SESSION_GRANT_META_KEY]: _grant, ...forwardedMeta } = meta;
+      const perSession = spec.server === MCP_SERVER_XACPX;
+      return {
+        key: JSON.stringify([
+          claims.workspace,
+          perSession ? claims.session : null
+        ]),
+        spec: () =>
+          provisioned(claims.workspace, perSession ? claims.session : undefined),
+        owner: `grant:${claims.session}`,
+        correlation: {
+          server: spec.server,
+          role: claims.role,
+          // A bounded label, never the workspace path.
+          workspace: path.basename(claims.workspace),
+          sessionId: claims.runtimeSession ? claims.session : null
+        },
+        message: { ...message, params: { ...params, _meta: forwardedMeta } }
+      };
+    },
+    options
+  );
+}
+
+type BackendRoute = PooledBackendController | ScopedController;
 
 function backendRoute(
   name: string,
-  spec: PooledBackendSpec,
+  spec: PooledBackendSpec | AdmittedBackendSpec,
   options: ChatgptBackendPoolOptions
 ): BackendRoute {
+  if (spec.kind === "admitted") return admitted(name, spec, options);
   return spec.kind === "stdio" && spec.conversationScopedEnv !== undefined
-    ? new ConversationScopedController(
-        name,
-        spec as ConversationScopedSpec,
-        options
-      )
+    ? conversationScoped(name, spec as ConversationScopedSpec, options)
     : new PooledBackendController(name, spec, options);
 }
 

@@ -1,6 +1,6 @@
 # Allowlisted Commands MCP — Design and Migration Plan
 
-> **Status:** Substantial source implementation and earlier recorded tests (2026-11-25); latest parallel review changes are not yet independently tested or deployed. The backend is integrated into the launcher, gateway confinement, RuleSync catalogue and canonical role contracts. The registry proxy implements restricted package egress; actual dependency installation through the nested production gateway sandbox remains unverified. Durable task recovery is implemented in source and covered by unit and integration tests. Protected approval, conversation-specific task ownership, deployment, Console and telemetry acceptance remain open.
+> **Status:** Source implementation audited against every requirement and acceptance criterion in this plan on 2026-11-26 (see [Acceptance audit](#acceptance-audit-2026-11-26)): the unit, integration, real-OS confinement, task-store and gateway-pool task suites pass locally (75 tests), and the gaps the audit found are fixed in source. **Not deployed:** the installer has not been run and no catalogue digest is approved, so live gateway, provider, telemetry, installer-reconciliation and Console acceptance remain open, as do the residuals the audit lists as blocked.
 >
 > **Authority:** [AutoDev unified target state](autodev-console-target-state.md#allowlisted-command-execution) owns durable architecture and authorization requirements. This focused subsystem plan explains the rationale, proposed implementation, migration order and acceptance gates. Record observed deployment evidence in [the migration tracker](autodev-console-migration.md), and operational instructions in [local setup](local-setup.md) when implemented.
 
@@ -92,7 +92,11 @@ launchd services and the live provider surfaces still carry the previous state.
   `runtime/src/mcp/commands-catalogue.ts` validates it: bounded fixed
   executable and argv, at most 64 definitions, narrowly typed string
   parameters, and no parameter that no argument uses or argument that names no
-  parameter.
+  parameter. Every reading of a catalogue file -- the approved copy the
+  backend serves and the proposal the installer offers for approval -- goes
+  through `parseCommandCatalogueText`, which also refuses a key declared twice
+  in one object: `JSON.parse` silently keeps the last of two equal keys, so the
+  definition an operator reviewed could otherwise differ from the one granted.
 - A parameter replaces a **whole** argument element and is never spliced into
   one. `git_commit` declares `args: ["commit", "-m", "{message}"]` with a
   `message` parameter bounded to 1..500 characters; the value reaches `git` as
@@ -303,6 +307,85 @@ roots, writable state, replaced run/scratch directories and physical
 workspace overlap. Local test execution remains pending. The shared
 gateway cutover still must establish one state home across all providers.
 
+### Acceptance audit (2026-11-26)
+
+Every requirement and acceptance criterion in sections 4-12 was checked
+against the source and by executing the suites, not by reading earlier status
+notes. Command (from `runtime/`):
+
+```sh
+pnpm exec node --import ./tests/support/isolate-autodev-state.ts --test \
+  tests/commands-mcp.test.ts tests/commands-mcp-integration.test.ts \
+  tests/command-task-store.test.ts tests/command-process-tree.test.ts \
+  tests/command-network-boundary.test.ts tests/control-api-commands-approval.test.ts \
+  tests/backend-pool-tasks.test.ts
+```
+
+Result: 75 tests, 75 pass, 0 skipped, on macOS with the real `sandbox-exec`.
+Also run: `tests/platform/command-catalogue-approval.test.ts` (7 pass),
+`runtime/tests/execution-contract-render.test.ts` (2 pass), and
+`node runtime/src/cli/autodev.ts render contract --output config/execution-contract.json --check`
+(no drift; orchestrator and worker hold the eight commands, validator holds
+`typecheck`, `test`, `git_status`, `git_diff`; no read-only role holds any).
+`tsc --noEmit` reports no errors in the Commands files. Test names below are
+the evidence.
+
+#### Fixed by this audit
+
+| Criterion | Gap found | Fix and evidence |
+| --- | --- | --- |
+| Valid/invalid catalogue, **duplicate names** -> actionable rejection | `JSON.parse` silently kept the last of two equal keys in both the backend's approved-catalogue read and the installer's approval read, so a reviewed definition could differ from the granted one | `parseCommandCatalogueText` rejects any key declared twice in one object (`DUPLICATE_CATALOGUE_KEY`), used by `commands-main.ts` and `command-catalogue-approval.ts`. Tests: "a catalogue that declares one key twice is rejected, not silently resolved", "an approved catalogue that declares a key twice grants nothing", "a proposal that declares a command twice is never offered for approval" |
+| Exit codes and **startup failure** -> truthful distinct outcomes; missing executables distinguishable from infrastructure errors | An executable that vanished after admission was reported as a generic `infrastructure_error` | `prepareCommand` raises `CommandExecutableUnavailableError`; the result is `startup_failure` with `exitCode: null`. Test: "an approved executable that disappeared is a startup failure, not a command that ran" |
+| Native task status semantics | A non-succeeded command made a `failed` task whose result did not set `isError`, so the result and the task disagreed | Non-succeeded results carry `isError: true`. Test: "a command that fails is a failed task, and never a completed one" |
+| Excess output/expired retention -> bounded storage, **secure cleanup** | A backend that died between writing and renaming a record left a `.tmp` file holding a result body forever | Reconciliation removes temporary records whose writer process is gone and keeps a live writer's. Test: "a partial record a dead backend left behind is removed, a live writer's is kept" |
+| Access **host IPC** -> denied | Only asserted on the profile text | Real-OS test with a positive control: "a confined command cannot reach a host IPC service" (`notifyutil` answers on the host and fails under the profile; adding `(allow mach-lookup)` makes it answer, so the test can go red) |
+
+#### Verified
+
+| Criterion | Evidence (test names) |
+| --- | --- |
+| Registration/discovery: only effective named definitions | "a client discovers exactly the commands its role holds, and runs one"; "a role with a narrower grant sees only its own commands"; "registered commands match discovery, ..."; "a command may be restricted to the workspaces it names" |
+| Extra input, executable, argv, cwd, env overrides rejected before subprocess | "parameters are validated, substituted literally, and never interpolated"; "the catalogue is strict, and a parameter is only ever a whole argument" |
+| Trusted executable resolution; PATH/workspace shadowing denied | "trusted executables never resolve out of the workspace"; "the confined PATH prefers an admitted Runtime Node over workspace shims" |
+| Shell interpolation | "a confined command keeps literal arguments, ..." |
+| Output bounds | "output beyond the bound is reported as truncated ..."; "a command's output is bounded and its exit status is the observed one" |
+| Deadline and cancellation | "a command that outlives its deadline is stopped and reported as timed out"; "a cancelled command is stopped and reported as cancelled"; "registered commands match discovery, and request cancellation and revocation stop execution" |
+| Env filtering | "a command's environment carries no operator credentials and no host paths"; "a confined command cannot read the operator's Git configuration" |
+| Concurrent requests: workspace serialization | "a workspace lease is exclusive across sessions and released on completion"; "an old lease is not proof that its command stopped". Busy admission is rejected, not queued (no queue exists, so no queue time is observed) |
+| Configuration drift | execution-contract `--check` above; "the installed catalogue is a valid, generic catalogue"; approval suite |
+| Unlisted command, unknown role, read-only role | "a read-only role is refused the command surface entirely"; "a role's grant decides the effective command set, ..." |
+| Traversal and symlink escape | "a symlink in the workspace cannot be used to reach outside it"; "the admitted command workspace cannot be redirected after scope resolution"; "workspace keys are physical, ..." |
+| Replace executable or edit effective policy; no self-escalation | "replacing the approved catalogue revokes the grant"; "approved catalogue reads reject symlinks, shared hard links and writable modes"; "the server refuses to start when the approved catalogue is inside the workspace"; "an agent's edit to the checkout catalogue is not approved by a reinstall" |
+| Workspace is AutoDev's own checkout | "a command in AutoDev's own checkout cannot change the effective policy" |
+| Read secrets, write outside workspace | "a confined command keeps literal arguments, cannot write outside the workspace and cannot read secrets"; "confined commands can use private Runtime roots without reading sibling Runtime state" |
+| Unauthorized network | "a confined command reaches the registry proxy's port and nothing else"; "only a dependency install may reach the network, and only the registry proxy" |
+| Descendant escape and detached descendants | the four `command-process-tree` tests |
+| Shared cache cross-contamination | "two workspaces never share a writable cache" |
+| Revoked or forged grant | "a command whose grant ends mid-flight is failed, not left running"; "the task store refuses every operation once the grant is revoked" |
+| List/read/result/cancel another session's task | Backend: "the task store isolates explicit and absent transport sessions". Gateway pool: "a task is visible only to the session or conversation that created it" |
+| Sandbox available and really confining | "the host's sandbox tooling really confines, so the negative tests mean something" |
+| Short command; long command as native task | "the native task lifecycle is available to a client that drives it" |
+| Pool reaping, idle and session timeouts | "native task handles retain their backend past idle and unrelated RPC timeout"; "a retained task prevents conversation eviction until its retention expires"; "a native terminal status notification releases retention without a client poll" |
+| Crash/restart: no false completion or replay | "a task whose backend ended is failed, never completed, and is not replayed"; "a finished task keeps its result ..."; "a live backend's task is not reconciled by a sibling backend"; "a command that is still running when the backend closes is failed, never completed" |
+| Duplicate/uncertain submission | "an uncertain task creation is not treated as idle or safe to retry"; no automatic retry exists in the backend |
+| Bounded retention | "the task store is bounded by count and by retention"; "the task store's records are private to their scope" |
+| Commit attribution (temporary repository) | "a commit made through the command surface is attributed to the agent" |
+| Execution spans without content | "command execution spans reuse the MCP tracer without double-counting or leaking command content" |
+| Approval state on `/control/mcps` | the four `control-api-commands-approval` tests |
+
+#### Blocked
+
+| Criterion | Reason |
+| --- | --- |
+| Gateway and provider acceptance (ChatGPT ingress, Codex, Claude, Antigravity, MiniMax Code, Copilot, OpenCLI ChatGPT/Gemini); concrete ChatGPT development scenario | Needs an installed deployment: the installer restarts launchd services and needs the operator's authorization, and the ChatGPT gateway serves no Commands backend until the operator approves a catalogue digest. Not done here by constraint |
+| Native task negotiation through Supergateway, tunnel and real clients; client disconnect/reconnect over the live gateway | Same: requires the installed gateway. The pool and backend behaviour is proven in source tests only |
+| Metrics (counts, latency, active work, denials, cleanup) | No meter exists in the shared MCP telemetry owner (`runtime/src/mcp/mcp-telemetry.ts` has spans only); adding one is a shared-telemetry change outside this subsystem, and collector reachability from the confined backend is unqualified |
+| Installer reconciliation, rollback, health and Console MCP management live | Installed-state evidence; the source surfaces are tested (approval suite, `/control/mcps` publication) |
+| Mount escape | Not testable without privileged mount creation; covered only by physical-path canonicalization and the default-deny profile |
+| `sandbox-exec` exec failure after admission | `sandbox-exec` exits 71 when it cannot exec the approved executable, which a command can also exit with, so a failure in the microseconds between `prepareCommand`'s check and the exec is reported as `failed` with exit 71 rather than `startup_failure` |
+| Retention limit shared across sessions | The 32-task bound is per role/workspace scope, not per session, so one session can fill it and make another's submission fail with "retention limit reached" until records expire. Fails closed; fairness needs per-conversation identity the backend does not receive (the pool owns it) |
+| Hostile registry body; detached descendant whose parent exits between sweeps; one state home across providers | Residuals already recorded in section 13 and "Command state admission" |
+
 ### What is still open
 
 - **Deployment.** The installer has not been run. A normal install restarts
@@ -435,6 +518,8 @@ Return structured results using native MCP structured content and task contracts
   "outputTruncated": false
 }
 ```
+
+Implemented statuses: `succeeded`, `failed` (observed nonzero exit), `timed_out`, `cancelled`, `output_limit`, `startup_failure` (the approved executable vanished after admission; no process ran and no exit status is claimed) and `infrastructure_error` (confinement or spawn failure, with a fixed message). Grant denials, busy workspaces and invalid parameters are refused before a task exists. A task whose backend ended mid-command is `failed` with an explicitly unknown outcome. Every non-succeeded result carries `isError: true` and its task is `failed`, so result and task status agree.
 
 Specify schemas and status semantics consistently. An ordinary failed test is a completed command with a nonzero exit status, not a transport failure. Permission denials, missing executables and infrastructure errors are distinguishable. Do not claim an exit status that was not observed. Expose accurate tool annotations; validation commands are not intrinsically read-only or idempotent.
 
@@ -580,6 +665,7 @@ Use synthetic fixtures for unit tests and independent canonical-source validatio
 | Access unauthorized network or host IPC | Denied |
 | Dependency/test descendant attempts escape | Denied |
 | Descendant detaches into its own session | Terminated with the command; not left running |
+| Registry answers with a crafted body naming another host | The named host is never contacted; the child's attempt to reach it is refused |
 | Shared cache or workspace cross-contamination | Prevented |
 | Invoke from read-only, revoked or forged grant | Denied |
 | List/read/result/cancel another session's task | Denied |
@@ -720,6 +806,37 @@ dependency install reaches the registry proxy's port; and the same dependency
 install is refused by the unapproved peer. The test was shown able to go red:
 widening the profile to allow every network peer fails it.
 
+### A hostile registry, proved against the operating system
+
+The registry is the one party that answers the package manager with a body it
+chose, and that body names the tarball the child downloads. A registry that
+answers maliciously could therefore point the child at a host of its own
+choosing, so the question is what stands between that body and the child.
+
+Two things do. The proxy fetches only the approved registry and serves only
+what it fetched itself: a URL named by the body is never fetched. And the
+confined child may open exactly one network peer, the proxy's own port.
+
+That is exercised against the real operating system
+(`runtime/tests/command-registry-hostile.test.ts`). The approved registry
+answers with a crafted body naming a tarball on a second loopback host, and a
+second version carrying credentials. The test shows that the proxy does not
+impersonate the host it cannot reach, that it does not turn the credentialed
+URL into one of its own, and that it forwards no credential of its own to the
+registry. The confined child's attempt to reach the host the body named is
+refused by the operating system, and that host is never contacted: it accepts
+no connection beyond the deliberate control and serves no request at all.
+
+The control matters: the same peer answers the identical connection without
+any confinement, so the refusal is the boundary at work rather than a host
+that was never listening. The test was shown able to go red: dropping the
+proxy's origin and credential checks makes it fail on the rewritten URL.
+
+What remains open is not the proxy's behaviour against a crafted body but the
+installed path: that a real dependency installation reaches the permitted
+upstream registry through the whole production gateway, backend and command
+sandbox configuration, which needs the deployed services.
+
 ## 13. Open decisions and known blockers
 
 - Native asynchronous MCP Tasks negotiation/support through Supergateway, tunnel and actual clients is unproven.
@@ -731,11 +848,13 @@ widening the profile to allow every network peer fails it.
   system, including a descendant that detached into its own session (see
   "Descendant termination" in section 12), and the network boundary is proven
   the same way (see "The network boundary, proved against the operating
-  system" in section 12). What still needs a real adversarial test is the
-  registry proxy's own behaviour against a hostile registry: the proxy
-  refuses the request forms it does not serve and rewrites the tarball URLs
-  it serves, but a registry that answers with a crafted body has not been
-  exercised.
+  system" in section 12). A registry that answers with a crafted body is now
+  exercised the same way as well: it cannot steer the confined child off the
+  proxy and the host it names is never contacted (see "A hostile registry,
+  proved against the operating system" in section 12). What still needs a
+  real run is the installed path: that a real dependency installation reaches
+  the permitted upstream registry through the whole production gateway,
+  backend and command sandbox configuration.
 - The exact catalogue location/schema, initial grants, execution budgets and
   network policy are decided in the implementation: the catalogue is
   `config/commands.json` in the checkout and the approved copy is

@@ -1,4 +1,7 @@
-import { CHATGPT_TUNNEL_CONTROL_PATH, type ChatgptTunnelStatus } from "@simulatorlife/autodev-core";
+import {
+  CHATGPT_TUNNEL_CONTROL_PATH,
+  type ChatgptTunnelStatus
+} from "@simulatorlife/autodev-core";
 /**
  * Server-only typed fetcher for the AutoDev Control API.
  *
@@ -1669,8 +1672,10 @@ function isMcpApprovedCatalogue(value: unknown): boolean {
       value.state === "pending" ||
       value.state === "unavailable" ||
       value.state === "unknown") &&
-    (value.approvedDigest === null || typeof value.approvedDigest === "string") &&
-    (value.proposedDigest === null || typeof value.proposedDigest === "string") &&
+    (value.approvedDigest === null ||
+      typeof value.approvedDigest === "string") &&
+    (value.proposedDigest === null ||
+      typeof value.proposedDigest === "string") &&
     typeof value.approvedPath === "string"
   );
 }
@@ -1693,12 +1698,48 @@ function isMcpServerRow(value: unknown): boolean {
   );
 }
 
+function isMcpGrants(value: unknown): boolean {
+  return isRecord(value) && Object.values(value).every(isStringList);
+}
+
+/**
+ * Narrows the shared MCP gateway the catalog carries.
+ *
+ * Every verdict the gateway panel renders is read from here, so a field the
+ * panel would turn into "Ready" or into a published endpoint has to be
+ * present and typed rather than defaulted.
+ */
+function isMcpGateway(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.label === "string" &&
+    typeof value.installed === "boolean" &&
+    typeof value.ready === "boolean" &&
+    (value.port === null || typeof value.port === "number") &&
+    (value.readinessUrl === null || typeof value.readinessUrl === "string") &&
+    (value.generation === null || typeof value.generation === "string") &&
+    (value.workspace === null || typeof value.workspace === "string") &&
+    typeof value.role === "string" &&
+    isStringList(value.roles) &&
+    Array.isArray(value.surfaces) &&
+    value.surfaces.every(
+      (surface) =>
+        isRecord(surface) &&
+        typeof surface.role === "string" &&
+        typeof surface.url === "string"
+    ) &&
+    isMcpGrants(value.reviewed) &&
+    isMcpGrants(value.grants) &&
+    (value.error === null || typeof value.error === "string")
+  );
+}
+
 function isControlApiMcpsResponse(
   value: unknown
 ): value is ControlApiMcpsResponse {
   return (
     isRecord(value) &&
-    value.schema === "autodev-control-mcps-v2" &&
+    value.schema === "autodev-control-mcps-v3" &&
     typeof value.source === "string" &&
     // The revision is the handle a write is compared against, so the Console
     // refuses a catalog it cannot name rather than sending a write that has
@@ -1712,7 +1753,8 @@ function isControlApiMcpsResponse(
     // and the reason away.
     isValidationIssueList(value.issues) &&
     Array.isArray(value.servers) &&
-    value.servers.every(isMcpServerRow)
+    value.servers.every(isMcpServerRow) &&
+    isMcpGateway(value.gateway)
   );
 }
 
@@ -2207,7 +2249,7 @@ export async function fetchMcps(
   if (result.kind !== "ok") return result;
   return isControlApiMcpsResponse(result.data)
     ? { kind: "ok", data: result.data }
-    : invalidResponse("Mcps", "autodev-control-mcps-v2");
+    : invalidResponse("Mcps", "autodev-control-mcps-v3");
 }
 
 /**
@@ -3507,7 +3549,6 @@ export async function fetchEvaluations(
       );
 }
 
-
 /**
  * The diagnostics routes are read-only and read the whole machine's session
  * evidence: a session's rollouts, the router's rotated logs, the bridge logs,
@@ -3655,19 +3696,26 @@ export async function fetchHookDenials(
   };
 }
 
-export async function fetchChatgptTunnel(config: ControlApiConfig): Promise<ControlApiResult<ChatgptTunnelStatus>> {
-  const result = await fetchControlApi<unknown>(CHATGPT_TUNNEL_CONTROL_PATH, config);
+export async function fetchChatgptTunnel(
+  config: ControlApiConfig
+): Promise<ControlApiResult<ChatgptTunnelStatus>> {
+  const result = await fetchControlApi<unknown>(
+    CHATGPT_TUNNEL_CONTROL_PATH,
+    config
+  );
   if (result.kind !== "ok") return result;
   const data = result.data;
-  const grants = (value: unknown): boolean => isRecord(value) && Object.values(value).every(isStringList);
-  if (!isRecord(data) || data.schema !== "autodev-chatgpt-tunnel-v1" ||
-    typeof data.revision !== "string" || !/^[a-f0-9]{64}$/u.test(data.revision) ||
-    typeof data.configured !== "boolean" || typeof data.enabled !== "boolean" ||
-    typeof data.ready !== "boolean" || typeof data.role !== "string" || !data.role.trim() ||
+  if (
+    !isRecord(data) ||
+    data.schema !== "autodev-chatgpt-tunnel-v2" ||
+    typeof data.revision !== "string" ||
+    !/^[a-f0-9]{64}$/u.test(data.revision) ||
+    typeof data.configured !== "boolean" ||
+    typeof data.enabled !== "boolean" ||
+    typeof data.ready !== "boolean" ||
     !isStringList(data.roles) ||
-    (data.availableRoles !== undefined && !isStringList(data.availableRoles)) ||
-    !isNullableString(data.workspace) ||
-    !isNullableString(data.tunnelId) || !grants(data.reviewed) || !grants(data.grants))
-    return invalidResponse("ChatgptTunnel", "autodev-chatgpt-tunnel-v1");
+    !isNullableString(data.tunnelId)
+  )
+    return invalidResponse("ChatgptTunnel", "autodev-chatgpt-tunnel-v2");
   return { kind: "ok", data: data as unknown as ChatgptTunnelStatus };
 }

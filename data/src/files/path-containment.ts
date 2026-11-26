@@ -1,3 +1,4 @@
+import { lstatSync, realpathSync } from "node:fs";
 import path from "node:path";
 
 /**
@@ -30,4 +31,43 @@ export function isPathWithin(root: string, candidate: string): boolean {
  */
 export function pathsOverlap(left: string, right: string): boolean {
   return isPathWithin(left, right) || isPathWithin(right, left);
+}
+
+/**
+ * Resolve an as-yet uncreated path through its nearest existing ancestor.
+ * Only missing components may be appended; an inaccessible path or dangling
+ * symlink is not evidence of a safe location. This is a snapshot, not an OS
+ * confinement guarantee against concurrent filesystem changes.
+ */
+export function resolvePathWithExistingAncestor(target: string): string {
+  const absolute = path.resolve(target);
+  let ancestor = absolute;
+  for (;;) {
+    try {
+      return path.join(
+        realpathSync(ancestor),
+        path.relative(ancestor, absolute)
+      );
+    } catch (error) {
+      const parent = path.dirname(ancestor);
+      if (
+        (error as NodeJS.ErrnoException).code !== "ENOENT" ||
+        parent === ancestor
+      ) {
+        throw error;
+      }
+      // realpath may return ENOENT for an existing dangling symlink.
+      // Do not silently turn that redirect into a missing path component.
+      try {
+        lstatSync(ancestor);
+      } catch (statError) {
+        if ((statError as NodeJS.ErrnoException).code !== "ENOENT") {
+          throw statError;
+        }
+        ancestor = parent;
+        continue;
+      }
+      throw error;
+    }
+  }
 }

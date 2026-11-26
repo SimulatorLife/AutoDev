@@ -17,6 +17,11 @@
  * hook for both, so this hook refuses them and names the tool to use instead;
  * the model reads the refusal as the call's output and makes the call again
  * through `filesystem`.
+ *
+ * The refusal is AutoDev's file-surface policy, so it applies only to an
+ * AutoDev session (`HookSessionOrigin`). An unrelated native chat that shares
+ * the repository's projected hooks keeps its host's own file tools: it was
+ * never offered AutoDev's `filesystem` server to use instead.
  */
 
 import { readFileSync } from "node:fs";
@@ -64,10 +69,17 @@ export interface FileSurfaceDecision {
 }
 
 /** Whether a `PreToolUse` payload is a native file tool, and why it is refused. */
-export function evaluateFileSurfaceHook(rawInput: string): FileSurfaceDecision {
+export function evaluateFileSurfaceHook(
+  rawInput: string,
+  environment: NodeJS.ProcessEnv = process.env
+): FileSurfaceDecision {
   const payload = parseHookPayload(rawInput);
-  if (!payload) return { denied: false, reason: null };
-  const call = extractHookToolCall(payload);
+  if (
+    !payload ||
+    extractHookContext(payload, environment).origin === "unmanaged"
+  )
+    return { denied: false, reason: null };
+  const call = extractHookToolCall(payload, environment);
   if (!call) return { denied: false, reason: null };
   const replacement = REPLACEMENTS.get(normalizeToolName(call.toolName));
   if (replacement === undefined) return { denied: false, reason: null };
@@ -77,15 +89,19 @@ export function evaluateFileSurfaceHook(rawInput: string): FileSurfaceDecision {
   };
 }
 
-export function runFileSurfaceHook(raw = readFileSync(0, "utf8")): number {
-  const decision = evaluateFileSurfaceHook(raw);
+export function runFileSurfaceHook(
+  raw = readFileSync(0, "utf8"),
+  environment: NodeJS.ProcessEnv = process.env
+): number {
+  const decision = evaluateFileSurfaceHook(raw, environment);
   if (!decision.denied || decision.reason === null) return 0;
   const payload = parseHookPayload(raw);
-  const call = payload ? extractHookToolCall(payload) : null;
-  const context = extractHookContext(payload);
+  const call = payload ? extractHookToolCall(payload, environment) : null;
+  const context = extractHookContext(payload, environment);
   logPreToolUseDenial({
     hook: "file-surface",
     policy: "file-surface",
+    origin: context.origin,
     role: context.role,
     model: context.model,
     session: context.sessionId,

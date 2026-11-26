@@ -170,3 +170,30 @@ test("an invalid proposal is never offered for approval", () => {
     cleanup();
   }
 });
+
+test("a proposal that declares a command twice is never offered for approval", () => {
+  const { checkout, home, cleanup } = fixture();
+  try {
+    const file = path.join(checkout, "config", "commands.json");
+    // A reviewer reading the text sees the first `git_status`; JSON.parse
+    // alone would grant the second.
+    writeFileSync(
+      file,
+      readFileSync(file, "utf8").replace(
+        '"commands": {',
+        `"commands": {\n    "git_status": ${JSON.stringify({
+          description: "Inspect working tree status.",
+          executable: "git",
+          args: ["status"],
+          timeoutMs: 15000,
+          executionClass: "validation",
+          concurrency: "exclusive"
+        })},`
+      )
+    );
+    assert.throws(() => commandCatalogueApproval(checkout, home), /more than once/u);
+    assert.equal(existsSync(approvedCommandCataloguePath(home)), false);
+  } finally {
+    cleanup();
+  }
+});

@@ -42,6 +42,28 @@ test("every other tool, and an unreadable payload, is left to the other policies
   assert.equal(evaluateFileSurfaceHook("not json").denied, false);
 });
 
+test("an unrelated native chat keeps its host's own file tools", () => {
+  // No Runtime environment and no AutoDev-routed model: a native Claude Code,
+  // Copilot or Antigravity chat that only shares the projected hooks.
+  for (const tool of ["apply_patch", "write_to_file", "view_image"]) {
+    const raw = JSON.stringify({
+      session_id: "native-session",
+      hook_event_name: "PreToolUse",
+      tool_name: tool,
+      tool_input: { path: "a.ts" }
+    });
+    assert.equal(evaluateFileSurfaceHook(raw, {}).denied, false, tool);
+    assert.equal(
+      evaluateFileSurfaceHook(raw, {
+        AUTODEV_SESSION_ID: "runtime-session",
+        AUTODEV_AGENT_ROLE: "worker"
+      }).denied,
+      true,
+      tool
+    );
+  }
+});
+
 test("the installed hook answers Codex with a deny decision and logs it", () => {
   const codexHome = mkdtempSync(path.join(tmpdir(), "file-surface-hook-"));
   try {
@@ -66,6 +88,7 @@ test("the installed hook answers Codex with a deny decision and logs it", () => 
     assert.equal(log.hook, "file-surface");
     assert.equal(log.policy, "file-surface");
     assert.equal(log.role, "explorer");
+    assert.equal(log.origin, "autodev_routed");
     assert.equal(log.tool, "view_image");
   } finally {
     rmSync(codexHome, { recursive: true, force: true });

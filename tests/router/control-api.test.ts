@@ -3020,7 +3020,7 @@ test("Control API surfaces all 13 typed resource families", async () => {
       actor: "viewer-a"
     });
     assert.equal(mcps.response.statusCode, 200);
-    assert.equal(mcps.body.schema, "autodev-control-mcps-v2");
+    assert.equal(mcps.body.schema, "autodev-control-mcps-v3");
     assert.equal(mcps.body.source, ".rulesync/mcp.jsonc");
     assert.equal(mcps.body.valid, true);
     assert.ok(
@@ -4861,7 +4861,7 @@ test("Control API /control/chatgpt-tunnel exposes status and enforces operator a
     );
     assert.equal(getResult.handled, true);
     assert.equal(getResult.response.statusCode, 200);
-    assert.equal(getResult.body?.schema, "autodev-chatgpt-tunnel-v1");
+    assert.equal(getResult.body?.schema, "autodev-chatgpt-tunnel-v2");
     assert.equal(getResult.body?.configured, false);
     assert.equal(getResult.body?.enabled, false);
     assert.equal(getResult.body?.ready, false);

@@ -97,11 +97,23 @@ test("the root session's own turns are left to the session's sandbox", () => {
   assert.equal(outcome.denied, false);
 });
 
+/** The environment the Runtime gives a provider process it launched. */
+function runtimeEnvironment(role: string): NodeJS.ProcessEnv {
+  return {
+    AUTODEV_SESSION_ID: "runtime-session",
+    AUTODEV_AGENT_ROLE: role,
+    AUTODEV_PROVIDER: "claude"
+  };
+}
+
 test("explicit orchestrator roles and the AutoDev root alias may not read git history", () => {
-  for (const [agentType, model] of [
-    [undefined, "autodev/orchestrator"],
-    ["orchestrator", "gpt-5.5"],
-    ["orchestrator", "claude-opus"]
+  // The root alias is served through the AutoDev router; a concrete model is
+  // an orchestrator only in a process the Runtime launched as one.
+  for (const [agentType, model, environment] of [
+    [undefined, "autodev/orchestrator", {}],
+    ["orchestrator", "gpt-5.5", runtimeEnvironment("orchestrator")],
+    ["orchestrator", "claude-opus", runtimeEnvironment("orchestrator")],
+    [undefined, "claude-opus", runtimeEnvironment("orchestrator")]
   ] as const) {
     for (const cmd of [
       "git log -p -- src/a.ts",
@@ -117,7 +129,8 @@ test("explicit orchestrator roles and the AutoDev root alias may not read git hi
           model,
           toolName: "exec_command",
           toolInput: { cmd }
-        })
+        }),
+        environment
       );
       assert.equal(outcome.denied, true, `${model}: ${cmd} was allowed`);
       assert.match(outcome.reason ?? "", /does not read git history/u);
@@ -168,6 +181,64 @@ test("children and unrelated standalone sessions may read git history", () => {
     );
     assert.equal(outcome.denied, false, `${agentType ?? "root"} was denied`);
   }
+});
+
+test("unrelated native chats sharing the projected hooks are never governed", () => {
+  // A Claude Code or Copilot chat in this repository: no Runtime environment
+  // and no AutoDev-routed model. Its agent types are the host's own subagent
+  // names, including ones that collide with AutoDev role names.
+  for (const agentType of [undefined, "Explore", "general-purpose", "explorer", "orchestrator"]) {
+    for (const command of ["rm -rf build", "git log -p -5"]) {
+      const raw = JSON.stringify({
+        session_id: "native-session",
+        hook_event_name: "PreToolUse",
+        tool_name: "Bash",
+        tool_input: { command },
+        ...(agentType && { agent_type: agentType })
+      });
+      assert.equal(
+        evaluateRoleSandboxHook(raw, {}).denied,
+        false,
+        `${agentType ?? "root"}: ${command} was denied`
+      );
+    }
+  }
+});
+
+test("a Runtime-assigned read-only role is enforced without a host-reported role", () => {
+  const outcome = evaluateRoleSandboxHook(
+    JSON.stringify({
+      session_id: "host-session",
+      tool_name: "Bash",
+      tool_input: { command: "rm -rf build" }
+    }),
+    runtimeEnvironment("explorer")
+  );
+  assert.equal(outcome.denied, true);
+});
+
+test("a child thread cannot widen a Runtime-launched read-only session", () => {
+  const outcome = evaluateRoleSandboxHook(
+    payload({
+      agentType: "worker",
+      model: "claude-opus",
+      toolName: "exec_command",
+      toolInput: { cmd: "rm -rf build" }
+    }),
+    runtimeEnvironment("explorer")
+  );
+  assert.equal(outcome.denied, true);
+});
+
+test("a Runtime-assigned role the contract does not describe fails closed", () => {
+  const outcome = evaluateRoleSandboxHook(
+    JSON.stringify({
+      tool_name: "Bash",
+      tool_input: { command: "rm -rf build" }
+    }),
+    runtimeEnvironment("no-such-role")
+  );
+  assert.equal(outcome.denied, true);
 });
 
 test("a payload that cannot be read is left alone rather than refused blindly", () => {

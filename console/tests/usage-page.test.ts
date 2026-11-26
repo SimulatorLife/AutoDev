@@ -389,8 +389,28 @@ test("UsagePage loads Control API MCP inventory and runtime observations server-
       }
       if (url === "http://control.test/control/mcps") {
         return Response.json({
-          schema: "autodev-control-mcps-v2",
+          schema: "autodev-control-mcps-v3",
           source: ".rulesync/mcp.jsonc",
+          gateway: {
+            label: "com.codex.autodev-mcp-gateway",
+            installed: true,
+            ready: true,
+            port: 3312,
+            readinessUrl: "http://127.0.0.1:3312/readyz",
+            generation: "generation-1",
+            workspace: "/workspace",
+            role: "orchestrator",
+            roles: ["orchestrator"],
+            surfaces: [
+              {
+                role: "orchestrator",
+                url: "http://127.0.0.1:3312/orchestrator/mcp"
+              }
+            ],
+            reviewed: { lsp: ["lsp_hover"] },
+            grants: { lsp: ["lsp_hover"] },
+            error: null
+          },
           revision: "rev-1",
           readOnly: false,
           valid: true,

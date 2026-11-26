@@ -28,6 +28,7 @@ import {
   type ControlApiMcpRuntimeHealthCounts,
   type ControlApiMcpRuntimeServer,
   type ControlApiMcpServerPatchResponse,
+  type ControlApiMcpGateway,
   type ControlApiMcpsResponse,
   type ControlApiModelPatchResponse,
   type ControlApiModelsResponse,
@@ -116,11 +117,17 @@ import {
 } from "@simulatorlife/autodev-data";
 import {
   chatgptTunnelStatus,
+  checkMcpGateway,
   commandCatalogueHomes,
   dependencyEnvironment,
   installedSkillMatches,
   materializeCurrentMcpConfiguration,
+  MCP_GATEWAY_LABEL,
+  type McpGatewayState,
+  mcpGatewayRoleSurfaceUrl,
+  mcpGatewaySurfaceStatus,
   publishedCommandCatalogueApproval,
+  readMcpGatewayState,
   tunnelMutationSchema
 } from "@simulatorlife/autodev-runtime/platform";
 import { getDefaultConcurrencyManager } from "@simulatorlife/autodev-runtime/router/concurrency";
@@ -1612,9 +1619,70 @@ function commandCatalogueApprovals(
   });
 }
 
-function mcpsView(
-  repositoryRoot: string = DEFAULT_REPO_ROOT
-): Record<string, unknown> {
+/**
+ * The shared MCP gateway as the installer projected it and the Runtime
+ * observes it.
+ *
+ * Every fact is read through the gateway service's own accessors: the
+ * installed state, the published role surfaces with their reviewed and
+ * effective grants, and the service check that proves the LaunchAgent owns a
+ * listener that answers `/readyz`. An unreadable state is reported with a
+ * fixed reason rather than as an absent gateway, because "not installed" and
+ * "installed but unreadable" call for different operator actions.
+ */
+async function mcpGatewayView(
+  repositoryRoot: string,
+  codexHome: string
+): Promise<ControlApiMcpGateway> {
+  const paths = {
+    home: defaultHomeForReconciliation(),
+    codexHome,
+    repositoryRoot
+  };
+  let state: McpGatewayState | undefined;
+  let error: string | null = null;
+  try {
+    state = readMcpGatewayState(codexHome);
+  } catch {
+    // Fixed diagnostics only: the state sits beside the gateway credential.
+    error = "The MCP gateway state could not be read.";
+  }
+  let surfaces: ReturnType<typeof mcpGatewaySurfaceStatus> | null = null;
+  try {
+    surfaces = mcpGatewaySurfaceStatus(paths, state);
+  } catch {
+    error ??= "The MCP gateway role policy could not be read.";
+  }
+  const port = state?.mcpPort ?? null;
+  const roles = surfaces?.roles ?? state?.roles ?? [];
+  return {
+    label: MCP_GATEWAY_LABEL,
+    installed: state !== undefined,
+    ready: state !== undefined && (await checkMcpGateway(paths)),
+    port,
+    readinessUrl: port === null ? null : `http://127.0.0.1:${port}/readyz`,
+    generation: state?.generation ?? null,
+    workspace: surfaces?.workspace ?? state?.workspace ?? null,
+    role: surfaces?.role ?? state?.role ?? "",
+    roles,
+    surfaces:
+      port === null
+        ? []
+        : roles.map((role) => ({
+            role,
+            url: mcpGatewayRoleSurfaceUrl(port, role)
+          })),
+    reviewed: surfaces?.reviewed ?? {},
+    grants: surfaces?.grants ?? {},
+    error
+  };
+}
+
+async function mcpsView(
+  repositoryRoot: string = DEFAULT_REPO_ROOT,
+  codexHome: string = defaultCodexHomeForReconciliation()
+): Promise<ControlApiMcpsResponse> {
+  const gateway = await mcpGatewayView(repositoryRoot, codexHome);
   const repository = new RuleSyncRepository(repositoryRoot);
   const state = repository.loadMcpState();
   // The revision is the handle a write compares against, so it is read with
@@ -1622,7 +1690,7 @@ function mcpsView(
   const revision = repository.loadMcpRevision().revision;
   if (state.valid !== true) {
     return {
-      schema: "autodev-control-mcps-v2",
+      schema: "autodev-control-mcps-v3",
       source: state.source,
       revision,
       readOnly: false,
@@ -1631,8 +1699,9 @@ function mcpsView(
       // could not be applied" are different states, and the second one is only
       // actionable with the reasons.
       issues: state.issues,
-      servers: []
-    };
+      servers: [],
+      gateway
+    } satisfies ControlApiMcpsResponse;
   }
 
   const exposures = configuredRoleExposure("mcp");
@@ -1666,7 +1735,7 @@ function mcpsView(
       roles
     }));
   return {
-    schema: "autodev-control-mcps-v2",
+    schema: "autodev-control-mcps-v3",
     source: state.source,
     revision,
     readOnly: false,
@@ -1676,7 +1745,8 @@ function mcpsView(
     issues: state.issues,
     servers: [...declared, ...unbackedRoleExposures].sort((left, right) =>
       CONTROL_API_COLLATOR.compare(left.name, right.name)
-    )
+    ),
+    gateway
   } satisfies ControlApiMcpsResponse;
 }
 
@@ -3448,7 +3518,9 @@ function permissionPolicyState(
   // One read of the canonical source, so the source text and the policy
   // beside it are parsed from the same bytes. The applied configuration is a
   // separate read and is published as the policy it states, never as text.
-  const canonical = readPermissionPolicySource(repository.permissionPolicyPath());
+  const canonical = readPermissionPolicySource(
+    repository.permissionPolicyPath()
+  );
   const read = canonical.read;
   const appliedSource = path.join(codexHome, CODEX_USER_CONFIG_FILE);
   const appliedRead = readAppliedPermissionPolicyFile(appliedSource);
@@ -5565,7 +5637,10 @@ const READ_ONLY_COLLECTIONS: ReadonlyMap<string, ReadOnlyCollectionRenderer> =
     [CONTROL_API_PATHS.providerModels, () => providerModelsView()],
     [CONTROL_API_PATHS.providerVersions, () => providerVersionsView()],
     [CONTROL_API_PATHS.models, () => modelsView()],
-    [CONTROL_API_PATHS.mcps, (_actor, root) => mcpsView(root)],
+    [
+      CONTROL_API_PATHS.mcps,
+      (_actor, root, codexHome) => mcpsView(root, codexHome)
+    ],
     [CONTROL_API_PATHS.mcpRuntime, () => mcpRuntimeView()],
     [
       CONTROL_API_PATHS.mcpApplied,

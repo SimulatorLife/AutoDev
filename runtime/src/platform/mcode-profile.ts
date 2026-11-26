@@ -28,6 +28,13 @@
  * The profile links the operator's own MiniMax Code `config.yaml` and `auth`
  * directory, so a session runs with the models and credentials the operator
  * already configured without copying secrets into AutoDev's tree.
+ *
+ * The same canonical projection also enrolls the operator's standalone
+ * profile (`~/.minimax`, read by the MiniMax Code desktop app and the
+ * standalone `mcode` CLI) -- see {@link enrollMcodeOperatorProfile}. That
+ * profile belongs to the operator, so enrollment merges AutoDev's
+ * contribution into it instead of replacing it, and the two profiles must
+ * never overlap. Its MCP registrations (`mcp.json`) are not reconciled here.
  */
 
 import {
@@ -95,6 +102,10 @@ const MCODE_PATH_ACTIONS: Readonly<Record<string, readonly string[]>> = {
 
 export interface McodeProfileArtifacts {
   readonly agentsMd: string;
+  /** The canonical hooks, keyed by MiniMax Code hook event. */
+  readonly hooks: Readonly<Record<string, unknown>>;
+  /** The canonical deny rules in MiniMax Code's native v2 shape. */
+  readonly deny: readonly McodePermissionEntry[];
   readonly hooksJson: string;
   readonly permissionJson: string;
 }
@@ -221,7 +232,9 @@ export function toMcodeHookMatcher(matcher: string): string | null {
  * never fires would leave the role boundary unenforced while the profile
  * claimed it was configured.
  */
-export function renderMcodeHooks(hooks: Record<string, unknown>): unknown {
+export function renderMcodeHooks(
+  hooks: Record<string, unknown>
+): Record<string, unknown> {
   const rendered: Record<string, unknown> = {};
   for (const [event, groups] of Object.entries(hooks)) {
     if (!Array.isArray(groups)) {
@@ -253,23 +266,22 @@ export function renderMcodeHooks(hooks: Record<string, unknown>): unknown {
  * the execution contract and the ACP permission boundary, exactly like the
  * per-role capability enforcement the canonical source documents.
  */
-export function renderMcodePermissionDocument(
+export function renderMcodeDenyEntries(
   claudePermissions: unknown,
   home: string
-): string {
+): McodePermissionEntry[] {
   const deny = isRecord(claudePermissions) && Array.isArray(claudePermissions.deny)
     ? claudePermissions.deny.filter(
         (entry): entry is string => typeof entry === "string"
       )
     : [];
-  const entries = deny
+  return deny
     .map((rule) => toMcodePermissionEntry(rule, home))
     .filter((entry): entry is McodePermissionEntry => entry !== null);
-  return `${JSON.stringify(
-    { version: 2, allow: [], deny: entries, ask: [] },
-    null,
-    2
-  )}\n`;
+}
+
+function renderPermissionDocument(deny: readonly McodePermissionEntry[]): string {
+  return `${JSON.stringify({ version: 2, allow: [], deny, ask: [] }, null, 2)}\n`;
 }
 
 function generateInto(
@@ -331,14 +343,18 @@ export function renderMcodeProfileArtifacts(options: {
       );
     }
     const permissions = isRecord(settings) ? settings.permissions : undefined;
+    const mcodeHooks = renderMcodeHooks(hooks);
+    const deny = renderMcodeDenyEntries(permissions, home);
     return {
       agentsMd: readFileSync(agentsMdPath, "utf8"),
+      hooks: mcodeHooks,
+      deny,
       hooksJson: `${JSON.stringify(
-        { enabled: true, hooks: renderMcodeHooks(hooks) },
+        { enabled: true, hooks: mcodeHooks },
         null,
         2
       )}\n`,
-      permissionJson: renderMcodePermissionDocument(permissions, home)
+      permissionJson: renderPermissionDocument(deny)
     };
   } finally {
     temporary.remove();
@@ -464,6 +480,34 @@ function resolvedProfilePath(value: string): string {
   }
 }
 
+/** The operator's standalone MiniMax Code profile for `home`. */
+export function operatorMcodeProfileDirectory(home: string): string {
+  return path.join(home, OPERATOR_PROFILE_DIRECTORY);
+}
+
+/**
+ * Refuse any lexical or resolved-path overlap between the managed profile and
+ * the operator profile. The managed profile's reconciliation replaces and
+ * removes files, and the operator enrollment merges into what it finds, so
+ * neither may ever act on the other's tree.
+ */
+function assertProfilesDisjoint(
+  managedProfile: string,
+  operatorProfile: string
+): void {
+  if (
+    pathsOverlap(path.resolve(managedProfile), path.resolve(operatorProfile)) ||
+    pathsOverlap(
+      resolvedProfilePath(managedProfile),
+      resolvedProfilePath(operatorProfile)
+    )
+  ) {
+    throw new Error(
+      "Managed MiniMax Code profile overlaps the operator profile."
+    );
+  }
+}
+
 /**
  * Materialize (or verify, with `check: true`) the AutoDev-managed MiniMax
  * Code profile. Never apply its destructive reconciliation rules to the
@@ -474,25 +518,18 @@ export function materializeMcodeProfile(options: {
   readonly profileDirectory: string;
   readonly home?: string;
   readonly check?: boolean;
+  readonly artifacts?: McodeProfileArtifacts;
 }): McodeProfileResult {
   const home = options.home ?? process.env.HOME?.trim() ?? homedir();
-  const operatorProfile = path.join(home, OPERATOR_PROFILE_DIRECTORY);
+  const operatorProfile = operatorMcodeProfileDirectory(home);
   const profileDirectory = path.resolve(options.profileDirectory);
-  if (
-    pathsOverlap(profileDirectory, path.resolve(operatorProfile)) ||
-    pathsOverlap(
-      resolvedProfilePath(profileDirectory),
-      resolvedProfilePath(operatorProfile)
-    )
-  ) {
-    throw new Error(
-      "Managed MiniMax Code profile overlaps the operator profile."
-    );
-  }
-  const artifacts = renderMcodeProfileArtifacts({
-    repositoryRoot: options.repositoryRoot,
-    home
-  });
+  assertProfilesDisjoint(profileDirectory, operatorProfile);
+  const artifacts =
+    options.artifacts ??
+    renderMcodeProfileArtifacts({
+      repositoryRoot: options.repositoryRoot,
+      home
+    });
   const isCheck = options.check === true;
 
   const files = writeProfileFiles(
@@ -527,4 +564,408 @@ export function materializeMcodeProfile(options: {
     drifted: [...files.drifted, ...links, ...obsolete.drifted],
     removed: obsolete.removed
   };
+}
+
+// ---------------------------------------------------------------------------
+// Operator profile enrollment
+// ---------------------------------------------------------------------------
+
+/**
+ * Delimits AutoDev's canonical rules inside the operator's own `AGENTS.md`.
+ * Everything outside the block is the operator's and is preserved verbatim.
+ */
+const OPERATOR_RULES_BEGIN =
+  "<!-- BEGIN AutoDev canonical rules: generated from .rulesync/rules by the AutoDev installer; edit the canonical source, not this block -->";
+const OPERATOR_RULES_END = "<!-- END AutoDev canonical rules -->";
+
+/**
+ * MiniMax Code reads at most this many bytes of the global `AGENTS.md`
+ * (`GLOBAL_INSTRUCTIONS_MAX_BYTES` in MiniMax Code 3.1). A longer document is
+ * truncated silently, which would drop canonical rules while the profile
+ * claimed to carry them.
+ */
+export const MCODE_GLOBAL_INSTRUCTIONS_MAX_BYTES = 32 * 1024;
+
+/**
+ * Where the installer records which hook groups and deny rules it merged
+ * into the operator profile. It lives in the AutoDev home, never in the
+ * operator profile, so a later reconciliation can retire exactly AutoDev's
+ * own former contributions and nothing the operator wrote.
+ */
+export const OPERATOR_ENROLLMENT_RECORD = path.join(
+  "providers",
+  "mcode-operator-enrollment.json"
+);
+
+interface OperatorEnrollmentRecord {
+  readonly version: 1;
+  readonly hooks: Readonly<Record<string, readonly string[]>>;
+  readonly deny: readonly string[];
+}
+
+export interface McodeOperatorEnrollmentResult {
+  /** `null` when the operator profile does not exist, so nothing is enrolled. */
+  readonly profileDirectory: string | null;
+  readonly written: readonly string[];
+  readonly drifted: readonly string[];
+  /**
+   * Operator state enrollment will not override; each entry names the file
+   * and the operator choice that blocks it.
+   */
+  readonly conflicts: readonly string[];
+}
+
+/** JSON with sorted object keys, so equal values compare equal. */
+function stableJson(value: unknown): string {
+  return JSON.stringify(value, (_key, inner: unknown) =>
+    isRecord(inner)
+      ? Object.fromEntries(
+          Object.entries(inner).sort(([left], [right]) =>
+            FILE_NAME_COLLATOR.compare(left, right)
+          )
+        )
+      : inner
+  );
+}
+
+function readOptionalText(filePath: string): string | null {
+  return existsSync(filePath) ? readFileSync(filePath, "utf8") : null;
+}
+
+function readEnrollmentRecord(recordPath: string): OperatorEnrollmentRecord {
+  const empty: OperatorEnrollmentRecord = { version: 1, hooks: {}, deny: [] };
+  const text = readOptionalText(recordPath);
+  if (text === null) return empty;
+  const parsed = JSON.parse(text) as unknown;
+  if (
+    !isRecord(parsed) ||
+    parsed.version !== 1 ||
+    !isRecord(parsed.hooks) ||
+    !Array.isArray(parsed.deny)
+  ) {
+    throw new Error(
+      `The MiniMax Code operator enrollment record is not in the expected shape: ${recordPath}`
+    );
+  }
+  const hooks: Record<string, string[]> = {};
+  for (const [event, groups] of Object.entries(parsed.hooks)) {
+    if (Array.isArray(groups)) {
+      hooks[event] = groups.filter((group) => typeof group === "string");
+    }
+  }
+  return {
+    version: 1,
+    hooks,
+    deny: parsed.deny.filter((entry) => typeof entry === "string")
+  };
+}
+
+const OPERATOR_RULES_BLOCK = new RegExp(
+  String.raw`${RegExp.escape(OPERATOR_RULES_BEGIN)}[\s\S]*?${RegExp.escape(OPERATOR_RULES_END)}\n?`,
+  "u"
+);
+
+/**
+ * The operator's `AGENTS.md` with AutoDev's canonical block reconciled. The
+ * operator's own text is kept; the block replaces a previous block in place
+ * or is appended after the operator's text.
+ */
+export function mergeOperatorInstructions(
+  current: string | null,
+  canonicalRules: string
+): string {
+  const block = `${OPERATOR_RULES_BEGIN}\n${canonicalRules.trimEnd()}\n${OPERATOR_RULES_END}\n`;
+  if (current === null || current.trim() === "") return block;
+  if (OPERATOR_RULES_BLOCK.test(current)) {
+    return current.replace(OPERATOR_RULES_BLOCK, () => block);
+  }
+  return `${current.trimEnd()}\n\n${block}`;
+}
+
+/**
+ * The operator's hooks document with AutoDev's canonical groups reconciled.
+ * Groups the record says AutoDev wrote earlier are retired; every other
+ * operator group is kept in its place, ahead of the canonical groups.
+ */
+function mergeOperatorHooks(
+  current: Record<string, unknown>,
+  canonical: Readonly<Record<string, unknown>>,
+  record: OperatorEnrollmentRecord
+): Record<string, unknown> {
+  const currentHooks = isRecord(current.hooks) ? current.hooks : {};
+  const merged: Record<string, unknown> = {};
+  const events = new Set([
+    ...Object.keys(currentHooks),
+    ...Object.keys(canonical)
+  ]);
+  for (const event of events) {
+    const operatorGroups = currentHooks[event];
+    const canonicalGroups = Array.isArray(canonical[event])
+      ? (canonical[event] as unknown[])
+      : [];
+    if (operatorGroups !== undefined && !Array.isArray(operatorGroups)) {
+      merged[event] = operatorGroups;
+      continue;
+    }
+    const canonicalKeys = new Set(canonicalGroups.map(stableJson));
+    const retired = new Set(record.hooks[event]);
+    const kept = (operatorGroups ?? []).filter((group) => {
+      const key = stableJson(group);
+      return !retired.has(key) && !canonicalKeys.has(key);
+    });
+    const groups = [...kept, ...canonicalGroups];
+    if (groups.length > 0) merged[event] = groups;
+  }
+  return { ...current, enabled: true, hooks: merged };
+}
+
+/**
+ * The operator's permission document with AutoDev's canonical deny rules
+ * reconciled. The operator's allow and ask rules, and deny rules AutoDev did
+ * not write, are kept unchanged.
+ */
+function mergeOperatorPermissions(
+  current: Record<string, unknown>,
+  canonicalDeny: readonly McodePermissionEntry[],
+  record: OperatorEnrollmentRecord
+): Record<string, unknown> {
+  const canonicalKeys = new Set(canonicalDeny.map(stableJson));
+  const retired = new Set(record.deny);
+  const operatorDeny = Array.isArray(current.deny) ? current.deny : [];
+  const kept = operatorDeny.filter((entry) => {
+    const key = stableJson(entry);
+    return !retired.has(key) && !canonicalKeys.has(key);
+  });
+  // The operator's key order is kept; a new document gets MiniMax Code's own.
+  const merged: Record<string, unknown> = {
+    version: 2,
+    allow: [],
+    deny: [],
+    ask: [],
+    ...current
+  };
+  merged.deny = [...kept, ...canonicalDeny];
+  return { ...current, ...merged };
+}
+
+function parseOperatorJson(
+  filePath: string,
+  conflicts: string[]
+): Record<string, unknown> | null {
+  const text = readOptionalText(filePath);
+  if (text === null) return {};
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (isRecord(parsed)) return parsed;
+  } catch {
+    // Reported below.
+  }
+  conflicts.push(`${filePath} is not a JSON object; it was left unchanged`);
+  return null;
+}
+
+function formatJson(value: unknown): string {
+  return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+/**
+ * Enroll (or verify, with `check: true`) the operator's standalone MiniMax
+ * Code profile with the canonical RuleSync projection: the canonical rules
+ * in its global `AGENTS.md`, the canonical hooks (session bootstrap, command
+ * policy, skill-read telemetry, role sandbox) in its `hooks.json`, and the
+ * canonical deny rules in its `permission.json`. Skills need no write here:
+ * MiniMax Code reads the user-level `~/.agents/skills` AutoDev already
+ * materializes.
+ *
+ * Enrollment merges and never replaces. The operator's own instructions,
+ * hooks, allow/ask rules, model configuration, credentials, history and
+ * `mcp.json` are left as they are; an operator choice enrollment would have
+ * to override (user hooks explicitly disabled, a file that is not JSON, an
+ * unsupported permission schema) is reported as a conflict instead.
+ *
+ * An absent operator profile means MiniMax Code has never run as this user,
+ * so nothing is created.
+ */
+export function enrollMcodeOperatorProfile(options: {
+  readonly repositoryRoot: string;
+  readonly managedProfileDirectory: string;
+  readonly enrollmentRecord: string;
+  readonly home?: string;
+  readonly check?: boolean;
+  readonly artifacts?: McodeProfileArtifacts;
+}): McodeOperatorEnrollmentResult {
+  const home = options.home ?? process.env.HOME?.trim() ?? homedir();
+  const profileDirectory = operatorMcodeProfileDirectory(home);
+  assertProfilesDisjoint(options.managedProfileDirectory, profileDirectory);
+  if (
+    pathsOverlap(
+      resolvedProfilePath(options.enrollmentRecord),
+      resolvedProfilePath(profileDirectory)
+    )
+  ) {
+    throw new Error(
+      "The MiniMax Code operator enrollment record must live outside the operator profile."
+    );
+  }
+  let profileStat;
+  try {
+    profileStat = lstatSync(profileDirectory);
+  } catch {
+    return { profileDirectory: null, written: [], drifted: [], conflicts: [] };
+  }
+  if (!profileStat.isDirectory()) {
+    return {
+      profileDirectory,
+      written: [],
+      drifted: [],
+      conflicts: [
+        `${profileDirectory} is not a directory; MiniMax Code operator enrollment was skipped`
+      ]
+    };
+  }
+
+  const artifacts =
+    options.artifacts ??
+    renderMcodeProfileArtifacts({
+      repositoryRoot: options.repositoryRoot,
+      home
+    });
+  const record = readEnrollmentRecord(options.enrollmentRecord);
+  const conflicts: string[] = [];
+  const files: Array<readonly [string, string]> = [];
+  // A part that is not enrolled keeps its previous record, so AutoDev's
+  // former contribution can still be retired once the conflict is resolved.
+  let recordedHooks = record.hooks;
+  let recordedDeny = record.deny;
+
+  const instructionsPath = path.join(profileDirectory, PROFILE_INSTRUCTIONS_FILE);
+  const instructions = mergeOperatorInstructions(
+    readOptionalText(instructionsPath),
+    artifacts.agentsMd
+  );
+  if (Buffer.byteLength(instructions) > MCODE_GLOBAL_INSTRUCTIONS_MAX_BYTES) {
+    conflicts.push(
+      `${instructionsPath} would exceed MiniMax Code's ${MCODE_GLOBAL_INSTRUCTIONS_MAX_BYTES}-byte global instruction limit with the canonical rules; it was left unchanged`
+    );
+  } else {
+    files.push([instructionsPath, instructions]);
+  }
+
+  const hooksPath = path.join(profileDirectory, PROFILE_HOOKS_FILE);
+  const hooksDocument = parseOperatorJson(hooksPath, conflicts);
+  if (hooksDocument !== null) {
+    const hasOperatorGroups =
+      isRecord(hooksDocument.hooks) &&
+      Object.values(hooksDocument.hooks).some(
+        (groups) => Array.isArray(groups) && groups.length > 0
+      );
+    if (hooksDocument.enabled === false) {
+      conflicts.push(
+        `${hooksPath} disables user hooks ("enabled": false); the canonical hooks were not enrolled`
+      );
+    } else if (hasOperatorGroups && hooksDocument.enabled !== true) {
+      conflicts.push(
+        `${hooksPath} holds operator hooks that are not enabled; enabling user hooks for the canonical hooks would also enable them, so it was left unchanged`
+      );
+    } else {
+      files.push([
+        hooksPath,
+        formatJson(mergeOperatorHooks(hooksDocument, artifacts.hooks, record))
+      ]);
+      recordedHooks = Object.fromEntries(
+        Object.entries(artifacts.hooks).map(([event, groups]) => [
+          event,
+          Array.isArray(groups) ? groups.map(stableJson) : []
+        ])
+      );
+    }
+  }
+
+  const permissionPath = path.join(profileDirectory, PROFILE_PERMISSION_FILE);
+  const permissionDocument = parseOperatorJson(permissionPath, conflicts);
+  if (permissionDocument !== null) {
+    if (
+      permissionDocument.version === undefined ||
+      permissionDocument.version === 2
+    ) {
+      files.push([
+        permissionPath,
+        formatJson(
+          mergeOperatorPermissions(permissionDocument, artifacts.deny, record)
+        )
+      ]);
+      recordedDeny = artifacts.deny.map(stableJson);
+    } else {
+      conflicts.push(
+        `${permissionPath} uses permission schema version ${String(permissionDocument.version)}, not 2; the canonical deny rules were not enrolled`
+      );
+    }
+  }
+
+  const isCheck = options.check === true;
+  const written = writeProfileFiles(files, { check: isCheck });
+  const nextRecord: OperatorEnrollmentRecord = {
+    version: 1,
+    hooks: recordedHooks,
+    deny: recordedDeny
+  };
+  const recordFiles = writeProfileFiles(
+    [[options.enrollmentRecord, formatJson(nextRecord)]],
+    { check: isCheck }
+  );
+  return {
+    profileDirectory,
+    written: [...written.written, ...recordFiles.written],
+    drifted: [...written.drifted, ...recordFiles.drifted],
+    conflicts
+  };
+}
+
+export interface McodeProfilesResult {
+  readonly managed: McodeProfileResult;
+  readonly operator: McodeOperatorEnrollmentResult;
+}
+
+/**
+ * Reconcile (or verify, with `check: true`) both MiniMax Code profiles from
+ * one rendering of the canonical sources: the AutoDev-managed profile that
+ * Runtime-managed `mcode acp` sessions run against, and the operator's
+ * standalone profile.
+ */
+export function reconcileMcodeProfiles(options: {
+  readonly repositoryRoot: string;
+  readonly autodevHome: string;
+  readonly home?: string;
+  readonly check?: boolean;
+}): McodeProfilesResult {
+  const home = options.home ?? process.env.HOME?.trim() ?? homedir();
+  const managedProfileDirectory = path.join(
+    options.autodevHome,
+    "providers",
+    "mcode"
+  );
+  assertProfilesDisjoint(
+    managedProfileDirectory,
+    operatorMcodeProfileDirectory(home)
+  );
+  const artifacts = renderMcodeProfileArtifacts({
+    repositoryRoot: options.repositoryRoot,
+    home
+  });
+  const managed = materializeMcodeProfile({
+    repositoryRoot: options.repositoryRoot,
+    profileDirectory: managedProfileDirectory,
+    home,
+    check: options.check === true,
+    artifacts
+  });
+  const operator = enrollMcodeOperatorProfile({
+    repositoryRoot: options.repositoryRoot,
+    managedProfileDirectory,
+    enrollmentRecord: path.join(options.autodevHome, OPERATOR_ENROLLMENT_RECORD),
+    home,
+    check: options.check === true,
+    artifacts
+  });
+  return { managed, operator };
 }

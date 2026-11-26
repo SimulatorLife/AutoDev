@@ -25,7 +25,11 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { isPathWithin, pathsOverlap } from "@simulatorlife/autodev-data/files";
+import {
+  isPathWithin,
+  pathsOverlap,
+  resolvePathWithExistingAncestor
+} from "@simulatorlife/autodev-data/files";
 import { autodevRunDirectory } from "@simulatorlife/autodev-runtime/shared/autodev-home";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
@@ -33,7 +37,7 @@ import { gitCommitIdentityEnv } from "@simulatorlife/autodev-runtime/telemetry";
 
 import {
   type CommandCatalogue,
-  parseCommandCatalogue
+  parseCommandCatalogueText
 } from "./commands-catalogue.ts";
 import {
   type ApprovedCommandScope,
@@ -197,7 +201,7 @@ export function createApprovedCatalogueGrant(cataloguePath: string): {
 } {
   const content = readApprovedCatalogue(cataloguePath);
   const digest = catalogueDigest(content);
-  const catalogue = parseCommandCatalogue(JSON.parse(content));
+  const catalogue = parseCommandCatalogueText(content);
   let revoked = false;
   return {
     digest,
@@ -249,26 +253,7 @@ function ensureCommandRunDirectory(
   // A not-yet-created run directory has no realpath. Resolve its nearest
   // existing ancestor first, so even /tmp aliases and redirected parents
   // cannot cause us to create command state inside an admitted workspace.
-  let ancestor = absolute;
-  let physicalRun: string;
-  for (;;) {
-    try {
-      physicalRun = path.join(
-        realpathSync(ancestor),
-        path.relative(ancestor, absolute)
-      );
-      break;
-    } catch (error) {
-      const parent = path.dirname(ancestor);
-      if (
-        (error as NodeJS.ErrnoException).code !== "ENOENT" ||
-        parent === ancestor
-      ) {
-        throw error;
-      }
-      ancestor = parent;
-    }
-  }
+  const physicalRun = resolvePathWithExistingAncestor(absolute);
   if (workspace && pathsOverlap(physicalRun, workspace)) {
     throw new CommandsAdmissionError(
       "Command state directory overlaps the authorized workspace."

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Thin OS/process boundary: keep the active workspace cwd and hand MCP
-# selection and execution to the typed launcher.
+# selection to the gateway client.
 target="${BASH_SOURCE[0]}"
 while [[ -L "$target" ]]; do
   target_dir="$(cd -- "$(dirname -- "$target")" && pwd)"
@@ -32,11 +32,18 @@ if [[ -z "$node_bin" ]]; then
 fi
 [[ -x "$node_bin" ]] || { echo "AutoDev MCP launcher: node not found" >&2; exit 127; }
 # The Runtime lives at <root>/runtime/src in a checkout and at <root>/src once it
-# is materialized into CODEX_HOME, so the root alone does not say which layout
-# it is. The launcher module has to be looked up in both, the way the router
-# hook looks up the server script; pointing only at the checkout layout makes
-# the MCP server exit on startup instead of serving its tools.
-launcher="$repo_root/runtime/src/mcp/launcher.ts"
-[[ -f "$launcher" ]] || launcher="$repo_root/src/mcp/launcher.ts"
-[[ -f "$launcher" ]] || { echo "AutoDev MCP launcher: launcher module not found under $repo_root" >&2; exit 127; }
-exec env AUTODEV_REPO_ROOT="$repo_root" "$node_bin" "$launcher" "$@"
+# is materialized into CODEX_HOME. Every client reaches AutoDev's workspace MCP
+# servers through the shared gateway: this starts the gateway client, which
+# admits the launch directory as the workspace and relays to the role's gateway
+# surface, so those backends only ever run inside the gateway.
+#
+# The playtest server is not a workspace server: it serves exactly one
+# Playtesting run, whose trusted context (run, task, actor, analysis) the
+# Runtime hands this process in its environment, under the run's own isolated
+# CODEX_HOME. It runs here, bound to that run, and is never a gateway surface.
+entrypoint="mcp/gateway-client.ts"
+[[ "${1:-}" == "playtest" ]] && entrypoint="mcp/launcher.ts"
+client="$repo_root/runtime/src/$entrypoint"
+[[ -f "$client" ]] || client="$repo_root/src/$entrypoint"
+[[ -f "$client" ]] || { echo "AutoDev MCP launcher: $entrypoint not found under $repo_root" >&2; exit 127; }
+exec "$node_bin" "$client" "$@"

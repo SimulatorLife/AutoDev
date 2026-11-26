@@ -28,6 +28,7 @@
     "./mcp": "./src/mcp/index.ts",
     "./mcp/mcp-telemetry": "./src/mcp/mcp-telemetry.ts",
     "./mcp/filesystem-server": "./src/mcp/filesystem-server.ts",
+    "./mcp/gateway-admission": "./src/mcp/gateway-admission.ts",
     "./platform": "./src/platform/index.ts",
     "./playtesting": "./src/playtesting/index.ts",
     "./playtesting/statistics": "./src/playtesting/statistics/index.ts",

@@ -316,6 +316,19 @@ export class DurableCommandTaskStore implements TaskStore {
   reported as failed, with the reason, and never as completed.
   */
   private reconcile(): void {
+    // A backend that died between writing a record's replacement and
+    // renaming it leaves the temporary file behind. It holds a result body,
+    // so it is removed once its writer is gone rather than kept forever.
+    try {
+      for (const entry of readdirSync(this.directory)) {
+        const writer = /\.json\.(\d+)\.\d+\.tmp$/u.exec(entry);
+        if (writer && !isProcessAlive(Number(writer[1]))) {
+          rmSync(path.join(this.directory, entry), { force: true });
+        }
+      }
+    } catch {
+      // An unreadable directory has no records to reconcile either.
+    }
     for (const record of this.records()) {
       if (isTerminal(record.task.status) || isProcessAlive(record.ownerPid))
         continue;

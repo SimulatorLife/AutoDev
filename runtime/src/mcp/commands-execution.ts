@@ -292,6 +292,19 @@ export function commandSandboxProfile(
   return rules.join("\n");
 }
 
+/**
+The approved executable is no longer present or runnable where it was
+resolved when the scope was admitted. Nothing was started, so the command has
+no exit status, and the caller reports a startup failure rather than an
+infrastructure fault or a command that ran and failed.
+*/
+export class CommandExecutableUnavailableError extends Error {
+  constructor() {
+    super("The command's approved executable is unavailable.");
+    this.name = "CommandExecutableUnavailableError";
+  }
+}
+
 export interface PreparedCommand {
   readonly executable: string;
   readonly args: readonly string[];
@@ -354,12 +367,17 @@ export function prepareCommand(
   if (!configured || !path.isAbsolute(configured)) {
     throw new Error("Command executable has not been approved.");
   }
-  const executable = realpathSync(configured);
+  let executable: string;
+  try {
+    executable = realpathSync(configured);
+    if (!statSync(executable).isFile()) throw new Error("Command executable is not a file.");
+    accessSync(executable, constants.X_OK);
+  } catch {
+    throw new CommandExecutableUnavailableError();
+  }
   if (roots.every((root) => !isPathWithin(root, executable))) {
     throw new Error("Command executable is outside the approved toolchain.");
   }
-  if (!statSync(executable).isFile()) throw new Error("Command executable is not a file.");
-  accessSync(executable, constants.X_OK);
   // PATH holds only approved executable directories, OS binaries and the
   // workspace's own tool directory. Everything else a child resolves is
   // confined by the profile.
@@ -470,7 +488,21 @@ export async function runApprovedCommand(
   signal: AbortSignal
 ): Promise<CommandResult> {
   const started = performance.now();
-  const prepared = prepareCommand(scope, definition, arguments_);
+  let prepared: PreparedCommand;
+  try {
+    prepared = prepareCommand(scope, definition, arguments_);
+  } catch (error) {
+    if (!(error instanceof CommandExecutableUnavailableError)) throw error;
+    return {
+      commandId,
+      status: "startup_failure",
+      exitCode: null,
+      durationMs: Math.round(performance.now() - started),
+      stdout: "",
+      stderr: error.message,
+      outputTruncated: false
+    };
+  }
   const child = execa(prepared.executable, prepared.args, {
     cwd: prepared.cwd,
     env: prepared.env,

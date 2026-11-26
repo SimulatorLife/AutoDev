@@ -154,6 +154,29 @@ test("a task whose backend ended is failed, never completed, and is not replayed
   }
 });
 
+test("a partial record a dead backend left behind is removed, a live writer's is kept", () => {
+  const directory = directoryFixture();
+  try {
+    // A process that has exited: its pid names no live writer.
+    const exited = spawnSync(process.execPath, ["-e", ""]);
+    assert.equal(exited.status, 0);
+    const taskId = "a".repeat(32);
+    const abandoned = `${taskId}.json.${exited.pid}.0.tmp`;
+    const inFlight = `${taskId}.json.${process.pid}.0.tmp`;
+    for (const entry of [abandoned, inFlight]) {
+      writeFileSync(path.join(directory, entry), '{"result":"private output"}', {
+        mode: 0o600
+      });
+    }
+    new DurableCommandTaskStore({ directory, authorize: () => {} });
+    const remaining = readdirSync(directory);
+    assert.equal(remaining.includes(abandoned), false);
+    assert.equal(remaining.includes(inFlight), true);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("a live backend's task is not reconciled by a sibling backend", async () => {
   const directory = directoryFixture();
   try {

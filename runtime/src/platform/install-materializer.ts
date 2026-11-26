@@ -40,7 +40,11 @@ import {
   updateAntigravityPermissions,
   updateAntigravitySkills
 } from "./antigravity-settings.ts";
-import { materializeMcodeProfile } from "./mcode-profile.ts";
+import {
+  claudeCodeHeadersHelperCommand,
+  reconcileClaudeCodeTelemetry
+} from "./claude-code-telemetry.ts";
+import { reconcileMcodeProfiles } from "./mcode-profile.ts";
 import { createCodexMcpSource } from "./codex-mcp-source.ts";
 import { createCodexPermissionsSource } from "./codex-permissions-source.ts";
 import {
@@ -208,6 +212,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/telemetry/provider-phases.ts",
   "runtime/src/telemetry/tracer-provider.ts",
   "runtime/src/telemetry/otlp-config.ts",
+  "runtime/src/telemetry/otel-headers-helper.ts",
   "runtime/src/providers/codex-auth.ts",
   "runtime/src/providers/model-discovery.ts",
   "runtime/src/providers/cli-versions.ts",
@@ -230,6 +235,9 @@ export const RUNTIME_MODULES = [
   "runtime/src/mcp/launcher.ts",
   "runtime/src/mcp/chatgpt-backend-pool.ts",
   "runtime/src/mcp/chatgpt-supergateway-probe.ts",
+  "runtime/src/mcp/gateway-admission.ts",
+  "runtime/src/mcp/gateway-client.ts",
+  "runtime/src/mcp/session-grant.ts",
   "runtime/src/mcp/chatgpt-filesystem-sandbox.ts",
   "runtime/src/shared/role-prompts.ts",
   "runtime/src/cli/diagnostics.ts",
@@ -253,6 +261,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/platform/opencli-browser-install.ts",
   "runtime/src/platform/code-graph-ensure.ts",
   "runtime/src/platform/antigravity-settings.ts",
+  "runtime/src/platform/claude-code-telemetry.ts",
   "runtime/src/platform/runtime-files.ts",
   "runtime/src/platform/runtime-mirror-package.ts",
   "runtime/src/platform/runtime-reconciliation.ts",
@@ -2340,12 +2349,35 @@ export function materializeInstallation(options: MaterializeOptions): void {
   }
   approveCommandCatalogue(options, [options.codexHome, autodevHome]);
   // The MiniMax Code provider runs against the profile in the AutoDev home,
-  // wherever that home is, so the profile is materialized either way.
-  materializeMcodeProfile({
+  // wherever that home is, so the profile is materialized either way. The
+  // operator's standalone profile is enrolled from the same rendering.
+  const mcode = reconcileMcodeProfiles({
     repositoryRoot: options.repositoryRoot,
-    profileDirectory: path.join(autodevHome, "providers", "mcode"),
+    autodevHome,
     home: options.home
   });
+  for (const conflict of mcode.operator.conflicts)
+    writeLine(`MiniMax Code operator profile not fully enrolled: ${conflict}`);
+  applyClaudeCodeTelemetryIfInstalled(options, autodevHome);
+}
+
+/**
+ * Enable Claude Code's native OTel exporter in the operator's user settings,
+ * so standalone Claude Code sessions report to OpenLIT themselves.
+ */
+function applyClaudeCodeTelemetryIfInstalled(
+  options: MaterializeOptions,
+  autodevHome: string
+): void {
+  if (options.materializeOnly || !commandAvailable("claude")) return;
+  const conflicts = reconcileClaudeCodeTelemetry(
+    path.join(options.home, ".claude", "settings.json"),
+    claudeCodeHeadersHelperCommand(autodevHome)
+  );
+  for (const conflict of conflicts)
+    writeLine(
+      `Claude Code native telemetry left as the operator configured it: ${conflict}`
+    );
 }
 function exists(filePath: string): boolean {
   try {

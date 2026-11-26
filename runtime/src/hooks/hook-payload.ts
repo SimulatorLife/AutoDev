@@ -12,14 +12,45 @@ export interface NormalizedHookToolCall {
   readonly toolInput: unknown;
 }
 
+/**
+Where the session that ran a hook came from, established only from evidence
+the hook can check:
+
+- `runtime`: a provider process the AutoDev Runtime launched. The Runtime puts
+  the session and the role it assigned (`AUTODEV_SESSION_ID`,
+  `AUTODEV_AGENT_ROLE`) into that process's environment, and the host's hooks
+  inherit it.
+- `autodev_routed`: a host turn served through the AutoDev model router, which
+  the host names by an `autodev/<alias>` model (the Codex root session and the
+  roles AutoDev projects into Codex).
+- `unmanaged`: anything else -- a native chat in Claude Code, Copilot or
+  Antigravity that only shares the repository's projected hooks. Runtime role
+  policies never apply to it.
+*/
+export type HookSessionOrigin = "runtime" | "autodev_routed" | "unmanaged";
+
 export interface NormalizedHookContext {
+  readonly origin: HookSessionOrigin;
   readonly sessionId: string | null;
   readonly turnId: string | null;
+  /**
+  The AutoDev role Runtime policy is read under: the role the host reported
+  for the calling thread, or else the role the Runtime assigned the process.
+  Always `null` for an `unmanaged` session, whose host-reported agent type
+  (a native subagent name) is not an AutoDev role.
+  */
   readonly role: string | null;
+  /** The role the Runtime assigned this process; `null` outside `runtime`. */
+  readonly runtimeRole: string | null;
+  /** The agent type the host reported, whatever the origin. Data, not authorization. */
+  readonly reportedRole: string | null;
   readonly model: string | null;
   readonly provider: string | null;
   readonly cwd: string | null;
 }
+
+/** The model-id namespace the AutoDev model router serves. */
+const AUTODEV_ROUTED_MODEL_PREFIX = "autodev/";
 
 const TOOL_NAME_KEYS = ["tool_name", "toolName", "name"] as const;
 const ARGUMENT_KEYS = [
@@ -180,7 +211,8 @@ export function extractHookToolCall(
 }
 
 /**
-Extract session/turn/role/model/provider/cwd metadata from a hook payload and env.
+Extract session/turn/role/model/provider/cwd metadata from a hook payload and
+env, and the session origin that decides which of it Runtime policy may use.
 */
 export function extractHookContext(
   payload: unknown,
@@ -188,8 +220,10 @@ export function extractHookContext(
 ): NormalizedHookContext {
   const record = isRecord(payload) ? payload : {};
   const metadata = isRecord(record.metadata) ? record.metadata : null;
+  const runtimeSessionId = stringOrNull(environment.AUTODEV_SESSION_ID);
+  const assignedRole = stringOrNull(environment.AUTODEV_AGENT_ROLE);
   const sessionId =
-    stringOrNull(environment.AUTODEV_SESSION_ID) ??
+    runtimeSessionId ??
     pickHookString(record, SESSION_ID_KEYS) ??
     (metadata ? pickHookString(metadata, SESSION_ID_KEYS) : null) ??
     stringOrNull(record["x-codex-session-id"]);
@@ -197,14 +231,13 @@ export function extractHookContext(
     stringOrNull(environment.AUTODEV_TURN_ID) ??
     pickHookString(record, TURN_ID_KEYS) ??
     (metadata ? pickHookString(metadata, TURN_ID_KEYS) : null);
-  const role =
-    stringOrNull(environment.AUTODEV_AGENT_ROLE) ??
+  const reportedRole =
     pickHookString(record, ROLE_KEYS) ??
     (metadata ? pickHookString(metadata, ROLE_KEYS) : null);
-  const model =
-    stringOrNull(environment.AUTODEV_MODEL) ??
+  const hostModel =
     stringOrNull(record.model) ??
     (metadata ? stringOrNull(metadata.model) : null);
+  const model = stringOrNull(environment.AUTODEV_MODEL) ?? hostModel;
   const provider =
     stringOrNull(environment.AUTODEV_PROVIDER) ??
     stringOrNull(record.provider) ??
@@ -213,7 +246,26 @@ export function extractHookContext(
     pickHookString(record, CWD_KEYS) ??
     (metadata ? pickHookString(metadata, CWD_KEYS) : null);
 
-  return { sessionId, turnId, role, model, provider, cwd };
+  let origin: HookSessionOrigin = "unmanaged";
+  if (runtimeSessionId && assignedRole) origin = "runtime";
+  else if (hostModel?.startsWith(AUTODEV_ROUTED_MODEL_PREFIX))
+    origin = "autodev_routed";
+  const runtimeRole = origin === "runtime" ? assignedRole : null;
+  // The calling thread's own reported role is the more specific one (a child
+  // thread inside a Runtime-launched session), so it is read first.
+  const role = origin === "unmanaged" ? null : (reportedRole ?? runtimeRole);
+
+  return {
+    origin,
+    sessionId,
+    turnId,
+    role,
+    runtimeRole,
+    reportedRole,
+    model,
+    provider,
+    cwd
+  };
 }
 
 export function formatPreToolUseDenyResponse(reason: string): string {

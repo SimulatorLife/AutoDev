@@ -152,35 +152,27 @@ export interface RuleSyncMcpState {
   readonly servers: readonly McpServerDefinition[];
 }
 
-/** Secret-free operator view of the ChatGPT MCP gateway ingress. */
+/** Tool grants by MCP server, as the shared gateway publishes them. */
+export type McpGatewayGrants = Record<string, string[]>;
+
+/**
+ * Secret-free operator view of the optional ChatGPT tunnel ingress.
+ *
+ * Tunnel facts only: the gateway's role surfaces, workspace and grants are
+ * published once, on the MCP catalog's `gateway`.
+ */
 export const CHATGPT_TUNNEL_CONTROL_PATH = "/control/chatgpt-tunnel";
-export type ChatgptMcpGrants = Record<string, string[]>;
 export interface ChatgptTunnelStatus {
-  readonly schema: "autodev-chatgpt-tunnel-v1";
+  readonly schema: "autodev-chatgpt-tunnel-v2";
+  /** The compare-and-swap handle every tunnel mutation carries. */
   readonly revision: string;
   readonly configured: boolean;
   readonly enabled: boolean;
   readonly ready: boolean;
-  readonly role: string;
-  // Every role this tunnel publishes a surface for, primary role first.
+  /** The gateway roles the tunnel publishes as channels, primary role first. */
   readonly roles: readonly string[];
-  readonly availableRoles?: readonly string[];
-  readonly workspace: string | null;
   readonly tunnelId: string | null;
-  readonly reviewed: ChatgptMcpGrants;
-  readonly grants: ChatgptMcpGrants;
 }
 export type ChatgptTunnelMutation =
   | { action: "disable" | "enable" | "forget"; expectedRevision: string }
-  | {
-      action: "configure";
-      expectedRevision: string;
-      workspace: string;
-      // The primary role; it owns the gateway's delegation coordinator.
-      role?: string;
-      // The additional roles this tunnel publishes a surface for.
-      roles?: readonly string[];
-      // Explicit grants for the primary role.
-      grants: ChatgptMcpGrants;
-    }
   | { action: "rotate"; expectedRevision: string; runtimeKey: string };

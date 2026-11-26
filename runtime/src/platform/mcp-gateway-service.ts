@@ -71,6 +71,14 @@ import {
   externalMcpBackend,
   hasExternalMcpProfile
 } from "../mcp/chatgpt-filesystem-sandbox.ts";
+import {
+  createGatewayAdmission,
+  ensureLocalAdmission,
+  localAdmissionPaths,
+  MCP_GATEWAY_DIRECTORY,
+  mcpGatewayDirectory,
+  readLocalAdmission
+} from "../mcp/gateway-admission.ts";
 import { readBridgeMcpCatalogue } from "../mcp/filesystem-server.ts";
 import { isEntryPoint } from "../shared/entry-point.ts";
 import { runtimeBinDirectory } from "../shared/executables.ts";
@@ -112,7 +120,6 @@ import { sleep } from "./sleep.ts";
 import { waitForProbe } from "./wait-for-probe.ts";
 
 export const MCP_GATEWAY_LABEL = "com.codex.autodev-mcp-gateway";
-export const MCP_GATEWAY_DIRECTORY = "mcp-gateway";
 export const MCP_GATEWAY_WORKSPACE_ENV = "AUTODEV_MCP_GATEWAY_WORKSPACE";
 export const MCP_GATEWAY_PORT_ENV = "AUTODEV_MCP_GATEWAY_PORT";
 // The primary role: it owns the gateway's delegation coordinator.
@@ -279,9 +286,6 @@ export async function withInstallLock<T>(
   }
 }
 
-export function mcpGatewayDirectory(codexHome: string): string {
-  return path.join(codexHome, MCP_GATEWAY_DIRECTORY);
-}
 
 /**
 The gateway's bearer key and the matching `Authorization` header file that
@@ -723,7 +727,9 @@ async function resolveReviewedFromRoleContract(
   gatewayEnvironment: Record<string, string>,
   environment: NodeJS.ProcessEnv,
   dependencies: McpGatewayDependencies,
-  prior?: McpGatewayState
+  prior?: McpGatewayState,
+  // Discovered tool lists shared across roles, by server and confinement.
+  discovered?: Map<string, Promise<string[]>>
 ): Promise<{
   policyFile: string;
   policyDigest: string;
@@ -830,17 +836,23 @@ async function resolveReviewedFromRoleContract(
       const explicit = roleMcpTools[server]?.length
         ? roleMcpTools[server]
         : permissions.allowedTools[server];
-      const tools = explicit?.length
-        ? explicit
-        : await discover(
-            server,
-            descriptor,
-            paths,
-            workspace,
-            node,
-            gatewayEnvironment,
-            environment
-          );
+      const discoverOnce = () => {
+        const key = `${server}:${contract.readOnly === true}`;
+        const cached = discovered?.get(key);
+        if (cached) return cached;
+        const tools = discover(
+          server,
+          descriptor,
+          paths,
+          workspace,
+          node,
+          gatewayEnvironment,
+          environment
+        );
+        discovered?.set(key, tools);
+        return tools;
+      };
+      const tools = explicit?.length ? explicit : await discoverOnce();
       const filtered = denied
         ? tools.filter((tool) => !denied.has(tool))
         : tools;
@@ -1081,10 +1093,53 @@ interface RenderedGateway {
   pool: string;
 }
 
+/**
+Every declared role's full authorized surface for local clients. Roles the
+ChatGPT ingress publishes reuse their reviewed grants (never an operator's
+ChatGPT-only narrowing); tool discovery runs once per server and confinement.
+*/
+async function resolveLocalSurfaces(
+  paths: ServicePaths,
+  catalogue: Record<string, Record<string, unknown>>,
+  published: ChatgptRoleSurface[],
+  workspace: string,
+  node: string,
+  gatewayEnvironment: Record<string, string>,
+  environment: NodeJS.ProcessEnv,
+  dependencies: McpGatewayDependencies
+): Promise<ChatgptRoleSurface[]> {
+  const discovered = new Map<string, Promise<string[]>>();
+  const surfaces: ChatgptRoleSurface[] = [];
+  for (const role of declaredRoleNames()) {
+    if (roleContract(role).mcp.length === 0) continue;
+    const existing = published.find((surface) => surface.role === role);
+    if (existing) {
+      surfaces.push({ role, grants: existing.reviewed, reviewed: existing.reviewed });
+      continue;
+    }
+    const { reviewed } = await resolveReviewedFromRoleContract(
+      paths,
+      catalogue,
+      role,
+      workspace,
+      node,
+      gatewayEnvironment,
+      environment,
+      dependencies,
+      undefined,
+      discovered
+    );
+    if (Object.keys(reviewed).length > 0)
+      surfaces.push({ role, grants: reviewed, reviewed });
+  }
+  return surfaces;
+}
+
 function renderGateway(
   paths: ServicePaths,
   catalogue: Record<string, Record<string, unknown>>,
   surfaces: ChatgptRoleSurface[],
+  local: ChatgptRoleSurface[],
   workspace: string,
   node: string,
   mcpPort: number,
@@ -1104,12 +1159,17 @@ function renderGateway(
         runtimeSource: installedRuntimeSource(paths)
       }
     );
+  const localSurfaces = {
+    roles: local,
+    apiKeyFile: localAdmissionPaths(paths.codexHome).keyFile
+  };
   return {
     pool: renderChatgptBackendPoolConfig(
       catalogue,
       surfaces,
       workspace,
-      backendFor
+      backendFor,
+      localSurfaces
     ),
     supergateway: renderChatgptSupergatewayConfig(
       catalogue,
@@ -1120,7 +1180,8 @@ function renderGateway(
         apiKeyFile: mcpGatewayAuthPaths(paths.codexHome).keyFile,
         sessionTimeout: DEFAULT_CHATGPT_SESSION_TIMEOUT_MS
       },
-      backendFor
+      backendFor,
+      localSurfaces
     )
   };
 }
@@ -1141,7 +1202,12 @@ export async function checkMcpGateway(
       path.join(generation, "supergateway.json")
     );
     const poolRaw = privateRead(path.join(generation, "backend-pool.json"));
-    if (!supergatewayRaw || !poolRaw || !gatewayAuthValid(paths.codexHome))
+    if (
+      !supergatewayRaw ||
+      !poolRaw ||
+      !gatewayAuthValid(paths.codexHome) ||
+      !readLocalAdmission(paths.codexHome)
+    )
       return false;
     chatgptBackendPoolConfigSchema.parse(JSON.parse(poolRaw));
     const config = supergatewayConfigSchema.parse(JSON.parse(supergatewayRaw));
@@ -1151,11 +1217,13 @@ export async function checkMcpGateway(
       surfaces.length === 0 ||
       config.host !== "127.0.0.1" ||
       config.port !== state.mcpPort ||
-      surfaces.some(
-        ([role, surface]) =>
-          !state.roles.includes(role) ||
-          surface.sessionTimeout !== DEFAULT_CHATGPT_SESSION_TIMEOUT_MS ||
-          surface.apiKeyFile.replaceAll("$$", "$") !== keyFile
+      surfaces.some(([name, surface]) =>
+        "mcpServers" in surface
+          ? !state.roles.includes(name) ||
+            surface.sessionTimeout !== DEFAULT_CHATGPT_SESSION_TIMEOUT_MS ||
+            surface.apiKeyFile.replaceAll("$$", "$") !== keyFile
+          : surface.apiKeyFile.replaceAll("$$", "$") !==
+            localAdmissionPaths(paths.codexHome).keyFile
       )
     )
       return false;
@@ -1301,11 +1369,23 @@ async function reconcileGateway(
       reviewed: resolved.reviewed
     });
   }
+  const local = await resolveLocalSurfaces(
+    paths,
+    catalogue,
+    surfaces,
+    workspace,
+    node,
+    gatewayEnvironment,
+    environment,
+    dependencies
+  );
   ensureGatewayAuth(paths.codexHome);
+  ensureLocalAdmission(paths.codexHome);
   const rendered = renderGateway(
     paths,
     catalogue,
     surfaces,
+    local,
     workspace,
     node,
     mcpPort,
@@ -1473,7 +1553,10 @@ until Supergateway exits or launchd stops the service.
 export async function runMcpGatewayDaemon(
   paths: ServicePaths,
   environment: NodeJS.ProcessEnv = process.env,
-  dependencies: { spawnProcess?: typeof spawn } = {}
+  dependencies: {
+    spawnProcess?: typeof spawn;
+    backend?: typeof externalMcpBackend;
+  } = {}
 ): Promise<number> {
   const directory = mcpGatewayDirectory(paths.codexHome);
   const stagedRaw = privateRead(path.join(directory, "staged.json"));
@@ -1502,7 +1585,19 @@ export async function runMcpGatewayDaemon(
   );
   const backendPool: ChatgptBackendPoolHandle = await startChatgptBackendPool(
     chatgptBackendPoolConfigSchema.parse(JSON.parse(poolRaw)),
-    { gatewayEnv: gatewayEnvironment, secretEnv: environment }
+    {
+      gatewayEnv: gatewayEnvironment,
+      secretEnv: environment,
+      admission: createGatewayAdmission({
+        repositoryRoot: paths.repositoryRoot,
+        node: state.node,
+        home: paths.home,
+        codexHome: paths.codexHome,
+        catalogueWorkspace: state.workspace,
+        runtimeSource: installedRuntimeSource(paths),
+        ...(dependencies.backend ? { backend: dependencies.backend } : {})
+      })
+    }
   );
   const gateway = (dependencies.spawnProcess ?? spawn)(
     state.supergateway,

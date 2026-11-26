@@ -32,54 +32,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (action === "enable" || action === "disable" || action === "forget") {
     if (form.size !== 2) return redirect("failed");
     mutation = { action, expectedRevision };
-  } else if (action === "configure") {
-    const workspace = form.get("workspace");
-    if (!workspace || form.getAll("workspace").length !== 1)
-      return redirect("failed");
-    const roleValues = form.getAll("role");
-    if (roleValues.length > 1) return redirect("failed");
-    const role = roleValues[0]?.trim();
-    if (role !== undefined && (!role || !/^[a-z0-9_-]+$/u.test(role)))
-      return redirect("failed");
-    const additionalValues = form.getAll("roles");
-    if (additionalValues.length > 32) return redirect("failed");
-    const roles: string[] = [];
-    for (const value of additionalValues) {
-      const additional = value.trim();
-      if (!additional || !/^[a-z0-9_-]+$/u.test(additional))
-        return redirect("failed");
-      if (!roles.includes(additional)) roles.push(additional);
-    }
-    const grants = new Map<string, string[]>();
-    for (const entry of form.getAll("grant")) {
-      const parts = entry.split(":");
-      const [server, tool] = parts;
-      if (
-        parts.length !== 2 ||
-        !server ||
-        !tool ||
-        !/^[a-zA-Z0-9_-]+$/u.test(server) ||
-        !/^[a-zA-Z0-9_.-]+$/u.test(tool)
-      )
-        return redirect("failed");
-      grants.set(server, [...(grants.get(server) ?? []), tool]);
-    }
-    if (
-      form.size !==
-      3 +
-        roleValues.length +
-        additionalValues.length +
-        form.getAll("grant").length
-    )
-      return redirect("failed");
-    mutation = {
-      action,
-      expectedRevision,
-      workspace,
-      ...(role ? { role } : {}),
-      ...(roles.length ? { roles } : {}),
-      grants: Object.fromEntries(grants)
-    };
   } else if (action === "rotate") {
     const runtimeKey = form.get("runtimeKey");
     if (

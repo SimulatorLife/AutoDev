@@ -18,10 +18,18 @@
  * The refusal is the tool call's own permission decision, so the model is
  * told why the call did not run and can report what it needed instead.
  *
+ * The policy applies only to an AutoDev session (see `HookSessionOrigin`): a
+ * Runtime-launched provider process or a turn served through the AutoDev
+ * model router. The same projected hooks also run in unrelated native chats
+ * (a Claude Code or Copilot chat in this repository), whose agent types are
+ * the host's own subagent names, not AutoDev roles; those are never governed.
+ *
  * An explicitly assigned orchestrator role (or the explicit AutoDev root
  * alias on a native Codex turn without a role) uses the orchestrator policy.
- * A standalone host's concrete model or missing role does not identify an
- * AutoDev orchestrator. Hook policy is defense in depth, not an execution grant.
+ * A concrete model or missing role does not identify an AutoDev orchestrator.
+ * Within a Runtime-launched read-only session, a child thread reporting a
+ * write-capable role cannot widen the session's read-only tier. Hook policy is
+ * defense in depth, not an execution grant.
  *
  * The role's declaration is read from the installed execution contract, which
  * is the projection of the role files. A contract left behind by an older
@@ -47,6 +55,7 @@ import {
   extractHookContext,
   extractHookToolCall,
   formatPreToolUseDenyResponse,
+  type HookSessionOrigin,
   parseHookPayload
 } from "./hook-payload.ts";
 
@@ -54,6 +63,7 @@ interface RoleSandboxEvaluation {
   readonly denied: boolean;
   readonly reason: string | null;
   readonly policy: HookDenialPolicy | null;
+  readonly origin: HookSessionOrigin;
   readonly role: string | null;
   readonly model: string | null;
   readonly session: string | null;
@@ -67,6 +77,7 @@ function emptyEvaluation(): RoleSandboxEvaluation {
     denied: false,
     reason: null,
     policy: null,
+    origin: "unmanaged",
     role: null,
     model: null,
     session: null,
@@ -76,11 +87,15 @@ function emptyEvaluation(): RoleSandboxEvaluation {
   };
 }
 
-function evaluateRoleSandboxDetailed(rawInput: string): RoleSandboxEvaluation {
+function evaluateRoleSandboxDetailed(
+  rawInput: string,
+  environment: NodeJS.ProcessEnv
+): RoleSandboxEvaluation {
   const payload = parseHookPayload(rawInput);
   if (!payload) return emptyEvaluation();
-  const extracted = extractHookToolCall(payload);
-  const context = extractHookContext(payload);
+  const context = extractHookContext(payload, environment);
+  if (context.origin === "unmanaged") return emptyEvaluation();
+  const extracted = extractHookToolCall(payload, environment);
   const toolName = extracted?.toolName ?? "";
   const toolInput = extracted?.toolInput;
   const role = context.role;
@@ -100,6 +115,7 @@ function evaluateRoleSandboxDetailed(rawInput: string): RoleSandboxEvaluation {
           denied: true,
           reason: decision.reason ?? null,
           policy: "orchestrator-git-history",
+          origin: context.origin,
           role: "root",
           model,
           session,
@@ -109,7 +125,13 @@ function evaluateRoleSandboxDetailed(rawInput: string): RoleSandboxEvaluation {
         };
   }
 
-  if (role === null || !isReadOnlyRole(role)) return emptyEvaluation();
+  const readOnlyRole =
+    role !== null && isReadOnlyRole(role)
+      ? role
+      : context.runtimeRole !== null && isReadOnlyRole(context.runtimeRole)
+        ? context.runtimeRole
+        : null;
+  if (readOnlyRole === null) return emptyEvaluation();
 
   const decision = evaluateReadOnlyToolCall(call);
   if (decision.allowed) return emptyEvaluation();
@@ -117,7 +139,8 @@ function evaluateRoleSandboxDetailed(rawInput: string): RoleSandboxEvaluation {
     denied: true,
     reason: decision.reason ?? null,
     policy: "read-only",
-    role,
+    origin: context.origin,
+    role: readOnlyRole,
     model,
     session,
     turn,
@@ -126,22 +149,29 @@ function evaluateRoleSandboxDetailed(rawInput: string): RoleSandboxEvaluation {
   };
 }
 
-export function evaluateRoleSandboxHook(rawInput: string): {
+export function evaluateRoleSandboxHook(
+  rawInput: string,
+  environment: NodeJS.ProcessEnv = process.env
+): {
   readonly denied: boolean;
   readonly reason: string | null;
 } {
-  const { denied, reason } = evaluateRoleSandboxDetailed(rawInput);
+  const { denied, reason } = evaluateRoleSandboxDetailed(rawInput, environment);
   return { denied, reason };
 }
 
-export function runRoleSandboxHook(raw = readFileSync(0, "utf8")): number {
-  const outcome = evaluateRoleSandboxDetailed(raw);
+export function runRoleSandboxHook(
+  raw = readFileSync(0, "utf8"),
+  environment: NodeJS.ProcessEnv = process.env
+): number {
+  const outcome = evaluateRoleSandboxDetailed(raw, environment);
   if (!outcome.denied) return 0;
   const reason = outcome.reason ?? "This role runs in a read-only sandbox.";
   if (outcome.policy) {
     logPreToolUseDenial({
       hook: "role-sandbox",
       policy: outcome.policy,
+      origin: outcome.origin,
       role: outcome.role,
       model: outcome.model,
       session: outcome.session,

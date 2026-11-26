@@ -2564,7 +2564,10 @@ test("Prompt detail renders canonical text and reports an actually empty source"
   assert.match(markup, /\.rulesync\/commands\/dry\.md/);
   assert.match(markup, /data-prompt-source="read-only"/);
   assert.match(markup, /data-source-view="rendered"/);
-  assert.doesNotMatch(markup, /<textarea|action="\/api\/prompts\/dry"|Save &amp; Apply/);
+  assert.doesNotMatch(
+    markup,
+    /<textarea|action="\/api\/prompts\/dry"|Save &amp; Apply/
+  );
   assert.match(markup, /data-prompt-history="unavailable"/);
   assert.match(markup, /Git history unavailable in this test\./);
 
@@ -12654,8 +12657,8 @@ test("the policy shows the canonical value the repository states", () => {
         applied: null,
         appliedSource: "/tmp/codex/config.toml",
         roleMatrices: [],
-      sourceText: null
-    })
+        sourceText: null
+      })
     );
     assert.match(markup, new RegExp(`>${approvalPolicy}<`, "u"));
     assert.doesNotMatch(markup, /<form|<select|name="expectedRevision"/u);
@@ -13050,7 +13053,24 @@ test("Catalog collections fail closed on unreadable responses", async () => {
   // payload reached the view and threw instead of failing closed. See "a catalog
   // row missing the fields its view reads fails closed instead of throwing".
   const mcps = {
-    schema: "autodev-control-mcps-v2",
+    schema: "autodev-control-mcps-v3",
+    gateway: {
+      label: "com.codex.autodev-mcp-gateway",
+      installed: true,
+      ready: true,
+      port: 3312,
+      readinessUrl: "http://127.0.0.1:3312/readyz",
+      generation: "generation-1",
+      workspace: "/workspace",
+      role: "orchestrator",
+      roles: ["orchestrator"],
+      surfaces: [
+        { role: "orchestrator", url: "http://127.0.0.1:3312/orchestrator/mcp" }
+      ],
+      reviewed: { lsp: ["lsp_hover"] },
+      grants: { lsp: ["lsp_hover"] },
+      error: null
+    },
     source: ".rulesync/mcp.jsonc",
     revision: "b".repeat(64),
     readOnly: false,
@@ -16079,7 +16099,24 @@ test("a catalog row missing the fields its view reads fails closed instead of th
     roles: ["orchestrator"]
   };
   const mcpEnvelope = (servers: unknown[]) => ({
-    schema: "autodev-control-mcps-v2",
+    schema: "autodev-control-mcps-v3",
+    gateway: {
+      label: "com.codex.autodev-mcp-gateway",
+      installed: true,
+      ready: true,
+      port: 3312,
+      readinessUrl: "http://127.0.0.1:3312/readyz",
+      generation: "generation-1",
+      workspace: "/workspace",
+      role: "orchestrator",
+      roles: ["orchestrator"],
+      surfaces: [
+        { role: "orchestrator", url: "http://127.0.0.1:3312/orchestrator/mcp" }
+      ],
+      reviewed: { lsp: ["lsp_hover"] },
+      grants: { lsp: ["lsp_hover"] },
+      error: null
+    },
     source: ".rulesync/mcp.jsonc",
     revision: "b".repeat(64),
     readOnly: false,
@@ -16266,10 +16303,15 @@ test("a catalog row missing the fields its view reads fails closed instead of th
     "a complete policy is accepted"
   );
   assert.equal(
-    (await fetchPermissions(config, serve({
-      ...permissionsEnvelope(policyRow),
-      readOnly: false
-    }))).kind,
+    (
+      await fetchPermissions(
+        config,
+        serve({
+          ...permissionsEnvelope(policyRow),
+          readOnly: false
+        })
+      )
+    ).kind,
     "invalid-response",
     "a writable Permissions response must not reach the read-only view"
   );
@@ -19269,18 +19311,13 @@ test("the MCP declaration route refuses a request that is not same-origin before
 
 test("ChatgptTunnelPanel and fetchChatgptTunnel render status without leaking secrets", async () => {
   const validStatus: ChatgptTunnelStatus = {
-    schema: "autodev-chatgpt-tunnel-v1",
+    schema: "autodev-chatgpt-tunnel-v2",
     revision: "a".repeat(64),
     configured: true,
     enabled: true,
     ready: true,
-    role: "orchestrator",
     roles: ["orchestrator"],
-    availableRoles: ["default", "explorer", "orchestrator", "worker"],
-    workspace: "/Users/test/project",
-    tunnelId: "tunnel_0123456789abcdef0123456789abcdef",
-    reviewed: { filesystem: ["read_text_file", "list_directory"] },
-    grants: { filesystem: ["read_text_file"] }
+    tunnelId: "tunnel_0123456789abcdef0123456789abcdef"
   };
 
   await withControlRouteEnvironment(
@@ -19304,7 +19341,7 @@ test("ChatgptTunnelPanel and fetchChatgptTunnel render status without leaking se
     "chatgpt-tunnel-invalid-token",
     async () =>
       Response.json({
-        schema: "autodev-chatgpt-tunnel-v1",
+        schema: "autodev-chatgpt-tunnel-v2",
         revision: "not-a-sha256"
       }),
     async () => {
@@ -19339,10 +19376,13 @@ test("ChatgptTunnelPanel and fetchChatgptTunnel render status without leaking se
         configured: false,
         enabled: false,
         ready: false,
-        workspace: null,
         tunnelId: null
       }
     })
+  );
+  assert.match(
+    unconfiguredMarkup,
+    /data-chatgpt-tunnel-status="Not configured"/u
   );
   assert.match(unconfiguredMarkup, /--enable-chatgpt-tunnel/u);
   assert.doesNotMatch(unconfiguredMarkup, /Disconnect and disable/u);
@@ -19350,17 +19390,27 @@ test("ChatgptTunnelPanel and fetchChatgptTunnel render status without leaking se
   const readyMarkup = renderToStaticMarkup(
     React.createElement(ChatgptTunnelPanel, { status: validStatus })
   );
-  assert.match(readyMarkup, /Ready/u);
+  assert.match(readyMarkup, /data-chatgpt-tunnel-status="Ready"/u);
   assert.match(readyMarkup, /tunnel_0123456789abcdef0123456789abcdef/u);
-  assert.match(readyMarkup, /Published roles: orchestrator/u);
+  assert.match(readyMarkup, /data-chips="chatgpt-tunnel-channels"/u);
   assert.match(readyMarkup, /Disconnect and disable/u);
-  assert.match(readyMarkup, /checked="" value="filesystem:read_text_file"/u);
-  assert.match(readyMarkup, /value="filesystem:list_directory"/u);
-  assert.doesNotMatch(readyMarkup, /checked="" value="filesystem:list_directory"/u);
+  // Grants, roles and workspace are repository-owned and shown read-only in
+  // the gateway panel; the tunnel offers no control that changes them.
+  for (const field of ["grant", "role", "roles", "workspace"])
+    assert.doesNotMatch(readyMarkup, new RegExp(`name="${field}"`, "u"));
+  assert.doesNotMatch(readyMarkup, /value="configure"/u);
+  const actions = [...readyMarkup.matchAll(/name="action" value="([a-z]+)"/gu)]
+    .map((match) => match[1])
+    .sort();
+  assert.deepEqual(actions, ["disable", "forget", "rotate"]);
 });
 
 test("ChatGPT tunnel Console route enforces same-origin and forwards valid mutations", async () => {
-  const requests: Array<{ url: string; method: string | undefined; body: unknown }> = [];
+  const requests: Array<{
+    url: string;
+    method: string | undefined;
+    body: unknown;
+  }> = [];
   await withControlRouteEnvironment(
     "chatgpt-tunnel-route-token",
     async (input, init) => {
@@ -19370,7 +19420,7 @@ test("ChatGPT tunnel Console route enforces same-origin and forwards valid mutat
         body: JSON.parse(String(init?.body))
       });
       return Response.json({
-        schema: "autodev-chatgpt-tunnel-v1",
+        schema: "autodev-chatgpt-tunnel-v2",
         revision: "b".repeat(64)
       });
     },
@@ -19379,7 +19429,10 @@ test("ChatGPT tunnel Console route enforces same-origin and forwards valid mutat
       const crossOrigin = await chatgptTunnelRoute.POST(
         sameOriginFormRequest(
           "/api/chatgpt-tunnel",
-          new URLSearchParams({ action: "disable", expectedRevision: revision }).toString(),
+          new URLSearchParams({
+            action: "disable",
+            expectedRevision: revision
+          }).toString(),
           { fetchSite: "cross-site" }
         )
       );
@@ -19390,12 +19443,17 @@ test("ChatGPT tunnel Console route enforces same-origin and forwards valid mutat
       const badRevision = await chatgptTunnelRoute.POST(
         sameOriginFormRequest(
           "/api/chatgpt-tunnel",
-          new URLSearchParams({ action: "disable", expectedRevision: "short" }).toString()
+          new URLSearchParams({
+            action: "disable",
+            expectedRevision: "short"
+          }).toString()
         )
       );
       assert.equal(badRevision.headers.get("location"), "/mcps?tunnel=failed");
       assert.equal(requests.length, 0);
 
+      // Grants and published roles are repository-owned, so the route
+      // refuses a reconfiguration rather than forwarding it.
       const configureBody = new URLSearchParams({
         action: "configure",
         expectedRevision: revision,
@@ -19403,21 +19461,29 @@ test("ChatGPT tunnel Console route enforces same-origin and forwards valid mutat
         role: "worker"
       });
       configureBody.append("grant", "filesystem:read_text_file");
-      configureBody.append("grant", "filesystem:write_file");
       const configured = await chatgptTunnelRoute.POST(
         sameOriginFormRequest("/api/chatgpt-tunnel", configureBody.toString())
       );
       assert.equal(configured.status, 303);
-      assert.equal(configured.headers.get("location"), "/mcps?tunnel=ok");
+      assert.equal(configured.headers.get("location"), "/mcps?tunnel=failed");
+      assert.equal(requests.length, 0);
+
+      const disabled = await chatgptTunnelRoute.POST(
+        sameOriginFormRequest(
+          "/api/chatgpt-tunnel",
+          new URLSearchParams({
+            action: "disable",
+            expectedRevision: revision
+          }).toString()
+        )
+      );
+      assert.equal(disabled.headers.get("location"), "/mcps?tunnel=ok");
       assert.equal(requests.length, 1);
       assert.match(requests[0]!.url, /\/control\/chatgpt-tunnel$/u);
       assert.equal(requests[0]!.method, "POST");
       assert.deepEqual(requests[0]!.body, {
-        action: "configure",
-        expectedRevision: revision,
-        workspace: "/Users/test/project",
-        role: "worker",
-        grants: { filesystem: ["read_text_file", "write_file"] }
+        action: "disable",
+        expectedRevision: revision
       });
 
       const rotated = await chatgptTunnelRoute.POST(

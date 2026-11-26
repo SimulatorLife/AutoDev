@@ -80,13 +80,31 @@ const gatewayServerSchema = streamableHttpServerSchema;
  */
 const chatgptRoleSurfaceSchema = z
   .object({
-    path: z.string().regex(/^\/[a-zA-Z0-9_-]+$/u),
+    path: z.string().regex(/^(\/[a-zA-Z0-9_-]+)+$/u),
     outputTransport: z.literal("streamableHttp"),
     streamableHttpPath: z.literal("/mcp"),
     stateful: z.literal(true),
     sessionTimeout: z.number().int().min(1).optional(),
     apiKeyFile: z.string().min(1),
     mcpServers: z.record(identifier, gatewayServerSchema)
+  })
+  .strict();
+/**
+One role's server for local clients, at `/local/<role>/<server>`: a single
+pool route under the server's own identity, so local clients keep canonical
+server and tool names. It accepts only the local key, which the ChatGPT tunnel
+never holds, and every call must carry a session grant.
+*/
+const localServerSurfaceSchema = z
+  .object({
+    path: z.string().regex(/^\/local\/[a-z0-9-]+\/[a-zA-Z0-9_-]+$/u),
+    url: z.string().min(1),
+    type: z.literal("streamableHttp"),
+    oauth2Bearer: z.string().min(1),
+    outputTransport: z.literal("streamableHttp"),
+    streamableHttpPath: z.literal("/mcp"),
+    stateful: z.literal(true),
+    apiKeyFile: z.string().min(1)
   })
   .strict();
 export const DEFAULT_CHATGPT_MCP_PORT = 3312;
@@ -105,7 +123,10 @@ export const supergatewayConfigSchema = z
     logLevel: z.literal("none"),
     logFormat: z.literal("json"),
     healthEndpoint: z.tuple([z.literal("/readyz")]),
-    mcpServers: z.record(identifier, chatgptRoleSurfaceSchema)
+    mcpServers: z.record(
+      identifier,
+      z.union([chatgptRoleSurfaceSchema, localServerSurfaceSchema])
+    )
   })
   .strict();
 type GatewayServer = z.infer<typeof gatewayServerSchema>;
@@ -118,13 +139,39 @@ export interface ChatgptSupergatewayHttpOptions {
   sessionTimeout?: number;
 }
 
+/**
+The role surfaces local clients reach with session grants: each role's full
+authorized grants, served in whatever workspace a grant names.
+*/
+export interface LocalGatewaySurfaces {
+  readonly roles: ChatgptRoleSurface[];
+  /** The local-only key file every local surface requires. */
+  readonly apiKeyFile: string;
+}
+
+/** The pooled route that serves one role's server to local clients. */
+export function localPoolServerKey(role: string, server: string): string {
+  return `local.${role}.${server}`;
+}
+
+/** The gateway path of one role's server for local clients. */
+export function localSurfacePath(role: string, server: string): string {
+  return `/local/${role}/${server}`;
+}
+
+function localSurfaceName(role: string, server: string): string {
+  return `local-${role}-${server}`;
+}
+
 export function qualifiedToolNames(
   config: ChatgptSupergatewayConfig
 ): string[] {
   return [
     ...new Set(
       Object.values(config.mcpServers)
-        .flatMap((surface) => Object.values(surface.mcpServers))
+        .flatMap((surface) =>
+          "mcpServers" in surface ? Object.values(surface.mcpServers) : []
+        )
         .flatMap(({ toolPrefix, tools }) =>
           tools.map((tool) => toolPrefix + tool)
         )
@@ -307,9 +354,32 @@ export function renderChatgptBackendPoolConfig(
   catalogue: Catalogue,
   surfaces: ChatgptRoleSurface[],
   workspace: string,
-  confinedBackend?: ChatgptConfinedBackend
+  confinedBackend?: ChatgptConfinedBackend,
+  local?: LocalGatewaySurfaces
 ): string {
-  const servers: Record<string, PooledBackendSpec> = {};
+  const servers: ChatgptBackendPoolConfig["servers"] = {};
+  for (const surface of local?.roles ?? []) {
+    for (const entry of resolveValidatedExternalServers(
+      catalogue,
+      surface.grants,
+      workspace,
+      surface.reviewed,
+      confinedBackend,
+      surface.role
+    )) {
+      // A local backend is provisioned per admitted workspace; a remote one
+      // has no workspace and is shared.
+      servers[localPoolServerKey(surface.role, entry.name)] =
+        entry.poolSpec.kind === "stdio"
+          ? {
+              kind: "admitted",
+              role: surface.role,
+              server: entry.name,
+              tools: entry.tools
+            }
+          : entry.poolSpec;
+    }
+  }
   for (const surface of surfaces) {
     const resolved = resolveValidatedExternalServers(
       catalogue,
@@ -349,10 +419,13 @@ export function renderChatgptSupergatewayConfig(
   surfaces: ChatgptRoleSurface[],
   workspace: string,
   http: ChatgptSupergatewayHttpOptions,
-  confinedBackend?: ChatgptConfinedBackend
+  confinedBackend?: ChatgptConfinedBackend,
+  local?: LocalGatewaySurfaces
 ): string {
   if (!path.isAbsolute(workspace))
     throw new Error("ChatGPT MCP workspace must be absolute");
+  if (local && !path.isAbsolute(local.apiKeyFile))
+    throw new Error("Local gateway API key file must be absolute");
   if (!Number.isInteger(http.port) || http.port < 1024 || http.port > 65535)
     throw new Error(
       "ChatGPT Supergateway port must be an integer from 1024 to 65535"
@@ -410,12 +483,50 @@ export function renderChatgptSupergatewayConfig(
         logLevel: "none",
         logFormat: "json",
         healthEndpoint: ["/readyz"],
-        mcpServers: published
+        mcpServers: {
+          ...published,
+          ...localSurfaces(catalogue, workspace, local, confinedBackend)
+        }
       }),
       null,
       2
     ) + "\n"
   );
+}
+
+function localSurfaces(
+  catalogue: Catalogue,
+  workspace: string,
+  local: LocalGatewaySurfaces | undefined,
+  confinedBackend: ChatgptConfinedBackend | undefined
+): Record<string, z.infer<typeof localServerSurfaceSchema>> {
+  const entries: Array<[string, z.infer<typeof localServerSurfaceSchema>]> =
+    [];
+  for (const surface of local?.roles ?? []) {
+    for (const entry of resolveValidatedExternalServers(
+      catalogue,
+      surface.grants,
+      workspace,
+      surface.reviewed,
+      confinedBackend,
+      surface.role
+    )) {
+      entries.push([
+        localSurfaceName(surface.role, entry.name),
+        {
+          path: localSurfacePath(surface.role, entry.name),
+          url: `http://127.0.0.1:\${${CHATGPT_MCP_POOL_PORT_ENV}}/mcp/${localPoolServerKey(surface.role, entry.name)}`,
+          type: "streamableHttp",
+          oauth2Bearer: `\${${CHATGPT_MCP_POOL_TOKEN_ENV}}`,
+          outputTransport: "streamableHttp",
+          streamableHttpPath: "/mcp",
+          stateful: true,
+          apiKeyFile: escapeInterpolation(local!.apiKeyFile)
+        }
+      ]);
+    }
+  }
+  return Object.fromEntries(entries);
 }
 
 function escapeInterpolation(value: string): string {

@@ -38,7 +38,6 @@ import {
 import {
   defaultMcpGatewayDependencies,
   dependencyEnvironment,
-  ensureMcpGateway,
   ensurePrivateDirectory,
   failureDetail,
   generationPath,
@@ -46,7 +45,6 @@ import {
   type McpGatewayDependencies,
   type McpGatewayState,
   mcpGatewayAuthPaths,
-  mcpGatewayConfigurationSchema,
   mcpGatewayRoleSurfaceUrl,
   mcpGatewaySurfaceStatus,
   privateRead,
@@ -111,11 +109,6 @@ export const tunnelMutationSchema = z.discriminatedUnion("action", [
   z
     .object({ action: z.literal("forget"), expectedRevision: revision })
     .strict(),
-  // Reconfigures the gateway's published surfaces; the tunnel follows.
-  mcpGatewayConfigurationSchema.extend({
-    action: z.literal("configure"),
-    expectedRevision: revision
-  }),
   z
     .object({
       action: z.literal("rotate"),
@@ -557,13 +550,16 @@ export async function chatgptTunnelStatus(
     paths,
     readMcpGatewayState(paths.codexHome)
   );
+  // Tunnel facts only. The gateway's role surfaces and grants are published
+  // once, on the MCP catalog (`GET /control/mcps`); the tunnel reports which
+  // of those roles it carries as channels.
   return {
-    schema: "autodev-chatgpt-tunnel-v1",
+    schema: "autodev-chatgpt-tunnel-v2",
     revision: controlRevision(paths, surfaces.reviewed),
     configured: prior !== undefined,
     enabled: state?.enabled === true,
     ready: state?.enabled === true && (await checkChatgptTunnel(paths, deps)),
-    ...surfaces,
+    roles: surfaces.roles,
     tunnelId: prior?.tunnelId ?? null
   };
 }
@@ -571,8 +567,9 @@ export async function chatgptTunnelStatus(
 /**
 Apply an installer mode or an authorized Control API mutation.
 
-`configure` reconfigures the gateway, then re-projects an enabled tunnel's
-channels; every other mutation acts on the tunnel alone.
+Every mutation acts on the tunnel alone. The gateway's published roles and
+grants are repository-owned (the canonical role contract, narrowed only by
+the installer's private policy file), so no tunnel mutation reconfigures them.
 */
 export async function ensureChatgptTunnel(
   paths: ServicePaths,
@@ -592,18 +589,6 @@ export async function ensureChatgptTunnel(
       ) !== mutation.expectedRevision
     )
       throw new Error("Tunnel configuration revision conflict");
-    if (mutation.action === "configure") {
-      if (!gateway) throw new Error("Install the MCP gateway first");
-      const {
-        action: _action,
-        expectedRevision: _revision,
-        ...configuration
-      } = mutation;
-      await ensureMcpGateway(paths, env, configuration, deps);
-      if (stateAt(stateFile)?.enabled)
-        await ensureChatgptTunnel(paths, "reconcile", env, undefined, deps);
-      return;
-    }
     if (!installedState(stateAt(stateFile)))
       throw new Error("Complete initial tunnel installation first");
   }
@@ -1022,9 +1007,7 @@ if (isEntryPoint(import.meta.url)) {
         paths,
         mutation.action === "disable" || mutation.action === "forget"
           ? "disable"
-          : mutation.action === "configure"
-            ? "reconcile"
-            : "enable",
+          : "enable",
         dependencyEnvironment(process.env),
         mutation
       );

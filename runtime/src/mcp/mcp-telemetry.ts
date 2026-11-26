@@ -31,10 +31,20 @@
  * after `safeAutoDevWorkspaceKey` / `safeAutoDevAgentRole` accept the
  * value, so the same privacy contract holds for inherited attributes.
  *
+ * Per-call correlation: a shared gateway serves many roles, workspaces and
+ * sessions from one process, so its resource cannot name them. The caller
+ * that verified a call's admission passes that call's role, workspace key and
+ * AutoDev session as `McpToolCallCorrelation`; they become span attributes
+ * (`autodev.agent.role`, `autodev.workspace`, `autodev.session.id`), never
+ * metric dimensions, and only after the same `safeAutoDev*` validation the
+ * router applies. A value that is absent or fails validation is left off the
+ * span -- Not observed -- rather than replaced by a placeholder.
+ *
  * Privacy contract (mirrors docs/observability-target-state.md):
  * - Tool names are bounded and appear only on this MCP operation span;
- *   arguments, results, prompts, session IDs, request IDs, conversation
- *   IDs, and JSON-RPC ids are never attached.
+ *   arguments, results, prompts, request IDs, conversation IDs, raw
+ *   workspace paths and JSON-RPC ids are never attached. The only session
+ *   identity is a validated, caller-verified AutoDev session ID.
  * - Errors use categorical `error.type` values only; raw messages,
  *   bridge URLs, HTTP status, and tool content are not exported.
  * - If tracer setup or export fails, the MCP callback still runs exactly
@@ -89,6 +99,7 @@ import {
   readOtlpHeaders,
   readOtlpTraceEndpoint
 } from "@simulatorlife/autodev-runtime/telemetry/otlp-config";
+import { safeAutoDevSessionId } from "@simulatorlife/autodev-core";
 import {
   safeAutoDevAgentRole,
   safeAutoDevWorkspaceKey
@@ -99,6 +110,8 @@ import type { CommandDefinition, CommandResult } from "./commands-catalogue.ts";
 
 const ATTR_AUTODEV_WORKSPACE = "autodev.workspace" as const;
 const ATTR_AUTODEV_AGENT_ROLE = "autodev.agent.role" as const;
+const ATTR_AUTODEV_SESSION_ID = "autodev.session.id" as const;
+const ATTR_AUTODEV_MCP_SERVER = "autodev.mcp.server" as const;
 const ATTR_MCP_METHOD_NAME = "mcp.method.name" as const;
 const ATTR_GEN_AI_TOOL_NAME = "gen_ai.tool.name" as const;
 const ATTR_GEN_AI_OPERATION_NAME = "gen_ai.operation.name" as const;
@@ -387,6 +400,37 @@ export async function shutdownTelemetryForTest(): Promise<void> {
   }
 }
 
+/**
+ * The admission facts a gateway verified for one `tools/call`. Every field is
+ * optional and untrusted until validated here; the caller must take them from
+ * the verified grant or admission, never from MCP arguments or headers.
+ */
+export interface McpToolCallCorrelation {
+  /** The canonical backend server name the call was routed to. */
+  readonly server?: string | null;
+  /** The AutoDev role the call was admitted under. */
+  readonly role?: string | null;
+  /** The AutoDev workspace key (`owner/repo` or a bounded label), never a path. */
+  readonly workspace?: string | null;
+  /** The AutoDev session ID the router also attributes, for trace joins. */
+  readonly sessionId?: string | null;
+}
+
+function correlationAttributes(
+  correlation: McpToolCallCorrelation | undefined
+): Record<string, string> {
+  const attributes: Record<string, string> = {};
+  const server = safeTrim(correlation?.server);
+  if (server) attributes[ATTR_AUTODEV_MCP_SERVER] = server;
+  const role = safeAutoDevAgentRole(correlation?.role);
+  if (role) attributes[ATTR_AUTODEV_AGENT_ROLE] = role;
+  const workspace = safeAutoDevWorkspaceKey(correlation?.workspace);
+  if (workspace) attributes[ATTR_AUTODEV_WORKSPACE] = workspace;
+  const sessionId = safeAutoDevSessionId(correlation?.sessionId);
+  if (sessionId) attributes[ATTR_AUTODEV_SESSION_ID] = sessionId;
+  return attributes;
+}
+
 export interface ToolCallOutcome {
   status: "ok" | "error";
   /** Categorical error tag; never includes tool arguments or output. */
@@ -445,8 +489,9 @@ function endSpan(span: Span): void {
  * handled by the codex-tools-shim. The callback runs to completion
  * regardless of telemetry state; telemetry is never allowed to block,
  * mutate, or fail the call it observes. Tool arguments, results,
- * prompts, session IDs, request IDs, and JSON-RPC ids are never attached
- * to the span.
+ * prompts, request IDs, and JSON-RPC ids are never attached to the span;
+ * `correlation` adds only the validated admission facts described on
+ * `McpToolCallCorrelation`.
  *
  * The MCP and GenAI attribute names are from the incubating semantic-
  * conventions package entrypoint; their source mapping is pinned by
@@ -460,7 +505,8 @@ function endSpan(span: Span): void {
 export async function recordToolCallSpan(
   name: string,
   callback: () => Promise<ToolCallOutcome>,
-  metadata?: unknown
+  metadata?: unknown,
+  correlation?: McpToolCallCorrelation
 ): Promise<ToolCallOutcome> {
   let span: Span | null = null;
   try {
@@ -471,7 +517,8 @@ export async function recordToolCallSpan(
       [ATTR_NETWORK_TRANSPORT]: "pipe"
     };
     if (externalTelemetry)
-      attributes["autodev.mcp.server"] = externalTelemetry.server;
+      attributes[ATTR_AUTODEV_MCP_SERVER] = externalTelemetry.server;
+    Object.assign(attributes, correlationAttributes(correlation));
     const toolName = safeTrim(name);
     if (toolName) attributes[ATTR_GEN_AI_TOOL_NAME] = toolName;
     const spanName = toolName ? `tools/call ${toolName}` : "tools/call";

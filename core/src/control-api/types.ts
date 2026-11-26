@@ -15,7 +15,7 @@ import type {
   HookDeclarationOrigin,
   HookEvent
 } from "../hooks/types.ts";
-import type { McpServerResource } from "../mcps/types.ts";
+import type { McpGatewayGrants, McpServerResource } from "../mcps/types.ts";
 import type { PermissionPolicy } from "../permissions/types.ts";
 import type {
   HumanPlaytestStudy,
@@ -630,8 +630,55 @@ export interface ControlApiModelPatchResponse {
   readonly reconciliation: ReconciliationView;
 }
 
+/** One role surface the shared MCP gateway publishes on loopback. */
+export interface ControlApiMcpGatewaySurface {
+  readonly role: string;
+  /** The loopback Streamable HTTP endpoint that serves this role. */
+  readonly url: string;
+}
+
+/**
+ * The shared MCP gateway, as the Runtime installed and observes it.
+ *
+ * A read-only operator view: the gateway's own state file is the projection
+ * the installer wrote, and the grants are the canonical role contract's
+ * reviewed grants narrowed by the operator. Nothing here is a second registry
+ * or a second policy; the Console renders it and never writes it.
+ */
+export interface ControlApiMcpGateway {
+  /** The LaunchAgent that supervises the gateway. */
+  readonly label: string;
+  /** Whether the installer has written a current gateway state. */
+  readonly installed: boolean;
+  /**
+   * Whether the installed service matches its state, its LaunchAgent owns the
+   * listener, and `/readyz` answers. `false` whenever any of those is not
+   * observed, including when the gateway is not installed.
+   */
+  readonly ready: boolean;
+  readonly port: number | null;
+  /** The loopback readiness probe; `null` when the gateway is not installed. */
+  readonly readinessUrl: string | null;
+  readonly generation: string | null;
+  readonly workspace: string | null;
+  /** The primary role: it owns the gateway's delegation coordinator. */
+  readonly role: string;
+  /** Every role with a published surface, primary role first. */
+  readonly roles: readonly string[];
+  readonly surfaces: readonly ControlApiMcpGatewaySurface[];
+  /** The primary role's reviewed (role-contracted) tool grants. */
+  readonly reviewed: McpGatewayGrants;
+  /**
+   * The primary role's effective grants: the reviewed grants, optionally
+   * narrowed by the operator, never widened.
+   */
+  readonly grants: McpGatewayGrants;
+  /** Why the gateway state could not be read; `null` when it was. */
+  readonly error: string | null;
+}
+
 export interface ControlApiMcpsResponse {
-  readonly schema: "autodev-control-mcps-v2";
+  readonly schema: "autodev-control-mcps-v3";
   readonly source: ".rulesync/mcp.jsonc";
   /**
    * The revision of the canonical declaration.
@@ -662,6 +709,15 @@ export interface ControlApiMcpsResponse {
    * configuration stays a configuration read.
    */
   readonly servers: readonly McpServerResource[];
+  /**
+   * The shared MCP gateway every provider reaches these servers through.
+   *
+   * Published on the catalog rather than as another resource family: the
+   * MCPs resource owns gateway health, published role surfaces and effective
+   * grants, and its observation of individual servers stays on
+   * `/control/mcp-runtime` and `/control/mcp-applied`.
+   */
+  readonly gateway: ControlApiMcpGateway;
 }
 
 /**

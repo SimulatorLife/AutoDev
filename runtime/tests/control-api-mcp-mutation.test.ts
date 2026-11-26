@@ -142,7 +142,7 @@ test("the MCP catalog carries the revision a write is compared against", async (
   const options = fixture();
   const result = await call("GET", "/control/mcps", options);
   assert.equal(result.statusCode, 200);
-  assert.equal(result.body?.schema, "autodev-control-mcps-v2");
+  assert.equal(result.body?.schema, "autodev-control-mcps-v3");
   // The revision is the handle the write compares against, so it is present
   // and it is a digest rather than a counter.
   assert.match(String(result.body?.revision), /^[a-f0-9]{64}$/u);

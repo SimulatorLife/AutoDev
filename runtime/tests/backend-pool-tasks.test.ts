@@ -63,7 +63,16 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   } else if (request.method === "tasks/result") {
     reply({ content: [{ type: "text", text: "retained result" }] });
   } else if (request.method === "tasks/list") {
-    reply({ tasks: [...tasks.values()] });
+    const mode = request.params?._meta?.fixtureList;
+    const privateData = "foreign-task-fixture-private";
+    if (mode === "malformed") {
+      reply({ tasks: [...tasks.values(), { taskId: "bad", status: privateData }] });
+    } else if (mode === "error") {
+      send({ id: request.id, error: { code: -32603, message: privateData,
+        data: { tasks: [...tasks.values()] } } });
+    } else {
+      reply({ tasks: [...tasks.values()], _meta: { privateData } });
+    }
   } else if (request.method === "tasks/cancel") {
     const task = tasks.get(request.params.taskId);
     task.status = "cancelled";
@@ -276,8 +285,18 @@ test("a task is visible only to the session or conversation that created it", {
       assert.equal(foreign.body.error?.message, "Task not found", method);
     }
     const foreignList = await f.request(other, "tasks/list", {});
-    assert.deepEqual(foreignList.body.result.tasks, []);
+    assert.deepEqual(foreignList.body.result, { tasks: [] });
+    for (const fixtureList of ["malformed", "error"]) {
+      const invalid = await f.request(other, "tasks/list", {
+        _meta: { fixtureList }
+      });
+      assert.equal(invalid.body.error?.message, "Backend task list unavailable");
+      assert.equal(invalid.body.result, undefined);
+      assert.equal(invalid.body.error?.data, undefined);
+      assert.doesNotMatch(JSON.stringify(invalid.body), /foreign-task-fixture-private/u);
+    }
     const ownList = await f.request(owner, "tasks/list", {});
+    assert.equal(ownList.body.result._meta, undefined);
     assert.deepEqual(
       ownList.body.result.tasks.map((entry: { taskId: string }) => entry.taskId),
       [task.taskId]

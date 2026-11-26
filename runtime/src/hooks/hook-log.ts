@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { isRecord } from "@simulatorlife/autodev-core";
 
+import type { HookSessionOrigin } from "./hook-payload.ts";
 import { codexHome } from "./hook-roots.ts";
 
 export const MAX_HOOK_REASON_LENGTH = 200;
@@ -14,6 +15,8 @@ export type HookDenialPolicy =
 export interface PreToolUseDenialLogEntry {
   readonly hook: "role-sandbox" | "block-ccc-cli" | "file-surface";
   readonly policy: HookDenialPolicy;
+  /** The session origin the policy decision was made under. */
+  readonly origin: HookSessionOrigin;
   readonly role: string | null;
   readonly model: string | null;
   readonly session: string | null;
@@ -149,6 +152,7 @@ export function logPreToolUseDenial(
       hook: entry.hook,
       decision: "deny",
       policy: entry.policy,
+      origin: entry.origin,
       role: entry.role,
       model: entry.model,
       session: entry.session,

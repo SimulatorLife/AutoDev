@@ -29,6 +29,27 @@ the out-of-repository key and publishes the standard OTLP endpoint/header to
 its own process and the Codex GUI launchd domain. Disable it with
 `bash scripts/install.sh --disable-openlit-ingress`.
 
+Native client exporters report to the same receiver without an AutoDev
+translation layer:
+
+- **Codex** exports logs, traces and metrics from the `[otel]` table of the
+  portable `config/config.autodev.toml` (`log_user_prompt = false`), with the
+  header the router launcher publishes to the GUI launchd domain.
+- **Claude Code** (2.1.x) exports metrics and log events when the installer
+  has added AutoDev's slice to `~/.claude/settings.json`
+  (`runtime/src/platform/claude-code-telemetry.ts`):
+  `CLAUDE_CODE_ENABLE_TELEMETRY=1`, `OTEL_METRICS_EXPORTER=otlp`,
+  `OTEL_LOGS_EXPORTER=otlp`, `OTEL_EXPORTER_OTLP_PROTOCOL=http/json`,
+  `OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318`, and
+  `otelHeadersHelper`, which runs `runtime/src/telemetry/otel-headers-helper.ts`
+  to print the bearer header from the private secret file at export time. The
+  key is never written into the settings file. Prompt, tool-detail, tool-content
+  and raw-API-body logging stay off; an operator value that differs from
+  AutoDev's, or turns one of those on, is reported by the installer and
+  `--check`, never overwritten.
+- Copilot, Antigravity and MiniMax Code native exporters are not configured:
+  their support at the installed versions is not yet qualified.
+
 OpenLIT's embedded Collector accepts OTLP/HTTP JSON and Protobuf as supported
 by its receiver. Producers use standard OTLP protocol settings; no AutoDev
 telemetry translation layer is inserted. AutoDev no longer ships or runs a

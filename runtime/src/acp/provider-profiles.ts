@@ -12,12 +12,16 @@ contract uniformly across all providers.
 */
 
 import { realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 
 import type { McpServer } from "@agentclientprotocol/sdk";
 import { autodevHome } from "@simulatorlife/autodev-runtime/shared/autodev-home";
 import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { resolveManagedSecret } from "@simulatorlife/autodev-runtime/shared/runtime-secrets";
+
+import { issueLaunchGrant } from "../mcp/gateway-admission.ts";
+import { MCP_GRANT_ENV } from "../mcp/gateway-client.ts";
 
 export const ACP_PROVIDER_IDS = [
   "claude",
@@ -43,11 +47,6 @@ export interface AcpProviderIsolationSurface {
   readonly gaps: readonly string[];
 }
 
-export interface AcpSupergatewayEndpoint {
-  readonly url: string;
-  readonly bearerToken?: string;
-}
-
 export interface AcpProfileOptions {
   readonly provider: AcpProviderId;
   readonly role: string;
@@ -55,8 +54,6 @@ export interface AcpProfileOptions {
   readonly cwd: string;
   readonly systemPrompt: string;
   readonly sessionId: string;
-  readonly mcpConfigPath?: string;
-  readonly supergateway?: AcpSupergatewayEndpoint;
   readonly reasoningEffort?: string | null;
   readonly env?: NodeJS.ProcessEnv;
 }
@@ -90,16 +87,6 @@ const COPILOT_EXCLUDED_NATIVE_TOOLS = [
   "task"
 ] as const;
 
-const REMOTE_MCP_URLS: Readonly<Record<string, { url: string; secret?: string; header?: string }>> = {
-  openaiDeveloperDocs: { url: "https://developers.openai.com/mcp" },
-  context7: { url: "https://mcp.context7.com/mcp", secret: "CONTEXT7_API_KEY" },
-  googleDeveloperKnowledge: {
-    url: "https://developerknowledge.googleapis.com/mcp",
-    secret: "GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY",
-    header: "X-Goog-Api-Key"
-  }
-};
-
 /**
 Normalize an AutoDev routing provider id (e.g. `antigravity-gemini` or
 `minimax`) onto its underlying ACP executor identity.
@@ -120,16 +107,6 @@ function sharedIsolationEnvironment(
   contract: ReturnType<typeof roleContract>
 ): Record<string, string> {
   const homeDirectory = autodevHome(options.env);
-  const mcpServers = contract.mcp;
-  // Gateway-owned remote credentials must not enter the provider process.
-  const context7ApiKey =
-    !options.supergateway && mcpServers.includes("context7")
-      ? resolveManagedSecret("CONTEXT7_API_KEY", options.env)
-      : null;
-  const googleDeveloperKnowledgeApiKey =
-    !options.supergateway && mcpServers.includes("googleDeveloperKnowledge")
-      ? resolveManagedSecret("GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY", options.env)
-      : null;
   return {
     AUTODEV_HOME: homeDirectory,
     AUTODEV_AGENT_ROLE: options.role,
@@ -142,105 +119,46 @@ function sharedIsolationEnvironment(
     ...(contract.readOnly === true ? { AUTODEV_MCP_READ_ONLY: "1" } : {}),
     AUTODEV_AGENT_EVENTS_URL:
       options.env?.AUTODEV_AGENT_EVENTS_URL ??
-      "http://127.0.0.1:4100/v1/agent-events",
-    ...(context7ApiKey ? { CONTEXT7_API_KEY: context7ApiKey } : {}),
-    ...(googleDeveloperKnowledgeApiKey
-      ? {
-          GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY: googleDeveloperKnowledgeApiKey
-        }
-      : {})
+      "http://127.0.0.1:4100/v1/agent-events"
   };
 }
 
-/** Transitional direct projection: pin to the executing Runtime generation. */
-function resolveLauncherPath(): string {
-  return realpathSync(new URL("../mcp/launcher.ts", import.meta.url));
+/** The gateway client of the executing Runtime generation. */
+function resolveGatewayClientPath(): string {
+  return realpathSync(new URL("../mcp/gateway-client.ts", import.meta.url));
 }
 
+/**
+The role's MCP servers, each reached through the shared gateway by the
+gateway client under this session's own grant: the session is admitted in its
+workspace and role, and the provider process never holds a backend launch,
+a remote URL or a backend credential.
+*/
 function buildAcpMcpServers(
   options: AcpProfileOptions,
-  contract: ReturnType<typeof roleContract>,
-  baseEnvironment: Readonly<Record<string, string>>
+  contract: ReturnType<typeof roleContract>
 ): McpServer[] {
-  if (options.supergateway) {
-    const { url, bearerToken } = options.supergateway;
-    // This endpoint is a Runtime-provisioned local connection, not an
-    // arbitrary remote MCP URL. Never send a grant to an unrelated host.
-    const endpoint = URL.canParse(url) ? new URL(url) : null;
-    if (
-      !endpoint ||
-      endpoint.protocol !== "http:" ||
-      !["127.0.0.1", "[::1]"].includes(endpoint.hostname) ||
-      endpoint.username ||
-      endpoint.password ||
-      endpoint.search ||
-      endpoint.hash ||
-      !bearerToken ||
-      /\s/u.test(bearerToken)
-    ) {
-      throw new Error(
-        "ACP requires an authenticated loopback Supergateway endpoint."
-      );
-    }
-    if (options.mcpConfigPath) {
-      throw new Error(
-        "ACP cannot combine a Supergateway grant with an independent MCP configuration."
-      );
-    }
-    return contract.mcp.length === 0
-      ? []
-      : [
-          {
-            type: "http",
-            name: "autodev",
-            url: endpoint.href,
-            headers: [{ name: "Authorization", value: `Bearer ${bearerToken}` }]
-          }
-        ];
-  }
-
-  const launcherPath = resolveLauncherPath();
-  const servers: McpServer[] = [];
-  for (const name of contract.mcp) {
-    const remote = Object.hasOwn(REMOTE_MCP_URLS, name)
-      ? REMOTE_MCP_URLS[name]
-      : undefined;
-    if (remote) {
-      const secretValue = remote.secret
-        ? resolveManagedSecret(remote.secret, options.env)
-        : null;
-      const headers = secretValue
-        ? [
-            {
-              name: remote.header ?? "Authorization",
-              value: remote.header ? secretValue : `Bearer ${secretValue}`
-            }
-          ]
-        : [];
-      servers.push({
-        type: "http",
-        name,
-        url: remote.url,
-        headers
-      });
-      continue;
-    }
-    const envEntries: Array<{ name: string; value: string }> = [
-      { name: "AUTODEV_HOME", value: baseEnvironment.AUTODEV_HOME! },
-      { name: "AUTODEV_AGENT_ROLE", value: options.role },
-      { name: "AUTODEV_MCP_WORKSPACE", value: options.cwd },
-      ...(contract.readOnly === true
-        ? [{ name: "AUTODEV_MCP_READ_ONLY", value: "1" }]
-        : [])
-    ];
-    servers.push({
-      name,
-      command: process.execPath,
-      args: [launcherPath, name],
-      env: envEntries
-    });
-  }
-  return servers;
+  if (contract.mcp.length === 0) return [];
+  const { grant } = issueLaunchGrant({
+    env: options.env ?? process.env,
+    launchDirectory: options.cwd,
+    role: options.role,
+    session: options.sessionId
+  });
+  const client = resolveGatewayClientPath();
+  const env = options.env ?? process.env;
+  const home = env.HOME?.trim() || homedir();
+  const handedOver = [
+    { name: MCP_GRANT_ENV, value: grant },
+    { name: "HOME", value: home },
+    { name: "CODEX_HOME", value: env.CODEX_HOME?.trim() || path.join(home, ".codex") }
+  ];
+  return contract.mcp.map((name) => ({
+    name,
+    command: process.execPath,
+    args: [client, name],
+    env: handedOver
+  }));
 }
 
 /**
@@ -259,7 +177,7 @@ export function buildAcpProviderLaunchSpec(
   const shell = contract.shell !== false;
   const hooks = contract.hooks !== false;
   const baseEnvironment = sharedIsolationEnvironment(options, contract);
-  const acpMcpServers = buildAcpMcpServers(options, contract, baseEnvironment);
+  const acpMcpServers = buildAcpMcpServers(options, contract);
 
   const sharedFields = {
     role: options.role,
@@ -289,9 +207,6 @@ export function buildAcpProviderLaunchSpec(
         "--model",
         options.model
       ];
-      if (options.mcpConfigPath) {
-        cliArguments.push("--mcp-config", options.mcpConfigPath);
-      }
       if (options.reasoningEffort) {
         cliArguments.push("--effort", options.reasoningEffort);
       }
@@ -358,9 +273,6 @@ export function buildAcpProviderLaunchSpec(
         "--excluded-tools",
         COPILOT_EXCLUDED_NATIVE_TOOLS.join(",")
       ];
-      if (options.mcpConfigPath) {
-        cliArguments.push("--additional-mcp-config", options.mcpConfigPath);
-      }
       if (options.reasoningEffort) {
         cliArguments.push("--reasoning-effort", options.reasoningEffort);
       }

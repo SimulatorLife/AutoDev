@@ -25,6 +25,11 @@ import {
 import type { RoutingPolicy } from "@simulatorlife/autodev-runtime/router/routing";
 import { didHandleAcpRoute } from "@simulatorlife/autodev-runtime/xacpx/http";
 import { XacpxSessionManager } from "@simulatorlife/autodev-runtime/xacpx/manager";
+import { ensureLocalAdmission } from "@simulatorlife/autodev-runtime/mcp/gateway-admission";
+
+// ACP launches sign their sessions' gateway grants: give the test process's
+// isolated CODEX_HOME the gateway's admission files.
+ensureLocalAdmission(process.env.CODEX_HOME!);
 
 class FakeRequest extends EventTarget {
   method: string;

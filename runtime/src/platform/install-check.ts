@@ -38,11 +38,15 @@ import {
   antigravitySkillsStatus,
   missingAntigravityPermissions
 } from "./antigravity-settings.ts";
+import {
+  claudeCodeHeadersHelperCommand,
+  claudeCodeTelemetryDrift
+} from "./claude-code-telemetry.ts";
 import { checkCodeGraphDatabase } from "./code-graph-ensure.ts";
 import { resolveRuntimeSourcePath } from "../shared/runtime-source-root.ts";
 import { createCodexMcpSource } from "./codex-mcp-source.ts";
 import { createCodexPermissionsSource } from "./codex-permissions-source.ts";
-import { materializeMcodeProfile } from "./mcode-profile.ts";
+import { reconcileMcodeProfiles } from "./mcode-profile.ts";
 import {
   checkCocoIndex,
   checkCodeGraphContext,
@@ -978,6 +982,42 @@ function checkOtelIngress(
   );
 }
 
+/**
+ * Claude Code's native exporter in the operator's user settings. Missing
+ * managed keys are drift; an operator's own differing value is reported, not
+ * failed, because the installer deliberately leaves it in place.
+ */
+function checkClaudeCodeTelemetry(
+  paths: RunInstallPaths,
+  failures: { value: number }
+): void {
+  if (!commandAvailable("claude")) return;
+  const settingsPath = path.join(paths.home, ".claude", "settings.json");
+  let drift: ReturnType<typeof claudeCodeTelemetryDrift>;
+  try {
+    drift = claudeCodeTelemetryDrift(
+      settingsPath,
+      claudeCodeHeadersHelperCommand(autodevHome(process.env, paths.home))
+    );
+  } catch {
+    writeLine(`unreadable Claude Code settings ${settingsPath}`);
+    failures.value = 1;
+    return;
+  }
+  for (const conflict of drift.conflicts)
+    writeLine(
+      `Claude Code native telemetry left as the operator configured it: ${conflict}`
+    );
+  if (drift.missing.length > 0) {
+    writeLine(
+      `missing-or-drifted Claude Code native telemetry: ${drift.missing.join(", ")}`
+    );
+    failures.value = 1;
+    return;
+  }
+  writeLine(`ok Claude Code native telemetry (${settingsPath})`);
+}
+
 function checkObsoleteSkillPaths(
   paths: RunInstallPaths,
   failures: { value: number }
@@ -1083,15 +1123,16 @@ function checkMcodeProfile(
   const autodevProviderHome = autodevHome(process.env, paths.home);
   const profileDir = path.join(autodevProviderHome, "providers", "mcode");
   try {
-    const result = materializeMcodeProfile({
+    const { managed, operator } = reconcileMcodeProfiles({
       repositoryRoot: paths.repositoryRoot,
-      profileDirectory: profileDir,
+      autodevHome: autodevProviderHome,
       home: paths.home,
       check: true
     });
-    if (result.drifted.length > 0) {
+    const drifted = [...managed.drifted, ...operator.drifted];
+    if (drifted.length > 0) {
       writeLine(
-        `missing-or-drifted MiniMax Code profile: ${result.drifted.join(", ")}`
+        `missing-or-drifted MiniMax Code profile: ${drifted.join(", ")}`
       );
       failures.value = 1;
       return;
@@ -1099,6 +1140,18 @@ function checkMcodeProfile(
     writeLine(
       `ok MiniMax Code profile (${profileDir}) generated from ${paths.repositoryRoot}/.rulesync`
     );
+    if (operator.profileDirectory === null) {
+      writeLine(
+        "ok MiniMax Code operator profile absent; nothing to enroll"
+      );
+    } else if (operator.conflicts.length > 0) {
+      for (const conflict of operator.conflicts)
+        writeLine(`conflict MiniMax Code operator profile: ${conflict}`);
+    } else {
+      writeLine(
+        `ok MiniMax Code operator profile (${operator.profileDirectory}) enrolled from ${paths.repositoryRoot}/.rulesync`
+      );
+    }
   } catch (error) {
     writeLine(
       `missing-or-drifted MiniMax Code profile: ${errorMessage(error)}`
@@ -1299,6 +1352,7 @@ export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
     );
     checkRulesync(paths, failures);
     checkOtelIngress(paths, failures);
+    checkClaudeCodeTelemetry(paths, failures);
     checkObsoleteSkillPaths(paths, failures);
     checkAntigravityCli(paths, failures);
     checkMcodeProfile(paths, failures);

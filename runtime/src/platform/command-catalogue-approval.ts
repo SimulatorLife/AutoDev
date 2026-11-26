@@ -22,7 +22,7 @@ import path from "node:path";
 import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import { autodevHome } from "@simulatorlife/autodev-runtime/shared/autodev-home";
 
-import { parseCommandCatalogue } from "../mcp/commands-catalogue.ts";
+import { parseCommandCatalogueText } from "../mcp/commands-catalogue.ts";
 import {
   APPROVED_CATALOGUE_FILE,
   catalogueDigest,
@@ -73,7 +73,7 @@ function readProposed(repositoryRoot: string): string {
     "utf8"
   );
   // A proposal that is not a valid catalogue is never offered for approval.
-  parseCommandCatalogue(JSON.parse(content));
+  parseCommandCatalogueText(content);
   return content;
 }
 
@@ -95,7 +95,7 @@ function approvalOf(
 function readApprovedDigest(approvedPath: string): string | null {
   try {
     const content = readApprovedCatalogue(approvedPath);
-    parseCommandCatalogue(JSON.parse(content));
+    parseCommandCatalogueText(content);
     return catalogueDigest(content);
   } catch {
     return null;

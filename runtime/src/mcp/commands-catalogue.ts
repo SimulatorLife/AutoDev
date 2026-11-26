@@ -126,6 +126,65 @@ export function parseCommandCatalogue(input: unknown): CommandCatalogue {
 }
 
 /**
+The first object key that appears twice in one object of a JSON text, or
+null when every object's keys are distinct.
+
+`JSON.parse` keeps the last of two equal keys and drops the first without a
+trace, so a catalogue reviewed by reading its text could grant a different
+definition than the one the operator read. The text must already be valid
+JSON; this only walks its strings and brackets.
+*/
+function duplicateJsonKey(text: string): string | null {
+  const objects: Array<Set<string> | null> = [];
+  let index = 0;
+  while (index < text.length) {
+    const character = text[index]!;
+    if (character === "{") objects.push(new Set());
+    else if (character === "[") objects.push(null);
+    else if (character === "}" || character === "]") objects.pop();
+    else if (character === '"') {
+      let end = index + 1;
+      while (text[end] !== '"') end += text[end] === "\\" ? 2 : 1;
+      const token = text.slice(index, end + 1);
+      index = end + 1;
+      while (/\s/u.test(text[index] ?? "")) index += 1;
+      const keys = objects.at(-1);
+      if (text[index] === ":" && keys) {
+        const key = JSON.parse(token) as string;
+        if (keys.has(key)) return key;
+        keys.add(key);
+      }
+      continue;
+    }
+    index += 1;
+  }
+  return null;
+}
+
+/**
+Parse a catalogue's text: valid JSON, no key declared twice in any object,
+and a valid catalogue. This is the only reading of a catalogue file, for the
+approved copy the backend serves and for the proposal offered for approval.
+*/
+export function parseCommandCatalogueText(text: string): CommandCatalogue {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new CommandCatalogueError("The command catalogue is not valid JSON.", "INVALID_CATALOGUE");
+  }
+  const duplicate = duplicateJsonKey(text);
+  if (duplicate !== null) {
+    throw new CommandCatalogueError(
+      `The command catalogue declares "${duplicate.slice(0, 64)}" more than once in one object; ` +
+        "only one declaration may be the reviewed one.",
+      "DUPLICATE_CATALOGUE_KEY"
+    );
+  }
+  return parseCommandCatalogue(parsed);
+}
+
+/**
 A rejected catalogue or invocation.
 
 The message is operator-facing and names the offending declaration; it never
@@ -210,6 +269,9 @@ export const commandResultSchema = z.strictObject({
     "cancelled",
     "timed_out",
     "output_limit",
+    // The approved executable could not be started: no process ran, so
+    // there is no exit status to report.
+    "startup_failure",
     "infrastructure_error"
   ]),
   exitCode: z.number().int().nullable(),

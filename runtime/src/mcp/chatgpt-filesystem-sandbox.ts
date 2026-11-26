@@ -56,7 +56,6 @@ const SUPPORTED_LOCAL_GATEWAY_SERVERS = new Set<string>([
   MCP_SERVER_CODEGRAPHCONTEXT,
   MCP_SERVER_XACPX,
   MCP_SERVER_PLAYWRIGHT,
-  MCP_SERVER_PLAYTEST,
   MCP_SERVER_GITHUB,
   MCP_SERVER_COMMANDS
 ]);
@@ -341,7 +340,6 @@ export function externalMcpBackend(
   }
   if (
     server === MCP_SERVER_PLAYWRIGHT ||
-    server === MCP_SERVER_PLAYTEST ||
     server === MCP_SERVER_GITHUB
   ) {
     return {

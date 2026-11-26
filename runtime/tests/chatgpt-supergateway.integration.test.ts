@@ -63,6 +63,7 @@ import {
   tunnelClientMcpEnv,
   tunnelClientSupported,
   tunnelMetadata,
+  tunnelMutationSchema,
   validateRuntimeKey
 } from "../src/platform/chatgpt-tunnel-install.ts";
 import {
@@ -504,16 +505,18 @@ test("role-aware sandbox admits canonical AutoDev local MCP backends and enforce
     "filesystem",
     "codegraphcontext",
     "playwright",
-    "playtest",
     "github"
   ]) {
     const backend = externalMcpBackend(canonical, repo, repo, process.execPath);
     assert.ok(backend.command.length > 0);
   }
-  assert.throws(
-    () => externalMcpBackend("codex_app", repo, repo, process.execPath),
-    /No externally confined/
-  );
+  // A Playtesting run's server is bound to that run by the Runtime, never a
+  // gateway backend.
+  for (const unconfined of ["codex_app", "playtest"])
+    assert.throws(
+      () => externalMcpBackend(unconfined, repo, repo, process.execPath),
+      /No externally confined/
+    );
 });
 
 test("externalMcpBackend runs backends from the Runtime tree it is given, not the caller's checkout", () => {
@@ -1434,8 +1437,31 @@ test(
         config.mcpServers.orchestrator.apiKeyFile.replaceAll("$$", "$"),
         path.join(directory, "supergateway.key")
       );
-      assert.ok(
+      const poolManifest = JSON.parse(
         privateRead(path.join(directory, first.generation, "backend-pool.json"))
+      );
+      // Every role with MCP grants also gets a surface per server for local
+      // clients, locked by a local-only key the tunnel never holds and served
+      // in whatever workspace each session grant names.
+      const localKey = privateRead(path.join(directory, "local.key"));
+      assert.match(localKey, /^[a-f0-9]{64}$/u);
+      assert.notEqual(localKey, key);
+      assert.match(privateRead(path.join(directory, "admission.key")), /^[a-f0-9]{64}$/u);
+      const workerFilesystem = config.mcpServers["local-worker-filesystem"];
+      assert.equal(workerFilesystem.path, "/local/worker/filesystem");
+      assert.equal(
+        workerFilesystem.apiKeyFile.replaceAll("$$", "$"),
+        path.join(directory, "local.key")
+      );
+      assert.match(workerFilesystem.url, /\/mcp\/local\.worker\.filesystem$/u);
+      assert.deepEqual(
+        { ...poolManifest.servers["local.worker.filesystem"], tools: [] },
+        { kind: "admitted", role: "worker", server: "filesystem", tools: [] }
+      );
+      assert.equal(
+        config.mcpServers["local-explorer-xacpx"],
+        undefined,
+        "a leaf role never gets delegation"
       );
       // The LaunchAgent runs the gateway from the resolved Runtime generation,
       // with interactive QoS for its sandboxed MCP children.
@@ -1577,7 +1603,7 @@ test(
             HOME: paths.home,
             AUTODEV_CHATGPT_TUNNEL_API_KEY: "never-forwarded"
           },
-          { spawnProcess }
+          { spawnProcess, backend: gatewayDeps.backend }
         ),
         1,
         "an unexpected Supergateway exit fails the job so launchd restarts it"
@@ -1753,8 +1779,10 @@ test(
       );
       const status = await chatgptTunnelStatus(paths, deps);
       assert.equal(status.ready, true);
-      assert.equal(status.workspace, workspace);
       assert.deepEqual(status.roles, ["orchestrator"]);
+      // Gateway grants and workspace are the MCP catalog's, not the tunnel's.
+      assert.equal("grants" in status, false);
+      assert.equal("workspace" in status, false);
       assert.equal(events.filter((event) => event === "create").length, 1);
       const count = events.length;
       await ensureChatgptTunnel(paths, "reconcile", env, undefined, deps);
@@ -1886,21 +1914,26 @@ test(
       assert.notEqual(rotated.revision, before.revision);
       assert.ok(!JSON.stringify(rotated).includes("fixture-new"));
 
-      // `configure` reconfigures the gateway, and the tunnel re-projects one
-      // channel per published role.
-      await ensureChatgptTunnel(
-        paths,
-        "reconcile",
-        env,
-        {
+      // The tunnel never reconfigures the gateway: published roles and grants
+      // are repository-owned. When the installer republishes the gateway's
+      // roles, reconciling the tunnel re-projects one channel per role.
+      assert.equal(
+        tunnelMutationSchema.safeParse({
           action: "configure",
           expectedRevision: rotated.revision,
           workspace,
           roles: ["explorer"],
           grants: {}
-        },
+        }).success,
+        false
+      );
+      await ensureMcpGateway(
+        paths,
+        env,
+        { workspace, roles: ["explorer"], grants: {} },
         deps
       );
+      await ensureChatgptTunnel(paths, "reconcile", env, undefined, deps);
       const configured = await chatgptTunnelStatus(paths, deps);
       assert.deepEqual(configured.roles, ["orchestrator", "explorer"]);
       const reprojected = JSON.parse(privateRead(stateFile));
