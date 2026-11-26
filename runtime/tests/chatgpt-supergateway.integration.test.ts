@@ -202,7 +202,7 @@ test(
       writeFileSync(secretEnv, "OPENAI_ADMIN_KEY=super-secret-value\n");
       writeFileSync(exampleEnv, "OPENAI_ADMIN_KEY=\n");
       symlinkSync(outside, path.join(workspace, "escape.txt"));
-      const executable = resolveSupergateway(repo);
+      const executable = resolveSupergateway(path.join(repo, "runtime", "src"));
       const config = path.join(root, "supergateway.json");
       const keyFile = path.join(root, "supergateway.key");
       const localToken = "fixture-supergateway-token";
@@ -754,7 +754,7 @@ test(
     const clients: Client[] = [];
     let gateway: ChildProcess | undefined;
     try {
-      const executable = resolveSupergateway(repo);
+      const executable = resolveSupergateway(path.join(repo, "runtime", "src"));
       const config = path.join(root, "gateway.json");
       const keyFile = path.join(root, "supergateway.key");
       const localToken = "fixture-combined-token";
@@ -1829,7 +1829,7 @@ test(
       await once(remoteServer, "listening");
       const remoteAddr = remoteServer.address();
       assert.ok(remoteAddr && typeof remoteAddr !== "string");
-      const executable = resolveSupergateway(repo);
+      const executable = resolveSupergateway(path.join(repo, "runtime", "src"));
       const config = path.join(root, "supergateway.json");
       const keyFile = path.join(root, "supergateway.key");
       const localToken = "multi-gateway-token";
@@ -1990,7 +1990,7 @@ test(
     writeFileSync(outside, "forbidden-secret");
     symlinkSync(outside, path.join(workspace, "escape.txt"));
 
-    const supergateway = resolveSupergateway(repo);
+    const supergateway = resolveSupergateway(path.join(repo, "runtime", "src"));
     const config = path.join(root, "supergateway.json");
     const keyFile = path.join(root, "supergateway.key");
     const headerFile = path.join(root, "supergateway-auth.header");
@@ -2286,7 +2286,7 @@ test(
       symlinkSync(userHfCache, path.join(home, ".cache", "huggingface"));
     }
 
-    const supergateway = resolveSupergateway(repo);
+    const supergateway = resolveSupergateway(path.join(repo, "runtime", "src"));
     const config = path.join(root, "supergateway.json");
     const keyFile = path.join(root, "supergateway.key");
     const headerFile = path.join(root, "supergateway-auth.header");
@@ -2621,7 +2621,7 @@ test(
     writeFileSync(skillFile, "# Demo Skill\nUse canonical tools.\n");
     symlinkSync(outsideFile, path.join(workspace, "escape-link.txt"));
 
-    const executable = resolveSupergateway(repo);
+    const executable = resolveSupergateway(path.join(repo, "runtime", "src"));
     const config = path.join(root, "supergateway.json");
     const keyFile = path.join(root, "supergateway.key");
     const localToken = "rw-gateway-token";
@@ -2883,7 +2883,7 @@ test(
       repositoryRoot: repo
     });
 
-    const executable = resolveSupergateway(repo);
+    const executable = resolveSupergateway(path.join(repo, "runtime", "src"));
     const keyFileA = path.join(root, "supergateway-a.key");
     const keyFileB = path.join(root, "supergateway-b.key");
     const headerFileA = path.join(root, "supergateway-a.header");
@@ -3497,7 +3497,7 @@ lines.on("line", (line) => {
       { mode: 0o600 }
     );
 
-    const executable = resolveSupergateway(repo);
+    const executable = resolveSupergateway(path.join(repo, "runtime", "src"));
     const configPath = path.join(root, "supergateway.json");
     const poolConfigPath = path.join(root, "backend-pool.json");
     const keyFile = path.join(root, "supergateway.key");

@@ -47,7 +47,9 @@ export function clientSurfaceFromOriginator(
 ): ClientSurface | null {
   const normalized = originator?.trim().toLowerCase();
   if (!normalized) return null;
-  return ORIGINATOR_SURFACES[normalized] ?? "other";
+  return Object.hasOwn(ORIGINATOR_SURFACES, normalized)
+    ? ORIGINATOR_SURFACES[normalized]!
+    : "other";
 }
 
 /**

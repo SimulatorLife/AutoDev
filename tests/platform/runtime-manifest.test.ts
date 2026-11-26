@@ -6,13 +6,13 @@ import { fileURLToPath } from "node:url";
 
 import {
   LAUNCH_LABELS,
-  nodeModuleLinks,
   OBSOLETE_DASHBOARD,
   OBSOLETE_LAUNCH,
   OBSOLETE_RUNTIME_DATA_FILES,
   RUNTIME_MODULES,
   runtimeSourceTree
 } from "@simulatorlife/autodev-runtime/platform/install-materializer";
+import { runtimeDependencyClosure } from "@simulatorlife/autodev-runtime/platform/runtime-dependency-closure";
 import { runtimeTarget } from "@simulatorlife/autodev-runtime/platform/runtime-files";
 import * as ts from "typescript";
 
@@ -161,7 +161,7 @@ test("the installed source tree is exactly the manifest's runtime/src modules", 
   );
   assert.equal(
     tree.nodeModules,
-    join(repositoryRoot, "runtime", "node_modules")
+    runtimeDependencyClosure(repositoryRoot, "/codex-home")
   );
 });
 
@@ -1215,46 +1215,41 @@ test("installed sources use dependencies from their owning workspace", () => {
     );
 });
 
-test("the CODEX_HOME copy resolves every bare import through a linked node_modules", () => {
+test("the CODEX_HOME copy resolves every bare import through the protected dependency closure", () => {
   // `$CODEX_HOME` is not the repository, so a copied module resolves packages
   // only by walking up from its installed directory through node_modules trees
-  // that actually exist there. Model that walk: a node_modules directory
-  // inside CODEX_HOME exists only where the installer links one, and it
-  // resolves to its link source. Driven by nodeModuleLinks() so that dropping
-  // or misplacing a link fails here rather than crash-looping a supervised
-  // service -- the router ran for a day on ERR_MODULE_NOT_FOUND for `zod`,
-  // which resolves in the repository and not in the mirror.
+  // that exist there. The only one is the source generation's link to the
+  // dependency closure, which `pnpm deploy --prod` fills with exactly the
+  // Runtime package's production dependencies. A module that imports anything
+  // else would crash-loop a supervised service -- the router once ran for a
+  // day on ERR_MODULE_NOT_FOUND for `zod`, which resolved in the repository
+  // and not in the mirror.
   const codexHome = join(repositoryRoot, "codex-home");
-  const links = new Map(
-    nodeModuleLinks({ repositoryRoot, codexHome }).map(({ source, target }) => [
-      target,
-      source
-    ])
+  const closureRoot = join(codexHome, "src");
+  const tree = runtimeSourceTree(repositoryRoot, codexHome);
+  assert.equal(
+    dirname(dirname(tree.nodeModules)),
+    codexHome,
+    "the closure lives under the Runtime home, not in the checkout"
   );
-  const resolvesFromInstalledPath = (
-    installedPath: string,
-    packageName: string
-  ): boolean => {
-    let directory = dirname(installedPath);
-    while (
-      directory === codexHome ||
-      directory.startsWith(`${codexHome}${sep}`)
-    ) {
-      const linkSource = links.get(join(directory, "node_modules"));
-      if (linkSource && existsSync(join(linkSource, packageName))) return true;
-      directory = dirname(directory);
-    }
-    return false;
-  };
+  const runtimeManifest = JSON.parse(
+    readFileSync(join(repositoryRoot, "runtime", "package.json"), "utf8")
+  ) as { name: string; dependencies: Record<string, string> };
+  // The mirror's own package.json resolves the Runtime's self-imports.
+  const closure = new Set([
+    runtimeManifest.name,
+    ...Object.keys(runtimeManifest.dependencies)
+  ]);
 
   const unresolvable: string[] = [];
   for (const modulePath of RUNTIME_MODULES) {
     if (!modulePath.endsWith(".ts")) continue;
     const installedPath = runtimeTarget(modulePath, codexHome);
+    const inClosureWalk = installedPath.startsWith(`${closureRoot}${sep}`);
     for (const packageName of packageImports(
       readFileSync(join(repositoryRoot, modulePath), "utf8")
     ))
-      if (!resolvesFromInstalledPath(installedPath, packageName))
+      if (!inClosureWalk || !closure.has(packageName))
         unresolvable.push(
           `${modulePath} -> ${installedPath} imports "${packageName}"`
         );
@@ -1262,6 +1257,6 @@ test("the CODEX_HOME copy resolves every bare import through a linked node_modul
   assert.deepEqual(
     unresolvable.sort(),
     [],
-    `installed sources cannot resolve these packages from CODEX_HOME; link each owning package's node_modules where the mirror will walk through it:\n${unresolvable.join("\n")}`
+    `installed sources cannot resolve these packages from CODEX_HOME; declare each as a Runtime production dependency:\n${unresolvable.join("\n")}`
   );
 });

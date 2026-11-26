@@ -167,14 +167,15 @@ test("Antigravity PreToolUse payloads enforce file-surface, ccc block, and read-
 });
 
 test("MCP launcher resolves newly added github and xacpx servers", () => {
-  const githubCommand = resolveMcpCommand("github", REPO_ROOT);
-  assert.equal(existsSync(githubCommand.binary), true);
-  const xacpxCommand = resolveMcpCommand("xacpx", REPO_ROOT, {
+  const githubCommand = resolveMcpCommand("github");
+  assert.equal(existsSync(githubCommand.args[0]!), true);
+  const xacpxCommand = resolveMcpCommand("xacpx", {
     AUTODEV_XACPX_COORDINATOR_SESSION: "coord-1",
     AUTODEV_XACPX_WORKSPACE: "AutoDev"
   });
-  assert.equal(existsSync(xacpxCommand.binary), true);
-  assert.deepEqual(xacpxCommand.args, [
+  assert.equal(xacpxCommand.binary, process.execPath);
+  assert.equal(existsSync(xacpxCommand.args[0]!), true);
+  assert.deepEqual(xacpxCommand.args.slice(1), [
     "mcp-stdio",
     "--coordinator-session",
     "coord-1",
@@ -323,7 +324,7 @@ test("ACP provider profiles project canonical role capabilities, native mcpServe
 });
 
 test("XacpxSessionManager resolves binaries, dispatches every transport, and pins sessions", () => {
-  const binaries = resolveXacpxBinaries(process.env, REPO_ROOT);
+  const binaries = resolveXacpxBinaries(process.env);
   assert.equal(existsSync(binaries.xacpxBin), true);
   assert.equal(existsSync(binaries.acpxBin), true);
 

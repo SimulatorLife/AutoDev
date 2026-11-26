@@ -59,7 +59,6 @@ import {
   LAUNCH_LABELS,
   loadCodexCommands,
   MCP_LAUNCHERS,
-  nodeModuleLinks,
   OBSOLETE_CLAUDE_SKILL_VIEWS,
   OBSOLETE_DASHBOARD,
   OBSOLETE_DIRS,
@@ -527,10 +526,11 @@ export function checkRuntimeSourceGeneration(
       manifest = false;
     }
   }
-  const nodeModules = runtimeLinkMatches(
-    tree.nodeModules,
-    path.join(codexHome, RUNTIME_SOURCE_LINK, "node_modules")
-  );
+  const nodeModules =
+    runtimeLinkMatches(
+      tree.nodeModules,
+      path.join(codexHome, RUNTIME_SOURCE_LINK, "node_modules")
+    ) && existsSync(tree.nodeModules);
   return { generation, manifest, nodeModules };
 }
 
@@ -575,12 +575,16 @@ function checkRuntimeAndOt(
       );
     }
   }
-  for (const { source, target } of nodeModuleLinks(paths))
-    check(
-      `node_modules link ${path.relative(paths.codexHome, target)}`,
-      runtimeLinkMatches(source, target),
-      failures
-    );
+  check(
+    `runtime ${RUNTIME_SOURCE_LINK}/node_modules is the protected dependency closure`,
+    sourceGeneration.nodeModules,
+    failures
+  );
+  check(
+    "no checkout node_modules link under the Runtime home",
+    !isSymlinkPath(path.join(paths.codexHome, "node_modules")),
+    failures
+  );
   for (const role of PROMPT_ROLES)
     check(
       `prompt role ${role}`,
@@ -701,6 +705,14 @@ function checkCommands(
   }
 }
 
+function isSymlinkPath(filePath: string): boolean {
+  try {
+    return lstatSync(filePath).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
 function checkScripts(
   paths: RunInstallPaths,
   failures: { value: number }
@@ -708,7 +720,7 @@ function checkScripts(
   for (const name of MCP_LAUNCHERS)
     check(
       `MCP launcher ${name}`,
-      runtimeLinkMatches(
+      runtimeFileMatches(
         path.join(paths.repositoryRoot, `scripts/${name}`),
         path.join(paths.hooks, name)
       ),

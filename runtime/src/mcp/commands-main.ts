@@ -10,7 +10,9 @@ the approved catalogue cannot be established, the server refuses to start.
 import { createHash } from "node:crypto";
 import {
   closeSync,
-  existsSync,
+  constants,
+  fstatSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -38,6 +40,10 @@ import {
 } from "./commands-execution.ts";
 import { startRegistryProxy } from "./commands-registry-proxy.ts";
 import { createCommandsMcpServer, effectiveCommands } from "./commands-server.ts";
+import {
+  configureCommandExecutionTelemetry,
+  shutdownTelemetry
+} from "./mcp-telemetry.ts";
 
 /**
 The environment variable that names the role this server serves.
@@ -60,11 +66,6 @@ export const COMMANDS_REGISTRY_ENV = "AUTODEV_COMMAND_REGISTRY";
 The approved catalogue's file name inside the Runtime's config directory.
 */
 export const APPROVED_CATALOGUE_FILE = "commands.json";
-
-/**
-How long a workspace lease may be held before it is considered abandoned.
-*/
-const LEASE_STALE_MS = 30 * 60 * 1000;
 
 export class CommandsAdmissionError extends Error {
   constructor(message: string) {
@@ -106,18 +107,58 @@ export function approvedCataloguePath(
     catalogueDirectory = path.resolve(configDirectory);
   }
   const catalogue = path.join(catalogueDirectory, APPROVED_CATALOGUE_FILE);
+  // Resolve the file too, not just its parent. A link to an editable
+  // catalogue must never be treated as an approved installed revision.
+  let resolvedCatalogue: string;
+  try {
+    resolvedCatalogue = realpathSync(catalogue);
+  } catch {
+    throw new CommandsAdmissionError("The approved command catalogue is unavailable.");
+  }
   let workspaceRoot: string;
   try {
     workspaceRoot = realpathSync(workspace);
   } catch {
     workspaceRoot = path.resolve(workspace);
   }
-  if (isWithin(catalogue, workspaceRoot)) {
+  if (
+    isWithin(catalogue, workspaceRoot) ||
+    isWithin(resolvedCatalogue, workspaceRoot)
+  ) {
     throw new CommandsAdmissionError(
       "The approved command catalogue resolves inside the authorized workspace; an agent that can edit it would be editing its own authority. Install the Runtime and run the command surface from the installed configuration."
     );
   }
+  if (resolvedCatalogue !== catalogue) {
+    throw new CommandsAdmissionError("The approved command catalogue must not be a symbolic link.");
+  }
   return catalogue;
+}
+
+/**
+Read one protected revision through a descriptor, refusing symbolic links,
+shared hard links and files writable by another user. The installed parent
+directory must also be protected by the Runtime admission boundary.
+*/
+function readApprovedCatalogue(cataloguePath: string): string {
+  const descriptor = openSync(
+    cataloguePath,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+  );
+  try {
+    const stat = fstatSync(descriptor);
+    if (
+      !stat.isFile() ||
+      stat.nlink !== 1 ||
+      (stat.mode & 0o022) !== 0 ||
+      (process.getuid && stat.uid !== process.getuid())
+    ) {
+      throw new CommandsAdmissionError("The approved command catalogue is not a protected regular file.");
+    }
+    return readFileSync(descriptor, "utf8");
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
 /**
@@ -130,27 +171,32 @@ export function catalogueDigest(content: string): string {
 /**
 A revocation check bound to one approved catalogue revision.
 
-The approved catalogue is re-read on every check, so an operator who
-replaces or removes it revokes the grant immediately -- including for a
-command that is already running, whose next lifecycle operation fails.
+The approved catalogue is re-read on every check. Replacement or removal
+revokes this grant permanently once observed. The command server checks
+active executions periodically as well as at lifecycle requests.
 */
 export function createApprovedCatalogueGrant(cataloguePath: string): {
   readonly digest: string;
   readonly catalogue: CommandCatalogue;
   isAuthorized(): boolean;
 } {
-  const content = readFileSync(cataloguePath, "utf8");
+  const content = readApprovedCatalogue(cataloguePath);
   const digest = catalogueDigest(content);
   const catalogue = parseCommandCatalogue(JSON.parse(content));
+  let revoked = false;
   return {
     digest,
     catalogue,
     isAuthorized(): boolean {
-      try {
-        return catalogueDigest(readFileSync(cataloguePath, "utf8")) === digest;
-      } catch {
-        return false;
+      if (!revoked) {
+        try {
+          revoked =
+            catalogueDigest(readApprovedCatalogue(cataloguePath)) !== digest;
+        } catch {
+          revoked = true;
+        }
       }
+      return !revoked;
     }
   };
 }
@@ -176,34 +222,39 @@ export function createWorkspaceLease(
   );
   return {
     tryAcquire(): (() => void) | null {
-      if (existsSync(lockPath)) {
-        try {
-          const age = Date.now() - statSync(lockPath).mtimeMs;
-          if (age > LEASE_STALE_MS) unlinkSync(lockPath);
-          else return null;
-        } catch {
-          return null;
-        }
-      }
+      // A timestamp cannot prove that a command or detached descendant
+      // has stopped. An abandoned lease stays closed until the Runtime
+      // can prove recovery (or the operator verifies it and removes it).
       let descriptor: number;
       try {
         descriptor = openSync(lockPath, "wx", 0o600);
       } catch {
         return null;
       }
+      let identity;
       try {
+        identity = fstatSync(descriptor);
         writeSync(descriptor, `${process.pid}\n`);
-      } finally {
+      } catch {
         closeSync(descriptor);
+        // Preserve the lease on an uncertain acquisition failure.
+        return null;
       }
       let isReleased = false;
       return () => {
         if (isReleased) return;
         isReleased = true;
         try {
-          unlinkSync(lockPath);
+          const current = lstatSync(lockPath);
+          if (current.dev === identity.dev && current.ino === identity.ino) {
+            unlinkSync(lockPath);
+          }
         } catch {
-          // The lock is already gone.
+          // The lock is already gone or cannot safely be inspected.
+        } finally {
+          // Retain the descriptor until release to prevent inode reuse
+          // from making a replacement lock look like our original.
+          closeSync(descriptor);
         }
       };
     }
@@ -302,20 +353,20 @@ export function resolveCommandsScope(
       `The Commands MCP requires ${COMMANDS_ROLE_ENV}; it serves one admitted role scope.`
     );
   }
-  const workspace = (
+  const requestedWorkspace = (
     commandsArgumentValue(options.args, "--workspace") ??
     environment[COMMANDS_WORKSPACE_ENV] ??
     ""
   ).trim();
-  if (!workspace || !path.isAbsolute(workspace)) {
+  if (!requestedWorkspace || !path.isAbsolute(requestedWorkspace)) {
     throw new CommandsAdmissionError(
       `The Commands MCP requires an absolute ${COMMANDS_WORKSPACE_ENV}.`
     );
   }
-  if (!existsSync(workspace)) {
-    throw new CommandsAdmissionError(
-      `The Commands MCP workspace does not exist: ${workspace}`
-    );
+  const workspace = realpathSync(requestedWorkspace);
+  const workspaceIdentity = statSync(workspace);
+  if (!workspaceIdentity.isDirectory()) {
+    throw new CommandsAdmissionError("The Commands MCP workspace is not a directory.");
   }
   const workspaceId =
     commandsArgumentValue(options.args, "--workspace-id")?.trim() ??
@@ -325,8 +376,13 @@ export function resolveCommandsScope(
   const approved = createApprovedCatalogueGrant(cataloguePath);
   const runDirectory = autodevRunDirectory(environment, home);
   const workspaceKey = commandWorkspaceKey(workspace);
+  const effective = effectiveCommands({
+    role,
+    workspaceId,
+    catalogue: approved.catalogue
+  });
   const executables = resolveTrustedExecutables(
-    [...new Set(Object.values(approved.catalogue.commands).map((entry) => entry.executable))],
+    [...new Set(effective.values().map((entry) => entry.executable))],
     environment,
     home
   );
@@ -344,7 +400,19 @@ export function resolveCommandsScope(
     scope,
     catalogue: approved.catalogue,
     digest: approved.digest,
-    isAuthorized: approved.isAuthorized,
+    isAuthorized() {
+      if (!approved.isAuthorized()) return false;
+      try {
+        const current = statSync(workspace);
+        return (
+          realpathSync(workspace) === workspace &&
+          current.dev === workspaceIdentity.dev &&
+          current.ino === workspaceIdentity.ino
+        );
+      } catch {
+        return false;
+      }
+    },
     workspaceKey
   };
 }
@@ -364,14 +432,7 @@ export async function startCommandsServer(
   close(): Promise<void>;
 }> {
   const lease = createWorkspaceLease(runDirectory, resolved.workspaceKey);
-  const effective = effectiveCommands({
-    role: resolved.role,
-    workspaceId: resolved.workspaceId,
-    catalogue: resolved.catalogue,
-    scope: resolved.scope,
-    isAuthorized: resolved.isAuthorized,
-    tryAcquireWorkspace: () => null
-  });
+  const effective = effectiveCommands(resolved);
   const isNeedsRegistry = effective
     .values()
     .some((definition) => definition.executionClass === "dependency_install");
@@ -384,21 +445,38 @@ export async function startCommandsServer(
   const scope: ApprovedCommandScope = registry
     ? { ...resolved.scope, registryEndpoint: registry.endpoint }
     : resolved.scope;
-  const created = createCommandsMcpServer({
-    role: resolved.role,
-    workspaceId: resolved.workspaceId,
-    catalogue: resolved.catalogue,
-    scope,
-    isAuthorized: resolved.isAuthorized,
-    tryAcquireWorkspace: lease.tryAcquire
-  });
-  const transport = new StdioServerTransport();
-  await created.server.connect(transport);
-  return {
-    server: created,
-    async close() {
-      await created.close();
+  let created: ReturnType<typeof createCommandsMcpServer> | undefined;
+  try {
+    created = createCommandsMcpServer({
+      role: resolved.role,
+      workspaceId: resolved.workspaceId,
+      catalogue: resolved.catalogue,
+      scope,
+      isAuthorized: resolved.isAuthorized,
+      tryAcquireWorkspace: lease.tryAcquire
+    });
+    await created.server.connect(new StdioServerTransport());
+  } catch (error) {
+    try {
+      await created?.close();
+    } finally {
       await registry?.close();
+    }
+    throw error;
+  }
+  const server = created;
+  let closing: Promise<void> | undefined;
+  return {
+    server,
+    close() {
+      closing ??= Promise.resolve().then(async () => {
+        try {
+          await server.close();
+        } finally {
+          await registry?.close();
+        }
+      });
+      return closing;
     }
   };
 }
@@ -406,7 +484,7 @@ export async function startCommandsServer(
 /**
 Start the server for the scope the trusted launcher described.
 */
-function runCommandsMain(): number {
+async function runCommandsMain(): Promise<void> {
   const environment = process.env;
   const home = environment.HOME?.trim() || homedir();
   try {
@@ -417,21 +495,34 @@ function runCommandsMain(): number {
       args: process.argv.slice(2)
     });
     const runDirectory = autodevRunDirectory(environment, home);
-    void startCommandsServer(resolved, runDirectory).catch((error: unknown) => {
-      process.stderr.write(
-        `autodev commands mcp: ${error instanceof Error ? error.message : String(error)}\n`
-      );
-      process.exitCode = 2;
-    });
-    return 0;
+    configureCommandExecutionTelemetry(resolved.role, resolved.workspaceId);
+    const running = await startCommandsServer(resolved, runDirectory);
+    // The SDK's stdio transport does not close on stdin EOF by itself.
+    // Do not leave active commands and a listening registry proxy behind
+    // when the trusted gateway closes or stops this backend.
+    const shutdown = (): void => {
+      void running.close().finally(shutdownTelemetry).catch(() => {
+        process.stderr.write("autodev commands mcp: shutdown failed\n");
+        process.exitCode = 2;
+      }).finally(() => {
+        process.stdin.off("end", shutdown);
+        process.off("SIGINT", shutdown);
+        process.off("SIGTERM", shutdown);
+      });
+    };
+    running.server.server.server.onclose = shutdown;
+    process.stdin.once("end", shutdown);
+    process.once("SIGINT", shutdown);
+    process.once("SIGTERM", shutdown);
+    if (process.stdin.readableEnded) shutdown();
   } catch (error) {
     process.stderr.write(
       `autodev commands mcp: ${error instanceof Error ? error.message : String(error)}\n`
     );
-    return 2;
+    process.exitCode = 2;
   }
 }
 
 if (isEntryPoint(import.meta.url)) {
-  process.exitCode = runCommandsMain();
+  void runCommandsMain();
 }

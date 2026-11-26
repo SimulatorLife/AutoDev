@@ -78,6 +78,12 @@ import {
   materializeRuntimeSourceGeneration,
   type RuntimeSourceTree
 } from "./runtime-source-generation.ts";
+import {
+  collectRuntimeDependencyClosures,
+  materializeRuntimeDependencyClosure,
+  referencedRuntimeDependencyClosure,
+  runtimeDependencyClosure
+} from "./runtime-dependency-closure.ts";
 import { userLevelSkills } from "./user-level-skills.ts";
 
 const OBSOLETE_RUNTIME_PATH_REASON = "obsolete-runtime-path";
@@ -246,6 +252,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/platform/runtime-mirror-package.ts",
   "runtime/src/platform/runtime-reconciliation.ts",
   "runtime/src/platform/runtime-source-generation.ts",
+  "runtime/src/platform/runtime-dependency-closure.ts",
   "runtime/src/platform/user-level-skills.ts",
   "runtime/src/platform/service-restart.ts",
   "runtime/src/platform/usage-stack.ts",
@@ -1159,7 +1166,8 @@ const RUNTIME_SOURCE_PREFIX = "runtime/src/";
 /**
  * The installed Runtime source tree: every `runtime/src` manifest module at
  * its path under `$CODEX_HOME/src`, the mirror package manifest, and the
- * `node_modules` the tree resolves Runtime's own dependencies through.
+ * protected dependency closure the tree resolves Runtime's own dependencies
+ * through (`runtime-dependency-closure.ts`).
  */
 export function runtimeSourceTree(
   repositoryRoot: string,
@@ -1179,10 +1187,10 @@ export function runtimeSourceTree(
       materialized: new Set<string>(RUNTIME_MODULES)
     })
   );
-  const nodeModules = nodeModuleLinks({ repositoryRoot, codexHome }).find(
-    (link) => link.owner === "source-generation"
-  )!.source;
-  return { files, nodeModules };
+  return {
+    files,
+    nodeModules: runtimeDependencyClosure(repositoryRoot, codexHome)
+  };
 }
 
 /**
@@ -1207,10 +1215,33 @@ function materializeRuntimeTree(
   ];
   for (const filePath of files)
     materializeRuntimeFile(source(filePath), target(filePath), 0o644);
+  materializeRuntimeDependencyClosure(repositoryRoot, codexHome);
   materializeRuntimeSourceGeneration(
     codexHome,
     runtimeSourceTree(repositoryRoot, codexHome)
   );
+  collectRuntimeDependencyClosures(
+    codexHome,
+    referencedRuntimeDependencyClosures(codexHome)
+  );
+}
+
+/**
+ * The closures some retained source generation still resolves through: a
+ * replaced generation keeps running long-lived sessions, so its closure stays
+ * until the generation itself is collected.
+ */
+function referencedRuntimeDependencyClosures(codexHome: string): Set<string> {
+  const referenced = new Set<string>();
+  for (const name of readdirSync(codexHome)) {
+    if (!name.startsWith(".src-")) continue;
+    const closure = referencedRuntimeDependencyClosure(
+      codexHome,
+      path.join(codexHome, name, "node_modules")
+    );
+    if (closure) referenced.add(closure);
+  }
+  return referenced;
 }
 
 function materializeScripts(hooks: string, source: FileTarget): void {
@@ -1222,8 +1253,14 @@ function materializeScripts(hooks: string, source: FileTarget): void {
       0o755
     );
   }
+  // Launchers are copies, never links into the checkout: a launcher decides
+  // which Runtime tree every MCP server runs from.
   for (const name of MCP_LAUNCHERS)
-    linkRuntimeSource(source(`scripts/${name}`), path.join(hooks, name));
+    materializeRuntimeFile(
+      source(`scripts/${name}`),
+      path.join(hooks, name),
+      0o755
+    );
 }
 
 function linkRuntimeConfigs(codexHome: string, source: FileTarget): void {
@@ -1270,61 +1307,15 @@ export function materializeCommandRules(
   }
 }
 
-export interface NodeModuleLink {
-  readonly source: string;
-  readonly target: string;
-  /**
-   * Who creates the link: the installer, directly under `$CODEX_HOME`, or the
-   * source generation, which carries its own link so it is complete before it
-   * is swapped in.
-   */
-  readonly owner: "codex-home" | "source-generation";
-}
-
 /**
- * `$CODEX_HOME/src` mirrors `runtime/src`, and pnpm installs each workspace
- * package's dependencies into that package's own `node_modules` -- so the
- * mirror resolves nothing Runtime declares from the copied sources alone.
- * That is how the router came to crash-loop under KeepAlive with
- * `Cannot find package 'zod'`: nothing was wrong with the copy, only with the
- * resolution environment it was dropped into. Link the owning package's
- * dependency tree beside the mirror root, and keep the repository-root link
- * that resolves the workspace packages the mirror imports
- * (`@simulatorlife/autodev-core`, `@simulatorlife/autodev-data`).
+ * Before the protected dependency closure, `$CODEX_HOME/node_modules` linked
+ * the checkout's root `node_modules`, which let installed launchers resolve
+ * MCP server binaries from the editable checkout. Nothing installed resolves
+ * through it now; a link that is still there is removed.
  */
-export function nodeModuleLinks(
-  options: Pick<MaterializeOptions, "repositoryRoot" | "codexHome">
-): readonly NodeModuleLink[] {
-  return [
-    {
-      source: path.join(options.repositoryRoot, "node_modules"),
-      target: path.join(options.codexHome, "node_modules"),
-      owner: "codex-home"
-    },
-    {
-      source: path.join(options.repositoryRoot, "runtime", "node_modules"),
-      // runtimeTarget() installs every `runtime/src/...` module under
-      // `$CODEX_HOME/src/...`, so node_modules beside that mirror root is the
-      // directory a copied module's own walk-up reaches first.
-      target: path.join(
-        runtimeTarget("runtime/src", options.codexHome),
-        "node_modules"
-      ),
-      owner: "source-generation"
-    }
-  ];
-}
-
-function linkNodeModules(options: MaterializeOptions): void {
-  for (const { source, target, owner } of nodeModuleLinks(options)) {
-    if (!exists(source))
-      throw new Error(`missing ${source}; run pnpm install --frozen-lockfile`);
-    if (owner !== "codex-home") continue;
-    if (exists(target) && !isSymlink(target)) {
-      rmSync(target, { recursive: true, force: true });
-    }
-    linkRuntimeSource(source, target);
-  }
+function removeCheckoutNodeModulesLink(codexHome: string): void {
+  const link = path.join(codexHome, "node_modules");
+  if (isSymlink(link)) unlinkSync(link);
 }
 
 function replaceSkillSymlinks(
@@ -2230,7 +2221,7 @@ export function materializeInstallation(options: MaterializeOptions): void {
   const launchd = new LaunchdClient();
   bootoutObsoleteLaunchLabels(launchd);
   removeObsoleteRuntimeArtifacts(options.codexHome, options.home, hooks);
-  linkNodeModules(options);
+  removeCheckoutNodeModulesLink(options.codexHome);
   const source: FileTarget = (filePath) =>
     path.join(options.repositoryRoot, filePath);
   const target: FileTarget = (filePath) =>
@@ -2296,7 +2287,7 @@ export function materializeInstallation(options: MaterializeOptions): void {
     options.autodevHome ?? resolveAutodevHome(process.env, options.home);
   if (path.resolve(autodevHome) !== path.resolve(options.codexHome)) {
     const autodevHooks = path.join(autodevHome, "hooks");
-    linkNodeModules({ ...options, codexHome: autodevHome });
+    removeCheckoutNodeModulesLink(autodevHome);
     materializeRuntimeTree(
       options.repositoryRoot,
       autodevHome,

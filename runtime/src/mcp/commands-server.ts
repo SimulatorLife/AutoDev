@@ -26,13 +26,13 @@ import type {
   Result,
   Task
 } from "@modelcontextprotocol/sdk/types.js";
-import { z } from "zod";
 
-import { isReadOnlyRole, roleContract } from "../shared/execution-contract.ts";
+import { roleContract } from "../shared/execution-contract.ts";
 import {
   type CommandCatalogue,
   type CommandDefinition,
   type CommandResult,
+  commandInputSchema,
   commandResultSchema,
   parseCommandCatalogue,
   resolveCommandArguments
@@ -42,6 +42,7 @@ import {
   prepareCommand,
   runApprovedCommand
 } from "./commands-execution.ts";
+import { recordCommandExecutionSpan } from "./mcp-telemetry.ts";
 
 /**
 How long a finished task's result is kept before the store drops it.
@@ -51,6 +52,8 @@ const RETENTION_MS = 120_000;
 The most tasks this scope may hold at once.
 */
 const MAX_RETAINED_TASKS = 32;
+/** Bound the active revocation detection interval without another protocol. */
+const REVOCATION_CHECK_MS = 250;
 
 interface ActiveCommand {
   readonly controller: AbortController;
@@ -97,9 +100,12 @@ export function isCommandEligibleInWorkspace(
 The command ids one role may run, and the definitions behind them.
 */
 export function effectiveCommands(
-  grant: CommandsServerGrant
+  grant: Pick<CommandsServerGrant, "role" | "workspaceId" | "catalogue">
 ): Map<string, CommandDefinition> {
-  const contract = roleContract(grant.role);
+  const contract = roleContract(grant.role, grant.workspaceId);
+  if (contract.readOnly === true || !contract.mcp.includes("commands")) {
+    throw new Error("Role is not authorized for command execution.");
+  }
   const allowed = new Set(contract.mcpTools?.commands);
   const catalogue = parseCommandCatalogue(grant.catalogue);
   const effective = new Map<string, CommandDefinition>();
@@ -229,18 +235,29 @@ export interface CommandsServer {
 
 export function createCommandsMcpServer(grant: CommandsServerGrant): CommandsServer {
   let isClosed = false;
+  let revoked = false;
+  const active = new Map<string, ActiveCommand>();
+  const isAuthorized = (): boolean => {
+    if (!revoked) {
+      try {
+        revoked = !grant.isAuthorized();
+      } catch {
+        revoked = true;
+      }
+      if (revoked) {
+        for (const execution of active.values()) execution.controller.abort();
+      }
+    }
+    return !isClosed && !revoked;
+  };
   const authorize = (): void => {
-    if (isClosed || !grant.isAuthorized()) {
+    if (!isAuthorized()) {
       throw new Error("Command execution grant is unavailable or revoked.");
     }
   };
   authorize();
-  const contract = roleContract(grant.role);
-  if (isReadOnlyRole(grant.role) || !contract.mcp.includes("commands")) {
-    throw new Error("Role is not authorized for command execution.");
-  }
   const effective = effectiveCommands(grant);
-  const active = new Map<string, ActiveCommand>();
+  const commandIds: string[] = [];
   const store = new CommandTaskStore(authorize, active);
   const server = new McpServer(
     { name: "commands", version: "1.0.0" },
@@ -254,17 +271,7 @@ export function createCommandsMcpServer(grant: CommandsServerGrant): CommandsSer
     }
   );
   for (const [commandId, definition] of effective) {
-    const inputShape: Record<string, z.ZodType> = {};
-    for (const [name, parameter] of Object.entries(definition.parameters)) {
-      inputShape[name] = z
-        .string()
-        .min(parameter.minLength)
-        .max(parameter.maxLength)
-        .describe(parameter.description);
-    }
-    // A strict object, so the schema the client sees says that an
-    // undeclared argument is refused rather than ignored.
-    const inputSchema = z.strictObject(inputShape);
+    const inputSchema = commandInputSchema(definition);
     // Do not advertise a tool the scope cannot actually launch.
     try {
       prepareCommand(grant.scope, definition);
@@ -278,8 +285,10 @@ export function createCommandsMcpServer(grant: CommandsServerGrant): CommandsSer
         inputSchema,
         outputSchema: commandResultSchema,
         annotations: {
-          readOnlyHint: definition.executionClass === "validation",
-          destructiveHint: definition.executionClass !== "validation",
+          // Even validation scripts may execute arbitrary project code and
+          // write within the workspace. These are conservative MCP hints.
+          readOnlyHint: false,
+          destructiveHint: true,
           idempotentHint: false,
           openWorldHint: definition.executionClass === "dependency_install"
         },
@@ -306,34 +315,49 @@ export function createCommandsMcpServer(grant: CommandsServerGrant): CommandsSer
               done: Promise.resolve()
             };
             active.set(task.taskId, execution);
+            // The SDK keeps the initiating request's signal alive for an
+            // ordinary call, but releases it after a native task-creation
+            // response. Cancel the former without making the latter depend
+            // on later status/result requests.
+            const abortRequest = (): void => execution.controller.abort();
+            extra.signal.addEventListener("abort", abortRequest, { once: true });
+            if (extra.signal.aborted) abortRequest();
+            const revocationCheck = setInterval(() => {
+              if (!isAuthorized()) execution.controller.abort();
+            }, REVOCATION_CHECK_MS);
+            revocationCheck.unref();
             execution.done = (async () => {
               try {
                 const started = performance.now();
                 let result: CommandResult;
                 try {
                   authorize();
-                  result = await runApprovedCommand(
+                  result = await recordCommandExecutionSpan(
                     commandId,
-                    definition,
-                    argv,
-                    grant.scope,
-                    execution.controller.signal
+                    definition.executionClass,
+                    () => runApprovedCommand(
+                      commandId,
+                      definition,
+                      argv,
+                      grant.scope,
+                      execution.controller.signal
+                    ),
+                    extra._meta
                   );
-                } catch (error) {
+                } catch {
                   result = {
                     commandId,
                     status: "infrastructure_error",
                     exitCode: null,
                     durationMs: Math.round(performance.now() - started),
                     stdout: "",
-                    stderr:
-                      error instanceof Error
-                        ? error.message.slice(0, 500)
-                        : "Command could not be executed within the approved scope.",
+                    // An exception from a process runner can include argv,
+                    // paths and environment values. Do not return it verbatim.
+                    stderr: "Command could not be executed within the approved scope.",
                     outputTruncated: false
                   };
                 }
-                if (!isClosed && !execution.cancelling) {
+                if (isAuthorized() && !execution.cancelling) {
                   await extra.taskStore.storeTaskResult(
                     task.taskId,
                     result.status === "infrastructure_error" ? "failed" : "completed",
@@ -343,6 +367,8 @@ export function createCommandsMcpServer(grant: CommandsServerGrant): CommandsSer
               } catch {
                 // A lost or revoked task cannot be replayed.
               } finally {
+                clearInterval(revocationCheck);
+                extra.signal.removeEventListener("abort", abortRequest);
                 active.delete(task.taskId);
                 release();
               }
@@ -363,10 +389,11 @@ export function createCommandsMcpServer(grant: CommandsServerGrant): CommandsSer
         }
       }
     );
+    commandIds.push(commandId);
   }
   return {
     server,
-    commandIds: effective.keys().toArray(),
+    commandIds,
     async close() {
       if (isClosed) return;
       isClosed = true;

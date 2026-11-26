@@ -86,7 +86,7 @@ export function runFileSurfaceHook(raw = readFileSync(0, "utf8")): number {
   logPreToolUseDenial({
     hook: "file-surface",
     policy: "file-surface",
-    role: context.role ?? "root",
+    role: context.role,
     model: context.model,
     session: context.sessionId,
     turn: context.turnId,

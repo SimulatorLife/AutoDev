@@ -23,7 +23,7 @@ import test from "node:test";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { z } from "zod";
+import { CreateTaskResultSchema } from "@modelcontextprotocol/sdk/types.js";
 
 const SERVER = path.resolve(
   import.meta.dirname,
@@ -32,6 +32,15 @@ const SERVER = path.resolve(
   "mcp",
   "commands-main.ts"
 );
+
+/** The test process's environment, as the stdio transport's string map. */
+function processEnvironment(): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(process.env).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined
+    )
+  );
+}
 
 /** A disposable workspace with a Git repository in it. */
 function workspaceFixture(): string {
@@ -50,7 +59,7 @@ async function connect(
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [SERVER, "--role", role, "--workspace", workspace],
-    env: { ...process.env }
+    env: processEnvironment()
   });
   const client = new Client({ name: "commands-integration", version: "1.0.0" });
   await client.connect(transport);
@@ -141,7 +150,7 @@ test(
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [SERVER, "--role", "explorer", "--workspace", workspace],
-      env: { ...process.env }
+      env: processEnvironment()
     });
     const client = new Client({ name: "commands-integration", version: "1.0.0" });
     await assert.rejects(() => client.connect(transport));
@@ -160,7 +169,7 @@ test(
     t.after(() => close());
 
     // An augmented call receives the task immediately rather than a result.
-    const augmented = (await client.request(
+    const augmented = await client.request(
       {
         method: "tools/call",
         params: {
@@ -169,19 +178,15 @@ test(
           task: { ttl: 60000 }
         }
       },
-      // The SDK's client schema does not model the augmentation, so the raw
-      // request is issued here.
-      z
-        .object({ task: z.object({ taskId: z.string() }).passthrough() })
-        .passthrough()
-    )) as { task?: { taskId?: string } };
-    assert.ok(augmented.task?.taskId, "the augmented call must return a task");
+      CreateTaskResultSchema
+    );
+    assert.ok(augmented.task.taskId, "the augmented call must return a task");
 
-    const taskId = augmented.task.taskId!;
+    const taskId = augmented.task.taskId;
     let status = "";
     for (let attempt = 0; attempt < 60; attempt += 1) {
       const observed = await client.experimental.tasks.getTask(taskId);
-      status = observed.task.status;
+      status = observed.status;
       if (status === "completed" || status === "failed" || status === "cancelled") {
         break;
       }
@@ -207,7 +212,7 @@ test(
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [SERVER, "--role", "worker", "--workspace", repositoryRoot],
-      env: { ...process.env }
+      env: processEnvironment()
     });
     const client = new Client({ name: "commands-integration", version: "1.0.0" });
     await assert.rejects(() => client.connect(transport));

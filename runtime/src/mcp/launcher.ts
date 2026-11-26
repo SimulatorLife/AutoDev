@@ -10,14 +10,13 @@ import { declaredRoleNames } from "@simulatorlife/autodev-runtime/shared/executi
 import {
   isExecutable,
   resolveCocoIndexBinary,
-  resolveCodeGraphContextBinary
+  resolveCodeGraphContextBinary,
+  resolveRuntimePackageBin,
+  runtimeBinDirectory
 } from "@simulatorlife/autodev-runtime/shared/executables";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import { resolveSkillRoots } from "@simulatorlife/autodev-runtime/shared/skill-reads";
-import {
-  resolveRuntimeSourcePath,
-  resolveRuntimeSourceRoot
-} from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
+import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 import {
   MCP_FILESYSTEM_READ_ONLY_ENV,
   MCP_FILESYSTEM_WORKSPACE_ONLY_ENV,
@@ -29,6 +28,9 @@ import {
   MCP_SERVER_XACPX
 } from "@simulatorlife/autodev-runtime/shared/tool-names";
 import { resolveXacpxOrchestrationSocketPath } from "../xacpx/orchestration-ipc.ts";
+
+/** The Runtime source directory this launcher module belongs to. */
+const RUNTIME_SOURCE_DIRECTORY = path.resolve(import.meta.dirname, "..");
 
 export type McpName =
   | "lsp"
@@ -81,23 +83,28 @@ export interface McpCommand {
  */
 export function resolveMcpCommand(
   name: string,
-  repoRoot: string,
   env: NodeJS.ProcessEnv = process.env
 ): McpCommand {
   const tool = name as McpName;
-  if (tool === "lsp")
+  // Every Node-based server runs from the Runtime's own dependency tree with
+  // the current Node: the walk starts at this module, so an installed Runtime
+  // runs its protected closure and no configured root or caller PATH can swap
+  // the executable for one from an editable checkout.
+  const node = process.execPath;
+  const nodeBin = path.dirname(node);
+  if (tool === "lsp") {
+    const languageServers = runtimeBinDirectory("typescript-language-server");
     return {
-      binary: path.join(repoRoot, "node_modules/.bin/lsp-mcp-server"),
-      args: [],
-      pathPrepend: [
-        path.join(repoRoot, "node_modules/.bin"),
-        path.dirname(process.execPath)
-      ]
+      binary: node,
+      args: [resolveRuntimePackageBin("lsp-mcp-server", "lsp-mcp-server")],
+      pathPrepend: [...(languageServers ? [languageServers] : []), nodeBin]
     };
+  }
   if (tool === "playwright")
     return {
-      binary: path.join(repoRoot, "node_modules/.bin/playwright-mcp"),
+      binary: node,
       args: [
+        resolveRuntimePackageBin("@playwright/mcp", "playwright-mcp"),
         ...(env.AUTODEV_PLAYWRIGHT_HEADED === "1" ? [] : ["--headless"]),
         "--no-sandbox",
         "--isolated"
@@ -109,9 +116,15 @@ export function resolveMcpCommand(
     // `runMcp`, which resolves it. A read-only role's server lists only the
     // tools that cannot change the filesystem.
     return {
-      binary: path.join(repoRoot, "node_modules/.bin/mcp-server-filesystem"),
-      args: env[MCP_FILESYSTEM_READ_ONLY_ENV] === "1" ? ["--read-only"] : [],
-      pathPrepend: [path.dirname(process.execPath)]
+      binary: node,
+      args: [
+        resolveRuntimePackageBin(
+          "@modelcontextprotocol/server-filesystem",
+          "mcp-server-filesystem"
+        ),
+        ...(env[MCP_FILESYSTEM_READ_ONLY_ENV] === "1" ? ["--read-only"] : [])
+      ],
+      pathPrepend: [nodeBin]
     };
   if (tool === "cocoindex-code") {
     const binary = resolveCocoIndexBinary(env);
@@ -131,50 +144,43 @@ export function resolveMcpCommand(
   }
   if (tool === MCP_SERVER_GITHUB) {
     return {
-      binary: path.join(repoRoot, "node_modules/.bin/mcp-server-github"),
-      args: [],
-      pathPrepend: [path.dirname(process.execPath)]
+      binary: node,
+      args: [
+        resolveRuntimePackageBin(
+          "@modelcontextprotocol/server-github",
+          "mcp-server-github"
+        )
+      ],
+      pathPrepend: [nodeBin]
     };
   }
   if (tool === MCP_SERVER_XACPX) {
-    const args = ["mcp-stdio"];
+    const args = [resolveRuntimePackageBin("@ganglion/xacpx", "xacpx"), "mcp-stdio"];
     const coordinatorSession = env.AUTODEV_XACPX_COORDINATOR_SESSION?.trim();
     if (coordinatorSession)
       args.push("--coordinator-session", coordinatorSession);
     const xacpxWorkspace = env.AUTODEV_XACPX_WORKSPACE?.trim();
     if (xacpxWorkspace) args.push("--workspace", xacpxWorkspace);
-    const checkoutBin = path.join(repoRoot, "runtime/node_modules/.bin/xacpx");
-    const installedBin = path.join(repoRoot, "src/node_modules/.bin/xacpx");
-    const binary = existsSync(checkoutBin) ? checkoutBin : installedBin;
+    const acpBins = runtimeBinDirectory("@ganglion/xacpx");
     return {
-      binary,
+      binary: node,
       args,
-      pathPrepend: [
-        path.dirname(binary),
-        path.join(repoRoot, "node_modules/.bin"),
-        path.dirname(process.execPath)
-      ]
+      pathPrepend: [...(acpBins ? [acpBins] : []), nodeBin]
     };
   }
   if (tool === MCP_SERVER_COMMANDS) {
-    // The Commands MCP is served from the Runtime's own source tree, the same
-    // way the Playtest MCP is, so it works from a checkout and from the
-    // installed tree without a second code path.
+    // Runtime-owned servers are this launcher's own sibling modules, so the
+    // code that runs is the tree the launcher itself was loaded from.
     return {
-      binary: process.execPath,
-      args: [resolveRuntimeSourcePath(repoRoot, "mcp/commands-main.ts")],
-      pathPrepend: [path.dirname(process.execPath)]
+      binary: node,
+      args: [path.join(RUNTIME_SOURCE_DIRECTORY, "mcp/commands-main.ts")],
+      pathPrepend: [nodeBin]
     };
   }
-  if (tool === MCP_SERVER_PLAYTEST || tool === "playtest") {    return {
-      binary: process.execPath,
-      // The Runtime lives at <root>/runtime/src in a checkout and at
-      // <root>/src once it is materialized into CODEX_HOME. The root alone does
-      // not say which layout it is, so the module path has to come from the
-      // resolver that knows both; joining "runtime/src" onto the root points
-      // the server at a path that does not exist in the installed tree, and the
-      // MCP server dies on startup instead of serving the playtest tools.
-      args: [resolveRuntimeSourcePath(repoRoot, "playtesting/mcp-main.ts")],
+  if (tool === MCP_SERVER_PLAYTEST || tool === "playtest") {
+    return {
+      binary: node,
+      args: [path.join(RUNTIME_SOURCE_DIRECTORY, "playtesting/mcp-main.ts")],
       pathPrepend: []
     };
   }
@@ -364,7 +370,7 @@ export function runMcp(
   repoRoot: string,
   env: NodeJS.ProcessEnv = process.env
 ): number {
-  const command = resolveMcpCommand(name, repoRoot, env);
+  const command = resolveMcpCommand(name, env);
   const workspace = resolveMcpWorkspace(env);
   if (!isExecutable(command.binary))
     throw new Error(

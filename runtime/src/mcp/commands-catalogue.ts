@@ -71,6 +71,13 @@ export const commandDefinitionSchema = z
       }
     }
     const declared = new Set(Object.keys(definition.parameters));
+    if (declared.size > 16) {
+      context.addIssue({
+        code: "custom",
+        path: ["parameters"],
+        message: "A command may declare at most 16 parameters"
+      });
+    }
     const referenced = new Set<string>();
     for (const [index, element] of definition.args.entries()) {
       const placeholder = placeholderPattern.exec(element);
@@ -99,7 +106,10 @@ export const commandDefinitionSchema = z
 
 export const commandCatalogueSchema = z.strictObject({
   version: z.literal(1),
-  commands: z.record(parameterName, commandDefinitionSchema)
+  commands: z.record(parameterName, commandDefinitionSchema).refine(
+    (commands) => Object.keys(commands).length <= 64,
+    "A catalogue may declare at most 64 commands"
+  )
 });
 
 export type CommandParameter = z.infer<typeof commandParameterSchema>;
@@ -140,83 +150,51 @@ export function resolveCommandArguments(
   definition: CommandDefinition,
   input: Readonly<Record<string, unknown>>
 ): string[] {
-  const declared = Object.keys(definition.parameters);
-  const provided = Object.keys(input);
-  for (const name of provided) {
-    if (!Object.hasOwn(definition.parameters, name)) {
-      throw new CommandCatalogueError(
-        `Command does not accept the parameter "${name}".`,
-        "UNKNOWN_PARAMETER"
-      );
+  const validated = commandInputSchema(definition).safeParse(input);
+  if (!validated.success) {
+    // Do not return Zod's raw messages: invalid values or undeclared
+    // parameter names can themselves contain sensitive caller content.
+    for (const name of Object.keys(input)) {
+      if (!Object.hasOwn(definition.parameters, name)) {
+        throw new CommandCatalogueError(
+          "Command received an undeclared parameter.",
+          "UNKNOWN_PARAMETER"
+        );
+      }
     }
+    for (const name of Object.keys(definition.parameters)) {
+      if (!Object.hasOwn(input, name) || typeof input[name] !== "string") {
+        throw new CommandCatalogueError(
+          `Command requires the parameter "${name}".`,
+          "MISSING_PARAMETER"
+        );
+      }
+    }
+    throw new CommandCatalogueError(
+      "Command parameter violates its declared bounds or contains a NUL byte.",
+      "INVALID_PARAMETER"
+    );
   }
-  const arguments_: string[] = [];
-  for (const element of definition.args) {
+  return definition.args.map((element) => {
     const placeholder = placeholderPattern.exec(element);
-    if (!placeholder) {
-      arguments_.push(element);
-      continue;
-    }
-    const name = placeholder[1]!;
-    const parameter = definition.parameters[name]!;
-    const value = input[name];
-    if (typeof value !== "string") {
-      throw new CommandCatalogueError(
-        `Command requires the parameter "${name}".`,
-        "MISSING_PARAMETER"
-      );
-    }
-    if (value.includes("\0")) {
-      throw new CommandCatalogueError(
-        `The parameter "${name}" must not contain a NUL byte.`,
-        "INVALID_PARAMETER"
-      );
-    }
-    if (value.length < parameter.minLength || value.length > parameter.maxLength) {
-      throw new CommandCatalogueError(
-        `The parameter "${name}" must be between ${parameter.minLength} and ${parameter.maxLength} characters.`,
-        "INVALID_PARAMETER"
-      );
-    }
-    arguments_.push(value);
-  }
-  for (const name of declared) {
-    if (!Object.hasOwn(input, name)) {
-      throw new CommandCatalogueError(
-        `Command requires the parameter "${name}".`,
-        "MISSING_PARAMETER"
-      );
-    }
-  }
-  return arguments_;
+    return placeholder ? validated.data[placeholder[1]!]! : element;
+  });
 }
 
-/**
-The JSON Schema for one command's input, derived from its parameters.
-
-The schema is what the MCP client sees, so it is derived from the same
-declaration the executor enforces rather than written twice.
-*/
-export function commandInputSchema(
-  definition: CommandDefinition
-): Record<string, unknown> {
-  const properties: Record<string, unknown> = {};
-  const required: string[] = [];
+/** One source for the MCP input schema and parameter validation. */
+export function commandInputSchema(definition: CommandDefinition) {
+  const shape: Record<string, z.ZodString> = {};
   for (const [name, parameter] of Object.entries(definition.parameters)) {
-    properties[name] = {
-      type: "string",
-      description: parameter.description,
-      minLength: parameter.minLength,
-      maxLength: parameter.maxLength
-    };
-    required.push(name);
+    shape[name] = z
+      .string()
+      .min(parameter.minLength)
+      .max(parameter.maxLength)
+      .refine((value) => !value.includes("\0"), {
+        message: "A parameter must not contain a NUL byte"
+      })
+      .describe(parameter.description);
   }
-  return {
-    type: "object",
-    properties,
-    required,
-    additionalProperties: false
-  };
+  return z.strictObject(shape);
 }
 
 export const commandResultSchema = z.strictObject({

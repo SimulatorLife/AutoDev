@@ -11,6 +11,7 @@ A fixed command allowlist is not a sandbox. `pnpm test` runs repository
 code and `pnpm install` runs package lifecycle scripts, so every descendant
 is constrained independently of the command's own text.
 */
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import path from "node:path";
@@ -39,7 +40,7 @@ exchanging any identity.
 */
 export function commandWorkspaceKey(workspace: string): string {
   return createHash("sha256")
-    .update(path.resolve(workspace))
+    .update(directory(workspace))
     .digest("hex")
     .slice(0, 16);
 }
@@ -100,6 +101,39 @@ export interface TrustedExecutables {
 }
 
 /**
+The binary a macOS developer-tool stub runs.
+
+`/usr/bin/git` and its siblings are `xcrun` trampolines: at run time they
+load `libxcrun` from the selected developer directory and re-exec the real
+tool there. Under a confined profile that directory is unreadable, so the
+stub fails before the tool starts ("unable to load libxcrun"). The real
+binary is resolved here, outside the sandbox, so the confined command runs
+it directly and its toolchain root is the developer directory -- not the
+stub's `/usr/bin`. A name `xcrun` does not resolve inside the selected
+developer directory is not a stub and stays as resolved.
+*/
+function developerToolBinary(name: string, resolved: string): string {
+  if (process.platform !== "darwin" || path.dirname(resolved) !== "/usr/bin")
+    return resolved;
+  try {
+    const options = {
+      encoding: "utf8" as const,
+      stdio: ["ignore", "pipe", "ignore"] as ["ignore", "pipe", "ignore"],
+      timeout: 5000
+    };
+    const developer = realpathSync(
+      execFileSync("/usr/bin/xcode-select", ["-p"], options).trim()
+    );
+    const found = realpathSync(
+      execFileSync("/usr/bin/xcrun", ["--find", name], options).trim()
+    );
+    return isWithin(found, developer) ? found : resolved;
+  } catch {
+    return resolved;
+  }
+}
+
+/**
 Resolve the executables a catalogue names, from trusted locations only.
 
 The resolution never consults the workspace and never trusts a PATH the
@@ -121,7 +155,7 @@ export function resolveTrustedExecutables(
     if (!resolved) {
       throw new Error(`Command executable "${name}" is not installed.`);
     }
-    executables[name] = realpathSync(resolved);
+    executables[name] = developerToolBinary(name, realpathSync(resolved));
   }
   for (const entry of Object.values(executables)) {
     roots.add(path.dirname(entry));
@@ -306,10 +340,23 @@ export function prepareCommand(
     }
     return path.dirname(resolved);
   });
-  const registryPort =
-    definition.executionClass === "dependency_install" && scope.registryEndpoint
-      ? Number(new URL(scope.registryEndpoint).port)
-      : undefined;
+  let registryPort: number | undefined;
+  if (definition.executionClass === "dependency_install" && scope.registryEndpoint) {
+    const endpoint = new URL(scope.registryEndpoint);
+    if (
+      endpoint.protocol !== "http:" ||
+      endpoint.hostname !== "127.0.0.1" ||
+      endpoint.username ||
+      endpoint.password ||
+      endpoint.pathname !== "/" ||
+      endpoint.search ||
+      endpoint.hash ||
+      !endpoint.port
+    ) {
+      throw new Error("Dependency installation requires a dedicated loopback registry endpoint.");
+    }
+    registryPort = Number(endpoint.port);
+  }
   if (!registryPort && definition.executionClass === "dependency_install") {
     throw new Error("Dependency installation requires an approved package-registry boundary.");
   }

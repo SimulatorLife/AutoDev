@@ -16,7 +16,9 @@ test("maps every known Codex originator onto its client surface", () => {
 });
 
 test("keeps an unrecognised originator distinct from an unobserved one", () => {
-  assert.equal(clientSurfaceFromOriginator("some_future_client"), "other");
+  for (const originator of ["some_future_client", "__proto__", "constructor"]) {
+    assert.equal(clientSurfaceFromOriginator(originator), "other");
+  }
   assert.equal(clientSurfaceFromOriginator("  "), null);
   assert.equal(clientSurfaceFromOriginator(undefined), null);
   assert.equal(formatClientSurface(null), "Not observed");

@@ -314,6 +314,17 @@ function applyAgentEvent(
   counters: AgentEventCounters
 ): void {
   const type = event.type as string;
+  if (type === "skill_used" || type === "skill_failed") {
+    const accepted =
+      type === "skill_used"
+        ? recordBridgeSkillUsed({ event, context })
+        : recordBridgeSkillFailed({ event, context });
+    if (accepted) {
+      counters.accepted += 1;
+      recordAgentLiveFeedEvent(deps, event, context, requestId);
+    }
+    return;
+  }
   recordAgentLiveFeedEvent(deps, event, context, requestId);
   if (type === "subagent_tools_unavailable") {
     recordSpawnFailure({
@@ -336,14 +347,6 @@ function applyAgentEvent(
   }
   if (type === "skill_exposed") {
     recordBridgeSkillExposure({ event, context });
-    return;
-  }
-  if (type === "skill_used") {
-    if (recordBridgeSkillUsed({ event, context })) counters.accepted += 1;
-    return;
-  }
-  if (type === "skill_failed") {
-    if (recordBridgeSkillFailed({ event, context })) counters.accepted += 1;
     return;
   }
   if (type === "mcp_exposed") {

@@ -272,12 +272,14 @@ test("a process started before a swap keeps importing from its own generation", 
 
 test("install-check verifies the generation symlink, package.json and node_modules link", () => {
   const home = codexHome();
+  const closure = path.join(home, ".deps-0123456789abcdef", "node_modules");
+  mkdirSync(closure, { recursive: true });
   const expected = tree(
     {
       "router/server.ts": "export const v = 1;\n",
       "package.json": '{\n  "name": "x"\n}\n'
     },
-    "/expected/node_modules"
+    closure
   );
   materializeRuntimeSourceGeneration(home, expected, 1000);
 

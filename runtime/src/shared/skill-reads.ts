@@ -82,15 +82,22 @@ const ARRAY_PATH_KEYS = ["files", "paths", "file_paths"] as const;
 
 const LEADING_SEPARATORS = /^[\\/]+/;
 
-export function normaliseSkillReadPath(raw: unknown): string | null {
+export function normaliseSkillReadPath(
+  raw: unknown,
+  cwd: string | null = null
+): string | null {
   const home = homedir();
   if (typeof raw !== "string") return null;
   const trimmed = raw.trim().replaceAll(/^['"]|['"]$/g, "");
   if (!trimmed) return null;
   let result = trimmed;
-  if (result.startsWith("~")) result = path.join(home, result.slice(1));
-  if (!path.isAbsolute(result)) result = path.resolve(result);
-  return result;
+  if (result === "~" || result.startsWith("~/")) {
+    result = path.join(home, result.slice(1));
+  } else if (result.startsWith("~")) {
+    // A named user's shell expansion is not known to the hook.
+    return null;
+  }
+  return path.resolve(cwd && path.isAbsolute(cwd) ? cwd : process.cwd(), result);
 }
 
 /** Reuses the canonical shell tokenizer owned by `read-only-policy.ts`. */
@@ -173,7 +180,7 @@ export function matchSkillReadTarget(
   customRoots?: readonly string[]
 ): { skill: string; root: string } | null {
   if (!filePath) return null;
-  const normalised = filePath.replaceAll(/[\\/]+/g, path.sep);
+  const normalised = path.normalize(filePath.replaceAll(/[\\/]+/g, path.sep));
   if (!isSkillMarkdownPath(normalised)) return null;
   const roots = customRoots ?? resolveSkillRoots();
   for (const rootRaw of roots) {

@@ -204,12 +204,6 @@ importers:
       '@eslint/js':
         specifier: ^10.0.1
         version: 10.0.1(eslint@10.15.0(jiti@2.7.0)(supports-color@7.2.0))
-      '@modelcontextprotocol/server-filesystem':
-        specifier: ^2.4.0
-        version: 2.4.0
-      '@modelcontextprotocol/server-github':
-        specifier: 2025.4.8
-        version: 2025.4.8
       '@opentelemetry/api':
         specifier: ^1.10.0
         version: 1.10.0
@@ -237,9 +231,6 @@ importers:
       '@opentelemetry/semantic-conventions':
         specifier: ^1.45.0
         version: 1.45.0
-      '@playwright/mcp':
-        specifier: ^0.0.86
-        version: 0.0.86
       '@simulatorlife/autodev-core':
         specifier: workspace:*
         version: link:core
@@ -300,9 +291,6 @@ importers:
       globals:
         specifier: ^17.14.0
         version: 17.14.0
-      lsp-mcp-server:
-        specifier: ^1.1.27
-        version: 1.1.27(supports-color@7.2.0)
       playwright-core:
         specifier: 1.65.1
         version: 1.65.1
@@ -321,9 +309,6 @@ importers:
       typescript-eslint:
         specifier: ^8.73.0
         version: 8.73.0(eslint@10.15.0(jiti@2.7.0)(supports-color@7.2.0))(supports-color@7.2.0)(typescript@6.0.3)
-      typescript-language-server:
-        specifier: ^6.1.0
-        version: 6.1.0
 
   console:
     dependencies:
@@ -428,6 +413,12 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.32.2
         version: 1.32.2(supports-color@7.2.0)(zod@4.6.7)
+      '@modelcontextprotocol/server-filesystem':
+        specifier: ^2.4.0
+        version: 2.4.0
+      '@modelcontextprotocol/server-github':
+        specifier: 2025.4.8
+        version: 2025.4.8
       '@opentelemetry/api':
         specifier: ^1.10.0
         version: 1.10.0
@@ -455,6 +446,9 @@ importers:
       '@opentelemetry/semantic-conventions':
         specifier: ^1.45.0
         version: 1.45.0
+      '@playwright/mcp':
+        specifier: ^0.0.86
+        version: 0.0.86
       '@simulatorlife/autodev-core':
         specifier: workspace:*
         version: link:../core
@@ -470,6 +464,9 @@ importers:
       execa:
         specifier: 10.2.1
         version: 10.2.1
+      lsp-mcp-server:
+        specifier: ^1.1.27
+        version: 1.1.27(supports-color@7.2.0)
       playwright-core:
         specifier: 1.65.1
         version: 1.65.1
@@ -482,6 +479,12 @@ importers:
       supergateway:
         specifier: 4.2.2
         version: 4.2.2(hono@4.13.19)(supports-color@7.2.0)
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+      typescript-language-server:
+        specifier: ^6.1.0
+        version: 6.1.0
       zod:
         specifier: ^4.6.7
         version: 4.6.7

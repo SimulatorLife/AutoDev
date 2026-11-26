@@ -31,8 +31,6 @@
     "@e18e/eslint-plugin": "^0.8.1",
     "@eslint/compat": "^2.1.1",
     "@eslint/js": "^10.0.1",
-    "@modelcontextprotocol/server-filesystem": "^2.4.0",
-    "@modelcontextprotocol/server-github": "2025.4.8",
     "@opentelemetry/api": "^1.10.0",
     "@opentelemetry/context-async-hooks": "^3.1.1",
     "@opentelemetry/core": "^3.1.1",
@@ -42,7 +40,6 @@
     "@opentelemetry/sdk-metrics": "^3.1.1",
     "@opentelemetry/sdk-trace": "^3.1.1",
     "@opentelemetry/semantic-conventions": "^1.45.0",
-    "@playwright/mcp": "^0.0.86",
     "@simulatorlife/autodev-core": "workspace:*",
     "@simulatorlife/autodev-data": "workspace:*",
     "@simulatorlife/autodev-runtime": "workspace:*",
@@ -63,13 +60,11 @@
     "eslint-plugin-unicorn": "^80.0.0",
     "eslint-plugin-unused-imports": "^4.4.1",
     "globals": "^17.14.0",
-    "lsp-mcp-server": "^1.1.27",
     "playwright-core": "1.65.1",
     "prettier": "^3.10.1",
     "rulesync": "43.14.0",
     "smol-toml": "^1.9.1",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.73.0",
-    "typescript-language-server": "^6.1.0"
+    "typescript-eslint": "^8.73.0"
   }
 }

@@ -53,6 +53,7 @@ import {
   providerContract,
   roleContract
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import { runtimeBinDirectory } from "@simulatorlife/autodev-runtime/shared/executables";
 import { resolveChatgptMcpApp } from "@simulatorlife/autodev-runtime/shared/opencli-mcp-app";
 import { composeRoleSystemPrompt } from "@simulatorlife/autodev-runtime/shared/role-prompts";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
@@ -342,47 +343,38 @@ function defaultAcpTransportFactory(
   };
 }
 
+/**
+ * A Runtime dependency's bin shim, from the dependency tree this module
+ * resolves through -- the installed Runtime's protected closure, never a
+ * configured repository root.
+ */
 function resolvePackageBinary(
+  packageName: string,
   name: string,
   environmentKey: string,
-  environment: NodeJS.ProcessEnv = process.env,
-  repositoryRoot: string = resolveRuntimeSourceRoot(
-    import.meta.dirname,
-    environment.AUTODEV_REPO_ROOT
-  )
+  environment: NodeJS.ProcessEnv
 ): string {
   const configured = environment[environmentKey]?.trim();
   if (configured) return configured;
-  const candidates = [
-    path.join(repositoryRoot, "runtime", "node_modules", ".bin", name),
-    path.join(repositoryRoot, "src", "node_modules", ".bin", name),
-    path.join(repositoryRoot, "node_modules", ".bin", name)
-  ];
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) return candidate;
-  }
+  const binDirectory = runtimeBinDirectory(packageName);
+  const candidate = binDirectory ? path.join(binDirectory, name) : null;
+  if (candidate && existsSync(candidate)) return candidate;
   throw new Error(
-    `${name} binary not found under ${repositoryRoot}; run pnpm install or set ${environmentKey}.`
+    `${name} binary is not in the Runtime dependency tree; reinstall AutoDev or set ${environmentKey}.`
   );
 }
 
 export function resolveXacpxBinaries(
-  environment: NodeJS.ProcessEnv = process.env,
-  repositoryRoot?: string
+  environment: NodeJS.ProcessEnv = process.env
 ): XacpxBinaries {
   return {
     xacpxBin: resolvePackageBinary(
+      "@ganglion/xacpx",
       "xacpx",
       "AUTODEV_XACPX_BIN",
-      environment,
-      repositoryRoot
+      environment
     ),
-    acpxBin: resolvePackageBinary(
-      "acpx",
-      "AUTODEV_ACPX_BIN",
-      environment,
-      repositoryRoot
-    )
+    acpxBin: resolvePackageBinary("acpx", "acpx", "AUTODEV_ACPX_BIN", environment)
   };
 }
 

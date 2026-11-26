@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { z } from "zod";
 
+import { findRuntimePackageDirectory } from "../shared/executables.ts";
 import { isReadOnlyRole } from "../shared/execution-contract.ts";
 import { commandWorkspaceKey } from "./commands-execution.ts";
 import { resolveSkillRoots } from "../shared/skill-reads.ts";
@@ -74,12 +75,12 @@ function isWithin(child: string, parent: string): boolean {
   );
 }
 
-function resolveLauncherScript(repositoryRoot: string): string {
-  const checkout = path.join(repositoryRoot, "runtime/src/mcp/launcher.ts");
-  if (existsSync(checkout)) return realpathSync(checkout);
-  const installed = path.join(repositoryRoot, "src/mcp/launcher.ts");
-  if (existsSync(installed)) return realpathSync(installed);
-  throw new Error("AutoDev MCP launcher is missing");
+/**
+ * The MCP launcher beside this module: the confined backends run the Runtime
+ * tree this module was loaded from, never one a caller-named root points at.
+ */
+function resolveLauncherScript(): string {
+  return realpathSync(path.join(import.meta.dirname, "launcher.ts"));
 }
 
 function resolveDirectNodeExecutable(node: string, cwd: string): string {
@@ -154,8 +155,14 @@ export function externalMcpBackend(
   const physicalWorkspace = physicalPath(workspace);
 
   if (server === MCP_SERVER_FILESYSTEM) {
-    const modules = path.join(repositoryRoot, "node_modules");
-    const packageRoot = realpathSync(path.join(modules, packageName));
+    // The server package comes from the Runtime dependency tree this module
+    // resolves through (the installed protected closure), not from a root the
+    // caller names.
+    const packageDirectory = findRuntimePackageDirectory(packageName);
+    if (!packageDirectory)
+      throw new Error("Filesystem MCP package is not in the Runtime dependency tree");
+    const packageRoot = realpathSync(packageDirectory);
+    const modules = path.dirname(path.dirname(packageDirectory));
     const manifest = manifestSchema.parse(
       JSON.parse(readFileSync(path.join(packageRoot, "package.json"), "utf8"))
     );
@@ -191,7 +198,7 @@ export function externalMcpBackend(
     };
   }
 
-  const launcher = resolveLauncherScript(repositoryRoot);
+  const launcher = resolveLauncherScript();
 
   if (server === MCP_SERVER_LSP) {
     return {

@@ -3,21 +3,34 @@ import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
   rmSync,
   symlinkSync,
+  utimesSync,
   writeFileSync
 } from "node:fs";
+import { once } from "node:events";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
+
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { InMemorySpanExporter } from "@opentelemetry/sdk-trace";
+import { z } from "zod";
 
 import {
   CommandCatalogueError,
   type CommandDefinition,
+  type CommandResult,
+  commandInputSchema,
   parseCommandCatalogue,
   resolveCommandArguments
 } from "../src/mcp/commands-catalogue.ts";
@@ -33,17 +46,25 @@ import {
   approvedCataloguePath,
   catalogueDigest,
   createApprovedCatalogueGrant,
-  createWorkspaceLease
+  createWorkspaceLease,
+  resolveCommandsScope
 } from "../src/mcp/commands-main.ts";
 import {
   classifyRegistryPath,
-  rewriteRegistryUrls
+  rewriteRegistryUrls,
+  startRegistryProxy
 } from "../src/mcp/commands-registry-proxy.ts";
 import {
   isCommandEligibleInWorkspace,
   createCommandsMcpServer,
   effectiveCommands
 } from "../src/mcp/commands-server.ts";
+import {
+  configureCommandExecutionTelemetry,
+  recordCommandExecutionSpan,
+  setTestExporter,
+  shutdownTelemetryForTest
+} from "../src/mcp/mcp-telemetry.ts";
 
 const PRINTF = realpathSync("/usr/bin/printf");
 const SHELL = realpathSync("/bin/sh");
@@ -80,8 +101,64 @@ function scopeFixture(root: string): ApprovedCommandScope {
   };
 }
 
+test("command execution spans reuse the MCP tracer without double-counting or leaking command content", async () => {
+  const exporter = new InMemorySpanExporter();
+  configureCommandExecutionTelemetry("worker", "owner/repository");
+  setTestExporter(exporter);
+  try {
+    const outcome: CommandResult = {
+      commandId: "test",
+      status: "failed",
+      exitCode: 3,
+      durationMs: 42,
+      stdout: "private-command-output",
+      stderr: "private-error-output",
+      outputTruncated: false
+    };
+    let calls = 0;
+    const result = await recordCommandExecutionSpan("test", "validation", async () => {
+      calls += 1;
+      return outcome;
+    }, { sessionId: "private-session-id" });
+    assert.equal(result, outcome);
+    const failure = new Error("private-exception-message");
+    await assert.rejects(
+      recordCommandExecutionSpan("typecheck", "validation", async () => {
+        calls += 1;
+        throw failure;
+      }),
+      (error: unknown) => error === failure
+    );
+    assert.equal(calls, 2);
+    const spans = exporter.getFinishedSpans();
+    assert.equal(spans.length, 2);
+    for (const span of spans) {
+      assert.equal(span.name, "command.execute");
+      assert.equal(span.attributes["mcp.method.name"], undefined);
+      assert.equal(span.attributes["gen_ai.operation.name"], undefined);
+      assert.equal(span.resource.attributes["service.name"], "autodev-commands-mcp");
+      assert.equal(span.resource.attributes["autodev.agent.role"], "worker");
+      assert.equal(span.resource.attributes["autodev.workspace"], "owner/repository");
+      assert.doesNotMatch(JSON.stringify(span.attributes), /private-/u);
+      assert.equal(span.events.length, 0);
+    }
+    assert.equal(spans[0]?.attributes["autodev.command.outcome"], "failed");
+    assert.equal(spans[0]?.attributes["autodev.command.exit_code"], 3);
+    assert.equal(spans[0]?.attributes["autodev.command.duration_ms"], 42);
+    assert.equal(spans[1]?.attributes["autodev.command.outcome"], "infrastructure_error");
+    assert.equal(spans[1]?.attributes["autodev.command.exit_code"], undefined);
+  } finally {
+    await shutdownTelemetryForTest();
+    setTestExporter(null);
+  }
+});
+
 test("the catalogue is strict, and a parameter is only ever a whole argument", () => {
   assert.deepEqual(parseCommandCatalogue(catalogue).commands.fixture, fixture);
+  assert.throws(() => parseCommandCatalogue({
+    version: 1,
+    commands: Object.fromEntries(Array.from({ length: 65 }, (_, i) => [`command_${i}`, fixture]))
+  }));
   for (const definition of [
     { ...fixture, executable: "../shell" },
     { ...fixture, args: ["a\0b"] },
@@ -146,6 +223,9 @@ test("parameters are validated, substituted literally, and never interpolated", 
     }
   } satisfies CommandDefinition;
   // A value that would be catastrophic in a shell is one literal argument.
+  const schema = commandInputSchema(definition);
+  assert.equal(schema.safeParse({ message: "a\0b" }).success, false);
+  assert.equal(schema.safeParse({ message: "ok", extra: "no" }).success, false);
   const argv = resolveCommandArguments(definition, {
     message: "; rm -rf / #$(whoami)`id`"
   });
@@ -187,10 +267,7 @@ test("a role's grant decides the effective command set, and a read-only role get
           executable: "pnpm"
         }
       }
-    }),
-    scope: scopeFixture("/tmp"),
-    isAuthorized: () => true,
-    tryAcquireWorkspace: () => null
+    })
   });
   assert.deepEqual(worker.keys().toArray(), ["typecheck"]);
   // A read-only role is refused outright, not merely given a smaller set.
@@ -221,6 +298,91 @@ test("a role's grant decides the effective command set, and a read-only role get
   );
 });
 
+test("registered commands match discovery, and request cancellation and revocation stop execution", {
+  skip: process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec")
+}, async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "autodev-command-revoke-active-"));
+  const scope = scopeFixture(root);
+  let authorized = true;
+  let held = false;
+  const created = createCommandsMcpServer({
+    role: "worker",
+    workspaceId: null,
+    catalogue: parseCommandCatalogue({
+      version: 1,
+      commands: {
+        typecheck: {
+          ...fixture,
+          executable: "sh",
+          args: ["-c", "printf ready > ready; sleep 10; printf late > late"],
+          timeoutMs: 15_000
+        },
+        test: { ...fixture, executable: "unapproved" }
+      }
+    }),
+    scope,
+    isAuthorized: () => authorized,
+    tryAcquireWorkspace: () => {
+      if (held) return null;
+      held = true;
+      return () => { held = false; };
+    }
+  });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: "revocation-test", version: "1.0.0" });
+  try {
+    await created.server.connect(serverTransport);
+    await client.connect(clientTransport);
+    assert.deepEqual(created.commandIds, ["typecheck"]);
+    const { tools } = await client.listTools();
+    assert.deepEqual(tools.map((tool) => tool.name), created.commandIds);
+    assert.equal(tools[0]?.annotations?.readOnlyHint, false);
+    const ready = path.join(scope.workspace, "ready");
+    const late = path.join(scope.workspace, "late");
+    async function waitUntil(predicate: () => boolean, message: string): Promise<void> {
+      for (let i = 0; i < 200 && !predicate(); i += 1) {
+        await delay(25);
+      }
+      assert.ok(predicate(), message);
+    }
+
+    const controller = new AbortController();
+    const ordinary = client.callTool(
+      { name: "typecheck", arguments: {} },
+      undefined,
+      { signal: controller.signal }
+    );
+    const cancelled = assert.rejects(ordinary);
+    await waitUntil(() => existsSync(ready), "ordinary command actually started");
+    controller.abort();
+    await cancelled;
+    await waitUntil(() => !held, "ordinary request cancellation stops execution");
+    assert.equal(existsSync(late), false);
+    rmSync(ready);
+
+    await client.request(
+      {
+        method: "tools/call",
+        params: { name: "typecheck", arguments: {}, task: { ttl: 30_000 } }
+      },
+      z.object({ task: z.object({ taskId: z.string() }).passthrough() }).passthrough()
+    );
+    await waitUntil(() => existsSync(ready), "native command actually started");
+    assert.equal(held, true);
+    authorized = false;
+    await waitUntil(() => !held, "revocation cancels active execution before its normal completion");
+    assert.equal(existsSync(late), false);
+    authorized = true;
+    const rejected = await client.callTool({ name: "typecheck", arguments: {} });
+    assert.equal(rejected.isError, true);
+    assert.match(JSON.stringify(rejected.content), /revoked/u);
+  } finally {
+    await created.close();
+    await client.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a command may be restricted to the workspaces it names", () => {
   const definition = {
     ...fixture,
@@ -247,6 +409,14 @@ test("the approved catalogue may not live inside the workspace it authorizes", (
     const resolved = approvedCataloguePath(moduleDirectory, workspace);
     const expected = path.join(realpathSync(path.join(outside, "config")), "commands.json");
     assert.equal(resolved, expected);
+    const editable = path.join(workspace, "commands.json");
+    writeFileSync(editable, JSON.stringify(catalogue));
+    rmSync(cataloguePath);
+    symlinkSync(editable, cataloguePath);
+    assert.throws(
+      () => approvedCataloguePath(moduleDirectory, workspace),
+      /inside the authorized workspace/u
+    );
     // A catalogue inside the workspace is refused: an agent that can edit it
     // would be editing its own authority.
     const insideRoot = path.join(root, "inside-root");
@@ -284,7 +454,30 @@ test("replacing the approved catalogue revokes the grant", () => {
       })
     );
     assert.equal(grant.isAuthorized(), false);
+    // A revoked revision cannot regain authority even if restored.
+    writeFileSync(cataloguePath, JSON.stringify(catalogue));
+    assert.equal(grant.isAuthorized(), false);
     rmSync(cataloguePath);
+    assert.equal(grant.isAuthorized(), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("approved catalogue reads reject symlinks, shared hard links and writable modes", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "autodev-command-file-"));
+  try {
+    const original = path.join(root, "original.json");
+    const approved = path.join(root, "commands.json");
+    writeFileSync(original, JSON.stringify(catalogue), { mode: 0o600 });
+    symlinkSync(original, approved);
+    assert.throws(() => createApprovedCatalogueGrant(approved));
+    rmSync(approved);
+    linkSync(original, approved);
+    assert.throws(() => createApprovedCatalogueGrant(approved), /protected regular file/u);
+    rmSync(original);
+    const grant = createApprovedCatalogueGrant(approved);
+    chmodSync(approved, 0o666);
     assert.equal(grant.isAuthorized(), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -299,7 +492,29 @@ test("a workspace lease is exclusive across sessions and released on completion"
     assert.ok(release);
     assert.equal(lease.tryAcquire(), null);
     release!();
-    assert.ok(lease.tryAcquire());
+    const second = lease.tryAcquire();
+    assert.ok(second);
+    second();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an old lease is not proof that its command stopped", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "autodev-command-lease-"));
+  try {
+    const lease = createWorkspaceLease(root, "workspace-key");
+    const release = lease.tryAcquire();
+    assert.ok(release);
+    const lock = path.join(root, "command-workspace-key.lock");
+    const old = new Date(0);
+    utimesSync(lock, old, old);
+    assert.equal(lease.tryAcquire(), null);
+    // Even an operator-replaced lock is not ours to release.
+    rmSync(lock);
+    writeFileSync(lock, "replacement");
+    release();
+    assert.equal(readFileSync(lock, "utf8"), "replacement");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -336,7 +551,9 @@ test("only a dependency install may reach the network, and only the registry pro
     ["/toolchain"],
     { registryPort: 4321 }
   );
-  assert.match(profile, /\(allow network-outbound \(remote ip "127\.0\.0\.1:4321"\)\)/u);
+  // Seatbelt accepts only `*` or `localhost` as a remote host ("host must be
+  // * or localhost in network address"), so loopback is spelled `localhost`.
+  assert.match(profile, /\(allow network-outbound \(remote ip "localhost:4321"\)\)/u);
   assert.doesNotMatch(profile, /\(allow network-outbound \(remote ip "\*"/u);
   assert.doesNotMatch(profile, /\(allow network\*/u);
 });
@@ -413,6 +630,18 @@ test("a scope that overlaps a protected root, or an unapproved executable, is re
       executionClass: "dependency_install"
     });
     assert.equal(prepared.env.npm_config_registry, "http://127.0.0.1:5555");
+    for (const registryEndpoint of [
+      "http://example.invalid:5555",
+      "https://127.0.0.1:5555",
+      "http://user@127.0.0.1:5555",
+      "http://127.0.0.1:5555/path",
+      "http://127.0.0.1:5555/?token=fixture"
+    ]) {
+      assert.throws(() => prepareCommand(
+        { ...scope, registryEndpoint },
+        { ...fixture, executionClass: "dependency_install" }
+      ), /loopback registry endpoint/u);
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -427,14 +656,78 @@ test("trusted executables never resolve out of the workspace", () => {
   assert.throws(() => resolveTrustedExecutables(["definitely-not-installed-xyz"]));
 });
 
-test("the workspace key is derived from the workspace and is stable", () => {
-  assert.equal(commandWorkspaceKey("/tmp/one"), commandWorkspaceKey("/tmp/one"));
-  assert.notEqual(commandWorkspaceKey("/tmp/one"), commandWorkspaceKey("/tmp/two"));
+test("workspace keys are physical, stable and shared across symlink aliases", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "autodev-command-key-"));
+  try {
+    const one = path.join(root, "one");
+    const two = path.join(root, "two");
+    const alias = path.join(root, "alias");
+    mkdirSync(one);
+    mkdirSync(two);
+    symlinkSync(one, alias);
+    assert.equal(commandWorkspaceKey(one), commandWorkspaceKey(alias));
+    assert.notEqual(commandWorkspaceKey(one), commandWorkspaceKey(two));
+    assert.throws(() => commandWorkspaceKey(path.join(root, "missing")));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the admitted command workspace cannot be redirected after scope resolution", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "autodev-command-workspace-identity-"));
+  try {
+    const workspace = path.join(root, "workspace");
+    const other = path.join(root, "other");
+    const runtimeRoot = path.join(root, "runtime");
+    const moduleDirectory = path.join(runtimeRoot, "src", "mcp");
+    mkdirSync(workspace);
+    mkdirSync(other);
+    mkdirSync(moduleDirectory, { recursive: true });
+    mkdirSync(path.join(runtimeRoot, "config"));
+    writeFileSync(path.join(runtimeRoot, "config", "commands.json"), JSON.stringify({
+      version: 1,
+      commands: { git_status: { ...fixture, executable: "git", args: ["status"] } }
+    }));
+    const alias = path.join(root, "alias");
+    symlinkSync(workspace, alias);
+    const resolved = resolveCommandsScope({
+      moduleDirectory,
+      env: { HOME: root, AUTODEV_HOME: runtimeRoot },
+      args: ["--role", "worker", "--workspace", alias]
+    });
+    assert.equal(resolved.workspace, realpathSync(workspace));
+    assert.equal(resolved.isAuthorized(), true);
+    // Replacing the caller's alias does not change the pinned workspace.
+    rmSync(alias);
+    symlinkSync(other, alias);
+    assert.equal(resolved.isAuthorized(), true);
+    // Replacing the physical root itself revokes admission.
+    rmSync(workspace, { recursive: true });
+    symlinkSync(other, workspace);
+    assert.equal(resolved.isAuthorized(), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("the registry proxy serves package metadata and tarballs, and nothing else", () => {
   assert.equal(classifyRegistryPath("/pnpm"), "metadata");
-  assert.equal(classifyRegistryPath("/@scope%2fname"), null);
+  assert.equal(classifyRegistryPath("/@scope%2fname"), "metadata");
+  assert.equal(classifyRegistryPath("/@scope%2Fname"), "metadata");
+  assert.equal(classifyRegistryPath("/@scope/name"), "metadata");
+  assert.equal(classifyRegistryPath("/@scope/name/-/name-1.0.0.tgz"), "tarball");
+  for (const path of [
+    "https://evil.example/pnpm",
+    "/pnpm/../secret",
+    "/pnpm/%2e%2e",
+    "/pnpm?secret=value",
+    "/pnpm/#fragment",
+    "/@scope%2f..",
+    "/@scope%2fname%2fother",
+    "/pnpm/-/foo%2fbar.tgz"
+  ]) {
+    assert.equal(classifyRegistryPath(path), null, path);
+  }
   assert.equal(classifyRegistryPath("/pnpm/-/pnpm-1.0.0.tgz"), "tarball");
   assert.equal(classifyRegistryPath("/-/ping"), null);
   assert.equal(classifyRegistryPath("/-/npm/v1/security/audits"), null);
@@ -446,6 +739,51 @@ test("the registry proxy serves package metadata and tarballs, and nothing else"
   );
   assert.match(rewritten, /http:\/\/127\.0\.0\.1:9999\/pnpm\/-\/pnpm-1\.0\.0\.tgz/u);
   assert.doesNotMatch(rewritten, /registry\.npmjs\.org/u);
+});
+
+test("registry proxy relays scoped packages and refuses unapproved request forms", async () => {
+  const requests: string[] = [];
+  let origin = "";
+  const upstream = createServer((request, response) => {
+    requests.push(request.url ?? "");
+    if (request.url === "/redirect") {
+      response.writeHead(302, { location: "https://example.invalid/" });
+      response.end();
+      return;
+    }
+    if (request.url?.endsWith(".tgz")) {
+      response.writeHead(200, { "content-type": "application/octet-stream" });
+      response.end(Buffer.from([1, 2, 3]));
+      return;
+    }
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ dist: { tarball: origin + "/@scope/name/-/name-1.tgz" } }));
+  });
+  upstream.listen(0, "127.0.0.1");
+  await once(upstream, "listening");
+  origin = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`;
+  try {
+    const proxy = await startRegistryProxy({ registry: origin });
+    try {
+      const metadata = await fetch(proxy.endpoint + "/@scope%2fname");
+      assert.equal(metadata.status, 200);
+      const body = await metadata.json() as { dist: { tarball: string } };
+      assert.equal(body.dist.tarball, proxy.endpoint + "/@scope/name/-/name-1.tgz");
+      const tarball = await fetch(body.dist.tarball);
+      assert.equal(tarball.status, 200);
+      assert.deepEqual(new Uint8Array(await tarball.arrayBuffer()), new Uint8Array([1, 2, 3]));
+      const redirect = await fetch(proxy.endpoint + "/redirect");
+      assert.equal(redirect.status, 502);
+      const forbidden = await fetch(proxy.endpoint + "/pnpm?secret=fixture");
+      assert.equal(forbidden.status, 404);
+      assert.deepEqual(requests, ["/@scope%2fname", "/@scope/name/-/name-1.tgz", "/redirect"]);
+    } finally {
+      await proxy.close();
+    }
+  } finally {
+    upstream.closeAllConnections();
+    await new Promise<void>((resolve) => upstream.close(() => resolve()));
+  }
 });
 
 test(
@@ -630,7 +968,8 @@ test(
 
 test("the installed catalogue is a valid, generic catalogue", () => {
   const cataloguePath = path.join(
-    process.cwd(),
+    import.meta.dirname,
+    "..",
     "..",
     "config",
     "commands.json"

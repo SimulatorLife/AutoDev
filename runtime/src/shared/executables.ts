@@ -326,30 +326,96 @@ export function resolveOpencliCommand(
 
 /** The package's `opencli` bin, read from the installed manifest as it is now. */
 function findOpencliPackageEntry(): string | null {
-  let directory = path.dirname(fileURLToPath(import.meta.url));
+  return findRuntimePackageBin(OPENCLI_PACKAGE, "opencli");
+}
+
+/**
+ * The directory of a package this Runtime depends on, as the `node_modules`
+ * walk-up from this module reaches it (`<node_modules>/<packageName>`, not its
+ * realpath).
+ *
+ * Resolution starts at the Runtime's own module and never at a configured
+ * repository root. An installed Runtime therefore resolves the protected
+ * dependency closure its source generation links to, and no environment value
+ * -- `AUTODEV_REPO_ROOT` included -- can redirect a Runtime-launched tool into
+ * an editable checkout.
+ */
+export function findRuntimePackageDirectory(
+  packageName: string,
+  moduleDirectory: string = path.dirname(fileURLToPath(import.meta.url))
+): string | null {
+  let directory = moduleDirectory;
   for (;;) {
-    const packageDirectory = path.join(
-      directory,
-      "node_modules",
-      OPENCLI_PACKAGE
-    );
-    try {
-      const manifest = JSON.parse(
-        readFileSync(path.join(packageDirectory, "package.json"), "utf8")
-      ) as { bin?: string | Record<string, string> };
-      const bin =
-        typeof manifest.bin === "string" ? manifest.bin : manifest.bin?.opencli;
-      if (bin) {
-        const entry = path.resolve(realpathSync(packageDirectory), bin);
-        return existsSync(entry) ? realpathSync(entry) : entry;
-      }
-    } catch {
-      // Not installed at this level; keep looking in the parent.
-    }
+    const packageDirectory = path.join(directory, "node_modules", packageName);
+    if (existsSync(path.join(packageDirectory, "package.json")))
+      return packageDirectory;
     const parent = path.dirname(directory);
     if (parent === directory) return null;
     directory = parent;
   }
+}
+
+/**
+ * The physical entry script of a Runtime dependency's bin, read from its
+ * installed manifest as it is now. Callers run it with the current Node, so no
+ * package-manager shim or caller PATH entry chooses what executes.
+ */
+export function findRuntimePackageBin(
+  packageName: string,
+  binName: string,
+  moduleDirectory?: string
+): string | null {
+  const packageDirectory = findRuntimePackageDirectory(
+    packageName,
+    moduleDirectory
+  );
+  if (!packageDirectory) return null;
+  try {
+    const manifest = JSON.parse(
+      readFileSync(path.join(packageDirectory, "package.json"), "utf8")
+    ) as { bin?: string | Record<string, string> };
+    const bin =
+      typeof manifest.bin === "string" ? manifest.bin : manifest.bin?.[binName];
+    if (!bin) return null;
+    const entry = path.resolve(realpathSync(packageDirectory), bin);
+    return existsSync(entry) ? realpathSync(entry) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** {@link findRuntimePackageBin}, failing with the package that is missing. */
+export function resolveRuntimePackageBin(
+  packageName: string,
+  binName: string,
+  moduleDirectory?: string
+): string {
+  const entry = findRuntimePackageBin(packageName, binName, moduleDirectory);
+  if (!entry)
+    throw new Error(
+      `Runtime dependency ${packageName} (bin ${binName}) is not installed; reinstall AutoDev.`
+    );
+  return entry;
+}
+
+/**
+ * The `node_modules/.bin` directory of the dependency tree that holds
+ * `packageName`, for a tool that spawns a sibling executable by bare name.
+ */
+export function runtimeBinDirectory(
+  packageName: string,
+  moduleDirectory?: string
+): string | null {
+  const packageDirectory = findRuntimePackageDirectory(
+    packageName,
+    moduleDirectory
+  );
+  if (!packageDirectory) return null;
+  const segments = packageName.split("/").length;
+  let nodeModules = packageDirectory;
+  for (let index = 0; index < segments; index++)
+    nodeModules = path.dirname(nodeModules);
+  return path.join(nodeModules, ".bin");
 }
 
 /** The same lookup without the failure, for callers that only ask whether it exists. */

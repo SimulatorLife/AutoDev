@@ -1,280 +1,104 @@
 #!/usr/bin/env node
-// Tool-call telemetry for SKILL.md reads.
-//
-// Codex fires this hook with a JSON payload describing the tool call about to
-// run. The payload carries the session id and turn id but no router-issued
-// request id; the router correlates via the in-flight parent /v1/responses
-// request whose session this hook fired inside (see
-// `noteBridgeSession`/`recallBridgeSessionRequestId` in codex-model-router.mjs)
-// and attributes reads to that turn's provider/model/role/workspace. A session
-// the router never served -- including a session between turns or one the
-// router has already finished -- resolves to no context, the router drops the
-// post, and this script exits silently so it cannot invent an unattributed
-// workspace count.
-//
-// Only canonical SKILL.md files under approved skill roots count; arbitrary
-// mentions, writes, list operations, or exposing a skill through the system
-// prompt do not. The matcher ("read_file|exec_command") is the gap Codex
-// itself uses to gate its read-side telemetry, and the actual read is
-// determined by inspecting the tool arguments.
-//
-// Persistent state lives at $CODEX_HOME/run/skill-read-telemetry/ and is
-// bounded so a stuck hook cannot leak disk.
+// Observe SKILL.md read requests from native PreToolUse hooks. A request
+// is not proof that the file read completed; bridge outcome reporting owns
+// confirmed success/failure where available. The router resolves session
+// context and owns the bounded observation dedupe window.
 
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import process from "node:process";
 
-import { atomicWrite } from "@simulatorlife/autodev-data/files";
-import { autodevRunDirectory } from "@simulatorlife/autodev-runtime/shared/autodev-home";
-
+import { isEntryPoint } from "../shared/entry-point.ts";
 import {
   extractSkillReadPath,
   matchSkillReadTarget,
   normaliseSkillReadPath
 } from "../shared/skill-reads.ts";
 import {
+  AGENT_EVENTS_URL_HEADER,
+  resolveSkillReadReporter,
+  SESSION_ID_HEADER,
+  SKILL_READ_SOURCE
+} from "../telemetry/agent-events.ts";
+import {
   extractHookContext,
   extractHookToolCall,
-  parseHookPayload
+  parseHookPayload,
+  pickHookString
 } from "./hook-payload.ts";
 
-function skillReadStateDir(env: NodeJS.ProcessEnv = process.env): string {
-  return path.join(autodevRunDirectory(env), "skill-read-telemetry");
-}
-const SEEN_KEYS_LIMIT = 4096;
-const SEEN_VALUE_LIMIT = 4096;
-type JsonPrimitive = string | number | boolean | null;
-type JsonObject = { [key: string]: JsonValue };
-type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
-type SeenTurn = { has: string[]; tool: string };
-type SeenState = { turns: Record<string, SeenTurn>; keys: string[] };
+const DEFAULT_EVENTS_URL = "http://127.0.0.1:4100/v1/agent-events";
 
-function asObject(value: JsonValue | undefined): JsonObject {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value
-    : {};
-}
-
-function asSeenState(value: JsonValue): SeenState {
-  const object = asObject(value);
-  // Turn ids are supplied by hook input; a normal object would treat names
-  // such as "constructor" and "__proto__" as inherited properties.
-  const turns = Object.create(null) as Record<string, SeenTurn>;
-  const rawTurns = asObject(object.turns);
-  for (const [turnId, rawTurn] of Object.entries(rawTurns)) {
-    const turn = asObject(rawTurn);
-    const has = Array.isArray(turn.has)
-      ? turn.has.filter((entry): entry is string => typeof entry === "string")
-      : [];
-    const tool = typeof turn.tool === "string" ? turn.tool : "";
-    turns[turnId] = { has, tool };
-  }
-  const keys = Array.isArray(object.keys)
-    ? object.keys.filter((entry): entry is string => typeof entry === "string")
-    : [];
-  return { turns, keys };
-}
-
-async function readStdin() {
-  const chunks = [];
-  for await (const chunk of process.stdin) chunks.push(chunk);
-  return Buffer.concat(chunks).toString("utf8");
-}
-
-function hashKey(...parts: string[]): string {
-  return createHash("sha256").update(parts.join("\0")).digest("hex");
-}
-
-async function readSeenState(
-  sessionId: string
-): Promise<{ path: string; value: SeenState }> {
-  const filePath = path.join(skillReadStateDir(), `${sessionId}.json`);
-  try {
-    const raw = await readFile(filePath, "utf8");
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object")
-      return { path: filePath, value: asSeenState(parsed as JsonValue) };
-  } catch (error) {
-    if (
-      !error ||
-      typeof error !== "object" ||
-      !("code" in error) ||
-      error.code !== "ENOENT"
-    )
-      throw error;
-  }
-  return {
-    path: filePath,
-    value: { turns: Object.create(null) as Record<string, SeenTurn>, keys: [] }
-  };
-}
-
-async function writeSeenState({
-  path: filePath,
-  value
-}: {
-  path: string;
-  value: SeenState;
-}): Promise<void> {
-  await atomicWrite(filePath, JSON.stringify(value));
-}
-
-function pruneKeys(keys: string[], keep: string[]): void {
-  const keepSet = new Set(keep);
-  for (const key of keys)
-    if (!keepSet.has(key)) keys.splice(keys.indexOf(key), 1);
-  while (keys.length > SEEN_KEYS_LIMIT) keys.shift();
-}
-
-async function alreadyReported({
-  sessionId,
-  turnId,
-  skill,
-  root
-}: {
-  sessionId: string;
-  turnId: string;
-  skill: string;
-  root: string;
-}): Promise<boolean> {
-  const state = await readSeenState(sessionId);
-  const turn = state.value.turns[turnId];
-  if (!turn) return false;
-  const key = hashKey(skill, root);
-  if (turn.has?.includes(key)) return true;
-  return false;
-}
-
-async function markReported({
-  sessionId,
-  turnId,
-  skill,
-  root,
-  toolName
-}: {
-  sessionId: string;
-  turnId: string;
-  skill: string;
-  root: string;
-  toolName: string;
-}): Promise<void> {
-  const state = await readSeenState(sessionId);
-  if (!state.value.turns) state.value.turns = {};
-  if (!state.value.keys) state.value.keys = [];
-  if (!state.value.turns[turnId])
-    state.value.turns[turnId] = { has: [], tool: toolName };
-  state.value.turns[turnId].has.push(hashKey(skill, root));
-  state.value.keys.push(hashKey(sessionId, turnId, skill, root));
-  pruneKeys(state.value.keys, state.value.keys.slice(-SEEN_VALUE_LIMIT));
-  // Per-turn dedupe needs the key, but a stale turn should not leak disk.
-  // Drop turn entries the router has not seen in the last 256 turns; LRU is
-  // a bounded approximation, and the keys list retains the dedupe index.
-  const turnKeys = Object.keys(state.value.turns);
-  while (turnKeys.length > 64) {
-    const drop = turnKeys.shift();
-    if (drop !== undefined) delete state.value.turns[drop];
-  }
-  await writeSeenState(state);
-}
-
-// Resolve the events URL. The user-level Codex config wires the router to
-// http://127.0.0.1:4100; this hook reads the live endpoint from the same
-// env vars the bridges use, so a local override is honoured without a
-// rebuild.
-function resolveEventsUrl() {
-  const fromEnv = process.env.AUTODEV_AGENT_EVENTS_URL;
-  if (typeof fromEnv === "string" && fromEnv.trim()) return fromEnv.trim();
-  return "http://127.0.0.1:4100/v1/agent-events";
-}
-
-async function postSkillUsed({
-  sessionId,
-  skill,
-  root,
-  turnId
-}: {
-  sessionId: string;
-  skill: string;
-  root: string;
-  turnId: string;
-}): Promise<void> {
-  const {
-    AGENT_EVENTS_URL_HEADER,
-    resolveSkillReadReporter,
-    SESSION_ID_HEADER,
-    SKILL_READ_SOURCE
-  } = await import("@simulatorlife/autodev-runtime/telemetry");
-  const reporter = resolveSkillReadReporter({
-    [AGENT_EVENTS_URL_HEADER]: resolveEventsUrl(),
-    [SESSION_ID_HEADER]: sessionId
-  });
-  if (!reporter) return;
-  const eventId = `read:${sessionId}:${turnId}:${hashKey(skill, root).slice(0, 12)}`;
-  // Fail-open: a post failure must not break the model turn. Best-effort by
-  // design; reporter.post swallows transport errors and emits a bounded,
-  // credential-free loss record so an operator can see it.
-  await reporter.reportSkillUsed({
+/**
+ * Stable event identity, bounded independently of host-supplied identifiers.
+ * A turn identifies repeated reads of one skill; without a turn, use an
+ * observed call ID. Do not collapse a long-lived session into a synthetic
+ * "no-turn" bucket or invent a unique ID for every hook retry.
+ */
+export function skillReadEventId(
+  sessionId: string,
+  turnId: string | null,
+  callId: string | null,
+  skill: string,
+  root: string
+): string | null {
+  if (!turnId && !callId) return null;
+  const identity = JSON.stringify([
+    sessionId,
+    turnId ? "turn" : "call",
+    turnId ?? callId,
     skill,
+    root
+  ]);
+  return "read:" + createHash("sha256").update(identity).digest("hex");
+}
+
+export async function reportSkillRead(raw: string): Promise<void> {
+  const payload = parseHookPayload(raw);
+  if (!payload) return;
+  const tool = extractHookToolCall(payload);
+  if (!tool) return;
+  const context = extractHookContext(payload);
+  if (!context.sessionId) return;
+  const match = matchSkillReadTarget(
+    normaliseSkillReadPath(
+      extractSkillReadPath(tool.toolName, tool.toolInput),
+      context.cwd
+    )
+  );
+  if (!match) return;
+  const callId = pickHookString(payload, [
+    "tool_use_id", "toolUseId", "call_id", "callId"
+  ]);
+  const eventId = skillReadEventId(
+    context.sessionId,
+    context.turnId,
+    callId,
+    match.skill,
+    match.root
+  );
+  if (!eventId) return;
+  const reporter = resolveSkillReadReporter({
+    [AGENT_EVENTS_URL_HEADER]:
+      process.env.AUTODEV_AGENT_EVENTS_URL?.trim() || DEFAULT_EVENTS_URL,
+    [SESSION_ID_HEADER]: context.sessionId
+  });
+  // Repeated requests have the same event ID. Only the router can decide
+  // whether an observation was accepted for an attributed session.
+  await reporter?.reportSkillUsed({
+    skill: match.skill,
     source: SKILL_READ_SOURCE,
     eventId
   });
 }
 
-async function run(): Promise<void> {
-  let raw = "";
+if (isEntryPoint(import.meta.url)) {
   try {
-    raw = await readStdin();
+    const chunks: Buffer[] = [];
+    for await (const chunk of process.stdin) chunks.push(chunk);
+    await reportSkillRead(Buffer.concat(chunks).toString("utf8"));
   } catch {
+    // Observability must not prevent the host from executing a turn.
+  } finally {
     process.exit(0);
   }
-  const payload = parseHookPayload(raw);
-  if (!payload) {
-    // Hook receives malformed JSON: no-op rather than surfacing an error to
-    // the host CLI. Telemetry must never fail a turn.
-    process.exit(0);
-  }
-  const tool = extractHookToolCall(payload);
-  if (!tool) return;
-  const candidatePath = extractSkillReadPath(tool.toolName, tool.toolInput);
-  if (!candidatePath) return;
-  const normalised = normaliseSkillReadPath(candidatePath);
-  if (!normalised) return;
-  const match = matchSkillReadTarget(normalised);
-  if (!match) return;
-  const context = extractHookContext(payload);
-  const sessionId = context.sessionId;
-  if (!sessionId) return;
-  const turnId = context.turnId ?? "no-turn";
-  if (
-    await alreadyReported({
-      sessionId,
-      turnId,
-      skill: match.skill,
-      root: match.root
-    })
-  )
-    return;
-  await markReported({
-    sessionId,
-    turnId,
-    skill: match.skill,
-    root: match.root,
-    toolName: tool.toolName
-  });
-  await postSkillUsed({
-    sessionId,
-    skill: match.skill,
-    root: match.root,
-    turnId
-  });
-}
-
-try {
-  await run();
-} catch {
-  /* fail-open by design */
-} finally {
-  process.exit(0);
 }

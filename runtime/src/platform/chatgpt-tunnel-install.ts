@@ -27,6 +27,8 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 import { z } from "zod";
 import { isEntryPoint } from "../shared/entry-point.ts";
+import { runtimeBinDirectory } from "../shared/executables.ts";
+import { RUNTIME_SOURCE_LINK } from "./runtime-source-generation.ts";
 import {
   deleteKeychainSecret,
   readKeychainSecret,
@@ -389,19 +391,21 @@ async function stopChildProcess(child: ChildProcess): Promise<void> {
   }
 }
 
-/** Resolve the workspace-managed dependency; package.json owns its version.
- * Never install or resolve a second dependency tree at tunnel startup. */
-export function resolveSupergateway(repositoryRoot: string): string {
-  const executable = path.join(
-    repositoryRoot,
-    "runtime",
-    "node_modules",
-    ".bin",
-    "supergateway"
-  );
-  if (!resolveCommandOnPath(executable))
+/**
+ * Supergateway's bin shim from the Runtime dependency tree that `sourceRoot`
+ * (a Runtime source tree) resolves through; the Runtime package manifest owns
+ * its version. The installer passes the installed tree, `$CODEX_HOME/src`, so
+ * the service runs the protected closure and never the editable checkout.
+ * Never install or resolve a second dependency tree at tunnel startup.
+ */
+export function resolveSupergateway(sourceRoot: string): string {
+  const binDirectory = runtimeBinDirectory("supergateway", sourceRoot);
+  const executable = binDirectory
+    ? path.join(binDirectory, "supergateway")
+    : null;
+  if (!executable || !resolveCommandOnPath(executable))
     throw new Error(
-      "Supergateway is not installed; run pnpm install from the AutoDev repository root"
+      "Supergateway is not in the Runtime dependency tree; reinstall AutoDev"
     );
   return executable;
 }
@@ -1315,7 +1319,7 @@ export interface ChatgptTunnelDependencies {
   launchd(): TunnelLaunchd;
   node(home: string): string;
   tunnelBinary(env: NodeJS.ProcessEnv): string;
-  supergateway(repositoryRoot: string): string;
+  supergateway(sourceRoot: string): string;
   backend: typeof externalMcpBackend;
   hasSecret?(name: string, env: NodeJS.ProcessEnv): boolean;
   discoverTools?(
@@ -1717,7 +1721,9 @@ async function reconcile(
 
   const dependencyEnv = dependencyEnvironment(env);
   const binary = deps.tunnelBinary(dependencyEnv);
-  const supergateway = deps.supergateway(paths.repositoryRoot);
+  const supergateway = deps.supergateway(
+    path.join(paths.codexHome, RUNTIME_SOURCE_LINK)
+  );
   const port = healthPort(
     env.AUTODEV_CHATGPT_TUNNEL_PORT?.trim() || prior?.port
   );

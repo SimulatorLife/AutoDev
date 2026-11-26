@@ -1,6 +1,6 @@
 # Allowlisted Commands MCP — Design and Migration Plan
 
-> **Status:** Source implementation complete and tested (2026-11-25); not deployed. The backend is integrated into the launcher, the gateway confinement, the RuleSync catalogue and the canonical role contracts, and dependency installation works through a trusted loopback registry proxy. Deployment, live acceptance, durable task recovery, the Console surface and command-level telemetry remain open.
+> **Status:** Substantial source implementation and earlier recorded tests (2026-11-25); latest parallel review changes are not yet independently tested or deployed. The backend is integrated into the launcher, gateway confinement, RuleSync catalogue and canonical role contracts. The registry proxy implements restricted package egress; actual dependency installation through the nested production gateway sandbox remains unverified. Protected approval, conversation-specific task ownership, deployment, durable recovery, Console and telemetry acceptance remain open.
 >
 > **Authority:** [AutoDev unified target state](autodev-console-target-state.md#allowlisted-command-execution) owns durable architecture and authorization requirements. This focused subsystem plan explains the rationale, proposed implementation, migration order and acceptance gates. Record observed deployment evidence in [the migration tracker](autodev-console-migration.md), and operational instructions in [local setup](local-setup.md) when implemented.
 
@@ -112,18 +112,25 @@ launchd services and the live provider surfaces still carry the previous state.
   approved catalogue, the canonical role contract
   (`mcpTools.commands`) and the workspace's eligibility. The SDK's session
   binding is preserved on every store operation, so a task created in one
-  session is not found by another. A grant is re-checked before every
-  lifecycle operation, and replacing or removing the approved catalogue
-  revokes it immediately -- including for a command that is already running.
-  Cancellation aborts the subprocess and is only acknowledged once the
-  invocation has settled.
+  session is not found by another **when the SDK sessions are distinct**.
+  This does not prove isolation across frontend conversations pooled into one
+  backend transport. A grant is rechecked before lifecycle operations and
+  every 250 ms while an invocation is active. Once revocation is observed,
+  that server's grant cannot recover; active invocations are aborted and
+  revoked results are not served. Cancellation and lease release wait for
+  subprocess settlement; detached descendant cleanup still requires host
+  qualification.
 - `runtime/src/mcp/commands-main.ts` is the stdio entry point. It resolves the
   role and workspace from the trusted launcher's arguments or environment,
   refuses to start when the approved catalogue resolves **inside** the
   authorized workspace (an agent that can edit its own authority is not a
   trusted authority), provisions private scratch and cache roots, and takes a
   workspace-wide exclusive lease so two sessions cannot race over the same
-  build outputs.
+  build outputs. A lease is never taken over solely on the basis of its age;
+  abandoned leases fail closed pending verified recovery. The approved
+  catalogue read refuses final-file symlinks, multiple hard links, and
+  non-owner/group-or-other-writable files. The parent directory and installed
+  Runtime still require an independently protected trust boundary.
 - Integration: `runtime/src/mcp/launcher.ts` serves the backend,
   `runtime/src/mcp/chatgpt-filesystem-sandbox.ts` gives it its own gateway
   confinement, `.rulesync/mcp.jsonc` declares it once for both the portable
@@ -147,6 +154,44 @@ launchd services and the live provider surfaces still carry the previous state.
   host's `sandbox-exec` really confines, so the negative tests are not
   vacuous.
 
+### Parallel review checkpoint (2026-11-25)
+
+Additional source changes in the command subsystem correct discovery readiness
+to report only successfully registered tools, use conservative mutation hints
+for repository-controlled validation scripts, add bounded active revocation
+checks, close the stdio backend and its registry proxy on graceful shutdown,
+and remove time-only lease takeover. The registry proxy accepts scoped npm
+package paths, rejects query strings, request bodies and redirects, bounds
+active requests and response sizes, and streams tarballs instead of buffering
+them. New regression fixtures cover these boundaries; these changes have not
+been run through the local test suite or installed gateway. The independent
+operator approval boundary, production nested sandbox/registry egress,
+cross-conversation task ownership, durable recovery, and detached descendant
+cleanup remain open.
+
+A second parallel pass uses the catalogue's Zod input schema for both
+SDK discovery and literal argv validation, bounds catalogue size and
+parameter count, and resolves only executables relevant to the admitted
+role/workspace. Command workspace keys now use physical paths; the
+admission callback also checks the original directory identity, revoking
+a scope when its physical root is replaced. This closes alias-key
+duplication, not all overlapping-workspace or path-replacement races.
+Dependency installation requires an exact root HTTP IPv4-loopback registry
+endpoint. Ordinary request cancellation propagates through the native SDK
+request signal to the existing process abort controller.
+
+Command execution spans reuse the MCP telemetry initializer and OTLP
+configuration, with the producer identity `autodev-commands-mcp`.
+They record one internal `command.execute` span per attempted invocation
+with bounded command identity, execution class, duration, observed exit
+code, terminal outcome and truncation, without a second MCP tool-call
+observation or arguments/output/error-message export. The backend does
+not broaden sandbox network access for telemetry; an allowed collector
+path, actual export, correlation and Console observations need production
+qualification. There is no admission queue in this implementation; do not
+fabricate queue-time observations. Regression fixtures are written but
+not executed in this pass.
+
 ### What is still open
 
 - **Deployment.** The installer has not been run. The installed tree, the
@@ -160,9 +205,11 @@ launchd services and the live provider surfaces still carry the previous state.
 - **Console and Control API surfaces.** The Commands backend has no dedicated
   Console state yet, so it cannot yet be reported as declared, approved,
   applied, observed, unavailable or failed through the Console.
-- **Telemetry.** The MCP spans cover the backend; the command-level
-  attributes (command id, duration, terminal outcome, exit code, queue time)
-  are not yet emitted on the existing OpenTelemetry/OpenLIT pipeline.
+- **Telemetry.** Source-owned execution spans now use the existing
+  OpenTelemetry pipeline. Installed collector reachability, actual export,
+  correlation with gateway observations, bounded metrics and Console
+  consumption are not yet verified. The backend rejects busy admission
+  rather than queueing it; queue latency is not observed.
 - **Cross-workspace trust.** The approved catalogue is protected by being
   outside every workspace and by the refusal to start when it is not. That is
   enforced, but it is a property of the deployment layout rather than a

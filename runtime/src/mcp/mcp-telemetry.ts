@@ -95,6 +95,8 @@ import {
 } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
 import { registerTracerProvider } from "@simulatorlife/autodev-runtime/telemetry/tracer-provider";
 
+import type { CommandDefinition, CommandResult } from "./commands-catalogue.ts";
+
 const ATTR_AUTODEV_WORKSPACE = "autodev.workspace" as const;
 const ATTR_AUTODEV_AGENT_ROLE = "autodev.agent.role" as const;
 const ATTR_MCP_METHOD_NAME = "mcp.method.name" as const;
@@ -120,10 +122,28 @@ export function configureExternalMcpTelemetry(
   endpoint: string,
   headers: Record<string, string>
 ): void {
-  if (state.initialized) throw new Error("MCP telemetry already initialized");
+  if (state.initialized || commandExecutionContext) {
+    throw new Error("MCP telemetry already initialized or configured");
+  }
   externalTelemetry = { server, endpoint, headers };
 }
 const ATTR_VALUE_MAX_LENGTH = 64;
+let commandExecutionContext: { role: string; workspace: string | null } | undefined;
+
+/**
+ * The Commands stdio backend owns execution spans, not another tools/call
+ * observation. Configure its resource before the first command is executed.
+ * The role and workspace come from trusted backend admission.
+ */
+export function configureCommandExecutionTelemetry(
+  role: string,
+  workspace: string | null
+): void {
+  if (state.initialized || externalTelemetry || commandExecutionContext) {
+    throw new Error("MCP telemetry already configured");
+  }
+  commandExecutionContext = { role, workspace };
+}
 
 interface ShimTelemetryState {
   tracer: Tracer;
@@ -167,14 +187,24 @@ function buildResource(): Resource {
   }
   // The shim's own producer identity always wins, so a misconfigured
   // OTEL_SERVICE_NAME=autodev-router cannot mislabel these spans.
-  merged[ATTR_SERVICE_NAME] = externalTelemetry
-    ? "autodev-chatgpt-mcp"
-    : SERVICE_NAME;
+  merged[ATTR_SERVICE_NAME] = commandExecutionContext
+    ? "autodev-commands-mcp"
+    : externalTelemetry
+      ? "autodev-chatgpt-mcp"
+      : SERVICE_NAME;
   merged[ATTR_SERVICE_VERSION] = TRACER_VERSION;
-  const workspace = safeAutoDevWorkspaceKey(merged[ATTR_AUTODEV_WORKSPACE]);
+  const workspace = safeAutoDevWorkspaceKey(
+    commandExecutionContext
+      ? commandExecutionContext.workspace
+      : merged[ATTR_AUTODEV_WORKSPACE]
+  );
   if (workspace) merged[ATTR_AUTODEV_WORKSPACE] = workspace;
   else delete merged[ATTR_AUTODEV_WORKSPACE];
-  const role = safeAutoDevAgentRole(merged[ATTR_AUTODEV_AGENT_ROLE]);
+  const role = safeAutoDevAgentRole(
+    commandExecutionContext
+      ? commandExecutionContext.role
+      : merged[ATTR_AUTODEV_AGENT_ROLE]
+  );
   if (role) merged[ATTR_AUTODEV_AGENT_ROLE] = role;
   else delete merged[ATTR_AUTODEV_AGENT_ROLE];
   return resourceFromAttributes(merged);
@@ -191,7 +221,8 @@ function safeTrim(value: unknown): string | null {
 
 function logTelemetryError(message: string): void {
   try {
-    process.stderr.write(`[autodev-codex-tools-telemetry] ${message}\n`);
+    const producer = commandExecutionContext ? "autodev-commands" : "autodev-codex-tools";
+    process.stderr.write(`[${producer}-telemetry] ${message}\n`);
   } catch {
     /* ignore */
   }
@@ -244,7 +275,11 @@ export function ensureOtelInitialized(): Tracer {
     });
     state.provider = provider;
     state.tracer = trace.getTracer(
-      externalTelemetry ? "autodev.chatgpt-mcp" : TRACER_NAME,
+      commandExecutionContext
+        ? "autodev.commands-mcp"
+        : externalTelemetry
+          ? "autodev.chatgpt-mcp"
+          : TRACER_NAME,
       TRACER_VERSION
     );
   } catch {
@@ -326,6 +361,7 @@ export async function shutdownTelemetryForTest(): Promise<void> {
   state.otlpExporterInstalled = false;
   state.initialized = false;
   externalTelemetry = undefined;
+  commandExecutionContext = undefined;
   for (const disable of [
     () => trace.disable(),
     () => context.disable(),
@@ -465,5 +501,68 @@ export async function recordToolCallSpan(
     throw error;
   } finally {
     endSpan(span);
+  }
+}
+
+/**
+ * Observe actual command execution once, independent of how many times its
+ * native MCP task is polled or its result retrieved. This internal span is
+ * deliberately not a tools/call span, so existing MCP counts do not double.
+ * Never export argv, paths, output, messages, or task/session identifiers.
+ */
+export async function recordCommandExecutionSpan(
+  commandId: string,
+  executionClass: CommandDefinition["executionClass"],
+  callback: () => Promise<CommandResult>,
+  metadata?: unknown
+): Promise<CommandResult> {
+  // An in-process fixture or another producer must not label an execution
+  // as a different MCP service. The real stdio entrypoint sets this once.
+  if (!commandExecutionContext) return callback();
+  let span: Span | null = null;
+  try {
+    span = ensureOtelInitialized().startSpan(
+      "command.execute",
+      {
+        kind: SpanKind.INTERNAL,
+        attributes: {
+          "autodev.command.id": safeTrim(commandId) ?? "_OTHER",
+          "autodev.command.class": executionClass
+        }
+      },
+      propagation.extract(context.active(), traceContextCarrier(metadata))
+    );
+  } catch {
+    logTelemetryError("command_span_initialization_failed");
+  }
+  try {
+    const result = await callback();
+    if (span) {
+      try {
+        span.setAttribute("autodev.command.outcome", result.status);
+        span.setAttribute("autodev.command.duration_ms", result.durationMs);
+        if (result.exitCode !== null)
+          span.setAttribute("autodev.command.exit_code", result.exitCode);
+        span.setAttribute("autodev.command.output_truncated", result.outputTruncated);
+      } catch {
+        /* observation cannot change the command result */
+      }
+      attachOutcome(span, result.status === "succeeded"
+        ? { status: "ok" }
+        : { status: "error", errorType: result.status });
+    }
+    return result;
+  } catch (error) {
+    if (span) {
+      try {
+        span.setAttribute("autodev.command.outcome", "infrastructure_error");
+      } catch {
+        /* ignore attribute failures */
+      }
+      attachOutcome(span, { status: "error", errorType: "infrastructure_error" });
+    }
+    throw error;
+  } finally {
+    if (span) endSpan(span);
   }
 }

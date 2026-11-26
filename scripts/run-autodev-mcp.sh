@@ -9,7 +9,11 @@ while [[ -L "$target" ]]; do
   target="$(readlink "$target")"
   [[ "$target" = /* ]] || target="$target_dir/$target"
 done
-repo_root="${AUTODEV_REPO_ROOT:-$(cd -- "$(dirname -- "$target")/.." && pwd)}"
+# The root is where this launcher lives, never a caller-supplied value: the
+# installed copy under <home>/hooks runs the installed Runtime and its
+# protected dependency closure, and no inherited AUTODEV_REPO_ROOT can point it
+# at an editable checkout.
+repo_root="$(cd -- "$(dirname -- "$target")/.." && pwd)"
 node_bin=""
 if [[ -n "${AUTODEV_NODE_BIN:-}" && -x "$AUTODEV_NODE_BIN" ]]; then
   node_bin="$AUTODEV_NODE_BIN"

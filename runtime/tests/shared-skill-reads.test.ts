@@ -4,6 +4,20 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { createAgentActivityTracker } from "../src/agents/agent-activity.ts";
+import {
+  reportSkillRead,
+  skillReadEventId
+} from "../src/hooks/skill-read-telemetry.ts";
+import { createAgentEventIngest } from "../src/router/agent-event-ingest.ts";
+import {
+  CorrelationTracker,
+  getDefaultCorrelationTracker,
+  setDefaultCorrelationTracker
+} from "../src/router/correlation.ts";
+import { LiveFeedRecorder } from "../src/router/live-feed.ts";
+import { noteBridgeRequest, resetSubagentTelemetry } from "../src/router/subagents.ts";
+import { UsageTracker } from "../src/router/usage.ts";
 import {
   extractSkillReadPath,
   flattenCommandValue,
@@ -53,6 +67,103 @@ test("normaliseSkillReadPath expands home directory and resolves paths", () => {
   );
   assert.equal(normaliseSkillReadPath(null), null);
   assert.equal(normaliseSkillReadPath(""), null);
+  assert.equal(normaliseSkillReadPath("~another/skills/SKILL.md"), null);
+  assert.equal(
+    normaliseSkillReadPath(".rulesync/skills/example/SKILL.md", REPO_ROOT),
+    path.join(REPO_ROOT, ".rulesync", "skills", "example", "SKILL.md")
+  );
+  assert.equal(
+    normaliseSkillReadPath("/a/b/../c/SKILL.md"),
+    path.resolve("/a/c/SKILL.md")
+  );
+});
+
+test("skill read identities are bounded, retry-stable, and scoped to observed turns or calls", () => {
+  const session = "session".repeat(100);
+  const id = skillReadEventId(session, "turn-1", "call-1", "example", "/skills");
+  assert.match(id ?? "", /^read:[a-f0-9]{64}$/u);
+  assert.equal(
+    skillReadEventId(session, "turn-1", "call-2", "example", "/skills"),
+    id
+  );
+  assert.notEqual(
+    skillReadEventId(session, "turn-2", "call-1", "example", "/skills"),
+    id
+  );
+  assert.notEqual(
+    skillReadEventId("another", "turn-1", "call-1", "example", "/skills"),
+    id
+  );
+  assert.notEqual(
+    skillReadEventId(session, null, "call-1", "example", "/skills"),
+    skillReadEventId(session, null, "call-2", "example", "/skills")
+  );
+  assert.equal(skillReadEventId(session, null, null, "example", "/skills"), null);
+});
+
+test("hook retries reach the router with the same identity; unidentified calls do not invent usage", async (t) => {
+  const events: Array<Record<string, unknown>> = [];
+  t.mock.method(globalThis, "fetch", async (_url: unknown, options: RequestInit) => {
+    const body = JSON.parse(String(options.body)) as {
+      events: Array<Record<string, unknown>>;
+    };
+    events.push(...body.events);
+    return new Response("{}", { status: 200 });
+  });
+  const payload = {
+    session_id: "fixture-session",
+    cwd: REPO_ROOT,
+    tool_name: "read_file",
+    tool_input: { path: path.relative(REPO_ROOT, CANONICAL_SKILL) }
+  };
+  const first = JSON.stringify({ ...payload, tool_use_id: "call-1" });
+  await reportSkillRead(first);
+  await reportSkillRead(first);
+  await reportSkillRead(JSON.stringify({ ...payload, tool_use_id: "call-2" }));
+  await reportSkillRead(JSON.stringify(payload));
+  assert.equal(events.length, 3);
+  assert.equal(events[0]?.skill, "orchestration");
+  assert.equal(events[0]?.eventId, events[1]?.eventId);
+  assert.notEqual(events[1]?.eventId, events[2]?.eventId);
+});
+
+test("skill event retries produce one accepted observation and one live feed record", () => {
+  resetSubagentTelemetry();
+  const original = getDefaultCorrelationTracker();
+  const tracker = new CorrelationTracker({ usageTracker: new UsageTracker() });
+  setDefaultCorrelationTracker(tracker);
+  try {
+    noteBridgeRequest("skill-retry-request", {
+      activitySubject: "req:skill-retry-request",
+      provider: "claude",
+      model: "sonnet",
+      role: "worker",
+      workspace: "Owner/Repo",
+      sessionKey: "skill-retry-session"
+    });
+    const liveFeedEvents = new LiveFeedRecorder();
+    const ingest = createAgentEventIngest({
+      agentActivity: createAgentActivityTracker(),
+      liveFeedEvents
+    });
+    const event = {
+      type: "skill_used",
+      skill: "fixture-skill",
+      source: "skill_read",
+      eventId: "read:fixture"
+    };
+    const payload = {
+      requestId: "skill-retry-request",
+      events: [event, event]
+    };
+    assert.equal(ingest(payload).accepted, 1);
+    assert.equal(ingest(payload).accepted, 0);
+    assert.equal(tracker.correlationStatus().bridgeEvents.skillUsed.total, 1);
+    assert.equal(liveFeedEvents.getRecentEvents().length, 1);
+  } finally {
+    setDefaultCorrelationTracker(original);
+    resetSubagentTelemetry();
+  }
 });
 
 test("isPathLikeToken recognizes absolute and home-relative paths only", () => {

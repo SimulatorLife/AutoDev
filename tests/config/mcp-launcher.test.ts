@@ -61,35 +61,49 @@ function createIsolatedTempDir(prefix: string): string {
   );
 }
 
-test("MCP launcher resolves pinned AutoDev binaries without shell commands", () => {
-  assert.deepEqual(resolveMcpCommand("lsp", "/repo"), {
-    binary: "/repo/node_modules/.bin/lsp-mcp-server",
-    args: [],
-    pathPrepend: ["/repo/node_modules/.bin", dirname(process.execPath)]
-  });
-  assert.deepEqual(resolveMcpCommand("playwright", "/repo", {}), {
-    binary: "/repo/node_modules/.bin/playwright-mcp",
-    args: ["--headless", "--no-sandbox", "--isolated"],
-    pathPrepend: []
-  });
+const RUNTIME_SOURCE = join(import.meta.dirname, "..", "..", "runtime", "src");
+/** pnpm's virtual store: every package the Runtime's node_modules links to. */
+const DEPENDENCY_STORE = realpathSync(
+  join(import.meta.dirname, "..", "..", "node_modules", ".pnpm")
+);
+
+function isRuntimeDependency(file: string): boolean {
+  return realpathSync(file).startsWith(`${DEPENDENCY_STORE}/`);
+}
+
+test("MCP launcher runs Node servers from the Runtime's own dependency tree with the current Node", () => {
+  const lsp = resolveMcpCommand("lsp");
+  assert.equal(lsp.binary, process.execPath);
+  assert.equal(isRuntimeDependency(lsp.args[0]!), true);
+  assert.deepEqual(lsp.pathPrepend, [
+    join(import.meta.dirname, "..", "..", "runtime", "node_modules", ".bin"),
+    dirname(process.execPath)
+  ]);
+  const playwright = resolveMcpCommand("playwright", {});
+  assert.equal(playwright.binary, process.execPath);
+  assert.equal(isRuntimeDependency(playwright.args[0]!), true);
+  assert.deepEqual(playwright.args.slice(1), [
+    "--headless",
+    "--no-sandbox",
+    "--isolated"
+  ]);
   assert.deepEqual(
-    resolveMcpCommand("playwright", "/repo", {
-      AUTODEV_PLAYWRIGHT_HEADED: "1"
-    }),
-    {
-      binary: "/repo/node_modules/.bin/playwright-mcp",
-      args: ["--no-sandbox", "--isolated"],
-      pathPrepend: []
-    }
+    resolveMcpCommand("playwright", { AUTODEV_PLAYWRIGHT_HEADED: "1" }).args.slice(1),
+    ["--no-sandbox", "--isolated"]
   );
+  for (const server of ["filesystem", "github"]) {
+    const command = resolveMcpCommand(server, {});
+    assert.equal(command.binary, process.execPath);
+    assert.equal(isRuntimeDependency(command.args[0]!), true, server);
+  }
   assert.deepEqual(
-    resolveMcpCommand("cocoindex-code", "/repo", {
+    resolveMcpCommand("cocoindex-code", {
       AUTODEV_COCOINDEX_BIN: "/custom/ccc"
     }),
     { binary: "/custom/ccc", args: ["mcp"], pathPrepend: [] }
   );
   assert.deepEqual(
-    resolveMcpCommand(MCP_SERVER_CODEGRAPHCONTEXT, "/repo", {
+    resolveMcpCommand(MCP_SERVER_CODEGRAPHCONTEXT, {
       AUTODEV_CODEGRAPHCONTEXT_BIN: "/custom/codegraphcontext"
     }),
     {
@@ -98,39 +112,29 @@ test("MCP launcher resolves pinned AutoDev binaries without shell commands", () 
       pathPrepend: []
     }
   );
-  assert.deepEqual(resolveMcpCommand("playtest", "/repo"), {
-    binary: process.execPath,
-    args: ["/repo/src/playtesting/mcp-main.ts"],
-    pathPrepend: []
-  });
 });
 
-test("MCP launcher resolves the playtest server in both Runtime layouts", () => {
-  // The Runtime lives at <root>/runtime/src in a checkout and at <root>/src
-  // once it is materialized into CODEX_HOME. The root alone does not say which
-  // layout it is, so the server module has to be resolved from the layout
-  // rather than by joining one fixed prefix onto the root: the analyst's
-  // playtest MCP server is launched from the materialized tree, and pointing it
-  // at <root>/runtime/src made it exit on startup, so the analyst could call
-  // no playtest tool and submitted no review.
-  const checkout = createIsolatedTempDir("autodev-mcp-checkout-");
-  const materialized = createIsolatedTempDir("autodev-mcp-materialized-");
-  try {
-    mkdirSync(join(checkout, "runtime"), { recursive: true });
-    writeFileSync(join(checkout, "runtime", "package.json"), "{}\n");
-    mkdirSync(join(materialized, "src", "playtesting"), { recursive: true });
-
-    assert.deepEqual(resolveMcpCommand("playtest", checkout).args, [
-      join(checkout, "runtime", "src", "playtesting", "mcp-main.ts")
-    ]);
-    assert.deepEqual(resolveMcpCommand("playtest", materialized).args, [
-      join(materialized, "src", "playtesting", "mcp-main.ts")
-    ]);
-  } finally {
-    rmSync(checkout, { recursive: true, force: true });
-    rmSync(materialized, { recursive: true, force: true });
-  }
+test("Runtime-owned MCP servers run beside the launcher, whatever root the caller names", () => {
+  // An inherited AUTODEV_REPO_ROOT used to choose which tree the Commands and
+  // Playtest servers ran from, so a caller could point the installed launcher
+  // at an editable checkout. The servers are the launcher's sibling modules.
+  const env = { AUTODEV_REPO_ROOT: "/elsewhere" };
+  assert.deepEqual(resolveMcpCommand("playtest", env).args, [
+    join(RUNTIME_SOURCE, "playtesting", "mcp-main.ts")
+  ]);
+  assert.deepEqual(resolveMcpCommand("commands", env).args, [
+    join(RUNTIME_SOURCE, "mcp", "commands-main.ts")
+  ]);
 });
+
+/** A copy of the launcher hook at `<root>/<directory>/`, as the installer places it. */
+function installHook(root: string, directory: string): string {
+  const hook = join(root, directory, "run-autodev-mcp.sh");
+  mkdirSync(dirname(hook), { recursive: true });
+  writeFileSync(hook, readFileSync(mcpLauncherHook));
+  chmodSync(hook, 0o755);
+  return hook;
+}
 
 test("the MCP launcher hook finds the launcher in both Runtime layouts", () => {
   // The hook is the OS boundary the installed Codex configuration calls, and it
@@ -158,9 +162,9 @@ test("the MCP launcher hook finds the launcher in both Runtime layouts", () => {
     writeFileSync(checkoutLauncher, "export {};\n");
     writeFileSync(materializedLauncher, "export {};\n");
 
-    for (const [root, expected] of [
-      [checkout, checkoutLauncher],
-      [materialized, materializedLauncher]
+    for (const [root, expected, hook] of [
+      [checkout, checkoutLauncher, installHook(checkout, "scripts")],
+      [materialized, materializedLauncher, installHook(materialized, "hooks")]
     ] as const) {
       const seen = join(root, "seen-args");
       const fakeNode = join(root, "fake-node");
@@ -170,10 +174,12 @@ test("the MCP launcher hook finds the launcher in both Runtime layouts", () => {
       );
       chmodSync(fakeNode, 0o755);
 
-      const result = spawnSync("bash", [mcpLauncherHook, "playtest"], {
+      // An inherited root names some other tree; the hook ignores it and
+      // runs the Runtime it was installed beside.
+      const result = spawnSync("bash", [hook, "playtest"], {
         env: {
           ...process.env,
-          AUTODEV_REPO_ROOT: root,
+          AUTODEV_REPO_ROOT: repositoryRoot,
           AUTODEV_NODE_BIN: fakeNode
         },
         encoding: "utf8"
@@ -203,12 +209,11 @@ test("the MCP launcher hook finds pnpm Node with a minimal PATH", () => {
     writeFileSync(pnpmNode, `#!/bin/sh\nprintf '%s\\n' "$@" > "${seen}"\n`);
     chmodSync(pnpmNode, 0o755);
 
-    const result = spawnSync("bash", [mcpLauncherHook, "playtest"], {
+    const result = spawnSync("bash", [installHook(root, "scripts"), "playtest"], {
       env: {
         HOME: root,
         PATH: "/usr/bin:/bin",
-        PNPM_HOME: join(root, "pnpm"),
-        AUTODEV_REPO_ROOT: root
+        PNPM_HOME: join(root, "pnpm")
       },
       encoding: "utf8"
     });
@@ -228,10 +233,9 @@ test("the MCP launcher hook reports a root that holds no launcher", () => {
     const fakeNode = join(empty, "fake-node");
     writeFileSync(fakeNode, "#!/usr/bin/env bash\nexit 0\n");
     chmodSync(fakeNode, 0o755);
-    const result = spawnSync("bash", [mcpLauncherHook, "playtest"], {
+    const result = spawnSync("bash", [installHook(empty, "hooks"), "playtest"], {
       env: {
         ...process.env,
-        AUTODEV_REPO_ROOT: empty,
         AUTODEV_NODE_BIN: fakeNode
       },
       encoding: "utf8"
@@ -246,7 +250,7 @@ test("the MCP launcher hook reports a root that holds no launcher", () => {
 test("MCP launcher fails clearly when codegraphcontext is missing", () => {
   assert.throws(
     () =>
-      resolveMcpCommand(MCP_SERVER_CODEGRAPHCONTEXT, "/repo", {
+      resolveMcpCommand(MCP_SERVER_CODEGRAPHCONTEXT, {
         PATH: "",
         HOME: "/nonexistent"
       }),
@@ -273,13 +277,13 @@ test("the launcher resolves installed tools from the home the server runs with",
       HOME: toolHome,
       PATH: "/usr/bin:/bin"
     };
-    assert.deepEqual(resolveMcpCommand("cocoindex-code", "/repo", env), {
+    assert.deepEqual(resolveMcpCommand("cocoindex-code", env), {
       binary: join(bin, "ccc"),
       args: ["mcp"],
       pathPrepend: []
     });
     assert.deepEqual(
-      resolveMcpCommand(MCP_SERVER_CODEGRAPHCONTEXT, "/repo", env),
+      resolveMcpCommand(MCP_SERVER_CODEGRAPHCONTEXT, env),
       {
         binary: join(bin, "codegraphcontext"),
         args: ["mcp", "start"],
@@ -302,7 +306,7 @@ test("a home with no install does not shadow the copy on PATH", () => {
     writeFileSync(join(bin, "ccc"), "#!/usr/bin/env bash\nexit 0\n");
     chmodSync(join(bin, "ccc"), 0o755);
     assert.deepEqual(
-      resolveMcpCommand("cocoindex-code", "/repo", {
+      resolveMcpCommand("cocoindex-code", {
         HOME: join(root, "isolated"),
         PATH: bin
       }),
@@ -315,7 +319,7 @@ test("a home with no install does not shadow the copy on PATH", () => {
 
 test("MCP launcher rejects unknown tools", () => {
   assert.throws(
-    () => resolveMcpCommand("unknown", "/repo"),
+    () => resolveMcpCommand("unknown"),
     /unsupported AutoDev MCP/
   );
 });
@@ -567,32 +571,28 @@ test("runMcp refuses a workspace it cannot initialize instead of serving the wro
 test("the LSP server finds the language servers AutoDev pins, whatever PATH Codex starts it with", () => {
   // Observed 2026-09-18: under Codex's environment lsp-mcp-server could not
   // spawn `typescript-language-server` (ENOENT) and exited on its first
-  // TypeScript request, which agents saw as "Transport closed".
-  const repo = createIsolatedTempDir("autodev-mcp-lsp-");
-  try {
-    const bin = join(repo, "node_modules", ".bin");
-    mkdirSync(bin, { recursive: true });
-    const seen = join(repo, "seen");
-    writeFileSync(
-      join(bin, "typescript-language-server"),
-      "#!/usr/bin/env bash\nexit 0\n"
-    );
-    writeFileSync(
-      join(bin, "lsp-mcp-server"),
-      `#!/usr/bin/env bash\ncommand -v node > "${seen}"\ncommand -v typescript-language-server >> "${seen}"\n`
-    );
-    chmodSync(join(bin, "typescript-language-server"), 0o755);
-    chmodSync(join(bin, "lsp-mcp-server"), 0o755);
-    const status = runMcp("lsp", repo, {
-      HOME: process.env.HOME,
-      PATH: "/usr/bin:/bin"
-    });
-    assert.equal(status, 0);
-    assert.deepEqual(readFileSync(seen, "utf8").trim().split("\n"), [
-      process.execPath,
-      join(bin, "typescript-language-server")
-    ]);
-  } finally {
-    rmSync(repo, { recursive: true, force: true });
-  }
+  // TypeScript request, which agents saw as "Transport closed". The launcher
+  // puts the Runtime's own bin directory and Node ahead of Codex's PATH.
+  const command = resolveMcpCommand("lsp", {});
+  const result = spawnSync(
+    "bash",
+    ["-c", "command -v node; command -v typescript-language-server"],
+    {
+      env: {
+        PATH: [...command.pathPrepend, "/usr/bin:/bin"].join(":")
+      },
+      encoding: "utf8"
+    }
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const [node, languageServer] = result.stdout.trim().split("\n");
+  assert.equal(realpathSync(node!), realpathSync(process.execPath));
+  assert.equal(
+    languageServer,
+    join(dirname(command.pathPrepend[0]!), ".bin", "typescript-language-server")
+  );
+  assert.equal(
+    languageServer,
+    join(import.meta.dirname, "..", "..", "runtime", "node_modules", ".bin", "typescript-language-server")
+  );
 });
