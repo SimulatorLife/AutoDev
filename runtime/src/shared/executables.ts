@@ -358,7 +358,9 @@ export function findRuntimePackageDirectory(
 /**
  * The physical entry script of a Runtime dependency's bin, read from its
  * installed manifest as it is now. Callers run it with the current Node, so no
- * package-manager shim or caller PATH entry chooses what executes.
+ * package-manager shim or caller PATH entry chooses what executes. A declared
+ * entry that was not built is returned as declared, so callers can report it
+ * apart from a package that is not installed.
  */
 export function findRuntimePackageBin(
   packageName: string,
@@ -378,7 +380,7 @@ export function findRuntimePackageBin(
       typeof manifest.bin === "string" ? manifest.bin : manifest.bin?.[binName];
     if (!bin) return null;
     const entry = path.resolve(realpathSync(packageDirectory), bin);
-    return existsSync(entry) ? realpathSync(entry) : null;
+    return existsSync(entry) ? realpathSync(entry) : entry;
   } catch {
     return null;
   }
@@ -395,6 +397,8 @@ export function resolveRuntimePackageBin(
     throw new Error(
       `Runtime dependency ${packageName} (bin ${binName}) is not installed; reinstall AutoDev.`
     );
+  if (!existsSync(entry))
+    throw new Error(`${packageName} entry point is missing: ${entry}`);
   return entry;
 }
 

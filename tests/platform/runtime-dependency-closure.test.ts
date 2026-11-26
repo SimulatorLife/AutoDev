@@ -32,7 +32,9 @@ function temporary(prefix: string): string {
   return mkdtempSync(path.join(tmpdir(), prefix));
 }
 
-/** The files the closure name is computed from, in a disposable checkout. */
+/**
+The files the closure name is computed from, in a disposable checkout.
+*/
 function fixtureCheckout(): string {
   const root = temporary("autodev-closure-checkout-");
   writeFileSync(path.join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
@@ -129,7 +131,7 @@ test("closures are collected once no retained generation links them", () => {
     const referenced = referencedRuntimeDependencyClosure(home, link);
     assert.equal(referenced, ".deps-aaaaaaaaaaaaaaaa");
     const collected = collectRuntimeDependencyClosures(home, new Set([referenced!]));
-    assert.deepEqual(collected.sort(), [
+    assert.deepEqual(collected.toSorted(new Intl.Collator("en").compare), [
       ".deps-bbbbbbbbbbbbbbbb",
       ".deps-cccccccccccccccc.tmp-999999999"
     ]);
@@ -143,11 +145,11 @@ test("closures are collected once no retained generation links them", () => {
 });
 
 /**
- * Adversarial: the deployed closure must share no file with the editable
- * checkout. A symlink into the checkout, or a hard link to a file the
- * checkout's `node_modules` also links, would let an edit in the workspace
- * change what the installed services run.
- */
+Adversarial: the deployed closure must share no file with the editable
+checkout. A symlink into the checkout, or a hard link to a file the
+checkout's `node_modules` also links, would let an edit in the workspace
+change what the installed services run.
+*/
 test("the deployed closure shares no file or link with the editable checkout", () => {
   const home = temporary("autodev-closure-home-");
   try {
@@ -160,7 +162,8 @@ test("the deployed closure shares no file or link with the editable checkout", (
     const checkoutRoot = realpathSync(repositoryRoot);
     const escapes: string[] = [];
     const walk = (directory: string): void => {
-      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const entries = readdirSync(directory, { withFileTypes: true });
+      for (const entry of entries) {
         const entryPath = path.join(directory, entry.name);
         if (entry.isSymbolicLink()) {
           const target = path.resolve(directory, readlinkSync(entryPath));

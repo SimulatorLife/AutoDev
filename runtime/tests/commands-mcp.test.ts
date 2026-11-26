@@ -45,6 +45,8 @@ import {
 import {
   approvedCataloguePath,
   catalogueDigest,
+  commandCacheRoot,
+  commandScratchRoot,
   createApprovedCatalogueGrant,
   createWorkspaceLease,
   resolveCommandsScope
@@ -55,6 +57,7 @@ import {
   startRegistryProxy
 } from "../src/mcp/commands-registry-proxy.ts";
 import {
+  CommandTaskStore,
   isCommandEligibleInWorkspace,
   createCommandsMcpServer,
   effectiveCommands
@@ -436,6 +439,30 @@ test("the approved catalogue may not live inside the workspace it authorizes", (
   }
 });
 
+test("native task store isolates explicit and absent transport sessions", async () => {
+  const store = new CommandTaskStore(() => {}, new Map());
+  const request = { method: "tools/call", params: { name: "test", arguments: {} } };
+  try {
+    const stdio = await store.createTask({ ttl: 10_000 }, 1, request);
+    const explicit = await store.createTask({ ttl: 10_000 }, 2, request, "stdio");
+    assert.equal((await store.getTask(stdio.taskId))?.taskId, stdio.taskId);
+    assert.equal(await store.getTask(stdio.taskId, "stdio"), null);
+    assert.equal(await store.getTask(explicit.taskId), null);
+    assert.equal(await store.getTask(explicit.taskId, "other"), null);
+    assert.deepEqual((await store.listTasks()).tasks.map((task) => task.taskId), [stdio.taskId]);
+    assert.deepEqual((await store.listTasks(undefined, "stdio")).tasks.map((task) => task.taskId), [explicit.taskId]);
+    const result = { content: [{ type: "text", text: "fixture" }] };
+    await assert.rejects(store.storeTaskResult(explicit.taskId, "completed", result), /not found/u);
+    await assert.rejects(store.updateTaskStatus(explicit.taskId, "cancelled"), /not found/u);
+    assert.equal((await store.getTask(explicit.taskId, "stdio"))?.status, "working");
+    await store.storeTaskResult(explicit.taskId, "completed", result, "stdio");
+    await assert.rejects(store.getTaskResult(explicit.taskId), /not found/u);
+    assert.deepEqual(await store.getTaskResult(explicit.taskId, "stdio"), result);
+  } finally {
+    store.cleanup();
+  }
+});
+
 test("replacing the approved catalogue revokes the grant", () => {
   const root = mkdtempSync(path.join(tmpdir(), "autodev-command-revoke-"));
   try {
@@ -479,6 +506,30 @@ test("approved catalogue reads reject symlinks, shared hard links and writable m
     const grant = createApprovedCatalogueGrant(approved);
     chmodSync(approved, 0o666);
     assert.equal(grant.isAuthorized(), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("approved catalogue reads are bounded and private state directories cannot redirect", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "autodev-command-state-"));
+  try {
+    const approved = path.join(root, "commands.json");
+    writeFileSync(approved, Buffer.alloc(1024 * 1024 + 1), { mode: 0o600 });
+    assert.throws(() => createApprovedCatalogueGrant(approved), /size limit/u);
+
+    const workspaceKey = commandWorkspaceKey(root);
+    const run = path.join(root, "run");
+    const scratch = commandScratchRoot(run, workspaceKey);
+    assert.equal(scratch, path.join(realpathSync(run), "command-scratch", workspaceKey));
+    assert.throws(() => commandCacheRoot(run, ".."), /workspace key/u);
+    const outside = path.join(root, "outside");
+    mkdirSync(outside, { mode: 0o700 });
+    symlinkSync(outside, path.join(run, "command-cache"));
+    assert.throws(() => commandCacheRoot(run, workspaceKey), /must not redirect/u);
+    rmSync(scratch, { recursive: true });
+    symlinkSync(outside, scratch);
+    assert.throws(() => commandScratchRoot(run, workspaceKey), /must not redirect/u);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -733,19 +784,43 @@ test("the registry proxy serves package metadata and tarballs, and nothing else"
   assert.equal(classifyRegistryPath("/-/npm/v1/security/audits"), null);
   assert.equal(classifyRegistryPath("//evil.example/"), null);
   const rewritten = rewriteRegistryUrls(
-    '{"tarball":"https://registry.npmjs.org/pnpm/-/pnpm-1.0.0.tgz"}',
+    '{"dist":{"tarball":"https://registry.npmjs.org/pnpm/-/pnpm-1.0.0.tgz"}}',
     "https://registry.npmjs.org",
     "http://127.0.0.1:9999"
   );
   assert.match(rewritten, /http:\/\/127\.0\.0\.1:9999\/pnpm\/-\/pnpm-1\.0\.0\.tgz/u);
   assert.doesNotMatch(rewritten, /registry\.npmjs\.org/u);
+  const registry = "https://registry.npmjs.org";
+  const endpoint = "http://127.0.0.1:9999";
+  const metadata = {
+    description: registry,
+    versions: {
+      "1.0.0": { dist: { tarball: registry + "/pnpm/-/pnpm-1.0.0.tgz" } },
+      "2.0.0": { dist: { tarball: registry + ".example.invalid/pnpm/-/pnpm-2.0.0.tgz" } },
+      "3.0.0": { dist: { tarball: registry + "/pnpm/-/pnpm-3.0.0.tgz?token=fixture" } }
+    }
+  };
+  assert.deepEqual(JSON.parse(rewriteRegistryUrls(JSON.stringify(metadata), registry, endpoint)), {
+    ...metadata,
+    versions: {
+      ...metadata.versions,
+      "1.0.0": { dist: { tarball: endpoint + "/pnpm/-/pnpm-1.0.0.tgz" } }
+    }
+  });
 });
 
 test("registry proxy relays scoped packages and refuses unapproved request forms", async () => {
   const requests: string[] = [];
+  const accepts: (string | undefined)[] = [];
   let origin = "";
   const upstream = createServer((request, response) => {
     requests.push(request.url ?? "");
+    accepts.push(request.headers.accept);
+    if (request.url === "/invalid") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("not json");
+      return;
+    }
     if (request.url === "/redirect") {
       response.writeHead(302, { location: "https://example.invalid/" });
       response.end();
@@ -765,7 +840,9 @@ test("registry proxy relays scoped packages and refuses unapproved request forms
   try {
     const proxy = await startRegistryProxy({ registry: origin });
     try {
-      const metadata = await fetch(proxy.endpoint + "/@scope%2fname");
+      const metadata = await fetch(proxy.endpoint + "/@scope%2fname", {
+        headers: { accept: "private-caller-header" }
+      });
       assert.equal(metadata.status, 200);
       const body = await metadata.json() as { dist: { tarball: string } };
       assert.equal(body.dist.tarball, proxy.endpoint + "/@scope/name/-/name-1.tgz");
@@ -776,7 +853,12 @@ test("registry proxy relays scoped packages and refuses unapproved request forms
       assert.equal(redirect.status, 502);
       const forbidden = await fetch(proxy.endpoint + "/pnpm?secret=fixture");
       assert.equal(forbidden.status, 404);
-      assert.deepEqual(requests, ["/@scope%2fname", "/@scope/name/-/name-1.tgz", "/redirect"]);
+      const invalid = await fetch(proxy.endpoint + "/invalid");
+      assert.equal(invalid.status, 502);
+      assert.deepEqual(requests, ["/@scope%2fname", "/@scope/name/-/name-1.tgz", "/redirect", "/invalid"]);
+      assert.equal(accepts[0], "application/vnd.npm.install-v1+json, application/json");
+      assert.equal(accepts[1], "application/octet-stream");
+      assert.ok(!accepts.includes("private-caller-header"));
     } finally {
       await proxy.close();
     }
@@ -842,6 +924,33 @@ test(
     assert.doesNotMatch(secret.stdout, /fixture-secret/u);
   }
 );
+
+test("confined commands can use private Runtime roots without reading sibling Runtime state", {
+  skip: process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec")
+}, async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), "autodev-command-runtime-state-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const scope = scopeFixture(root);
+  const state = path.join(root, ".autodev");
+  const run = path.join(state, "run");
+  const key = commandWorkspaceKey(scope.workspace);
+  const scratch = commandScratchRoot(run, key);
+  const cache = commandCacheRoot(run, key);
+  const sibling = path.join(run, "private-token");
+  writeFileSync(sibling, "outside-private-state");
+  const approvedScope = { ...scope, scratch, cache };
+  const command = {
+    ...fixture,
+    executable: "sh",
+    args: ["-c", 'printf ok > "$HOME/probe"; printf ok > "$1/probe"; cat "$HOME/probe" "$1/probe"', "sh", cache]
+  } satisfies CommandDefinition;
+  const allowed = await runApprovedCommand("fixture", command, command.args, approvedScope, AbortSignal.timeout(10_000));
+  assert.equal(allowed.status, "succeeded", allowed.stderr);
+  assert.equal(allowed.stdout, "okok");
+  const denied = await runApprovedCommand("fixture", command, ["-c", 'cat "$1"', "sh", sibling], approvedScope, AbortSignal.timeout(10_000));
+  assert.notEqual(denied.status, "succeeded");
+  assert.doesNotMatch(denied.stdout, /outside-private-state/u);
+});
 
 test(
   "a symlink in the workspace cannot be used to reach outside it",

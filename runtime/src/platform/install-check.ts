@@ -20,6 +20,10 @@ import {
 } from "@simulatorlife/autodev-runtime/config";
 import { listBundledPlugins } from "@simulatorlife/autodev-runtime/shared/bundled-plugins";
 import { autodevHome } from "@simulatorlife/autodev-runtime/shared/autodev-home";
+import {
+  commandCatalogueApproval,
+  pendingCommandCatalogueMessage
+} from "./command-catalogue-approval.ts";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import {
@@ -1046,6 +1050,27 @@ function checkAntigravityCli(
  * sources. A profile that drifted from the canonical sources is a provider
  * running stale instructions, hooks or permissions.
  */
+/**
+ * The Commands MCP serves only the operator-approved catalogue. A checkout
+ * that proposes another revision is pending approval, not drift the installer
+ * may silently repair.
+ */
+function checkCommandCatalogueApproval(
+  paths: RunInstallPaths,
+  failures: { value: number }
+): void {
+  const approval = commandCatalogueApproval(
+    paths.repositoryRoot,
+    autodevHome(process.env, paths.home)
+  );
+  if (approval.state === "approved") {
+    writeLine(`ok approved command catalogue ${approval.proposedDigest}`);
+    return;
+  }
+  writeLine(`pending ${pendingCommandCatalogueMessage(approval)}`);
+  failures.value = 1;
+}
+
 function checkMcodeProfile(
   paths: RunInstallPaths,
   failures: { value: number }
@@ -1271,6 +1296,7 @@ export function runInstallCheck(overrides: InstallCheckOptions = {}): number {
     checkObsoleteSkillPaths(paths, failures);
     checkAntigravityCli(paths, failures);
     checkMcodeProfile(paths, failures);
+    checkCommandCatalogueApproval(paths, failures);
     checkGitExcludes(paths, failures);
     checkGlobalExcludes(paths, failures);
     checkDependencies(paths, failures);

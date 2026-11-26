@@ -1,6 +1,8 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
+import { parseRuleSyncFrontmatter } from "@simulatorlife/autodev-data/rulesync-parser";
+
 /**
  * The canonical skills the installer links into `$HOME/.agents/skills`.
  *
@@ -14,8 +16,6 @@ import path from "node:path";
  * local tools from the user level.
  */
 const CURATED_SKILLS_DIR = ".curated";
-const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u;
-const TARGETS_KEY_PATTERN = /^targets\s*:/mu;
 
 export function userLevelSkills(skillsRoot: string): string[] {
   return readdirSync(skillsRoot, { withFileTypes: true })
@@ -31,7 +31,17 @@ export function userLevelSkills(skillsRoot: string): string[] {
 
 /** Whether a `SKILL.md`'s frontmatter declares a top-level `targets` key. */
 function declaresTargets(document: string): boolean {
-  const match = FRONTMATTER_PATTERN.exec(document);
-  if (!match) throw new Error("invalid-skill-document missing frontmatter");
-  return TARGETS_KEY_PATTERN.test(match[1]!);
+  const frontmatter = parseRuleSyncFrontmatter(document);
+  if (frontmatter.kind !== "valid") {
+    throw new Error("invalid-skill-document: expected YAML frontmatter mapping");
+  }
+  const { metadata } = frontmatter;
+  if (!Object.hasOwn(metadata, "targets")) return false;
+  if (
+    !Array.isArray(metadata.targets) ||
+    !metadata.targets.every((target) => typeof target === "string")
+  ) {
+    throw new Error("invalid-skill-document: targets must be a string array");
+  }
+  return true;
 }

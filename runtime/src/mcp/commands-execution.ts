@@ -243,7 +243,11 @@ export function commandSandboxProfile(
     // Workspace files can contain secrets too. Never grant dotenv/registry
     // credentials or agent-private auth directories by virtue of the cwd.
     String.raw`(deny file-read-data file-write* (regex #"/(\.env(\.[^/]*)?|\.npmrc|\.netrc|\.git-credentials)(/|$)"))`,
-    String.raw`(deny file-read-data file-write* (regex #"/(\.ssh|\.aws|\.gnupg|\.codex|\.autodev|\.config/gh)(/|$)"))`,
+    String.raw`(deny file-read-data file-write* (regex #"/(\.ssh|\.aws|\.gnupg|\.config/gh)(/|$)"))`,
+    // Runtime state is denied except for the two precisely admitted,
+    // private writable roots. The credential rules above still apply there.
+    String.raw`(deny file-read-data file-write* (require-all (regex #"/(\.codex|\.autodev)(/|$)") ` +
+      "(require-not (require-any " + subtree(scratch) + " " + subtree(cache) + "))))",
     "(allow file-read-data (require-all " + subtree(workspace) + String.raw` (regex #"/\.env\.example$")))`
   ];
   if (options.registryPort !== undefined) {

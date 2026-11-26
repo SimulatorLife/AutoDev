@@ -19,12 +19,12 @@ lifecycle -- creation, status, result and cancellation -- itself.
 */
 import { InMemoryTaskStore } from "@modelcontextprotocol/sdk/experimental/tasks/stores/in-memory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type {
-  CallToolResult,
-  Request,
-  RequestId,
-  Result,
-  Task
+import {
+  CallToolResultSchema,
+  type Request,
+  type RequestId,
+  type Result,
+  type Task
 } from "@modelcontextprotocol/sdk/types.js";
 
 import { roleContract } from "../shared/execution-contract.ts";
@@ -129,38 +129,16 @@ function resultPayload(result: CommandResult) {
 }
 
 /**
-Only a tool result may be returned as a task result.
-
-The SDK's task store is typed as returning any protocol `Result`, so the
-narrowing is done here rather than asserted: a task result that is not a
-tool result is a fault in the store, not a result to hand a client.
-*/
-function asToolResult(value: Result): CallToolResult {
-  const content = value.content;
-  if (!Array.isArray(content)) {
-    throw new TypeError("Command task result is not a tool result.");
-  }
-  const payload: CallToolResult = {
-    content: content as CallToolResult["content"]
-  };
-  if (value.structuredContent !== undefined) {
-    payload.structuredContent =
-      value.structuredContent as CallToolResult["structuredContent"];
-  }
-  if (value.isError === true) payload.isError = true;
-  return payload;
-}
-
-/**
 The SDK's store, with the bounds and the revocation checks the generic
 store cannot own.
 
-The store's own session binding is preserved: every method keeps the
-`sessionId` it was given, so a task created in one session is not found by
-another. The checks this class adds are the ones the SDK has no notion of
--- the operator's approval, and the retention bound.
+The SDK's default store treats a missing session ID as a wildcard.
+Normalize every operation to a nonempty, collision-free session key,
+including the sole stdio session. This is transport-level isolation only:
+the gateway must still admit a distinct backend scope for each trusted
+conversation. The store also enforces operator approval and retention.
 */
-class CommandTaskStore extends InMemoryTaskStore {
+export class CommandTaskStore extends InMemoryTaskStore {
   readonly authorize: () => void;
   readonly active: Map<string, ActiveCommand>;
 
@@ -168,6 +146,10 @@ class CommandTaskStore extends InMemoryTaskStore {
     super();
     this.authorize = authorize;
     this.active = active;
+  }
+
+  private sessionKey(sessionId?: string): string {
+    return sessionId === undefined ? "stdio" : `session:${sessionId}`;
   }
 
   override createTask(
@@ -180,17 +162,27 @@ class CommandTaskStore extends InMemoryTaskStore {
     if (this.getAllTasks().length >= MAX_RETAINED_TASKS) {
       throw new Error("Command task retention limit reached.");
     }
-    return super.createTask(parameters, requestId, request, sessionId);
+    return super.createTask(parameters, requestId, request, this.sessionKey(sessionId));
   }
 
   override getTask(taskId: string, sessionId?: string): Promise<Task | null> {
     this.authorize();
-    return super.getTask(taskId, sessionId);
+    return super.getTask(taskId, this.sessionKey(sessionId));
   }
 
   override getTaskResult(taskId: string, sessionId?: string): Promise<Result> {
     this.authorize();
-    return super.getTaskResult(taskId, sessionId);
+    return super.getTaskResult(taskId, this.sessionKey(sessionId));
+  }
+
+  override storeTaskResult(
+    taskId: string,
+    status: "completed" | "failed",
+    result: Result,
+    sessionId?: string
+  ): Promise<void> {
+    this.authorize();
+    return super.storeTaskResult(taskId, status, result, this.sessionKey(sessionId));
   }
 
   override listTasks(
@@ -198,7 +190,7 @@ class CommandTaskStore extends InMemoryTaskStore {
     sessionId?: string
   ): ReturnType<InMemoryTaskStore["listTasks"]> {
     this.authorize();
-    return super.listTasks(cursor, sessionId);
+    return super.listTasks(cursor, this.sessionKey(sessionId));
   }
 
   override async updateTaskStatus(
@@ -208,7 +200,8 @@ class CommandTaskStore extends InMemoryTaskStore {
     sessionId?: string
   ) {
     this.authorize();
-    if (status === "cancelled" && (await super.getTask(taskId, sessionId))) {
+    const key = this.sessionKey(sessionId);
+    if (status === "cancelled" && (await super.getTask(taskId, key))) {
       const execution = this.active.get(taskId);
       if (execution) {
         execution.cancelling = true;
@@ -220,7 +213,8 @@ class CommandTaskStore extends InMemoryTaskStore {
         await execution.done;
       }
     }
-    await super.updateTaskStatus(taskId, status, statusMessage, sessionId);
+    this.authorize();
+    await super.updateTaskStatus(taskId, status, statusMessage, key);
   }
 }
 
@@ -235,6 +229,7 @@ export interface CommandsServer {
 
 export function createCommandsMcpServer(grant: CommandsServerGrant): CommandsServer {
   let isClosed = false;
+  let closing: Promise<void> | undefined;
   let revoked = false;
   const active = new Map<string, ActiveCommand>();
   const isAuthorized = (): boolean => {
@@ -309,6 +304,9 @@ export function createCommandsMcpServer(grant: CommandsServerGrant): CommandsSer
               ttl: definition.timeoutMs + RETENTION_MS,
               pollInterval: 1000
             });
+            // Closing/revocation may have interleaved with task creation.
+            // Never start an invocation after its admission has ended.
+            authorize();
             const execution: ActiveCommand = {
               controller: new AbortController(),
               cancelling: false,
@@ -385,7 +383,7 @@ export function createCommandsMcpServer(grant: CommandsServerGrant): CommandsSer
         },
         getTaskResult: async (_arguments, extra) => {
           authorize();
-          return asToolResult(await extra.taskStore.getTaskResult(extra.taskId));
+          return CallToolResultSchema.parse(await extra.taskStore.getTaskResult(extra.taskId));
         }
       }
     );
@@ -394,17 +392,20 @@ export function createCommandsMcpServer(grant: CommandsServerGrant): CommandsSer
   return {
     server,
     commandIds,
-    async close() {
-      if (isClosed) return;
+    close() {
+      if (closing) return closing;
       isClosed = true;
-      const executions = active.values().toArray();
+      const executions = [...active.values()];
       for (const execution of executions) {
         execution.cancelling = true;
         execution.controller.abort();
       }
-      await Promise.all(executions.map((execution) => execution.done));
-      store.cleanup();
-      await server.close();
+      closing = Promise.allSettled(executions.map((execution) => execution.done))
+        .then(async () => {
+          store.cleanup();
+          await server.close();
+        });
+      return closing;
     }
   };
 }

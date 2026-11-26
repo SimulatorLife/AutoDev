@@ -15,7 +15,7 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
-  readFileSync,
+  readSync,
   realpathSync,
   statSync,
   unlinkSync,
@@ -140,6 +140,8 @@ Read one protected revision through a descriptor, refusing symbolic links,
 shared hard links and files writable by another user. The installed parent
 directory must also be protected by the Runtime admission boundary.
 */
+const MAX_CATALOGUE_BYTES = 1024 * 1024;
+
 function readApprovedCatalogue(cataloguePath: string): string {
   const descriptor = openSync(
     cataloguePath,
@@ -155,7 +157,21 @@ function readApprovedCatalogue(cataloguePath: string): string {
     ) {
       throw new CommandsAdmissionError("The approved command catalogue is not a protected regular file.");
     }
-    return readFileSync(descriptor, "utf8");
+    if (stat.size > MAX_CATALOGUE_BYTES) {
+      throw new CommandsAdmissionError("The approved command catalogue exceeds its size limit.");
+    }
+    // Bound reads even if the file grows between fstat and read.
+    const buffer = Buffer.alloc(Math.min(stat.size + 1, MAX_CATALOGUE_BYTES + 1));
+    let bytes = 0;
+    while (bytes < buffer.length) {
+      const count = readSync(descriptor, buffer, bytes, buffer.length - bytes, null);
+      if (count === 0) break;
+      bytes += count;
+    }
+    if (bytes !== stat.size) {
+      throw new CommandsAdmissionError("The approved command catalogue changed during read.");
+    }
+    return buffer.toString("utf8", 0, bytes);
   } finally {
     closeSync(descriptor);
   }
@@ -268,13 +284,7 @@ export function commandScratchRoot(
   runDirectory: string,
   workspaceKey: string
 ): string {
-  const root = path.join(
-    runDirectory,
-    "command-scratch",
-    workspaceKey.replaceAll(/[^A-Za-z0-9._-]/gu, "_")
-  );
-  mkdirSync(root, { recursive: true, mode: 0o700 });
-  return root;
+  return privateCommandRoot(runDirectory, "command-scratch", workspaceKey);
 }
 
 /**
@@ -284,12 +294,33 @@ export function commandCacheRoot(
   runDirectory: string,
   workspaceKey: string
 ): string {
-  const root = path.join(
-    runDirectory,
-    "command-cache",
-    workspaceKey.replaceAll(/[^A-Za-z0-9._-]/gu, "_")
-  );
-  mkdirSync(root, { recursive: true, mode: 0o700 });
+  return privateCommandRoot(runDirectory, "command-cache", workspaceKey);
+}
+
+function privateCommandRoot(
+  runDirectory: string,
+  kind: "command-scratch" | "command-cache",
+  workspaceKey: string
+): string {
+  if (!/^[a-f0-9]{16}$/u.test(workspaceKey)) {
+    throw new CommandsAdmissionError("Invalid command workspace key.");
+  }
+  mkdirSync(runDirectory, { recursive: true, mode: 0o700 });
+  const physicalRun = realpathSync(runDirectory);
+  const parent = path.join(physicalRun, kind);
+  const root = path.join(parent, workspaceKey);
+  for (const directory of [parent, root]) {
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const stat = lstatSync(directory);
+    if (
+      !stat.isDirectory() ||
+      (stat.mode & 0o077) !== 0 ||
+      (process.getuid && stat.uid !== process.getuid()) ||
+      realpathSync(directory) !== directory
+    ) {
+      throw new CommandsAdmissionError("Command state directory must be private and must not redirect.");
+    }
+  }
   return root;
 }
 

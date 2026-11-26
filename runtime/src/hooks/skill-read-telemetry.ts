@@ -67,7 +67,10 @@ export async function reportSkillRead(raw: string): Promise<void> {
   );
   if (!match) return;
   const callId = pickHookString(payload, [
-    "tool_use_id", "toolUseId", "call_id", "callId"
+    "tool_use_id",
+    "toolUseId",
+    "call_id",
+    "callId"
   ]);
   const eventId = skillReadEventId(
     context.sessionId,

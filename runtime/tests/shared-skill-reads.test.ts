@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { createAgentActivityTracker } from "../src/agents/agent-activity.ts";
+import { extractHookToolCall } from "../src/hooks/hook-payload.ts";
 import {
   reportSkillRead,
   skillReadEventId
@@ -16,7 +17,10 @@ import {
   setDefaultCorrelationTracker
 } from "../src/router/correlation.ts";
 import { LiveFeedRecorder } from "../src/router/live-feed.ts";
-import { noteBridgeRequest, resetSubagentTelemetry } from "../src/router/subagents.ts";
+import {
+  noteBridgeRequest,
+  resetSubagentTelemetry
+} from "../src/router/subagents.ts";
 import { UsageTracker } from "../src/router/usage.ts";
 import {
   extractSkillReadPath,
@@ -78,6 +82,21 @@ test("normaliseSkillReadPath expands home directory and resolves paths", () => {
   );
 });
 
+test("native hook aliases preserve the observed tool name and only translate known tools", () => {
+  const environment = { AUTODEV_PROVIDER: "mcode" };
+  assert.deepEqual(
+    extractHookToolCall({ tool_name: "read", tool_input: {} }, environment),
+    { rawToolName: "read", toolName: "read_file", toolInput: {} }
+  );
+  for (const name of ["constructor", "__proto__", "unknown"]) {
+    assert.equal(
+      extractHookToolCall({ tool_name: name }, environment)?.toolName,
+      name
+    );
+  }
+  assert.equal(extractHookToolCall({ tool_name: "read" }, {})?.toolName, "read");
+});
+
 test("skill read identities are bounded, retry-stable, and scoped to observed turns or calls", () => {
   const session = "session".repeat(100);
   const id = skillReadEventId(session, "turn-1", "call-1", "example", "/skills");
@@ -103,13 +122,17 @@ test("skill read identities are bounded, retry-stable, and scoped to observed tu
 
 test("hook retries reach the router with the same identity; unidentified calls do not invent usage", async (t) => {
   const events: Array<Record<string, unknown>> = [];
-  t.mock.method(globalThis, "fetch", async (_url: unknown, options: RequestInit) => {
-    const body = JSON.parse(String(options.body)) as {
-      events: Array<Record<string, unknown>>;
-    };
-    events.push(...body.events);
-    return new Response("{}", { status: 200 });
-  });
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async (_url: unknown, options: RequestInit) => {
+      const body = JSON.parse(String(options.body)) as {
+        events: Array<Record<string, unknown>>;
+      };
+      events.push(...body.events);
+      return new Response("{}", { status: 200 });
+    }
+  );
   const payload = {
     session_id: "fixture-session",
     cwd: REPO_ROOT,

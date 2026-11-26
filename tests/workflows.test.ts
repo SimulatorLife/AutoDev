@@ -473,7 +473,7 @@ test("MiniMax invocation configures headless OpenAI-compatible authentication", 
   assert.doesNotMatch(runner, /\bnpx\b/);
 });
 
-test("local provider tooling resolves the playwright MCP from a pinned devDependency", async () => {
+test("local provider tooling resolves the playwright MCP from a pinned Runtime dependency", async () => {
   // `.rulesync/mcp.jsonc` is the only place the Playwright launch is declared;
   // role TOMLs carry only per-role settings and are rendered with it.
   const mcpSource = JSON.parse(
@@ -499,10 +499,12 @@ test("local provider tooling resolves the playwright MCP from a pinned devDepend
     assert.doesNotMatch(settings, /\bnpx\b/);
   }
 
+  // The Runtime launches it, so the Runtime's own (protected, deployed)
+  // dependency tree pins it.
   const manifest = JSON.parse(
-    await readFile(path.join(root, "package.json"), "utf8")
+    await readFile(path.join(root, "runtime", "package.json"), "utf8")
   );
-  assert.equal(manifest.devDependencies["@playwright/mcp"], "^0.0.86");
+  assert.equal(manifest.dependencies["@playwright/mcp"], "^0.0.86");
 
   for (const role of ["browser-tester", "smart"]) {
     const roleSource = await readFile(

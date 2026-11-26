@@ -140,7 +140,10 @@ function canonicalToolName(
   environment: NodeJS.ProcessEnv = process.env
 ): string {
   if (environment.AUTODEV_PROVIDER?.trim() !== "mcode") return toolName;
-  return MCODE_NATIVE_TOOL_NAMES[toolName.toLowerCase()] ?? toolName;
+  const normalized = toolName.toLowerCase();
+  return Object.hasOwn(MCODE_NATIVE_TOOL_NAMES, normalized)
+    ? MCODE_NATIVE_TOOL_NAMES[normalized]!
+    : toolName;
 }
 
 /**
@@ -150,7 +153,8 @@ Extract the tool name and tool arguments from any supported hook payload:
 - Antigravity `call_mcp_tool` wrapper -> canonical `mcp__<server>__<tool>`
 */
 export function extractHookToolCall(
-  payload: unknown
+  payload: unknown,
+  environment: NodeJS.ProcessEnv = process.env
 ): NormalizedHookToolCall | null {
   if (!isRecord(payload)) return null;
   const nestedCall = isRecord(payload.toolCall)
@@ -169,7 +173,10 @@ export function extractHookToolCall(
     pickToolArguments(payload) ??
     {};
 
-  return unwrapCallMcpTool(canonicalToolName(rawToolName), toolInput);
+  return {
+    ...unwrapCallMcpTool(canonicalToolName(rawToolName, environment), toolInput),
+    rawToolName
+  };
 }
 
 /**

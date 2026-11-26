@@ -79,6 +79,10 @@ import {
   type RuntimeSourceTree
 } from "./runtime-source-generation.ts";
 import {
+  applyCommandCatalogueApproval,
+  pendingCommandCatalogueMessage
+} from "./command-catalogue-approval.ts";
+import {
   collectRuntimeDependencyClosures,
   materializeRuntimeDependencyClosure,
   referencedRuntimeDependencyClosure,
@@ -253,6 +257,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/platform/runtime-reconciliation.ts",
   "runtime/src/platform/runtime-source-generation.ts",
   "runtime/src/platform/runtime-dependency-closure.ts",
+  "runtime/src/platform/command-catalogue-approval.ts",
   "runtime/src/platform/user-level-skills.ts",
   "runtime/src/platform/service-restart.ts",
   "runtime/src/platform/usage-stack.ts",
@@ -511,6 +516,12 @@ interface MaterializeOptions {
   autodevHome?: string;
   materializeOnly: boolean;
   codexMcpSource: string;
+  /**
+   * The command catalogue digest the operator approved on the installer's
+   * command line, never from the environment (which loads the checkout's
+   * `.env`).
+   */
+  approvedCommandCatalogue?: string | undefined;
 }
 
 function commandAvailable(command: string): boolean {
@@ -2301,14 +2312,16 @@ export function materializeInstallation(options: MaterializeOptions): void {
       0o644
     );
     // The approved command catalogue lives beside the execution contract, in
-    // the Runtime's own configuration. It is read-only to the agent because it
-    // is outside every workspace, and it is the only catalogue the Commands
-    // MCP trusts.
-    materializeRuntimeFile(
-      source("config/commands.json"),
-      path.join(autodevHome, "config", "commands.json"),
-      0o644
+    // the Runtime's own configuration, outside every workspace. The checkout's
+    // copy is only a proposal: it replaces the approved one only when the
+    // operator approved exactly that revision (command-catalogue-approval.ts).
+    const approval = applyCommandCatalogueApproval(
+      options.repositoryRoot,
+      autodevHome,
+      { approvedDigest: options.approvedCommandCatalogue }
     );
+    if (approval.state === "pending")
+      writeErrorLine(pendingCommandCatalogueMessage(approval));
     prepareRunLogs(autodevHome);
   }
   // The MiniMax Code provider runs against the profile in the AutoDev home,

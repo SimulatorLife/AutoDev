@@ -97,7 +97,10 @@ export function normaliseSkillReadPath(
     // A named user's shell expansion is not known to the hook.
     return null;
   }
-  return path.resolve(cwd && path.isAbsolute(cwd) ? cwd : process.cwd(), result);
+  return path.resolve(
+    cwd && path.isAbsolute(cwd) ? cwd : process.cwd(),
+    result
+  );
 }
 
 /** Reuses the canonical shell tokenizer owned by `read-only-policy.ts`. */
@@ -180,7 +183,9 @@ export function matchSkillReadTarget(
   customRoots?: readonly string[]
 ): { skill: string; root: string } | null {
   if (!filePath) return null;
-  const normalised = path.normalize(filePath.replaceAll(/[\\/]+/g, path.sep));
+  const normalised = path.normalize(
+    filePath.replaceAll(/[\\/]+/g, path.sep)
+  );
   if (!isSkillMarkdownPath(normalised)) return null;
   const roots = customRoots ?? resolveSkillRoots();
   for (const rootRaw of roots) {

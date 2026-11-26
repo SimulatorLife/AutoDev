@@ -34,10 +34,6 @@ function isArtifactSegment(value: string): boolean {
   return /^[a-zA-Z0-9][a-zA-Z0-9._+-]{0,255}$/u.test(value);
 }
 
-function withoutTrailingSlash(value: string): string {
-  return value.endsWith("/") ? value.slice(0, -1) : value;
-}
-
 const MAX_METADATA_BYTES = 16 * 1024 * 1024;
 const MAX_TARBALL_BYTES = 256 * 1024 * 1024;
 const MAX_ACTIVE_REQUESTS = 8;
@@ -142,8 +138,39 @@ export function rewriteRegistryUrls(
   registry: string,
   endpoint: string
 ): string {
-  const origin = withoutTrailingSlash(registry);
-  return body.split(origin).join(withoutTrailingSlash(endpoint));
+  const origin = new URL(registry).origin;
+  const proxy = new URL(endpoint).origin;
+  const metadata: unknown = JSON.parse(body);
+  const object = (value: unknown): Record<string, unknown> | null =>
+    value !== null && typeof value === "object" && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : null;
+  const rewrite = (value: unknown): void => {
+    const dist = object(object(value)?.dist);
+    if (!dist || typeof dist.tarball !== "string") return;
+    let target: URL;
+    try {
+      target = new URL(dist.tarball);
+    } catch {
+      return;
+    }
+    if (
+      target.origin === origin &&
+      !target.username &&
+      !target.password &&
+      !target.search &&
+      !target.hash &&
+      classifyRegistryPath(target.pathname) === "tarball"
+    ) {
+      dist.tarball = proxy + target.pathname;
+    }
+  };
+  rewrite(metadata);
+  const versions = object(object(metadata)?.versions);
+  if (versions) {
+    for (const version of Object.values(versions)) rewrite(version);
+  }
+  return JSON.stringify(metadata);
 }
 
 function fail(response: ServerResponse, status: number, message: string): void {
@@ -178,7 +205,11 @@ function relay(
       method: client.method === "HEAD" ? "HEAD" : "GET",
       signal: deadline,
       headers: {
-        accept: client.headers.accept ?? "application/json",
+        // Caller-controlled header values could carry arbitrary data to
+        // the registry. Use the fixed media types the proxy actually serves.
+        accept: options.kind === "metadata"
+          ? "application/vnd.npm.install-v1+json, application/json"
+          : "application/octet-stream",
         "accept-encoding": "identity",
         "user-agent": "autodev-commands-registry-proxy"
       }
@@ -232,15 +263,23 @@ function relay(
       });
       upstreamResponse.on("end", () => {
         if (response.destroyed || response.writableEnded) return;
-        const raw = Buffer.concat(chunks);
-        const body = contentType.includes("json")
-          ? Buffer.from(rewriteRegistryUrls(raw.toString("utf8"), options.registry, options.endpoint))
-          : raw;
-        response.writeHead(status, {
-          "content-type": contentType,
-          "content-length": body.length
-        });
-        response.end(body);
+        try {
+          const raw = Buffer.concat(chunks);
+          const body = contentType.includes("json")
+            ? Buffer.from(rewriteRegistryUrls(raw.toString("utf8"), options.registry, options.endpoint))
+            : raw;
+          if (body.length > limit) {
+            fail(response, 502, "registry response exceeds limit");
+            return;
+          }
+          response.writeHead(status, {
+            "content-type": contentType,
+            "content-length": body.length
+          });
+          response.end(body);
+        } catch {
+          fail(response, 502, "registry metadata is invalid");
+        }
       });
       upstreamResponse.on("error", () => fail(response, 502, "registry upstream failed"));
     }
@@ -286,11 +325,16 @@ export async function startRegistryProxy(
     }
     active += 1;
     response.once("close", () => { active -= 1; });
+    response.setTimeout(30_000, () => response.destroy());
     const address = server.address();
     const port = typeof address === "object" && address ? address.port : 0;
     const endpoint = `http://127.0.0.1:${port}`;
     relay(client, response, { origin, secure, endpoint, registry, pathname, kind });
   });
+  server.maxConnections = MAX_ACTIVE_REQUESTS * 4;
+  server.headersTimeout = 10_000;
+  server.requestTimeout = 30_000;
+  server.keepAliveTimeout = 5000;
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(0, host, () => {

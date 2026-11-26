@@ -47,7 +47,7 @@ import {
   type ParseError,
   printParseErrorCode
 } from "jsonc-parser";
-import { parse as parseYaml } from "yaml";
+
 
 import { atomicWrite } from "../files/atomic-write.ts";
 import {
@@ -56,6 +56,7 @@ import {
   type RuleSyncCommand,
   RuleSyncCommandValidationError
 } from "./command-parser.ts";
+import { parseRuleSyncFrontmatter } from "./frontmatter.ts";
 
 const DEFAULT_REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const COLLATOR = new Intl.Collator();
@@ -102,7 +103,6 @@ const COMMAND_REVISION_PATTERN = /^[a-f0-9]{64}$/u;
 const GIT_REVISION_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
 const SKILLS_SOURCE = ".rulesync/skills" as const;
 const CURATED_SKILLS_DIRECTORY = ".curated" as const;
-const SKILL_FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u;
 const SKILL_NAME_PATTERN = /^[a-z0-9-]{1,64}$/u;
 const SKILL_DESCRIPTION_MAX = 512;
 const SKILL_CONTENT_MAX = 20_000;
@@ -177,21 +177,21 @@ function skillFrontmatterProblem(
 }
 
 function validateSkillSource(name: string, content: string): void {
-  const frontmatter = content.match(SKILL_FRONTMATTER_PATTERN);
-  if (!frontmatter) {
+  const frontmatter = parseRuleSyncFrontmatter(content);
+  if (frontmatter.kind === "missing") {
     throw new RuleSyncSkillValidationError(
       "Skill source must have YAML frontmatter."
     );
   }
-  let metadata: unknown;
-  try {
-    metadata = parseYaml(frontmatter[1]!);
-  } catch {
+  if (frontmatter.kind === "invalid_yaml") {
     throw new RuleSyncSkillValidationError(
       "Skill source frontmatter is not valid YAML."
     );
   }
-  const problem = skillFrontmatterProblem(metadata, name);
+  const problem = skillFrontmatterProblem(
+    frontmatter.kind === "valid" ? frontmatter.metadata : null,
+    name
+  );
   if (problem !== null) throw new RuleSyncSkillValidationError(problem);
 }
 
@@ -305,17 +305,14 @@ function readSkillEntry(skillsDir: string, entry: Dirent): SkillEntry {
   if (cachedSkill && cachedSkill.text === text) {
     return cachedSkill.entry;
   }
-  const frontmatter = text.match(SKILL_FRONTMATTER_PATTERN);
-  if (!frontmatter) {
+  const frontmatter = parseRuleSyncFrontmatter(text);
+  if (frontmatter.kind === "missing") {
     return {
       kind: "invalid",
       issue: [skillLocation, `"${skillLocation}" must have YAML frontmatter.`]
     };
   }
-  let metadata: unknown;
-  try {
-    metadata = parseYaml(frontmatter[1]!);
-  } catch {
+  if (frontmatter.kind === "invalid_yaml") {
     return {
       kind: "invalid",
       issue: [
@@ -324,6 +321,7 @@ function readSkillEntry(skillsDir: string, entry: Dirent): SkillEntry {
       ]
     };
   }
+  const metadata = frontmatter.kind === "valid" ? frontmatter.metadata : null;
   const problem = skillFrontmatterProblem(metadata, entry.name);
   if (problem !== null) {
     return { kind: "invalid", issue: [skillLocation, problem] };

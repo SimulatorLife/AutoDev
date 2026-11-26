@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 
-import { isRecord, type PromptAsset } from "@simulatorlife/autodev-core";
-import { parse as parseYaml } from "yaml";
+import type { PromptAsset } from "@simulatorlife/autodev-core";
+
+import { parseRuleSyncFrontmatter } from "./frontmatter.ts";
+export { parseRuleSyncFrontmatter } from "./frontmatter.ts";
 
 /**
  * The canonical RuleSync command parser.
@@ -20,9 +22,6 @@ import { parse as parseYaml } from "yaml";
  */
 
 export const COMMANDS_SOURCE = ".rulesync/commands" as const;
-
-const COMMAND_FRONTMATTER_PATTERN =
-  /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)([\s\S]*)$/u;
 
 export interface RuleSyncCommand extends PromptAsset {
   readonly name: string;
@@ -51,25 +50,23 @@ export function parseRuleSyncCommand(
   name: string,
   content: string
 ): RuleSyncCommand {
-  const frontmatter = content.match(COMMAND_FRONTMATTER_PATTERN);
-  if (!frontmatter) {
+  const frontmatter = parseRuleSyncFrontmatter(content);
+  if (frontmatter.kind === "missing") {
     throw new RuleSyncCommandValidationError(
       `Command "${name}" must have valid YAML frontmatter.`
     );
   }
-  let metadata: unknown;
-  try {
-    metadata = parseYaml(frontmatter[1]!);
-  } catch {
+  if (frontmatter.kind === "invalid_yaml") {
     throw new RuleSyncCommandValidationError(
       `Command "${name}" frontmatter is invalid YAML.`
     );
   }
-  if (!isRecord(metadata)) {
+  if (frontmatter.kind !== "valid") {
     throw new RuleSyncCommandValidationError(
       `Command "${name}" frontmatter must be a mapping.`
     );
   }
+  const { metadata, body } = frontmatter;
   const description = metadata.description;
   const targets = metadata.targets ?? ["*"];
   if (
@@ -87,7 +84,7 @@ export function parseRuleSyncCommand(
     path: `${COMMANDS_SOURCE}/${name}.md`,
     kind: "command",
     content,
-    prompt: frontmatter[2]?.trim() ?? "",
+    prompt: body.trim(),
     targets,
     revision: createHash("sha256").update(content, "utf8").digest("hex"),
     ...(description === undefined ? {} : { description })

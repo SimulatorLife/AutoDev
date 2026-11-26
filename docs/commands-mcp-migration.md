@@ -73,10 +73,15 @@ launchd services and the live provider surfaces still carry the previous state.
 
 ### What exists now
 
-- `config/commands.json` is the **operator-approved** catalogue. It is the
-  single source of truth for approved executable/argv definitions, and the
-  installer materializes it beside the execution contract
-  (`$CODEX_HOME/config/commands.json`). It is never read from a workspace.
+- `config/commands.json` is the **proposed** catalogue and the single source
+  of truth for executable/argv definitions. The installer copies it beside the
+  execution contract (`$AUTODEV_HOME/config/commands.json`) only when the
+  operator approved that exact revision on the installer's command line
+  (`--approve-command-catalogue=sha256:<digest>`, never from `.env`; see
+  `runtime/src/platform/command-catalogue-approval.ts`); a changed checkout
+  catalogue is reported as pending by the installer and `install-check` and
+  never approved by a reinstall. The approved copy is never read from a
+  workspace.
   `runtime/src/mcp/commands-catalogue.ts` validates it: bounded fixed
   executable and argv, at most 64 definitions, narrowly typed string
   parameters, and no parameter that no argument uses or argument that names no
@@ -191,6 +196,35 @@ path, actual export, correlation and Console observations need production
 qualification. There is no admission queue in this implementation; do not
 fabricate queue-time observations. Regression fixtures are written but
 not executed in this pass.
+
+A third parallel pass tightens the native task store's transport-session
+binding. The SDK treats an omitted session identifier as a wildcard; the
+backend now normalizes omitted and explicit identifiers to disjoint,
+nonempty keys for every store operation, including result writes and
+cancellation. Shutdown callers share one settlement promise, and a grant
+is rechecked after asynchronous task creation before any command starts.
+Stored tool results use the SDK's own schema instead of a handwritten cast.
+This does not authenticate frontend conversations multiplexed onto one
+stdio transport.
+
+The scratch/cache directory creation logic is shared and refuses invalid
+workspace keys, redirected directories and non-private permissions.
+Catalogue reads are bounded to 1 MiB, including concurrent growth. The
+command sandbox's broad Runtime-state deny now excludes precisely the
+admitted scratch and cache roots, without relaxing credential denies or
+granting sibling state access. The macOS fixture exercises this actual
+layout; execution under the host Seatbelt remains to be verified.
+
+The registry proxy now rewrites only package metadata's `dist.tarball`
+fields (including version records) whose URL has the exact approved
+registry origin and allowed tarball path. Other metadata is preserved.
+Caller header values are not forwarded, malformed JSON is rejected, and
+listener connections, header/request timeouts and response inactivity
+are bounded. This does not qualify the outer gateway network policy or
+eliminate the inherent outbound package-name request channel.
+
+All changes in this pass have source regression fixtures, not executed
+host test evidence. No additional dependency or service was introduced.
 
 ### What is still open
 
@@ -386,7 +420,7 @@ Paths below are source-navigation starting points, not a mandate to create addit
 | runtime/src/config/render-chatgpt-supergateway.ts | Existing role-contracted gateway projections |
 | runtime/src/mcp/chatgpt-filesystem-sandbox.ts | Reuse/generalize confinement; verify trusted executables and descendants |
 | runtime/src/platform/ | Installation, health and reconciliation |
-| console/ and existing Control API | Existing MCP resource, not a new command product |
+| console/ and existing Control API | Existing MCP resource for command availability, approval revision, effective grants, health and evidence; command definitions/permission policy remain repository-owned and read-only, not a new command-authoring product |
 | tests/ and runtime/tests/ | Behavioral, isolation, security and acceptance coverage |
 
 Do not expand the existing shell command classification/parser just to authorize fixed argv invocations. Do not duplicate an inventory in prompts, generated projections or tests. Derive role grants and provider projections from their owners.

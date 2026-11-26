@@ -54,6 +54,7 @@
     "./platform/runtime-mirror-package": "./src/platform/runtime-mirror-package.ts",
     "./platform/runtime-source-generation": "./src/platform/runtime-source-generation.ts",
     "./platform/runtime-dependency-closure": "./src/platform/runtime-dependency-closure.ts",
+    "./platform/command-catalogue-approval": "./src/platform/command-catalogue-approval.ts",
     "./platform/runtime-reconciliation": "./src/platform/runtime-reconciliation.ts",
     "./platform/service-restart": "./src/platform/service-restart.ts",
     "./platform/sleep": "./src/platform/sleep.ts",

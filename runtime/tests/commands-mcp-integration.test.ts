@@ -23,7 +23,10 @@ import test from "node:test";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { CreateTaskResultSchema } from "@modelcontextprotocol/sdk/types.js";
+import {
+  CallToolResultSchema,
+  CreateTaskResultSchema
+} from "@modelcontextprotocol/sdk/types.js";
 
 const SERVER = path.resolve(
   import.meta.dirname,
@@ -193,7 +196,10 @@ test(
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     assert.equal(status, "completed");
-    const taskResult = await client.experimental.tasks.getTaskResult(taskId);
+    const taskResult = await client.experimental.tasks.getTaskResult(
+      taskId,
+      CallToolResultSchema
+    );
     const payload = taskResult.structuredContent as { commandId: string };
     assert.equal(payload.commandId, "git_status");
   }
