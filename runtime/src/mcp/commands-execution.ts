@@ -1,0 +1,403 @@
+/**
+Execute an operator-approved command under a closed macOS Seatbelt profile.
+
+This module owns two things and refuses to own a third: the confinement
+profile a command runs under, and the process that runs it. It never
+decides *whether* a command may run -- that is the Runtime's admission, the
+execution contract and the catalogue's business -- and it never grants a
+command an authority the catalogue did not declare.
+
+A fixed command allowlist is not a sandbox. `pnpm test` runs repository
+code and `pnpm install` runs package lifecycle scripts, so every descendant
+is constrained independently of the command's own text.
+*/
+import { createHash } from "node:crypto";
+import { accessSync, constants, realpathSync, statSync } from "node:fs";
+import path from "node:path";
+
+import {
+  findExecutable,
+  findPnpmGlobalBinary
+} from "@simulatorlife/autodev-runtime/shared/executables";
+import { execa } from "execa";
+
+import type { CommandDefinition, CommandResult } from "./commands-catalogue.ts";
+
+const SANDBOX = "/usr/bin/sandbox-exec";
+/**
+The most output a single command may return, in either stream.
+*/
+const OUTPUT_LIMIT_BYTES = 256 * 1024;
+
+/**
+The stable key one workspace's command scope is named by.
+
+It is derived from the workspace's own path so that every process that
+serves that workspace -- the launcher, the gateway backend, the session's
+server -- agrees on the same scratch root, cache root and lease without
+exchanging any identity.
+*/
+export function commandWorkspaceKey(workspace: string): string {
+  return createHash("sha256")
+    .update(path.resolve(workspace))
+    .digest("hex")
+    .slice(0, 16);
+}
+
+export interface ApprovedCommandScope {
+  /**
+  Canonical, independently authorized workspace.
+  */
+  readonly workspace: string;
+  /**
+  Private scratch root provisioned by the trusted Runtime, not a caller.
+  */
+  readonly scratch: string;
+  /**
+  A private, per-workspace cache root (the package store, the tool caches).
+  It lives outside the workspace so a command cannot poison another
+  workspace's cache, and it is writable only by this workspace's commands.
+  */
+  readonly cache: string;
+  /**
+  Only reviewed, protected toolchain roots, never agent-writable paths.
+  */
+  readonly toolchainRoots: readonly string[];
+  /**
+  Executable name to reviewed absolute executable, resolved by the operator.
+  */
+  readonly executables: Readonly<Record<string, string>>;
+  /**
+  The loopback registry proxy endpoint dependency installation is pointed
+  at. Absent means dependency installation is not available at all.
+  */
+  readonly registryEndpoint?: string;
+}
+
+/**
+The directories a command's executable may be resolved from.
+
+The workspace is deliberately absent: an executable resolved out of the
+workspace is a file the agent controls, and a command that runs it runs
+whatever the agent last wrote there.
+*/
+const TRUSTED_EXECUTABLE_PATH = [
+  "/usr/bin",
+  "/bin",
+  "/usr/local/bin",
+  "/opt/homebrew/bin"
+].join(path.delimiter);
+
+export interface TrustedExecutables {
+  /**
+  Executable name to the absolute path it was resolved at.
+  */
+  readonly executables: Readonly<Record<string, string>>;
+  /**
+  The directories the resolved executables and their runtime live in.
+  */
+  readonly toolchainRoots: readonly string[];
+}
+
+/**
+Resolve the executables a catalogue names, from trusted locations only.
+
+The resolution never consults the workspace and never trusts a PATH the
+workspace could influence. A name that cannot be resolved is an error
+rather than a fallback: a command whose executable is missing must fail
+closed, not run something else.
+*/
+export function resolveTrustedExecutables(
+  names: readonly string[],
+  environment: NodeJS.ProcessEnv = process.env,
+  home: string = environment.HOME?.trim() || ""
+): TrustedExecutables {
+  const executables: Record<string, string> = {};
+  const roots = new Set<string>();
+  for (const name of names) {
+    const resolved =
+      findPnpmGlobalBinary(name, home, environment) ??
+      findExecutable(name, TRUSTED_EXECUTABLE_PATH);
+    if (!resolved) {
+      throw new Error(`Command executable "${name}" is not installed.`);
+    }
+    executables[name] = realpathSync(resolved);
+  }
+  for (const entry of Object.values(executables)) {
+    roots.add(path.dirname(entry));
+    const parent = path.dirname(path.dirname(entry));
+    // The filesystem root is never a toolchain root: a profile that grants
+    // it would grant the whole disk.
+    if (parent !== path.parse(parent).root) roots.add(parent);
+  }
+  // A package manager is a script that runs the Node binary, and the Node
+  // binary a version manager installed is reached through a shim that re-execs
+  // the real one. The real binary's directory has to be readable and
+  // executable, or the confined command cannot start at all.
+  try {
+    roots.add(path.dirname(realpathSync(process.execPath)));
+  } catch {
+    // The running Node binary is always resolvable; a failure here only means
+    // the extra root is missing.
+  }
+  return { executables, toolchainRoots: [...roots] };
+}
+
+function directory(value: string): string {
+  if (!path.isAbsolute(value)) throw new Error("Command scope requires absolute paths.");
+  const resolved = realpathSync(value);
+  if (!statSync(resolved).isDirectory()) throw new Error("Command scope root is not a directory.");
+  return resolved;
+}
+
+function isWithin(candidate: string, root: string): boolean {
+  const relative = path.relative(root, candidate);
+  return (
+    relative === "" ||
+    (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(".." + path.sep))
+  );
+}
+
+function isOverlapping(a: string, b: string): boolean {
+  return isWithin(a, b) || isWithin(b, a);
+}
+
+function subtree(value: string): string {
+  return "(subpath " + JSON.stringify(value) + ")";
+}
+
+function literal(value: string): string {
+  return "(literal " + JSON.stringify(value) + ")";
+}
+
+/**
+The Seatbelt profile one command runs under.
+
+Intentionally narrower than the language-server profile: no blanket host
+file reads, no Mach services, no host IPC and no general network. Every
+descendant inherits the profile, so a command's own children cannot widen
+it. The only network entitlement is a single loopback port -- the registry
+proxy -- and only for the execution class that needs it.
+*/
+export function commandSandboxProfile(
+  workspace: string,
+  scratch: string,
+  cache: string,
+  toolchainRoots: readonly string[],
+  options: { readonly registryPort?: number } = {}
+): string {
+  const systemRoots = ["/System", "/usr/lib", "/usr/share", "/usr/bin", "/bin", "/Library/Apple/System"];
+  const readRoots = [workspace, scratch, cache, ...toolchainRoots, ...systemRoots];
+  const rules = [
+    "(version 1)",
+    "(deny default)",
+    '(import "dyld-support.sb")',
+    "(allow file-read-metadata)",
+    "(allow sysctl-read)",
+    "(allow process-fork)",
+    "(allow process-exec " + readRoots.map(subtree).join(" ") + ")",
+    "(allow signal (target same-sandbox))",
+    "(allow file-read* " +
+      [
+        ...readRoots.map(subtree),
+        ...["/dev/null", "/dev/random", "/dev/urandom", "/private/etc/localtime"].map(literal)
+      ].join(" ") +
+      ")",
+    "(allow file-write* " +
+      [subtree(workspace), subtree(scratch), subtree(cache), literal("/dev/null")].join(" ") +
+      ")",
+    // Workspace files can contain secrets too. Never grant dotenv/registry
+    // credentials or agent-private auth directories by virtue of the cwd.
+    String.raw`(deny file-read-data file-write* (regex #"/(\.env(\.[^/]*)?|\.npmrc|\.netrc|\.git-credentials)(/|$)"))`,
+    String.raw`(deny file-read-data file-write* (regex #"/(\.ssh|\.aws|\.gnupg|\.codex|\.autodev|\.config/gh)(/|$)"))`,
+    "(allow file-read-data (require-all " + subtree(workspace) + String.raw` (regex #"/\.env\.example$")))`
+  ];
+  if (options.registryPort !== undefined) {
+    // The only reachable network peer is the trusted registry proxy, on one
+    // known loopback port. Seatbelt cannot express "this host", so the
+    // restriction is expressed as "this port", and the proxy is what
+    // restricts the host. Seatbelt's `remote ip` filter accepts only `*` or
+    // `localhost` as the host, so the loopback name is the only spelling
+    // that parses.
+    rules.push(
+      `(allow network-outbound (remote ip "localhost:${options.registryPort}"))`,
+      `(allow network-inbound (remote ip "localhost:${options.registryPort}"))`
+    );
+  }
+  return rules.join("\n");
+}
+
+export interface PreparedCommand {
+  readonly executable: string;
+  readonly args: readonly string[];
+  readonly cwd: string;
+  readonly env: Readonly<Record<string, string>>;
+}
+
+/**
+Resolve a fixed invocation, using only the independently supplied scope.
+
+Nothing here consults the caller's environment or working directory: the
+workspace, the executables and the toolchain all come from the scope the
+Runtime established.
+*/
+export function prepareCommand(
+  scope: ApprovedCommandScope,
+  definition: CommandDefinition,
+  arguments_: readonly string[] = definition.args
+): PreparedCommand {
+  if (process.platform !== "darwin") {
+    throw new Error("Commands MCP requires qualified macOS process confinement.");
+  }
+  accessSync(SANDBOX, constants.X_OK);
+  if (definition.executionClass === "dependency_install" && !scope.registryEndpoint) {
+    throw new Error("Dependency installation requires an approved package-registry boundary.");
+  }
+  const workspace = directory(scope.workspace);
+  const scratch = directory(scope.scratch);
+  const cache = directory(scope.cache);
+  const roots = scope.toolchainRoots.map(directory);
+  for (const root of [scratch, cache]) {
+    const rootStat = statSync(root);
+    if (
+      (rootStat.mode & 0o077) !== 0 ||
+      (process.getuid && rootStat.uid !== process.getuid())
+    ) {
+      throw new Error("Command scratch and cache must be private and owned by the Runtime user.");
+    }
+  }
+  if (
+    workspace === path.parse(workspace).root ||
+    scratch === path.parse(scratch).root ||
+    cache === path.parse(cache).root ||
+    isOverlapping(workspace, scratch) ||
+    isOverlapping(workspace, cache) ||
+    isOverlapping(scratch, cache) ||
+    roots.length === 0 ||
+    roots.some((root) =>
+      root === path.parse(root).root ||
+      isOverlapping(root, workspace) ||
+      isOverlapping(root, scratch) ||
+      isOverlapping(root, cache)
+    )
+  ) {
+    throw new Error("Command scope overlaps a protected toolchain or scratch root.");
+  }
+  const configured = Object.hasOwn(scope.executables, definition.executable)
+    ? scope.executables[definition.executable]
+    : undefined;
+  if (!configured || !path.isAbsolute(configured)) {
+    throw new Error("Command executable has not been approved.");
+  }
+  const executable = realpathSync(configured);
+  if (roots.every((root) => !isWithin(executable, root))) {
+    throw new Error("Command executable is outside the approved toolchain.");
+  }
+  if (!statSync(executable).isFile()) throw new Error("Command executable is not a file.");
+  accessSync(executable, constants.X_OK);
+  // PATH holds only the approved executable directories, the workspace's own
+  // tool directory (a project's scripts resolve their tools from it) and the
+  // OS binaries. Everything else a child resolves is confined by the profile.
+  const binDirectories = Object.values(scope.executables).map((entry) => {
+    if (!path.isAbsolute(entry)) throw new Error("Invalid approved executable path.");
+    const resolved = realpathSync(entry);
+    if (roots.every((root) => !isWithin(resolved, root))) {
+      throw new Error("Approved executable lies outside its toolchain.");
+    }
+    return path.dirname(resolved);
+  });
+  const registryPort =
+    definition.executionClass === "dependency_install" && scope.registryEndpoint
+      ? Number(new URL(scope.registryEndpoint).port)
+      : undefined;
+  if (!registryPort && definition.executionClass === "dependency_install") {
+    throw new Error("Dependency installation requires an approved package-registry boundary.");
+  }
+  const environment: Record<string, string> = {
+    PATH: [
+      ...new Set([
+        ...binDirectories,
+        path.join(workspace, "node_modules", ".bin"),
+        "/usr/bin",
+        "/bin"
+      ])
+    ].join(path.delimiter),
+    HOME: scratch,
+    TMPDIR: scratch,
+    XDG_CACHE_HOME: path.join(cache, "xdg"),
+    LANG: "C",
+    LC_ALL: "C",
+    CI: "1",
+    // The package manager must not phone home for anything but the packages.
+    npm_config_update_notifier: "false",
+    npm_config_fund: "false",
+    npm_config_audit: "false",
+    npm_config_store_dir: path.join(cache, "pnpm-store")
+  };
+  if (scope.registryEndpoint && definition.executionClass === "dependency_install") {
+    environment.npm_config_registry = scope.registryEndpoint;
+  }
+  return {
+    executable: SANDBOX,
+    args: [
+      "-p",
+      commandSandboxProfile(workspace, scratch, cache, roots, {
+        ...(registryPort && { registryPort })
+      }),
+      executable,
+      ...arguments_
+    ],
+    cwd: workspace,
+    env: environment
+  };
+}
+
+/**
+Run one approved command and report what actually happened.
+
+The exit status is the one the process reported. A failed test is a
+completed command with a nonzero status, not a transport failure, and the
+result never claims a status that was not observed.
+*/
+export async function runApprovedCommand(
+  commandId: string,
+  definition: CommandDefinition,
+  arguments_: readonly string[],
+  scope: ApprovedCommandScope,
+  signal: AbortSignal
+): Promise<CommandResult> {
+  const started = performance.now();
+  const prepared = prepareCommand(scope, definition, arguments_);
+  const result = await execa(prepared.executable, prepared.args, {
+    cwd: prepared.cwd,
+    env: prepared.env,
+    extendEnv: false,
+    shell: false,
+    stdin: "ignore",
+    reject: false,
+    timeout: definition.timeoutMs,
+    cancelSignal: signal,
+    maxBuffer: OUTPUT_LIMIT_BYTES,
+    killDescendants: true
+  });
+  const status: CommandResult["status"] = result.isMaxBuffer
+    ? "output_limit"
+    : result.timedOut
+      ? "timed_out"
+      : result.isCanceled || signal.aborted
+        ? "cancelled"
+        : result.exitCode === 0 && !result.failed
+          ? "succeeded"
+          : result.exitCode === undefined
+            ? "infrastructure_error"
+            : "failed";
+  return {
+    commandId,
+    status,
+    exitCode: result.exitCode ?? null,
+    durationMs: Math.round(performance.now() - started),
+    stdout: (result.stdout ?? "").slice(0, OUTPUT_LIMIT_BYTES),
+    stderr: (result.stderr ?? "").slice(0, OUTPUT_LIMIT_BYTES),
+    outputTruncated: result.isMaxBuffer
+  };
+}

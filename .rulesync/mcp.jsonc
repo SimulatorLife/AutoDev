@@ -8,6 +8,13 @@
         "exec \"${AUTODEV_HOME:-$HOME/.autodev}/hooks/run-autodev-mcp.sh\" filesystem"
       ]
     },
+    "commands": {
+      "command": "bash",
+      "args": [
+        "-lc",
+        "exec \"${AUTODEV_HOME:-$HOME/.autodev}/hooks/run-autodev-mcp.sh\" commands"
+      ]
+    },
     "github": {
       "command": "bash",
       "args": [
@@ -78,6 +85,14 @@
         "args": [
           "-lc",
           "exec \"${AUTODEV_HOME:-$HOME/.autodev}/hooks/run-autodev-mcp.sh\" filesystem"
+        ],
+        "default_tools_approval_mode": "approve"
+      },
+      "commands": {
+        "command": "bash",
+        "args": [
+          "-lc",
+          "exec \"${AUTODEV_HOME:-$HOME/.autodev}/hooks/run-autodev-mcp.sh\" commands"
         ],
         "default_tools_approval_mode": "approve"
       },

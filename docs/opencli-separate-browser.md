@@ -22,7 +22,7 @@ dedicated browser on starts it, turning it off closes its window once its
 leased commands finish. The rest of this section describes the mode when it is
 on.
 
-The bridge a separate headed Chromium process, an AutoDev-private
+The bridge owns a separate headed Chromium process, an AutoDev-private
 profile, a loopback-only ephemeral CDP port, and a per-site tab pool sized by
 the admitted route concurrency. Every opencli command gets the exact WebSocket
 target for its leased tab and uses `--site-session ephemeral`; AutoDev replaces
@@ -33,6 +33,10 @@ typed installer places the Playwright-pinned Chromium in
 `$CODEX_HOME/run/opencli-browser-profile`. See [`local-setup.md`](local-setup.md)
 for setup and [`provider-routing.md`](provider-routing.md) for the runtime
 contract.
+
+Source change (2026-11-25; deployment and live acceptance pending): XACPX role turns now use the same authenticated loopback browser service as other OpenCLI turns. The dedicated browser activates the exact leased CDP target before invoking native input and holds an exclusive foreground lease across sites until process settlement, including cancellation quarantine. Target replacement cannot steal another foreground lease. This intentionally serializes foreground-sensitive commands even when the configured per-site tab pool has multiple slots. It does not bypass visibility checks or guarantee macOS visibility when the browser is covered, minimized, or on another Space. A regression fixture covers activation and exclusive leasing; it has not been executed on the host.
+
+The foreground lease is required only by the operations that actually use native input. Reading the installed opencli 2.0.3 shows that attaching a ChatGPT app, enabling a site tool and picking a model open a menu with an unguarded native click, which a hidden page refuses, while ChatGPT's prompt path inserts text and clicks submit programmatically and Gemini's adapter never clicks natively at all. The requirement is therefore derived from the command (`opencliCommandRequiresForeground`), so a Gemini turn and a plain ChatGPT turn do not take the foreground from each other, and the foreground is released as soon as the prompt has been submitted rather than being held for the whole turn. A background command also waits for the foreground to be free before it replaces a lost tab, because creating a target activates it and would hide the page a native-input turn is holding.
 
 Automated tests cover browser process/readiness, target leasing/replacement,
 per-command endpoint isolation, transport-failure health and recovery, bridge

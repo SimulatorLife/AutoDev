@@ -47,26 +47,125 @@ export function resolveOpencliBrowserExecutable(
   return executable;
 }
 
+const DEFAULT_CDP_COMMAND_TIMEOUT_MS = 3000;
+
+export type OpencliCdpCommand = (
+  wsUrl: string,
+  method: string,
+  params?: Record<string, unknown>,
+  signal?: AbortSignal
+) => Promise<Record<string, unknown>>;
+
+function assertLoopbackCdpWs(wsUrl: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(wsUrl);
+  } catch {
+    throw new OpencliBrowserUnavailableError("CDP returned an invalid WebSocket URL");
+  }
+  if (
+    parsed.protocol !== "ws:" ||
+    (parsed.hostname !== "127.0.0.1" &&
+      parsed.hostname !== "localhost" &&
+      parsed.hostname !== "[::1]")
+  ) {
+    throw new OpencliBrowserUnavailableError("CDP returned a non-loopback target");
+  }
+}
+
+async function defaultCdpCommand(
+  wsUrl: string,
+  method: string,
+  params: Record<string, unknown> = {},
+  signal?: AbortSignal
+): Promise<Record<string, unknown>> {
+  assertLoopbackCdpWs(wsUrl);
+  const timeout = AbortSignal.timeout(DEFAULT_CDP_COMMAND_TIMEOUT_MS);
+  const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
+  combined.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsUrl);
+    let settled = false;
+    const finish = (fn: () => void): void => {
+      if (settled) return;
+      settled = true;
+      combined.removeEventListener("abort", onAbort);
+      try {
+        ws.close();
+      } catch {
+        // Ignore close errors.
+      }
+      fn();
+    };
+    const onAbort = (): void =>
+      finish(() =>
+        reject(
+          new OpencliBrowserUnavailableError("CDP browser command timed out or cancelled")
+        )
+      );
+    combined.addEventListener("abort", onAbort, { once: true });
+    ws.addEventListener("open", () => {
+      ws.send(JSON.stringify({ id: 1, method, params }));
+    });
+    ws.addEventListener("error", () => {
+      finish(() =>
+        reject(new OpencliBrowserUnavailableError("CDP browser socket error"))
+      );
+    });
+    ws.addEventListener("message", (event) => {
+      try {
+        const payload = JSON.parse(String(event.data)) as {
+          id?: number;
+          result?: Record<string, unknown>;
+          error?: { message?: string };
+        };
+        if (payload.id !== 1) return;
+        if (payload.error) {
+          finish(() =>
+            reject(
+              new OpencliBrowserUnavailableError(
+                payload.error?.message || `CDP ${method} failed`
+              )
+            )
+          );
+          return;
+        }
+        finish(() => resolve(payload.result ?? {}));
+      } catch {
+        // Ignore malformed frame and await reply or timeout.
+      }
+    });
+  });
+}
+
 export interface OpencliBrowserOptions {
   readonly executable: string;
   readonly siteTabs: Readonly<Record<OpencliSite, number>>;
   readonly profileDirectory?: string;
   readonly spawnBrowser?: typeof spawn;
   readonly fetch?: typeof fetch;
+  readonly cdpCommand?: OpencliCdpCommand;
   readonly readinessTimeoutMs?: number;
 }
 
-/** Owns Chromium and leases a distinct CDP page target to every command. */
+/** Owns Chromium and leases a distinct CDP page window/target to every command. */
 export class OpencliBrowser {
   readonly profileDirectory: string;
   private readonly spawnBrowser: typeof spawn;
   private readonly fetcher: typeof fetch;
+  private readonly cdpCommand: OpencliCdpCommand;
   private readonly slots = new Map<OpencliSite, string[]>();
   private readonly busy = new Set<string>();
+  private visibleLease: string | null = null;
+  private readonly visibleQueue: symbol[] = [];
+  private creatingTarget = false;
   /** A command settled without process close; its target must not be leased. */
   private readonly quarantined = new Set<string>();
+  private readonly waiters = new Set<() => void>();
   private child: ChildProcess | null = null;
   private port: number | null = null;
+  private browserWsUrl: string | null = null;
+  private generation = 0;
   private starting: Promise<void> | null = null;
   private closing = false;
   /** A stop that waits for the commands holding leases to finish. */
@@ -83,6 +182,7 @@ export class OpencliBrowser {
 
   /** Start eagerly so the proxy does not become healthy before its browser is usable. */
   async initialize(): Promise<void> {
+    this.stopWhenIdle = false;
     try {
       await this.ensureReady();
     } catch (error) {
@@ -102,18 +202,42 @@ export class OpencliBrowser {
       );
     this.spawnBrowser = options.spawnBrowser ?? spawn;
     this.fetcher = options.fetch ?? fetch;
+    this.cdpCommand = options.cdpCommand ?? defaultCdpCommand;
+  }
+
+  private notify(): void {
+    for (const wake of [...this.waiters]) wake();
+  }
+
+  private waitForChange(signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return Promise.resolve();
+    return new Promise((resolve) => {
+      const done = (): void => {
+        this.waiters.delete(done);
+        signal.removeEventListener("abort", done);
+        resolve();
+      };
+      this.waiters.add(done);
+      signal.addEventListener("abort", done, { once: true });
+    });
   }
 
   async run<T>(
     site: OpencliSite,
     signal: AbortSignal,
-    command: (endpoint: string) => Promise<T>
+    command: (endpoint: string, releaseForeground: () => void) => Promise<T>,
+    requiresVisiblePage = false
   ): Promise<T> {
-    let endpoint: string;
+    if (this.closing) {
+      throw new OpencliBrowserUnavailableError(
+        "dedicated opencli browser is shutting down"
+      );
+    }
+    let lease: { endpoint: string; generation: number };
     this.stopWhenIdle = false;
     try {
       await this.ensureReady();
-      endpoint = await this.acquire(site, signal);
+      lease = await this.acquire(site, signal, requiresVisiblePage);
       this.lastError = null;
     } catch (error) {
       if (signal.aborted) throw error;
@@ -124,12 +248,89 @@ export class OpencliBrowser {
         { cause: error }
       );
     }
+    const { endpoint, generation } = lease;
+    let foregroundReleased = !requiresVisiblePage;
+    const releaseForeground = (): void => {
+      if (foregroundReleased) return;
+      foregroundReleased = true;
+      if (
+        this.generation === generation &&
+        this.visibleLease === endpoint &&
+        !this.quarantined.has(endpoint)
+      ) {
+        this.visibleLease = null;
+        this.notify();
+      }
+    };
     try {
-      return await command(endpoint);
+      if (requiresVisiblePage) {
+        await this.activateTarget(endpoint, signal);
+      }
+      signal.throwIfAborted();
+      return await command(endpoint, releaseForeground);
     } finally {
-      // Keep the lease held if the CLI outlives its caller's cancellation.
-      if (!this.quarantined.has(endpoint)) this.busy.delete(endpoint);
-      if (this.stopWhenIdle && this.busy.size === 0) void this.shutDown();
+      // Keep the lease held if the CLI outlives its caller's cancellation, and
+      // never let a stale crashed-generation command corrupt a new browser run.
+      if (this.generation === generation && !this.quarantined.has(endpoint)) {
+        this.busy.delete(endpoint);
+        if (this.visibleLease === endpoint) this.visibleLease = null;
+        this.notify();
+        if (this.stopWhenIdle && this.busy.size === 0) void this.shutDown();
+      }
+    }
+  }
+
+  private async activateTarget(
+    endpoint: string,
+    signal: AbortSignal
+  ): Promise<void> {
+    // Activate only the leased target using Chromium's native CDP endpoint and
+    // restore minimized windows when possible. Do not spoof
+    // document.visibilityState or bypass OpenCLI's input guard.
+    const target = new URL(endpoint).pathname.split("/").pop();
+    if (!target) {
+      throw new OpencliBrowserUnavailableError("Missing CDP target identity.");
+    }
+    const combinedSignal = AbortSignal.any([signal, AbortSignal.timeout(3000)]);
+    const browserWs = this.browserWsUrl;
+    if (browserWs) {
+      try {
+        const win = (await this.cdpCommand(
+          browserWs,
+          "Browser.getWindowForTarget",
+          { targetId: target },
+          combinedSignal
+        )) as { windowId?: number; bounds?: { windowState?: string } };
+        if (
+          typeof win.windowId === "number" &&
+          win.bounds?.windowState === "minimized"
+        ) {
+          await this.cdpCommand(
+            browserWs,
+            "Browser.setWindowBounds",
+            { windowId: win.windowId, bounds: { windowState: "normal" } },
+            combinedSignal
+          );
+        }
+        await this.cdpCommand(
+          browserWs,
+          "Target.activateTarget",
+          { targetId: target },
+          combinedSignal
+        );
+      } catch (error) {
+        if (signal.aborted) throw error;
+        // Fall through to HTTP /json/activate for older/mock CDP targets.
+      }
+    }
+    const response = await this.fetcher(
+      `http://127.0.0.1:${this.port}/json/activate/${encodeURIComponent(target)}`,
+      { signal: combinedSignal }
+    );
+    if (!response.ok) {
+      throw new OpencliBrowserUnavailableError(
+        "Could not activate the leased browser tab."
+      );
     }
   }
 
@@ -143,6 +344,8 @@ export class OpencliBrowser {
   releaseQuarantine(endpoint: string): void {
     this.quarantined.delete(endpoint);
     this.busy.delete(endpoint);
+    if (this.visibleLease === endpoint) this.visibleLease = null;
+    this.notify();
     if (this.stopWhenIdle && this.busy.size === 0) void this.shutDown();
   }
 
@@ -153,24 +356,38 @@ export class OpencliBrowser {
    * the browser again. Commands already holding a tab finish first.
    */
   async stop(): Promise<void> {
+    this.stopWhenIdle = true;
+    this.notify();
     await this.starting?.catch(() => undefined);
     if (this.busy.size > 0) {
-      this.stopWhenIdle = true;
       return;
     }
     await this.shutDown();
   }
 
+  private resetState(): void {
+    this.generation += 1;
+    this.port = null;
+    this.browserWsUrl = null;
+    this.slots.clear();
+    this.busy.clear();
+    this.quarantined.clear();
+    this.visibleLease = null;
+    this.creatingTarget = false;
+    this.notify();
+  }
+
   private async shutDown(): Promise<void> {
     this.stopWhenIdle = false;
-    this.port = null;
-    this.slots.clear();
+    this.resetState();
     this.lastError = null;
     await this.stopChild();
   }
 
   async close(): Promise<void> {
     this.closing = true;
+    this.stopWhenIdle = false;
+    this.notify();
     await this.starting?.catch(() => undefined);
     const child = this.child;
     if (child && child.exitCode === null) {
@@ -192,17 +409,20 @@ export class OpencliBrowser {
       }
     }
     this.child = null;
-    this.port = null;
-    this.slots.clear();
-    this.busy.clear();
-    this.quarantined.clear();
+    this.resetState();
   }
 
   private async ensureReady(): Promise<void> {
+    if (this.closing) {
+      throw new OpencliBrowserUnavailableError(
+        "dedicated opencli browser is shutting down"
+      );
+    }
     if (this.port !== null && (await this.version())) return;
     if (!this.starting)
       this.starting = this.start().finally(() => {
         this.starting = null;
+        this.notify();
       });
     await this.starting;
   }
@@ -219,8 +439,12 @@ export class OpencliBrowser {
         "dedicated Chromium executable is unavailable from the AutoDev Playwright cache"
       );
     await this.stopChild();
-    this.port = null;
-    this.slots.clear();
+    this.resetState();
+    if (this.closing || this.stopWhenIdle) {
+      throw new OpencliBrowserUnavailableError(
+        "dedicated opencli browser is shutting down"
+      );
+    }
     mkdirSync(this.profileDirectory, { recursive: true, mode: 0o700 });
     chmodSync(this.profileDirectory, 0o700);
     try {
@@ -243,18 +467,19 @@ export class OpencliBrowser {
     this.launchError = null;
     child.once("error", (error) => {
       this.launchError = error;
+      this.notify();
     });
     child.once("close", () => {
       if (this.child === child && !this.closing) {
-        this.port = null;
-        this.slots.clear();
+        this.child = null;
+        this.resetState();
         this.lastError = "Dedicated Chromium exited unexpectedly";
       }
     });
     const deadline = Date.now() + (this.options.readinessTimeoutMs ?? 20_000);
     try {
       while (Date.now() < deadline) {
-        if (this.closing)
+        if (this.closing || this.stopWhenIdle)
           throw new Error("dedicated opencli browser is shutting down");
         if (this.launchError) throw this.launchError;
         if (child.exitCode !== null)
@@ -276,9 +501,13 @@ export class OpencliBrowser {
           this.port = port;
           // eslint-disable-next-line no-await-in-loop -- wait for CDP before creating its target pool.
           if (await this.version()) {
+            if (this.closing || this.stopWhenIdle) {
+              throw new Error("dedicated opencli browser is shutting down");
+            }
             // eslint-disable-next-line no-await-in-loop -- serial creation makes partial pool rollback deterministic.
             await this.createPool();
             this.lastError = null;
+            this.notify();
             return;
           }
         }
@@ -288,8 +517,7 @@ export class OpencliBrowser {
       }
       throw new Error("dedicated opencli browser CDP readiness timed out");
     } catch (error) {
-      this.port = null;
-      this.slots.clear();
+      this.resetState();
       await this.stopChild();
       throw new OpencliBrowserUnavailableError(
         error instanceof Error ? error.message : String(error),
@@ -321,18 +549,35 @@ export class OpencliBrowser {
   }
 
   private async version(): Promise<boolean> {
+    if (this.port === null) return false;
     try {
       const response = await this.fetcher(
         `http://127.0.0.1:${this.port}/json/version`,
         { signal: AbortSignal.timeout(1000) }
       );
-      return response.ok;
+      if (!response.ok) return false;
+      try {
+        const payload = (await response.json()) as {
+          webSocketDebuggerUrl?: unknown;
+        };
+        if (
+          typeof payload.webSocketDebuggerUrl === "string" &&
+          payload.webSocketDebuggerUrl.startsWith("ws://127.0.0.1:")
+        ) {
+          this.browserWsUrl = payload.webSocketDebuggerUrl;
+        }
+      } catch {
+        // Test mocks may return `{}` or empty body for /json/version.
+      }
+      return true;
     } catch {
       return false;
     }
   }
 
-  private async targets(): Promise<Array<{ webSocketDebuggerUrl: string }>> {
+  private async targets(): Promise<
+    Array<{ id?: string; webSocketDebuggerUrl: string }>
+  > {
     let response: Response;
     try {
       response = await this.fetcher(`http://127.0.0.1:${this.port}/json/list`, {
@@ -349,7 +594,10 @@ export class OpencliBrowser {
         "dedicated opencli browser target list unavailable"
       );
     try {
-      return (await response.json()) as Array<{ webSocketDebuggerUrl: string }>;
+      return (await response.json()) as Array<{
+        id?: string;
+        webSocketDebuggerUrl: string;
+      }>;
     } catch (error) {
       throw new OpencliBrowserUnavailableError(
         "dedicated opencli browser returned an invalid target list",
@@ -363,6 +611,39 @@ export class OpencliBrowser {
       site === "chatgpt"
         ? "https://chatgpt.com/"
         : "https://gemini.google.com/app";
+    if (this.browserWsUrl) {
+      try {
+        const created = (await this.cdpCommand(
+          this.browserWsUrl,
+          "Target.createTarget",
+          { url, newWindow: true }
+        )) as { targetId?: unknown };
+        if (typeof created.targetId === "string" && created.targetId) {
+          const listed = await this.targets();
+          const matched = listed.find(
+            (target) =>
+              target.id === created.targetId ||
+              target.webSocketDebuggerUrl.endsWith(`/${created.targetId}`)
+          );
+          if (matched?.webSocketDebuggerUrl?.startsWith("ws://127.0.0.1:")) {
+            return matched.webSocketDebuggerUrl;
+          }
+          if (matched?.webSocketDebuggerUrl) {
+            throw new OpencliBrowserUnavailableError(
+              "CDP returned a non-loopback target"
+            );
+          }
+        }
+      } catch (error) {
+        if (
+          error instanceof OpencliBrowserUnavailableError &&
+          error.message === "CDP returned a non-loopback target"
+        ) {
+          throw error;
+        }
+        // Fall through to HTTP /json/new if Target.createTarget fails.
+      }
+    }
     const response = await this.fetcher(
       `http://127.0.0.1:${this.port}/json/new?${encodeURIComponent(url)}`,
       { method: "PUT", signal: AbortSignal.timeout(3000) }
@@ -384,7 +665,7 @@ export class OpencliBrowser {
     for (const site of ["chatgpt", "gemini"] as const) {
       const targets: string[] = [];
       for (let i = 0; i < this.options.siteTabs[site]; i++) {
-        // One CDP tab must be confirmed before requesting the next.
+        // One CDP window/tab must be confirmed before requesting the next.
         // eslint-disable-next-line no-await-in-loop -- CDP tabs must exist before slot state is committed.
         targets.push(await this.createTab(site));
       }
@@ -394,35 +675,96 @@ export class OpencliBrowser {
 
   private async acquire(
     site: OpencliSite,
-    signal: AbortSignal
-  ): Promise<string> {
-    while (!signal.aborted) {
-      const slots = this.slots.get(site) ?? [];
-      // A fresh target list is required to detect tabs closed since the last turn.
-      // eslint-disable-next-line no-await-in-loop -- every retry needs a fresh target inventory.
-      const currentTargets = await this.targets();
-      const existing = new Set(
-        currentTargets.map((target) => target.webSocketDebuggerUrl)
-      );
-      for (let i = 0; i < slots.length; i++) {
-        let endpoint = slots[i]!;
-        if (!existing.has(endpoint)) {
-          // Replace the lost slot before leasing it to a command.
-          // eslint-disable-next-line no-await-in-loop -- replacement target must be established before lease.
-          endpoint = await this.createTab(site);
-          slots[i] = endpoint;
+    signal: AbortSignal,
+    requiresVisiblePage: boolean
+  ): Promise<{ endpoint: string; generation: number }> {
+    const ticket = requiresVisiblePage ? Symbol("visible-lease") : null;
+    if (ticket) this.visibleQueue.push(ticket);
+    const canLease = (): boolean =>
+      !this.closing &&
+      !this.stopWhenIdle &&
+      !this.creatingTarget &&
+      (!requiresVisiblePage ||
+        (this.visibleLease === null && this.visibleQueue[0] === ticket));
+    try {
+      while (!signal.aborted) {
+        if (this.closing || this.stopWhenIdle) {
+          throw new OpencliBrowserUnavailableError(
+            "dedicated opencli browser is shutting down"
+          );
         }
-        if (!this.busy.has(endpoint)) {
-          this.busy.add(endpoint);
-          return endpoint;
+        if (this.port === null) {
+          // Recover transparently if Chromium exited while waiting.
+          // eslint-disable-next-line no-await-in-loop -- recovery must precede slot lookup.
+          await this.ensureReady();
         }
+        if (!canLease()) {
+          // A visible native-input turn owns foreground activation during its
+          // input/submission phase; wait cleanly until notified.
+          // eslint-disable-next-line no-await-in-loop -- wait for the current lease.
+          await this.waitForChange(signal);
+          continue;
+        }
+        const gen = this.generation;
+        const slots = this.slots.get(site) ?? [];
+        // A fresh target list is required to detect tabs closed since the last turn.
+        // eslint-disable-next-line no-await-in-loop -- every retry needs a fresh target inventory.
+        const currentTargets = await this.targets();
+        if (gen !== this.generation) continue;
+        const existing = new Set(
+          currentTargets.map((target) => target.webSocketDebuggerUrl)
+        );
+        for (let i = 0; i < slots.length; i++) {
+          if (!canLease() || signal.aborted || gen !== this.generation) break;
+          let endpoint = slots[i]!;
+          if (!existing.has(endpoint)) {
+            // Replace the lost slot before leasing it to a command.
+            // Creating a target activates it, which would hide the page a
+            // native-input turn is holding in the foreground and make that
+            // turn's click fail. A background command therefore waits for the
+            // foreground to be free before it replaces a target.
+            while (this.visibleLease !== null && !signal.aborted) {
+              // eslint-disable-next-line no-await-in-loop -- wait for the foreground lease.
+              await this.waitForChange(signal);
+            }
+            if (signal.aborted) break;
+            // eslint-disable-next-line no-await-in-loop -- replacement must finish before leasing.
+            this.creatingTarget = true;
+            try {
+              // eslint-disable-next-line no-await-in-loop -- replacement must finish before leasing.
+              endpoint = await this.createTab(site);
+              if (gen !== this.generation) break;
+              slots[i] = endpoint;
+            } finally {
+              this.creatingTarget = false;
+              this.notify();
+            }
+          }
+          if (
+            canLease() &&
+            !signal.aborted &&
+            gen === this.generation &&
+            !this.busy.has(endpoint) &&
+            !this.quarantined.has(endpoint)
+          ) {
+            this.busy.add(endpoint);
+            if (requiresVisiblePage) this.visibleLease = endpoint;
+            return { endpoint, generation: gen };
+          }
+        }
+        // Wait for a lease to free without spinning on target list fetches.
+        // eslint-disable-next-line no-await-in-loop -- wait for another lease to become free.
+        await this.waitForChange(signal);
       }
-      // Wait for a lease to free without allowing target-list failures to spin.
-      // eslint-disable-next-line no-await-in-loop -- wait for another lease to become free.
-      await delay(25, undefined, { signal }).catch(() => undefined);
+      throw new Error(
+        "opencli browser command cancelled while waiting for a tab"
+      );
+    } finally {
+      if (ticket) {
+        const index = this.visibleQueue.indexOf(ticket);
+        if (index !== -1) this.visibleQueue.splice(index, 1);
+        this.notify();
+      }
     }
-    throw new Error(
-      "opencli browser command cancelled while waiting for a tab"
-    );
   }
 }

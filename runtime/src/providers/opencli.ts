@@ -1,7 +1,7 @@
 /**
  * `opencli` site process runner, dedicated Chrome for Testing lifecycle, and
- * health/model-discovery daemon used for `github-worker` web automation and
- * Control API browser toggles (`opencli-browser-setting.ts`).
+ * health/model-discovery daemon used for site-backed role turns and model
+ * discovery.
  */
 
 import {
@@ -9,7 +9,6 @@ import {
   type ChildProcessByStdio,
   spawn
 } from "node:child_process";
-import { unwatchFile, watchFile } from "node:fs";
 import {
   createServer,
   type IncomingMessage,
@@ -24,10 +23,6 @@ import {
   type OpencliCommand,
   resolveOpencliCommand
 } from "@simulatorlife/autodev-runtime/shared/executables";
-import {
-  opencliBrowserSettingFile,
-  readOpencliDedicatedBrowser
-} from "@simulatorlife/autodev-runtime/shared/opencli-browser-setting";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import { sendJson } from "@simulatorlife/autodev-runtime/shared/provider-http";
 import {
@@ -39,7 +34,16 @@ import {
   type OpencliSite
 } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 
-import { type ProviderRoute, ROUTES } from "../router/routing.ts";
+import { isLoopbackAddress, routerAuthorizationValid } from "../router/auth.ts";
+import { type ProviderRoute, ROUTES, ROUTING_POLICY } from "../router/routing.ts";
+import { hasRoleContract, providerContract } from "../shared/execution-contract.ts";
+import {
+  executeOpencliRoleTurn,
+  OPENCLI_DEFAULT_PORT,
+  OPENCLI_ROLE_TURN_PATH,
+  OPENCLI_ROUTER_AUTH_VARIABLE,
+  opencliRoleTurnSchema
+} from "./opencli-role.ts";
 import {
   OpencliBrowser,
   resolveOpencliBrowserExecutable
@@ -47,20 +51,51 @@ import {
 import {
   OPENCLI_SITE_SPECS,
   OpencliCommandError,
+  opencliCommandRequiresForeground,
   parseOpencliOutput
 } from "./opencli-turn.ts";
 
 type JsonRecord = Record<string, unknown>;
 
 export const PROVIDER = "opencli";
-export const OPENCLI_ROUTER_AUTH_VARIABLE = "CODEX_ROUTER_OPENCLI_API_KEY";
-const DEFAULT_PORT = 4004;
-const SITE_BUSY = "SITE_BUSY";
+const MAX_ROLE_TURN_BYTES = 512 * 1024;
 const KILL_GRACE_MS = 2000;
 const CANCEL_SETTLE_MS = 5000;
 const MODEL_LIST_TTL_MS = 5 * 60 * 1000;
 const MODEL_LIST_TIMEOUT_MS = 60_000;
-const SETTING_POLL_MS = 1000;
+
+const SAFE_CHILD_ENV_KEYS = [
+  "PATH",
+  "HOME",
+  "TMPDIR",
+  "TEMP",
+  "TMP",
+  "USER",
+  "LOGNAME",
+  "LANG",
+  "LC_ALL",
+  "TERM",
+  "CODEX_HOME",
+  "AUTODEV_HOME",
+  "PLAYWRIGHT_BROWSERS_PATH",
+  "OPENCLI_GEMINI_ACCOUNT",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+  "NODE_EXTRA_CA_CERTS",
+  "NO_COLOR",
+  "FORCE_COLOR"
+] as const;
+
+function sanitizeOpencliChildEnv(
+  source: NodeJS.ProcessEnv = process.env
+): NodeJS.ProcessEnv {
+  const clean: NodeJS.ProcessEnv = {};
+  for (const key of SAFE_CHILD_ENV_KEYS) {
+    const value = source[key];
+    if (value !== undefined) clean[key] = value;
+  }
+  return clean;
+}
 
 export interface OpencliRunRequest {
   readonly args: readonly string[];
@@ -79,12 +114,6 @@ function progressRecord(line: string): JsonRecord | null {
   } catch {
     return null;
   }
-}
-
-export function opencliSiteSlots(
-  tabs: Readonly<Record<OpencliSite, number>>
-): string {
-  return OPENCLI_SITES.map((site) => `${site}:${tabs[site]}`).join(",");
 }
 
 export function routedSiteTabs(
@@ -108,7 +137,6 @@ export function routedSiteTabs(
 export function processRunner(
   resolveCommand: () => OpencliCommand,
   siteTabs: Readonly<Record<OpencliSite, number>>,
-  dedicated: () => boolean,
   live: Set<ChildProcess> = new Set(),
   browser = new OpencliBrowser({
     executable: resolveOpencliBrowserExecutable(process.env) ?? "",
@@ -119,12 +147,7 @@ export function processRunner(
   readonly browser: OpencliBrowser;
   close(): Promise<void>;
 } {
-  const quarantined = new Map<OpencliSite, number>();
-  const extensionEnv = {
-    ...process.env,
-    OPENCLI_CDP_ENDPOINT: undefined,
-    OPENCLI_SITE_SLOTS: opencliSiteSlots(siteTabs)
-  };
+  const childEnvironment = sanitizeOpencliChildEnv(process.env);
   const spawnOpencli = (
     args: readonly string[],
     env: NodeJS.ProcessEnv,
@@ -136,24 +159,7 @@ export function processRunner(
         reject(new OpencliCommandError("turn cancelled", "CANCELLED", null));
         return;
       }
-      const site = OPENCLI_SITES.includes(args[0] as OpencliSite)
-        ? (args[0] as OpencliSite)
-        : null;
       const dedicatedEndpoint = env.OPENCLI_CDP_ENDPOINT || null;
-      if (
-        !dedicatedEndpoint &&
-        site !== null &&
-        (quarantined.get(site) ?? 0) > 0
-      ) {
-        reject(
-          new OpencliCommandError(
-            `a cancelled ${site} command has not exited; its tab remains quarantined`,
-            SITE_BUSY,
-            null
-          )
-        );
-        return;
-      }
       const command = resolveCommand();
       const child = spawnCommand(command.command, [...command.args, ...args], {
         detached: process.platform !== "win32",
@@ -212,14 +218,8 @@ export function processRunner(
         signal.removeEventListener("abort", onAbort);
         if (killTimer) clearTimeout(killTimer);
         if (settleTimer) clearTimeout(settleTimer);
-        if (isQuarantined) {
-          if (dedicatedEndpoint) {
-            browser.releaseQuarantine(dedicatedEndpoint);
-          } else if (site !== null) {
-            const remaining = (quarantined.get(site) ?? 1) - 1;
-            if (remaining > 0) quarantined.set(site, remaining);
-            else quarantined.delete(site);
-          }
+        if (isQuarantined && dedicatedEndpoint) {
+          browser.releaseQuarantine(dedicatedEndpoint);
         }
       };
       const onAbort = (): void => {
@@ -232,9 +232,6 @@ export function processRunner(
           if (closed || settled) return;
           if (dedicatedEndpoint) {
             browser.quarantine(dedicatedEndpoint);
-            isQuarantined = true;
-          } else if (site !== null) {
-            quarantined.set(site, (quarantined.get(site) ?? 0) + 1);
             isQuarantined = true;
           }
           settled = true;
@@ -255,10 +252,15 @@ export function processRunner(
         cleanup();
         if (!settled) {
           settled = true;
-          reject(error);
+          const reason = (error as NodeJS.ErrnoException).code ?? "unknown reason";
+          reject(new OpencliCommandError(
+            `OpenCLI could not start process: ${reason}`,
+            "COMMAND_EXEC",
+            null
+          ));
         }
       });
-      child.once("close", (code) => {
+      child.once("close", (code, terminationSignal) => {
         if (closed) return;
         cleanup();
         if (settled) return;
@@ -268,7 +270,22 @@ export function processRunner(
           return;
         }
         try {
-          resolve(parseOpencliOutput(stdout, code));
+          if (code === null) {
+            throw new OpencliCommandError(
+              `OpenCLI process terminated: ${terminationSignal ?? "unknown reason"}`,
+              "COMMAND_EXEC",
+              null
+            );
+          }
+          const rows = parseOpencliOutput(stdout, code);
+          if (code !== 0) {
+            throw new OpencliCommandError(
+              `OpenCLI exited with code ${code}`,
+              "COMMAND_EXEC",
+              code
+            );
+          }
+          resolve(rows);
         } catch (error) {
           if (error instanceof OpencliCommandError && stderr.trim()) {
             error.message = `${error.message}; stderr: ${stderr.trim().slice(-800)}`;
@@ -279,20 +296,34 @@ export function processRunner(
     });
   const run: OpencliRunner = ({ args, signal, onProgress }) => {
     const site = args[0] as OpencliSite;
-    if (!dedicated() || !OPENCLI_SITES.includes(site)) {
-      return spawnOpencli(args, extensionEnv, signal, onProgress);
+    if (!OPENCLI_SITES.includes(site)) {
+      return spawnOpencli(args, childEnvironment, signal, onProgress);
     }
-    return browser.run(site, signal, (endpoint) =>
-      spawnOpencli(
-        [...args, "--site-session", "ephemeral"],
-        {
-          ...process.env,
-          OPENCLI_CDP_ENDPOINT: endpoint,
-          OPENCLI_SITE_SLOTS: undefined
-        },
-        signal,
-        onProgress
-      )
+    return browser.run(
+      site,
+      signal,
+      (endpoint, releaseForeground) =>
+        spawnOpencli(
+          [...args, "--site-session", "ephemeral"],
+          {
+            ...childEnvironment,
+            OPENCLI_CDP_ENDPOINT: endpoint,
+            OPENCLI_SITE_SLOTS: undefined
+          },
+          signal,
+          (record) => {
+            if (
+              record.phase === "submitted" ||
+              typeof record.text === "string"
+            ) {
+              releaseForeground();
+            }
+            onProgress?.(record);
+          }
+        ),
+      // Only the operations that open a menu with a native click need the
+      // browser's foreground; the rest run without it and stay concurrent.
+      opencliCommandRequiresForeground(args)
     );
   };
   return Object.assign(run, {
@@ -323,6 +354,8 @@ export function processRunner(
 
 export interface OpencliHealthServerOptions {
   readonly run: OpencliRunner;
+  /** Trusted Runtime-to-browser-service credential; absent disables turns. */
+  readonly roleTurnToken?: string;
   readonly browserHealth?: () => {
     readonly ready: boolean;
     readonly error: string | null;
@@ -367,6 +400,87 @@ export function createOpencliHealthServer(
     response: ServerResponse
   ): Promise<void> {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    if (url.pathname === OPENCLI_ROLE_TURN_PATH && request.method === "POST") {
+      const fail = (
+        status: number,
+        message: string,
+        code: string,
+        exitCode: number | null = null
+      ): void => {
+        if (!response.destroyed) {
+          sendJson(response, status, {
+            ok: false,
+            error: { message, code, exitCode }
+          });
+        }
+      };
+      if (
+        !options.roleTurnToken ||
+        !isLoopbackAddress(request.socket.remoteAddress) ||
+        !routerAuthorizationValid(request, options.roleTurnToken)
+      ) {
+        fail(401, "OpenCLI role turn is not authorized.", "AUTH_REQUIRED");
+        return;
+      }
+      let body: unknown;
+      try {
+        const chunks: Buffer[] = [];
+        let bytes = 0;
+        for await (const chunk of request) {
+          const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          bytes += buffer.length;
+          if (bytes > MAX_ROLE_TURN_BYTES) throw new Error("body exceeds limit");
+          chunks.push(buffer);
+        }
+        body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+      } catch {
+        fail(400, "Invalid OpenCLI role turn body.", "INVALID_OUTPUT");
+        return;
+      }
+      const parsed = opencliRoleTurnSchema.safeParse(body);
+      if (!parsed.success) {
+        fail(400, "Invalid OpenCLI role turn body.", "INVALID_OUTPUT");
+        return;
+      }
+      const task = parsed.data;
+      const ingress = providerContract(task.provider).mcpIngress;
+      if (
+        !hasRoleContract(task.role) ||
+        !ROUTING_POLICY.providerReachesRoleMcp(task.provider, task.role) ||
+        (ingress === "gateway" && !task.mcpApp) ||
+        (ingress !== "gateway" && task.mcpApp !== null)
+      ) {
+        fail(403, "OpenCLI transport cannot serve this role surface.", "AUTH_REQUIRED");
+        return;
+      }
+      const disconnected = new AbortController();
+      const onClose = (): void => {
+        if (!response.writableEnded) disconnected.abort();
+      };
+      response.once("close", onClose);
+      try {
+        const signal = AbortSignal.any([
+          disconnected.signal,
+          AbortSignal.timeout(task.timeoutSeconds * 1000)
+        ]);
+        const result = await executeOpencliRoleTurn(task, options.run, signal);
+        if (!response.destroyed) sendJson(response, 200, { ok: true, result });
+      } catch (error) {
+        if (error instanceof OpencliCommandError) {
+          fail(502, error.message, error.code, error.exitCode);
+        } else {
+          // Never expose the complete command (which contains the prompt).
+          fail(
+            502,
+            "OpenCLI browser service could not execute the turn; inspect service health.",
+            "COMMAND_EXEC"
+          );
+        }
+      } finally {
+        response.off("close", onClose);
+      }
+      return;
+    }
     if (
       (url.pathname === "/health" || url.pathname === "/health/liveliness") &&
       request.method === "GET"
@@ -424,12 +538,10 @@ if (IS_MAIN) {
   const host = process.env.OPENCLI_PROXY_HOST?.trim() || "127.0.0.1";
   const port = parseNonNegativeInteger(
     process.env.OPENCLI_PROXY_PORT,
-    DEFAULT_PORT
+    OPENCLI_DEFAULT_PORT
   );
   const live = new Set<ChildProcess>();
   const siteTabs = routedSiteTabs();
-  const settingFile = opencliBrowserSettingFile();
-  let dedicated = readOpencliDedicatedBrowser(settingFile);
   const browser = new OpencliBrowser({
     executable: resolveOpencliBrowserExecutable(process.env) ?? "",
     siteTabs
@@ -437,41 +549,32 @@ if (IS_MAIN) {
   const runner = processRunner(
     () => resolveOpencliCommand(),
     siteTabs,
-    () => dedicated,
     live,
     browser
   );
+  const roleTurnToken = process.env[OPENCLI_ROUTER_AUTH_VARIABLE]?.trim();
   const healthServer = createOpencliHealthServer({
     run: runner,
-    browserHealth: () =>
-      dedicated
-        ? { ready: browser.isReady, error: browser.unavailableReason }
-        : { ready: true, error: null }
+    ...(roleTurnToken ? { roleTurnToken } : {}),
+    browserHealth: () => ({
+      ready: browser.isReady,
+      error: browser.unavailableReason
+    })
   });
   const server = createServer((request, response) => {
     void healthServer.handle(request, response);
   });
   let shuttingDown = false;
-  watchFile(settingFile, { interval: SETTING_POLL_MS }, () => {
-    const next = readOpencliDedicatedBrowser(settingFile);
-    if (next === dedicated || shuttingDown) return;
-    dedicated = next;
-    writeErrorLine(
-      `opencli browser: ${dedicated ? "dedicated Chrome for Testing" : "the operator's Chrome via the Browser Bridge extension"}`
-    );
-    void (dedicated ? browser.initialize() : browser.stop());
-  });
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
     process.once(signal, () => {
       if (shuttingDown) return;
       shuttingDown = true;
-      unwatchFile(settingFile);
       for (const child of live) child.kill("SIGTERM");
       if (server.listening) server.close();
       void runner.close().finally(() => process.exit(0));
     });
   }
-  void (dedicated ? browser.initialize() : Promise.resolve()).finally(() => {
+  void browser.initialize().finally(() => {
     if (shuttingDown) return;
     server.listen(port, host, () => {
       writeErrorLine(`opencli service listening at http://${host}:${port}`);

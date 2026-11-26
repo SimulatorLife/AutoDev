@@ -50,6 +50,7 @@ import {
 } from "@simulatorlife/autodev-runtime/router/routing";
 import {
   hasRoleContract,
+  providerContract,
   roleContract
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { resolveChatgptMcpApp } from "@simulatorlife/autodev-runtime/shared/opencli-mcp-app";
@@ -674,7 +675,10 @@ export class XacpxSessionManager {
       // app is selected by the role: the conversation's tools are the role's
       // canonical contract and the coordinator that owns its delegated
       // children is that role's own.
-      const mcpApp = resolveChatgptMcpApp(role, environment);
+      const mcpApp =
+        providerContract(chosen.provider).mcpIngress === "gateway"
+          ? resolveChatgptMcpApp(role, environment)
+          : null;
       return {
         kind: "opencli",
         session,
@@ -682,6 +686,7 @@ export class XacpxSessionManager {
           role,
           provider: chosen.provider,
           model: chosen.model,
+          reasoningEffort: chosen.reasoningEffort ?? null,
           repository:
             opencli?.repository ?? request.repository ?? path.basename(cwd),
           task: request.promptOrTask,

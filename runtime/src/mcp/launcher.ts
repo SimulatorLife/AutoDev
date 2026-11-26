@@ -22,6 +22,7 @@ import {
   MCP_FILESYSTEM_READ_ONLY_ENV,
   MCP_FILESYSTEM_WORKSPACE_ONLY_ENV,
   MCP_SERVER_CODEGRAPHCONTEXT,
+  MCP_SERVER_COMMANDS,
   MCP_SERVER_FILESYSTEM,
   MCP_SERVER_GITHUB,
   MCP_SERVER_PLAYTEST,
@@ -34,6 +35,7 @@ export type McpName =
   | "playwright"
   | "cocoindex-code"
   | typeof MCP_SERVER_CODEGRAPHCONTEXT
+  | typeof MCP_SERVER_COMMANDS
   | typeof MCP_SERVER_FILESYSTEM
   | typeof MCP_SERVER_GITHUB
   | typeof MCP_SERVER_PLAYTEST
@@ -154,8 +156,17 @@ export function resolveMcpCommand(
       ]
     };
   }
-  if (tool === MCP_SERVER_PLAYTEST || tool === "playtest") {
+  if (tool === MCP_SERVER_COMMANDS) {
+    // The Commands MCP is served from the Runtime's own source tree, the same
+    // way the Playtest MCP is, so it works from a checkout and from the
+    // installed tree without a second code path.
     return {
+      binary: process.execPath,
+      args: [resolveRuntimeSourcePath(repoRoot, "mcp/commands-main.ts")],
+      pathPrepend: [path.dirname(process.execPath)]
+    };
+  }
+  if (tool === MCP_SERVER_PLAYTEST || tool === "playtest") {    return {
       binary: process.execPath,
       // The Runtime lives at <root>/runtime/src in a checkout and at
       // <root>/src once it is materialized into CODEX_HOME. The root alone does

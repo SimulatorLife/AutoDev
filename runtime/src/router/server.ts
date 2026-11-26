@@ -26,15 +26,10 @@ import {
   setControlApiDiagnosticsRouterStatusSource
 } from "../control-api/diagnostics.ts";
 import {
-  opencliProviderBrowser,
-  setOpencliDedicatedBrowser
-} from "../control-api/opencli-browser.ts";
-import {
   getControlApiAvailability,
   handleControlApiRequest,
   setControlApiDiagnosticsHandler,
   setControlApiLiveSessionsSource,
-  setControlApiOpencliBrowserSource,
   setControlApiProviderCheckSource,
   setControlApiProviderCliVersionSource,
   setControlApiProviderModelDiscoverySource,
@@ -286,10 +281,6 @@ export function startRouterServer(port = PORT, host = HOST): Server {
   if (IS_MAIN) {
     setControlApiProviderQuotaAxiSource(() => QUOTA_POLL.report);
   }
-  setControlApiOpencliBrowserSource({
-    read: opencliProviderBrowser,
-    set: setOpencliDedicatedBrowser
-  });
   setControlApiProviderCheckSource((provider) =>
     checkProvider(
       provider,
@@ -367,7 +358,6 @@ export function startRouterServer(port = PORT, host = HOST): Server {
     if (cliVersions) setControlApiProviderCliVersionSource(null);
     setControlApiProviderQuotaAxiSource(null);
     setControlApiProviderCheckSource(null);
-    setControlApiOpencliBrowserSource(null);
     setControlApiLiveSessionsSource(null);
     setControlApiDiagnosticsRouterStatusSource(null);
     void closePlaytestingSafely();

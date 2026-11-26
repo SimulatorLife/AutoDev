@@ -27,7 +27,8 @@ const MCP_ORDER: Record<string, number> = {
   googleDeveloperKnowledge: 7,
   github: 8,
   xacpx: 9,
-  playtest: 10
+  playtest: 10,
+  commands: 11
 };
 const SKILL_ORDER: Record<string, number> = {
   orchestration: 0,

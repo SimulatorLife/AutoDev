@@ -408,7 +408,7 @@ test("orchestrator MCP contract is provider-agnostic and omits Codex-only plugin
   assert.ok(orchestrator, "orchestrator role must be declared");
   assert.deepEqual(
     orchestrator.mcp,
-    ["filesystem", "lsp", "cocoindex-code", "codegraphcontext", "xacpx"],
+    ["filesystem", "lsp", "cocoindex-code", "codegraphcontext", "xacpx", "commands"],
     "orchestrator MCPs must be provider-agnostic and include xacpx in deterministic order"
   );
   assert.equal("allowProviderHop" in orchestrator, false);
@@ -418,6 +418,16 @@ test("orchestrator MCP contract is provider-agnostic and omits Codex-only plugin
       "find_code",
       "analyze_code_relationships",
       "get_repository_stats"
+    ],
+    commands: [
+      "install_dependencies",
+      "typecheck",
+      "test",
+      "lint_fix",
+      "git_status",
+      "git_diff",
+      "git_stage",
+      "git_commit"
     ]
   });
 

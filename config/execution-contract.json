@@ -205,7 +205,8 @@
         "lsp",
         "cocoindex-code",
         "codegraphcontext",
-        "xacpx"
+        "xacpx",
+        "commands"
       ],
       "skills": [
         "orchestration",
@@ -218,12 +219,23 @@
           "find_code",
           "analyze_code_relationships",
           "get_repository_stats"
+        ],
+        "commands": [
+          "install_dependencies",
+          "typecheck",
+          "test",
+          "lint_fix",
+          "git_status",
+          "git_diff",
+          "git_stage",
+          "git_commit"
         ]
       },
       "mcpApprovalMode": {
         "filesystem": "approve",
         "codegraphcontext": "approve",
-        "xacpx": "approve"
+        "xacpx": "approve",
+        "commands": "approve"
       },
       "mcpEnvVars": {
         "cocoindex-code": [
@@ -442,7 +454,8 @@
         "filesystem",
         "lsp",
         "cocoindex-code",
-        "codegraphcontext"
+        "codegraphcontext",
+        "commands"
       ],
       "skills": [
         "ccc",
@@ -451,6 +464,12 @@
         "doubt-driven-development"
       ],
       "mcpTools": {
+        "commands": [
+          "typecheck",
+          "test",
+          "git_status",
+          "git_diff"
+        ],
         "codegraphcontext": [
           "list_indexed_repositories",
           "find_code",
@@ -460,6 +479,7 @@
       },
       "mcpApprovalMode": {
         "filesystem": "approve",
+        "commands": "approve",
         "cocoindex-code": "approve",
         "codegraphcontext": "approve"
       },
@@ -484,7 +504,8 @@
         "filesystem",
         "lsp",
         "cocoindex-code",
-        "codegraphcontext"
+        "codegraphcontext",
+        "commands"
       ],
       "skills": [
         "ccc",
@@ -515,6 +536,16 @@
           "lsp_code_actions",
           "lsp_format_document"
         ],
+        "commands": [
+          "install_dependencies",
+          "typecheck",
+          "test",
+          "lint_fix",
+          "git_status",
+          "git_diff",
+          "git_stage",
+          "git_commit"
+        ],
         "codegraphcontext": [
           "list_indexed_repositories",
           "find_code",
@@ -524,6 +555,7 @@
       },
       "mcpApprovalMode": {
         "filesystem": "approve",
+        "commands": "approve",
         "cocoindex-code": "approve",
         "codegraphcontext": "approve"
       },

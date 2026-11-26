@@ -6,7 +6,6 @@ import test from "node:test";
 
 import {
   createOpencliHealthServer,
-  opencliSiteSlots,
   processRunner,
   routedSiteTabs
 } from "@simulatorlife/autodev-runtime/providers/opencli";
@@ -75,11 +74,10 @@ test("opencli health server reports liveliness, browser errors, and discovered m
   }
 });
 
-test("opencli site slots and routedSiteTabs derive from ROUTES", () => {
+test("routedSiteTabs derive from ROUTES", () => {
   const tabs = routedSiteTabs(ROUTES);
   assert.ok(tabs.chatgpt >= 1);
   assert.ok(tabs.gemini >= 1);
-  assert.match(opencliSiteSlots(tabs), /chatgpt:\d+,gemini:\d+/u);
 });
 
 test("opencli output parsing, conversation id extraction, and limit helpers behave deterministically", () => {

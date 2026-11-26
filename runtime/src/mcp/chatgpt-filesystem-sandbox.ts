@@ -7,10 +7,12 @@ import path from "node:path";
 import { z } from "zod";
 
 import { isReadOnlyRole } from "../shared/execution-contract.ts";
+import { commandWorkspaceKey } from "./commands-execution.ts";
 import { resolveSkillRoots } from "../shared/skill-reads.ts";
 import {
   MCP_SERVER_COCOINDEX,
   MCP_SERVER_CODEGRAPHCONTEXT,
+  MCP_SERVER_COMMANDS,
   MCP_SERVER_FILESYSTEM,
   MCP_SERVER_GITHUB,
   MCP_SERVER_LSP,
@@ -47,7 +49,8 @@ const SUPPORTED_LOCAL_GATEWAY_SERVERS = new Set<string>([
   MCP_SERVER_XACPX,
   MCP_SERVER_PLAYWRIGHT,
   MCP_SERVER_PLAYTEST,
-  MCP_SERVER_GITHUB
+  MCP_SERVER_GITHUB,
+  MCP_SERVER_COMMANDS
 ]);
 
 export function hasExternalMcpProfile(server: string): boolean {
@@ -272,6 +275,39 @@ export function externalMcpBackend(
         binary,
         launcher,
         MCP_SERVER_XACPX
+      ]
+    };
+  }
+  if (server === MCP_SERVER_COMMANDS) {
+    // The Commands MCP server itself needs to read the approved catalogue,
+    // write its private scratch and cache roots, spawn the confined command
+    // processes, and reach its own loopback registry proxy. The commands it
+    // runs are confined again, far more tightly, by their own profile.
+    const key = commandWorkspaceKey(physicalWorkspace);
+    return {
+      command: sandboxExecutable,
+      args: [
+        "-p",
+        workspaceCodeToolSandboxProfile({
+          workspace: physicalWorkspace,
+          home: physicalHome,
+          codexHome: physicalCodexHome,
+          writableSubpaths: [
+            path.join(physicalCodexHome, "run"),
+            path.join(physicalCodexHome, "run", "command-scratch", key),
+            path.join(physicalCodexHome, "run", "command-cache", key)
+          ],
+          allowLocalhostNetwork: true
+        }),
+        binary,
+        launcher,
+        MCP_SERVER_COMMANDS,
+        // The Runtime knows the role and the workspace; the agent never
+        // supplies either.
+        "--role",
+        options.role ?? "default",
+        "--workspace",
+        physicalWorkspace
       ]
     };
   }

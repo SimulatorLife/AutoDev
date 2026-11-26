@@ -23,6 +23,17 @@ default_tools_approval_mode = "approve"
 [mcp_servers.lsp]
 enabled = true
 
+[mcp_servers.commands]
+enabled = true
+default_tools_approval_mode = "approve"
+enabled_tools = [
+  "typecheck",
+  "test",
+  "git_status",
+  "git_diff"
+]
+env = { AUTODEV_MCP_ROLE = "validator" }
+
 [[skills.config]]
 name = "orchestration"
 enabled = false

@@ -1,11 +1,18 @@
 diff --git a/cli-manifest.json b/cli-manifest.json
-index 4b294f1db04d234f44a88729727093c2ac44f413..ce7d47a53834ba93d45c8dfcaae88474620d9e62 100644
+index 4b294f1db04d234f44a88729727093c2ac44f413..288c992da8b97617f84d4cafcafee35ab7c903b9 100644
 --- a/cli-manifest.json
 +++ b/cli-manifest.json
-@@ -5430,12 +5430,20 @@
+@@ -5430,12 +5430,27 @@
          "default": false,
          "required": false,
          "help": "Enable ChatGPT 网页搜索 (Web Search)"
++      },
++      {
++        "name": "model",
++        "type": "str",
++        "required": false,
++        "valueRequired": true,
++        "help": "Select ChatGPT model or intelligence level before asking"
 +      },
 +      {
 +        "name": "app",
@@ -23,7 +30,7 @@ index 4b294f1db04d234f44a88729727093c2ac44f413..ce7d47a53834ba93d45c8dfcaae88474
        "response"
      ],
      "type": "js",
-@@ -5493,6 +5501,13 @@
+@@ -5493,6 +5508,13 @@
          "required": false,
          "valueRequired": true,
          "help": "Start a new chat inside a ChatGPT project ID or /g/g-p-<id> URL"
@@ -37,7 +44,7 @@ index 4b294f1db04d234f44a88729727093c2ac44f413..ce7d47a53834ba93d45c8dfcaae88474
        }
      ],
      "columns": [
-@@ -12172,16 +12187,23 @@
+@@ -12172,16 +12194,23 @@
          "required": false,
          "help": "Start a new chat first (true/false, default: false)"
        },
@@ -181,10 +188,10 @@ index 976208dca661fbb87a02335cc87606f5c1a534bb..2b47941bfc22cb153a210f96eb997167
          const currentUrl = await currentChatGPTUrl(page);
          const conversationId = parseChatGPTConversationId(currentUrl) || '';
 diff --git a/clis/chatgpt/ask.js b/clis/chatgpt/ask.js
-index 7d615f3b5993ddaac0ea895fc0e100d27f35d401..dbf726bb85d904b5500fad050d3403b7ead80a7e 100644
+index 7d615f3b5993ddaac0ea895fc0e100d27f35d401..be1938d231cc37ae9b3e9cd2e68e723d345aa8d9 100644
 --- a/clis/chatgpt/ask.js
 +++ b/clis/chatgpt/ask.js
-@@ -6,14 +6,14 @@ import {
+@@ -6,14 +6,15 @@ import {
      currentChatGPTUrl,
      ensureChatGPTComposer,
      ensureOnChatGPT,
@@ -198,13 +205,15 @@ index 7d615f3b5993ddaac0ea895fc0e100d27f35d401..dbf726bb85d904b5500fad050d3403b7
      parseChatGPTConversationId,
      sendChatGPTMessage,
 +    selectChatGPTApp,
++    selectChatGPTModel,
      selectChatGPTTool,
      isGenerating,
      startNewChat,
-@@ -54,8 +54,9 @@ export const askCommand = cli({
+@@ -54,8 +55,10 @@ export const askCommand = cli({
          { name: 'wait', type: 'boolean', default: true, help: 'Wait for the assistant response after sending' },
          { name: 'deep-research', type: 'boolean', default: false, help: 'Enable ChatGPT 深度研究 (Deep Research)' },
          { name: 'web-search', type: 'boolean', default: false, help: 'Enable ChatGPT 网页搜索 (Web Search)' },
++        { name: 'model', valueRequired: true, help: 'Select ChatGPT model or intelligence level before asking' },
 +        { name: 'app', valueRequired: true, help: 'Attach the connected app (plugin) shown under this name to the conversation' },
      ],
 -    columns: ['conversationId', 'conversationUrl', 'tool', 'response'],
@@ -212,7 +221,18 @@ index 7d615f3b5993ddaac0ea895fc0e100d27f35d401..dbf726bb85d904b5500fad050d3403b7
      func: async (page, kwargs) => {
          const prompt = requireNonEmptyPrompt(kwargs.prompt, 'chatgpt ask');
          const timeout = requirePositiveInt(
-@@ -98,6 +99,7 @@ export const askCommand = cli({
+@@ -86,6 +89,10 @@ export const askCommand = cli({
+         }
+         const tool = useDeepResearch ? 'deep-research' : (useWebSearch ? 'web-search' : null);
+ 
++        if (kwargs.model) {
++            await selectChatGPTModel(page, kwargs.model);
++        }
++
+         if (kwargs.conversation) {
+             await openChatGPTConversation(page, kwargs.conversation);
+         } else if (kwargs.project) {
+@@ -98,6 +105,7 @@ export const askCommand = cli({
          // startNewChat / ensureOnChatGPT now wait for the composer selector
          // after navigating, so the previous standalone 2 s settle is redundant.
          await ensureChatGPTComposer(page, 'ChatGPT ask requires a logged-in ChatGPT session with a visible composer.');
@@ -220,7 +240,7 @@ index 7d615f3b5993ddaac0ea895fc0e100d27f35d401..dbf726bb85d904b5500fad050d3403b7
          const selectedTool = tool ? await selectChatGPTTool(page, tool) : null;
  
          const settleStart = Date.now();
-@@ -108,9 +110,8 @@ export const askCommand = cli({
+@@ -108,22 +116,28 @@ export const askCommand = cli({
              await page.sleep(3);
          }
  
@@ -232,9 +252,16 @@ index 7d615f3b5993ddaac0ea895fc0e100d27f35d401..dbf726bb85d904b5500fad050d3403b7
          const sent = await sendChatGPTMessage(page, prompt);
          if (!sent) {
              throw new CommandExecutionError('Failed to send message to ChatGPT', `Open ${CHATGPT_URL} and verify the composer is ready.`);
-@@ -118,12 +119,12 @@ export const askCommand = cli({
+         }
  
          const { conversationId, conversationUrl } = await waitForConversationUrl(page);
++        const progressFd = Number(process.env.OPENCLI_PROGRESS_FD);
++        if (Number.isInteger(progressFd) && progressFd >= 3) {
++            try {
++                const { writeSync } = await import('node:fs');
++                writeSync(progressFd, JSON.stringify({ phase: 'submitted', conversationId, conversationUrl }) + '\n');
++            } catch {}
++        }
          if (!shouldWait) {
 -            return [{ conversationId, conversationUrl, tool: selectedTool?.Tool ?? '', response: '' }];
 +            return [{ conversationId, conversationUrl, tool: selectedTool?.Tool ?? '', app: selectedApp?.App ?? '', response: '' }];
@@ -886,7 +913,7 @@ index 05a28f7e7ac12fef47fc9ee9926dc35a2d317aaf..023ec439584d720a4c95644caf50c449
 +}
 +
 diff --git a/clis/gemini/ask.js b/clis/gemini/ask.js
-index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..fbba503e960f77f5b17a4f3aa9172b92488b1462 100644
+index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..1880ad65d9099ac84ae51794c23b6127130505c9 100644
 --- a/clis/gemini/ask.js
 +++ b/clis/gemini/ask.js
 @@ -4,6 +4,13 @@ import {
@@ -1003,7 +1030,7 @@ index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..fbba503e960f77f5b17a4f3aa9172b92
              await selectGeminiModel(page, modelValue);
          }
  
-@@ -256,20 +294,39 @@ export const askCommand = cli({
+@@ -256,20 +294,46 @@ export const askCommand = cli({
              }
          }
  
@@ -1023,6 +1050,13 @@ index 4ffdfc9788c16a912681b50ef3d564b4c3450d3e..fbba503e960f77f5b17a4f3aa9172b92
              throw new TimeoutError('Gemini reply', timeout,
                  'Your message may already be submitted. Check "opencli gemini read" before sending again. For future requests, use --timeout 120.');
          }
++        const progressFd = Number(process.env.OPENCLI_PROGRESS_FD);
++        if (Number.isInteger(progressFd) && progressFd >= 3) {
++            try {
++                const { writeSync } = await import('node:fs');
++                writeSync(progressFd, JSON.stringify({ phase: 'submitted' }) + '\n');
++            } catch {}
++        }
          const remainingTimeoutSeconds = Math.max(0, timeout - Math.ceil((Date.now() - submissionStartedAt) / 1000));
 -        const response = await waitForGeminiResponse(page, submitted, prompt, remainingTimeoutSeconds);
 +        const observed = {};

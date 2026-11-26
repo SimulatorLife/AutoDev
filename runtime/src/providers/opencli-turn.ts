@@ -69,7 +69,7 @@ export interface OpencliSiteSpec {
   turn(invocation: OpencliInvocation, exec: OpencliExec): Promise<OpencliReply>;
 }
 
-const GEMINI_REPLY_PREFIX = "💬 ";
+export const GEMINI_REPLY_PREFIX = "💬 ";
 const GEMINI_CONVERSATION_PATTERN = /\/app\/([\w-]+)/u;
 const JSON_FORMAT = ["-f", "json"] as const;
 
@@ -84,7 +84,41 @@ export const CHATGPT_MODELS = Object.freeze([
 
 export const CHAT_MISMATCH = "CHAT_MISMATCH";
 
-function answeredIn(
+/**
+ * Whether one opencli invocation needs the browser's foreground.
+ *
+ * OpenCLI refuses native input -- a real mouse or key event -- on a page the
+ * browser does not consider visible, so an operation that opens a menu with a
+ * native click needs the browser's active tab. Most operations do not:
+ * ChatGPT's composer accepts inserted text and its submit button is a
+ * scripted click, Gemini's adapter never clicks natively at all, and only the
+ * operations that open the composer's menu -- attaching an app, enabling a
+ * site tool, picking a model -- need a visible page.
+ *
+ * Serializing every command behind the foreground would make the dedicated
+ * browser's tab pool meaningless and would let a read-only discovery command
+ * block a live turn, so the requirement is derived from the command itself.
+ */
+export function opencliCommandRequiresForeground(
+  args: readonly string[]
+): boolean {
+  const site = args[0];
+  const command = args[1];
+  if (site !== "chatgpt") return false;
+  if (command === "model") return true;
+  if (command !== "ask" && command !== "ask-file" && command !== "send") {
+    return false;
+  }
+  // Attaching an app and enabling a site tool both open the composer's menu
+  // with a native click.
+  return (
+    args.includes("--app") ||
+    args.includes("--deep-research") ||
+    args.includes("--web-search")
+  );
+}
+
+export function answeredIn(
   site: string,
   expected: string | null,
   reply: OpencliReply
@@ -106,7 +140,7 @@ function answeredIn(
 const GEMINI_MODEL_SELECTION_FAILURE =
   /Gemini model discovery returned no selectable models|Gemini model selection|Failed to open (?:Gemini )?model picker|model picker button was not found|Failed to click Gemini model picker|not found in picker menu/u;
 
-function isGeminiModelSelectionFailure(error: unknown): boolean {
+export function isGeminiModelSelectionFailure(error: unknown): boolean {
   return (
     error instanceof OpencliCommandError &&
     GEMINI_MODEL_SELECTION_FAILURE.test(error.message)
@@ -116,7 +150,7 @@ function isGeminiModelSelectionFailure(error: unknown): boolean {
 const GEMINI_THINKING_SELECTION_FAILURE =
   /Could not select thinking level|--thinking must be one of|--thinking '[^']*' is not (?:currently )?available/u;
 
-function isGeminiThinkingSelectionFailure(error: unknown): boolean {
+export function isGeminiThinkingSelectionFailure(error: unknown): boolean {
   return (
     error instanceof OpencliCommandError &&
     GEMINI_THINKING_SELECTION_FAILURE.test(error.message)

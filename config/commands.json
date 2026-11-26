@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "commands": {
+    "install_dependencies": {
+      "description": "Install dependencies and regenerate the lockfile.",
+      "executable": "pnpm",
+      "args": [
+        "install",
+        "--no-frozen-lockfile"
+      ],
+      "timeoutMs": 600000,
+      "executionClass": "dependency_install",
+      "concurrency": "exclusive"
+    },
+    "typecheck": {
+      "description": "Run project type checking.",
+      "executable": "pnpm",
+      "args": [
+        "run",
+        "typecheck"
+      ],
+      "timeoutMs": 300000,
+      "executionClass": "validation",
+      "concurrency": "exclusive"
+    },
+    "test": {
+      "description": "Run the regression suite.",
+      "executable": "pnpm",
+      "args": [
+        "test"
+      ],
+      "timeoutMs": 900000,
+      "executionClass": "validation",
+      "concurrency": "exclusive"
+    },
+    "lint_fix": {
+      "description": "Apply automated lint corrections.",
+      "executable": "pnpm",
+      "args": [
+        "run",
+        "lint:fix"
+      ],
+      "timeoutMs": 300000,
+      "executionClass": "workspace_mutation",
+      "concurrency": "exclusive"
+    },
+    "git_status": {
+      "description": "Inspect working tree status.",
+      "executable": "git",
+      "args": [
+        "--no-optional-locks",
+        "status",
+        "--short",
+        "--branch"
+      ],
+      "timeoutMs": 15000,
+      "executionClass": "validation",
+      "concurrency": "exclusive"
+    },
+    "git_diff": {
+      "description": "Inspect unstaged changes without external diff drivers or text conversion.",
+      "executable": "git",
+      "args": [
+        "--no-pager",
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv"
+      ],
+      "timeoutMs": 15000,
+      "executionClass": "validation",
+      "concurrency": "exclusive"
+    },
+    "git_stage": {
+      "description": "Stage all changes in the authorized workspace.",
+      "executable": "git",
+      "args": [
+        "add",
+        "."
+      ],
+      "timeoutMs": 30000,
+      "executionClass": "workspace_mutation",
+      "concurrency": "exclusive"
+    },
+    "git_commit": {
+      "description": "Commit the staged changes with the given message.",
+      "executable": "git",
+      "args": [
+        "commit",
+        "-m",
+        "{message}"
+      ],
+      "parameters": {
+        "message": {
+          "description": "The commit message for the staged changes.",
+          "minLength": 1,
+          "maxLength": 500
+        }
+      },
+      "timeoutMs": 60000,
+      "executionClass": "workspace_mutation",
+      "concurrency": "exclusive"
+    }
+  }
+}

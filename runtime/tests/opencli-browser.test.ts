@@ -47,6 +47,7 @@ async function fixture(
     readonly args: string[][];
     readonly profile: string;
     readonly children: FakeChild[];
+    readonly activatedTargets: string[];
     readonly setListStatus: (status: number) => void;
     readonly setNewFailures: (count: number) => void;
   }) => Promise<void>
@@ -56,6 +57,7 @@ async function fixture(
   const targets: Target[] = [];
   const args: string[][] = [];
   const children: FakeChild[] = [];
+  const activatedTargets: string[] = [];
   let listStatus = 200;
   let newFailures = 0;
   let nextId = 0;
@@ -78,6 +80,14 @@ async function fixture(
       };
       targets.push(target);
       return Response.json(target, { status: 200 });
+    }
+    if (url.pathname.startsWith("/json/activate/")) {
+      const id = url.pathname.slice("/json/activate/".length);
+      if (!targets.some((target) => target.id === id)) {
+        return new Response(null, { status: 404 });
+      }
+      activatedTargets.push(id);
+      return new Response(null, { status: 200 });
     }
     return new Response(null, { status: 404 });
   };
@@ -111,6 +121,7 @@ async function fixture(
       args,
       profile,
       children,
+      activatedTargets,
       setListStatus: (status) => {
         listStatus = status;
       },
@@ -179,6 +190,37 @@ test("leases distinct ChatGPT targets concurrently and isolates the Gemini pool"
     assert.notEqual(geminiTarget, secondTarget);
     release();
     assert.notEqual(await first, secondTarget);
+  });
+});
+
+test("foreground lease activates the exact target and excludes competing native turns", async () => {
+  await fixture(async ({ browser, activatedTargets }) => {
+    let release!: () => void;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    const first = browser.run(
+      "chatgpt",
+      AbortSignal.timeout(2000),
+      async (endpoint) => {
+        assert.equal(activatedTargets.at(-1), new URL(endpoint).pathname.split("/").pop());
+        entered();
+        await hold;
+      },
+      true
+    );
+    await started;
+    const waiting = new AbortController();
+    const second = browser.run("gemini", waiting.signal, async () => {
+      assert.fail("A competing turn must not steal foreground");
+    }, true);
+    waiting.abort();
+    await assert.rejects(second, /cancelled/u);
+    assert.equal(activatedTargets.length, 1);
+    release();
+    await first;
+    const target = await browser.run("gemini", AbortSignal.timeout(1000), async (endpoint) => endpoint, true);
+    assert.equal(activatedTargets.at(-1), new URL(target).pathname.split("/").pop());
   });
 });
 
@@ -270,7 +312,7 @@ test("does not leave Chromium running after shutdown", async () => {
   });
 });
 
-test("turning the dedicated browser off waits for leased commands, and turning it on starts it again", async () => {
+test("stopping the dedicated browser waits for leased commands, and the next run starts it again", async () => {
   await fixture(async ({ browser, args, children }) => {
     let release: () => void = () => undefined;
     const held = browser.run(
@@ -390,4 +432,156 @@ test("resolver rejects cache paths outside AutoDev's dedicated provider runtime"
     }),
     null
   );
+});
+
+test("creates new-window CDP targets and restores minimized windows before activation", async () => {
+  const root = mkdtempSync(join(tmpdir(), "opencli-browser-cdp-"));
+  const profile = join(root, "private-profile");
+  const targets: Target[] = [];
+  const cdpCalls: Array<{ method: string; params: Record<string, unknown> }> = [];
+  let nextId = 0;
+  const port = 9444;
+  const browser = new OpencliBrowser({
+    executable: "/dedicated/chromium",
+    siteTabs: { chatgpt: 1, gemini: 1 },
+    profileDirectory: profile,
+    readinessTimeoutMs: 200,
+    fetch: (async (input) => {
+      const url = new URL(typeof input === "string" ? input : input.toString());
+      if (url.pathname === "/json/version") {
+        return Response.json(
+          { webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/browser/root` },
+          { status: 200 }
+        );
+      }
+      if (url.pathname === "/json/list") {
+        return Response.json(targets, { status: 200 });
+      }
+      if (url.pathname.startsWith("/json/activate/")) {
+        return new Response(null, { status: 200 });
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch,
+    cdpCommand: async (_wsUrl, method, params = {}) => {
+      cdpCalls.push({ method, params });
+      if (method === "Target.createTarget") {
+        const id = `win-${++nextId}`;
+        targets.push({
+          id,
+          webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/page/${id}`
+        });
+        return { targetId: id };
+      }
+      if (method === "Browser.getWindowForTarget") {
+        return { windowId: 77, bounds: { windowState: "minimized" } };
+      }
+      return {};
+    },
+    spawnBrowser: (() => {
+      const child = fakeChild();
+      writeFileSync(
+        join(profile, "DevToolsActivePort"),
+        `${port}\n/devtools/browser/root`
+      );
+      return child;
+    }) as never
+  });
+  try {
+    await browser.run(
+      "chatgpt",
+      AbortSignal.timeout(1000),
+      async () => "ok",
+      true
+    );
+    const created = cdpCalls.filter((c) => c.method === "Target.createTarget");
+    assert.equal(created.length, 2);
+    assert.equal(created[0]?.params.newWindow, true);
+    assert.ok(
+      cdpCalls.some(
+        (c) =>
+          c.method === "Browser.setWindowBounds" &&
+          c.params.windowId === 77 &&
+          (c.params.bounds as { windowState?: string })?.windowState === "normal"
+      )
+    );
+    assert.ok(cdpCalls.some((c) => c.method === "Target.activateTarget"));
+  } finally {
+    await browser.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("releasing foreground after submission allows concurrent visible turns across sites", async () => {
+  await fixture(async ({ browser }) => {
+    let finishFirst!: () => void;
+    let firstSubmitted!: () => void;
+    const submitted = new Promise<void>((resolve) => {
+      firstSubmitted = resolve;
+    });
+    const first = browser.run(
+      "chatgpt",
+      AbortSignal.timeout(1000),
+      async (endpoint, releaseForeground) => {
+        releaseForeground();
+        firstSubmitted();
+        await new Promise<void>((resolve) => {
+          finishFirst = resolve;
+        });
+        return endpoint;
+      },
+      true
+    );
+    await submitted;
+    const secondEndpoint = await browser.run(
+      "gemini",
+      AbortSignal.timeout(1000),
+      async (endpoint) => endpoint,
+      true
+    );
+    assert.ok(secondEndpoint.includes("/devtools/page/"));
+    finishFirst();
+    const firstEndpoint = await first;
+    assert.notEqual(firstEndpoint, secondEndpoint);
+  });
+});
+
+test("unexpected Chromium exit clears stale leases and recovers on the next run", async () => {
+  await fixture(async ({ browser, children }) => {
+    let releaseFirst!: () => void;
+    let enteredFirst!: () => void;
+    const inFirst = new Promise<void>((resolve) => {
+      enteredFirst = resolve;
+    });
+    const first = browser.run(
+      "chatgpt",
+      AbortSignal.timeout(1000),
+      async () => {
+        enteredFirst();
+        await new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+        });
+        return "stale";
+      },
+      true
+    );
+    await inFirst;
+    children[0]!.exitCode = 1;
+    children[0]!.emit("close", 1, null);
+    assert.equal(browser.isReady, false);
+
+    // Next turn restarts Chromium and takes foreground without being blocked by
+    // the crashed generation's lease, even before the stale callback resolves.
+    const second = await browser.run(
+      "gemini",
+      AbortSignal.timeout(1000),
+      async () => "recovered",
+      true
+    );
+    assert.equal(second, "recovered");
+    assert.equal(browser.isReady, true);
+    releaseFirst();
+    assert.equal(await first, "stale");
+    // Late completion of crashed-generation callback does not drop ready state.
+    assert.equal(browser.isReady, true);
+  });
 });

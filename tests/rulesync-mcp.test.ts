@@ -159,6 +159,7 @@ test("source declares each launch definition consistently", () => {
   assert.deepEqual(Object.keys(shared).sort(), [
     "cocoindex-code",
     "codegraphcontext",
+    "commands",
     "context7",
     "filesystem",
     "github",

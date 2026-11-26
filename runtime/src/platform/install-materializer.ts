@@ -164,7 +164,6 @@ export const RUNTIME_MODULES = [
   "runtime/vendor/jev-playtest-lab/src/core.js",
   "runtime/src/control-api/request-handler.ts",
   "runtime/src/control-api/github.ts",
-  "runtime/src/control-api/opencli-browser.ts",
   "runtime/src/router/subagents.ts",
   "runtime/src/router/metric-label.ts",
   "runtime/src/router/usage.ts",
@@ -206,10 +205,14 @@ export const RUNTIME_MODULES = [
   "runtime/src/providers/claude-credential.ts",
   "runtime/src/providers/opencli.ts",
   "runtime/src/providers/opencli-browser.ts",
-  "runtime/src/shared/opencli-browser-setting.ts",
   "runtime/src/shared/opencli-mcp-app.ts",
   "runtime/src/providers/opencli-turn.ts",
   "runtime/src/providers/opencli-role.ts",
+  "runtime/src/mcp/commands-catalogue.ts",
+  "runtime/src/mcp/commands-execution.ts",
+  "runtime/src/mcp/commands-registry-proxy.ts",
+  "runtime/src/mcp/commands-server.ts",
+  "runtime/src/mcp/commands-main.ts",
   "runtime/src/mcp/tool-filter.ts",
   "runtime/src/mcp/filesystem-server.ts",
   "runtime/src/mcp/mcp-telemetry.ts",
@@ -2304,6 +2307,15 @@ export function materializeInstallation(options: MaterializeOptions): void {
     materializeRuntimeFile(
       source("config/execution-contract.json"),
       path.join(autodevHome, "config", "execution-contract.json"),
+      0o644
+    );
+    // The approved command catalogue lives beside the execution contract, in
+    // the Runtime's own configuration. It is read-only to the agent because it
+    // is outside every workspace, and it is the only catalogue the Commands
+    // MCP trusts.
+    materializeRuntimeFile(
+      source("config/commands.json"),
+      path.join(autodevHome, "config", "commands.json"),
       0o644
     );
     prepareRunLogs(autodevHome);

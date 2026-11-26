@@ -14,20 +14,26 @@
  * as it would in a hand-written ChatGPT conversation.
  */
 
-import { execa } from "execa";
-
-import { resolveOpencliCommand } from "@simulatorlife/autodev-runtime/shared/executables";
+import { z } from "zod";
+import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
+import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   OPENCLI_PROVIDER_SITES,
+  OPENCLI_PROVIDERS,
   opencliModel,
   type OpencliProvider,
   type OpencliSite
 } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 
 import {
+  answeredIn,
+  GEMINI_REPLY_PREFIX,
+  GEMINI_THINKING_LEVELS,
   geminiConversationId,
+  geminiModelLimit,
+  isGeminiModelSelectionFailure,
+  isGeminiThinkingSelectionFailure,
   OpencliCommandError,
-  parseOpencliOutput,
   replyFromRow
 } from "./opencli-turn.ts";
 
@@ -60,6 +66,7 @@ export interface OpencliRoleTaskSpec {
   readonly provider: OpencliProvider;
   readonly site: OpencliSite;
   readonly model: string;
+  readonly reasoningEffort?: string | null;
   readonly sessionId: string;
   /** The site's own conversation identity, pinned after the first turn. */
   readonly conversationId: string | null;
@@ -125,6 +132,7 @@ export function buildOpencliRoleTaskSpec(options: {
   readonly role: string;
   readonly provider: OpencliProvider;
   readonly model: string;
+  readonly reasoningEffort?: string | null;
   readonly sessionId: string;
   readonly conversationId?: string | null;
   readonly workspace: string;
@@ -139,6 +147,7 @@ export function buildOpencliRoleTaskSpec(options: {
     provider: options.provider,
     site: OPENCLI_PROVIDER_SITES[options.provider],
     model: options.model,
+    reasoningEffort: options.reasoningEffort ?? null,
     sessionId: options.sessionId,
     conversationId: options.conversationId ?? null,
     workspace: options.workspace,
@@ -155,17 +164,51 @@ export function buildOpencliRoleTaskSpec(options: {
   };
 }
 
-/**
- * Run one site-driven role turn.
- *
- * The site command is the native opencli entry point for the provider's site:
- * ChatGPT's `ask` and Gemini's `ask` both continue a pinned conversation and
- * return the site's own conversation identity, which the Runtime pins to the
- * AutoDev session so follow-up turns continue the same conversation.
- */
-export async function runOpencliRoleTurn(
-  task: OpencliRoleTaskSpec,
-  signal?: AbortSignal
+/** Only the trusted Runtime uses this internal, loopback service route. */
+export const OPENCLI_ROLE_TURN_PATH = "/internal/role-turn";
+export const OPENCLI_ROUTER_AUTH_VARIABLE = "CODEX_ROUTER_OPENCLI_API_KEY";
+export const OPENCLI_DEFAULT_PORT = 4004;
+const TURN_TRANSPORT_GRACE_MS = 30_000;
+
+export const opencliRoleTurnSchema = z.strictObject({
+  role: z.string().min(1).max(128),
+  provider: z.enum(OPENCLI_PROVIDERS),
+  model: z.string().min(1).max(128),
+  reasoningEffort: z.string().min(1).max(64).nullable().optional(),
+  conversationId: z.string().regex(/^[\w-]+$/u).max(256).nullable(),
+  mcpApp: z.string().min(1).max(256).nullable(),
+  prompt: z.string().min(1).max(100_000),
+  timeoutSeconds: z.number().int().positive().max(900)
+});
+
+type RoleTurn = z.infer<typeof opencliRoleTurnSchema>;
+type RunSite = (request: {
+  readonly args: readonly string[];
+  readonly signal: AbortSignal;
+}) => Promise<Record<string, unknown>[]>;
+
+const resultSchema = z.strictObject({
+  outputText: z.string(),
+  exitCode: z.literal(0),
+  conversationId: z.string().min(1)
+});
+const responseSchema = z.discriminatedUnion("ok", [
+  z.strictObject({ ok: z.literal(true), result: resultSchema }),
+  z.strictObject({
+    ok: z.literal(false),
+    error: z.strictObject({
+      message: z.string(),
+      code: z.string(),
+      exitCode: z.number().int().nullable()
+    })
+  })
+]);
+
+/** Execute the native site command only inside the existing browser owner. */
+export async function executeOpencliRoleTurn(
+  task: RoleTurn,
+  run: RunSite,
+  signal: AbortSignal
 ): Promise<OpencliRunResult> {
   const parsed = opencliModel(task.model);
   if (!parsed || parsed.provider !== task.provider) {
@@ -175,12 +218,17 @@ export async function runOpencliRoleTurn(
       null
     );
   }
-  const commandArguments = [
-    task.site,
+  const site = OPENCLI_PROVIDER_SITES[task.provider];
+  const baseAskArgs = (
+    model: string | null,
+    thinking: string | null
+  ): string[] => [
+    site,
     "ask",
     task.prompt,
-    ...(task.site === "gemini" ? ["--model", parsed.siteModel] : []),
-    ...(task.mcpApp ? ["--app", task.mcpApp] : []),
+    ...(model === null ? [] : ["--model", model]),
+    ...(thinking === null ? [] : ["--thinking", thinking]),
+    ...(site === "chatgpt" && task.mcpApp ? ["--app", task.mcpApp] : []),
     ...(task.conversationId
       ? ["--conversation", task.conversationId]
       : ["--new", "true"]),
@@ -189,63 +237,53 @@ export async function runOpencliRoleTurn(
     "-f",
     "json"
   ];
-
-  // Use the exact same pinned package and Node executable as the installer
-  // and browser service. The supervised Runtime does not have a login-shell
-  // PATH, and a globally installed OpenCLI may target a different daemon.
-  const command = resolveOpencliCommand();
-  const result = await execa(
-    command.command,
-    [...command.args, ...commandArguments],
-    {
-      stdin: "ignore",
-      reject: false,
-      ...(signal ? { cancelSignal: signal } : {})
-    }
-  );
-  const output = (result.stdout ?? "").trim();
-  const errorText = (result.stderr ?? "").trim();
-  const exitCode = result.exitCode ?? null;
-  if (result.failed || exitCode !== 0) {
-    // Execa reports spawn failures and signal termination without an exit
-    // code. Do not fabricate one or include its full command (the prompt).
-    if (result.isCanceled || signal?.aborted) {
-      throw new OpencliCommandError(
-        "OpenCLI turn cancelled.",
-        "CANCELLED",
-        exitCode
-      );
-    }
-    if (exitCode === null) {
-      const reason = result.code ?? result.signal ?? "unknown reason";
-      throw new OpencliCommandError(
-        `OpenCLI could not complete process execution: ${reason}`,
-        "COMMAND_EXEC",
-        null
-      );
-    }
-    if (output) {
-      // The native JSON envelope carries the actionable error code and hint.
-      // Preserve them instead of replacing them with a generic exit failure.
-      try {
-        parseOpencliOutput(output, exitCode);
-      } catch (error) {
-        if (
-          !(error instanceof OpencliCommandError) ||
-          error.code !== "INVALID_OUTPUT" ||
-          !errorText
-        ) {
-          throw error;
+  let rows: Record<string, unknown>[];
+  if (site === "gemini") {
+    const requestedThinking =
+      typeof task.reasoningEffort === "string" &&
+      GEMINI_THINKING_LEVELS.includes(task.reasoningEffort)
+        ? task.reasoningEffort
+        : null;
+    try {
+      rows = await run({
+        args: baseAskArgs(parsed.siteModel, requestedThinking),
+        signal
+      });
+    } catch (error) {
+      if (requestedThinking !== null && isGeminiThinkingSelectionFailure(error)) {
+        writeErrorLine(
+          `opencli gemini could not switch to ${requestedThinking}: ${errorMessage(error)}`
+        );
+        try {
+          rows = await run({
+            args: baseAskArgs(parsed.siteModel, null),
+            signal
+          });
+        } catch (retryError) {
+          if (!isGeminiModelSelectionFailure(retryError)) {
+            throw geminiModelLimit(retryError) ?? retryError;
+          }
+          writeErrorLine(
+            `opencli gemini could not switch to ${parsed.siteModel}: ${errorMessage(retryError)}`
+          );
+          rows = await run({ args: baseAskArgs(null, null), signal });
         }
+      } else if (isGeminiModelSelectionFailure(error)) {
+        writeErrorLine(
+          `opencli gemini could not switch to ${parsed.siteModel}: ${errorMessage(error)}`
+        );
+        rows = await run({ args: baseAskArgs(null, null), signal });
+      } else {
+        throw geminiModelLimit(error) ?? error;
       }
     }
-    throw new OpencliCommandError(
-      errorText.slice(-800) || `opencli exited with code ${exitCode}`,
-      "COMMAND_EXEC",
-      exitCode
-    );
+  } else {
+    rows = await run({
+      args: baseAskArgs(parsed.siteModel, null),
+      signal
+    });
   }
-  const row = parseOpencliOutput(output, exitCode)[0];
+  const row = rows[0];
   if (!row) {
     throw new OpencliCommandError(
       "OpenCLI returned no response row.",
@@ -254,14 +292,120 @@ export async function runOpencliRoleTurn(
     );
   }
   const reply = replyFromRow(row);
-  const conversationId =
-    task.site === "gemini" ? geminiConversationId(row.url) : reply.conversationId;
-  if (!conversationId) {
+  const rawConversationId =
+    site === "gemini" ? geminiConversationId(row.url) : reply.conversationId;
+  const outputText =
+    site === "gemini" && reply.response.startsWith(GEMINI_REPLY_PREFIX)
+      ? reply.response.slice(GEMINI_REPLY_PREFIX.length)
+      : reply.response;
+  const verified = answeredIn(
+    site === "gemini" ? "Gemini" : "ChatGPT",
+    task.conversationId,
+    {
+      response: outputText,
+      conversationId: rawConversationId,
+      modelSelected: true
+    }
+  );
+  if (!verified.conversationId) {
     throw new OpencliCommandError(
       "OpenCLI response has no verifiable conversation identity.",
       "INVALID_OUTPUT",
       null
     );
   }
-  return { outputText: reply.response, exitCode, conversationId };
+  return {
+    outputText: verified.response,
+    exitCode: 0,
+    conversationId: verified.conversationId
+  };
+}
+
+/**
+ * Runtime-side client of the browser owner. No raw argv or arbitrary
+ * executable is accepted by the service, and no direct spawn fallback exists.
+ */
+export async function runOpencliRoleTurn(
+  task: OpencliRoleTaskSpec,
+  signal?: AbortSignal
+): Promise<OpencliRunResult> {
+  const token = process.env[OPENCLI_ROUTER_AUTH_VARIABLE]?.trim();
+  if (!token) {
+    throw new OpencliCommandError(
+      "OpenCLI Runtime service credential is missing; reconcile the installer.",
+      "AUTH_REQUIRED",
+      null
+    );
+  }
+  const host = process.env.CODEX_OPENCLI_PROXY_HOST?.trim() || "127.0.0.1";
+  if (!["127.0.0.1", "::1", "[::1]", "localhost"].includes(host)) {
+    throw new OpencliCommandError(
+      "OpenCLI role execution requires a loopback browser service.",
+      "COMMAND_EXEC",
+      null
+    );
+  }
+  const port = Number(process.env.CODEX_OPENCLI_PROXY_PORT || OPENCLI_DEFAULT_PORT);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error("Invalid OpenCLI service port.");
+  }
+  const body = opencliRoleTurnSchema.parse({
+    role: task.role,
+    provider: task.provider,
+    model: task.model,
+    reasoningEffort: task.reasoningEffort ?? null,
+    conversationId: task.conversationId,
+    mcpApp: task.mcpApp,
+    prompt: task.prompt,
+    timeoutSeconds: task.timeoutSeconds
+  });
+  const deadline = AbortSignal.timeout(
+    body.timeoutSeconds * 1000 + TURN_TRANSPORT_GRACE_MS
+  );
+  const requestSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  const authority = host === "::1" ? "[::1]" : host;
+  let response: Response;
+  try {
+    response = await fetch(`http://${authority}:${port}${OPENCLI_ROLE_TURN_PATH}`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json"
+      },
+      redirect: "error",
+      body: JSON.stringify(body),
+      signal: requestSignal
+    });
+  } catch {
+    throw new OpencliCommandError(
+      signal?.aborted
+        ? "OpenCLI turn cancelled."
+        : deadline.aborted
+          ? "OpenCLI browser service turn deadline exceeded."
+          : "OpenCLI browser service unavailable; reconcile the installed Runtime.",
+      signal?.aborted ? "CANCELLED" : "COMMAND_EXEC",
+      null
+    );
+  }
+  const bodyResult: unknown = await response.json().catch(() => null);
+  const parsed = responseSchema.safeParse(bodyResult);
+  if (!parsed.success) {
+    throw new OpencliCommandError(
+      `OpenCLI browser service returned an invalid result (HTTP ${response.status}).`,
+      "INVALID_OUTPUT",
+      null
+    );
+  }
+  if (!parsed.data.ok) {
+    const error = parsed.data.error;
+    throw new OpencliCommandError(error.message, error.code, error.exitCode);
+  }
+  if (!response.ok) {
+    throw new OpencliCommandError(
+      `OpenCLI browser service returned HTTP ${response.status}.`,
+      "COMMAND_EXEC",
+      null
+    );
+  }
+  return parsed.data.result;
 }

@@ -36,6 +36,21 @@ default_tools_approval_mode = "approve"
 [tools]
 web_search = true
 
+[mcp_servers.commands]
+enabled = true
+default_tools_approval_mode = "approve"
+enabled_tools = [
+  "install_dependencies",
+  "typecheck",
+  "test",
+  "lint_fix",
+  "git_status",
+  "git_diff",
+  "git_stage",
+  "git_commit"
+]
+env = { AUTODEV_MCP_ROLE = "orchestrator" }
+
 [[skills.config]]
 name = "orchestration"
 enabled = true

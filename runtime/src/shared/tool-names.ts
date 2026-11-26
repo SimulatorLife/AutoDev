@@ -88,6 +88,11 @@ export const MCP_SERVER_PLAYTEST = "playtest" as const;
 export const MCP_SERVER_GITHUB = "github" as const;
 export const MCP_SERVER_XACPX = "xacpx" as const;
 /**
+ * AutoDev's declarative command surface: operator-approved, fixed executable and
+ * argument definitions exposed as individually discoverable MCP tools.
+ */
+export const MCP_SERVER_COMMANDS = "commands" as const;
+/**
  * AutoDev's one file-interaction surface:
  * `@modelcontextprotocol/server-filesystem`, confined to the turn's workspace.
  * Every provider-native file tool is disabled in its favour.

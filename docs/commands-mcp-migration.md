@@ -1,6 +1,6 @@
 # Allowlisted Commands MCP — Design and Migration Plan
 
-> **Status:** Proposed; no command backend or live acceptance is implied by this document.
+> **Status:** Source implementation complete and tested (2026-11-25); not deployed. The backend is integrated into the launcher, the gateway confinement, the RuleSync catalogue and the canonical role contracts, and dependency installation works through a trusted loopback registry proxy. Deployment, live acceptance, durable task recovery, the Console surface and command-level telemetry remain open.
 >
 > **Authority:** [AutoDev unified target state](autodev-console-target-state.md#allowlisted-command-execution) owns durable architecture and authorization requirements. This focused subsystem plan explains the rationale, proposed implementation, migration order and acceptance gates. Record observed deployment evidence in [the migration tracker](autodev-console-migration.md), and operational instructions in [local setup](local-setup.md) when implemented.
 
@@ -64,6 +64,109 @@ The same role and workspace receive the same semantic command capabilities acros
 | Agent delegation | XACPX, unchanged |
 
 Retain `@modelcontextprotocol/server-filesystem` as the file-interaction surface. The new command tools are not a substitute for reading/editing files through that interface. This migration does not by itself require removing provider-native shell tools; they remain subject to the existing execution contract.
+
+## Implementation status (2026-11-25)
+
+The Commands MCP is implemented, integrated and tested at the source level. It
+is **not deployed**: the installer has not been run, so the installed tree, the
+launchd services and the live provider surfaces still carry the previous state.
+
+### What exists now
+
+- `config/commands.json` is the **operator-approved** catalogue. It is the
+  single source of truth for approved executable/argv definitions, and the
+  installer materializes it beside the execution contract
+  (`$CODEX_HOME/config/commands.json`). It is never read from a workspace.
+  `runtime/src/mcp/commands-catalogue.ts` validates it: bounded fixed
+  executable and argv, at most 64 definitions, narrowly typed string
+  parameters, and no parameter that no argument uses or argument that names no
+  parameter.
+- A parameter replaces a **whole** argument element and is never spliced into
+  one. `git_commit` declares `args: ["commit", "-m", "{message}"]` with a
+  `message` parameter bounded to 1..500 characters; the value reaches `git` as
+  one literal argument, so a message containing `; rm -rf /` is text, not
+  syntax. Nothing is ever handed to a shell.
+- `runtime/src/mcp/commands-execution.ts` owns the confinement. Each command
+  runs under its own macOS Seatbelt profile: default-deny, no Mach services,
+  no host IPC, no network, reads limited to the workspace, the Runtime's own
+  scratch and cache roots and the reviewed toolchain, and writes limited to
+  the workspace and those two roots. `.env*`, `.npmrc`, `.netrc`,
+  `.git-credentials`, `.ssh`, `.aws`, `.gnupg`, `.codex` and `.autodev` are
+  denied by path even inside the workspace. Every descendant inherits the
+  profile, so a repository script cannot widen it. The child environment is
+  constructed from scratch: `HOME`, `TMPDIR` and the cache root point at
+  Runtime-owned private directories, `PATH` holds only the approved toolchain
+  directories and the workspace's own `node_modules/.bin`, and no operator
+  secret, tunnel token or provider credential is inherited.
+- **Dependency installation works, with real egress control.** Seatbelt cannot
+  restrict an outbound connection to a host, only to a port, so
+  `runtime/src/mcp/commands-registry-proxy.ts` runs a trusted loopback proxy
+  that serves package metadata and tarballs for one approved registry, refuses
+  every other path (including npm's audit and ping endpoints), forwards no
+  credentials, and rewrites the metadata's tarball URLs back to itself. The
+  confined command may open exactly that one loopback port and nothing else.
+  The package store is per workspace, so one workspace cannot poison another's
+  cache.
+- `runtime/src/mcp/commands-server.ts` registers one native SDK task tool per
+  approved command. The effective tool set is the intersection of the
+  approved catalogue, the canonical role contract
+  (`mcpTools.commands`) and the workspace's eligibility. The SDK's session
+  binding is preserved on every store operation, so a task created in one
+  session is not found by another. A grant is re-checked before every
+  lifecycle operation, and replacing or removing the approved catalogue
+  revokes it immediately -- including for a command that is already running.
+  Cancellation aborts the subprocess and is only acknowledged once the
+  invocation has settled.
+- `runtime/src/mcp/commands-main.ts` is the stdio entry point. It resolves the
+  role and workspace from the trusted launcher's arguments or environment,
+  refuses to start when the approved catalogue resolves **inside** the
+  authorized workspace (an agent that can edit its own authority is not a
+  trusted authority), provisions private scratch and cache roots, and takes a
+  workspace-wide exclusive lease so two sessions cannot race over the same
+  build outputs.
+- Integration: `runtime/src/mcp/launcher.ts` serves the backend,
+  `runtime/src/mcp/chatgpt-filesystem-sandbox.ts` gives it its own gateway
+  confinement, `.rulesync/mcp.jsonc` declares it once for both the portable
+  and the Codex projection, and `agents/roles/{orchestrator,worker,validator}.toml`
+  grant it. `config/execution-contract.json` is regenerated from those role
+  files by the canonical renderer. The orchestrator and worker hold
+  `install_dependencies`, `typecheck`, `test`, `lint_fix`, `git_status`,
+  `git_diff`, `git_stage` and `git_commit`; the validator holds `typecheck`,
+  `test`, `git_status` and `git_diff`. No role holds `git push`, `git reset`,
+  `git config`, `git rebase` or `git clean`, and no read-only role holds a
+  command at all.
+- `runtime/tests/commands-mcp.test.ts` covers catalogue strictness, parameter
+  validation and literal substitution, role grants and denials, workspace
+  eligibility, the protected-catalogue rule, revocation, the workspace lease,
+  the network and credential profile, trusted executable resolution, the
+  registry proxy's path classification and URL rewriting, and -- as real
+  macOS confinement tests -- literal argument handling, denial of writes
+  outside the workspace, denial of `.env` reads, refusal to follow a symlink
+  out of the workspace, timeout, cancellation, output truncation and the
+  privacy of the scratch and cache roots. A positive control asserts that the
+  host's `sandbox-exec` really confines, so the negative tests are not
+  vacuous.
+
+### What is still open
+
+- **Deployment.** The installer has not been run. The installed tree, the
+  launchd services, the Supergateway projections and the live provider
+  surfaces still carry the previous state, and no live acceptance has been
+  performed.
+- **Task durability.** The SDK's task store is in-memory. It is bounded and
+  session-scoped, but a Runtime restart loses a running task's result. The
+  migration's durable-recovery requirement is not met; the current behaviour
+  fails closed rather than reporting a lost task as completed.
+- **Console and Control API surfaces.** The Commands backend has no dedicated
+  Console state yet, so it cannot yet be reported as declared, approved,
+  applied, observed, unavailable or failed through the Console.
+- **Telemetry.** The MCP spans cover the backend; the command-level
+  attributes (command id, duration, terminal outcome, exit code, queue time)
+  are not yet emitted on the existing OpenTelemetry/OpenLIT pipeline.
+- **Cross-workspace trust.** The approved catalogue is protected by being
+  outside every workspace and by the refusal to start when it is not. That is
+  enforced, but it is a property of the deployment layout rather than a
+  cryptographic binding of the executable resolution to a reviewed revision.
 
 ## 3. Dependency and protocol qualification
 
