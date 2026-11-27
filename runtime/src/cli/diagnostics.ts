@@ -296,7 +296,8 @@ async function runLocalEngine(options: DiagnosticsCliOptions): Promise<string> {
   if (options.recent !== null) {
     const body = listRecentSessionsResponse(
       rolloutRoots(options.codexHome),
-      options.recent
+      options.recent,
+      options.routerLog
     );
     return options.json
       ? JSON.stringify(body, null, 2)

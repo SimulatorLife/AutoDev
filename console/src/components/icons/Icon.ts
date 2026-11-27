@@ -238,57 +238,6 @@ export function Icon({
 }
 
 /**
- * A word with an icon beside it.
- *
- * This is the one way the Console puts a mark next to a label, and it exists
- * because the composition itself is a decision: the mark's size, the gap
- * between it and the word, and the side it sits on. Written out at each call
- * site, those three things drift -- a chevron at 12px in one row and 16px in
- * the next, a gap of 1 in one place and 1.5 in another -- and a reader cannot
- * tell a deliberate difference from a copy that was edited once and forgotten.
- *
- * The icon comes first or last by what it means, not by habit. A mark that
- * points the way ("next", "opens in a new tab") follows the word, because the
- * word is what the operator reads and says; a mark that qualifies the word
- * ("this one is chosen") leads it.
- *
- * The icon is decorative: the word beside it is the accessible name, so the
- * mark is hidden from assistive technology rather than announced a second
- * time. A control whose *only* content is an icon does not come through here
- * -- it takes `Icon` directly and names itself with `label`.
- */
-export interface IconLabelProps {
-  /** The mark that stands for the action. */
-  readonly icon: IconName;
-  /** The word the operator reads. */
-  readonly label: string;
-  /** Which side of the word the mark sits on. */
-  readonly position?: "before" | "after";
-  /** The mark's size in pixels. */
-  readonly size?: number | undefined;
-  readonly className?: string | undefined;
-}
-
-export function IconLabel({
-  icon,
-  label,
-  position = "after",
-  size = 12,
-  className
-}: IconLabelProps): React.JSX.Element {
-  const mark = React.createElement(Icon, { name: icon, size });
-  return React.createElement(
-    "span",
-    {
-      className: `inline-flex items-center gap-1${className === undefined ? "" : ` ${className}`}`
-    },
-    ...(position === "before" ? [mark] : []),
-    label,
-    ...(position === "after" ? [mark] : [])
-  );
-}
-
-/**
  * The canonical navigation resources, each paired with the icon that stands for
  * it. One list, because the previous shape stated this twice -- as a type union
  * and again as a `Set` literal -- and a resource added to one but not the other

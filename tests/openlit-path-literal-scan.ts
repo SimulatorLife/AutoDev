@@ -30,7 +30,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
-export function isDir(p: string): boolean {
+function isDir(p: string): boolean {
   try {
     return statSync(p).isDirectory();
   } catch {
@@ -75,7 +75,7 @@ function toRoute(app: string, file: string): string {
   );
 }
 
-export function readRouteSets(client: string): {
+function readRouteSets(client: string): {
   pages: Set<string>;
   api: Set<string>;
 } {

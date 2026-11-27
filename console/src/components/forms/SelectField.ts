@@ -28,7 +28,7 @@ import {
 
 const CONTROL_CLASS = SELECT_CONTROL_CLASS;
 
-export interface SelectOption {
+interface SelectOption {
   readonly value: string;
   readonly label: string;
   readonly disabled?: boolean | undefined;

@@ -8,28 +8,27 @@ cannot break a test that was only restating it.
 */
 
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { assertReportSections } from "./support/playtesting-sections.ts";
 import {
   frontmatterDescription,
   headings,
-  splitFrontmatter
+  readSkill
 } from "./support/skill-document.ts";
 
 const repositoryRoot = new URL("../", import.meta.url);
 const collator = new Intl.Collator();
 
-function read(relativePath: string): string {
-  return readFileSync(new URL(relativePath, repositoryRoot), "utf8");
-}
-
-const gamePlaytesting = splitFrontmatter(
-  read(".rulesync/skills/game-playtesting/SKILL.md")
+const gamePlaytesting = readSkill(
+  fileURLToPath(repositoryRoot),
+  "game-playtesting"
 );
-const playtestAnalysis = splitFrontmatter(
-  read(".rulesync/skills/playtest-analysis/SKILL.md")
+const playtestAnalysis = readSkill(
+  fileURLToPath(repositoryRoot),
+  "playtest-analysis"
 );
 const gamePlaytestingDescription = frontmatterDescription(
   gamePlaytesting.front
@@ -101,7 +100,10 @@ test("each playtesting skill routes the requests only it owns", () => {
     onlyGamePlaytesting,
     "the two descriptions are not discriminable by their quoted examples"
   );
-  assert.equal(hasTriggerPhrase(onlyGamePlaytesting, gamePlaytestingExamples), true);
+  assert.equal(
+    hasTriggerPhrase(onlyGamePlaytesting, gamePlaytestingExamples),
+    true
+  );
   assert.equal(
     hasTriggerPhrase(onlyGamePlaytesting, playtestAnalysisExamples),
     false
@@ -235,7 +237,9 @@ test("human validation stays a conditional reference, not a third skill", () => 
     new URL(".rulesync/skills", repositoryRoot)
   ).filter((name) => /playtest|gameplay/i.test(name));
   assert.deepEqual(
-    playtestingSkillDirectories.sort((left, right) => collator.compare(left, right)),
+    playtestingSkillDirectories.sort((left, right) =>
+      collator.compare(left, right)
+    ),
     ["game-playtesting", "playtest-analysis"]
   );
 });

@@ -181,7 +181,7 @@ export type PlaytestingReadRepository = Pick<
  * workspace's reviews. Only the Control API answers "what has the analyst
  * concluded so far", and only that answer has to survive a restart.
  */
-export type PlaytestingReviewRepository = Pick<
+type PlaytestingReviewRepository = Pick<
   PlaytestRepository,
   "listReviews" | "countReviews"
 >;
@@ -779,10 +779,10 @@ function parseQuery(
  * mode, and recorded target provenance. There is no placeholder value for
  * these faults: a Console cannot act on a visual target that might be wrong.
  */
-export class PlaytestVisualAssignmentUnavailableError extends Error {}
+class PlaytestVisualAssignmentUnavailableError extends Error {}
 
 /** The episode's visual batch exists but fails the exact-binding check. */
-export class PlaytestVisualAssignmentMismatchError extends Error {}
+class PlaytestVisualAssignmentMismatchError extends Error {}
 
 function resolveVisualAssignment(
   batch: PlaytestBatch | null,

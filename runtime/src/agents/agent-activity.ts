@@ -1,7 +1,13 @@
 import {
+  type ClientSurface,
   CONTROL_API_LIVE_SESSION_IDENTITY_LIMIT,
   safeAutoDevSessionId
 } from "@simulatorlife/autodev-core";
+
+import {
+  nativeSessionIdentity,
+  type NativeSessionObservation
+} from "../shared/native-session-observation.ts";
 
 /**
  * Shared state machine for session/agent activity that spans request gaps.
@@ -116,6 +122,7 @@ interface ActivityRecord {
   tag: string | null;
   sessionId: string | null;
   parentRequestId: string | null;
+  clientSurface?: ClientSurface;
   state: string;
   provider: string | null;
   model: string | null;
@@ -137,6 +144,7 @@ interface AgentActivitySnapshot {
   tag: string | null;
   /** Present only when a source explicitly supplied a validated session ID. */
   sessionId?: string;
+  clientSurface?: ClientSurface;
   state: string;
   provider: string | null;
   model: string | null;
@@ -156,6 +164,7 @@ export interface AgentActivityLiveSessionIdentity {
   readonly provider: string | null;
   readonly model: string | null;
   readonly role: string | null;
+  readonly clientSurface: ClientSurface | null;
 }
 
 export interface AgentActivityLiveSessionsProjection {
@@ -240,6 +249,7 @@ function snapshotRecord(
     kind: rec.kind,
     tag: rec.tag,
     ...(rec.sessionId ? { sessionId: rec.sessionId } : {}),
+    ...(rec.clientSurface ? { clientSurface: rec.clientSurface } : {}),
     state: isStale(rec, at) ? "stale" : rec.state,
     provider: rec.provider,
     model: rec.model,
@@ -714,6 +724,58 @@ export function createAgentActivityTracker({
     return snapshotRecord(rec, event.timestamp ?? now());
   }
 
+  /**
+   * Native lifecycle signals describe a host session, not a router request.
+   * Keep them TTL-bound (never fabricate an open request) and independent of
+   * managed execution subjects, even if native IDs happen to match.
+   */
+  function observeNativeSession(
+    observation: NativeSessionObservation
+  ): AgentActivitySnapshot | null {
+    const sessionId = nativeSessionIdentity(observation);
+    if (!sessionId) return null;
+    const at = now();
+    let rec = subjects.get(sessionId);
+    if (rec && rec.origin !== "native_session") return null;
+    if (!rec) {
+      const native = [...subjects.values()].filter(
+        (record) => record.origin === "native_session"
+      );
+      // Bound this independently supplied activity source; do not evict a
+      // known-live session or any managed agent activity to admit one.
+      if (native.length >= 1024) {
+        const reclaimable = native
+          .filter(
+            (record) => TERMINAL_STATES.has(record.state) || isStale(record, at)
+          )
+          .sort((a, b) => a.updatedAt - b.updatedAt)[0];
+        if (!reclaimable) return null;
+        subjects.delete(reclaimable.subject);
+      }
+      rec = ensure(sessionId, { sessionId });
+    }
+    if (TERMINAL_STATES.has(rec.state)) {
+      if (observation.event !== "start" && observation.event !== "prompt") {
+        return snapshotRecord(rec, at);
+      }
+      rec.startedAt = at;
+    }
+    rec.origin = "native_session";
+    rec.clientSurface = observation.client;
+    rec.model = observation.model ?? rec.model;
+    rec.workspace = observation.workspace ?? rec.workspace;
+    transition(
+      rec,
+      observation.event === "end"
+        ? "finished"
+        : observation.event === "prompt"
+          ? "active"
+          : "user_wait",
+      at
+    );
+    return snapshotRecord(rec, at);
+  }
+
   function getState(subject: string, at = now()): string | null {
     const rec = subjects.get(subject);
     if (!rec) return null;
@@ -809,6 +871,7 @@ export function createAgentActivityTracker({
       provider: string | null;
       model: string | null;
       role: string | null;
+      clientSurface: ClientSurface | null;
     };
     const grouped = new Map<string, MutableIdentity>();
     const attributionTimes = new Map<
@@ -840,11 +903,18 @@ export function createAgentActivityTracker({
           lastActivityAt: activity.updatedAt,
           provider: current?.provider ?? null,
           model: current?.model ?? null,
-          role: current?.role ?? null
+          role: current?.role ?? null,
+          clientSurface:
+            current?.clientSurface ?? activity.clientSurface ?? null
         });
       }
       const identity = grouped.get(sessionId)!;
-      const times = attributionTimes.get(sessionId) ?? { provider: -1, model: -1, role: -1 };
+      identity.clientSurface ??= activity.clientSurface ?? null;
+      const times = attributionTimes.get(sessionId) ?? {
+        provider: -1,
+        model: -1,
+        role: -1
+      };
       const update = (field: "provider" | "model" | "role") => {
         const value = activity[field];
         if (value === null) return;
@@ -962,6 +1032,7 @@ export function createAgentActivityTracker({
     noteSubagentWait,
     noteSubagentResolved,
     applyLifecycleEvent,
+    observeNativeSession,
     getState,
     getRecord,
     sweep,

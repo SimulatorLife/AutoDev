@@ -65,6 +65,7 @@ pnpm install --frozen-lockfile
 pnpm run format:check        # Prettier; `pnpm run format` rewrites
 pnpm run lint                # ESLint; `pnpm run lint:fix` applies safe fixes
 pnpm run typecheck
+pnpm run knip                # unused files, dependencies, and exports
 pnpm test
 pnpm run validate:inventory  # migration gate; fails while legacy files remain
 pnpm run validate:actionlint
@@ -88,6 +89,14 @@ CLI and hooks on top. Process output goes through `@simulatorlife/autodev-runtim
 stderr); `console` is a lint error everywhere else. Do not relax a rule to make
 a change pass: fix the code, or add a narrowly scoped disable with a
 `-- reason`.
+
+Dead-code detection uses [Knip](https://knip.dev) (`knip.jsonc`). `pnpm run knip`
+checks the whole repository; `pnpm run knip:production` ignores tests, so it
+also reports source that only tests still reach. Knip follows imports, so any
+file started by a path string (a hook in `.rulesync/hooks.jsonc`, a server the
+runtime spawns, a script a shell launcher runs) must be listed as an `entry`,
+and a package installed only for its executable as an `ignoreDependencies`
+item, or Knip reports it as unused. Knip is not yet a CI gate.
 
 AutoDev owns the organization workflows and local AI/provider setup. RacingGame intentionally retains only product-specific tooling such as build, performance, CSS-token, and source-boundary scripts; those are not organization automation and are not duplicated here.
 

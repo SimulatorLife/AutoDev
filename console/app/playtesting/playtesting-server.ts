@@ -59,7 +59,8 @@ import {
   PLAYTESTS_MAX_BATCH_ASSIGNMENTS,
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
   type PlaytestSessionReference,
-  type PlaytestSessionReview} from "@simulatorlife/autodev-core";
+  type PlaytestSessionReview
+} from "@simulatorlife/autodev-core";
 
 import {
   PLAYTESTING_FILTERS_BY_RESOURCE,
@@ -126,8 +127,6 @@ const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
 const ENTITY_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const PLAYTESTING_READINESS_LABEL = "Playtesting readiness";
 const CANONICAL_WORKSPACE_REQUIREMENT = "a canonical workspaceId";
-export type PlaytestingPage<Row> =
-  ControlApiPlaytestingPageResponse<Row>["page"];
 
 export async function fetchPlaytestingReadiness(
   workspaceId: string,

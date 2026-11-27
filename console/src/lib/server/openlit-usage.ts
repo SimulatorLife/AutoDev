@@ -161,10 +161,10 @@ function first(value: string | readonly string[] | undefined): string {
 }
 
 /** The unscoped Usage views: the fleet aggregate and the two fleet diagnostics. */
-export type UsageFleetView = "overview" | "sessions" | "hooks";
+type UsageFleetView = "overview" | "sessions" | "hooks";
 
 /** The session-scoped Usage tabs. */
-export type UsageSessionTab =
+type UsageSessionTab =
   "overview" | "threads" | "failures" | "requests" | "spans";
 
 /** Everything the Usage page reads out of its own URL. */

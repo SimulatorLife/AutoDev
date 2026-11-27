@@ -26,6 +26,7 @@ import {
   readRulesyncConfig,
   targetsOwningFeature
 } from "./support/rulesync-config.ts";
+import { readCommand } from "./support/skill-document.ts";
 
 const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
 const catalogRoot = join(repositoryRoot, ".rulesync", "commands");
@@ -59,35 +60,6 @@ const materializerPath = join(
 const codexCommandNames = loadCodexCommands(repositoryRoot)
   .map((command) => command.name)
   .sort(compareText);
-
-function splitFrontmatter(text: string): { front: string; body: string } {
-  const match = /^---\n(?<front>[\s\S]*?)\n---\n(?<body>[\s\S]*)$/u.exec(text);
-  assert.ok(
-    match?.groups?.front !== undefined && match.groups.body !== undefined,
-    "missing YAML frontmatter"
-  );
-  const targets = /^targets:[ \t]*(?<value>\[[^\]]*\])[ \t]*$/mu.exec(
-    match.groups.front
-  );
-  assert.ok(
-    targets?.groups?.value !== undefined,
-    "frontmatter must declare `targets: [...]`"
-  );
-  const targetsList = JSON.parse(targets.groups.value) as unknown;
-  assert.ok(
-    Array.isArray(targetsList) &&
-      targetsList.every((value) => typeof value === "string"),
-    "frontmatter `targets` must be a list of strings"
-  );
-  const description = /^description:[ \t]*(?<value>\S.*)$/mu.exec(
-    match.groups.front
-  );
-  assert.ok(
-    description?.groups?.value !== undefined,
-    "frontmatter must declare a non-empty `description:`"
-  );
-  return { front: match.groups.front, body: match.groups.body };
-}
 
 /**
 The targets that own a feature, read from the configuration.
@@ -131,8 +103,21 @@ function generateGlobal(outputHome: string): void {
 test("every canonical RuleSync command has valid targets, description, and body", () => {
   const files = readdirSync(catalogRoot).filter((file) => file.endsWith(".md"));
   for (const file of files) {
-    const text = readFileSync(join(catalogRoot, file), "utf8");
-    const { front, body } = splitFrontmatter(text);
+    const { front, body } = readCommand(
+      repositoryRoot,
+      file.replace(/\.md$/u, "")
+    );
+    const targets = /^targets:[ \t]*(?<value>\[[^\]]*\])[ \t]*$/mu.exec(front);
+    assert.ok(
+      targets?.groups?.value !== undefined,
+      `${file} frontmatter must declare \`targets: [...]\``
+    );
+    const targetsList = JSON.parse(targets.groups.value) as unknown;
+    assert.ok(
+      Array.isArray(targetsList) &&
+        targetsList.every((value) => typeof value === "string"),
+      `${file} frontmatter \`targets\` must be a list of strings`
+    );
     assert.match(
       front,
       /^description:[ \t]*\S/mu,

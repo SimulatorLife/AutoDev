@@ -429,8 +429,17 @@ export function renderSessionDiagnosticsReport(
   const out: string[] = [];
   if (!report.found) {
     out.push(
-      "No rollout found for that id under <codex-home>/sessions or archived_sessions. Try --recent."
+      "No rollout or retained native lifecycle observation found for that id. Try --recent."
     );
+  }
+  if (report.nativeSession) {
+    const native = report.nativeSession;
+    out.push(
+      `Native session ${report.rootSessionId ?? report.requestedId} client=${report.clientSurface ?? DASH} model=${native.model ?? DASH} workspace=${native.workspace ?? DASH}`,
+      `started=${native.startedAt ?? DASH} last-observed=${native.lastObservedAt} ended=${native.endedAt ?? DASH}`,
+      "Native transcript and per-turn diagnostics not observed."
+    );
+    return out.join("\n");
   }
   for (const thread of report.threads) {
     const router = report.router.find((entry) => entry.thread === thread.id);
@@ -473,7 +482,7 @@ export function renderRecentSessions(
   return response.sessions
     .map(
       (session) =>
-        `${session.lastWrite} ${session.id} threads=${session.threads} client=${session.clientSurface ?? DASH} started=${session.started} cwd=${session.cwd ?? DASH}`
+        `${session.lastWrite} ${session.id} threads=${session.id.startsWith("native:") ? DASH : session.threads} client=${session.clientSurface ?? DASH} started=${session.started} cwd=${session.cwd ?? DASH}`
     )
     .join("\n");
 }
@@ -508,6 +517,16 @@ export function renderFleetScanReport(
   ];
   for (const session of report.sessions)
     lines.push(renderFleetSessionRow(session));
+  if (report.recentSessions) {
+    const rolloutIds = new Set(report.sessions.map((session) => session.id));
+    for (const session of report.recentSessions) {
+      if (!rolloutIds.has(session.id)) {
+        lines.push(
+          `${INDENT}${session.lastWrite} ${session.id} client=${session.clientSurface ?? DASH} (native lifecycle; rollout metrics not observed)`
+        );
+      }
+    }
+  }
   const categorySummary = Object.entries(totals.toolFailuresByCategory)
     .sort((a, b) => b[1] - a[1])
     .map(([category, count]) => `${category}=${count}`)

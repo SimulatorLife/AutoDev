@@ -1,0 +1,96 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema-jsonc.json",
+  // Knip reports unused files, dependencies, and exports.
+  //   pnpm run knip             whole repository, tests included
+  //   pnpm run knip:production  shipped code only: finds code kept alive by tests
+  //
+  // Plugins (node --test, Next.js, Playwright, ESLint, TypeScript) supply the
+  // default entries. The entries below are files started by a path string
+  // (hooks, spawned servers, shell scripts) rather than an import, which Knip
+  // cannot follow. A trailing `!` marks a pattern as production code.
+  "ignoreIssues": {
+    // PLAYTESTS_MAX_ANALYSIS_SESSIONS names the analyst-dispatch bound, which
+    // is defined as never exceeding the batch review ceiling it aliases.
+    "core/src/playtesting/batch-run.ts": ["duplicates"]
+  },
+  "workspaces": {
+    ".": {
+      "entry": [
+        // Skill scripts are run directly by agents following the skill.
+        ".rulesync/skills/*/scripts/*.ts",
+        // Manually run benchmarks.
+        "scripts/*.mjs"
+      ],
+      // Repository tooling and tests only; nothing here ships.
+      "project": [
+        "*.{js,ts}",
+        ".rulesync/**/*.ts",
+        "scripts/*.mjs",
+        "tests/**/*.ts"
+      ],
+      // Runtime-owned; tests/providers/opencli-upstream.test.ts resolves it
+      // through runtime/package.json with createRequire.
+      "ignoreDependencies": ["@jackwener/opencli"],
+      // System tools installed outside pnpm.
+      "ignoreBinaries": ["actionlint", "shellcheck"]
+    },
+    "console": {
+      "entry": [
+        // Imported by next.config.ts, which Knip treats as build-only config.
+        "src/lib/build-output.ts!",
+        // Alternative Playwright configs passed with `playwright test --config`.
+        "playwright.*.config.ts"
+      ],
+      "project": [
+        "app/**/*.{ts,tsx,css}!",
+        "src/**/*.{ts,tsx,css}!",
+        "*.ts",
+        "e2e/**/*.ts",
+        "tests/**/*.ts"
+      ]
+    },
+    "core": {
+      "project": ["src/**/*.ts!", "tests/**/*.ts"]
+    },
+    "data": {
+      "project": ["src/**/*.ts!", "tests/**/*.ts"]
+    },
+    "runtime": {
+      "entry": [
+        // Hooks registered in .rulesync/hooks.jsonc.
+        "src/hooks/*.ts!",
+        // Spawned by path: MCP launcher, gateway service, Claude Code telemetry.
+        "src/playtesting/mcp-main.ts!",
+        "src/mcp/chatgpt-supergateway-probe.ts!",
+        "src/telemetry/otel-headers-helper.ts!",
+        // Started by scripts/run-autodev-console.sh and package scripts (which
+        // production mode does not read).
+        "src/cli/verify-control-api.ts!",
+        "src/platform/usage-contract.ts!",
+        "src/benchmarks/github-metrics.ts!",
+        // Spawned as child processes by the playtesting tests.
+        "tests/fixtures/**/*.mjs"
+      ],
+      // Vendored upstream source sits outside the project on purpose.
+      "project": ["src/**/*.ts!", "tests/**/*.{ts,mjs}"],
+      // Packages installed for their executables, which the runtime launches
+      // by package name (resolveRuntimePackageBin, MCP launcher, gateway).
+      "ignoreDependencies": [
+        "@ganglion/xacpx",
+        "@jackwener/opencli",
+        "@modelcontextprotocol/server-filesystem",
+        "@modelcontextprotocol/server-github",
+        "@playwright/mcp",
+        "acpx",
+        "lsp-mcp-server",
+        "supergateway",
+        "typescript-language-server",
+        // Target-state optional trajectory normalization
+        // (docs/autodev-console-target-state.md, "Experience / trajectories").
+        "@letta-ai/trajectory"
+      ],
+      // Python toolchain the statistics tests require on PATH.
+      "ignoreBinaries": ["uv"]
+    }
+  }
+}

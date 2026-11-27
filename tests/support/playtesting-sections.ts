@@ -10,7 +10,7 @@ Each entry names the section as the canonical document states it and the
 phrase a document has to carry, because the two documents phrase the same
 section slightly differently.
 */
-export const REQUIRED_REPORT_SECTIONS = [
+const REQUIRED_REPORT_SECTIONS = [
   { canonical: "provenance/coverage", keyword: "provenance" },
   {
     canonical: "chronological episode summary",
@@ -50,13 +50,12 @@ Assert that a document carries every required report section.
 A review missing a section is invalid, so the contract is that each one is
 present, not that it is phrased in a particular way.
 */
-export function assertReportSections(
-  document: string,
-  label: string
-): void {
+export function assertReportSections(document: string, label: string): void {
   for (const section of REQUIRED_REPORT_SECTIONS) {
     if (!new RegExp(section.keyword, "iu").test(document)) {
-      throw new Error(`${label} is missing the report section: ${section.canonical}`);
+      throw new Error(
+        `${label} is missing the report section: ${section.canonical}`
+      );
     }
   }
 }

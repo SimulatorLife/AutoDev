@@ -5,7 +5,6 @@ export {
   isTerminal
 } from "./state.ts";
 export {
-  type PlaytestingActiveRunsState,
   usePlaytestingActiveRuns,
   type UsePlaytestingActiveRunsResult
 } from "./use-active-runs.ts";

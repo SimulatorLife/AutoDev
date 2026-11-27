@@ -58,7 +58,9 @@ test.after(async () => {
 });
 
 test("admission keys are stable and invalid existing files are never overwritten", () => {
-  using root = mkdtempDisposableSync(path.join(tmpdir(), "autodev-admission-key-"));
+  using root = mkdtempDisposableSync(
+    path.join(tmpdir(), "autodev-admission-key-")
+  );
   const codexHome = path.join(root.path, ".codex");
   ensureLocalAdmission(codexHome);
   const initial = readLocalAdmission(codexHome);
@@ -90,7 +92,9 @@ test("admission keys are stable and invalid existing files are never overwritten
 });
 
 test("local gateway URLs require private state and literal role/server identifiers", () => {
-  using root = mkdtempDisposableSync(path.join(tmpdir(), "autodev-admission-url-"));
+  using root = mkdtempDisposableSync(
+    path.join(tmpdir(), "autodev-admission-url-")
+  );
   const codexHome = path.join(root.path, ".codex");
   ensureLocalAdmission(codexHome);
   const state = path.join(codexHome, "mcp-gateway", "gateway.json");
@@ -133,13 +137,60 @@ test("catalogue discovery reuses the reviewed workspace, not the gateway secret 
     }
   });
   assert.equal(admission.catalogueWorkspace, reviewed);
-  assert.equal(admission.provision("commands", "worker", reviewed).cwd, reviewed);
+  assert.equal(
+    admission.provision("commands", "worker", reviewed).cwd,
+    reviewed
+  );
   assert.equal(admission.provision("commands", "worker", adHoc).cwd, adHoc);
   assert.deepEqual(provisioned, [reviewed, adHoc]);
 });
 
+test("lazy admission remains pinned to its Runtime source generation after installation swaps src", () => {
+  using root = mkdtempDisposableSync(
+    path.join(tmpdir(), "autodev-admission-generation-")
+  );
+  const home = realpathSync(root.path);
+  const codexHome = path.join(home, ".codex");
+  ensureLocalAdmission(codexHome);
+  const first = path.join(codexHome, ".src-first");
+  const second = path.join(codexHome, ".src-second");
+  const current = path.join(codexHome, "src");
+  const workspace = path.join(home, "project");
+  for (const directory of [first, second, workspace]) mkdirSync(directory);
+  symlinkSync(first, current);
+  const sources: string[] = [];
+  const admission = createGatewayAdmission({
+    repositoryRoot: workspace,
+    node: process.execPath,
+    home,
+    codexHome,
+    catalogueWorkspace: workspace,
+    runtimeSource: current,
+    backend: (
+      _server,
+      _repo,
+      _workspace,
+      _node,
+      _home,
+      _codexHome,
+      options
+    ) => {
+      assert.ok(options?.runtimeSource);
+      sources.push(options.runtimeSource);
+      return { command: process.execPath, args: [] };
+    }
+  });
+  admission.provision("commands", "worker", workspace);
+  rmSync(current);
+  symlinkSync(second, current);
+  admission.provision("commands", "worker", workspace);
+  assert.deepEqual(sources, [first, first]);
+});
+
 test("preflight exposes a safe phase when staged configuration cannot be read", async () => {
-  using root = mkdtempDisposableSync(path.join(tmpdir(), "autodev-probe-phase-"));
+  using root = mkdtempDisposableSync(
+    path.join(tmpdir(), "autodev-probe-phase-")
+  );
   const phases: string[] = [];
   await assert.rejects(
     probeSupergateway(
@@ -259,13 +310,20 @@ test("cancellation metadata carries the adapter's grant, not a caller's grant", 
   });
 });
 
-test("scoped cancellation matches the original workspace, owner and transport session", {
-  timeout: 15_000
-}, async () => {
-  using root = mkdtempDisposableSync(path.join(tmpdir(), "autodev-cancel-scope-"));
-  const base = realpathSync(root.path);
-  const script = path.join(base, "backend.mjs");
-  writeFileSync(script, String.raw`import { createInterface } from "node:readline";
+test(
+  "scoped cancellation matches the original workspace, owner and transport session",
+  {
+    timeout: 15_000
+  },
+  async () => {
+    using root = mkdtempDisposableSync(
+      path.join(tmpdir(), "autodev-cancel-scope-")
+    );
+    const base = realpathSync(root.path);
+    const script = path.join(base, "backend.mjs");
+    writeFileSync(
+      script,
+      String.raw`import { createInterface } from "node:readline";
 const held = new Map();
 const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\n");
 const result = (id, value) => send({ id, result: { content: [{ type: "text", text: value }] } });
@@ -288,107 +346,142 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     held.delete(request.params.requestId);
   }
 });
-`);
-  const alpha = path.join(base, "alpha");
-  const beta = path.join(base, "beta");
-  mkdirSync(alpha);
-  mkdirSync(beta);
-  const pool = await startChatgptBackendPool({
-    version: 1,
-    servers: {
-      fixture: { kind: "admitted", role: "worker", server: "fixture", tools: ["hold"] }
-    }
-  }, {
-    gatewayEnv: {},
-    toolCallTimeoutMs: 10_000,
-    admission: {
-      secret: SECRET,
-      catalogueWorkspace: base,
-      provision: (server, _role, workspace) => ({
-        server, command: process.execPath, args: [script], cwd: workspace
-      })
-    }
-  });
-  try {
-    const url = `http://127.0.0.1:${pool.port}/mcp/fixture`;
-    const headers = { authorization: `Bearer ${pool.token}`, "content-type": "application/json" };
-    const send = (session: string | null, message: unknown) =>
-      fetch(url, {
-        method: "POST",
-        headers: session ? { ...headers, "mcp-session-id": session } : headers,
-        body: JSON.stringify(message),
-        signal: AbortSignal.timeout(12_000)
-      });
-    const open = async () => {
-      const response = await send(null, {
-        jsonrpc: "2.0", id: 0, method: "initialize",
-        params: { protocolVersion: "2025-03-26", capabilities: {} }
-      });
-      assert.ok((await response.json()).result);
-      const id = response.headers.get("mcp-session-id");
-      assert.ok(id);
-      return id;
-    };
-    const session = await open();
-    const otherSession = await open();
-    const grant = (workspace: string) => issueSessionGrant(SECRET, {
-      workspace, role: "worker", session: newGrantSession()
-    });
-    const a = grant(alpha);
-    const b = grant(beta);
-    const c = grant(alpha);
-    const call = async (token: string, id: number, action: string, label = "") => {
-      const response = await send(session, {
-        jsonrpc: "2.0", id, method: "tools/call",
-        params: { name: "hold", arguments: { action, label }, _meta: { [SESSION_GRANT_META_KEY]: token } }
-      });
-      return response.json();
-    };
-    const cancel = async (token: string | undefined, transport = session) => {
-      const response = await send(transport, {
-        jsonrpc: "2.0", method: "notifications/cancelled",
-        params: { requestId: 42, _meta: { [SESSION_GRANT_META_KEY]: token } }
-      });
-      assert.equal(response.status, 202);
-      await response.text();
-    };
-    // A shared transport can carry independent authorized scopes, and
-    // upstream remapping may reuse request IDs.
-    const heldA = call(a, 42, "hold", "a");
-    const heldB = call(b, 42, "hold", "b");
-    const heldC = call(c, 42, "hold", "c");
-    for (const pending of [heldA, heldB, heldC]) void pending.catch(() => {});
-    const status = async (token: string) =>
-      JSON.parse((await call(token, 43, "status")).result.content[0].text);
-    const waitForStatus = async (token: string, expected: string[]) => {
-      for (let i = 0; i < 100; i += 1) {
-        // eslint-disable-next-line no-await-in-loop -- wait for the backend to receive the held calls
-        const actual = await status(token);
-        if (JSON.stringify(actual) === JSON.stringify(expected)) return;
-        // eslint-disable-next-line no-await-in-loop -- bounded fixture polling
-        await delay(20);
+`
+    );
+    const alpha = path.join(base, "alpha");
+    const beta = path.join(base, "beta");
+    mkdirSync(alpha);
+    mkdirSync(beta);
+    const pool = await startChatgptBackendPool(
+      {
+        version: 1,
+        servers: {
+          fixture: {
+            kind: "admitted",
+            role: "worker",
+            server: "fixture",
+            tools: ["hold"]
+          }
+        }
+      },
+      {
+        gatewayEnv: {},
+        toolCallTimeoutMs: 10_000,
+        admission: {
+          secret: SECRET,
+          catalogueWorkspace: base,
+          provision: (server, _role, workspace) => ({
+            server,
+            command: process.execPath,
+            args: [script],
+            cwd: workspace
+          })
+        }
       }
-      assert.fail("fixture never reached expected pending state");
-    };
-    await waitForStatus(a, ["a", "c"]);
-    await waitForStatus(b, ["b"]);
-    await cancel(undefined);
-    await cancel("v1.forged.grant");
-    await cancel(a, otherSession);
-    assert.deepEqual(await status(a), ["a", "c"]);
-    assert.deepEqual(await status(b), ["b"]);
-    await cancel(a);
-    assert.match((await heldA).error.message, /cancelled/u);
-    await waitForStatus(a, ["c"]);
-    assert.deepEqual(await status(b), ["b"]);
-    await call(c, 44, "release", "c");
-    await call(b, 44, "release", "b");
-    assert.equal((await heldC).result.content[0].text, "c");
-    assert.equal((await heldB).result.content[0].text, "b");
-  } finally {
-    await pool.close();
+    );
+    try {
+      const url = `http://127.0.0.1:${pool.port}/mcp/fixture`;
+      const headers = {
+        authorization: `Bearer ${pool.token}`,
+        "content-type": "application/json"
+      };
+      const send = (session: string | null, message: unknown) =>
+        fetch(url, {
+          method: "POST",
+          headers: session
+            ? { ...headers, "mcp-session-id": session }
+            : headers,
+          body: JSON.stringify(message),
+          signal: AbortSignal.timeout(12_000)
+        });
+      const open = async () => {
+        const response = await send(null, {
+          jsonrpc: "2.0",
+          id: 0,
+          method: "initialize",
+          params: { protocolVersion: "2025-03-26", capabilities: {} }
+        });
+        assert.ok((await response.json()).result);
+        const id = response.headers.get("mcp-session-id");
+        assert.ok(id);
+        return id;
+      };
+      const session = await open();
+      const otherSession = await open();
+      const grant = (workspace: string) =>
+        issueSessionGrant(SECRET, {
+          workspace,
+          role: "worker",
+          session: newGrantSession()
+        });
+      const a = grant(alpha);
+      const b = grant(beta);
+      const c = grant(alpha);
+      const call = async (
+        token: string,
+        id: number,
+        action: string,
+        label = ""
+      ) => {
+        const response = await send(session, {
+          jsonrpc: "2.0",
+          id,
+          method: "tools/call",
+          params: {
+            name: "hold",
+            arguments: { action, label },
+            _meta: { [SESSION_GRANT_META_KEY]: token }
+          }
+        });
+        return response.json();
+      };
+      const cancel = async (token: string | undefined, transport = session) => {
+        const response = await send(transport, {
+          jsonrpc: "2.0",
+          method: "notifications/cancelled",
+          params: { requestId: 42, _meta: { [SESSION_GRANT_META_KEY]: token } }
+        });
+        assert.equal(response.status, 202);
+        await response.text();
+      };
+      // A shared transport can carry independent authorized scopes, and
+      // upstream remapping may reuse request IDs.
+      const heldA = call(a, 42, "hold", "a");
+      const heldB = call(b, 42, "hold", "b");
+      const heldC = call(c, 42, "hold", "c");
+      for (const pending of [heldA, heldB, heldC]) void pending.catch(() => {});
+      const status = async (token: string) =>
+        JSON.parse((await call(token, 43, "status")).result.content[0].text);
+      const waitForStatus = async (token: string, expected: string[]) => {
+        for (let i = 0; i < 100; i += 1) {
+          // eslint-disable-next-line no-await-in-loop -- wait for the backend to receive the held calls
+          const actual = await status(token);
+          if (JSON.stringify(actual) === JSON.stringify(expected)) return;
+          // eslint-disable-next-line no-await-in-loop -- bounded fixture polling
+          await delay(20);
+        }
+        assert.fail("fixture never reached expected pending state");
+      };
+      await waitForStatus(a, ["a", "c"]);
+      await waitForStatus(b, ["b"]);
+      await cancel(undefined);
+      await cancel("v1.forged.grant");
+      await cancel(a, otherSession);
+      assert.deepEqual(await status(a), ["a", "c"]);
+      assert.deepEqual(await status(b), ["b"]);
+      await cancel(a);
+      assert.match((await heldA).error.message, /cancelled/u);
+      await waitForStatus(a, ["c"]);
+      assert.deepEqual(await status(b), ["b"]);
+      await call(c, 44, "release", "c");
+      await call(b, 44, "release", "b");
+      assert.equal((await heldC).result.content[0].text, "c");
+      assert.equal((await heldB).result.content[0].text, "b");
+    } finally {
+      await pool.close();
+    }
   }
-});
+);
 
 test(
   "admitted servers run each grant's calls in a backend confined to its workspace",
@@ -543,9 +636,24 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         session: span.attributes["autodev.session.id"]
       }));
       assert.deepEqual(correlated, [
-        { server: "fixture", role: "worker", workspace: "alpha", session: undefined },
-        { server: "fixture", role: "worker", workspace: "beta", session: undefined },
-        { server: "fixture", role: "worker", workspace: "alpha", session: undefined },
+        {
+          server: "fixture",
+          role: "worker",
+          workspace: "alpha",
+          session: undefined
+        },
+        {
+          server: "fixture",
+          role: "worker",
+          workspace: "beta",
+          session: undefined
+        },
+        {
+          server: "fixture",
+          role: "worker",
+          workspace: "alpha",
+          session: undefined
+        },
         {
           server: "fixture",
           role: "worker",

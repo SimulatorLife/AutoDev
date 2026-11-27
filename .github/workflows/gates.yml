@@ -74,6 +74,12 @@ jobs:
         if: always()
         run: pnpm lint:ci
 
+      # Initial duplication baseline: report findings without introducing
+      # a percentage gate before the existing clones have been reviewed.
+      - name: Report code duplication
+        run: pnpm run duplicates
+        continue-on-error: true
+
       - name: Typecheck
         if: always()
         run: pnpm typecheck

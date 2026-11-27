@@ -26,6 +26,7 @@ import {
   type SessionThreadTrace
 } from "@simulatorlife/autodev-core";
 
+import { isPathWithin } from "../files/path-containment.ts";
 import {
   parseSessionMetaPayload,
   type SessionMetaPayload
@@ -785,13 +786,10 @@ function countImageObjects(root: unknown): number {
 
 function normalizeSkillRoot(skillFilePath: string, cwd: string): string {
   const rootDir = path.dirname(path.dirname(skillFilePath));
-  if (
-    cwd !== "/" &&
-    (rootDir === cwd || rootDir.startsWith(`${cwd}${path.sep}`))
-  )
+  if (cwd !== "/" && isPathWithin(cwd, rootDir))
     return `<repo>${rootDir.slice(cwd.length)}`;
   const home = homedir();
-  if (home && (rootDir === home || rootDir.startsWith(`${home}${path.sep}`)))
+  if (home && isPathWithin(home, rootDir))
     return `~${rootDir.slice(home.length)}`;
   return rootDir;
 }
@@ -936,7 +934,10 @@ function recordInvestigation(
   }
 }
 
-function isFilesystemEdit(kind: string, item: Record<string, unknown>): boolean {
+function isFilesystemEdit(
+  kind: string,
+  item: Record<string, unknown>
+): boolean {
   return (
     kind === "McpToolCall" &&
     item.server === FILESYSTEM_SERVER &&

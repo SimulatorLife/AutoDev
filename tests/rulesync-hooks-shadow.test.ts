@@ -61,7 +61,7 @@ const canonicalHooks = (() => {
     events[event] = (groups as unknown[]).map((group) => {
       const entry = asObject(group);
       return {
-        ...((typeof entry.matcher === "string") && { matcher: entry.matcher }),
+        ...(typeof entry.matcher === "string" && { matcher: entry.matcher }),
         command: String(entry.command)
       };
     });
@@ -86,15 +86,24 @@ const canonicalEvents = Object.keys(canonicalHooks).map((event) =>
 /**
 The canonical events a client cannot receive.
 
-Each entry is a documented parity limit of one client, not a copy of the
-canonical inventory: Copilot has no session-start event.
+Each entry is a limitation of the pinned RuleSync projection. Copilot
+drops the session-start matcher; Antigravity does not support prompt-submit
+or session-end in its native hook surface.
 */
 const unsupportedEvents: Record<(typeof targets)[number], readonly string[]> = {
   codexcli: [],
   claudecode: [],
   copilot: ["sessionstart"],
-  "antigravity-cli": []
+  "antigravity-cli": ["beforesubmitprompt", "sessionend"]
 };
+
+function canonicalEventName(event: string): string {
+  if (event === "UserPromptSubmit" || event === "userPromptSubmitted") {
+    return "beforesubmitprompt";
+  }
+  if (event === "agentStop") return "stop";
+  return event.toLowerCase();
+}
 
 function readJson(path: string): JsonObject {
   return JSON.parse(readFileSync(path, "utf8")) as JsonObject;
@@ -164,7 +173,7 @@ function generatedFiles(root: string): string[] {
       const path = join(directory, entry.name);
       if (entry.isDirectory()) visit(path);
       else if (entry.isFile())
-        files.push(relative(root, path).replaceAll('/', '/'));
+        files.push(relative(root, path).replaceAll("/", "/"));
     }
   };
   visit(root);
@@ -232,36 +241,20 @@ test("target projections preserve their documented command losses", () => {
   const codexHooks = asObject(codexDocument.hooks);
   const claudeHooks = asObject(claudeDocument.hooks);
   const antigravityRulesync = asObject(antigravityDocument.rulesync);
-  const antigravitySessionStart = antigravityRulesync.SessionStart;
   const projected = {
     codexcli: new Set(groupedCommands(codexHooks)),
     claudecode: new Set(groupedCommands(claudeHooks)),
     copilot: new Set(commands(copilotDocument)),
     "antigravity-cli": new Set([
       ...groupedCommands(antigravityRulesync),
-      ...commands({ hooks: { SessionStart: antigravitySessionStart } })
+      ...commands({
+        hooks: {
+          SessionStart: antigravityRulesync.SessionStart,
+          Stop: antigravityRulesync.Stop
+        }
+      })
     ])
   };
-  const expected: Record<(typeof targets)[number], Set<string>> = {
-    codexcli: new Set(),
-    claudecode: new Set(),
-    copilot: new Set(
-      canonicalHooks.sessionStart?.map((group) => group.command)
-    ),
-    "antigravity-cli": new Set()
-  };
-  assert.equal(projected.codexcli.size, sourceCommands.length);
-  assert.equal(projected.claudecode.size, sourceCommands.length);
-  assert.equal(projected["antigravity-cli"].size, sourceCommands.length);
-  for (const target of targets)
-    assert.deepEqual(
-      new Set(
-        sourceCommands.filter((command) => !projected[target].has(command))
-      ),
-      expected[target],
-      target
-    );
-
   const targetEvents: Record<(typeof targets)[number], Set<string>> = {
     codexcli: new Set(Object.keys(codexHooks)),
     claudecode: new Set(Object.keys(claudeHooks)),
@@ -269,16 +262,18 @@ test("target projections preserve their documented command losses", () => {
     "antigravity-cli": new Set(Object.keys(antigravityRulesync))
   };
   for (const target of targets) {
-    // Every native event corresponds to a canonical event, and the only
-    // events a client does not receive are its documented parity limits.
-    const native = Array.from(targetEvents[target], (event) => event.toLowerCase());
-    assert.ok(
-      native.every((event) => canonicalEvents.includes(event)),
-      `${target} native events are not canonical events`
-    );
+    const expectedCommands = Object.entries(canonicalHooks)
+      .filter(
+        ([event]) => !unsupportedEvents[target].includes(event.toLowerCase())
+      )
+      .flatMap(([, groups]) => groups.map((group) => group.command));
+    assert.deepEqual(projected[target], new Set(expectedCommands), target);
+    const native = Array.from(targetEvents[target], canonicalEventName);
     assert.deepEqual(
-      canonicalEvents.filter((event) => !native.includes(event)).sort(compareText),
-      [...unsupportedEvents[target]].sort(compareText),
+      [...native].sort(compareText),
+      canonicalEvents
+        .filter((event) => !unsupportedEvents[target].includes(event))
+        .sort(compareText),
       `${target} native events`
     );
   }
@@ -319,14 +314,18 @@ test("install projects Codex hooks once, at user level only", () => {
     assert.equal(existsSync(join(repository, ".codex", "hooks.json")), false);
     const projectTargets = targets.filter((name) => name !== "codexcli");
     for (const target of projectTargets)
-      assert.equal(existsSync(join(repository, hookPaths[target])), true, target);
+      assert.equal(
+        existsSync(join(repository, hookPaths[target])),
+        true,
+        target
+      );
     const installed = join(codexHome, "hooks.json");
     assert.equal(lstatSync(installed).isFile(), true);
     // The installed document carries the canonical hook commands, not the
     // output of the module that wrote it.
     const installedHooks = asObject(readJson(installed).hooks);
     const installedCommands = groupedCommands(installedHooks);
-    assert.deepEqual(installedCommands, sourceCommands);
+    assert.deepEqual(new Set(installedCommands), new Set(sourceCommands));
     assert.equal(new Set(installedCommands).size, installedCommands.length);
     const projectedCodexHooks = asObject(document("codexcli").hooks);
     assert.deepEqual(
@@ -342,20 +341,16 @@ test("Codex and Claude retain expected native hook projections without deprecate
   const source = hooksAt(readJson(hookSourcePath).hooks);
   const codex = hooksAt(document("codexcli").hooks);
   assert.deepEqual(
-    Object.keys(codex)
-      .map((event) => event.toLowerCase())
-      .sort(compareText),
+    Object.keys(codex).map(canonicalEventName).sort(compareText),
     [...canonicalEvents].sort(compareText)
   );
-  assert.deepEqual(groupedCommands(codex), sourceCommands);
+  assert.deepEqual(new Set(groupedCommands(codex)), new Set(sourceCommands));
   const claude = hooksAt(document("claudecode").hooks);
   assert.deepEqual(
-    Object.keys(claude)
-      .map((event) => event.toLowerCase())
-      .sort(compareText),
+    Object.keys(claude).map(canonicalEventName).sort(compareText),
     [...canonicalEvents].sort(compareText)
   );
-  assert.deepEqual(groupedCommands(claude), sourceCommands);
+  assert.deepEqual(new Set(groupedCommands(claude)), new Set(sourceCommands));
   assert.equal(codex.PreToolUse?.[0]?.matcher, source.preToolUse?.[0]?.matcher);
 });
 
@@ -366,8 +361,12 @@ test("Copilot and Antigravity retain their documented parity limits", () => {
   const canonicalPreToolUse = canonicalHooks.preToolUse ?? [];
   const copilot = document("copilot");
   const copilotHooks = hooksAt(copilot.hooks);
-  assert.deepEqual(Object.keys(copilotHooks), ["preToolUse"]);
-  assert.deepEqual(commands(copilot), canonicalPreToolUse.map((g) => g.command));
+  assert.deepEqual(
+    Object.keys(copilotHooks).map(canonicalEventName).sort(compareText),
+    canonicalEvents
+      .filter((event) => !unsupportedEvents.copilot.includes(event))
+      .sort(compareText)
+  );
   assert.deepEqual(
     copilotHooks.preToolUse?.map((hook) => [hook.matcher, hook.command]),
     canonicalPreToolUse.map((group) => [group.matcher, group.command])
@@ -375,9 +374,11 @@ test("Copilot and Antigravity retain their documented parity limits", () => {
   const antigravity = document("antigravity-cli");
   assert.deepEqual(
     Object.keys(asObject(antigravity.rulesync))
-      .map((event) => event.toLowerCase())
+      .map(canonicalEventName)
       .sort(compareText),
-    [...canonicalEvents].sort(compareText)
+    canonicalEvents
+      .filter((event) => !unsupportedEvents["antigravity-cli"].includes(event))
+      .sort(compareText)
   );
   assert.deepEqual(
     groupedCommands(asObject(antigravity.rulesync)),
@@ -397,10 +398,7 @@ test("Copilot and Antigravity retain their documented parity limits", () => {
         (group.hooks as unknown[]).map((hook) => asObject(hook).command)
       ];
     }),
-    canonicalPreToolUse.map((group) => [
-      group.matcher,
-      [group.command]
-    ])
+    canonicalPreToolUse.map((group) => [group.matcher, [group.command]])
   );
 });
 

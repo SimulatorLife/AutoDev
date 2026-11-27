@@ -141,7 +141,8 @@ export function configureExternalMcpTelemetry(
   externalTelemetry = { server, endpoint, headers };
 }
 const ATTR_VALUE_MAX_LENGTH = 64;
-let commandExecutionContext: { role: string; workspace: string | null } | undefined;
+let commandExecutionContext:
+  { role: string; workspace: string | null } | undefined;
 
 /**
  * The Commands stdio backend owns execution spans, not another tools/call
@@ -234,7 +235,9 @@ function safeTrim(value: unknown): string | null {
 
 function logTelemetryError(message: string): void {
   try {
-    const producer = commandExecutionContext ? "autodev-commands" : "autodev-codex-tools";
+    const producer = commandExecutionContext
+      ? "autodev-commands"
+      : "autodev-codex-tools";
     process.stderr.write(`[${producer}-telemetry] ${message}\n`);
   } catch {
     /* ignore */
@@ -345,6 +348,19 @@ export function resetTelemetryForTest(): void {
 }
 
 /** Flush queued spans and shut down the provider before the MCP process exits. */
+/**
+ * Deliver every span recorded so far without ending the process's telemetry.
+ * A component that closes while its process lives on -- a backend pool --
+ * flushes; only the process's own exit shuts the provider down.
+ */
+export async function flushTelemetry(): Promise<void> {
+  try {
+    await state.provider?.forceFlush();
+  } catch {
+    logTelemetryError("tracer_provider_flush_failed");
+  }
+}
+
 export async function shutdownTelemetry(): Promise<void> {
   const provider = state.provider;
   state.provider = null;
@@ -590,13 +606,19 @@ export async function recordCommandExecutionSpan(
         span.setAttribute("autodev.command.duration_ms", result.durationMs);
         if (result.exitCode !== null)
           span.setAttribute("autodev.command.exit_code", result.exitCode);
-        span.setAttribute("autodev.command.output_truncated", result.outputTruncated);
+        span.setAttribute(
+          "autodev.command.output_truncated",
+          result.outputTruncated
+        );
       } catch {
         /* observation cannot change the command result */
       }
-      attachOutcome(span, result.status === "succeeded"
-        ? { status: "ok" }
-        : { status: "error", errorType: result.status });
+      attachOutcome(
+        span,
+        result.status === "succeeded"
+          ? { status: "ok" }
+          : { status: "error", errorType: result.status }
+      );
     }
     return result;
   } catch (error) {
@@ -606,7 +628,10 @@ export async function recordCommandExecutionSpan(
       } catch {
         /* ignore attribute failures */
       }
-      attachOutcome(span, { status: "error", errorType: "infrastructure_error" });
+      attachOutcome(span, {
+        status: "error",
+        errorType: "infrastructure_error"
+      });
     }
     throw error;
   } finally {

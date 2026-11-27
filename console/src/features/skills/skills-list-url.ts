@@ -71,7 +71,7 @@ export function readSkillsFilters(
  * POST has to come back to the rows the operator narrowed, and the address it
  * comes back to is the list's own.
  */
-export function skillsListQueryString(filters: SkillsListFilters): string {
+function skillsListQueryString(filters: SkillsListFilters): string {
   const role = filters.role.trim();
   if (role === "") return "";
   const params = new URLSearchParams();

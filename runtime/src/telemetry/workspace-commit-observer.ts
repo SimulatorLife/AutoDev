@@ -49,11 +49,11 @@ import { safeAutoDevWorkspaceKey } from "./resource-context/index.ts";
 const execFileAsync = promisify(execFile);
 
 /** Timeout for each read-only git invocation (ms). */
-export const OBSERVE_GIT_TIMEOUT_MS = 10_000;
+const OBSERVE_GIT_TIMEOUT_MS = 10_000;
 /** Buffer cap for each read-only git invocation (bytes). */
-export const OBSERVE_GIT_MAX_BUFFER_BYTES = 8 * 1024 * 1024;
+const OBSERVE_GIT_MAX_BUFFER_BYTES = 8 * 1024 * 1024;
 /** Git commit SHA pattern, copied from the shared git-change-metrics helper. */
-export const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/iu;
+const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/iu;
 
 /** A single read-only git invocation. Injected for tests. */
 export type RunGit = (
@@ -90,7 +90,7 @@ export interface WorkspaceCommitObserverOptions {
   readonly runGit?: RunGit;
 }
 
-export interface WorkspaceCommitBaseline {
+interface WorkspaceCommitBaseline {
   readonly workspaceKey: string;
   readonly repositoryRoot: string;
   /** HEAD sha at baseline time, or null when the repo has no commits yet. */

@@ -65,7 +65,15 @@ test("only explicit validated IDs identify live sessions; duplicate activity is 
   const projection = tracker.listLiveSessions(30);
   assert.deepEqual(projection, {
     identitiesObserved: [
-      { sessionId: "session-b", state: "tool_wait", lastActivityAt: 30, provider: null, model: null, role: null }
+      {
+        sessionId: "session-b",
+        state: "tool_wait",
+        lastActivityAt: 30,
+        provider: null,
+        model: null,
+        role: null,
+        clientSurface: null
+      }
     ],
     identifiedSessionCount: 1,
     partial: false,
@@ -77,14 +85,41 @@ test("only explicit validated IDs identify live sessions; duplicate activity is 
 
 test("session attribution independently selects newest observed value and resolves ties lexically", () => {
   const tracker = createAgentActivityTracker({ now: () => 30 });
-  tracker.beginRequest("old", { sessionId: "session-attributed", provider: "provider-old", model: "model-z", role: "worker", timestamp: 10 });
-  tracker.beginRequest("new", { sessionId: "session-attributed", provider: "provider-new", timestamp: 20 });
-  tracker.beginRequest("tie-z", { sessionId: "session-attributed", model: "model-z", role: "role-z", timestamp: 20 });
-  tracker.beginRequest("tie-a", { sessionId: "session-attributed", model: "model-a", role: "role-a", timestamp: 20 });
-  assert.deepEqual(tracker.listLiveSessions(30).identitiesObserved, [{
-    sessionId: "session-attributed", state: "active", lastActivityAt: 20,
-    provider: "provider-new", model: "model-a", role: "role-a"
-  }]);
+  tracker.beginRequest("old", {
+    sessionId: "session-attributed",
+    provider: "provider-old",
+    model: "model-z",
+    role: "worker",
+    timestamp: 10
+  });
+  tracker.beginRequest("new", {
+    sessionId: "session-attributed",
+    provider: "provider-new",
+    timestamp: 20
+  });
+  tracker.beginRequest("tie-z", {
+    sessionId: "session-attributed",
+    model: "model-z",
+    role: "role-z",
+    timestamp: 20
+  });
+  tracker.beginRequest("tie-a", {
+    sessionId: "session-attributed",
+    model: "model-a",
+    role: "role-a",
+    timestamp: 20
+  });
+  assert.deepEqual(tracker.listLiveSessions(30).identitiesObserved, [
+    {
+      sessionId: "session-attributed",
+      state: "active",
+      lastActivityAt: 20,
+      provider: "provider-new",
+      model: "model-a",
+      role: "role-a",
+      clientSurface: null
+    }
+  ]);
 });
 
 test("a later request without a source session ID cannot inherit a prior ID", () => {

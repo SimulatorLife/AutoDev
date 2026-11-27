@@ -35,7 +35,7 @@ export interface OverviewProviderVerdicts {
   readonly quotaEvidence: QuotaExhaustionEvidence;
 }
 
-export interface OverviewFailingSession {
+interface OverviewFailingSession {
   readonly id: string;
   readonly lastWrite: string;
   readonly toolFailures: number;

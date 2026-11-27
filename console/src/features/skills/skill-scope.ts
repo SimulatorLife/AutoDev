@@ -36,7 +36,7 @@ export const NOT_INSTALLED_LABEL = "Not installed";
  * installed inside one, and that repository is not a workspace here, so there
  * is nowhere to assign it.
  */
-export const UNATTRIBUTED_WORKSPACE_LABEL = "Not attributed to a workspace";
+const UNATTRIBUTED_WORKSPACE_LABEL = "Not attributed to a workspace";
 
 /**
  * The place a skill is installed, in the words the Console uses for it.

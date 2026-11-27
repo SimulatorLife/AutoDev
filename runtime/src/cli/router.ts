@@ -9,8 +9,6 @@ import { UnmigratedRuntimeError } from "./runtime.ts";
 /** The router vocabulary, owned here and consumed by validation, help, and errors. */
 export const ROUTER_COMMANDS = ["run", "ensure", "status"] as const;
 
-export type RouterCommand = (typeof ROUTER_COMMANDS)[number];
-
 export interface RouterCommandBackend {
   run(): number;
   ensure(): number;

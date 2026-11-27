@@ -4,7 +4,8 @@ import {
   type ClientSurface,
   type ControlApiLiveSessions,
   isClientSurface,
-  safeAutoDevSessionId} from "@simulatorlife/autodev-core";
+  safeAutoDevSessionId
+} from "@simulatorlife/autodev-core";
 import {
   AGENT_ACTIVITY_KINDS,
   AGENT_ACTIVITY_STATES
@@ -1000,7 +1001,9 @@ export class UsageTracker {
       ...projection,
       identitiesObserved: projection.identitiesObserved.map((identity) => ({
         ...identity,
-        clientSurface: this.sessionClientSurface(identity.sessionId)
+        clientSurface:
+          identity.clientSurface ??
+          this.sessionClientSurface(identity.sessionId)
       }))
     };
   }

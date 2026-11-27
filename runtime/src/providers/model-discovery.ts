@@ -6,6 +6,7 @@ import {
   type AntigravityProvider,
   type ControlApiDiscoveredProviderModel,
   type ControlApiProviderModelDiscovery,
+  CONTROL_API_PROVIDER_MODEL_DISCOVERY_SCHEMA_ID,
   type ControlApiProviderModelsResponse,
   isRecord
 } from "@simulatorlife/autodev-core";
@@ -895,7 +896,7 @@ export class ProviderModelDiscoveryService {
 
   snapshot(): ControlApiProviderModelsResponse {
     return {
-      schema: "autodev-control-provider-model-discovery-v1",
+      schema: CONTROL_API_PROVIDER_MODEL_DISCOVERY_SCHEMA_ID,
       source: "runtime-provider-discovery",
       providers: [...this.providerIds()]
         .sort(MODEL_DISCOVERY_COLLATOR.compare)

@@ -17,8 +17,8 @@ import type { PlaytestArtifactStore } from "./artifact-store.ts";
 
 /** Approved playtest runs are capped at one hour; grace covers final persistence. */
 export const PLAYTEST_PACKET_PENDING_GRACE_MS = 2 * 60 * 60 * 1000;
-export const PLAYTEST_PACKET_PENDING_SCAN_LIMIT = 10_000;
-export const PLAYTEST_PACKET_PENDING_BATCH_LIMIT = 64;
+const PLAYTEST_PACKET_PENDING_SCAN_LIMIT = 10_000;
+const PLAYTEST_PACKET_PENDING_BATCH_LIMIT = 64;
 const PACKET_STATE_READ_CONCURRENCY = 4;
 
 export interface PlaytestPacketArtifactRepository {

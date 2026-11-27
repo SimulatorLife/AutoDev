@@ -53,7 +53,10 @@ import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 
 import { isRecord } from "@simulatorlife/autodev-core";
-import { atomicWriteSync, pathsOverlap } from "@simulatorlife/autodev-data/files";
+import {
+  atomicWriteSync,
+  pathsOverlap
+} from "@simulatorlife/autodev-data/files";
 import { CANONICAL_TO_MCODE_TOOL_NAMES } from "@simulatorlife/autodev-runtime/shared/tool-names";
 
 import { runRulesyncGenerate } from "./runtime-files.ts";
@@ -128,9 +131,7 @@ interface McodePermissionEntry {
 
 function expandHome(pattern: string, home: string): string {
   if (pattern === "~") return home;
-  return pattern.startsWith("~/")
-    ? path.join(home, pattern.slice(2))
-    : pattern;
+  return pattern.startsWith("~/") ? path.join(home, pattern.slice(2)) : pattern;
 }
 
 /**
@@ -243,15 +244,32 @@ export function renderMcodeHooks(
     }
     rendered[event] = groups.map((group) => {
       if (!isRecord(group)) return group;
+      // The standalone host does not inherit Runtime's AUTODEV_PROVIDER.
+      // Add a fixed client identity only to the shared lifecycle handlers.
+      const handlers = Array.isArray(group.hooks)
+        ? group.hooks.map((handler: unknown) => {
+            if (!isRecord(handler) || typeof handler.command !== "string")
+              return handler;
+            const command = handler.command;
+            if (
+              !/\/hooks\/(?:session-start\.ts|native-session\.ts (?:prompt|stop|end))$/u.test(
+                command
+              )
+            )
+              return handler;
+            return { ...handler, command: command + " --client=mcode" };
+          })
+        : group.hooks;
+      const projectedGroup = { ...group, hooks: handlers };
       const matcher = group.matcher;
-      if (typeof matcher !== "string") return group;
+      if (typeof matcher !== "string") return projectedGroup;
       const projected = toMcodeHookMatcher(matcher);
       if (projected === null) {
         throw new Error(
           `The canonical hook matcher for ${event} ("${matcher}") names no AutoDev tool, so it cannot be projected onto MiniMax Code's tool names`
         );
       }
-      return { ...group, matcher: projected };
+      return { ...projectedGroup, matcher: projected };
     });
   }
   return rendered;
@@ -270,17 +288,20 @@ export function renderMcodeDenyEntries(
   claudePermissions: unknown,
   home: string
 ): McodePermissionEntry[] {
-  const deny = isRecord(claudePermissions) && Array.isArray(claudePermissions.deny)
-    ? claudePermissions.deny.filter(
-        (entry): entry is string => typeof entry === "string"
-      )
-    : [];
+  const deny =
+    isRecord(claudePermissions) && Array.isArray(claudePermissions.deny)
+      ? claudePermissions.deny.filter(
+          (entry): entry is string => typeof entry === "string"
+        )
+      : [];
   return deny
     .map((rule) => toMcodePermissionEntry(rule, home))
     .filter((entry): entry is McodePermissionEntry => entry !== null);
 }
 
-function renderPermissionDocument(deny: readonly McodePermissionEntry[]): string {
+function renderPermissionDocument(
+  deny: readonly McodePermissionEntry[]
+): string {
   return `${JSON.stringify({ version: 2, allow: [], deny, ask: [] }, null, 2)}\n`;
 }
 
@@ -556,7 +577,9 @@ export function materializeMcodeProfile(options: {
     ],
     { check: isCheck }
   );
-  const obsolete = removeObsoleteProfileFiles(profileDirectory, { check: isCheck });
+  const obsolete = removeObsoleteProfileFiles(profileDirectory, {
+    check: isCheck
+  });
 
   return {
     profileDirectory,
@@ -838,7 +861,10 @@ export function enrollMcodeOperatorProfile(options: {
   let recordedHooks = record.hooks;
   let recordedDeny = record.deny;
 
-  const instructionsPath = path.join(profileDirectory, PROFILE_INSTRUCTIONS_FILE);
+  const instructionsPath = path.join(
+    profileDirectory,
+    PROFILE_INSTRUCTIONS_FILE
+  );
   const instructions = mergeOperatorInstructions(
     readOptionalText(instructionsPath),
     artifacts.agentsMd
@@ -962,7 +988,10 @@ export function reconcileMcodeProfiles(options: {
   const operator = enrollMcodeOperatorProfile({
     repositoryRoot: options.repositoryRoot,
     managedProfileDirectory,
-    enrollmentRecord: path.join(options.autodevHome, OPERATOR_ENROLLMENT_RECORD),
+    enrollmentRecord: path.join(
+      options.autodevHome,
+      OPERATOR_ENROLLMENT_RECORD
+    ),
     home,
     check: options.check === true,
     artifacts

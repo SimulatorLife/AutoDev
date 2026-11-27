@@ -62,7 +62,7 @@ export interface RegistryProxy {
   close(): Promise<void>;
 }
 
-export class RegistryProxyError extends Error {
+class RegistryProxyError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "RegistryProxyError";
@@ -80,14 +80,19 @@ function registryOrigin(registry: string): { origin: URL; secure: boolean } {
   // registries must use HTTPS, and only a root origin is supported.
   if (
     (url.protocol !== "https:" &&
-      !(url.protocol === "http:" && ["127.0.0.1", "[::1]"].includes(url.hostname))) ||
+      !(
+        url.protocol === "http:" &&
+        ["127.0.0.1", "[::1]"].includes(url.hostname)
+      )) ||
     url.username ||
     url.password ||
     url.pathname !== "/" ||
     url.search ||
     url.hash
   ) {
-    throw new RegistryProxyError("Package registry must be a root HTTPS origin (or an HTTP loopback fixture).");
+    throw new RegistryProxyError(
+      "Package registry must be a root HTTPS origin (or an HTTP loopback fixture)."
+    );
   }
   return { origin: url, secure: url.protocol === "https:" };
 }
@@ -100,8 +105,15 @@ endpoints (`/-/ping`, the audit endpoint, the abbreviated metadata
 negotiation endpoints) are refused: the audit endpoint would report the
 dependency tree to a third party, and pnpm is told not to call it.
 */
-export function classifyRegistryPath(pathname: string): "metadata" | "tarball" | null {
-  if (!pathname.startsWith("/") || pathname.startsWith("//") || pathname.length > 1024) return null;
+export function classifyRegistryPath(
+  pathname: string
+): "metadata" | "tarball" | null {
+  if (
+    !pathname.startsWith("/") ||
+    pathname.startsWith("//") ||
+    pathname.length > 1024
+  )
+    return null;
   const segments = pathname.slice(1).split("/");
   // npm uses both /@scope/name and /@scope%2fname. Only this encoded
   // separator is legal; never decode a complete request path.
@@ -110,19 +122,22 @@ export function classifyRegistryPath(pathname: string): "metadata" | "tarball" |
     const encoded = /^@([^%/]+)%2[fF]([^%/]+)$/u.exec(first);
     const scope = encoded ? encoded[1]! : first.slice(1);
     const name = encoded ? encoded[2]! : segments.shift();
-    if (!isPackageSegment(scope) || !name || !isPackageSegment(name)) return null;
+    if (!isPackageSegment(scope) || !name || !isPackageSegment(name))
+      return null;
   } else {
     const name = segments.shift();
     if (!name || !isPackageSegment(name)) return null;
   }
   if (segments.length === 0) return "metadata";
-  if (segments.length === 1 && isArtifactSegment(segments[0]!)) return "metadata";
+  if (segments.length === 1 && isArtifactSegment(segments[0]!))
+    return "metadata";
   if (
     segments.length === 2 &&
     segments[0] === "-" &&
     isArtifactSegment(segments[1]!) &&
     segments[1]!.endsWith(".tgz")
-  ) return "tarball";
+  )
+    return "tarball";
   return null;
 }
 
@@ -143,7 +158,7 @@ export function rewriteRegistryUrls(
   const metadata: unknown = JSON.parse(body);
   const object = (value: unknown): Record<string, unknown> | null =>
     value !== null && typeof value === "object" && !Array.isArray(value)
-      ? value as Record<string, unknown>
+      ? (value as Record<string, unknown>)
       : null;
   const rewrite = (value: unknown): void => {
     const dist = object(object(value)?.dist);
@@ -207,9 +222,10 @@ function relay(
       headers: {
         // Caller-controlled header values could carry arbitrary data to
         // the registry. Use the fixed media types the proxy actually serves.
-        accept: options.kind === "metadata"
-          ? "application/vnd.npm.install-v1+json, application/json"
-          : "application/octet-stream",
+        accept:
+          options.kind === "metadata"
+            ? "application/vnd.npm.install-v1+json, application/json"
+            : "application/octet-stream",
         "accept-encoding": "identity",
         "user-agent": "autodev-commands-registry-proxy"
       }
@@ -222,7 +238,8 @@ function relay(
         return;
       }
       const contentType = upstreamResponse.headers["content-type"] ?? "";
-      const limit = options.kind === "metadata" ? MAX_METADATA_BYTES : MAX_TARBALL_BYTES;
+      const limit =
+        options.kind === "metadata" ? MAX_METADATA_BYTES : MAX_TARBALL_BYTES;
       const declaredLength = Number(upstreamResponse.headers["content-length"]);
       if (Number.isFinite(declaredLength) && declaredLength > limit) {
         upstreamResponse.destroy();
@@ -240,12 +257,15 @@ function relay(
         const bound = new Transform({
           transform(chunk: Buffer, _encoding, callback) {
             bytes += chunk.length;
-            if (bytes > limit) callback(new Error("registry response exceeds limit"));
+            if (bytes > limit)
+              callback(new Error("registry response exceeds limit"));
             else callback(null, chunk);
           }
         });
         response.writeHead(status, { "content-type": contentType });
-        void pipeline(upstreamResponse, bound, response, { signal: deadline }).catch(() => response.destroy());
+        void pipeline(upstreamResponse, bound, response, {
+          signal: deadline
+        }).catch(() => response.destroy());
         return;
       }
       // Metadata alone needs buffering for URL rewriting. Its per-request
@@ -266,7 +286,13 @@ function relay(
         try {
           const raw = Buffer.concat(chunks);
           const body = contentType.includes("json")
-            ? Buffer.from(rewriteRegistryUrls(raw.toString("utf8"), options.registry, options.endpoint))
+            ? Buffer.from(
+                rewriteRegistryUrls(
+                  raw.toString("utf8"),
+                  options.registry,
+                  options.endpoint
+                )
+              )
             : raw;
           if (body.length > limit) {
             fail(response, 502, "registry response exceeds limit");
@@ -281,7 +307,9 @@ function relay(
           fail(response, 502, "registry metadata is invalid");
         }
       });
-      upstreamResponse.on("error", () => fail(response, 502, "registry upstream failed"));
+      upstreamResponse.on("error", () =>
+        fail(response, 502, "registry upstream failed")
+      );
     }
   );
   upstream.on("error", () => fail(response, 502, "registry upstream failed"));
@@ -303,7 +331,8 @@ export async function startRegistryProxy(
 ): Promise<RegistryProxy> {
   const { origin, secure } = registryOrigin(options.registry);
   const host = options.host ?? "127.0.0.1";
-  if (host !== "127.0.0.1") throw new RegistryProxyError("Registry proxy must bind to IPv4 loopback.");
+  if (host !== "127.0.0.1")
+    throw new RegistryProxyError("Registry proxy must bind to IPv4 loopback.");
   const registry = origin.origin;
   let active = 0;
   const server = createServer((client, response) => {
@@ -314,9 +343,15 @@ export async function startRegistryProxy(
     }
     const pathname = client.url ?? "/";
     const kind = classifyRegistryPath(pathname);
-    if (!kind || client.headers["transfer-encoding"] || Number(client.headers["content-length"] ?? 0) !== 0) {
+    if (
+      !kind ||
+      client.headers["transfer-encoding"] ||
+      Number(client.headers["content-length"] ?? 0) !== 0
+    ) {
       response.writeHead(404, { "content-type": "application/json" });
-      response.end(JSON.stringify({ error: "path is not served by the registry proxy" }));
+      response.end(
+        JSON.stringify({ error: "path is not served by the registry proxy" })
+      );
       return;
     }
     if (active >= MAX_ACTIVE_REQUESTS) {
@@ -324,12 +359,21 @@ export async function startRegistryProxy(
       return;
     }
     active += 1;
-    response.once("close", () => { active -= 1; });
+    response.once("close", () => {
+      active -= 1;
+    });
     response.setTimeout(30_000, () => response.destroy());
     const address = server.address();
     const port = typeof address === "object" && address ? address.port : 0;
     const endpoint = `http://127.0.0.1:${port}`;
-    relay(client, response, { origin, secure, endpoint, registry, pathname, kind });
+    relay(client, response, {
+      origin,
+      secure,
+      endpoint,
+      registry,
+      pathname,
+      kind
+    });
   });
   server.maxConnections = MAX_ACTIVE_REQUESTS * 4;
   server.headersTimeout = 10_000;

@@ -11,11 +11,9 @@
 /** The session the acceptance inspects. */
 export const DIAGNOSTICS_SESSION_ID = "01a0ba14-d54c-78f2-9367-3f80e9a8f75f";
 /** The root thread of that session. */
-export const DIAGNOSTICS_ROOT_THREAD_ID =
-  "01a0ba15-d54c-78f2-9367-3f80e9a8f75f";
+const DIAGNOSTICS_ROOT_THREAD_ID = "01a0ba15-d54c-78f2-9367-3f80e9a8f75f";
 /** A subagent thread of that session. */
-export const DIAGNOSTICS_WORKER_THREAD_ID =
-  "01a0ba16-d54c-78f2-9367-3f80e9a8f75f";
+const DIAGNOSTICS_WORKER_THREAD_ID = "01a0ba16-d54c-78f2-9367-3f80e9a8f75f";
 
 /** The worker's model, as the router recorded it. */
 const WORKER_MODEL = "gemini-2.5-pro";

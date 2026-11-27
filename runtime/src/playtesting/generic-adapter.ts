@@ -19,7 +19,6 @@ import {
   type PlaytestBindableMethod,
   type PlaytestCapabilityAdvertisement,
   type PlaytestJsonSchema,
-  PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES,
   PLAYTESTS_ADAPTER_DEFAULT_QUOTAS,
   PLAYTESTS_OPTIONAL_ADAPTER_METHODS,
   PLAYTESTS_PROTOCOL_VERSION,
@@ -48,13 +47,13 @@ export class GenericAdapterError extends Error {
  * The game object the entry factory produced. Its shape is the game's; this
  * runtime only reaches it through declared references.
  */
-export type BoundGame = Readonly<Record<string, unknown>>;
+type BoundGame = Readonly<Record<string, unknown>>;
 
 /**
  * Injected so the binding resolves inside the integration directory and a test
  * can supply a game without a filesystem.
  */
-export type AdapterEntryLoader = (input: {
+type AdapterEntryLoader = (input: {
   readonly entry: string;
   readonly factory: string;
 }) => Promise<BoundGame> | BoundGame;
@@ -103,7 +102,7 @@ function entryClose(game: BoundGame): () => Promise<void> {
  * The capability advertisement, with every digest derived from the game's own
  * schemas. A game declares schemas; it does not declare their hashes.
  */
-export function buildCapabilityAdvertisement(
+function buildCapabilityAdvertisement(
   options: GenericAdapterOptions,
   bound: PlaytestAdapterBinding
 ): PlaytestCapabilityAdvertisement {
@@ -270,7 +269,3 @@ export async function createGenericAdapter(
     throw error;
   }
 }
-
-/** The capability error code used when a game refuses a declared method. */
-export const GENERIC_ADAPTER_UNSUPPORTED =
-  PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES.unsupportedCapability;

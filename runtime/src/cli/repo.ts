@@ -8,15 +8,13 @@ import { unsupportedChoice } from "./command-choice.ts";
 /** The repo vocabulary, owned here and consumed by validation and errors. */
 export const REPO_SUBCOMMANDS = ["bootstrap"] as const;
 
-export type RepoSubcommand = (typeof REPO_SUBCOMMANDS)[number];
-
 export interface RepoCommandBackend {
   bootstrap(args?: readonly string[]): number;
 }
 
 const repoRoot = path.resolve(resolveRuntimeSourceRoot(import.meta.dirname));
 
-export const defaultRepoBackend: RepoCommandBackend = {
+const defaultRepoBackend: RepoCommandBackend = {
   bootstrap: (args = []) => {
     const script = path.join(
       repoRoot,

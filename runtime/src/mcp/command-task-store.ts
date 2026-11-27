@@ -57,7 +57,7 @@ const PAGE_SIZE = 10;
 /**
 The status a task that outlived its backend is reconciled to.
 */
-export const INTERRUPTED_TASK_STATUS_MESSAGE =
+const INTERRUPTED_TASK_STATUS_MESSAGE =
   "The command's backend process ended before the task completed.";
 
 /**

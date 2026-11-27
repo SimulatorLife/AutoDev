@@ -50,7 +50,7 @@ import {
  * caller of an analysis tool. Absent today; when absent, every derived record
  * is `unvalidated-synthetic`.
  */
-export interface PlaytestPolicyHumanPreregistration {
+interface PlaytestPolicyHumanPreregistration {
   /** Held-out human decision-state ids, per policy. Absent keys mean none. */
   readonly heldOutHumanStateIdsByPolicyId?: Readonly<
     Record<string, readonly string[]>
@@ -69,7 +69,7 @@ export interface DerivePlaytestPolicyValidityInput {
   readonly createdAt: string;
 }
 
-export interface PlaytestDerivedPolicyValidity {
+interface PlaytestDerivedPolicyValidity {
   readonly validity: PlayerPolicyValidity;
   /**
    * SHA-256 over Core's canonical form of the record.
@@ -95,13 +95,13 @@ export interface PlaytestDerivedPolicyValidity {
  * Each is a fact about the run rather than a score, so a caller can tell an
  * unmeasured policy from one that failed.
  */
-export type PlaytestPolicyValiditySkipReason =
+type PlaytestPolicyValiditySkipReason =
   | "no-eligible-opportunities"
   | "no-observed-episodes"
   | "policy-version-undeclared"
   | "schema-hashes-unavailable";
 
-export interface PlaytestUnmeasurablePolicyCell {
+interface PlaytestUnmeasurablePolicyCell {
   readonly policyId: string;
   readonly cohortId: string;
   readonly policyVersion: string | null;

@@ -22,9 +22,12 @@ One argument element. A NUL byte is rejected outright: it truncates a C
 string, so an argument carrying one would not reach the program the
 catalogue describes.
 */
-const argvElement = z.string().max(8192).refine((value) => !value.includes("\0"), {
-  message: "An argument must not contain a NUL byte"
-});
+const argvElement = z
+  .string()
+  .max(8192)
+  .refine((value) => !value.includes("\0"), {
+    message: "An argument must not contain a NUL byte"
+  });
 /**
 A placeholder is a whole argument element naming exactly one parameter.
 */
@@ -32,13 +35,13 @@ const placeholderPattern = /^\{([a-z][a-z0-9_]{0,31})\}$/u;
 /**
 The execution classes the runtime knows how to confine.
 */
-export const commandExecutionClasses = [
+const commandExecutionClasses = [
   "validation",
   "workspace_mutation",
   "dependency_install"
 ] as const;
 
-export const commandParameterSchema = z.strictObject({
+const commandParameterSchema = z.strictObject({
   description: z.string().trim().min(1).max(300),
   minLength: z.number().int().min(0).max(4096),
   maxLength: z.number().int().min(1).max(4096)
@@ -49,7 +52,7 @@ export const commandExecutableNameSchema = z
   .string()
   .regex(/^[a-zA-Z0-9][a-zA-Z0-9_.+-]{0,127}$/u);
 
-export const commandDefinitionSchema = z
+const commandDefinitionSchema = z
   .strictObject({
     description: z.string().trim().min(1).max(500),
     executable: commandExecutableNameSchema,
@@ -109,15 +112,16 @@ export const commandDefinitionSchema = z
     }
   });
 
-export const commandCatalogueSchema = z.strictObject({
+const commandCatalogueSchema = z.strictObject({
   version: z.literal(1),
-  commands: z.record(parameterName, commandDefinitionSchema).refine(
-    (commands) => Object.keys(commands).length <= 64,
-    "A catalogue may declare at most 64 commands"
-  )
+  commands: z
+    .record(parameterName, commandDefinitionSchema)
+    .refine(
+      (commands) => Object.keys(commands).length <= 64,
+      "A catalogue may declare at most 64 commands"
+    )
 });
 
-export type CommandParameter = z.infer<typeof commandParameterSchema>;
 export type CommandDefinition = z.infer<typeof commandDefinitionSchema>;
 export type CommandCatalogue = z.infer<typeof commandCatalogueSchema>;
 
@@ -171,7 +175,10 @@ export function parseCommandCatalogueText(text: string): CommandCatalogue {
   try {
     parsed = JSON.parse(text);
   } catch {
-    throw new CommandCatalogueError("The command catalogue is not valid JSON.", "INVALID_CATALOGUE");
+    throw new CommandCatalogueError(
+      "The command catalogue is not valid JSON.",
+      "INVALID_CATALOGUE"
+    );
   }
   const duplicate = duplicateJsonKey(text);
   if (duplicate !== null) {

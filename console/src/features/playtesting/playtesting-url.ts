@@ -5,7 +5,7 @@ import {
   PLAYTESTS_MAX_ANALYSIS_SESSIONS
 } from "@simulatorlife/autodev-core";
 
-export const PLAYTESTING_VIEWS = [
+const PLAYTESTING_VIEWS = [
   "overview",
   "sessions",
   "findings",
@@ -14,7 +14,7 @@ export const PLAYTESTING_VIEWS = [
 export type PlaytestingView = (typeof PLAYTESTING_VIEWS)[number];
 export type PlaytestingLayout = "list" | "grid";
 
-export const PLAYTESTING_FILTER_KEYS = [
+const PLAYTESTING_FILTER_KEYS = [
   "buildSha",
   "scenario",
   "policy",
@@ -128,7 +128,7 @@ export interface PlaytestingScope {
   readonly invalidQuery: boolean;
 }
 
-export const DEFAULT_PLAYTESTING_PAGE_SIZE = 50;
+const DEFAULT_PLAYTESTING_PAGE_SIZE = 50;
 export const PLAYTESTING_PAGE_SIZES = [25, 50, 100] as const;
 const PLAYTESTING_ROUTE = "/playtesting";
 const HASH_PATTERN = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu;
@@ -198,12 +198,7 @@ function hasRepeatedValues(
 }
 
 function isView(value: string | undefined): value is PlaytestingView {
-  return (
-    value === "overview" ||
-    value === "sessions" ||
-    value === "findings" ||
-    value === "compare"
-  );
+  return (PLAYTESTING_VIEWS as readonly (string | undefined)[]).includes(value);
 }
 
 function normalizedFilters(

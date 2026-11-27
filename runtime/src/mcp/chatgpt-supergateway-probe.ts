@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { existsSync, readFileSync } from "node:fs";
 import { createConnection, createServer } from "node:net";
+import { availableParallelism } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -113,14 +114,22 @@ async function probeLocalSurface(
         "content-type": "application/json",
         ...(presented ? { authorization: `Bearer ${presented}` } : {})
       },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {}
+      })
     });
     if (refused.status !== 401)
       throw new Error(
         `Expected local surface ${endpoint.pathname} to refuse ${presented ? "the ingress key" : "no key"}, got ${refused.status}`
       );
   }
-  const client = new Client({ name: "autodev-install-check", version: "1.0.0" });
+  const client = new Client({
+    name: "autodev-install-check",
+    version: "1.0.0"
+  });
   try {
     reportPhase("local endpoint initialize");
     await client.connect(
@@ -318,7 +327,9 @@ export async function probeSupergateway(
           );
         }
 
-        reportPhase(`external role ${label}: tools/list and capability validation`);
+        reportPhase(
+          `external role ${label}: tools/list and capability validation`
+        );
         assertApprovedCapabilities(primary);
         assertApprovedCapabilities(secondary);
 
@@ -338,26 +349,52 @@ export async function probeSupergateway(
         await Promise.allSettled([primary.close(), secondary.close()]);
       }
     }
-    for (const surface of localSurfaces) {
-      await probeLocalSurface(
-        new URL(
-          `http://127.0.0.1:${probePort}${surface.path}${surface.streamableHttpPath}`
-        ),
-        surface.apiKeyFile.replaceAll("$$", "$"),
-        token,
-        poolConfig.servers[
-          localPoolServerKey(
-            ...(surface.path.split("/").slice(2) as [string, string])
-          )
-        ]?.tools ?? [],
-        (phase) => {
-          const label = /^\/local\/[a-z0-9-]+\/[a-zA-Z0-9_.-]+$/u.test(surface.path)
-            ? surface.path
-            : "unknown local surface";
-          reportPhase(`${label}: ${phase}`);
+    // Each local surface starts its own catalogue backend, so probing them
+    // one after another made the install's probe as slow as the sum of every
+    // backend's startup. A few workers share one queue instead.
+    const queue = localSurfaces.values();
+    // The reported phase names the failure, so once a surface fails the other
+    // workers stop reporting and that surface's phase is the one that stands.
+    let failed = false;
+    const probeNext = async (): Promise<void> => {
+      for (const surface of queue) {
+        const label = /^\/local\/[a-z0-9-]+\/[a-zA-Z0-9_.-]+$/u.test(
+          surface.path
+        )
+          ? surface.path
+          : "unknown local surface";
+        let current = `${label}: start`;
+        try {
+          await probeLocalSurface(
+            new URL(
+              `http://127.0.0.1:${probePort}${surface.path}${surface.streamableHttpPath}`
+            ),
+            surface.apiKeyFile.replaceAll("$$", "$"),
+            token,
+            poolConfig.servers[
+              localPoolServerKey(
+                ...(surface.path.split("/").slice(2) as [string, string])
+              )
+            ]?.tools ?? [],
+            (phase) => {
+              current = `${label}: ${phase}`;
+              if (!failed) reportPhase(current);
+            }
+          );
+        } catch (error) {
+          if (!failed) reportPhase(current);
+          failed = true;
+          throw error;
         }
-      );
-    }
+        if (failed) return;
+      }
+    };
+    await Promise.all(
+      Array.from(
+        { length: Math.min(localSurfaces.length, availableParallelism()) },
+        probeNext
+      )
+    );
   } finally {
     if (child.exitCode === null && child.signalCode === null) {
       child.kill("SIGTERM");
@@ -385,9 +422,7 @@ if (isEntryPoint(import.meta.url)) {
   }).catch(() => {
     // Only locally constructed phase labels; never print upstream errors,
     // protocol payloads, arguments, credential values or file contents.
-    process.stderr.write(
-      `Supergateway MCP preflight failed (${phase})\n`
-    );
+    process.stderr.write(`Supergateway MCP preflight failed (${phase})\n`);
     process.exitCode = 1;
   });
 }

@@ -29,7 +29,7 @@ export interface ClickHouseRetryOptions {
  * The code is read from the error's `cause`, which is where Node surfaces the
  * underlying syscall failure for `fetch` rejections.
  */
-export function isRetryableClickHouseTransportError(error: unknown): boolean {
+function isRetryableClickHouseTransportError(error: unknown): boolean {
   const cause = (error as { readonly cause?: unknown } | null | undefined)
     ?.cause;
   const code = (cause as { readonly code?: unknown } | null | undefined)?.code;

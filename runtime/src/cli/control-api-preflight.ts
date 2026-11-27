@@ -1,14 +1,13 @@
 import {
   CONTROL_API_CONTRACT,
   CONTROL_API_PLAYTESTING_READINESS_SCHEMA,
+  controlApiProviderModelsResponseSchema,
   isRecord,
   LOCAL_CONTROL_API_ACTOR
 } from "@simulatorlife/autodev-core";
 
 const CONTROL_API_PROBE_TIMEOUT_MS = 10_000;
 const DEV_PROBE_WORKSPACE_ID = "autodev-dev-probe/not-configured";
-const CONTROL_API_PROVIDER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
-const CONTROL_API_MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/u;
 
 export interface ControlApiCompatibilityConfig {
   readonly baseUrl: string;
@@ -130,107 +129,24 @@ function isPlaytestingCapabilitiesResponse(
   );
 }
 
-function isCanonicalTimestamp(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    Number.isFinite(Date.parse(value)) &&
-    new Date(value).toISOString() === value
-  );
-}
+/**
+The discovery response, as the shared schema states it, and the providers this
+Console checkout expects to find in it.
 
-function isDiscoveryModel(value: unknown): boolean {
-  if (
-    !isRecord(value) ||
-    typeof value.id !== "string" ||
-    value.id.trim() !== value.id ||
-    !CONTROL_API_MODEL_ID_PATTERN.test(value.id) ||
-    (value.displayName !== null && typeof value.displayName !== "string") ||
-    !isRecord(value.routeability)
-  ) {
-    return false;
-  }
-  return (
-    value.routeability.status === "supported" ||
-    (value.routeability.status === "unsupported" &&
-      typeof value.routeability.reason === "string" &&
-      value.routeability.reason.trim().length > 0)
-  );
-}
-
-function areDiscoveryModels(value: unknown): boolean {
-  if (!Array.isArray(value)) return false;
-  const modelIds = new Set<string>();
-  for (const model of value) {
-    if (!isDiscoveryModel(model) || modelIds.has(model.id)) return false;
-    modelIds.add(model.id);
-  }
-  return true;
-}
-
-function isProviderDiscovery(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  if (value.status === "unavailable") {
-    return (
-      (value.source === null ||
-        (typeof value.source === "string" && value.source.trim().length > 0)) &&
-      (value.lastAttemptAt === null ||
-        isCanonicalTimestamp(value.lastAttemptAt)) &&
-      typeof value.reason === "string" &&
-      value.reason.trim().length > 0
-    );
-  }
-  if (
-    (value.status !== "observed" && value.status !== "stale") ||
-    typeof value.source !== "string" ||
-    value.source.trim().length === 0 ||
-    !isCanonicalTimestamp(value.observedAt) ||
-    !isCanonicalTimestamp(value.lastAttemptAt) ||
-    !areDiscoveryModels(value.models)
-  ) {
-    return false;
-  }
-  if (
-    value.status === "stale" &&
-    (typeof value.reason !== "string" || value.reason.trim().length === 0)
-  ) {
-    return false;
-  }
-  return true;
-}
-
-function isProviderDiscoveryEntry(value: unknown): value is {
-  provider: string;
-  discovery: unknown;
-} {
-  return (
-    isRecord(value) &&
-    typeof value.provider === "string" &&
-    value.provider.trim() === value.provider &&
-    value.provider.length > 0 &&
-    CONTROL_API_PROVIDER_ID_PATTERN.test(value.provider) &&
-    isProviderDiscovery(value.discovery)
-  );
-}
-
+The shape is the Core schema's, because the Console reads the same response
+and the two must not read it differently. Which providers must answer is this
+checkout's own question: a Runtime that serves a different set of providers is
+not the Runtime this Console was written for.
+*/
 function isControlApiProviderModelsResponse(
   value: unknown,
   expectedProviders: ReadonlySet<string>
 ): boolean {
-  if (
-    !isRecord(value) ||
-    value.schema !== "autodev-control-provider-model-discovery-v1" ||
-    value.source !== "runtime-provider-discovery" ||
-    !Array.isArray(value.providers)
-  ) {
-    return false;
-  }
-  const providers = new Set<string>();
-  for (const entry of value.providers) {
-    if (!isProviderDiscoveryEntry(entry) || providers.has(entry.provider)) {
-      return false;
-    }
-    providers.add(entry.provider);
-  }
+  const parsed = controlApiProviderModelsResponseSchema.safeParse(value);
+  if (!parsed.success) return false;
+  const providers = new Set(
+    parsed.data.providers.map((entry) => entry.provider)
+  );
   return (
     providers.size === expectedProviders.size &&
     [...expectedProviders].every((provider) => providers.has(provider))

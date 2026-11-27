@@ -272,7 +272,11 @@ export async function handleControlApiDiagnosticsRequest(
       rejectUnknownParams(params, RECENT_PARAMS);
       const format = formatParam(params);
       const limit = limitParam(params, SESSION_RECENT_LIMIT);
-      const body = listRecentSessionsResponse(rolloutRoots(codexHome), limit);
+      const body = listRecentSessionsResponse(
+        rolloutRoots(codexHome),
+        limit,
+        diagnosticsRouterLog(codexHome)
+      );
       if (format === "text") sendText(response, renderRecentSessions(body));
       else sendJsonBody(response, body);
       return true;

@@ -39,12 +39,12 @@ import type {
 } from "../../src/playtesting/visual-browser-driver.ts";
 import { inMemoryPlaytestLaunchIntentRepository } from "./playtesting-launch-intents.ts";
 
-export const WORKSPACE_ID = "fixture/visual-episode";
-export const TARGET_ID = "racing-game-local";
-export const ORIGIN = "http://127.0.0.1:5173";
+const WORKSPACE_ID = "fixture/visual-episode";
+const TARGET_ID = "racing-game-local";
+const ORIGIN = "http://127.0.0.1:5173";
 
 /** An approval with the budgets the harness runs against. */
-export function approval(
+function approval(
   limits: WorkspaceVisualPlaytestTargetApproval["limits"],
   progressPolicy?: WorkspaceVisualPlaytestTargetApproval["progressPolicy"]
 ): WorkspaceVisualPlaytestTargetApproval {
@@ -73,7 +73,7 @@ export function approval(
 }
 
 /** The budgets the harness runs against. */
-export function targetLimits(
+function targetLimits(
   overrides: Partial<WorkspaceVisualPlaytestTargetApproval["limits"]> = {}
 ): WorkspaceVisualPlaytestTargetApproval["limits"] {
   return {
@@ -88,7 +88,7 @@ export function targetLimits(
   };
 }
 
-export function enabledWorkspaceCatalog(): () => WorkspaceCatalogRead {
+function enabledWorkspaceCatalog(): () => WorkspaceCatalogRead {
   return () => ({
     status: "valid",
     workspaces: [
@@ -102,7 +102,7 @@ export function enabledWorkspaceCatalog(): () => WorkspaceCatalogRead {
   });
 }
 
-export function session(): PlaytestMcpSession {
+function session(): PlaytestMcpSession {
   return {
     workspaceId: WORKSPACE_ID,
     role: "playtester",
@@ -119,7 +119,7 @@ export function session(): PlaytestMcpSession {
  * observation, because whether the game advanced is what the episode's guard
  * measures.
  */
-export class ScriptedVisualDriver implements PlaytestVisualEpisodeDriver {
+class ScriptedVisualDriver implements PlaytestVisualEpisodeDriver {
   /** The refusal reason for each action attempt, in order; a gap dispatches. */
   readonly script: readonly (PlaytestVisualActionRefusalReason | null)[];
   /** The phase each observation reports; the last one repeats. */
@@ -245,7 +245,7 @@ export interface DecisionRequest {
 }
 
 /** A local stand-in for the model Router, so no provider is ever contacted. */
-export async function startFakeRouter(decisions: readonly unknown[]): Promise<{
+async function startFakeRouter(decisions: readonly unknown[]): Promise<{
   readonly port: number;
   readonly close: () => Promise<void>;
   readonly requests: DecisionRequest[];
@@ -448,7 +448,7 @@ export async function runVisualEpisode(options: {
 }
 
 /** The episode's own trace window, as the recorded lines. */
-export function readTraceSteps(
+function readTraceSteps(
   artifactRoot: string,
   episode: PlaytestEpisode
 ): readonly Record<string, unknown>[] {

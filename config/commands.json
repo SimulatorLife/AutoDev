@@ -81,6 +81,329 @@
       "executionClass": "workspace_mutation",
       "concurrency": "exclusive"
     },
+    "git_add": {
+      "description": "Stage changes for one literal file or directory path in the authorized workspace.",
+      "executable": "git",
+      "args": [
+        "--literal-pathspecs",
+        "add",
+        "--",
+        "{path}"
+      ],
+      "parameters": {
+        "path": {
+          "description": "Literal file or directory path relative to the workspace; no glob expansion.",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "timeoutMs": 30000,
+      "executionClass": "workspace_mutation",
+      "concurrency": "exclusive"
+    },
+    "git_diff_staged": {
+      "description": "Inspect staged changes without external diff drivers or text conversion.",
+      "executable": "git",
+      "args": [
+        "--no-pager",
+        "diff",
+        "--cached",
+        "--no-ext-diff",
+        "--no-textconv"
+      ],
+      "timeoutMs": 15000,
+      "executionClass": "validation",
+      "concurrency": "exclusive"
+    },
+    "git_diff_path": {
+      "description": "Inspect unstaged changes to one literal file or directory.",
+      "executable": "git",
+      "args": [
+        "--no-pager",
+        "--literal-pathspecs",
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--",
+        "{path}"
+      ],
+      "parameters": {
+        "path": {
+          "description": "Literal file or directory path relative to the workspace.",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "timeoutMs": 15000,
+      "executionClass": "validation",
+      "concurrency": "exclusive"
+    },
+    "git_log": {
+      "description": "Inspect the latest 30 commits reachable from HEAD.",
+      "executable": "git",
+      "args": [
+        "--no-pager",
+        "log",
+        "-n",
+        "30",
+        "--format=oneline",
+        "--abbrev-commit",
+        "--no-notes",
+        "--no-show-signature"
+      ],
+      "timeoutMs": 15000,
+      "executionClass": "validation",
+      "concurrency": "exclusive"
+    },
+    "git_log_path": {
+      "description": "Inspect the latest 30 commits affecting one literal file or directory.",
+      "executable": "git",
+      "args": [
+        "--no-pager",
+        "--literal-pathspecs",
+        "log",
+        "-n",
+        "30",
+        "--format=oneline",
+        "--abbrev-commit",
+        "--no-notes",
+        "--no-show-signature",
+        "--",
+        "{path}"
+      ],
+      "parameters": {
+        "path": {
+          "description": "Literal file or directory path relative to the workspace.",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "timeoutMs": 15000,
+      "executionClass": "validation",
+      "concurrency": "exclusive"
+    },
+    "git_show": {
+      "description": "Inspect a commit or Git revision without external diff drivers or text conversion.",
+      "executable": "git",
+      "args": [
+        "--no-pager",
+        "show",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-notes",
+        "--no-show-signature",
+        "--end-of-options",
+        "{revision}",
+        "--"
+      ],
+      "parameters": {
+        "revision": {
+          "description": "A Git revision such as HEAD or a commit hash, not an option.",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "timeoutMs": 15000,
+      "executionClass": "validation",
+      "concurrency": "exclusive"
+    },
+    "git_branches": {
+      "description": "List local and remote-tracking branches without network access.",
+      "executable": "git",
+      "args": [
+        "--no-pager",
+        "branch",
+        "--list",
+        "--all",
+        "--no-color"
+      ],
+      "timeoutMs": 15000,
+      "executionClass": "validation",
+      "concurrency": "exclusive"
+    },
+    "git_head": {
+      "description": "Report the full object ID of the current HEAD commit.",
+      "executable": "git",
+      "args": [
+        "rev-parse",
+        "--verify",
+        "HEAD"
+      ],
+      "timeoutMs": 15000,
+      "executionClass": "validation",
+      "concurrency": "exclusive"
+    },
+    "git_blame": {
+      "description": "Inspect line-level authorship of a tracked file without text conversion.",
+      "executable": "git",
+      "args": [
+        "--no-pager",
+        "--literal-pathspecs",
+        "blame",
+        "--no-textconv",
+        "--",
+        "{path}"
+      ],
+      "parameters": {
+        "path": {
+          "description": "Literal tracked file path relative to the workspace.",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "timeoutMs": 15000,
+      "executionClass": "validation",
+      "concurrency": "exclusive"
+    },
+    "git_diff_stat": {
+      "description": "Summarize unstaged changes without external diff drivers or text conversion.",
+      "executable": "git",
+      "args": [
+        "--no-pager",
+        "diff",
+        "--stat",
+        "--no-ext-diff",
+        "--no-textconv"
+      ],
+      "timeoutMs": 15000,
+      "executionClass": "validation",
+      "concurrency": "exclusive"
+    },
+    "git_ls_files": {
+      "description": "List tracked files in the authorized workspace.",
+      "executable": "git",
+      "args": [
+        "--no-pager",
+        "ls-files",
+        "--cached"
+      ],
+      "timeoutMs": 15000,
+      "executionClass": "validation",
+      "concurrency": "exclusive"
+    },
+    "git_merge_base": {
+      "description": "Find a common ancestor of two Git revisions without network access.",
+      "executable": "git",
+      "args": [
+        "merge-base",
+        "--",
+        "{left}",
+        "{right}"
+      ],
+      "parameters": {
+        "left": {
+          "description": "Git revision such as HEAD, a branch name or commit hash; not an option.",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "right": {
+          "description": "Git revision such as HEAD, a branch name or commit hash; not an option.",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "timeoutMs": 15000,
+      "executionClass": "validation",
+      "concurrency": "exclusive"
+    },
+    "git_unstage": {
+      "description": "Unstage a specific literal file or directory against HEAD without modifying working-tree contents.",
+      "executable": "git",
+      "args": [
+        "--literal-pathspecs",
+        "restore",
+        "--staged",
+        "--",
+        "{path}"
+      ],
+      "parameters": {
+        "path": {
+          "description": "Literal file or directory path relative to the workspace; no glob expansion.",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "timeoutMs": 30000,
+      "executionClass": "workspace_mutation",
+      "concurrency": "exclusive"
+    },
+    "knip": {
+      "description": "Analyze the project for unused files, exports, dependencies and other dead-code candidates using its configured Knip script.",
+      "executable": "pnpm",
+      "args": [
+        "run",
+        "knip"
+      ],
+      "timeoutMs": 300000,
+      "executionClass": "validation",
+      "concurrency": "exclusive"
+    },
+    "knip_production": {
+      "description": "Analyze production code for unused files, exports and dependencies using the project's configured production Knip script.",
+      "executable": "pnpm",
+      "args": [
+        "run",
+        "knip:production"
+      ],
+      "timeoutMs": 300000,
+      "executionClass": "validation",
+      "concurrency": "exclusive"
+    },
+    "duplicates": {
+      "description": "Detect duplicated code using the project's configured jscpd token-clone scan.",
+      "executable": "pnpm",
+      "args": [
+        "run",
+        "duplicates"
+      ],
+      "timeoutMs": 300000,
+      "executionClass": "validation",
+      "concurrency": "exclusive"
+    },
+    "duplicates_similar": {
+      "description": "Detect near-duplicate functions using the project's configured jscpd similarity scan.",
+      "executable": "pnpm",
+      "args": [
+        "run",
+        "duplicates:similar"
+      ],
+      "timeoutMs": 300000,
+      "executionClass": "validation",
+      "concurrency": "exclusive"
+    },
+    "lint": {
+      "description": "Run the project's lint checks without applying source fixes.",
+      "executable": "pnpm",
+      "args": [
+        "run",
+        "lint"
+      ],
+      "timeoutMs": 300000,
+      "executionClass": "validation",
+      "concurrency": "exclusive"
+    },
+    "format_fix": {
+      "description": "Apply the project's canonical formatting rules using its format script.",
+      "executable": "pnpm",
+      "args": [
+        "run",
+        "format"
+      ],
+      "timeoutMs": 300000,
+      "executionClass": "workspace_mutation",
+      "concurrency": "exclusive"
+    },
+    "build": {
+      "description": "Run the project's build script, allowing generated build outputs within the authorized workspace.",
+      "executable": "pnpm",
+      "args": [
+        "run",
+        "build"
+      ],
+      "timeoutMs": 900000,
+      "executionClass": "workspace_mutation",
+      "concurrency": "exclusive"
+    },
     "git_commit": {
       "description": "Commit the staged changes with the given message.",
       "executable": "git",

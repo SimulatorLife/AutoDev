@@ -149,7 +149,7 @@ export const DETAIL_ROUTES: readonly CanonicalRoute[] = [
  * Their heading is their section's heading, because a view is a view of that
  * section and says so the same way its detail pages do.
  */
-export const SUBSURFACE_ROUTES: readonly CanonicalRoute[] = [
+const SUBSURFACE_ROUTES: readonly CanonicalRoute[] = [
   {
     path: "/playtesting/sessions/episode-17?workspaceId=fixture%2Fgame",
     section: "playtesting",
@@ -408,7 +408,7 @@ export function documentFitsViewport(page: Page): Promise<boolean> {
 /**
  * The headings of a document, in the order they appear.
  */
-export interface HeadingStructure {
+interface HeadingStructure {
   /** One heading, with the level it was written at. */
   readonly level: number;
   /** The heading's text. */
@@ -559,11 +559,4 @@ export function statCard(page: Page, title: string): Locator {
   return page.locator("dl").filter({
     has: page.locator("dt").filter({ hasText: title })
   });
-}
-
-/**
- * The stat grid of a page, the row of cards above its content.
- */
-export function statGrid(page: Page): Locator {
-  return page.locator("[data-stat-grid]");
 }

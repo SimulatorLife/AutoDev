@@ -71,6 +71,18 @@ import type {
   WorkspaceRuntimeAvailability
 } from "../workspaces/types.ts";
 import type { WorkspaceVisualPlaytestTargetApproval } from "../workspaces/visual-playtesting.ts";
+import type { ControlApiProviderModelDiscovery } from "./provider-model-discovery.ts";
+
+export {
+  canonicalTimestampSchema,
+  CONTROL_API_PROVIDER_ID_PATTERN,
+  CONTROL_API_PROVIDER_MODEL_DISCOVERY_SCHEMA_ID,
+  controlApiProviderModelsResponseSchema,
+  discoveredProviderModelSchema,
+  PROVIDER_MODEL_ID_PATTERN,
+  providerModelDiscoveryEntrySchema,
+  providerModelDiscoverySchema
+} from "./provider-model-discovery.ts";
 
 /** Maximum number of source-confirmed live session identities returned by Runtime. */
 export const CONTROL_API_LIVE_SESSION_IDENTITY_LIMIT = 100;
@@ -315,49 +327,22 @@ export interface ControlApiProviderLinks {
   readonly documentation: string | null;
 }
 
-/** One source-reported model and whether this Runtime can route it. */
-export interface ControlApiDiscoveredProviderModel {
-  readonly id: string;
-  readonly displayName: string | null;
-  readonly routeability:
-    | { readonly status: "supported" }
-    | { readonly status: "unsupported"; readonly reason: string };
-}
+/**
+The provider model discovery contract, stated once.
 
-/** Provider-owned model availability, kept separate from operator routing. */
-export type ControlApiProviderModelDiscovery =
-  | {
-      readonly status: "observed";
-      readonly source: string;
-      readonly observedAt: string;
-      readonly lastAttemptAt: string;
-      readonly models: readonly ControlApiDiscoveredProviderModel[];
-    }
-  | {
-      readonly status: "stale";
-      readonly source: string;
-      readonly observedAt: string;
-      readonly lastAttemptAt: string;
-      readonly reason: string;
-      readonly models: readonly ControlApiDiscoveredProviderModel[];
-    }
-  | {
-      readonly status: "unavailable";
-      readonly source: string | null;
-      readonly lastAttemptAt: string | null;
-      readonly reason: string;
-    };
+The Runtime produces this response, the Console reads it, and the Console's
+startup preflight checks that the Runtime it is about to talk to speaks the
+same contract. The shape and the rules live in one schema, and the types
+below are read out of it, so a producer, a reader and a preflight cannot
+disagree about what the contract is.
+*/
 
-export interface ControlApiProviderModelDiscoveryEntry {
-  readonly provider: string;
-  readonly discovery: ControlApiProviderModelDiscovery;
-}
-
-export interface ControlApiProviderModelsResponse {
-  readonly schema: "autodev-control-provider-model-discovery-v1";
-  readonly source: "runtime-provider-discovery";
-  readonly providers: readonly ControlApiProviderModelDiscoveryEntry[];
-}
+export type {
+  ControlApiDiscoveredProviderModel,
+  ControlApiProviderModelDiscovery,
+  ControlApiProviderModelDiscoveryEntry,
+  ControlApiProviderModelsResponse
+} from "./provider-model-discovery.ts";
 
 /**
  * The version of the CLI that serves a provider.

@@ -21,9 +21,6 @@
  * state. See the family note in `components/ui/tones.ts`.
  */
 
-/** The three states a state-coloured button can show. */
-export type StatePillTone = "on" | "off" | "unknown";
-
 export const STATE_PILL_TONE_CLASS = {
   on: "bg-success/15 text-success border-success/60 hover:border-success/70",
   off: "bg-warning/10 text-warning border-warning/60 hover:border-warning/70",

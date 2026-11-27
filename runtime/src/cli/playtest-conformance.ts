@@ -37,7 +37,7 @@ import { readAdapterContext } from "../playtesting/generic-adapter-main.ts";
 /** Bound so a game that never answers cannot hold the command open. */
 const CONFORMANCE_DEADLINE_MS = 15_000;
 
-export interface ConformanceFailure {
+interface ConformanceFailure {
   /** The protocol method, or `entry`/`factory`/`binding` for a load failure. */
   readonly stage: string;
   readonly message: string;
@@ -371,7 +371,3 @@ export function formatConformanceReport(report: ConformanceReport): string {
   );
   return ["playtest conformance failed", ...lines].join("\n");
 }
-
-/** Re-exported so the observation contract assertion stays owned here. */
-
-export { assertPlaytestObservationContract } from "@simulatorlife/autodev-core";

@@ -11,6 +11,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
+import { isPathWithin } from "@simulatorlife/autodev-data/files";
 import {
   OPENCLI_SITES,
   type OpencliSite
@@ -41,7 +42,8 @@ export function resolveOpencliBrowserExecutable(
   if (!configuredCache || path.resolve(configuredCache) !== expectedCache)
     return null;
   const executable = path.resolve(chromium.executablePath());
-  if (!executable.startsWith(`${expectedCache}${path.sep}`)) return null;
+  if (executable === expectedCache || !isPathWithin(expectedCache, executable))
+    return null;
   try {
     accessSync(executable, constants.X_OK);
   } catch {
@@ -67,7 +69,9 @@ function assertLoopbackCdpWs(wsUrl: string): void {
   try {
     parsed = new URL(wsUrl);
   } catch {
-    throw new OpencliBrowserUnavailableError("CDP returned an invalid WebSocket URL");
+    throw new OpencliBrowserUnavailableError(
+      "CDP returned an invalid WebSocket URL"
+    );
   }
   if (
     parsed.protocol !== "ws:" ||
@@ -75,7 +79,9 @@ function assertLoopbackCdpWs(wsUrl: string): void {
       parsed.hostname !== "localhost" &&
       parsed.hostname !== "[::1]")
   ) {
-    throw new OpencliBrowserUnavailableError("CDP returned a non-loopback target");
+    throw new OpencliBrowserUnavailableError(
+      "CDP returned a non-loopback target"
+    );
   }
 }
 
@@ -106,7 +112,9 @@ async function defaultCdpCommand(
     const onAbort = (): void =>
       finish(() =>
         reject(
-          new OpencliBrowserUnavailableError("CDP browser command timed out or cancelled")
+          new OpencliBrowserUnavailableError(
+            "CDP browser command timed out or cancelled"
+          )
         )
       );
     combined.addEventListener("abort", onAbort, { once: true });

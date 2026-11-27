@@ -51,14 +51,14 @@ import {
   standardizePlaytestCohortRates
 } from "@simulatorlife/autodev-core";
 
-export interface DerivePlaytestCohortObservationsInput {
+interface DerivePlaytestCohortObservationsInput {
   readonly episodes: readonly PlaytestEpisode[];
   readonly metricId: string;
   /** Metric version the rows must match, so a renamed metric cannot mix. */
   readonly metricVersion?: number | string | undefined;
 }
 
-export interface DerivePlaytestCohortObservationsResult {
+interface DerivePlaytestCohortObservationsResult {
   /** Keyed by the episode's `policyCohort`; absent when never observed. */
   readonly cohortObservations: Readonly<
     Record<string, PlaytestCohortObservation>
@@ -83,7 +83,7 @@ interface Accumulator {
  * no eligible opportunity stays a zero denominator, and the standardizer owns
  * the state that reports.
  */
-export function derivePlaytestCohortObservations(
+function derivePlaytestCohortObservations(
   input: DerivePlaytestCohortObservationsInput
 ): DerivePlaytestCohortObservationsResult {
   const totals = new Map<string, Accumulator>();
@@ -140,7 +140,7 @@ export function derivePlaytestCohortObservations(
 export const RUN_SET_BUILD_ID = "__runs__";
 
 /** One measured run: the batch that scoped it and the episodes it recorded. */
-export interface PlaytestCohortRunInput {
+interface PlaytestCohortRunInput {
   readonly batch: PlaytestAdapterBatch;
   readonly episodes: readonly PlaytestEpisode[];
 }
@@ -154,10 +154,10 @@ export interface StandardizePlaytestCohortsInput {
 }
 
 /** Why a build could not enter the comparison. */
-export type PlaytestCohortRefusalReason =
+type PlaytestCohortRefusalReason =
   "cohort-set-mismatch" | "insufficient-builds";
 
-export interface PlaytestCohortBuildRefusal {
+interface PlaytestCohortBuildRefusal {
   /**
    * `buildSha` for a cohort-set mismatch; the literal `"__runs__"` for a gate
    * that never had enough distinct builds to compare, where naming one build

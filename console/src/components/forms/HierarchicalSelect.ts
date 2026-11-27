@@ -11,7 +11,7 @@ import {
 } from "./SelectChevron.ts";
 
 /** One choice inside a level; choosing it submits that level's form. */
-export interface HierarchicalSelectOption {
+interface HierarchicalSelectOption {
   readonly value: string;
   readonly label: string;
 }
@@ -21,7 +21,7 @@ export interface HierarchicalSelectOption {
  * own form. Choosing an option posts `name=value` with the level's hidden
  * fields to the level's action.
  */
-export interface HierarchicalSelectLevel {
+interface HierarchicalSelectLevel {
   readonly key: string;
   readonly label: string;
   /** What the level is set to now, shown beside its label. */

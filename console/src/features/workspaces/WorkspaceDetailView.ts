@@ -7,7 +7,8 @@ import {
   isRecord,
   type ReconciliationView,
   type WorkspacePlaytestApproval,
-  type WorkspaceVisualPlaytestTargetApproval} from "@simulatorlife/autodev-core";
+  type WorkspaceVisualPlaytestTargetApproval
+} from "@simulatorlife/autodev-core";
 import React from "react";
 
 import { CALLOUT_WARNING_CLASS } from "../../components/layout/Callout.ts";
@@ -54,7 +55,7 @@ import {
   type WorkspaceVisualTargetUnavailable
 } from "./WorkspaceVisualPlaytestTargetManager.ts";
 
-export interface WorkspaceApprovalUnavailable {
+interface WorkspaceApprovalUnavailable {
   readonly code: string;
   readonly message: string;
 }

@@ -23,6 +23,7 @@ import {
   type SessionRecentListResponse
 } from "@simulatorlife/autodev-core";
 
+import { readNativeSessionEvidence } from "./native-session-evidence.ts";
 import type { MutableRecentSession } from "./working-shapes.ts";
 
 /** The `session_meta` record, as it appears at the head of every rollout JSONL. */
@@ -250,14 +251,44 @@ export function listRecentSessions(
     .slice(0, limit);
 }
 
+/** Merge bounded native lifecycle evidence without inventing rollout metrics. */
+export function mergeNativeRecentSessions(
+  rolloutSessions: readonly RecentSessionSummary[],
+  limit: number,
+  routerLog?: string
+): RecentSessionSummary[] {
+  const sessions = [...rolloutSessions];
+  if (routerLog) {
+    for (const native of readNativeSessionEvidence(routerLog)) {
+      if (sessions.some((session) => session.id === native.id)) continue;
+      sessions.push({
+        id: native.id,
+        clientSurface: native.clientSurface,
+        started: native.startedAt ?? "",
+        lastWrite: native.lastObservedAt,
+        threads: 0,
+        cwd: null
+      });
+    }
+  }
+  return sessions
+    .sort((a, b) => COLLATOR.compare(b.lastWrite, a.lastWrite))
+    .slice(0, limit);
+}
+
 /** The recent-sessions listing, in the shape the Control API publishes. */
 export function listRecentSessionsResponse(
   sessionsRoot: string | readonly string[],
-  limit: number
+  limit: number,
+  routerLog?: string
 ): SessionRecentListResponse {
   return {
     schema: SESSION_RECENT_LIST_SCHEMA,
     limit,
-    sessions: listRecentSessions(sessionsRoot, limit)
+    sessions: mergeNativeRecentSessions(
+      listRecentSessions(sessionsRoot, limit),
+      limit,
+      routerLog
+    )
   };
 }

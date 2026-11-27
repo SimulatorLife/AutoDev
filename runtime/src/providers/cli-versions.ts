@@ -40,7 +40,7 @@ import { ROUTING_POLICY } from "../router/routing.ts";
  * that matters -- a CLI that has to warm something up before it prints -- and
  * because a version is not worth a stalled page load.
  */
-export const CLI_VERSION_TIMEOUT_MS = 5000;
+const CLI_VERSION_TIMEOUT_MS = 5000;
 /** The bound on combined stdout and stderr before a CLI's output is refused. */
 const MAX_VERSION_OUTPUT_BYTES = 8 * 1024;
 /**
@@ -51,7 +51,7 @@ const MAX_VERSION_OUTPUT_BYTES = 8 * 1024;
  * upgraded CLI is visible within a working session and long enough that the
  * refresh costs six process starts an hour.
  */
-export const CLI_VERSION_REFRESH_INTERVAL_MS = 10 * 60_000;
+const CLI_VERSION_REFRESH_INTERVAL_MS = 10 * 60_000;
 /**
  * A version, as the CLIs that serve providers print them.
  *

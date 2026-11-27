@@ -91,7 +91,7 @@ export function pageRangeLabel(page: PagePosition): string {
 }
 
 /** Whether each direction has somewhere to go. */
-export function pageDirections(page: PagePosition): {
+function pageDirections(page: PagePosition): {
   readonly hasPrevious: boolean;
   readonly hasNext: boolean;
 } {

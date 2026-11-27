@@ -10,7 +10,7 @@ install-time probe build the same admission from the same files, so the probe
 exercises exactly what the service runs.
 */
 import { randomBytes } from "node:crypto";
-import { lstatSync, writeFileSync } from "node:fs";
+import { lstatSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -115,15 +115,22 @@ export function localSurfaceUrl(
   server: string
 ): URL | null {
   try {
-    if (!/^[a-z0-9-]+$/u.test(role) || !/^[a-zA-Z0-9_.-]+$/u.test(server) ||
-        server === "." || server === "..") return null;
+    if (
+      !/^[a-z0-9-]+$/u.test(role) ||
+      !/^[a-zA-Z0-9_.-]+$/u.test(server) ||
+      server === "." ||
+      server === ".."
+    )
+      return null;
     const directory = mcpGatewayDirectory(codexHome);
     assertPrivateDirectory(directory);
     const { mcpPort } = JSON.parse(
       privateRead(path.join(directory, "gateway.json"))
     ) as { mcpPort?: unknown };
-    return typeof mcpPort === "number" && Number.isSafeInteger(mcpPort) &&
-      mcpPort > 0 && mcpPort <= 65535
+    return typeof mcpPort === "number" &&
+      Number.isSafeInteger(mcpPort) &&
+      mcpPort > 0 &&
+      mcpPort <= 65535
       ? new URL(
           `http://127.0.0.1:${String(mcpPort)}/local/${role}/${server}/mcp`
         )
@@ -196,6 +203,9 @@ export function createGatewayAdmission(
   const admission = readLocalAdmission(context.codexHome);
   if (!admission)
     throw new Error("The MCP gateway's local admission files are missing");
+  // Resolve once, not on each lazy provision. An installer can repoint
+  // the installed src symlink while this gateway is still serving traffic.
+  const runtimeSource = realpathSync(context.runtimeSource);
   // The separate catalogue controller cannot execute client tool calls.
   // Reuse the reviewed policy-discovery workspace: the gateway's own
   // private directory is explicitly inaccessible to confined backends.
@@ -211,7 +221,7 @@ export function createGatewayAdmission(
         context.node,
         context.home,
         context.codexHome,
-        { role, readOnly: isReadOnly, runtimeSource: context.runtimeSource }
+        { role, readOnly: isReadOnly, runtimeSource }
       );
       return {
         server,

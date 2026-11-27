@@ -17,9 +17,9 @@ import {
   runApprovedCommand
 } from "../../src/mcp/commands-execution.ts";
 
-export const SHELL = realpathSync("/bin/sh");
-export const NODE = realpathSync(process.execPath);
-export const SANDBOX = "/usr/bin/sandbox-exec";
+const SHELL = realpathSync("/bin/sh");
+const NODE = realpathSync(process.execPath);
+const SANDBOX = "/usr/bin/sandbox-exec";
 
 /**
 Whether this machine can confine a command at all.

@@ -30,4 +30,4 @@ skills:
   dirs: []
 minimumReleaseAgeExclude:
   - "@types/node@26.6.9"
-  - rulesync@43.14.0
+  - rulesync@43.14.0 || 43.16.0

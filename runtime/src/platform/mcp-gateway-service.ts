@@ -248,7 +248,6 @@ export async function withInstallLock<T>(
   }
 }
 
-
 /**
 The gateway's bearer key and the matching `Authorization` header file that
 clients (the tunnel, local providers) present.
@@ -1076,7 +1075,11 @@ async function resolveLocalSurfaces(
     if (roleContract(role).mcp.length === 0) continue;
     const existing = published.find((surface) => surface.role === role);
     if (existing) {
-      surfaces.push({ role, grants: existing.reviewed, reviewed: existing.reviewed });
+      surfaces.push({
+        role,
+        grants: existing.reviewed,
+        reviewed: existing.reviewed
+      });
       continue;
     }
     const { reviewed } = await resolveReviewedFromRoleContract(
@@ -1556,7 +1559,10 @@ export async function runMcpGatewayDaemon(
         home: paths.home,
         codexHome: paths.codexHome,
         catalogueWorkspace: state.workspace,
-        runtimeSource: installedRuntimeSource(paths),
+        // Launchd runs this module from a physical source generation.
+        // A failed or concurrent install may already have repointed src;
+        // dynamic backends must use the same generation as this daemon.
+        runtimeSource: path.resolve(import.meta.dirname, ".."),
         ...(dependencies.backend ? { backend: dependencies.backend } : {})
       })
     }

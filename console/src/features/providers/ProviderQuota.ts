@@ -193,7 +193,7 @@ function quotaBarsForProviderEntry(
 }
 
 /** Extracts compact per-provider usage bars from the quota-axi snapshot. */
-export function quotaByProvider(
+function quotaByProvider(
   report: QuotaAxiSnapshot | null
 ): ReadonlyMap<string, readonly ProviderQuotaWindowBar[]> {
   const grouped = new Map<string, ProviderQuotaWindowBar[]>();
@@ -453,7 +453,7 @@ const QUOTA_READ_STATE_EXPLANATION: Readonly<Record<string, string>> = {
  * The shared Antigravity service fans out the same way its windows do: one
  * quota source, three route rows, each showing that source's state.
  */
-export function quotaReadStates(
+function quotaReadStates(
   report: QuotaAxiSnapshot | null
 ): ReadonlyMap<string, ProviderQuotaReadState> {
   const states = new Map<string, ProviderQuotaReadState>();

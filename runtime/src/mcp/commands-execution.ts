@@ -218,9 +218,11 @@ export function resolveTrustedExecutables(
 }
 
 function directory(value: string): string {
-  if (!path.isAbsolute(value)) throw new Error("Command scope requires absolute paths.");
+  if (!path.isAbsolute(value))
+    throw new Error("Command scope requires absolute paths.");
   const resolved = realpathSync(value);
-  if (!statSync(resolved).isDirectory()) throw new Error("Command scope root is not a directory.");
+  if (!statSync(resolved).isDirectory())
+    throw new Error("Command scope root is not a directory.");
   return resolved;
 }
 
@@ -269,8 +271,21 @@ export function commandSandboxProfile(
   toolchainRoots: readonly string[],
   options: { readonly registryPort?: number } = {}
 ): string {
-  const systemRoots = ["/System", "/usr/lib", "/usr/share", "/usr/bin", "/bin", "/Library/Apple/System"];
-  const readRoots = [workspace, scratch, cache, ...toolchainRoots, ...systemRoots];
+  const systemRoots = [
+    "/System",
+    "/usr/lib",
+    "/usr/share",
+    "/usr/bin",
+    "/bin",
+    "/Library/Apple/System"
+  ];
+  const readRoots = [
+    workspace,
+    scratch,
+    cache,
+    ...toolchainRoots,
+    ...systemRoots
+  ];
   const rules = [
     "(version 1)",
     "(deny default)",
@@ -283,11 +298,21 @@ export function commandSandboxProfile(
     "(allow file-read* " +
       [
         ...readRoots.map(subtree),
-        ...["/dev/null", "/dev/random", "/dev/urandom", "/private/etc/localtime"].map(literal)
+        ...[
+          "/dev/null",
+          "/dev/random",
+          "/dev/urandom",
+          "/private/etc/localtime"
+        ].map(literal)
       ].join(" ") +
       ")",
     "(allow file-write* " +
-      [subtree(workspace), subtree(scratch), subtree(cache), literal("/dev/null")].join(" ") +
+      [
+        subtree(workspace),
+        subtree(scratch),
+        subtree(cache),
+        literal("/dev/null")
+      ].join(" ") +
       ")",
     // Workspace files can contain secrets too. Never grant dotenv/registry
     // credentials or agent-private auth directories by virtue of the cwd.
@@ -296,8 +321,14 @@ export function commandSandboxProfile(
     // Runtime state is denied except for the two precisely admitted,
     // private writable roots. The credential rules above still apply there.
     String.raw`(deny file-read-data file-write* (require-all (regex #"/(\.codex|\.autodev)(/|$)") ` +
-      "(require-not (require-any " + subtree(scratch) + " " + subtree(cache) + "))))",
-    "(allow file-read-data (require-all " + subtree(workspace) + String.raw` (regex #"/\.env\.example$")))`
+      "(require-not (require-any " +
+      subtree(scratch) +
+      " " +
+      subtree(cache) +
+      "))))",
+    "(allow file-read-data (require-all " +
+      subtree(workspace) +
+      String.raw` (regex #"/\.env\.example$")))`
   ];
   if (options.registryPort !== undefined) {
     // The only reachable network peer is the trusted registry proxy, on one
@@ -320,7 +351,7 @@ resolved when the scope was admitted. Nothing was started, so the command has
 no exit status, and the caller reports a startup failure rather than an
 infrastructure fault or a command that ran and failed.
 */
-export class CommandExecutableUnavailableError extends Error {
+class CommandExecutableUnavailableError extends Error {
   constructor() {
     super("The command's approved executable is unavailable.");
     this.name = "CommandExecutableUnavailableError";
@@ -347,11 +378,18 @@ export function prepareCommand(
   arguments_: readonly string[] = definition.args
 ): PreparedCommand {
   if (process.platform !== "darwin") {
-    throw new Error("Commands MCP requires qualified macOS process confinement.");
+    throw new Error(
+      "Commands MCP requires qualified macOS process confinement."
+    );
   }
   accessSync(SANDBOX, constants.X_OK);
-  if (definition.executionClass === "dependency_install" && !scope.registryEndpoint) {
-    throw new Error("Dependency installation requires an approved package-registry boundary.");
+  if (
+    definition.executionClass === "dependency_install" &&
+    !scope.registryEndpoint
+  ) {
+    throw new Error(
+      "Dependency installation requires an approved package-registry boundary."
+    );
   }
   const workspace = directory(scope.workspace);
   const scratch = directory(scope.scratch);
@@ -368,14 +406,17 @@ export function prepareCommand(
     pathsOverlap(workspace, cache) ||
     pathsOverlap(scratch, cache) ||
     roots.length === 0 ||
-    roots.some((root) =>
-      root === path.parse(root).root ||
-      pathsOverlap(root, workspace) ||
-      pathsOverlap(root, scratch) ||
-      pathsOverlap(root, cache)
+    roots.some(
+      (root) =>
+        root === path.parse(root).root ||
+        pathsOverlap(root, workspace) ||
+        pathsOverlap(root, scratch) ||
+        pathsOverlap(root, cache)
     )
   ) {
-    throw new Error("Command scope overlaps a protected toolchain or scratch root.");
+    throw new Error(
+      "Command scope overlaps a protected toolchain or scratch root."
+    );
   }
   const configured = Object.hasOwn(scope.executables, definition.executable)
     ? scope.executables[definition.executable]
@@ -386,7 +427,8 @@ export function prepareCommand(
   let executable: string;
   try {
     executable = realpathSync(configured);
-    if (!statSync(executable).isFile()) throw new Error("Command executable is not a file.");
+    if (!statSync(executable).isFile())
+      throw new Error("Command executable is not a file.");
     accessSync(executable, constants.X_OK);
   } catch {
     throw new CommandExecutableUnavailableError();
@@ -398,7 +440,8 @@ export function prepareCommand(
   // workspace's own tool directory. Everything else a child resolves is
   // confined by the profile.
   const binDirectories = Object.values(scope.executables).map((entry) => {
-    if (!path.isAbsolute(entry)) throw new Error("Invalid approved executable path.");
+    if (!path.isAbsolute(entry))
+      throw new Error("Invalid approved executable path.");
     const resolved = realpathSync(entry);
     if (roots.every((root) => !isPathWithin(root, resolved))) {
       throw new Error("Approved executable lies outside its toolchain.");
@@ -406,7 +449,10 @@ export function prepareCommand(
     return path.dirname(resolved);
   });
   let registryPort: number | undefined;
-  if (definition.executionClass === "dependency_install" && scope.registryEndpoint) {
+  if (
+    definition.executionClass === "dependency_install" &&
+    scope.registryEndpoint
+  ) {
     const endpoint = new URL(scope.registryEndpoint);
     if (
       endpoint.protocol !== "http:" ||
@@ -418,12 +464,16 @@ export function prepareCommand(
       endpoint.hash ||
       !endpoint.port
     ) {
-      throw new Error("Dependency installation requires a dedicated loopback registry endpoint.");
+      throw new Error(
+        "Dependency installation requires a dedicated loopback registry endpoint."
+      );
     }
     registryPort = Number(endpoint.port);
   }
   if (!registryPort && definition.executionClass === "dependency_install") {
-    throw new Error("Dependency installation requires an approved package-registry boundary.");
+    throw new Error(
+      "Dependency installation requires an approved package-registry boundary."
+    );
   }
   // pnpm and other installed scripts may use /usr/bin/env node. Include
   // the running Runtime's Node directory when it is already admitted,
@@ -473,6 +523,11 @@ export function prepareCommand(
     // the Runtime's own identity is the only one a commit can carry.
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_CONFIG_GLOBAL: "/dev/null",
+    // A host fsmonitor daemon is outside the command sandbox. Use Git's
+    // ordinary index/worktree scan instead of attempting its IPC or hook.
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "core.fsmonitor",
+    GIT_CONFIG_VALUE_0: "false",
     // A confined command has no terminal to answer a credential prompt on.
     GIT_TERMINAL_PROMPT: "0",
     // The Runtime's own commit identity, and nothing else from the operator's

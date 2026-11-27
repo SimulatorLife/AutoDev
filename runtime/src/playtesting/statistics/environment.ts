@@ -31,7 +31,6 @@ import { EXPECTED_SCIENTIFIC_LOCK } from "./lock-manifest.ts";
 const SHA256_HEX_LENGTH = 64;
 const PYPROJECT_FILE = "pyproject.toml";
 const UV_LOCK_FILE = "uv.lock";
-const PYTHON_README_FILE = "PYTHON_README.md";
 
 /** Where the Python project root lives inside the Runtime source tree. */
 function projectRootAbsolute(): string {
@@ -54,11 +53,6 @@ export function uvLockPath(): string {
 /** Absolute path to the worker entry point module. */
 export function pythonWorkerModule(): string {
   return "python_script";
-}
-
-/** Absolute path to the operator documentation file. */
-export function pythonReadmePath(): string {
-  return path.join(projectRootAbsolute(), PYTHON_README_FILE);
 }
 
 /**

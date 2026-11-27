@@ -21,6 +21,8 @@ export const CLIENT_SURFACES = [
   "codex_cli",
   "codex_exec",
   "codex_vscode",
+  "claude_code",
+  "minimax_code",
   "other"
 ] as const;
 
@@ -80,6 +82,8 @@ const CLIENT_SURFACE_LABELS: Readonly<Record<ClientSurface, string>> = {
   codex_cli: "Codex CLI",
   codex_exec: "codex exec",
   codex_vscode: "Codex VS Code extension",
+  claude_code: "Claude Code",
+  minimax_code: "MiniMax Code",
   other: "Other client"
 };
 

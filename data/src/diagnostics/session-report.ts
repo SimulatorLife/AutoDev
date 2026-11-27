@@ -28,6 +28,7 @@ import {
   readBridgeLogAlerts,
   readLogSummaries
 } from "./live-context.ts";
+import { readNativeSessionEvidence } from "./native-session-evidence.ts";
 import { findSessionRollouts, rolloutRoots } from "./rollout-discovery.ts";
 import {
   readRouterEvents,
@@ -455,12 +456,23 @@ export async function buildSessionDiagnosticsReport(
     ? buildEfficiencySummary(options.codexHome, liveResult.status)
     : null;
 
+  const native =
+    threads.length === 0 && options.id.startsWith("native:")
+      ? readNativeSessionEvidence(options.routerLog).find(
+          (session) => session.id === options.id
+        )
+      : undefined;
   const rootThread = threads.find((thread) => thread.parentId === null);
   const rootSessionId =
-    rootThread?.sessionId ?? rootThread?.id ?? threads[0]?.sessionId ?? null;
+    rootThread?.sessionId ??
+    rootThread?.id ??
+    threads[0]?.sessionId ??
+    native?.id ??
+    null;
   const matchedByThreadId =
     rootSessionId !== null && options.id !== rootSessionId;
-  const clientSurface = rootThread?.clientSurface ?? null;
+  const clientSurface =
+    rootThread?.clientSurface ?? native?.clientSurface ?? null;
 
   const allEvents = sessionRouterEvents(threads, rows);
   const events = options.threadId
@@ -475,11 +487,20 @@ export async function buildSessionDiagnosticsReport(
 
   return {
     schema: SESSION_DIAGNOSTICS_SCHEMA,
-    found: threads.length > 0,
+    found: threads.length > 0 || native !== undefined,
     requestedId: options.id,
     rootSessionId,
     matchedByThreadId,
     clientSurface,
+    ...(native && {
+      nativeSession: {
+        startedAt: native.startedAt,
+        lastObservedAt: native.lastObservedAt,
+        endedAt: native.endedAt,
+        model: native.model,
+        workspace: native.workspace
+      }
+    }),
     threads,
     router,
     logs: readLogSummaries(options.codexHome),

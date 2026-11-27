@@ -33,7 +33,7 @@ import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 /**
 The OpenLIT receiver's OTLP/HTTP base endpoint (see config/openlit/otlp-endpoints.md).
 */
-export const OPENLIT_OTLP_HTTP_ENDPOINT = "http://127.0.0.1:4318";
+const OPENLIT_OTLP_HTTP_ENDPOINT = "http://127.0.0.1:4318";
 
 /**
 The exporter selection AutoDev manages in Claude Code's `env` block.
@@ -51,7 +51,7 @@ export const MANAGED_ENVIRONMENT: Readonly<Record<string, string>> =
 Content-bearing switches that must stay off. Claude Code leaves each off
 unless it is set truthy; AutoDev never sets them, and reports one that is.
 */
-export const CONTENT_SWITCHES: readonly string[] = Object.freeze([
+const CONTENT_SWITCHES: readonly string[] = Object.freeze([
   "OTEL_LOG_USER_PROMPTS",
   "OTEL_LOG_TOOL_DETAILS",
   "OTEL_LOG_TOOL_CONTENT",
@@ -171,7 +171,10 @@ the installer would report. Empty means the native exporter is configured.
 export function claudeCodeTelemetryDrift(
   settingsPath: string,
   headersHelperCommand: string
-): { readonly missing: readonly string[]; readonly conflicts: readonly string[] } {
+): {
+  readonly missing: readonly string[];
+  readonly conflicts: readonly string[];
+} {
   const existing = readSettings(settingsPath);
   const plan = planClaudeCodeTelemetry(existing, headersHelperCommand);
   const current = isJsonObject(existing) ? existing : {};

@@ -16,7 +16,7 @@ export interface MeasureUnit {
   readonly value: number | null;
 }
 
-export type MeasureUnitId = "bytes" | "characters" | "tokens";
+type MeasureUnitId = "bytes" | "characters" | "tokens";
 
 const UNIT_NOUNS: Readonly<
   Record<MeasureUnitId, { readonly singular: string; readonly plural: string }>

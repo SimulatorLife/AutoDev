@@ -66,7 +66,7 @@ export function isToolSource(value: string): value is ToolSource {
  * Exposed on its own because an entry's own address needs it: the detail route
  * is a path, so the list's state travels beside it as a query.
  */
-export function toolsListQuery(filters: ToolsListFilters): string {
+function toolsListQuery(filters: ToolsListFilters): string {
   const params = new URLSearchParams();
   if (filters.source && filters.source !== "all") {
     params.set("source", filters.source);

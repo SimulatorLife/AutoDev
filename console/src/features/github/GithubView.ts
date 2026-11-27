@@ -38,6 +38,7 @@ import {
 } from "../../components/ui/text-classes.ts";
 import { githubRunOutcome } from "./github-labels.ts";
 import {
+  countRunOutcomes,
   countWorkflowStates,
   filterRuns,
   filterWorkflows,
@@ -189,6 +190,7 @@ function recentRunsSection({
   readonly emptyMessage: string;
 }): React.JSX.Element {
   const isNarrowed = listFilters.outcome !== "all";
+  const outcomeCounts = countRunOutcomes(runs);
   return React.createElement(
     "div",
     { className: "flex flex-col gap-3" },
@@ -206,7 +208,8 @@ function recentRunsSection({
         label: "Outcome:",
         options: RUN_OUTCOME_FILTERS.map((value) => ({
           value,
-          label: RUN_OUTCOME_LABELS[value]
+          label: RUN_OUTCOME_LABELS[value],
+          count: outcomeCounts[value]
         })),
         selected: listFilters.outcome,
         href: (value) => githubListHref({ ...listFilters, outcome: value }),

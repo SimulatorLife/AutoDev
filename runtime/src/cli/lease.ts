@@ -27,8 +27,6 @@ The repo vocabulary, owned here and consumed by validation and errors.
 */
 export const LEASE_SUBCOMMANDS = ["list", "release"] as const;
 
-export type LeaseSubcommand = (typeof LEASE_SUBCOMMANDS)[number];
-
 export interface LeaseCommandBackend {
   /**
   The run directory the leases were read from, so the operator can see which
@@ -81,7 +79,7 @@ function describeLease(report: {
   return `${report.workspaceKey}  ${report.state}  holder ${holder}  command ${command}`;
 }
 
-export const defaultLeaseBackend: LeaseCommandBackend = {
+const defaultLeaseBackend: LeaseCommandBackend = {
   location: leaseRunDirectory(),
   list: () =>
     inspectCommandLeases(leaseRunDirectory()).map((report) =>

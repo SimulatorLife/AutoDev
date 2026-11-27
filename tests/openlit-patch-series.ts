@@ -101,7 +101,7 @@ export const OPENLIT_PATCH_NAMES = [
 ] as const;
 
 /** Strips the `.patch` suffix a directory listing carries. */
-export function patchNames(files: readonly string[]): string[] {
+function patchNames(files: readonly string[]): string[] {
   return files.map((file) => file.replace(/\.patch$/u, ""));
 }
 

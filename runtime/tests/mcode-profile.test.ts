@@ -63,7 +63,10 @@ interface McodePermissionDocument {
 
 interface McodeHookGroup {
   readonly matcher?: string;
-  readonly hooks: readonly { readonly type: string; readonly command: string }[];
+  readonly hooks: readonly {
+    readonly type: string;
+    readonly command: string;
+  }[];
 }
 
 interface McodeHooksDocument {
@@ -141,9 +144,7 @@ function canonicalDenyPatterns(home: string): Set<string> {
     for (const [pattern, decision] of Object.entries(rules)) {
       if (decision !== "deny") continue;
       patterns.add(
-        pattern.startsWith("~/")
-          ? path.join(home, pattern.slice(2))
-          : pattern
+        pattern.startsWith("~/") ? path.join(home, pattern.slice(2)) : pattern
       );
     }
   }
@@ -199,11 +200,10 @@ test("the MiniMax Code profile hooks carry the canonical hook declarations", () 
   assert.ok(hooks.hooks, "the profile carries hooks");
   const canonical = canonicalHooks();
 
-  // RuleSync renames the canonical camelCase events to the Claude event
-  // names MiniMax Code reads, so the events are matched case-insensitively.
-  const profileEvents = Object.keys(hooks.hooks).map((event) =>
-    event.toLowerCase()
-  );
+  // RuleSync projects the shared events into Claude's native dialect.
+  const eventKey = (event: string) =>
+    event === "UserPromptSubmit" ? "beforesubmitprompt" : event.toLowerCase();
+  const profileEvents = Object.keys(hooks.hooks).map(eventKey);
   assert.deepEqual(
     profileEvents.sort((left, right) => collator.compare(left, right)),
     Object.keys(canonical)
@@ -213,7 +213,7 @@ test("the MiniMax Code profile hooks carry the canonical hook declarations", () 
 
   for (const [event, groups] of Object.entries(hooks.hooks)) {
     const canonicalEntry = Object.entries(canonical).find(
-      ([name]) => name.toLowerCase() === event.toLowerCase()
+      ([name]) => name.toLowerCase() === eventKey(event)
     );
     assert.ok(canonicalEntry, `the canonical source declares ${event}`);
     const canonicalGroups = canonicalEntry[1];
@@ -225,7 +225,11 @@ test("the MiniMax Code profile hooks carry the canonical hook declarations", () 
       assert.equal(group.hooks[0]?.type, "command", `${event}/${index}`);
       assert.equal(
         group.hooks[0]?.command,
-        canonicalGroup.command,
+        /\/hooks\/(?:session-start\.ts|native-session\.ts (?:prompt|stop|end))$/u.test(
+          canonicalGroup.command
+        )
+          ? canonicalGroup.command + " --client=mcode"
+          : canonicalGroup.command,
         `${event}/${index}`
       );
     }
@@ -330,7 +334,10 @@ test("the MiniMax Code profile holds no MCP configuration", () => {
     // a profile-level list would expose servers to roles that do not hold
     // them.
     assert.equal(existsSync(path.join(profileDirectory, "mcp.json")), false);
-    assert.equal(existsSync(path.join(profileDirectory, "permissions.json")), false);
+    assert.equal(
+      existsSync(path.join(profileDirectory, "permissions.json")),
+      false
+    );
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -364,7 +371,9 @@ test("the MiniMax Code profile materialization is idempotent and reports drift",
       home,
       check: true
     });
-    assert.deepEqual(drift.drifted, [path.join(profileDirectory, "hooks.json")]);
+    assert.deepEqual(drift.drifted, [
+      path.join(profileDirectory, "hooks.json")
+    ]);
 
     const repaired = materializeMcodeProfile({
       repositoryRoot: REPO_ROOT,
@@ -372,7 +381,9 @@ test("the MiniMax Code profile materialization is idempotent and reports drift",
       home
     });
     assert.deepEqual(repaired.drifted, []);
-    assert.deepEqual(repaired.written, [path.join(profileDirectory, "hooks.json")]);
+    assert.deepEqual(repaired.written, [
+      path.join(profileDirectory, "hooks.json")
+    ]);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -397,7 +408,10 @@ test("the MiniMax Code profile removes the superseded projection files", () => {
       home
     });
     assert.equal(existsSync(path.join(profileDirectory, "mcp.json")), false);
-    assert.equal(existsSync(path.join(profileDirectory, "permissions.json")), false);
+    assert.equal(
+      existsSync(path.join(profileDirectory, "permissions.json")),
+      false
+    );
     assert.equal(result.removed.length, 2);
   } finally {
     rmSync(home, { recursive: true, force: true });
@@ -409,7 +423,10 @@ test("the MiniMax Code profile links the operator's own configuration", () => {
   const profileDirectory = path.join(home, "providers", "mcode");
   try {
     const operatorProfile = path.join(home, ".minimax");
-    mkdirSync(path.join(operatorProfile, "auth"), { recursive: true, mode: 0o700 });
+    mkdirSync(path.join(operatorProfile, "auth"), {
+      recursive: true,
+      mode: 0o700
+    });
     writeFileSync(
       path.join(operatorProfile, "config.yaml"),
       "defaultModel: minimax/MiniMax-M3\n"
@@ -437,7 +454,10 @@ test("a stale operator link is replaced instead of left pointing elsewhere", () 
     mkdirSync(operatorProfile, { recursive: true, mode: 0o700 });
     writeFileSync(path.join(operatorProfile, "config.yaml"), "model: one\n");
     mkdirSync(profileDirectory, { recursive: true, mode: 0o700 });
-    symlinkSync(path.join(home, "elsewhere.yaml"), path.join(profileDirectory, "config.yaml"));
+    symlinkSync(
+      path.join(home, "elsewhere.yaml"),
+      path.join(profileDirectory, "config.yaml")
+    );
     materializeMcodeProfile({
       repositoryRoot: REPO_ROOT,
       profileDirectory,
@@ -495,6 +515,7 @@ test("the projected MiniMax Code hooks match only MiniMax Code tool names", () =
   );
   assert.ok(matchers.length > 0);
   for (const matcher of matchers) {
+    if (matcher === undefined) continue;
     assert.ok(matcher);
     // MiniMax Code rejects a matcher that carries an inline flag, and
     // matches a plain tool-name list exactly.

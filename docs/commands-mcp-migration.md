@@ -1,6 +1,6 @@
 # Allowlisted Commands MCP — Design and Migration Plan
 
-> **Status:** Source implementation audited against every requirement and acceptance criterion in this plan on 2026-11-26 (see [Acceptance audit](#acceptance-audit-2026-11-26)): the unit, integration, real-OS confinement, task-store and gateway-pool task suites pass locally (75 tests), and the gaps the audit found are fixed in source. **Not deployed:** the installer has not been run and no catalogue digest is approved, so live gateway, provider, telemetry, installer-reconciliation and Console acceptance remain open, as do the residuals the audit lists as blocked.
+> **Status:** Source implementation audited against every requirement and acceptance criterion in this plan on 2026-11-26 (see [Acceptance audit](#acceptance-audit-2026-11-26)): the unit, integration, real-OS confinement, task-store and gateway-pool task suites pass locally (75 tests), and the gaps the audit found are fixed in source. **Deployed (2026-11-26):** installed with the approved catalogue and accepted live through the installed gateway by a local client in an unregistered directory, including dependency installation, tests, Git staging and commits, native tasks and live sandbox denials (see [What is still open](#what-is-still-open)). ChatGPT-ingress and other-provider live runs, telemetry export and Console evidence remain open, as do the residuals the audit lists as blocked.
 >
 > **Authority:** [AutoDev unified target state](autodev-console-target-state.md#allowlisted-command-execution) owns durable architecture and authorization requirements. This focused subsystem plan explains the rationale, proposed implementation, migration order and acceptance gates. Record observed deployment evidence in [the migration tracker](autodev-console-migration.md), and operational instructions in [local setup](local-setup.md) when implemented.
 
@@ -12,9 +12,27 @@ ChatGPT and other agents using the shared MCP gateway can inspect and edit works
 pnpm install --no-frozen-lockfile
 pnpm run typecheck
 pnpm test
+pnpm run lint
 pnpm run lint:fix
+pnpm run knip
+pnpm run knip:production
+pnpm run duplicates
+pnpm run duplicates:similar
+pnpm run format
+pnpm run build
 git status
 git diff
+git diff --cached
+git log -n 30
+git show HEAD
+git branch --list --all
+git rev-parse --verify HEAD
+git blame -- path/to/file
+git diff --stat
+git ls-files --cached
+git merge-base -- HEAD main
+git restore --staged -- path/to/file
+git add -- path/to/file
 git add .
 git commit -m "..."
 ```
@@ -180,8 +198,29 @@ launchd services and the live provider surfaces still carry the previous state.
   grant it. `config/execution-contract.json` is regenerated from those role
   files by the canonical renderer. The orchestrator and worker hold
   `install_dependencies`, `typecheck`, `test`, `lint_fix`, `git_status`,
-  `git_diff`, `git_stage` and `git_commit`; the validator holds `typecheck`,
-  `test`, `git_status` and `git_diff`. No role holds `git push`, `git reset`,
+  `git_diff`, `git_stage`, `git_commit` and the expanded Git catalogue:
+  `git_add` (one literal path), `git_diff_staged`, `git_diff_path`, `git_log`,
+  `git_log_path`, `git_show`, `git_branches`, `git_head`, `git_blame`,
+  `git_diff_stat`, `git_ls_files`, `git_merge_base` and `git_unstage`,
+  plus `lint`, `knip`, `knip_production`, `duplicates`, `duplicates_similar`,
+  `format_fix` and `build`. The jscpd scans are validation operations using
+  fixed project scripts, with no automatic code changes or threshold gate.
+  Both Knip operations use the project's fixed scripts and configuration, report
+  dead-code candidates without auto-deletion, and retain normal exit status
+  (findings can produce a nonzero exit). The validator holds validation and
+  Git inspection tools, but no staging, unstaging, commits, dependency
+  installation, lint fixes, formatting fixes or build outputs. Formatting
+  deliberately invokes the project's write-mode `pnpm run format` script;
+  no format-check MCP tool is needed. This does not remove any existing
+  CI formatting checks. Build invokes the project's fixed `pnpm run build`
+  script where defined, not arbitrary package scripts. Selective unstaging
+  is index-only via `restore --staged` against HEAD, not worktree restoration.
+  Paths are literal pathspecs after `--`; revision input follows
+  `--end-of-options`. Git history is bounded and external diff/text conversion
+  is disabled. Git subprocesses disable host fsmonitor via a process-local
+  config override without changing repository settings. The expanded catalogue
+  is a proposal until its exact revision is explicitly approved and installed.
+  No role holds `git push`, `git reset`,
   `git config`, `git rebase` or `git clean`, and no read-only role holds a
   command at all.
 - `runtime/tests/command-workspace-lease.test.ts` covers the workspace lease:
@@ -399,18 +438,28 @@ the evidence.
 
 ### What is still open
 
-- **Deployment.** The installer has not been run. A normal install restarts
-  `com.codex.model-router`, `com.codex.opencli-proxy`,
-  `com.codex.autodev-console`, `com.codex.autodev-chatgpt-tunnel` and
-  `com.codex.autodev-mcp-gateway`, so it needs the operator's explicit
-  authorization; that authorization was requested and has not been given, so
-  the installer was left unrun rather than run on an unanswered question. The
-  installed tree, the launchd services, the Supergateway projections and the
-  live provider surfaces therefore still carry the previous state, and no live
-  acceptance has been performed. The ChatGPT gateway additionally needs
-  `--approve-command-catalogue=sha256:<digest>` for the approved revision it
-  publishes, so the catalogue's digest is part of the deployment, not a
-  source-tree detail.
+- **Deployment (live, 2026-11-26).** Installed with the approved catalogue
+  (`sha256:c347aad9…`, the checkout's revision) and exercised through the
+  installed gateway from an unregistered temporary repository, by a client
+  launching `run-autodev-mcp.sh commands`: discovery lists the eight
+  commands with task support; `git_status`, `install_dependencies` (through
+  the registry proxy into the workspace's isolated pnpm store), `test`,
+  `git_stage`, `git_diff` and `git_commit` succeed; `typecheck` reports the
+  script's real exit (3) as a failed result; a task-augmented `test` call
+  completes through the native task lifecycle; and the commit is attributed
+  to the agent identity. Workspace code run by `test` was refused (EPERM) the
+  gateway's `local.key` and `admission.key`, writes to the approved catalogue
+  and the installed Runtime, `~/.ssh`, and outbound network, and its
+  environment carried no credentials. The first live run found that no
+  command could run at all: the gateway wrapped the server in a Seatbelt
+  profile, and macOS refuses `sandbox_apply` inside any restrictive profile
+  (exit 71), so the server is now a trusted broker launched without one, with
+  each command under its own mandatory profile (see section 6;
+  `commands-mcp-integration.test.ts` launches the server exactly as the
+  gateway does). The ChatGPT ingress surface (`/orchestrator/mcp`, with the
+  tunnel's key and a conversation identity) lists the eight `commands__*`
+  tools and runs `git_status` in the gateway workspace. Still open: a run
+  from a real ChatGPT conversation and the other providers' live runs.
 - **Task durability.** The SDK's in-memory store is no longer used.
   `runtime/src/mcp/command-task-store.ts` implements the SDK's own `TaskStore`
   extension point over the Runtime's private run directory
@@ -561,11 +610,14 @@ Do not retry a mutating command or an uncertain submission automatically. On fai
 
 **A fixed command allowlist is not an execution sandbox.** pnpm test executes repository code, and pnpm install can execute package lifecycle scripts. An agent with write access can alter package scripts, dependencies, hooks or test files before running an approved invocation. Constrain every descendant independently of command text.
 
+**Broker versus workload:** On macOS 26.5.2 the operator confirmed that even an outer Seatbelt profile denying only a nonexistent file prevents applying the command's own Seatbelt profile. The Commands MCP server is therefore a trusted installed Runtime execution broker without an outer Seatbelt profile, not a workspace workload. Its in-process registry proxy may reach the approved upstream; every untrusted command and descendant remains subject to the independent default-deny command profile. Do not introduce a separate same-user exec helper or an unsandboxed command fallback. The current source launcher already reflects this decision; actual installed command execution and registry egress remain acceptance gates. Keep the broker on the serving Runtime source/dependency generation, not a newly swapped installation link.
+
 Enforce all of these boundaries:
 
 - Discovery and invocation: grant only the intersection of operator approval, canonical role, workspace, command definition and supported runtime capability. Reauthorize before execution and on task operations. Deny unknown or revoked grants.
 - Catalogue integrity: agents cannot widen their own grants by editing source configuration or invoking reload/reconciliation. If declarations live in an editable checkout, distinguish proposed declarations from operator-approved, protected effective policy. Bind authorization to the approved revision and protect the materialized policy, executable resolution, launcher and privileged Runtime code against replacement or TOCTOU by the same principal. A writable AutoDev source checkout is not a trustworthy live security boundary.
 - Workspace: bind cwd to trusted structured context; canonicalize paths and account for symlinks, mounts and overlapping workspaces. No caller-controlled cwd or environment.
+- Trust boundary: confine once, at the boundary to untrusted execution. The Commands server is a trusted broker (installed Runtime code, the approved catalogue, task lifecycle and registry proxy) and runs without an outer Seatbelt profile, because macOS refuses `sandbox_apply` inside any restrictive profile; every command and its descendants run under their own mandatory profile, and a profile that cannot be applied refuses the command. Workspace-controlled code never runs outside that boundary. The other MCP servers keep their outer profiles.
 - OS confinement: generalize existing Seatbelt/host confinement where proven. Deny writes outside authorized workspace and explicitly scoped scratch/cache areas, and deny reads of protected secrets, unrelated repositories and host credentials. Control subprocess and IPC access, signaling and escape paths. If confinement cannot be established, fail closed.
 - Environment: construct a minimal allowlisted environment; do not inherit operator API keys, SSH agent sockets, cloud credentials, tunnel tokens, provider credentials or unrestricted host configuration. Keep secrets out of output, logs and telemetry.
 - Network: deny by default for local validation and formatting; grant explicit network access for tests/builds only where required. Dependency installs need reviewed package-source access, registry authentication isolation and supply-chain controls. Do not claim domain-level enforcement if the underlying OS/network boundary cannot provide it. Protect shared caches from cross-workspace poisoning; isolate writable caches where necessary.

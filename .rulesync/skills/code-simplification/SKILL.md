@@ -131,6 +131,8 @@ Look for evidence such as:
 - Dead or superseded code
 - Comments required only because the code structure obscures intent
 
+When the project supplies a duplicate-code detector (for example, jscpd), use its configured normal clone scan and, where useful, function-similarity scan to find candidates across module boundaries. Prefer the project's existing scripts or approved Commands tools over installing a separate scanner. For example, a project's `duplicates` and `duplicates:similar` scripts may also be exposed as approved command tools. Use available dead-code analysis (such as Knip) as complementary evidence, not as a substitute for duplication analysis. Read the reported fragments and compare their contracts, ownership and variation before refactoring. Do not automatically extract helpers for coincidental similarity, intentionally isolated code, or duplicated tests that express independent behavior. Keep the skill usable without any specific detector; inspect the relevant implementations directly when tooling is unavailable.
+
 Treat size thresholds only as investigation signals. A small file can have excellent cohesion and a large file can represent one clear concept
 
 ### Test Coupling and Extensible Catalogs

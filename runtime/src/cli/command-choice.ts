@@ -24,7 +24,7 @@ import { ConfigError } from "@simulatorlife/autodev-runtime/config";
  */
 
 /** Joins accepted values the way a sentence reads: "a, b, or c". */
-export function formatChoices(choices: readonly string[]): string {
+function formatChoices(choices: readonly string[]): string {
   if (choices.length < 2) return choices.at(0) ?? "";
   return `${choices.slice(0, -1).join(", ")}, or ${choices.at(-1) ?? ""}`;
 }

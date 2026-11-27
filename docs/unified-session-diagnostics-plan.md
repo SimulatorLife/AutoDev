@@ -277,7 +277,6 @@ Remove the superseded client-only POST lookup island, its browser proxy route, a
 Add `diagnostics: "/control/diagnostics"` to `CONTROL_API_PATHS` and typed server-side fetchers (`20_000ms` timeout, Core schema validation):
 
 - `fetchSessionDiagnostics(sessionId, options, config, fetchOptions)`
-- `fetchRecentSessions(limit, config, fetchOptions)`
 - `fetchFleetSessionScan(limit, config, fetchOptions)`
 - `fetchHookDenials(sinceDays, config, fetchOptions)`
 

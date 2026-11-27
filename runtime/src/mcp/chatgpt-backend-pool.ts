@@ -95,7 +95,7 @@ const toolIdentifier = z.string().regex(/^[a-zA-Z0-9_.-]+$/u);
 
 export const CHATGPT_MCP_POOL_PORT_ENV = "AUTODEV_MCP_POOL_PORT";
 export const CHATGPT_MCP_POOL_TOKEN_ENV = "AUTODEV_MCP_POOL_TOKEN";
-export const DEFAULT_BACKEND_IDLE_TIMEOUT_MS = 180_000;
+const DEFAULT_BACKEND_IDLE_TIMEOUT_MS = 180_000;
 const REQUEST_TIMEOUT_MS = 15_000;
 const TOOL_CALL_TIMEOUT_MS = 60_000;
 const MAX_BODY_BYTES = 16 * 1024 * 1024;
@@ -184,7 +184,7 @@ const admittedBackendSchema = z
     tools: z.array(toolIdentifier).min(1)
   })
   .strict();
-export type AdmittedBackendSpec = z.infer<typeof admittedBackendSchema>;
+type AdmittedBackendSpec = z.infer<typeof admittedBackendSchema>;
 
 export const chatgptBackendPoolConfigSchema = z
   .object({
@@ -339,10 +339,7 @@ function timingSafeBearerMatch(
 }
 
 /** Terminate a spawned process and its entire POSIX process group so wrappers never orphan children. */
-export function signalProcessTree(
-  child: ChildProcess,
-  signal: NodeJS.Signals
-): void {
+function signalProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
   if (child.exitCode !== null || child.signalCode !== null) return;
   if (process.platform !== "win32" && typeof child.pid === "number") {
     try {
@@ -1494,14 +1491,14 @@ call: "an anonymized conversation id you can use to correlate requests within
 a ChatGPT session" (Apps SDK changelog). It travels in request metadata the
 client sets, never in tool arguments the model writes.
 */
-export const CHATGPT_CONVERSATION_META_KEY = "openai/session";
+const CHATGPT_CONVERSATION_META_KEY = "openai/session";
 
 /**
 The digest a conversation is known by inside AutoDev.
 
 The raw identifier never reaches a process argument, environment or log.
 */
-export function chatgptConversationKey(meta: unknown): string | null {
+function chatgptConversationKey(meta: unknown): string | null {
   if (!isRecord(meta)) return null;
   const identity = meta[CHATGPT_CONVERSATION_META_KEY];
   if (
@@ -1516,10 +1513,7 @@ export function chatgptConversationKey(meta: unknown): string | null {
     .slice(0, 24);
 }
 
-type ConversationScopedSpec = Extract<
-  PooledBackendSpec,
-  { kind: "stdio" }
-> & {
+type ConversationScopedSpec = Extract<PooledBackendSpec, { kind: "stdio" }> & {
   readonly conversationScopedEnv: string;
   readonly env: Record<string, string>;
 };
@@ -1628,11 +1622,9 @@ class ScopedController {
       const owner =
         resolution.owner ?? taskOwner(resolution.message.params, sessionId);
       if (owner === null) return null;
-      await this.scopes.get(resolution.key)?.handleRequest(
-        resolution.message,
-        sessionId,
-        owner
-      );
+      await this.scopes
+        .get(resolution.key)
+        ?.handleRequest(resolution.message, sessionId, owner);
       return null;
     }
     if (
@@ -1671,8 +1663,14 @@ class ScopedController {
     return {
       ...catalogue,
       running: catalogue.running || scopes.some((scope) => scope.running),
-      spawns: scopes.reduce((total, scope) => total + scope.spawns, catalogue.spawns),
-      activeCalls: scopes.reduce((total, scope) => total + scope.activeCalls, 0),
+      spawns: scopes.reduce(
+        (total, scope) => total + scope.spawns,
+        catalogue.spawns
+      ),
+      activeCalls: scopes.reduce(
+        (total, scope) => total + scope.activeCalls,
+        0
+      ),
       retainedTasks: scopes.reduce(
         (total, scope) => total + scope.retainedTasks,
         catalogue.retainedTasks
@@ -1731,7 +1729,10 @@ function admitted(
   const admission = options.admission;
   if (!admission)
     throw new Error(`${name} needs gateway admission, which is not configured`);
-  const provisioned = (workspace: string, session?: string): PooledBackendSpec => ({
+  const provisioned = (
+    workspace: string,
+    session?: string
+  ): PooledBackendSpec => ({
     kind: "stdio",
     tools: spec.tools,
     ...admission.provision(spec.server, spec.role, workspace, session)
@@ -1759,7 +1760,10 @@ function admitted(
           perSession ? claims.session : null
         ]),
         spec: () =>
-          provisioned(claims.workspace, perSession ? claims.session : undefined),
+          provisioned(
+            claims.workspace,
+            perSession ? claims.session : undefined
+          ),
         owner: `grant:${claims.session}`,
         correlation: {
           server: spec.server,
@@ -2005,7 +2009,9 @@ export async function startChatgptBackendPool(
       if (sharedTelemetryPromise) {
         await Promise.race([
           sharedTelemetryPromise.then(
-            (mod) => mod.shutdownTelemetry(),
+            // The pool does not own the process's telemetry: deliver its
+            // spans, leaving the provider to whatever outlives the pool.
+            (mod) => mod.flushTelemetry(),
             () => {}
           ),
           new Promise<void>((resolve) => setTimeout(resolve, 400).unref())

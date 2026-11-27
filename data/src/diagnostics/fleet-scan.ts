@@ -21,6 +21,7 @@ import {
 
 import {
   listRecentSessions,
+  mergeNativeRecentSessions,
   readHeadMeta,
   rolloutFiles,
   rolloutRoots
@@ -294,10 +295,19 @@ export async function scanRecentSessions(
       .map(([key, count]) => ({ key, count }))
   };
 
+  const recentSessions = mergeNativeRecentSessions(
+    recent,
+    options.limit,
+    options.routerLog
+  );
+  const rolloutIds = new Set(recent.map((session) => session.id));
   return {
     schema: SESSION_FLEET_SCAN_SCHEMA,
     limit: options.limit,
     sessions: sessionRows,
+    ...(recentSessions.some((session) => !rolloutIds.has(session.id))
+      ? { recentSessions }
+      : {}),
     totals: publishedTotals
   };
 }

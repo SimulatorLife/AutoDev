@@ -70,7 +70,7 @@ import {
 } from "../../components/ui/text-classes.ts";
 
 /** The tabs the session-scoped page offers. */
-export const SESSION_TABS = [
+const SESSION_TABS = [
   { id: "overview", label: "Overview" },
   { id: "threads", label: "Threads & Turns" },
   { id: "failures", label: "Failures & Hooks" },
@@ -302,7 +302,7 @@ function chartData(
  * browser-side state change, so the page stays addressable, bookmarkable and
  * reachable by the back button -- and every tab keeps the session scope.
  */
-export function sessionViewHref(
+function sessionViewHref(
   state: SessionDiagnosticsViewState,
   changes: Readonly<Record<string, string | number | undefined>>
 ): string {
@@ -339,17 +339,22 @@ function panel(title: string, children: React.ReactNode): React.JSX.Element {
 function renderContextHeader(
   report: SessionDiagnosticsReport
 ): React.JSX.Element {
+  const native = report.nativeSession;
   const root = report.threads.find((thread) => thread.parentId === null);
-  const workspace = root?.cwd ?? null;
-  const started = report.threads
-    .map((thread) => thread.start)
-    .filter((value): value is string => typeof value === "string")
-    .sort()[0];
-  const ended = report.threads
-    .map((thread) => thread.end)
-    .filter((value): value is string => typeof value === "string")
-    .sort()
-    .at(-1);
+  const workspace = root?.cwd ?? native?.workspace ?? null;
+  const started = native
+    ? (native.startedAt ?? undefined)
+    : report.threads
+        .map((thread) => thread.start)
+        .filter((value): value is string => typeof value === "string")
+        .sort()[0];
+  const ended = native
+    ? (native.endedAt ?? undefined)
+    : report.threads
+        .map((thread) => thread.end)
+        .filter((value): value is string => typeof value === "string")
+        .sort()
+        .at(-1);
   const openThread = report.live?.openThreads.some(
     (thread) => thread.id === root?.id
   );
@@ -369,7 +374,7 @@ function renderContextHeader(
     React.createElement(
       DetailValue,
       { label: "Threads" },
-      String(report.aggregates.threadCount)
+      native ? NOT_OBSERVED_LABEL : String(report.aggregates.threadCount)
     ),
     React.createElement(
       DetailValue,
@@ -394,9 +399,13 @@ function renderContextHeader(
     React.createElement(
       DetailValue,
       { label: "Live" },
-      openThread === true
-        ? React.createElement(Tag, { children: "Open turn" })
-        : React.createElement(Tag, { children: "Not running" })
+      native
+        ? React.createElement(Tag, {
+            children: native.endedAt ? "End observed" : NOT_OBSERVED_LABEL
+          })
+        : openThread === true
+          ? React.createElement(Tag, { children: "Open turn" })
+          : React.createElement(Tag, { children: "Not running" })
     ),
     React.createElement(
       DetailValue,
@@ -420,7 +429,7 @@ function renderAlerts(report: SessionDiagnosticsReport): React.JSX.Element[] {
       React.createElement(
         "p",
         { className: CALLOUT_WARNING_CLASS, role: "status" },
-        "No rollout matched this session id under the Codex home's sessions or archived_sessions directories."
+        "No rollout or retained native lifecycle observation matched this session ID."
       )
     );
   }
@@ -1680,6 +1689,34 @@ export function SessionDiagnosticsView({
         "p",
         { className: MUTED_BODY_CLASS },
         "The session diagnostics could not be read."
+      );
+    }
+    if (report.nativeSession && state.tab !== "spans") {
+      return React.createElement(
+        "div",
+        { className: PANEL_CONTENT_STACK_CLASS },
+        React.createElement(
+          DetailGrid,
+          { columns: 2 },
+          React.createElement(
+            DetailValue,
+            { label: "Model" },
+            report.nativeSession.model ?? NOT_OBSERVED_LABEL
+          ),
+          React.createElement(
+            DetailValue,
+            { label: "Last observed" },
+            React.createElement(InstantDisplay, {
+              value: report.nativeSession.lastObservedAt,
+              label: "Last observed"
+            })
+          )
+        ),
+        React.createElement(
+          "p",
+          { className: MUTED_BODY_CLASS },
+          "Native session lifecycle was observed. Transcript, per-turn usage and managed router diagnostics are not observed for this session."
+        )
       );
     }
     switch (state.tab) {

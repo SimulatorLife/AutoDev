@@ -84,11 +84,6 @@ export function deliverWholePageAnswer(href: string): void {
   }
 }
 
-/** How many observers the owner has installed; the tests assert on this. */
-export function wholePageAnswerObserverCount(): number {
-  return observers.size;
-}
-
 /**
  * Stand in for the browser's address bar.
  *

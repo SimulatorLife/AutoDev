@@ -49,8 +49,6 @@ import {
 } from "./playtest-scaffold.ts";
 
 export const PLAYTESTS_SUBCOMMANDS = ["init", "check", "conformance"] as const;
-export type PlaytestSubcommand = (typeof PLAYTESTS_SUBCOMMANDS)[number];
-
 export const PLAYTESTS_CONFIG_FILE = "playtest.config.json";
 export const PLAYTESTS_OBSERVATION_FILE = "playtest.observation.json";
 export const PLAYTESTS_RUBRIC_FILE = "playtest.rubric.json";
@@ -62,8 +60,8 @@ const SCAFFOLD_ADAPTER_SCHEMAS: PlaytestAdapterBinding["schemas"] = {
   event: { type: "object", properties: {} }
 };
 
-export type PlaytestProblemSeverity = "error" | "warning";
-export type PlaytestProblemCode =
+type PlaytestProblemSeverity = "error" | "warning";
+type PlaytestProblemCode =
   | "missing-file"
   | "invalid-json"
   | "invalid-contract"
@@ -75,7 +73,7 @@ export type PlaytestProblemCode =
   | "incomplete-binding"
   | "unknown-policy";
 
-export interface PlaytestCheckProblem {
+interface PlaytestCheckProblem {
   readonly severity: PlaytestProblemSeverity;
   readonly code: PlaytestProblemCode;
   /** Checkout-relative, so the message names a path the operator can open. */
@@ -890,5 +888,3 @@ export function dispatchPlaytestCommand(
     PLAYTESTS_SUBCOMMANDS
   );
 }
-
-export { PLAYTESTS_INTEGRATION_DIR } from "@simulatorlife/autodev-core";

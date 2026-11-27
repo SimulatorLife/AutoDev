@@ -29,7 +29,7 @@ import type { ControlApiResult } from "./control-api.ts";
 export const MUTATION_REJECTION_SCHEMA = "autodev-console-mutation-rejected-v1";
 
 /** Why a mutation route did not forward a change, or what came back. */
-export type MutationRejectionCause =
+type MutationRejectionCause =
   /** Not a same-origin browser form submission. */
   | "cross_origin"
   /** The path names no valid provider, role, model or agent. */

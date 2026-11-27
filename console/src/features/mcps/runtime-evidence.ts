@@ -29,7 +29,7 @@ const FLEX_COLUMN_DETAILS_CLASS = "flex flex-col gap-2";
  * The badge's label always carries the Runtime's own word, so the tone never
  * becomes the only record of what the Runtime reported.
  */
-export function runtimeHealthStatus(
+function runtimeHealthStatus(
   health: ControlApiMcpRuntimeHealth
 ): StatusBadgeVariant {
   if (health === "ready") return "ready";

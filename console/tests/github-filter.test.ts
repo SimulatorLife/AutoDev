@@ -6,6 +6,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
+  countRunOutcomes,
   countWorkflowStates,
   filterRuns,
   filterWorkflows,
@@ -176,6 +177,29 @@ test("the runs table narrows by links, and the page stays read-only", () => {
   assert.match(markup, /Failed/u);
   assert.match(markup, /Cancelled/u);
   assert.match(markup, /In progress/u);
+});
+
+test("the outcome counts are over the whole sample, and the chips show them", () => {
+  const counts = countRunOutcomes(RUNS);
+  // The skipped run is in the sample's total and in no outcome's counter.
+  assert.deepEqual(counts, {
+    all: 5,
+    succeeded: 1,
+    failed: 1,
+    cancelled: 1,
+    "in-progress": 1
+  });
+
+  // Narrowing to one outcome does not shrink the other chips' counts.
+  const markup = renderGithub("failed");
+  const chip = (outcome: string): string | undefined =>
+    new RegExp(
+      `<a\\b[^>]*data-run-outcome="${outcome}"[^>]*>([^<]*)</a>`,
+      "u"
+    ).exec(markup)?.[1];
+  assert.equal(chip("all"), "All outcomes 5");
+  assert.equal(chip("succeeded"), "Succeeded 1");
+  assert.equal(chip("failed"), "Failed 1");
 });
 
 test("the selected chip says so, and not only by its colour", () => {

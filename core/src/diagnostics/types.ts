@@ -428,10 +428,19 @@ export interface SessionDiagnosticsAggregates {
   readonly byProvider: Readonly<Record<string, SessionRouterProviderStats>>;
 }
 
+/** Bounded lifecycle evidence; no claim of native transcript or token coverage. */
+export interface NativeSessionEvidence {
+  readonly startedAt: string | null;
+  readonly lastObservedAt: string;
+  readonly endedAt: string | null;
+  readonly model: string | null;
+  readonly workspace: string | null;
+}
+
 /** One session's full diagnostics report. */
 export interface SessionDiagnosticsReport {
   readonly schema: typeof SESSION_DIAGNOSTICS_SCHEMA;
-  /** False when no rollout matched the requested id. */
+  /** False when neither a rollout nor a native lifecycle observation matched. */
   readonly found: boolean;
   readonly requestedId: string;
   /** The session the id resolved to, when it resolved to one. */
@@ -440,6 +449,7 @@ export interface SessionDiagnosticsReport {
   readonly matchedByThreadId: boolean;
   /** The client surface observed on the session's root thread, if any. */
   readonly clientSurface: ClientSurface | null;
+  readonly nativeSession?: NativeSessionEvidence;
   readonly threads: readonly SessionThreadTrace[];
   readonly router: readonly SessionRouterSummary[];
   readonly logs: readonly SessionLogFileSummary[];
@@ -517,7 +527,11 @@ export interface FleetScanTotals {
 export interface SessionFleetScanResponse {
   readonly schema: typeof SESSION_FLEET_SCAN_SCHEMA;
   readonly limit: number;
+  /** Rollout-backed efficiency/failure rows only. */
   readonly sessions: readonly FleetSessionRow[];
+  /** Unified bounded recent list when lifecycle-only native sessions are present. */
+  readonly recentSessions?: readonly RecentSessionSummary[];
+  /** Rollout-only totals; native metrics must not be fabricated as zero. */
   readonly totals: FleetScanTotals;
 }
 
@@ -1166,7 +1180,14 @@ function hasSessionReportIdentity(value: Record<string, unknown>): boolean {
     typeof value.requestedId === "string" &&
     isNullableString(value.rootSessionId) &&
     typeof value.matchedByThreadId === "boolean" &&
-    isNullableClientSurface(value.clientSurface)
+    isNullableClientSurface(value.clientSurface) &&
+    (value.nativeSession === undefined ||
+      (isRecord(value.nativeSession) &&
+        isNullableString(value.nativeSession.startedAt) &&
+        typeof value.nativeSession.lastObservedAt === "string" &&
+        isNullableString(value.nativeSession.endedAt) &&
+        isNullableString(value.nativeSession.model) &&
+        isNullableString(value.nativeSession.workspace)))
   );
 }
 
@@ -1283,6 +1304,8 @@ export function isSessionFleetScanResponse(
     value.schema === SESSION_FLEET_SCAN_SCHEMA &&
     isNumber(value.limit) &&
     isEveryEntry(value.sessions, isFleetSessionRow) &&
+    (value.recentSessions === undefined ||
+      isEveryEntry(value.recentSessions, isRecentSessionSummary)) &&
     isFleetScanTotals(value.totals)
   );
 }

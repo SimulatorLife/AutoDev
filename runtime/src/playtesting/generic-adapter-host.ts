@@ -46,7 +46,7 @@ const INTERNAL_ERROR = -32_603;
 const PARSE_ERROR = -32_700;
 
 /** Parse one line into a request, rejecting anything the protocol forbids. */
-export function parseAdapterRequest(line: string):
+function parseAdapterRequest(line: string):
   | {
       readonly ok: true;
       readonly request: PlaytestJsonRpcRequest;
@@ -241,5 +241,3 @@ export async function startGenericAdapterHost(
     }
   };
 }
-
-export { protocolMethodFor } from "./generic-adapter.ts";

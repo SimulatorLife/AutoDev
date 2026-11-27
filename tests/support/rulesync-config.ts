@@ -34,9 +34,7 @@ export interface RulesyncConfig {
 /**
 Read `rulesync.jsonc`, the repository's canonical target state.
 */
-export function readRulesyncConfig(
-  repositoryRoot: string
-): RulesyncConfig {
+export function readRulesyncConfig(repositoryRoot: string): RulesyncConfig {
   const source = parseJsoncObject(
     readFileSync(path.join(repositoryRoot, "rulesync.jsonc"), "utf8"),
     "rulesync.jsonc"
@@ -60,10 +58,10 @@ export function readRulesyncConfig(
   };
 }
 
-function assertRecord(value: unknown, label: string): asserts value is Record<
-  string,
-  unknown
-> {
+function assertRecord(
+  value: unknown,
+  label: string
+): asserts value is Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} must be an object`);
   }
@@ -84,9 +82,7 @@ export function targetsOwningFeature(
 /**
 Every feature the configuration enables, across every target.
 */
-export function configuredFeatures(
-  config: RulesyncConfig
-): Set<string> {
+export function configuredFeatures(config: RulesyncConfig): Set<string> {
   return new Set(Object.values(config.targets).flat());
 }
 
@@ -96,7 +92,9 @@ The RuleSync executable this repository installs.
 export function rulesyncBinary(repositoryRoot: string): string {
   const binary = path.join(repositoryRoot, "node_modules", ".bin", "rulesync");
   if (!existsSync(binary)) {
-    throw new Error(`missing-rulesync ${binary}; run pnpm install --frozen-lockfile`);
+    throw new Error(
+      `missing-rulesync ${binary}; run pnpm install --frozen-lockfile`
+    );
   }
   return binary;
 }
@@ -112,7 +110,7 @@ it would rewrite, relative to the repository root. The repository's
 generated trees are not tracked, so a drifted path only matters when the
 repository tracks it.
 */
-export function rulesyncDriftedPaths(repositoryRoot: string): string[] {
+function rulesyncDriftedPaths(repositoryRoot: string): string[] {
   const result = spawnSync(
     rulesyncBinary(repositoryRoot),
     ["generate", "--check"],
@@ -125,7 +123,8 @@ export function rulesyncDriftedPaths(repositoryRoot: string): string[] {
     const drifted = match.groups?.path;
     if (!drifted) continue;
     const relative = path.relative(root, path.resolve(drifted));
-    if (!relative.startsWith("..")) paths.add(relative.split(path.sep).join("/"));
+    if (!relative.startsWith(".."))
+      paths.add(relative.split(path.sep).join("/"));
   }
   return [...paths].sort((left, right) => compareText(left, right));
 }

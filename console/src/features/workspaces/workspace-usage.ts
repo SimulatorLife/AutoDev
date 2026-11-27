@@ -51,7 +51,7 @@ export type WorkspaceRequestLookup = ReadonlyMap<
  * Requests that carried no workspace attribution belong to no workspace and
  * are not counted in any of them.
  */
-export function workspaceRequestReading(
+function workspaceRequestReading(
   source: UsageWorkspaceRequestSource,
   workspaceId: string
 ): WorkspaceRequestReading {

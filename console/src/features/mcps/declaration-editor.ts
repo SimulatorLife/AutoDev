@@ -13,7 +13,7 @@ import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
  * The write leaves the headers the declaration already has alone, so an edit
  * here never drops one.
  */
-export type McpDeclaredLaunch = Pick<
+type McpDeclaredLaunch = Pick<
   ControlApiMcpDeclaredServer,
   "command" | "args" | "cwd" | "url" | "bearerTokenEnvVar"
 >;

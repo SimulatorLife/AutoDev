@@ -49,7 +49,9 @@ function processEnvironment(): Record<string, string> {
 
 /** A disposable workspace with a Git repository in it. */
 function workspaceFixture(): string {
-  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "autodev-commands-workspace-")));
+  const root = realpathSync(
+    mkdtempSync(path.join(tmpdir(), "autodev-commands-workspace-"))
+  );
   execFileSync("/usr/bin/git", ["init", "--quiet", "--initial-branch=main"], {
     cwd: root
   });
@@ -90,11 +92,31 @@ test(
     const listed = await client.listTools();
     const names = listed.tools.map((tool) => tool.name).sort();
     assert.deepEqual(names, [
+      "build",
+      "duplicates",
+      "duplicates_similar",
+      "format_fix",
+      "git_add",
+      "git_blame",
+      "git_branches",
       "git_commit",
       "git_diff",
+      "git_diff_path",
+      "git_diff_staged",
+      "git_diff_stat",
+      "git_head",
+      "git_log",
+      "git_log_path",
+      "git_ls_files",
+      "git_merge_base",
+      "git_show",
       "git_stage",
       "git_status",
+      "git_unstage",
       "install_dependencies",
+      "knip",
+      "knip_production",
+      "lint",
       "lint_fix",
       "test",
       "typecheck"
@@ -137,10 +159,28 @@ test(
     const { client, close } = await connect(workspace, "validator");
     t.after(() => close());
     const listed = await client.listTools();
-    assert.deepEqual(
-      listed.tools.map((tool) => tool.name).sort(),
-      ["git_diff", "git_status", "test", "typecheck"]
-    );
+    assert.deepEqual(listed.tools.map((tool) => tool.name).sort(), [
+      "duplicates",
+      "duplicates_similar",
+      "git_blame",
+      "git_branches",
+      "git_diff",
+      "git_diff_path",
+      "git_diff_staged",
+      "git_diff_stat",
+      "git_head",
+      "git_log",
+      "git_log_path",
+      "git_ls_files",
+      "git_merge_base",
+      "git_show",
+      "git_status",
+      "knip",
+      "knip_production",
+      "lint",
+      "test",
+      "typecheck"
+    ]);
   }
 );
 
@@ -157,7 +197,10 @@ test(
       args: [SERVER, "--role", "explorer", "--workspace", workspace],
       env: processEnvironment()
     });
-    const client = new Client({ name: "commands-integration", version: "1.0.0" });
+    const client = new Client({
+      name: "commands-integration",
+      version: "1.0.0"
+    });
     await assert.rejects(() => client.connect(transport));
   }
 );
@@ -192,7 +235,11 @@ test(
     for (let attempt = 0; attempt < 60; attempt += 1) {
       const observed = await client.experimental.tasks.getTask(taskId);
       status = observed.status;
-      if (status === "completed" || status === "failed" || status === "cancelled") {
+      if (
+        status === "completed" ||
+        status === "failed" ||
+        status === "cancelled"
+      ) {
         break;
       }
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -231,7 +278,10 @@ test(
       { role: "worker" }
     );
     assert.notEqual(launch.command, "/usr/bin/sandbox-exec");
-    const client = new Client({ name: "commands-gateway-launch", version: "1.0.0" });
+    const client = new Client({
+      name: "commands-gateway-launch",
+      version: "1.0.0"
+    });
     await client.connect(
       new StdioClientTransport({
         command: launch.command,
@@ -270,7 +320,10 @@ test(
       args: [SERVER, "--role", "worker", "--workspace", repositoryRoot],
       env: processEnvironment()
     });
-    const client = new Client({ name: "commands-integration", version: "1.0.0" });
+    const client = new Client({
+      name: "commands-integration",
+      version: "1.0.0"
+    });
     await assert.rejects(() => client.connect(transport));
   }
 );
@@ -348,7 +401,11 @@ test(
       .split("\n")
       .filter((entry) => entry.startsWith("d") || entry.startsWith("-"));
     for (const entry of entries) {
-      assert.match(entry, /^drwx------/u, `scratch entry is not private: ${entry}`);
+      assert.match(
+        entry,
+        /^drwx------/u,
+        `scratch entry is not private: ${entry}`
+      );
     }
     mkdirSync(path.join(scratch, "probe"), { mode: 0o700 });
   }
@@ -365,8 +422,12 @@ test(
     const { client, close } = await connect(workspace, "worker");
     t.after(() => close());
 
-    // The staged change the commit will carry.
-    const staged = await client.callTool({ name: "git_stage", arguments: {} });
+    // Selective staging treats an option-looking name as a literal path.
+    writeFileSync(path.join(workspace, "--literal.txt"), "selected\n");
+    const staged = await client.callTool({
+      name: "git_add",
+      arguments: { path: "--literal.txt" }
+    });
     assert.equal(
       (staged.structuredContent as { status: string }).status,
       "succeeded"
@@ -384,12 +445,63 @@ test(
     assert.equal(result.status, "succeeded", result.stderr);
     assert.equal(result.exitCode, 0);
 
+    const run = async (
+      name: string,
+      arguments_: Record<string, string> = {}
+    ) => {
+      const response = await client.callTool({ name, arguments: arguments_ });
+      const value = response.structuredContent as {
+        status: string;
+        stdout: string;
+        stderr: string;
+      };
+      assert.equal(value.status, "succeeded", value.stderr);
+      return value.stdout;
+    };
+    assert.match(await run("git_status"), /\?\? README\.md/u);
+    assert.match(await run("git_log"), /fixture commit/u);
+    assert.match(
+      await run("git_log_path", { path: "--literal.txt" }),
+      /fixture commit/u
+    );
+    const head = (await run("git_head")).trim();
+    assert.match(head, /^[0-9a-f]{40,64}$/u);
+    assert.match(await run("git_show", { revision: head }), /selected/u);
+    assert.match(await run("git_branches"), /main/u);
+    assert.match(
+      await run("git_blame", { path: "--literal.txt" }),
+      /selected/u
+    );
+    assert.match(await run("git_ls_files"), /--literal\.txt/u);
+    assert.equal(
+      (await run("git_merge_base", { left: "HEAD", right: head })).trim(),
+      head
+    );
+    writeFileSync(path.join(workspace, "--literal.txt"), "updated\n");
+    assert.match(await run("git_diff_stat"), /--literal\.txt/u);
+    assert.match(
+      await run("git_diff_path", { path: "--literal.txt" }),
+      /\+updated/u
+    );
+    await run("git_add", { path: "--literal.txt" });
+    assert.match(await run("git_diff_staged"), /\+updated/u);
+    await run("git_unstage", { path: "--literal.txt" });
+    assert.equal((await run("git_diff_staged")).trim(), "");
+    assert.match(
+      await run("git_diff_path", { path: "--literal.txt" }),
+      /\+updated/u
+    );
+
     // The commit exists and carries the Runtime's own agent identity, which
     // is the only identity a confined command can be given.
-    const log = execFileSync("/usr/bin/git", ["log", "-1", "--format=%an <%ae>%n%cn <%ce>"], {
-      cwd: workspace,
-      encoding: "utf8"
-    }).trim();
+    const log = execFileSync(
+      "/usr/bin/git",
+      ["log", "-1", "--format=%an <%ae>%n%cn <%ce>"],
+      {
+        cwd: workspace,
+        encoding: "utf8"
+      }
+    ).trim();
     assert.match(log, /^AutoDev Agent \(worker\) <autodev-worker-/u);
     assert.match(log, /AutoDev Agent \(worker\) <autodev-worker-/u);
     // The subject is the parameter the model supplied, carried literally.

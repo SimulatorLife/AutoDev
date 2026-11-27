@@ -396,7 +396,7 @@ bundles it), `lsp_call_hierarchy`, `lsp_file_imports`, or `lsp_related_files`
 (CodeGraphContext owns call and dependency relationships), or the editor and
 server-lifecycle tools. `explorer`, `validator`, `smart`, and `orchestrator`
 keep the full LSP surface as the fallback for questions the preferred owner
-cannot answer. `tests/config/config-rendering.test.ts` freezes that split.
+cannot answer. `tests/config/config-rendering.test.ts` freezes that split. The LSP MCP starts language servers lazily per detected project root. An empty successful `lsp_server_status` is an idle MCP, not a connection failure. Verify with a file-scoped semantic operation followed by status; do not prewarm every language server during installation.
 The canonical Rulesync configuration contains provider-specific current projection overrides. The ACP profile and gateway target must deliver the exact effective role tools, regardless of the provider's user-level registry. The `browser-tester` and `smart`
 roles use the pinned TypeScript language server from AutoDev's devDependencies;
 the installer also installs `python-lsp-server==1.15.0` with pipx so Python

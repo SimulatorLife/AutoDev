@@ -44,7 +44,7 @@ export function normalizeResetsAt(value: unknown): string | null {
  * Milliseconds in a stated window such as `24m43s` or `14h23m32s`, or null when
  * it names no window.
  */
-export function durationMsFromWindow(window: string): number | null {
+function durationMsFromWindow(window: string): number | null {
   let total = 0;
   let components = 0;
   for (const [, digits, unit] of window.matchAll(DURATION_COMPONENT_PATTERN)) {

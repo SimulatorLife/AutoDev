@@ -31,7 +31,7 @@ export interface InlineDisplayToggleProps {
  * "this value changes when clicked" without adding a box around it. A native
  * button supplies Enter/Space activation and the focus order for free.
  */
-export const INLINE_DISPLAY_TOGGLE_CLASS =
+const INLINE_DISPLAY_TOGGLE_CLASS =
   "cursor-pointer bg-transparent p-0 text-left font-[inherit] text-inherit underline decoration-dotted underline-offset-4 hover:decoration-solid focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 
 /** The index the toggle moves to when activated: representations cycle in order. */

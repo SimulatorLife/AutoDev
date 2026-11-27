@@ -50,9 +50,11 @@ test("a cwd that is the authorized workspace root resolves to it", () => {
   assert.equal(result.workspace, workspace);
 });
 
-test("a cwd inside the authorized workspace is refused, not accepted as the root", () => {
+test("a cwd inside the authorized workspace is refused as nested, not as an unknown path", () => {
   // The canonical binding is anchored at the repository root, so a
   // subdirectory is a different path than the one the operator authorized.
+  // The operator is told it is nested rather than told it matches nothing,
+  // because those are different mistakes with different repairs.
   const result = resolveClaudeCodeWorkspaceBinding(
     binding,
     `${WORKSPACE_ROOT}/src`,
@@ -60,6 +62,7 @@ test("a cwd inside the authorized workspace is refused, not accepted as the root
   );
   assert.equal(result.ok, false);
   assert.equal(result.failure, "workspace_unauthorized");
+  assert.match(result.failureMessage ?? "", /subdirectory or ancestor/u);
 });
 
 test("a cwd that is an ancestor of the authorized workspace is refused", () => {
@@ -72,7 +75,7 @@ test("a cwd that is an ancestor of the authorized workspace is refused", () => {
   assert.equal(result.failure, "workspace_unauthorized");
 });
 
-test("a cwd that matches no authorized workspace is refused", () => {
+test("a cwd that matches no authorized workspace is refused as unknown", () => {
   const result = resolveClaudeCodeWorkspaceBinding(
     binding,
     "/elsewhere/project",
@@ -80,6 +83,10 @@ test("a cwd that matches no authorized workspace is refused", () => {
   );
   assert.equal(result.ok, false);
   assert.equal(result.failure, "workspace_unauthorized");
+  assert.match(
+    result.failureMessage ?? "",
+    /does not match any operator-authorized workspace root/u
+  );
 });
 
 test("a transcript beneath the transcript root resolves to the workspace", () => {

@@ -15,7 +15,7 @@ import { randomUUID } from "node:crypto";
 
 import { JsonLineFramer } from "../jsonl-framer.ts";
 
-export interface JsonRpcError {
+interface JsonRpcError {
   readonly code: number;
   readonly message: string;
   readonly data?: Readonly<Record<string, unknown>>;
@@ -33,7 +33,7 @@ export type JsonRpcEnvelope =
       readonly error: JsonRpcError;
     };
 
-export class JsonRpcClientError extends Error {
+class JsonRpcClientError extends Error {
   readonly category:
     | "spawn-failed"
     | "non-zero-exit"
@@ -56,7 +56,7 @@ export class JsonRpcClientError extends Error {
   }
 }
 
-export interface SpawnedJsonRpcTransport {
+interface SpawnedJsonRpcTransport {
   readonly command: string;
   readonly args: readonly string[];
   readonly env: Readonly<Record<string, string>>;
@@ -65,7 +65,7 @@ export interface SpawnedJsonRpcTransport {
   readonly framer: JsonLineFramer;
 }
 
-export interface JsonRpcSpawner {
+interface JsonRpcSpawner {
   (
     payload: string,
     options: {

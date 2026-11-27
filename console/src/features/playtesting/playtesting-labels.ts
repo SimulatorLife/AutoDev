@@ -154,8 +154,7 @@ const RUNTIME_FAILURE_CAUSES = {
     "The decision backend chose an action the screen did not offer, so the runtime refused it."
 } as const;
 
-export type PlaytestingRuntimeFailureCause =
-  keyof typeof RUNTIME_FAILURE_CAUSES;
+type PlaytestingRuntimeFailureCause = keyof typeof RUNTIME_FAILURE_CAUSES;
 
 /**
  * The tone for a state that is known but not a success.

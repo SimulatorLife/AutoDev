@@ -9,7 +9,7 @@ export const PROVIDER_NAMES = [
   "antigravity"
 ] as const;
 
-export type ProviderName = (typeof PROVIDER_NAMES)[number];
+type ProviderName = (typeof PROVIDER_NAMES)[number];
 
 export interface ProviderCommandBackend {
   start(provider: ProviderName): number;

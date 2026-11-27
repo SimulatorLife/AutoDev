@@ -15,6 +15,7 @@
 import {
   type FleetSessionRow,
   formatClientSurface,
+  type RecentSessionSummary,
   type SessionFleetScanResponse,
   type SessionHookDenialsResponse
 } from "@simulatorlife/autodev-core";
@@ -123,9 +124,13 @@ function panel(title: string, children: React.ReactNode): React.JSX.Element {
   );
 }
 
+type RecentSessionRow = RecentSessionSummary & {
+  readonly rollout?: FleetSessionRow;
+};
+
 function sessionColumns(
   range: string
-): readonly ColumnDef<DataTableFeatures, FleetSessionRow, unknown>[] {
+): readonly ColumnDef<DataTableFeatures, RecentSessionRow, unknown>[] {
   return [
     {
       id: "session",
@@ -161,51 +166,61 @@ function sessionColumns(
     {
       id: "threads",
       header: "Threads",
-      cell: ({ row: { original: row } }) => String(row.threads),
+      cell: ({ row: { original: row } }) =>
+        row.rollout ? String(row.rollout.threads) : NOT_OBSERVED_LABEL,
       meta: { weight: 80, align: "tokens" }
     },
     {
       id: "tokens",
       header: "Tokens",
-      cell: ({ row: { original: row } }) => tokens(row.totalTokens),
+      cell: ({ row: { original: row } }) =>
+        row.rollout ? tokens(row.rollout.totalTokens) : NOT_OBSERVED_LABEL,
       meta: { weight: 90, align: "tokens" }
     },
     {
       id: "cache",
       header: "Cache %",
-      cell: ({ row: { original: row } }) => percent(row.cacheHitPct),
+      cell: ({ row: { original: row } }) =>
+        row.rollout ? percent(row.rollout.cacheHitPct) : NOT_OBSERVED_LABEL,
       meta: { weight: 80, align: "tokens" }
     },
     {
       id: "compactions",
       header: "Compactions",
-      cell: ({ row: { original: row } }) => String(row.compactions),
+      cell: ({ row: { original: row } }) =>
+        row.rollout ? String(row.rollout.compactions) : NOT_OBSERVED_LABEL,
       meta: { weight: 100, align: "tokens" }
     },
     {
       id: "failures",
       header: "Failures",
       cell: ({ row: { original: row } }) =>
-        React.createElement(
-          "span",
-          { className: "flex flex-wrap gap-1" },
-          String(row.toolFailures),
-          row.topFailureCategory === null
-            ? null
-            : React.createElement(Tag, { children: row.topFailureCategory })
-        ),
+        row.rollout
+          ? React.createElement(
+              "span",
+              { className: "flex flex-wrap gap-1" },
+              String(row.rollout.toolFailures),
+              row.rollout.topFailureCategory === null
+                ? null
+                : React.createElement(Tag, {
+                    children: row.rollout.topFailureCategory
+                  })
+            )
+          : NOT_OBSERVED_LABEL,
       meta: { weight: 180, align: "tokens" }
     },
     {
       id: "hooks",
       header: "Hook blocks",
-      cell: ({ row: { original: row } }) => String(row.preToolUseBlocks),
+      cell: ({ row: { original: row } }) =>
+        row.rollout ? String(row.rollout.preToolUseBlocks) : NOT_OBSERVED_LABEL,
       meta: { weight: 100, align: "tokens" }
     },
     {
       id: "requests",
       header: "Router requests",
-      cell: ({ row: { original: row } }) => String(row.routerRequests),
+      cell: ({ row: { original: row } }) =>
+        row.rollout ? String(row.rollout.routerRequests) : NOT_OBSERVED_LABEL,
       meta: { weight: 120, align: "tokens" }
     }
   ];
@@ -231,11 +246,18 @@ function renderRecentSessions(
     );
   }
   const totals = scan.totals;
+  const byId = new Map(scan.sessions.map((row) => [row.id, row]));
+  const recent: RecentSessionRow[] = (scan.recentSessions ?? scan.sessions).map(
+    (row) => {
+      const rollout = byId.get(row.id);
+      return { ...row, ...(rollout ? { rollout } : {}) };
+    }
+  );
   return React.createElement(
     "div",
     { className: "flex flex-col gap-6" },
     panel(
-      "Fleet totals",
+      scan.recentSessions ? "Rollout totals" : "Fleet totals",
       React.createElement(
         StatGrid,
         { columns: 4 },
@@ -268,11 +290,11 @@ function renderRecentSessions(
     ),
     panel(
       "Recent sessions",
-      React.createElement<DataTableProps<FleetSessionRow>>(DataTable, {
-        data: scan.sessions,
+      React.createElement<DataTableProps<RecentSessionRow>>(DataTable, {
+        data: recent,
         columns: sessionColumns(range),
         keyExtractor: (row) => row.id,
-        emptyMessage: "No session rollout was observed.",
+        emptyMessage: "No session evidence was observed.",
         label: "Recent sessions"
       })
     )

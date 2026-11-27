@@ -27,7 +27,7 @@ import type {
  */
 
 /** The route the GitHub page lives at. */
-export const GITHUB_LIST_PATH = "/github";
+const GITHUB_LIST_PATH = "/github";
 
 /**
  * The outcome a run can be narrowed to.
@@ -140,7 +140,7 @@ export function readGithubFilters(
 }
 
 /** The list's query string, without the route. */
-export function githubListQuery(filters: GithubListFilters): string {
+function githubListQuery(filters: GithubListFilters): string {
   const params = new URLSearchParams();
   if (filters.outcome !== "all") params.set("outcome", filters.outcome);
   if (filters.state && filters.state !== "all") {

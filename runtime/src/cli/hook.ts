@@ -4,7 +4,7 @@ import { UnmigratedRuntimeError } from "./runtime.ts";
 /** The hook vocabulary, owned here and consumed by validation and errors. */
 export const HOOK_NAMES = ["session-start", "skill-read"] as const;
 
-export type HookName = (typeof HOOK_NAMES)[number];
+type HookName = (typeof HOOK_NAMES)[number];
 
 export interface HookCommandBackend {
   run(hook: HookName): number;

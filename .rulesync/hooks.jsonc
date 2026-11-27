@@ -7,6 +7,24 @@
         "command": "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/session-start.ts"
       }
     ],
+    "beforeSubmitPrompt": [
+      {
+        "type": "command",
+        "command": "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/native-session.ts prompt"
+      }
+    ],
+    "stop": [
+      {
+        "type": "command",
+        "command": "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/native-session.ts stop"
+      }
+    ],
+    "sessionEnd": [
+      {
+        "type": "command",
+        "command": "~/.autodev/hooks/run-autodev-hook.sh ~/.autodev/src/hooks/native-session.ts end"
+      }
+    ],
     "preToolUse": [
       {
         "type": "command",

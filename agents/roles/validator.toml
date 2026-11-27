@@ -30,7 +30,23 @@ enabled_tools = [
   "typecheck",
   "test",
   "git_status",
-  "git_diff"
+  "git_diff",
+  "git_diff_staged",
+  "git_diff_path",
+  "git_log",
+  "git_log_path",
+  "git_show",
+  "git_branches",
+  "git_head",
+  "git_blame",
+  "git_diff_stat",
+  "git_ls_files",
+  "git_merge_base",
+  "lint",
+  "knip",
+  "knip_production",
+  "duplicates",
+  "duplicates_similar"
 ]
 env = { AUTODEV_MCP_ROLE = "validator" }
 

@@ -39,16 +39,16 @@ import { activeSessionsFromRuntime } from "../../src/lib/server/usage-active-ses
 import { readUsageTelemetry } from "../../src/lib/server/usage-telemetry.ts";
 
 /** The fixed telemetry window; the shared telemetry cache may be up to 5 minutes old. */
-export const OVERVIEW_TELEMETRY_SELECTION: UsageFilterSelection = {
+const OVERVIEW_TELEMETRY_SELECTION: UsageFilterSelection = {
   range: "24H",
   values: {}
 };
 
 /** How many of the newest sessions the failure scan reads. */
-export const OVERVIEW_FLEET_SCAN_LIMIT = 10;
+const OVERVIEW_FLEET_SCAN_LIMIT = 10;
 
 /** How many failing sessions the Overview lists. */
-export const OVERVIEW_FAILING_SESSION_LIMIT = 5;
+const OVERVIEW_FAILING_SESSION_LIMIT = 5;
 
 const NOT_CONFIGURED_CODE = "autodev_control_api_disabled";
 

@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { type IncomingMessage, type ServerResponse } from "node:http";
@@ -24,6 +24,7 @@ import {
 } from "@simulatorlife/autodev-runtime/agents";
 import {
   authStatus,
+  isLoopbackAddress,
   routerAuthorizationValid
 } from "@simulatorlife/autodev-runtime/router/auth";
 import {
@@ -91,6 +92,13 @@ import {
   providerModelDiscoveryPersistenceSnapshot,
   restoreProviderModelDiscoveryPersistence
 } from "../providers/model-discovery.ts";
+import { readLocalAdmission } from "../mcp/gateway-admission.ts";
+import {
+  NATIVE_SESSION_EVENTS_PATH,
+  NATIVE_SESSION_EVENT_LIMIT,
+  nativeSessionIdentity,
+  nativeSessionObservationSchema
+} from "../shared/native-session-observation.ts";
 import { createAgentEventIngest } from "./agent-event-ingest.ts";
 import {
   correlationSnapshot,
@@ -326,6 +334,9 @@ const routerEvents = new RouterEventRecorder({
   routerInstanceId: ROUTER_INSTANCE_ID,
   resolveOrigin: (role) => usageOrigin(role),
   onEvent: (event, input) => {
+    // Native observations are persisted by the existing event recorder, but
+    // are not model routing, provider health, Git or managed usage events.
+    if (event.phase === "native_session") return;
     const workspaceSessionKey =
       event.thread ??
       (event.activitySubject?.startsWith("thread:")
@@ -1185,12 +1196,19 @@ export function getRouterStatus(
   return buildRouterStatus(now);
 }
 
-export async function requestBody(request: IncomingMessage): Promise<string> {
+export async function requestBody(
+  request: IncomingMessage,
+  maxBytes = Number.POSITIVE_INFINITY
+): Promise<string> {
   const chunks: Buffer[] = [];
+  let bytes = 0;
   for await (const chunk of request) {
-    chunks.push(
-      Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array)
-    );
+    const buffer = Buffer.isBuffer(chunk)
+      ? chunk
+      : Buffer.from(chunk as Uint8Array);
+    bytes += buffer.length;
+    if (bytes > maxBytes) throw new Error("Request body exceeds its limit");
+    chunks.push(buffer);
   }
   const body = Buffer.concat(chunks);
   const encoding = String(
@@ -1723,6 +1741,56 @@ export async function loadCatalog(
   }
 }
 
+/** Local enrollment credentials authorize observations only, not execution. */
+async function handleNativeSessionObservation(
+  request: IncomingMessage,
+  response: ServerResponse
+): Promise<void> {
+  const admission = readLocalAdmission(CODEX_HOME);
+  const header = request.headers.authorization;
+  const expected = admission ? `Bearer ${admission.key}` : "";
+  if (
+    !expected ||
+    !isLoopbackAddress(request.socket.remoteAddress) ||
+    typeof header !== "string" ||
+    Buffer.byteLength(header) !== Buffer.byteLength(expected) ||
+    !timingSafeEqual(Buffer.from(header), Buffer.from(expected))
+  ) {
+    sendRouterAuthFailure(response);
+    return;
+  }
+  try {
+    if (request.headers["content-encoding"]) {
+      throw new Error("Encoded lifecycle payloads are not supported");
+    }
+    const observed = nativeSessionObservationSchema.parse(
+      JSON.parse(await requestBody(request, NATIVE_SESSION_EVENT_LIMIT))
+    );
+    const sessionId = nativeSessionIdentity(observed)!;
+    const activity = agentActivity.observeNativeSession(observed);
+    if (!activity) {
+      sendJson(
+        response,
+        409,
+        errorBody("Native session observation unavailable")
+      );
+      return;
+    }
+    recordRouterEvent({
+      phase: "native_session",
+      thread: sessionId,
+      clientSurface: observed.client,
+      origin: "native_session",
+      model: observed.model,
+      workspace: observed.workspace,
+      outcome: observed.event
+    });
+    sendJson(response, 200, { accepted: true });
+  } catch {
+    sendJson(response, 400, errorBody("Invalid native session observation"));
+  }
+}
+
 export async function handleRequest(
   request: IncomingMessage,
   response: ServerResponse
@@ -1736,6 +1804,10 @@ export async function handleRequest(
     !routerAuthorizationValid(request)
   ) {
     sendRouterAuthFailure(response);
+    return;
+  }
+  if (pathname === NATIVE_SESSION_EVENTS_PATH && request.method === "POST") {
+    await handleNativeSessionObservation(request, response);
     return;
   }
   if (pathname === AGENT_EVENTS_PATH && request.method === "POST") {

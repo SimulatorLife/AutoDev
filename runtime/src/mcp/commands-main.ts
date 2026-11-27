@@ -61,26 +61,26 @@ import {
 /**
 The environment variable that names the role this server serves.
 */
-export const COMMANDS_ROLE_ENV = "AUTODEV_MCP_ROLE";
+const COMMANDS_ROLE_ENV = "AUTODEV_MCP_ROLE";
 /**
 The environment variable that names the canonical workspace id.
 */
-export const COMMANDS_WORKSPACE_ID_ENV = "AUTODEV_MCP_WORKSPACE_ID";
+const COMMANDS_WORKSPACE_ID_ENV = "AUTODEV_MCP_WORKSPACE_ID";
 /**
 The environment variable that names the workspace root.
 */
-export const COMMANDS_WORKSPACE_ENV = "AUTODEV_MCP_WORKSPACE";
+const COMMANDS_WORKSPACE_ENV = "AUTODEV_MCP_WORKSPACE";
 /**
 The registry dependency installation is pointed at.
 */
-export const COMMANDS_REGISTRY_ENV = "AUTODEV_COMMAND_REGISTRY";
+const COMMANDS_REGISTRY_ENV = "AUTODEV_COMMAND_REGISTRY";
 
 /**
 The approved catalogue's file name inside the Runtime's config directory.
 */
 export const APPROVED_CATALOGUE_FILE = "commands.json";
 
-export class CommandsAdmissionError extends Error {
+class CommandsAdmissionError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "CommandsAdmissionError";
@@ -118,7 +118,9 @@ export function approvedCataloguePath(
   try {
     resolvedCatalogue = realpathSync(catalogue);
   } catch {
-    throw new CommandsAdmissionError("The approved command catalogue is unavailable.");
+    throw new CommandsAdmissionError(
+      "The approved command catalogue is unavailable."
+    );
   }
   let workspaceRoot: string;
   try {
@@ -135,7 +137,9 @@ export function approvedCataloguePath(
     );
   }
   if (resolvedCatalogue !== catalogue) {
-    throw new CommandsAdmissionError("The approved command catalogue must not be a symbolic link.");
+    throw new CommandsAdmissionError(
+      "The approved command catalogue must not be a symbolic link."
+    );
   }
   return catalogue;
 }
@@ -165,21 +169,35 @@ export function readApprovedCatalogue(cataloguePath: string): string {
       (stat.mode & 0o022) !== 0 ||
       (process.getuid && stat.uid !== process.getuid())
     ) {
-      throw new CommandsAdmissionError("The approved command catalogue is not a protected regular file.");
+      throw new CommandsAdmissionError(
+        "The approved command catalogue is not a protected regular file."
+      );
     }
     if (stat.size > MAX_CATALOGUE_BYTES) {
-      throw new CommandsAdmissionError("The approved command catalogue exceeds its size limit.");
+      throw new CommandsAdmissionError(
+        "The approved command catalogue exceeds its size limit."
+      );
     }
     // Bound reads even if the file grows between fstat and read.
-    const buffer = Buffer.alloc(Math.min(stat.size + 1, MAX_CATALOGUE_BYTES + 1));
+    const buffer = Buffer.alloc(
+      Math.min(stat.size + 1, MAX_CATALOGUE_BYTES + 1)
+    );
     let bytes = 0;
     while (bytes < buffer.length) {
-      const count = readSync(descriptor, buffer, bytes, buffer.length - bytes, null);
+      const count = readSync(
+        descriptor,
+        buffer,
+        bytes,
+        buffer.length - bytes,
+        null
+      );
       if (count === 0) break;
       bytes += count;
     }
     if (bytes !== stat.size) {
-      throw new CommandsAdmissionError("The approved command catalogue changed during read.");
+      throw new CommandsAdmissionError(
+        "The approved command catalogue changed during read."
+      );
     }
     return buffer.toString("utf8", 0, bytes);
   } finally {
@@ -254,7 +272,9 @@ function ensureCommandRunDirectory(
   workspace?: string
 ): string {
   if (!path.isAbsolute(runDirectory)) {
-    throw new CommandsAdmissionError("Command state directory must be absolute.");
+    throw new CommandsAdmissionError(
+      "Command state directory must be absolute."
+    );
   }
   const absolute = path.resolve(runDirectory);
   // A not-yet-created run directory has no realpath. Resolve its nearest
@@ -313,7 +333,7 @@ lease was never released. `unverifiable` is everything else -- a record that
 cannot be read, a holder that is gone but whose command was never recorded,
 or a command that is still running.
 */
-export type CommandLeaseState = "held" | "abandoned" | "unverifiable";
+type CommandLeaseState = "held" | "abandoned" | "unverifiable";
 
 export interface CommandLeaseReport {
   readonly workspaceKey: string;
@@ -456,7 +476,7 @@ function leaseState(
 /**
 Where one workspace's lease lives.
 */
-export function commandWorkspaceLeasePath(
+function commandWorkspaceLeasePath(
   runDirectory: string,
   workspaceKey: string
 ): string {
@@ -702,7 +722,7 @@ A task belongs to a role and a workspace, so its records live in their own
 directory: one role's tasks are never readable by another role's, even when
 both serve the same workspace.
 */
-export function commandScopeKey(role: string, workspaceKey: string): string {
+function commandScopeKey(role: string, workspaceKey: string): string {
   if (!/^[a-z0-9][a-z0-9_-]{0,63}$/u.test(role)) {
     throw new CommandsAdmissionError("Invalid command role.");
   }
@@ -735,7 +755,9 @@ function privateCommandRoot(
   kind: "command-scratch" | "command-cache" | "command-tasks",
   scopeKey: string
 ): string {
-  if (!/^(?:[a-f0-9]{16}|[a-z0-9][a-z0-9_-]{0,63}-[a-f0-9]{16})$/u.test(scopeKey)) {
+  if (
+    !/^(?:[a-f0-9]{16}|[a-z0-9][a-z0-9_-]{0,63}-[a-f0-9]{16})$/u.test(scopeKey)
+  ) {
     throw new CommandsAdmissionError("Invalid command workspace key.");
   }
   const physicalRun = ensureCommandRunDirectory(runDirectory);
@@ -745,7 +767,9 @@ function privateCommandRoot(
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     commandDirectoryIdentity(directory, true);
     if (realpathSync(directory) !== directory) {
-      throw new CommandsAdmissionError("Command state directory must be private and must not redirect.");
+      throw new CommandsAdmissionError(
+        "Command state directory must be private and must not redirect."
+      );
     }
   }
   return root;
@@ -769,7 +793,7 @@ One value of a trusted command-line option.
 Only the options the Runtime itself passes are read; an unknown option is
 ignored rather than treated as a request.
 */
-export function commandsArgumentValue(
+function commandsArgumentValue(
   arguments_: readonly string[] | undefined,
   name: string
 ): string | null {
@@ -807,7 +831,9 @@ export function resolveCommandsScope(
   const environment = options.env ?? process.env;
   const home = options.home ?? (environment.HOME?.trim() || homedir());
   const role = (
-    commandsArgumentValue(options.args, "--role") ?? environment[COMMANDS_ROLE_ENV] ?? ""
+    commandsArgumentValue(options.args, "--role") ??
+    environment[COMMANDS_ROLE_ENV] ??
+    ""
   )
     .trim()
     .toLowerCase();
@@ -829,13 +855,18 @@ export function resolveCommandsScope(
   const workspace = realpathSync(requestedWorkspace);
   const workspaceIdentity = statSync(workspace);
   if (!workspaceIdentity.isDirectory()) {
-    throw new CommandsAdmissionError("The Commands MCP workspace is not a directory.");
+    throw new CommandsAdmissionError(
+      "The Commands MCP workspace is not a directory."
+    );
   }
   const workspaceId =
     commandsArgumentValue(options.args, "--workspace-id")?.trim() ??
     environment[COMMANDS_WORKSPACE_ID_ENV]?.trim() ??
     null;
-  const cataloguePath = approvedCataloguePath(options.moduleDirectory, workspace);
+  const cataloguePath = approvedCataloguePath(
+    options.moduleDirectory,
+    workspace
+  );
   const approved = createApprovedCatalogueGrant(cataloguePath);
   const runDirectory = ensureCommandRunDirectory(
     autodevRunDirectory(environment, home),
@@ -910,29 +941,32 @@ The registry proxy is only started when the effective grant actually
 contains a dependency install, so a scope that may not install packages
 never opens a network path at all.
 */
-export async function startCommandsServer(
-  resolved: ResolvedCommandsScope
-): Promise<{
+async function startCommandsServer(resolved: ResolvedCommandsScope): Promise<{
   readonly server: Awaited<ReturnType<typeof createCommandsMcpServer>>;
   close(): Promise<void>;
 }> {
   if (!resolved.isAuthorized()) {
-    throw new CommandsAdmissionError("Command execution grant is unavailable or revoked.");
+    throw new CommandsAdmissionError(
+      "Command execution grant is unavailable or revoked."
+    );
   }
   const lease = createWorkspaceLease(
     resolved.runDirectory,
     resolved.workspaceKey
   );
   const effective = effectiveCommands(resolved);
-  const needsRegistry = effective.values().some(
-    (definition) =>
-      definition.executionClass === "dependency_install" &&
-      Object.hasOwn(resolved.scope.executables, definition.executable)
-  );
+  const needsRegistry = effective
+    .values()
+    .some(
+      (definition) =>
+        definition.executionClass === "dependency_install" &&
+        Object.hasOwn(resolved.scope.executables, definition.executable)
+    );
   const registry = needsRegistry
     ? await startRegistryProxy({
         registry:
-          process.env[COMMANDS_REGISTRY_ENV]?.trim() || "https://registry.npmjs.org"
+          process.env[COMMANDS_REGISTRY_ENV]?.trim() ||
+          "https://registry.npmjs.org"
       })
     : null;
   const scope: ApprovedCommandScope = registry
@@ -1003,14 +1037,18 @@ async function runCommandsMain(): Promise<void> {
     // Do not leave active commands and a listening registry proxy behind
     // when the trusted gateway closes or stops this backend.
     const shutdown = (): void => {
-      void running.close().finally(shutdownTelemetry).catch(() => {
-        process.stderr.write("autodev commands mcp: shutdown failed\n");
-        process.exitCode = 2;
-      }).finally(() => {
-        process.stdin.off("end", shutdown);
-        process.off("SIGINT", shutdown);
-        process.off("SIGTERM", shutdown);
-      });
+      void running
+        .close()
+        .finally(shutdownTelemetry)
+        .catch(() => {
+          process.stderr.write("autodev commands mcp: shutdown failed\n");
+          process.exitCode = 2;
+        })
+        .finally(() => {
+          process.stdin.off("end", shutdown);
+          process.off("SIGINT", shutdown);
+          process.off("SIGTERM", shutdown);
+        });
     };
     running.server.server.server.onclose = shutdown;
     process.stdin.once("end", shutdown);

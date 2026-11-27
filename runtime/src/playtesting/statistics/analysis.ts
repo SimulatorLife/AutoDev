@@ -6,8 +6,8 @@
  * The Core comparison module accepts a `PlaytestNumericInterval` from
  * any trusted source; this file is the only place inside the Runtime
  * that produces such an interval. It shells out to a hash-locked Python
- * worker (see `environment.ts`) over a JSON-RPC channel implemented in
- * `jsonrpc-client.ts`.
+ * worker (see `environment.ts`) over a one-request JSON-RPC channel on the
+ * worker's stdio.
  *
  * The API exposes narrow calls that delegate every numerical method to the
  * locked Python/SciPy/statsmodels worker:
@@ -36,13 +36,29 @@ import {
   type ResolvedPlaytestStatEnvironment,
   resolvePlaytestStatEnvironment
 } from "./environment.ts";
-import type { JsonRpcEnvelope } from "./jsonrpc-client.ts";
 import {
   ACCEPTED_LIBRARY_TOKENS,
   EXPECTED_LOCK_TAG,
   EXPECTED_SCIENTIFIC_LOCK,
   type PlaytestStatisticFixture
 } from "./lock-manifest.ts";
+
+/** One JSON-RPC 2.0 envelope the worker answers a request with. */
+type JsonRpcEnvelope =
+  | {
+      readonly kind: "response";
+      readonly id: string;
+      readonly result: Record<string, unknown>;
+    }
+  | {
+      readonly kind: "error";
+      readonly id: string | null;
+      readonly error: {
+        readonly code: number;
+        readonly message: string;
+        readonly data?: Readonly<Record<string, unknown>>;
+      };
+    };
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const DEFAULT_CONFIDENCE_LEVEL = 0.95;

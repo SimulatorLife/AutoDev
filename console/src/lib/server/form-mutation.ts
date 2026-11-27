@@ -11,7 +11,7 @@ const FORM_CONTENT_TYPE = "application/x-www-form-urlencoded";
  * parser answers. A route that answered it differently would parse a body the
  * parser refuses, or refuse a body it parses.
  */
-export function isUrlEncodedFormRequest(request: Request): boolean {
+function isUrlEncodedFormRequest(request: Request): boolean {
   const contentType = (request.headers.get("content-type") ?? "")
     .trim()
     .toLowerCase();

@@ -136,10 +136,15 @@ test("command execution spans reuse the MCP tracer without double-counting or le
       outputTruncated: false
     };
     let calls = 0;
-    const result = await recordCommandExecutionSpan("test", "validation", async () => {
-      calls += 1;
-      return outcome;
-    }, { sessionId: "private-session-id" });
+    const result = await recordCommandExecutionSpan(
+      "test",
+      "validation",
+      async () => {
+        calls += 1;
+        return outcome;
+      },
+      { sessionId: "private-session-id" }
+    );
     assert.equal(result, outcome);
     const failure = new Error("private-exception-message");
     await assert.rejects(
@@ -156,16 +161,25 @@ test("command execution spans reuse the MCP tracer without double-counting or le
       assert.equal(span.name, "command.execute");
       assert.equal(span.attributes["mcp.method.name"], undefined);
       assert.equal(span.attributes["gen_ai.operation.name"], undefined);
-      assert.equal(span.resource.attributes["service.name"], "autodev-commands-mcp");
+      assert.equal(
+        span.resource.attributes["service.name"],
+        "autodev-commands-mcp"
+      );
       assert.equal(span.resource.attributes["autodev.agent.role"], "worker");
-      assert.equal(span.resource.attributes["autodev.workspace"], "owner/repository");
+      assert.equal(
+        span.resource.attributes["autodev.workspace"],
+        "owner/repository"
+      );
       assert.doesNotMatch(JSON.stringify(span.attributes), /private-/u);
       assert.equal(span.events.length, 0);
     }
     assert.equal(spans[0]?.attributes["autodev.command.outcome"], "failed");
     assert.equal(spans[0]?.attributes["autodev.command.exit_code"], 3);
     assert.equal(spans[0]?.attributes["autodev.command.duration_ms"], 42);
-    assert.equal(spans[1]?.attributes["autodev.command.outcome"], "infrastructure_error");
+    assert.equal(
+      spans[1]?.attributes["autodev.command.outcome"],
+      "infrastructure_error"
+    );
     assert.equal(spans[1]?.attributes["autodev.command.exit_code"], undefined);
   } finally {
     await shutdownTelemetryForTest();
@@ -175,7 +189,10 @@ test("command execution spans reuse the MCP tracer without double-counting or le
 
 test("a catalogue that declares one key twice is rejected, not silently resolved", () => {
   const text = JSON.stringify(catalogue, null, 2);
-  assert.deepEqual(parseCommandCatalogueText(text), parseCommandCatalogue(catalogue));
+  assert.deepEqual(
+    parseCommandCatalogueText(text),
+    parseCommandCatalogue(catalogue)
+  );
   // JSON.parse alone keeps the last of two equal keys: the reviewed first
   // definition would not be the effective one.
   const duplicateCommand = text.replace(
@@ -188,7 +205,10 @@ test("a catalogue that declares one key twice is rejected, not silently resolved
     '"executable": "sh", "executable": "printf",'
   );
   // An escaped spelling of the same key is the same key.
-  const escapedDuplicate = text.replace('"version": 1,', '"version": 1, "vers\\u0069on": 1,');
+  const escapedDuplicate = text.replace(
+    '"version": 1,',
+    '"version": 1, "vers\\u0069on": 1,'
+  );
   for (const [duplicated, key] of [
     [duplicateCommand, "fixture"],
     [duplicateField, "executable"],
@@ -204,25 +224,42 @@ test("a catalogue that declares one key twice is rejected, not silently resolved
   }
   // Equal keys in different objects, or equal strings that are values, are
   // not duplicates.
-  assert.doesNotThrow(() => parseCommandCatalogueText(JSON.stringify({
-    version: 1,
-    commands: {
-      fixture: { ...fixture, description: "fixture" },
-      other: { ...fixture, description: "fixture", args: ["description", "{fixture}"], parameters: { fixture: { description: "x", minLength: 1, maxLength: 2 } } }
-    }
-  })));
+  assert.doesNotThrow(() =>
+    parseCommandCatalogueText(
+      JSON.stringify({
+        version: 1,
+        commands: {
+          fixture: { ...fixture, description: "fixture" },
+          other: {
+            ...fixture,
+            description: "fixture",
+            args: ["description", "{fixture}"],
+            parameters: {
+              fixture: { description: "x", minLength: 1, maxLength: 2 }
+            }
+          }
+        }
+      })
+    )
+  );
   assert.throws(
     () => parseCommandCatalogueText("{"),
-    (error: unknown) => error instanceof CommandCatalogueError && error.code === "INVALID_CATALOGUE"
+    (error: unknown) =>
+      error instanceof CommandCatalogueError &&
+      error.code === "INVALID_CATALOGUE"
   );
 });
 
 test("the catalogue is strict, and a parameter is only ever a whole argument", () => {
   assert.deepEqual(parseCommandCatalogue(catalogue).commands.fixture, fixture);
-  assert.throws(() => parseCommandCatalogue({
-    version: 1,
-    commands: Object.fromEntries(Array.from({ length: 65 }, (_, i) => [`command_${i}`, fixture]))
-  }));
+  assert.throws(() =>
+    parseCommandCatalogue({
+      version: 1,
+      commands: Object.fromEntries(
+        Array.from({ length: 65 }, (_, i) => [`command_${i}`, fixture])
+      )
+    })
+  );
   for (const definition of [
     { ...fixture, executable: "../shell" },
     { ...fixture, executable: "." },
@@ -582,93 +619,123 @@ test(
   }
 );
 
-test("registered commands match discovery, and request cancellation and revocation stop execution", {
-  skip: process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec")
-}, async () => {
-  const root = mkdtempSync(path.join(tmpdir(), "autodev-command-revoke-active-"));
-  const scope = scopeFixture(root);
-  let authorized = true;
-  let held = false;
-  const created = createCommandsMcpServer({
-    role: "worker",
-    workspaceId: null,
-    catalogue: parseCommandCatalogue({
-      version: 1,
-      commands: {
-        typecheck: {
-          ...fixture,
-          executable: "sh",
-          args: ["-c", "printf ready > ready; sleep 10; printf late > late"],
-          timeoutMs: 15_000
+test(
+  "registered commands match discovery, and request cancellation and revocation stop execution",
+  {
+    skip: process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec")
+  },
+  async () => {
+    const root = mkdtempSync(
+      path.join(tmpdir(), "autodev-command-revoke-active-")
+    );
+    const scope = scopeFixture(root);
+    let authorized = true;
+    let held = false;
+    const created = createCommandsMcpServer({
+      role: "worker",
+      workspaceId: null,
+      catalogue: parseCommandCatalogue({
+        version: 1,
+        commands: {
+          typecheck: {
+            ...fixture,
+            executable: "sh",
+            args: ["-c", "printf ready > ready; sleep 10; printf late > late"],
+            timeoutMs: 15_000
+          },
+          test: { ...fixture, executable: "unapproved" }
+        }
+      }),
+      scope,
+      taskDirectory: taskDirectoryFixture(),
+      isAuthorized: () => authorized,
+      tryAcquireWorkspace: () => {
+        if (held) return null;
+        held = true;
+        return inertLease(() => {
+          held = false;
+        });
+      }
+    });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "revocation-test", version: "1.0.0" });
+    try {
+      await created.server.connect(serverTransport);
+      await client.connect(clientTransport);
+      assert.deepEqual(created.commandIds, ["typecheck"]);
+      const { tools } = await client.listTools();
+      assert.deepEqual(
+        tools.map((tool) => tool.name),
+        created.commandIds
+      );
+      assert.equal(tools[0]?.annotations?.readOnlyHint, false);
+      const ready = path.join(scope.workspace, "ready");
+      const late = path.join(scope.workspace, "late");
+      async function waitUntil(
+        predicate: () => boolean,
+        message: string
+      ): Promise<void> {
+        for (let i = 0; i < 200 && !predicate(); i += 1) {
+          await delay(25);
+        }
+        assert.ok(predicate(), message);
+      }
+
+      const controller = new AbortController();
+      const ordinary = client.callTool(
+        { name: "typecheck", arguments: {} },
+        undefined,
+        { signal: controller.signal }
+      );
+      const cancelled = assert.rejects(ordinary);
+      await waitUntil(
+        () => existsSync(ready),
+        "ordinary command actually started"
+      );
+      controller.abort();
+      await cancelled;
+      await waitUntil(
+        () => !held,
+        "ordinary request cancellation stops execution"
+      );
+      assert.equal(existsSync(late), false);
+      rmSync(ready);
+
+      await client.request(
+        {
+          method: "tools/call",
+          params: { name: "typecheck", arguments: {}, task: { ttl: 30_000 } }
         },
-        test: { ...fixture, executable: "unapproved" }
-      }
-    }),
-    scope,
-    taskDirectory: taskDirectoryFixture(),
-    isAuthorized: () => authorized,
-    tryAcquireWorkspace: () => {
-      if (held) return null;
-      held = true;
-      return inertLease(() => {
-        held = false;
+        z
+          .object({ task: z.object({ taskId: z.string() }).passthrough() })
+          .passthrough()
+      );
+      await waitUntil(
+        () => existsSync(ready),
+        "native command actually started"
+      );
+      assert.equal(held, true);
+      authorized = false;
+      await waitUntil(
+        () => !held,
+        "revocation cancels active execution before its normal completion"
+      );
+      assert.equal(existsSync(late), false);
+      authorized = true;
+      const rejected = await client.callTool({
+        name: "typecheck",
+        arguments: {}
       });
+      assert.equal(rejected.isError, true);
+      assert.match(JSON.stringify(rejected.content), /revoked/u);
+    } finally {
+      await created.close();
+      await client.close();
+      rmSync(root, { recursive: true, force: true });
     }
-  });
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  const client = new Client({ name: "revocation-test", version: "1.0.0" });
-  try {
-    await created.server.connect(serverTransport);
-    await client.connect(clientTransport);
-    assert.deepEqual(created.commandIds, ["typecheck"]);
-    const { tools } = await client.listTools();
-    assert.deepEqual(tools.map((tool) => tool.name), created.commandIds);
-    assert.equal(tools[0]?.annotations?.readOnlyHint, false);
-    const ready = path.join(scope.workspace, "ready");
-    const late = path.join(scope.workspace, "late");
-    async function waitUntil(predicate: () => boolean, message: string): Promise<void> {
-      for (let i = 0; i < 200 && !predicate(); i += 1) {
-        await delay(25);
-      }
-      assert.ok(predicate(), message);
-    }
-
-    const controller = new AbortController();
-    const ordinary = client.callTool(
-      { name: "typecheck", arguments: {} },
-      undefined,
-      { signal: controller.signal }
-    );
-    const cancelled = assert.rejects(ordinary);
-    await waitUntil(() => existsSync(ready), "ordinary command actually started");
-    controller.abort();
-    await cancelled;
-    await waitUntil(() => !held, "ordinary request cancellation stops execution");
-    assert.equal(existsSync(late), false);
-    rmSync(ready);
-
-    await client.request(
-      {
-        method: "tools/call",
-        params: { name: "typecheck", arguments: {}, task: { ttl: 30_000 } }
-      },
-      z.object({ task: z.object({ taskId: z.string() }).passthrough() }).passthrough()
-    );
-    await waitUntil(() => existsSync(ready), "native command actually started");
-    assert.equal(held, true);
-    authorized = false;
-    await waitUntil(() => !held, "revocation cancels active execution before its normal completion");
-    assert.equal(existsSync(late), false);
-    authorized = true;
-    const rejected = await client.callTool({ name: "typecheck", arguments: {} });
-    assert.equal(rejected.isError, true);
-    assert.match(JSON.stringify(rejected.content), /revoked/u);
-  } finally {
-    await created.close();
-    await client.close();
-    rmSync(root, { recursive: true, force: true });
   }
-});
+);
 
 test(
   "a command that fails is a failed task, and never a completed one",
@@ -754,8 +821,14 @@ test("a command may be restricted to the workspaces it names", () => {
     ...fixture,
     workspaces: ["SimulatorLife/AutoDev"]
   } satisfies CommandDefinition;
-  assert.equal(isCommandEligibleInWorkspace(definition, "SimulatorLife/AutoDev"), true);
-  assert.equal(isCommandEligibleInWorkspace(definition, "SimulatorLife/Other"), false);
+  assert.equal(
+    isCommandEligibleInWorkspace(definition, "SimulatorLife/AutoDev"),
+    true
+  );
+  assert.equal(
+    isCommandEligibleInWorkspace(definition, "SimulatorLife/Other"),
+    false
+  );
   assert.equal(isCommandEligibleInWorkspace(definition, null), false);
   assert.equal(isCommandEligibleInWorkspace(fixture, null), true);
 });
@@ -773,7 +846,10 @@ test("the approved catalogue may not live inside the workspace it authorizes", (
     const cataloguePath = path.join(outside, "config", "commands.json");
     writeFileSync(cataloguePath, JSON.stringify(catalogue));
     const resolved = approvedCataloguePath(moduleDirectory, workspace);
-    const expected = path.join(realpathSync(path.join(outside, "config")), "commands.json");
+    const expected = path.join(
+      realpathSync(path.join(outside, "config")),
+      "commands.json"
+    );
     assert.equal(resolved, expected);
     const editable = path.join(workspace, "commands.json");
     writeFileSync(editable, JSON.stringify(catalogue));
@@ -821,7 +897,10 @@ test("replacing the approved catalogue revokes the grant", () => {
     writeFileSync(cataloguePath, JSON.stringify(catalogue));
     const grant = createApprovedCatalogueGrant(cataloguePath);
     assert.equal(grant.isAuthorized(), true);
-    assert.equal(grant.digest, catalogueDigest(readFileSync(cataloguePath, "utf8")));
+    assert.equal(
+      grant.digest,
+      catalogueDigest(readFileSync(cataloguePath, "utf8"))
+    );
     writeFileSync(
       cataloguePath,
       JSON.stringify({
@@ -857,7 +936,8 @@ test("an approved catalogue that declares a key twice grants nothing", () => {
     assert.throws(
       () => createApprovedCatalogueGrant(cataloguePath),
       (error: unknown) =>
-        error instanceof CommandCatalogueError && error.code === "DUPLICATE_CATALOGUE_KEY"
+        error instanceof CommandCatalogueError &&
+        error.code === "DUPLICATE_CATALOGUE_KEY"
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -874,7 +954,10 @@ test("approved catalogue reads reject symlinks, shared hard links and writable m
     assert.throws(() => createApprovedCatalogueGrant(approved));
     rmSync(approved);
     linkSync(original, approved);
-    assert.throws(() => createApprovedCatalogueGrant(approved), /protected regular file/u);
+    assert.throws(
+      () => createApprovedCatalogueGrant(approved),
+      /protected regular file/u
+    );
     rmSync(original);
     const grant = createApprovedCatalogueGrant(approved);
     chmodSync(approved, 0o666);
@@ -894,7 +977,10 @@ test("approved catalogue reads are bounded and private state directories cannot 
     const workspaceKey = commandWorkspaceKey(root);
     const run = path.join(root, "run");
     const scratch = commandScratchRoot(run, workspaceKey);
-    assert.equal(scratch, path.join(realpathSync(run), "command-scratch", workspaceKey));
+    assert.equal(
+      scratch,
+      path.join(realpathSync(run), "command-scratch", workspaceKey)
+    );
     const redirectedRun = path.join(root, "redirected-run");
     symlinkSync(run, redirectedRun);
     assert.throws(
@@ -906,16 +992,25 @@ test("approved catalogue reads are bounded and private state directories cannot 
       /must not redirect/u
     );
     chmodSync(run, 0o777);
-    assert.throws(() => createWorkspaceLease(run, workspaceKey), /must not redirect/u);
+    assert.throws(
+      () => createWorkspaceLease(run, workspaceKey),
+      /must not redirect/u
+    );
     chmodSync(run, 0o700);
     assert.throws(() => commandCacheRoot(run, ".."), /workspace key/u);
     const outside = path.join(root, "outside");
     mkdirSync(outside, { mode: 0o700 });
     symlinkSync(outside, path.join(run, "command-cache"));
-    assert.throws(() => commandCacheRoot(run, workspaceKey), /must not redirect/u);
+    assert.throws(
+      () => commandCacheRoot(run, workspaceKey),
+      /must not redirect/u
+    );
     rmSync(scratch, { recursive: true });
     symlinkSync(outside, scratch);
-    assert.throws(() => commandScratchRoot(run, workspaceKey), /must not redirect/u);
+    assert.throws(
+      () => commandScratchRoot(run, workspaceKey),
+      /must not redirect/u
+    );
 
     // The durable task records live in their own private scope, named by the
     // role and the workspace, so one role's records are never another's.
@@ -958,7 +1053,10 @@ test(
       const scope = scopeFixture(root);
       const ipcScope: ApprovedCommandScope = {
         ...scope,
-        executables: { ...scope.executables, notifyutil: realpathSync(NOTIFYUTIL) }
+        executables: {
+          ...scope.executables,
+          notifyutil: realpathSync(NOTIFYUTIL)
+        }
       };
       const definition = {
         ...fixture,
@@ -974,7 +1072,10 @@ test(
       );
       // notifyutil exits 0 either way; the Mach lookup's failure is what
       // it reports.
-      assert.doesNotMatch(result.stdout, /^com\.apple\.system\.timezone \d+$/mu);
+      assert.doesNotMatch(
+        result.stdout,
+        /^com\.apple\.system\.timezone \d+$/mu
+      );
       assert.match(result.stdout + result.stderr, /Failed/u);
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -1015,7 +1116,10 @@ test("only a dependency install may reach the network, and only the registry pro
   );
   // Seatbelt accepts only `*` or `localhost` as a remote host ("host must be
   // * or localhost in network address"), so loopback is spelled `localhost`.
-  assert.match(profile, /\(allow network-outbound \(remote ip "localhost:4321"\)\)/u);
+  assert.match(
+    profile,
+    /\(allow network-outbound \(remote ip "localhost:4321"\)\)/u
+  );
   assert.doesNotMatch(profile, /\(allow network-outbound \(remote ip "\*"/u);
   assert.doesNotMatch(profile, /\(allow network\*/u);
 });
@@ -1050,6 +1154,9 @@ test("a command's environment carries no operator credentials and no host paths"
     // workspace, and the system file is host configuration.
     assert.equal(prepared.env.GIT_CONFIG_NOSYSTEM, "1");
     assert.equal(prepared.env.GIT_CONFIG_GLOBAL, "/dev/null");
+    assert.equal(prepared.env.GIT_CONFIG_COUNT, "1");
+    assert.equal(prepared.env.GIT_CONFIG_KEY_0, "core.fsmonitor");
+    assert.equal(prepared.env.GIT_CONFIG_VALUE_0, "false");
     assert.equal(prepared.env.GIT_TERMINAL_PROMPT, "0");
     // Without an identity of its own, a confined command cannot commit.
     assert.equal(prepared.env.GIT_AUTHOR_NAME, undefined);
@@ -1090,41 +1197,46 @@ test("the commit identity the Runtime supplies reaches the command", () => {
   }
 });
 
-test("a confined command cannot read the operator's Git configuration", {
-  skip: process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec")
-}, async () => {
-  const root = mkdtempSync(path.join(tmpdir(), "autodev-command-gitconfig-"));
-  try {
-    const scope = scopeFixture(root);
-    const home = process.env.HOME ?? "";
-    const globalConfig = path.join(home, ".gitconfig");
-    assert.ok(
-      existsSync(globalConfig),
-      "the operator's Git configuration is the subject of this test"
-    );
-    const definition: CommandDefinition = {
-      ...fixture,
-      executable: "sh",
-      args: ["-c", `cat ${JSON.stringify(globalConfig)}`]
-    };
-    const result = await runApprovedCommand(
-      "probe",
-      definition,
-      definition.args,
-      scope,
-      new AbortController().signal
-    );
-    // The file is outside every admitted root, so the read is refused and
-    // the configuration never reaches the command.
-    assert.equal(result.status, "failed");
-    assert.equal(result.stdout, "");
-    assert.doesNotMatch(result.stderr, /helper\s*=/u);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
+test(
+  "a confined command cannot read the operator's Git configuration",
+  {
+    skip: process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec")
+  },
+  async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "autodev-command-gitconfig-"));
+    try {
+      const scope = scopeFixture(root);
+      const home = process.env.HOME ?? "";
+      const globalConfig = path.join(home, ".gitconfig");
+      assert.ok(
+        existsSync(globalConfig),
+        "the operator's Git configuration is the subject of this test"
+      );
+      const definition: CommandDefinition = {
+        ...fixture,
+        executable: "sh",
+        args: ["-c", `cat ${JSON.stringify(globalConfig)}`]
+      };
+      const result = await runApprovedCommand(
+        "probe",
+        definition,
+        definition.args,
+        scope,
+        new AbortController().signal
+      );
+      // The file is outside every admitted root, so the read is refused and
+      // the configuration never reaches the command.
+      assert.equal(result.status, "failed");
+      assert.equal(result.stdout, "");
+      assert.doesNotMatch(result.stderr, /helper\s*=/u);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   }
-});
+);
 
-test("a scope that overlaps a protected root, or an unapproved executable, is refused", () => {  const root = mkdtempSync(path.join(tmpdir(), "autodev-command-scope-"));
+test("a scope that overlaps a protected root, or an unapproved executable, is refused", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "autodev-command-scope-"));
   try {
     const scope = scopeFixture(root);
     assert.throws(
@@ -1144,7 +1256,11 @@ test("a scope that overlaps a protected root, or an unapproved executable, is re
     // Dependency installation needs an approved egress, and without one it
     // is refused rather than silently allowed.
     assert.throws(
-      () => prepareCommand(scope, { ...fixture, executionClass: "dependency_install" }),
+      () =>
+        prepareCommand(scope, {
+          ...fixture,
+          executionClass: "dependency_install"
+        }),
       /egress|package-registry/u
     );
     const withRegistry = {
@@ -1163,10 +1279,14 @@ test("a scope that overlaps a protected root, or an unapproved executable, is re
       "http://127.0.0.1:5555/path",
       "http://127.0.0.1:5555/?token=fixture"
     ]) {
-      assert.throws(() => prepareCommand(
-        { ...scope, registryEndpoint },
-        { ...fixture, executionClass: "dependency_install" }
-      ), /loopback registry endpoint/u);
+      assert.throws(
+        () =>
+          prepareCommand(
+            { ...scope, registryEndpoint },
+            { ...fixture, executionClass: "dependency_install" }
+          ),
+        /loopback registry endpoint/u
+      );
     }
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -1179,32 +1299,45 @@ test("trusted executables never resolve out of the workspace", () => {
   assert.ok(resolved.toolchainRoots.length > 0);
   const filesystemRoot = path.parse(path.resolve("/")).root;
   assert.ok(!resolved.toolchainRoots.includes(filesystemRoot));
-  const partial = resolveTrustedExecutables(["git", "definitely-not-installed-xyz", ".", ".."]);
+  const partial = resolveTrustedExecutables([
+    "git",
+    "definitely-not-installed-xyz",
+    ".",
+    ".."
+  ]);
   assert.equal(partial.executables.git, resolved.executables.git);
   assert.deepEqual(Object.keys(partial.executables), ["git"]);
   assert.deepEqual(partial.toolchainRoots, resolved.toolchainRoots);
 });
 
-test("the confined PATH prefers an admitted Runtime Node over workspace shims", {
-  skip: process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec")
-}, () => {
-  const root = mkdtempSync(path.join(tmpdir(), "autodev-command-node-path-"));
-  try {
-    const scope = scopeFixture(root);
-    const nodeDirectory = path.dirname(realpathSync(process.execPath));
-    const prepared = prepareCommand(
-      { ...scope, toolchainRoots: [...scope.toolchainRoots, nodeDirectory] },
-      fixture
-    );
-    const entries = prepared.env.PATH!.split(path.delimiter);
-    const workspaceBin = path.join(realpathSync(scope.workspace), "node_modules", ".bin");
-    assert.equal(entries[0], nodeDirectory);
-    assert.ok(entries.indexOf(workspaceBin) > entries.indexOf("/usr/bin"));
-    assert.ok(entries.indexOf(workspaceBin) > entries.indexOf(nodeDirectory));
-  } finally {
-    rmSync(root, { recursive: true, force: true });
+test(
+  "the confined PATH prefers an admitted Runtime Node over workspace shims",
+  {
+    skip: process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec")
+  },
+  () => {
+    const root = mkdtempSync(path.join(tmpdir(), "autodev-command-node-path-"));
+    try {
+      const scope = scopeFixture(root);
+      const nodeDirectory = path.dirname(realpathSync(process.execPath));
+      const prepared = prepareCommand(
+        { ...scope, toolchainRoots: [...scope.toolchainRoots, nodeDirectory] },
+        fixture
+      );
+      const entries = prepared.env.PATH!.split(path.delimiter);
+      const workspaceBin = path.join(
+        realpathSync(scope.workspace),
+        "node_modules",
+        ".bin"
+      );
+      assert.equal(entries[0], nodeDirectory);
+      assert.ok(entries.indexOf(workspaceBin) > entries.indexOf("/usr/bin"));
+      assert.ok(entries.indexOf(workspaceBin) > entries.indexOf(nodeDirectory));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   }
-});
+);
 
 test("workspace keys are physical, stable and shared across symlink aliases", () => {
   const root = mkdtempSync(path.join(tmpdir(), "autodev-command-key-"));
@@ -1224,7 +1357,9 @@ test("workspace keys are physical, stable and shared across symlink aliases", ()
 });
 
 test("the admitted command workspace cannot be redirected after scope resolution", () => {
-  const root = mkdtempSync(path.join(tmpdir(), "autodev-command-workspace-identity-"));
+  const root = mkdtempSync(
+    path.join(tmpdir(), "autodev-command-workspace-identity-")
+  );
   try {
     const workspace = path.join(root, "workspace");
     const other = path.join(root, "other");
@@ -1234,13 +1369,16 @@ test("the admitted command workspace cannot be redirected after scope resolution
     mkdirSync(other);
     mkdirSync(moduleDirectory, { recursive: true });
     mkdirSync(path.join(runtimeRoot, "config"));
-    writeFileSync(path.join(runtimeRoot, "config", "commands.json"), JSON.stringify({
-      version: 1,
-      commands: {
-        git_status: { ...fixture, executable: "git", args: ["status"] },
-        test: { ...fixture, executable: "definitely-not-installed-xyz" }
-      }
-    }));
+    writeFileSync(
+      path.join(runtimeRoot, "config", "commands.json"),
+      JSON.stringify({
+        version: 1,
+        commands: {
+          git_status: { ...fixture, executable: "git", args: ["status"] },
+          test: { ...fixture, executable: "definitely-not-installed-xyz" }
+        }
+      })
+    );
     const alias = path.join(root, "alias");
     symlinkSync(workspace, alias);
     const options = {
@@ -1249,25 +1387,33 @@ test("the admitted command workspace cannot be redirected after scope resolution
       args: ["--role", "worker", "--workspace", alias]
     };
     assert.throws(
-      () => resolveCommandsScope({
-        ...options,
-        env: { HOME: root, AUTODEV_HOME: workspace }
-      }),
+      () =>
+        resolveCommandsScope({
+          ...options,
+          env: { HOME: root, AUTODEV_HOME: workspace }
+        }),
       /overlaps the authorized workspace/u
     );
     assert.throws(
-      () => resolveCommandsScope({
-        ...options,
-        env: { HOME: root, AUTODEV_HOME: alias }
-      }),
+      () =>
+        resolveCommandsScope({
+          ...options,
+          env: { HOME: root, AUTODEV_HOME: alias }
+        }),
       /overlaps the authorized workspace/u
     );
     assert.equal(existsSync(path.join(workspace, "run")), false);
     const resolved = resolveCommandsScope(options);
     assert.equal(resolved.workspace, realpathSync(workspace));
-    assert.equal(resolved.runDirectory, realpathSync(path.join(runtimeRoot, "run")));
+    assert.equal(
+      resolved.runDirectory,
+      realpathSync(path.join(runtimeRoot, "run"))
+    );
     assert.ok(resolved.scope.executables.git);
-    assert.equal(Object.hasOwn(resolved.scope.executables, "definitely-not-installed-xyz"), false);
+    assert.equal(
+      Object.hasOwn(resolved.scope.executables, "definitely-not-installed-xyz"),
+      false
+    );
     assert.equal(resolved.isAuthorized(), true);
     // Replacing the caller's alias does not change the pinned workspace.
     rmSync(alias);
@@ -1294,7 +1440,10 @@ test("the registry proxy serves package metadata and tarballs, and nothing else"
   assert.equal(classifyRegistryPath("/@scope%2fname"), "metadata");
   assert.equal(classifyRegistryPath("/@scope%2Fname"), "metadata");
   assert.equal(classifyRegistryPath("/@scope/name"), "metadata");
-  assert.equal(classifyRegistryPath("/@scope/name/-/name-1.0.0.tgz"), "tarball");
+  assert.equal(
+    classifyRegistryPath("/@scope/name/-/name-1.0.0.tgz"),
+    "tarball"
+  );
   for (const path of [
     "https://evil.example/pnpm",
     "/pnpm/../secret",
@@ -1316,7 +1465,10 @@ test("the registry proxy serves package metadata and tarballs, and nothing else"
     "https://registry.npmjs.org",
     "http://127.0.0.1:9999"
   );
-  assert.match(rewritten, /http:\/\/127\.0\.0\.1:9999\/pnpm\/-\/pnpm-1\.0\.0\.tgz/u);
+  assert.match(
+    rewritten,
+    /http:\/\/127\.0\.0\.1:9999\/pnpm\/-\/pnpm-1\.0\.0\.tgz/u
+  );
   assert.doesNotMatch(rewritten, /registry\.npmjs\.org/u);
   const registry = "https://registry.npmjs.org";
   const endpoint = "http://127.0.0.1:9999";
@@ -1324,17 +1476,26 @@ test("the registry proxy serves package metadata and tarballs, and nothing else"
     description: registry,
     versions: {
       "1.0.0": { dist: { tarball: registry + "/pnpm/-/pnpm-1.0.0.tgz" } },
-      "2.0.0": { dist: { tarball: registry + ".example.invalid/pnpm/-/pnpm-2.0.0.tgz" } },
-      "3.0.0": { dist: { tarball: registry + "/pnpm/-/pnpm-3.0.0.tgz?token=fixture" } }
+      "2.0.0": {
+        dist: { tarball: registry + ".example.invalid/pnpm/-/pnpm-2.0.0.tgz" }
+      },
+      "3.0.0": {
+        dist: { tarball: registry + "/pnpm/-/pnpm-3.0.0.tgz?token=fixture" }
+      }
     }
   };
-  assert.deepEqual(JSON.parse(rewriteRegistryUrls(JSON.stringify(metadata), registry, endpoint)), {
-    ...metadata,
-    versions: {
-      ...metadata.versions,
-      "1.0.0": { dist: { tarball: endpoint + "/pnpm/-/pnpm-1.0.0.tgz" } }
+  assert.deepEqual(
+    JSON.parse(
+      rewriteRegistryUrls(JSON.stringify(metadata), registry, endpoint)
+    ),
+    {
+      ...metadata,
+      versions: {
+        ...metadata.versions,
+        "1.0.0": { dist: { tarball: endpoint + "/pnpm/-/pnpm-1.0.0.tgz" } }
+      }
     }
-  });
+  );
 });
 
 test("registry proxy relays scoped packages and refuses unapproved request forms", async () => {
@@ -1360,7 +1521,11 @@ test("registry proxy relays scoped packages and refuses unapproved request forms
       return;
     }
     response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify({ dist: { tarball: origin + "/@scope/name/-/name-1.tgz" } }));
+    response.end(
+      JSON.stringify({
+        dist: { tarball: origin + "/@scope/name/-/name-1.tgz" }
+      })
+    );
   });
   upstream.listen(0, "127.0.0.1");
   await once(upstream, "listening");
@@ -1372,19 +1537,33 @@ test("registry proxy relays scoped packages and refuses unapproved request forms
         headers: { accept: "private-caller-header" }
       });
       assert.equal(metadata.status, 200);
-      const body = await metadata.json() as { dist: { tarball: string } };
-      assert.equal(body.dist.tarball, proxy.endpoint + "/@scope/name/-/name-1.tgz");
+      const body = (await metadata.json()) as { dist: { tarball: string } };
+      assert.equal(
+        body.dist.tarball,
+        proxy.endpoint + "/@scope/name/-/name-1.tgz"
+      );
       const tarball = await fetch(body.dist.tarball);
       assert.equal(tarball.status, 200);
-      assert.deepEqual(new Uint8Array(await tarball.arrayBuffer()), new Uint8Array([1, 2, 3]));
+      assert.deepEqual(
+        new Uint8Array(await tarball.arrayBuffer()),
+        new Uint8Array([1, 2, 3])
+      );
       const redirect = await fetch(proxy.endpoint + "/redirect");
       assert.equal(redirect.status, 502);
       const forbidden = await fetch(proxy.endpoint + "/pnpm?secret=fixture");
       assert.equal(forbidden.status, 404);
       const invalid = await fetch(proxy.endpoint + "/invalid");
       assert.equal(invalid.status, 502);
-      assert.deepEqual(requests, ["/@scope%2fname", "/@scope/name/-/name-1.tgz", "/redirect", "/invalid"]);
-      assert.equal(accepts[0], "application/vnd.npm.install-v1+json, application/json");
+      assert.deepEqual(requests, [
+        "/@scope%2fname",
+        "/@scope/name/-/name-1.tgz",
+        "/redirect",
+        "/invalid"
+      ]);
+      assert.equal(
+        accepts[0],
+        "application/vnd.npm.install-v1+json, application/json"
+      );
       assert.equal(accepts[1], "application/octet-stream");
       assert.ok(!accepts.includes("private-caller-header"));
     } finally {
@@ -1399,9 +1578,7 @@ test("registry proxy relays scoped packages and refuses unapproved request forms
 test(
   "a confined command keeps literal arguments, cannot write outside the workspace and cannot read secrets",
   {
-    skip:
-      process.platform !== "darwin" ||
-      !existsSync("/usr/bin/sandbox-exec")
+    skip: process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec")
   },
   async (t) => {
     const root = mkdtempSync(path.join(tmpdir(), "autodev-command-fixture-"));
@@ -1453,32 +1630,55 @@ test(
   }
 );
 
-test("confined commands can use private Runtime roots without reading sibling Runtime state", {
-  skip: process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec")
-}, async (t) => {
-  const root = mkdtempSync(path.join(tmpdir(), "autodev-command-runtime-state-"));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const scope = scopeFixture(root);
-  const state = path.join(root, ".autodev");
-  const run = path.join(state, "run");
-  const key = commandWorkspaceKey(scope.workspace);
-  const scratch = commandScratchRoot(run, key);
-  const cache = commandCacheRoot(run, key);
-  const sibling = path.join(run, "private-token");
-  writeFileSync(sibling, "outside-private-state");
-  const approvedScope = { ...scope, scratch, cache };
-  const command = {
-    ...fixture,
-    executable: "sh",
-    args: ["-c", 'printf ok > "$HOME/probe"; printf ok > "$1/probe"; cat "$HOME/probe" "$1/probe"', "sh", cache]
-  } satisfies CommandDefinition;
-  const allowed = await runApprovedCommand("fixture", command, command.args, approvedScope, AbortSignal.timeout(10_000));
-  assert.equal(allowed.status, "succeeded", allowed.stderr);
-  assert.equal(allowed.stdout, "okok");
-  const denied = await runApprovedCommand("fixture", command, ["-c", 'cat "$1"', "sh", sibling], approvedScope, AbortSignal.timeout(10_000));
-  assert.notEqual(denied.status, "succeeded");
-  assert.doesNotMatch(denied.stdout, /outside-private-state/u);
-});
+test(
+  "confined commands can use private Runtime roots without reading sibling Runtime state",
+  {
+    skip: process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec")
+  },
+  async (t) => {
+    const root = mkdtempSync(
+      path.join(tmpdir(), "autodev-command-runtime-state-")
+    );
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const scope = scopeFixture(root);
+    const state = path.join(root, ".autodev");
+    const run = path.join(state, "run");
+    const key = commandWorkspaceKey(scope.workspace);
+    const scratch = commandScratchRoot(run, key);
+    const cache = commandCacheRoot(run, key);
+    const sibling = path.join(run, "private-token");
+    writeFileSync(sibling, "outside-private-state");
+    const approvedScope = { ...scope, scratch, cache };
+    const command = {
+      ...fixture,
+      executable: "sh",
+      args: [
+        "-c",
+        'printf ok > "$HOME/probe"; printf ok > "$1/probe"; cat "$HOME/probe" "$1/probe"',
+        "sh",
+        cache
+      ]
+    } satisfies CommandDefinition;
+    const allowed = await runApprovedCommand(
+      "fixture",
+      command,
+      command.args,
+      approvedScope,
+      AbortSignal.timeout(10_000)
+    );
+    assert.equal(allowed.status, "succeeded", allowed.stderr);
+    assert.equal(allowed.stdout, "okok");
+    const denied = await runApprovedCommand(
+      "fixture",
+      command,
+      ["-c", 'cat "$1"', "sh", sibling],
+      approvedScope,
+      AbortSignal.timeout(10_000)
+    );
+    assert.notEqual(denied.status, "succeeded");
+    assert.doesNotMatch(denied.stdout, /outside-private-state/u);
+  }
+);
 
 test(
   "a command in AutoDev's own checkout cannot change the effective policy",
@@ -1556,9 +1756,7 @@ test(
 test(
   "a symlink in the workspace cannot be used to reach outside it",
   {
-    skip:
-      process.platform !== "darwin" ||
-      !existsSync("/usr/bin/sandbox-exec")
+    skip: process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec")
   },
   async (t) => {
     const root = mkdtempSync(path.join(tmpdir(), "autodev-command-symlink-"));
@@ -1590,9 +1788,7 @@ test(
 test(
   "a command that outlives its deadline is stopped and reported as timed out",
   {
-    skip:
-      process.platform !== "darwin" ||
-      !existsSync("/usr/bin/sandbox-exec")
+    skip: process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec")
   },
   async (t) => {
     const root = mkdtempSync(path.join(tmpdir(), "autodev-command-timeout-"));
@@ -1618,9 +1814,7 @@ test(
 test(
   "a cancelled command is stopped and reported as cancelled",
   {
-    skip:
-      process.platform !== "darwin" ||
-      !existsSync("/usr/bin/sandbox-exec")
+    skip: process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec")
   },
   async (t) => {
     const root = mkdtempSync(path.join(tmpdir(), "autodev-command-cancel-"));
@@ -1649,9 +1843,7 @@ test(
 test(
   "output beyond the bound is reported as truncated rather than buffered without limit",
   {
-    skip:
-      process.platform !== "darwin" ||
-      !existsSync("/usr/bin/sandbox-exec")
+    skip: process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec")
   },
   async (t) => {
     const root = mkdtempSync(path.join(tmpdir(), "autodev-command-output-"));
@@ -1693,6 +1885,26 @@ test("the installed catalogue is a valid, generic catalogue", () => {
     "lint_fix",
     "git_status",
     "git_diff",
+    "git_add",
+    "git_diff_staged",
+    "git_diff_path",
+    "git_log",
+    "git_log_path",
+    "git_show",
+    "git_branches",
+    "git_head",
+    "git_blame",
+    "git_diff_stat",
+    "git_ls_files",
+    "git_merge_base",
+    "git_unstage",
+    "lint",
+    "knip",
+    "knip_production",
+    "duplicates",
+    "duplicates_similar",
+    "format_fix",
+    "build",
     "git_stage",
     "git_commit"
   ]) {
@@ -1700,9 +1912,11 @@ test("the installed catalogue is a valid, generic catalogue", () => {
   }
   // The Git capabilities are exactly the ones the migration names: no push,
   // no reset, no configuration change.
-  const gitArguments = new Set(Object.entries(parsed.commands)
-    .filter(([, definition]) => definition.executable === "git")
-    .flatMap(([, definition]) => definition.args));
+  const gitArguments = new Set(
+    Object.entries(parsed.commands)
+      .filter(([, definition]) => definition.executable === "git")
+      .flatMap(([, definition]) => definition.args)
+  );
   for (const forbidden of ["push", "reset", "config", "rebase", "clean"]) {
     assert.ok(!gitArguments.has(forbidden), `git ${forbidden} is not granted`);
   }
@@ -1712,7 +1926,76 @@ test("the installed catalogue is a valid, generic catalogue", () => {
     minLength: 1,
     maxLength: 500
   });
-  assert.deepEqual(parsed.commands.git_commit!.args, ["commit", "-m", "{message}"]);
+  assert.deepEqual(parsed.commands.git_commit!.args, [
+    "commit",
+    "-m",
+    "{message}"
+  ]);
+  for (const command of [
+    "git_add",
+    "git_diff_path",
+    "git_log_path",
+    "git_blame",
+    "git_unstage"
+  ]) {
+    const args = resolveCommandArguments(parsed.commands[command]!, {
+      path: ":(glob)*"
+    });
+    assert.ok(args.includes("--literal-pathspecs"));
+    assert.deepEqual(args.slice(-2), ["--", ":(glob)*"]);
+  }
+  assert.deepEqual(
+    resolveCommandArguments(parsed.commands.git_show!, {
+      revision: "--format=%B"
+    }).slice(-3),
+    ["--end-of-options", "--format=%B", "--"]
+  );
+  assert.deepEqual(
+    resolveCommandArguments(parsed.commands.git_merge_base!, {
+      left: "--all",
+      right: "HEAD"
+    }),
+    ["merge-base", "--", "--all", "HEAD"]
+  );
+  assert.deepEqual(parsed.commands.git_unstage!.args, [
+    "--literal-pathspecs",
+    "restore",
+    "--staged",
+    "--",
+    "{path}"
+  ]);
+  assert.equal(
+    parsed.commands.git_unstage!.executionClass,
+    "workspace_mutation"
+  );
+  assert.deepEqual(parsed.commands.lint!.args, ["run", "lint"]);
+  assert.deepEqual(parsed.commands.knip!.args, ["run", "knip"]);
+  assert.deepEqual(parsed.commands.knip_production!.args, [
+    "run",
+    "knip:production"
+  ]);
+  assert.deepEqual(parsed.commands.duplicates!.args, ["run", "duplicates"]);
+  assert.deepEqual(parsed.commands.duplicates_similar!.args, [
+    "run",
+    "duplicates:similar"
+  ]);
+  for (const id of [
+    "knip",
+    "knip_production",
+    "duplicates",
+    "duplicates_similar"
+  ]) {
+    assert.equal(parsed.commands[id]!.executionClass, "validation");
+    assert.deepEqual(parsed.commands[id]!.parameters, {});
+  }
+  assert.deepEqual(parsed.commands.format_fix!.args, ["run", "format"]);
+  assert.equal(
+    parsed.commands.format_fix!.executionClass,
+    "workspace_mutation"
+  );
+  assert.deepEqual(parsed.commands.build!.args, ["run", "build"]);
+  assert.equal(parsed.commands.build!.executionClass, "workspace_mutation");
+  assert.equal(Object.hasOwn(parsed.commands, "format_check"), false);
 });
 
 test("the host's sandbox tooling really confines, so the negative tests mean something", () => {

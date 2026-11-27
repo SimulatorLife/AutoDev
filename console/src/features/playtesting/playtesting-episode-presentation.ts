@@ -41,13 +41,6 @@ export function episodeScenarioLabel(
     : "Scenario not recorded";
 }
 
-/** A URL's source checkout is not a build attestation for its rendered bytes. */
-export function episodeBuildLabel(
-  episode: Pick<PlaytestEpisode, "identity" | "executionProvenance">
-): string {
-  return buildLabel(episode.executionProvenance.source);
-}
-
 /**
  * A recorded duration, in the unit the product uses.
  *
@@ -174,7 +167,7 @@ export function defaultEpisodeInspectionStep(
 }
 
 /** The loop guard's unexecuted decision is recorded just beyond stepCount. */
-export function episodeTraceContainsStep(
+function episodeTraceContainsStep(
   episode: Pick<PlaytestEpisode, "stepCount" | "termination">,
   step: number
 ): boolean {

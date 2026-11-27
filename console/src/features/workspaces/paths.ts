@@ -24,10 +24,6 @@ function segmentsForWorkspaceId(
   return [owner, repository];
 }
 
-export function workspacesPath(): string {
-  return WORKSPACES_PATH;
-}
-
 /** Use two URL path segments; encoded slashes are not a reliable Next route key. */
 export function workspacePath(workspaceId: string): string {
   const [owner, repository] = segmentsForWorkspaceId(workspaceId);

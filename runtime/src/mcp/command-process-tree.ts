@@ -33,7 +33,7 @@ the next walk.
 const FREEZE_INTERVAL_MS = 25;
 const PROCESS_LINE = /\s+/u;
 
-export interface CommandProcessNode {
+interface CommandProcessNode {
   readonly pid: number;
   /**
   How far the process is from the command's own process. A descendant is
@@ -92,7 +92,7 @@ A descendant that detached into its own session is included: it left the
 process group, not the parent-child relationship, and this walk follows the
 parent-child relationship.
 */
-export function collectCommandDescendants(
+function collectCommandDescendants(
   rootPid: number | undefined
 ): CommandProcessNode[] {
   if (rootPid === undefined) return [];
@@ -135,7 +135,7 @@ A descendant that detached into its own session is in a group of its own, and
 a group signal never reaches it. These are the descendants that have to be
 terminated by their own pid.
 */
-export function findDetachedCommandDescendants(
+function findDetachedCommandDescendants(
   rootPid: number | undefined
 ): CommandProcessNode[] {
   if (rootPid === undefined) return [];

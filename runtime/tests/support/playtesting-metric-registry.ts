@@ -6,7 +6,7 @@ import {
   type PlaytestMetricRegistry
 } from "@simulatorlife/autodev-core";
 
-export const FIXTURE_SCORE_EVALUATOR_HASH = "f".repeat(64);
+const FIXTURE_SCORE_EVALUATOR_HASH = "f".repeat(64);
 
 export function fixturePlaytestMetricRegistry(
   workspaceId: string,

@@ -25,7 +25,7 @@ import { resolveXacpxOrchestrationSocketPath } from "../xacpx/orchestration-ipc.
 The variable carrying the XACPX delegation coordinator identity to `xacpx
 mcp-stdio` (the launcher turns it into `--coordinator-session`).
 */
-export const XACPX_COORDINATOR_SESSION_ENV = "AUTODEV_XACPX_COORDINATOR_SESSION";
+const XACPX_COORDINATOR_SESSION_ENV = "AUTODEV_XACPX_COORDINATOR_SESSION";
 
 type Catalogue = Record<string, Record<string, unknown>>;
 
@@ -155,7 +155,7 @@ export function localPoolServerKey(role: string, server: string): string {
 }
 
 /** The gateway path of one role's server for local clients. */
-export function localSurfacePath(role: string, server: string): string {
+function localSurfacePath(role: string, server: string): string {
   return `/local/${role}/${server}`;
 }
 
@@ -402,7 +402,7 @@ export function renderChatgptBackendPoolConfig(
 }
 
 /** The pooled backend key that carries one role's instance of one MCP server. */
-export function chatgptPoolServerKey(role: string, server: string): string {
+function chatgptPoolServerKey(role: string, server: string): string {
   return `${role}.${server}`;
 }
 
@@ -500,8 +500,7 @@ function localSurfaces(
   local: LocalGatewaySurfaces | undefined,
   confinedBackend: ChatgptConfinedBackend | undefined
 ): Record<string, z.infer<typeof localServerSurfaceSchema>> {
-  const entries: Array<[string, z.infer<typeof localServerSurfaceSchema>]> =
-    [];
+  const entries: Array<[string, z.infer<typeof localServerSurfaceSchema>]> = [];
   for (const surface of local?.roles ?? []) {
     for (const entry of resolveValidatedExternalServers(
       catalogue,

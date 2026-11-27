@@ -44,6 +44,7 @@ import {
   type ControlApiProviderHealth,
   type ControlApiProviderLimitsPatchResponse,
   type ControlApiProviderModelDiscovery,
+  CONTROL_API_PROVIDER_MODEL_DISCOVERY_SCHEMA_ID,
   type ControlApiProviderModelsResponse,
   type ControlApiProviderRecord,
   type ControlApiProviderRoleAssignment,
@@ -2966,7 +2967,7 @@ function providerModelsView(): ControlApiProviderModelsResponse {
     }
   }));
   return {
-    schema: "autodev-control-provider-model-discovery-v1",
+    schema: CONTROL_API_PROVIDER_MODEL_DISCOVERY_SCHEMA_ID,
     source: "runtime-provider-discovery",
     providers
   } satisfies ControlApiProviderModelsResponse;

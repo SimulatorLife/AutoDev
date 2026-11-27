@@ -99,7 +99,7 @@ import type {
 } from "./types.ts";
 
 /** Keep indexed records bounded; bulk trace/frame bytes belong to Runtime artifacts. */
-export const MAX_PLAYTEST_PAYLOAD_BYTES = 512 * 1024;
+const MAX_PLAYTEST_PAYLOAD_BYTES = 512 * 1024;
 const MAX_ARTIFACT_REF_LENGTH = 512;
 
 export interface PlaytestIndexedBatchRow {
@@ -2172,13 +2172,13 @@ export function decodeReview(
 }
 
 /** Review list rows surface bounded text; the archive keeps the full payload. */
-export const MAX_PLAYTEST_REVIEW_HEADLINE_CHARS = 240;
-export const MAX_PLAYTEST_REVIEW_SUMMARY_CHARS = 600;
-export const MAX_PLAYTEST_REVIEW_EVIDENCE_REFS = 8;
+const MAX_PLAYTEST_REVIEW_HEADLINE_CHARS = 240;
+const MAX_PLAYTEST_REVIEW_SUMMARY_CHARS = 600;
+const MAX_PLAYTEST_REVIEW_EVIDENCE_REFS = 8;
 /** One claim is a sentence the analyst wrote; the drawer shows it whole. */
-export const MAX_PLAYTEST_REVIEW_CLAIM_CHARS = 600;
+const MAX_PLAYTEST_REVIEW_CLAIM_CHARS = 600;
 /** How many claims one review row carries. */
-export const MAX_PLAYTEST_REVIEW_CLAIMS = 50;
+const MAX_PLAYTEST_REVIEW_CLAIMS = 50;
 
 /**
  * Bound a free-text field to the length a list row may carry. This is the
@@ -2192,7 +2192,7 @@ export const MAX_PLAYTEST_REVIEW_CLAIMS = 50;
  *
  * The ellipsis is inside the bound: the result is never longer than `max`.
  */
-export function boundPlaytestText(value: string, max: number): string {
+function boundPlaytestText(value: string, max: number): string {
   if (value.length <= max) return value;
   if (max <= 1) return value.slice(0, max);
   const cut = value.slice(0, max - 1);

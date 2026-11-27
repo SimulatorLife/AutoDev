@@ -1,0 +1,56 @@
+{
+  "minLines": 10,
+  "minTokens": 100,
+  "mode": "weak",
+  "gitignore": true,
+  "absolute": false,
+  "reporters": [
+    "console",
+    "json"
+  ],
+  "output": "./tmp/",
+  "noColors": true,
+  "noTips": true,
+  "failOnEmpty": true,
+  "format": [
+    "typescript",
+    "tsx",
+    "javascript",
+    "jsx",
+    "bash",
+    "css"
+  ],
+  "crossFormats": [
+    [
+      "typescript",
+      "tsx"
+    ],
+    [
+      "javascript",
+      "jsx"
+    ]
+  ],
+  "ignore": [
+    "**/node_modules/**",
+    "**/.pnpm-store/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/coverage/**",
+    "**/tmp/**",
+    "**/generated/**",
+    "**/fixtures/**",
+    "**/*.snap",
+    "**/vendor/**",
+    "**/vendored/**",
+    "**/.next*/**",
+    "**/.agents/**",
+    "**/.claude/**",
+    "**/.codex/**",
+    "**/.rulesync/skills/.curated/**",
+    "**/.cocoindex_code/**",
+    "**/.probe/**",
+    "**/.venv/**",
+    "**/test-results/**",
+    "**/playwright-report/**"
+  ]
+}

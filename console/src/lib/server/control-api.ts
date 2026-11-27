@@ -62,7 +62,7 @@ import {
   type ControlApiProviderCliVersion,
   type ControlApiProviderEnabledPatchResponse,
   type ControlApiProviderLimitsPatchResponse,
-  type ControlApiProviderModelDiscovery,
+  controlApiProviderModelsResponseSchema,
   type ControlApiProviderModelsResponse,
   type ControlApiProviderRolePatchResponse,
   type ControlApiProvidersResetRequest,
@@ -85,7 +85,6 @@ import {
   isSessionDiagnosticsReport,
   isSessionFleetScanResponse,
   isSessionHookDenialsResponse,
-  isSessionRecentListResponse,
   LOCAL_CONTROL_API_ACTOR,
   PROVIDER_ROLES,
   type ProviderRole,
@@ -95,7 +94,6 @@ import {
   type SessionDiagnosticsReport,
   type SessionFleetScanResponse,
   type SessionHookDenialsResponse,
-  type SessionRecentListResponse,
   type WorkspaceConfigurationHealth,
   type WorkspaceRuntimeAvailability
 } from "@simulatorlife/autodev-core";
@@ -1368,8 +1366,6 @@ export async function fetchModels(
   };
 }
 
-const PROVIDER_MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/u;
-
 function isCanonicalTimestamp(value: unknown): value is string {
   return (
     typeof value === "string" &&
@@ -1378,90 +1374,18 @@ function isCanonicalTimestamp(value: unknown): value is string {
   );
 }
 
-function isDiscoveredProviderModel(value: unknown): boolean {
-  if (
-    !isRecord(value) ||
-    typeof value.id !== "string" ||
-    !PROVIDER_MODEL_ID_PATTERN.test(value.id) ||
-    value.id.trim() !== value.id ||
-    (value.displayName !== null && typeof value.displayName !== "string") ||
-    !isRecord(value.routeability)
-  ) {
-    return false;
-  }
-  return (
-    value.routeability.status === "supported" ||
-    (value.routeability.status === "unsupported" &&
-      typeof value.routeability.reason === "string" &&
-      value.routeability.reason.trim().length > 0)
-  );
-}
+/**
+The discovery response, as the shared schema states it.
 
-function isProviderModelDiscovery(
-  value: unknown
-): value is ControlApiProviderModelDiscovery {
-  if (!isRecord(value)) return false;
-  if (value.status === "unavailable") {
-    return (
-      (value.source === null ||
-        (typeof value.source === "string" && value.source.trim().length > 0)) &&
-      (value.lastAttemptAt === null ||
-        isCanonicalTimestamp(value.lastAttemptAt)) &&
-      typeof value.reason === "string" &&
-      value.reason.trim().length > 0
-    );
-  }
-  if (
-    (value.status !== "observed" && value.status !== "stale") ||
-    typeof value.source !== "string" ||
-    value.source.trim().length === 0 ||
-    !isCanonicalTimestamp(value.observedAt) ||
-    !isCanonicalTimestamp(value.lastAttemptAt) ||
-    !Array.isArray(value.models)
-  ) {
-    return false;
-  }
-  if (
-    value.status === "stale" &&
-    (typeof value.reason !== "string" || value.reason.trim().length === 0)
-  ) {
-    return false;
-  }
-  const ids = new Set<string>();
-  for (const model of value.models) {
-    if (!isDiscoveredProviderModel(model) || ids.has(model.id)) return false;
-    ids.add(model.id);
-  }
-  return true;
-}
-
+The Runtime produces it, the Console reads it, and the Console's startup
+preflight checks the Runtime it is about to talk to speaks it. One schema
+answers for all three, so a reader cannot accept a response a preflight
+would refuse.
+*/
 function isControlApiProviderModelsResponse(
   value: unknown
 ): value is ControlApiProviderModelsResponse {
-  if (
-    !isRecord(value) ||
-    value.schema !== "autodev-control-provider-model-discovery-v1" ||
-    value.source !== "runtime-provider-discovery" ||
-    !Array.isArray(value.providers)
-  ) {
-    return false;
-  }
-  const providerIds = new Set<string>();
-  for (const entry of value.providers) {
-    if (
-      !isRecord(entry) ||
-      typeof entry.provider !== "string" ||
-      entry.provider.trim() !== entry.provider ||
-      entry.provider.length === 0 ||
-      entry.provider.length > 128 ||
-      providerIds.has(entry.provider) ||
-      !isProviderModelDiscovery(entry.discovery)
-    ) {
-      return false;
-    }
-    providerIds.add(entry.provider);
-  }
-  return true;
+  return controlApiProviderModelsResponseSchema.safeParse(value).success;
 }
 
 function isControlApiProviderVersionsResponse(
@@ -3556,7 +3480,7 @@ export async function fetchEvaluations(
  * and they are read on every scoped page view, so they carry their own budget
  * rather than the generic five seconds.
  */
-export const DIAGNOSTICS_CONTROL_API_TIMEOUT_MS = 20_000;
+const DIAGNOSTICS_CONTROL_API_TIMEOUT_MS = 20_000;
 
 /** The bounded query a session's diagnostics read accepts. */
 export interface SessionDiagnosticsQuery {
@@ -3624,29 +3548,6 @@ export async function fetchSessionDiagnostics(
     code: "autodev_control_api_invalid_diagnostics_response",
     message:
       "AutoDev Control API returned an incompatible session diagnostics response; the Console requires the v1 diagnostics contract."
-  };
-}
-
-/** Read the newest sessions, for the fleet's recent-sessions view. */
-export async function fetchRecentSessions(
-  limit: number,
-  config: ControlApiConfig,
-  options: FetchControlApiOptions = {}
-): Promise<ControlApiResult<SessionRecentListResponse>> {
-  const path = `${CONTROL_API_PATHS.diagnostics}/sessions/recent?limit=${encodeURIComponent(String(limit))}`;
-  const result = await fetchControlApi<unknown>(path, config, {
-    timeoutMs: DIAGNOSTICS_CONTROL_API_TIMEOUT_MS,
-    ...options
-  });
-  if (result.kind !== "ok") return result;
-  if (isSessionRecentListResponse(result.data)) {
-    return { kind: "ok", data: result.data };
-  }
-  return {
-    kind: INVALID_RESPONSE_KIND,
-    code: "autodev_control_api_invalid_recent_sessions_response",
-    message:
-      "AutoDev Control API returned an incompatible recent-sessions response; the Console requires the v1 recent-sessions contract."
   };
 }
 

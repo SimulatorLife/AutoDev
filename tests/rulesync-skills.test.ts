@@ -40,6 +40,7 @@ import {
 import {
   declaredTargets,
   frontmatterDescription,
+  readSkill,
   splitFrontmatter
 } from "./support/skill-document.ts";
 import { parseJsoncObject } from "@simulatorlife/autodev-data/files";
@@ -135,9 +136,7 @@ it names that target explicitly. The curated skills keep the default.
 */
 function expectedSkillsForTarget(target: string): string[] {
   const canonical = canonicalSkillNames().filter((skill) => {
-    const { front } = splitFrontmatter(
-      readFileSync(join(sourceRoot, skill, "SKILL.md"), "utf8")
-    );
+    const { front } = readSkill(repositoryRoot, skill);
     const targets = declaredTargets(front);
     return targets === null || targets.includes(target);
   });
@@ -394,9 +393,7 @@ test("a user-level skill reaches a repository folder only where it was asked for
       .map((entry) => entry.name);
     const projectedUserLevel = projected.filter((name) => userLevel.has(name));
     for (const skill of projectedUserLevel) {
-      const { front } = splitFrontmatter(
-        readFileSync(join(sourceRoot, skill, "SKILL.md"), "utf8")
-      );
+      const { front } = readSkill(repositoryRoot, skill);
       assert.ok(
         declaredTargets(front)?.includes(owner),
         `${tree}/${skill} duplicates a user-level skill in a folder that did not ask for it`
@@ -680,7 +677,10 @@ test("user-level skill selection follows YAML target declarations, not formattin
     writeSkill("nested", "description: Shared?\nextra:\n  targets: []");
     assert.deepEqual(userLevelSkills(root), ["block", "quoted"]);
     writeSkill("invalid", "description: Invalid.\ntargets: copilot");
-    assert.throws(() => userLevelSkills(root), /targets must be a string array/u);
+    assert.throws(
+      () => userLevelSkills(root),
+      /targets must be a string array/u
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -17,6 +17,7 @@ import {
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 
 import { repositoryRoot } from "./hook-roots.ts";
+import { reportNativeSession } from "./native-session.ts";
 
 export function runRepoBootstrapSync(cwd = process.cwd()): number {
   const scriptCandidates = [
@@ -48,10 +49,12 @@ export interface SessionStartRunner {
   ): Promise<RouterEnsureResult>;
   runRepoBootstrap?(cwd: string): Promise<number>;
   ensureCodeGraph?(cwd: string): Promise<void>;
+  observeNativeSession?(input: string): Promise<void>;
 }
 
 export const defaultSessionStartRunner: SessionStartRunner = {
   runRouterEnsure,
+  observeNativeSession: (input) => reportNativeSession(input, "start"),
   runRepoBootstrap: (cwd: string) => Promise.resolve(runRepoBootstrapSync(cwd)),
   ensureCodeGraph: (cwd: string) => {
     ensureCodeGraph(cwd);
@@ -63,7 +66,7 @@ export function createSessionStart(
   runner: SessionStartRunner = defaultSessionStartRunner
 ): (input?: Buffer | string) => Promise<number> {
   return async function runSessionStart(
-    _input = readFileSync(0)
+    input = readFileSync(0)
   ): Promise<number> {
     const options = resolveRouterEnsureOptions(process.env, process.pid);
     const deps = createDefaultRouterEnsureDeps(options);
@@ -72,6 +75,9 @@ export function createSessionStart(
       process.stderr.write(`${result.message}\n`);
     if (result.logTail && result.logTail.length > 0) {
       for (const line of result.logTail) process.stderr.write(`${line}\n`);
+    }
+    if (result.exitCode === 0 && runner.observeNativeSession) {
+      await runner.observeNativeSession(input.toString());
     }
     if (result.exitCode === 0 && runner.runRepoBootstrap) {
       await runner.runRepoBootstrap(process.cwd());
