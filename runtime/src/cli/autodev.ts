@@ -31,6 +31,11 @@ import {
   type InstallCommandBackend
 } from "./install.ts";
 import {
+  dispatchLeaseCommand,
+  LEASE_SUBCOMMANDS,
+  type LeaseCommandBackend
+} from "./lease.ts";
+import {
   defaultPlaytestBackend,
   dispatchPlaytestCommand,
   type PlaytestCommandBackend,
@@ -224,7 +229,8 @@ const COMMAND_ROWS: readonly (readonly [string, string])[] = [
   ["repo", REPO_SUBCOMMANDS.join("|")],
   ["diagnostics", ""],
   ["playtest", PLAYTESTS_SUBCOMMANDS.join("|")],
-  ["install", ""]
+  ["install", ""],
+  ["lease", LEASE_SUBCOMMANDS.join("|")]
 ];
 
 const RENDER_ARGUMENTS: Record<
@@ -271,6 +277,11 @@ function usage(): void {
       "    Defaults (checkout-relative): --source-dir agents/roles,",
       "      --prompt-dir agents/prompts, --root-config config/config.autodev.toml,",
       "      --contract config/execution-contract.json.",
+      "",
+      'Lease arguments (after "lease"):',
+      "    list",
+      "    release <workspace-key> [--force]",
+      "      --force releases a lease that cannot be verified as abandoned.",
       ""
     ].join("\n")
   );
@@ -283,6 +294,7 @@ export interface CliBackends {
   repo?: RepoCommandBackend;
   install?: InstallCommandBackend;
   playtest?: PlaytestCommandBackend;
+  lease?: LeaseCommandBackend;
 }
 
 export function runMain(
@@ -337,6 +349,9 @@ export function runMain(
       (value): value is string => value !== undefined
     );
     return runDiagnosticsCommand(args);
+  }
+  if (command === "lease") {
+    return dispatchLeaseCommand(subcommand ?? "", rest, backends.lease);
   }
   if (command === "install") {
     const args = [subcommand, ...rest].filter(

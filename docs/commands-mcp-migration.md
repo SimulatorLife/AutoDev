@@ -165,8 +165,11 @@ launchd services and the live provider surfaces still carry the previous state.
   trusted authority), provisions private scratch, cache and task-record roots
   outside the workspace, and takes a
   workspace-wide exclusive lease so two sessions cannot race over the same
-  build outputs. A lease is never taken over solely on the basis of its age;
-  abandoned leases fail closed pending verified recovery. The approved
+  build outputs. The lease records the process that holds it and the command
+  it was taken for, so it is never taken over on the basis of its age: it is
+  taken over only when that holder and that command are both gone, and
+  anything it cannot prove fails closed. An operator can inspect and release
+  a lease with `autodev lease list` and `autodev lease release`. The approved
   catalogue read refuses final-file symlinks, multiple hard links, and
   non-owner/group-or-other-writable files. The parent directory and installed
   Runtime still require an independently protected trust boundary.
@@ -181,9 +184,17 @@ launchd services and the live provider surfaces still carry the previous state.
   `test`, `git_status` and `git_diff`. No role holds `git push`, `git reset`,
   `git config`, `git rebase` or `git clean`, and no read-only role holds a
   command at all.
+- `runtime/tests/command-workspace-lease.test.ts` covers the workspace lease:
+  that it is exclusive across sessions and released on completion, that it is
+  never taken over on the basis of its age, that it is taken over only when
+  its holder and its command are both gone, that a lease whose command is
+  still running, whose command was never recorded, or whose record cannot be
+  read is never taken over, that a replaced run directory is never used, and
+  that the operator sees each lease's state and releases only what is
+  provable.
 - `runtime/tests/commands-mcp.test.ts` covers catalogue strictness, parameter
   validation and literal substitution, role grants and denials, workspace
-  eligibility, the protected-catalogue rule, revocation, the workspace lease,
+  eligibility, the protected-catalogue rule, revocation,
   the network and credential profile, trusted executable resolution, the
   registry proxy's path classification and URL rewriting, and -- as real
   macOS confinement tests -- literal argument handling, denial of writes
@@ -351,7 +362,7 @@ the evidence.
 | Output bounds | "output beyond the bound is reported as truncated ..."; "a command's output is bounded and its exit status is the observed one" |
 | Deadline and cancellation | "a command that outlives its deadline is stopped and reported as timed out"; "a cancelled command is stopped and reported as cancelled"; "registered commands match discovery, and request cancellation and revocation stop execution" |
 | Env filtering | "a command's environment carries no operator credentials and no host paths"; "a confined command cannot read the operator's Git configuration" |
-| Concurrent requests: workspace serialization | "a workspace lease is exclusive across sessions and released on completion"; "an old lease is not proof that its command stopped". Busy admission is rejected, not queued (no queue exists, so no queue time is observed) |
+| Concurrent requests: workspace serialization | "a workspace lease is exclusive across sessions and released on completion"; "an old lease is not proof that its command stopped"; "a lease whose holder and command are both gone is taken over"; "a lease whose command is still running is never taken over". Busy admission is rejected, not queued (no queue exists, so no queue time is observed) |
 | Configuration drift | execution-contract `--check` above; "the installed catalogue is a valid, generic catalogue"; approval suite |
 | Unlisted command, unknown role, read-only role | "a read-only role is refused the command surface entirely"; "a role's grant decides the effective command set, ..." |
 | Traversal and symlink escape | "a symlink in the workspace cannot be used to reach outside it"; "the admitted command workspace cannot be redirected after scope resolution"; "workspace keys are physical, ..." |
@@ -666,6 +677,7 @@ Use synthetic fixtures for unit tests and independent canonical-source validatio
 | Dependency/test descendant attempts escape | Denied |
 | Descendant detaches into its own session | Terminated with the command; not left running |
 | Registry answers with a crafted body naming another host | The named host is never contacted; the child's attempt to reach it is refused |
+| A real package manager installs through the proxy under the real profile | The package is installed from the proxy; the store and its coordination lock stay in the private cache; no other package manager is downloaded |
 | Shared cache or workspace cross-contamination | Prevented |
 | Invoke from read-only, revoked or forged grant | Denied |
 | List/read/result/cancel another session's task | Denied |
@@ -757,6 +769,11 @@ answers them.
 - The writable caches are isolated per workspace: the same workspace under
   another spelling shares its cache, and a different workspace never does, so
   a dependency store in one cannot poison another.
+- A real dependency installation is proven against the operating system: a
+  real package manager, under the real profile, installs a real package
+  through the real registry proxy, and the store, the virtual store and the
+  store's coordination lock all stay inside the private cache rather than in
+  the operator's home.
 
 ### Descendant termination
 
@@ -787,6 +804,15 @@ session of its own -- and a descendant that detached is terminated while its
 command is still running. The tests were shown able to go red: removing the
 descendant termination from the tree walk fails the cancellation case, and
 removing the detached-descendant detection fails the running-command case.
+
+One consequence of the executor's own behaviour shapes how that evidence has
+to be gathered. A detached descendant is terminated as soon as the sweep sees
+it, so it is gone within a few hundred milliseconds of the command starting.
+The test that shows the operating system reporting it in a process group of
+its own therefore records the process listing continuously from before the
+command starts, rather than sampling it once afterwards; a single sample
+taken later can miss a descendant the executor has already terminated, and
+would report the runner's timing rather than the code's behaviour.
 
 The one residual is a property of macOS rather than of the executor: a
 descendant that detaches *and* whose parent exits before the executor's next
@@ -835,7 +861,90 @@ proxy's origin and credential checks makes it fail on the rewritten URL.
 What remains open is not the proxy's behaviour against a crafted body but the
 installed path: that a real dependency installation reaches the permitted
 upstream registry through the whole production gateway, backend and command
-sandbox configuration, which needs the deployed services.
+sandbox configuration, which needs the deployed services. The source-side
+half of that is proved in the next section.
+
+### A lease that outlived the server that took it
+
+A workspace-wide exclusive lease keeps two sessions from running commands
+against one workspace at the same time. It is taken when a command starts and
+released when it finishes, so a server that dies in between leaves the lease
+behind -- and the workspace closed, for good, because nothing released it.
+
+A timestamp cannot settle that: an old file says nothing about whether a
+command is still running. The lease therefore records _who_ holds it, the
+server process, and _which command_ it was taken for, the command's own
+process id. A later server asks the operating system about those two
+processes, and takes the lease over only when the holder and the command are
+both gone. Everything else fails closed: a lease whose command is still
+running, whose command was never recorded, or whose record cannot be read is
+never taken over, because an uncertain overlap between two commands is worse
+than a workspace that stays closed.
+
+What cannot be settled by the Runtime is settled by the operator.
+`autodev lease list` shows every lease with the state of its holder and its
+command, and `autodev lease release <workspace-key>` releases one -- on the
+evidence when there is evidence, and only with `--force` when the operator
+has checked the workspace themselves.
+
+The behaviour is proven against the real operating system
+(`runtime/tests/command-workspace-lease.test.ts`), the operator's command by
+`tests/cli/lease.test.ts`, and each guard was shown able to go red: dropping the check that the command has finished takes over
+a lease whose command is still running; dropping the check that the holder
+is gone takes over a live server's lease; and treating an unreadable record
+as abandoned takes over a lease nobody can vouch for.
+
+### A real dependency installation, proved against the operating system
+
+The proxy's behaviour and the sandbox's network boundary are necessary but not
+sufficient: a package manager is configured through environment variables,
+and it reads those from a namespace of its own. The installation path is
+therefore exercised end to end
+(`runtime/tests/command-dependency-install.test.ts`) — the catalogue's own
+`pnpm install --no-frozen-lockfile`, the real executor, the real registry
+proxy, the real Seatbelt profile, a real package manager, and a registry
+fixture that answers with a real tarball.
+
+That run found three defects, each of which made the confined install reach
+something it must never reach.
+
+**A package manager reads its settings from its own namespace.** pnpm reads
+`pnpm_config_*` and ignores npm's `npm_config_*` entirely. The registry and
+the store were written in npm's namespace alone, so the confined install used
+the public registry and the operator's home. The settings are now written in
+the namespace of the approved executable, with npm's written alongside it
+because that is the convention the other Node package managers follow.
+
+**The package manager that runs is the approved one.** A workspace that pins
+a different `packageManager` version made the install download that version
+and run it instead. The operator approved an executable, not whatever it
+fetches at install time. pnpm's own `manage_package_manager_versions`
+setting is now written in the executable's namespace alone.
+
+**The store's coordination lock has to be somewhere the command may write.**
+pnpm keeps the locks that coordinate the processes sharing a store outside the
+store, in a per-user directory that is `$XDG_RUNTIME_DIR` when that variable
+names an absolute directory the user owns, can write to and search, and no
+other user can write to — and `/tmp` otherwise. The profile grants writes
+only inside the workspace, the scratch and the cache, so a lock in `/tmp`
+cannot be created at all, and every store-touching command failed with
+`ERR_PNPM_STORE_DIR_OPEN_OPERATION_LOCK`. The executor now points
+`XDG_RUNTIME_DIR` at the private cache, which satisfies the upstream
+conditions exactly and is the same directory that holds the store the lock
+coordinates.
+
+The test was shown able to go red for each of the three. Dropping
+`XDG_RUNTIME_DIR` fails the install with the lock error above; writing the
+registry only in npm's namespace fails it with a network error, because the
+confined child cannot reach the public registry at all; and dropping the
+self-management setting makes the install fetch the pinned package manager.
+
+What the run proves is the source-side path: a real package manager, in the
+real sandbox, installs a real package from the proxy, and the store, its
+virtual store and its coordination lock all stay inside the private cache
+rather than in the operator's home. What it does not prove is the installed
+path through the production gateway, backend and command configuration, which
+still needs the deployed services.
 
 ## 13. Open decisions and known blockers
 
@@ -851,10 +960,13 @@ sandbox configuration, which needs the deployed services.
   system" in section 12). A registry that answers with a crafted body is now
   exercised the same way as well: it cannot steer the confined child off the
   proxy and the host it names is never contacted (see "A hostile registry,
-  proved against the operating system" in section 12). What still needs a
-  real run is the installed path: that a real dependency installation reaches
-  the permitted upstream registry through the whole production gateway,
-  backend and command sandbox configuration.
+  proved against the operating system" in section 12). A real package
+  manager now installs a real package through the proxy under the real
+  profile, with the store and its lock in the private cache (see "A real
+  dependency installation, proved against the operating system" in section
+  12). What still needs a real run is the installed path: that a real
+  dependency installation reaches the permitted upstream registry through the
+  whole production gateway, backend and command sandbox configuration.
 - The exact catalogue location/schema, initial grants, execution budgets and
   network policy are decided in the implementation: the catalogue is
   `config/commands.json` in the checkout and the approved copy is

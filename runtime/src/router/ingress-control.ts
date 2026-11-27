@@ -9,6 +9,8 @@ import {
 } from "node:http";
 import path from "node:path";
 
+import { isPathWithin } from "@simulatorlife/autodev-data/files";
+
 import type { RouterGenerationEndpoint, RouterIngress } from "./ingress.ts";
 
 const WORKER_ENTRY_PATTERN = /\.[cm]?[jt]s$/u;
@@ -151,8 +153,7 @@ export class RouterIngressSupervisor {
       realpath(this.releasesDirectory),
       realpath(entry)
     ]);
-    const relative = path.relative(root, resolved);
-    if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+    if (resolved === root || !isPathWithin(root, resolved)) {
       throw new Error(
         "Worker entry must be inside the immutable releases directory"
       );

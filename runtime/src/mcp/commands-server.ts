@@ -71,7 +71,33 @@ export interface CommandsServerGrant {
   /**
   Existing Runtime admission owner must serialize across workspace sessions.
   */
-  readonly tryAcquireWorkspace: () => (() => void) | null;
+  readonly tryAcquireWorkspace: () => CommandWorkspaceLease | null;
+}
+
+/**
+A workspace-wide exclusive lease.
+
+Two sessions in one workspace must not run commands against it at the same
+time: an install and a test would race over the same build outputs.
+
+The lease records the command it was taken for, because a lease outlives its
+holder whenever that holder dies without releasing it. The record is what
+lets a later server tell an abandoned lease from a live one instead of
+refusing every command in that workspace forever.
+*/
+export interface CommandWorkspaceLease {
+  /**
+  Record the command the lease was taken for.
+
+  A command's process id exists only once it has started, so the lease
+  carries it after the fact. A lease whose command was never recorded cannot
+  be proven abandoned, and is never reclaimed on a guess.
+  */
+  noteCommand(pid: number): void;
+  /**
+  Release the lease.
+  */
+  release(): void;
 }
 
 /**
@@ -223,8 +249,9 @@ export function createCommandsMcpServer(grant: CommandsServerGrant): CommandsSer
             definition,
             arguments_ as Record<string, unknown>
           );
-          const release = grant.tryAcquireWorkspace();
-          if (!release) throw new Error("Workspace already has an active command.");
+          const lease = grant.tryAcquireWorkspace();
+          if (!lease)
+            throw new Error("Workspace already has an active command.");
           try {
             authorize();
             const task = await extra.taskStore.createTask({
@@ -260,13 +287,15 @@ export function createCommandsMcpServer(grant: CommandsServerGrant): CommandsSer
                   result = await recordCommandExecutionSpan(
                     commandId,
                     definition.executionClass,
-                    () => runApprovedCommand(
-                      commandId,
-                      definition,
-                      argv,
-                      grant.scope,
-                      execution.controller.signal
-                    ),
+                    () =>
+                      runApprovedCommand(
+                        commandId,
+                        definition,
+                        argv,
+                        grant.scope,
+                        execution.controller.signal,
+                        (pid) => lease.noteCommand(pid)
+                      ),
                     extra._meta
                   );
                 } catch {
@@ -309,12 +338,12 @@ export function createCommandsMcpServer(grant: CommandsServerGrant): CommandsSer
                 clearInterval(revocationCheck);
                 extra.signal.removeEventListener("abort", abortRequest);
                 active.delete(task.taskId);
-                release();
+                lease.release();
               }
             })();
             return { task };
           } catch (error) {
-            release();
+            lease.release();
             throw error;
           }
         },

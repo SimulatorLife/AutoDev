@@ -1,25 +1,35 @@
 import assert from "node:assert/strict";
 import {
+  chmodSync,
+  linkSync,
   mkdirSync,
   mkdtempDisposableSync,
+  readFileSync,
   realpathSync,
+  rmSync,
   symlinkSync,
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace";
 
 import { startChatgptBackendPool } from "../src/mcp/chatgpt-backend-pool.ts";
 import { probeSupergateway } from "../src/mcp/chatgpt-supergateway-probe.ts";
+import { withGrant } from "../src/mcp/gateway-client.ts";
 import {
   createGatewayAdmission,
-  ensureLocalAdmission
+  ensureLocalAdmission,
+  localAdmissionPaths,
+  localSurfaceUrl,
+  readLocalAdmission
 } from "../src/mcp/gateway-admission.ts";
 import {
   getFinishedSpans,
+  resetTelemetryForTest,
   setTestExporter,
   shutdownTelemetryForTest
 } from "../src/mcp/mcp-telemetry.ts";
@@ -38,9 +48,67 @@ test.before(async () => {
   setTestExporter(new InMemorySpanExporter());
 });
 
+test.beforeEach(() => {
+  resetTelemetryForTest();
+});
+
 test.after(async () => {
   await shutdownTelemetryForTest();
   setTestExporter(null);
+});
+
+test("admission keys are stable and invalid existing files are never overwritten", () => {
+  using root = mkdtempDisposableSync(path.join(tmpdir(), "autodev-admission-key-"));
+  const codexHome = path.join(root.path, ".codex");
+  ensureLocalAdmission(codexHome);
+  const initial = readLocalAdmission(codexHome);
+  assert.ok(initial);
+  assert.match(initial.key, /^[0-9a-f]{64}$/u);
+  assert.match(initial.secret, /^[0-9a-f]{64}$/u);
+  ensureLocalAdmission(codexHome);
+  assert.deepEqual(readLocalAdmission(codexHome), initial);
+  const { keyFile, secretFile } = localAdmissionPaths(codexHome);
+  chmodSync(keyFile, 0o644);
+  assert.equal(readLocalAdmission(codexHome), null);
+  assert.throws(() => ensureLocalAdmission(codexHome));
+  assert.equal(readFileSync(keyFile, "utf8").trim(), initial.key);
+  chmodSync(keyFile, 0o600);
+  rmSync(secretFile);
+  const other = path.join(root.path, "other");
+  writeFileSync(other, initial.secret + "\n", { mode: 0o600 });
+  for (const createLink of [symlinkSync, linkSync]) {
+    createLink(other, secretFile);
+    assert.equal(readLocalAdmission(codexHome), null);
+    assert.throws(() => ensureLocalAdmission(codexHome));
+    assert.equal(readFileSync(other, "utf8").trim(), initial.secret);
+    rmSync(secretFile);
+  }
+  writeFileSync(secretFile, "", { mode: 0o600 });
+  assert.equal(readLocalAdmission(codexHome), null);
+  assert.throws(() => ensureLocalAdmission(codexHome));
+  assert.equal(readFileSync(secretFile, "utf8"), "");
+});
+
+test("local gateway URLs require private state and literal role/server identifiers", () => {
+  using root = mkdtempDisposableSync(path.join(tmpdir(), "autodev-admission-url-"));
+  const codexHome = path.join(root.path, ".codex");
+  ensureLocalAdmission(codexHome);
+  const state = path.join(codexHome, "mcp-gateway", "gateway.json");
+  for (const mcpPort of [0, -1, 65536, "1234", 1.5]) {
+    writeFileSync(state, JSON.stringify({ mcpPort }), { mode: 0o600 });
+    assert.equal(localSurfaceUrl(codexHome, "worker", "commands"), null);
+  }
+  writeFileSync(state, JSON.stringify({ mcpPort: 1234 }), { mode: 0o600 });
+  assert.equal(
+    localSurfaceUrl(codexHome, "worker", "commands")?.href,
+    "http://127.0.0.1:1234/local/worker/commands/mcp"
+  );
+  for (const server of ["..", ".", "a/b", "a?b", "a%2fb"]) {
+    assert.equal(localSurfaceUrl(codexHome, "worker", server), null);
+  }
+  assert.equal(localSurfaceUrl(codexHome, "../worker", "commands"), null);
+  chmodSync(state, 0o644);
+  assert.equal(localSurfaceUrl(codexHome, "worker", "commands"), null);
 });
 
 test("catalogue discovery reuses the reviewed workspace, not the gateway secret directory", () => {
@@ -177,6 +245,149 @@ test("admission respects physical protected boundaries before configuration exis
         configuration: [path.join(dangling, "config")]
       })
   );
+});
+
+test("cancellation metadata carries the adapter's grant, not a caller's grant", () => {
+  const notification = {
+    jsonrpc: "2.0" as const,
+    method: "notifications/cancelled",
+    params: { requestId: 1, _meta: { [SESSION_GRANT_META_KEY]: "forged" } }
+  };
+  assert.deepEqual(withGrant(notification, "trusted"), {
+    ...notification,
+    params: { requestId: 1, _meta: { [SESSION_GRANT_META_KEY]: "trusted" } }
+  });
+});
+
+test("scoped cancellation matches the original workspace, owner and transport session", {
+  timeout: 15_000
+}, async () => {
+  using root = mkdtempDisposableSync(path.join(tmpdir(), "autodev-cancel-scope-"));
+  const base = realpathSync(root.path);
+  const script = path.join(base, "backend.mjs");
+  writeFileSync(script, String.raw`import { createInterface } from "node:readline";
+const held = new Map();
+const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\n");
+const result = (id, value) => send({ id, result: { content: [{ type: "text", text: value }] } });
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const request = JSON.parse(line);
+  if (request.method === "initialize") {
+    send({ id: request.id, result: { protocolVersion: request.params.protocolVersion,
+      capabilities: { tools: {} }, serverInfo: { name: "cancel-fixture", version: "1" } } });
+  } else if (request.method === "tools/call") {
+    const { action, label } = request.params.arguments;
+    if (action === "hold") held.set(request.id, label);
+    else if (action === "status") result(request.id, JSON.stringify([...held.values()].sort()));
+    else if (action === "release") {
+      for (const [id, value] of held) {
+        if (value === label) { held.delete(id); result(id, value); }
+      }
+      result(request.id, "released");
+    }
+  } else if (request.method === "notifications/cancelled") {
+    held.delete(request.params.requestId);
+  }
+});
+`);
+  const alpha = path.join(base, "alpha");
+  const beta = path.join(base, "beta");
+  mkdirSync(alpha);
+  mkdirSync(beta);
+  const pool = await startChatgptBackendPool({
+    version: 1,
+    servers: {
+      fixture: { kind: "admitted", role: "worker", server: "fixture", tools: ["hold"] }
+    }
+  }, {
+    gatewayEnv: {},
+    toolCallTimeoutMs: 10_000,
+    admission: {
+      secret: SECRET,
+      catalogueWorkspace: base,
+      provision: (server, _role, workspace) => ({
+        server, command: process.execPath, args: [script], cwd: workspace
+      })
+    }
+  });
+  try {
+    const url = `http://127.0.0.1:${pool.port}/mcp/fixture`;
+    const headers = { authorization: `Bearer ${pool.token}`, "content-type": "application/json" };
+    const send = (session: string | null, message: unknown) =>
+      fetch(url, {
+        method: "POST",
+        headers: session ? { ...headers, "mcp-session-id": session } : headers,
+        body: JSON.stringify(message),
+        signal: AbortSignal.timeout(12_000)
+      });
+    const open = async () => {
+      const response = await send(null, {
+        jsonrpc: "2.0", id: 0, method: "initialize",
+        params: { protocolVersion: "2025-03-26", capabilities: {} }
+      });
+      assert.ok((await response.json()).result);
+      const id = response.headers.get("mcp-session-id");
+      assert.ok(id);
+      return id;
+    };
+    const session = await open();
+    const otherSession = await open();
+    const grant = (workspace: string) => issueSessionGrant(SECRET, {
+      workspace, role: "worker", session: newGrantSession()
+    });
+    const a = grant(alpha);
+    const b = grant(beta);
+    const c = grant(alpha);
+    const call = async (token: string, id: number, action: string, label = "") => {
+      const response = await send(session, {
+        jsonrpc: "2.0", id, method: "tools/call",
+        params: { name: "hold", arguments: { action, label }, _meta: { [SESSION_GRANT_META_KEY]: token } }
+      });
+      return response.json();
+    };
+    const cancel = async (token: string | undefined, transport = session) => {
+      const response = await send(transport, {
+        jsonrpc: "2.0", method: "notifications/cancelled",
+        params: { requestId: 42, _meta: { [SESSION_GRANT_META_KEY]: token } }
+      });
+      assert.equal(response.status, 202);
+      await response.text();
+    };
+    // A shared transport can carry independent authorized scopes, and
+    // upstream remapping may reuse request IDs.
+    const heldA = call(a, 42, "hold", "a");
+    const heldB = call(b, 42, "hold", "b");
+    const heldC = call(c, 42, "hold", "c");
+    for (const pending of [heldA, heldB, heldC]) void pending.catch(() => {});
+    const status = async (token: string) =>
+      JSON.parse((await call(token, 43, "status")).result.content[0].text);
+    const waitForStatus = async (token: string, expected: string[]) => {
+      for (let i = 0; i < 100; i += 1) {
+        // eslint-disable-next-line no-await-in-loop -- wait for the backend to receive the held calls
+        const actual = await status(token);
+        if (JSON.stringify(actual) === JSON.stringify(expected)) return;
+        // eslint-disable-next-line no-await-in-loop -- bounded fixture polling
+        await delay(20);
+      }
+      assert.fail("fixture never reached expected pending state");
+    };
+    await waitForStatus(a, ["a", "c"]);
+    await waitForStatus(b, ["b"]);
+    await cancel(undefined);
+    await cancel("v1.forged.grant");
+    await cancel(a, otherSession);
+    assert.deepEqual(await status(a), ["a", "c"]);
+    assert.deepEqual(await status(b), ["b"]);
+    await cancel(a);
+    assert.match((await heldA).error.message, /cancelled/u);
+    await waitForStatus(a, ["c"]);
+    assert.deepEqual(await status(b), ["b"]);
+    await call(c, 44, "release", "c");
+    await call(b, 44, "release", "b");
+    assert.equal((await heldC).result.content[0].text, "c");
+    assert.equal((await heldB).result.content[0].text, "b");
+  } finally {
+    await pool.close();
+  }
 });
 
 test(

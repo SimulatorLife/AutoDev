@@ -260,6 +260,19 @@ test("view changes and replay selection stay fast on a saturated filter set", ()
   // people to ignore it, so only the measurement that survived three
   // consecutive parallel runs is kept. Detecting a uniformly slower path is
   // therefore not covered here; it needs the browser-side timing assertion.
+  //
+  // The statistic is the median cost of one iteration rather than the mean.
+  // This path costs microseconds per iteration, so the whole 2000-iteration
+  // run is a window of roughly ten milliseconds; a single scheduler stall of
+  // a few milliseconds inside that window is large enough to decide a mean,
+  // and the measured growth then reports the runner rather than the code. The
+  // stall is not the implementation's cost, so the guard measures the
+  // implementation's typical cost instead.
+  //
+  // A median does not weaken what the guard detects. When an iteration costs
+  // more the longer the run has been going -- a quadratic implementation --
+  // the median iteration of a run of n costs about n/2 times the median
+  // iteration of a run of n/4, so it reads the same ~4x growth a mean reads.
   const scope = parsePlaytestingScope({
     view: "findings",
     workspaceId: "owner/game",
@@ -270,8 +283,9 @@ test("view changes and replay selection stay fast on a saturated filter set", ()
     cursor: "page-3"
   });
 
-  const roundTrips = (iterations: number): number => {
-    const startedAt = performance.now();
+  const roundTrips = (iterations: number): number[] => {
+    const samples: number[] = [];
+    let previous = performance.now();
     for (let index = 0; index < iterations; index += 1) {
       const href = playtestingEpisodeHref(scope, "episode:17", index % 200);
       // Round-tripping through the parser is what a Back navigation costs.
@@ -281,33 +295,35 @@ test("view changes and replay selection stay fast on a saturated filter set", ()
       playtestingInspectorBackHref(parsed);
       playtestingViewHref(scope, "sessions");
       playtestingFilterHref(scope, { severity: "minor" });
+      const now = performance.now();
+      samples.push(now - previous);
+      previous = now;
     }
-    return performance.now() - startedAt;
+    return samples;
+  };
+
+  const median = (samples: number[]): number => {
+    const sorted = [...samples].sort((left, right) => left - right);
+    const middle = sorted.length >> 1;
+    return sorted.length % 2 === 0
+      ? (sorted[middle - 1]! + sorted[middle]!) / 2
+      : sorted[middle]!;
   };
 
   // Warm up first: no sample should pay for JIT tiering.
   roundTrips(500);
   // Best of three per size, so one scheduler hiccup cannot decide the result.
-  const fastest = (run: (iterations: number) => number, n: number): number =>
-    Math.min(run(n), run(n), run(n));
+  const cheapest = (n: number): number => {
+    let best = Infinity;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const cost = median(roundTrips(n));
+      if (cost < best) best = cost;
+    }
+    return best;
+  };
 
-  const small = fastest(roundTrips, 500);
-  const large = fastest(roundTrips, 2000);
-
-  // Linearity: the property the acceptance names, measured per iteration.
-  //
-  // Comparing totals (4x work against 1x) is the obvious form and it is wrong
-  // here: the larger sample runs four times longer, so it absorbs four times
-  // as much scheduler noise and the ratio inflates for reasons that have
-  // nothing to do with the code. Dividing each total by its own iteration count
-  // cancels that -- a fixed pause adds more per iteration to the shorter run,
-  // which biases the comparison downward rather than flaking it.
-  //
-  // Per iteration, linear cost reads ~1.0 because each iteration costs the
-  // same; quadratic reads ~4.0 because each later iteration costs more than the
-  // last. The threshold sits between them.
-  const perIterationSmall = small / 500;
-  const perIterationLarge = large / 2000;
+  const perIterationSmall = cheapest(500);
+  const perIterationLarge = cheapest(2000);
   const growth = perIterationLarge / perIterationSmall;
   assert.ok(
     growth < 2.5,

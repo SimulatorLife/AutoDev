@@ -197,16 +197,6 @@ function copyRegularFileIfPresent(
   copyFileSync(source, destination);
 }
 
-function pathIsWithin(root: string, candidate: string): boolean {
-  const relative = path.relative(path.resolve(root), path.resolve(candidate));
-  return (
-    relative === "" ||
-    (relative !== ".." &&
-      !relative.startsWith(`..${path.sep}`) &&
-      !path.isAbsolute(relative))
-  );
-}
-
 /** Copy a managed model catalog through a symlink only when it stays trusted. */
 function copyAnalystModelCatalog(
   sourceCodexHome: string,
@@ -220,8 +210,8 @@ function copyAnalystModelCatalog(
   if (sourceStat.isSymbolicLink()) {
     materializedSource = realpathSync(source);
     if (
-      !pathIsWithin(sourceCodexHome, materializedSource) &&
-      !pathIsWithin(trustedRepositoryRoot, materializedSource)
+      !isPathWithin(sourceCodexHome, materializedSource) &&
+      !isPathWithin(trustedRepositoryRoot, materializedSource)
     ) {
       throw new Error(
         "The source Codex model catalog link escapes trusted directories."

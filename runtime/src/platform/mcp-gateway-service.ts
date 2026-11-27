@@ -34,7 +34,7 @@ import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
+
 import {
   writeErrorLine,
   writeLine
@@ -87,6 +87,11 @@ import {
   roleContract
 } from "../shared/execution-contract.ts";
 import { resolveRemoteMcpHeaders } from "../shared/mcp-headers.ts";
+import {
+  ensurePrivateDirectory,
+  privateRead,
+  privateWrite
+} from "../shared/private-service-files.ts";
 import {
   readRuntimeSecret,
   resolveManagedSecret
@@ -203,54 +208,11 @@ export function dependencyEnvironment(
   );
 }
 
-function privateFileStat(file: string) {
-  try {
-    return lstatSync(file);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw error;
-  }
-}
-
-export function privateWrite(file: string, content: string): void {
-  const stat = privateFileStat(file);
-  if (
-    stat &&
-    (!stat.isFile() ||
-      stat.nlink !== 1 ||
-      (process.getuid && stat.uid !== process.getuid()))
-  )
-    throw new Error("Refusing non-private service file: " + file);
-  atomicWriteSync(file, content, { mode: 0o600, skipUnchanged: true });
-  chmodSync(file, 0o600);
-}
-
-export function privateRead(file: string): string {
-  const stat = privateFileStat(file);
-  if (!stat) return "";
-  if (
-    !stat.isFile() ||
-    stat.nlink !== 1 ||
-    (stat.mode & 0o077) !== 0 ||
-    (process.getuid && stat.uid !== process.getuid())
-  )
-    throw new Error("Service file must be a private regular file: " + file);
-  return readFileSync(file, "utf8").trim();
-}
-
-/**
-Create (or verify) a private, owned service directory.
-*/
-export function ensurePrivateDirectory(directory: string): void {
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const stat = lstatSync(directory);
-  if (!stat.isDirectory() || (process.getuid && stat.uid !== process.getuid()))
-    throw new Error(
-      "Service directory must be an owned directory, not a symlink: " +
-        directory
-    );
-  chmodSync(directory, 0o700);
-}
+export {
+  ensurePrivateDirectory,
+  privateRead,
+  privateWrite
+} from "../shared/private-service-files.ts";
 
 export function generationPath(directory: string, generation: string): string {
   const target = path.join(directory, generation);

@@ -176,7 +176,8 @@ export function resolveTrustedExecutables(
 ): TrustedExecutables {
   const entries: Array<[string, string]> = [];
   const roots = new Set<string>();
-  for (const name of new Set(names)) {
+  const uniqueNames = new Set(names);
+  for (const name of uniqueNames) {
     try {
       if (!commandExecutableNameSchema.safeParse(name).success) continue;
       const resolved =
@@ -221,6 +222,27 @@ function directory(value: string): string {
   const resolved = realpathSync(value);
   if (!statSync(resolved).isDirectory()) throw new Error("Command scope root is not a directory.");
   return resolved;
+}
+
+/**
+Require a private root the Runtime's own commands write into.
+
+0o077 rejects any group or other access at all. 0o300 requires that the owner
+can still write and search it: a private root nobody can write into is
+useless, and it is not a usable lock directory for the package manager
+either, which insists on owning a directory it can create files in.
+*/
+function assertPrivateCommandRoot(root: string): void {
+  const stat = statSync(root);
+  if (
+    (stat.mode & 0o077) !== 0 ||
+    (stat.mode & 0o300) !== 0o300 ||
+    (process.getuid && stat.uid !== process.getuid())
+  ) {
+    throw new Error(
+      "Command scratch and cache must be private and owned by the Runtime user."
+    );
+  }
 }
 
 function subtree(value: string): string {
@@ -336,13 +358,7 @@ export function prepareCommand(
   const cache = directory(scope.cache);
   const roots = scope.toolchainRoots.map(directory);
   for (const root of [scratch, cache]) {
-    const rootStat = statSync(root);
-    if (
-      (rootStat.mode & 0o077) !== 0 ||
-      (process.getuid && rootStat.uid !== process.getuid())
-    ) {
-      throw new Error("Command scratch and cache must be private and owned by the Runtime user.");
-    }
+    assertPrivateCommandRoot(root);
   }
   if (
     workspace === path.parse(workspace).root ||
@@ -429,14 +445,27 @@ export function prepareCommand(
     HOME: scratch,
     TMPDIR: scratch,
     XDG_CACHE_HOME: path.join(cache, "xdg"),
+    /**
+    Where the package manager keeps the locks that coordinate the processes
+    sharing a store.
+
+    pnpm keeps those locks outside the store, in a per-user directory. On
+    Unix that directory is `$XDG_RUNTIME_DIR` when the variable holds an
+    absolute path to a directory the current user owns, can write to and
+    search, and no other user can write to; otherwise it is `/tmp`. The
+    confined command cannot write to `/tmp` -- the profile grants writes only
+    inside the workspace, the scratch and the cache -- so without this the
+    store lock lands in `/tmp` and every store-touching command fails with
+    "Operation not permitted". The private cache satisfies the upstream
+    conditions exactly, and it is the same directory that holds the store the
+    lock coordinates.
+    */
+    XDG_RUNTIME_DIR: cache,
     LANG: "C",
     LC_ALL: "C",
     CI: "1",
-    // The package manager must not phone home for anything but the packages.
-    npm_config_update_notifier: "false",
-    npm_config_fund: "false",
-    npm_config_audit: "false",
-    npm_config_store_dir: path.join(cache, "pnpm-store"),
+    // The package manager's own settings are written separately, in the
+    // namespace the package manager actually reads.
     // Git must never read the host's configuration. The operator's global
     // file names credential helpers, commit templates and aliases that point
     // outside the workspace, and the system file is host configuration. An
@@ -450,9 +479,6 @@ export function prepareCommand(
     // Git configuration.
     ...scope.commitIdentityEnv
   };
-  if (scope.registryEndpoint && definition.executionClass === "dependency_install") {
-    environment.npm_config_registry = scope.registryEndpoint;
-  }
   return {
     executable: SANDBOX,
     args: [
@@ -464,8 +490,63 @@ export function prepareCommand(
       ...arguments_
     ],
     cwd: workspace,
-    env: environment
+    env: {
+      ...environment,
+      ...packageManagerEnvironment(
+        definition.executable,
+        cache,
+        scope.registryEndpoint &&
+          definition.executionClass === "dependency_install"
+          ? scope.registryEndpoint
+          : undefined
+      )
+    }
   };
+}
+
+/**
+The environment a Node package manager reads its own settings from.
+
+A package manager reads its own settings from its own namespace: pnpm reads
+`pnpm_config_*` and ignores npm's `npm_config_*` entirely. Written only in
+npm's namespace, the registry stays the public one and the store stays in the
+operator's home, so the confined install reaches neither the approved proxy
+nor the private cache. The approved executable names the namespace the
+program that runs certainly reads, and npm's is written alongside it because
+it is the convention the other Node package managers follow.
+
+The package manager must also not phone home for anything but the packages:
+its store and the lock it takes beside it stay inside the private cache
+rather than in the operator's home. And the package manager that runs is the
+approved one -- a workspace that pins a different version must not make the
+install download that version and run it instead, because the operator
+approved an executable, not whatever it fetches at install time. That is
+pnpm's own setting, so it is written in the executable's namespace alone.
+*/
+function packageManagerEnvironment(
+  executable: string,
+  cache: string,
+  registry: string | undefined
+): Record<string, string> {
+  const namespaces = [...new Set(["npm_config_", `${executable}_config_`])];
+  const settings: Record<string, string> = {
+    update_notifier: "false",
+    fund: "false",
+    audit: "false",
+    store_dir: path.join(cache, "pnpm-store")
+  };
+  if (registry) settings.registry = registry;
+  const environment: Record<string, string> = {};
+  for (const [setting, value] of Object.entries(settings)) {
+    for (const namespace of namespaces) {
+      environment[`${namespace}${setting}`] = value;
+    }
+  }
+  if (executable !== "npm") {
+    environment[`${executable}_config_manage_package_manager_versions`] =
+      "false";
+  }
+  return environment;
 }
 
 /**
@@ -479,13 +560,18 @@ Cancellation and the command's own deadline are handled here rather than by
 the executor's process-group signal, because a group signal does not reach a
 descendant that detached into its own session. The tree is terminated while
 the parent-child relationship still identifies every descendant.
+
+`onStarted` receives the command's process id once it exists. The workspace
+lease records it, so a lease left behind by a server that died can later be
+told apart from a lease whose command is still running.
 */
 export async function runApprovedCommand(
   commandId: string,
   definition: CommandDefinition,
   arguments_: readonly string[],
   scope: ApprovedCommandScope,
-  signal: AbortSignal
+  signal: AbortSignal,
+  onStarted?: (pid: number) => void
 ): Promise<CommandResult> {
   const started = performance.now();
   let prepared: PreparedCommand;
@@ -513,6 +599,7 @@ export async function runApprovedCommand(
     maxBuffer: OUTPUT_LIMIT_BYTES,
     killDescendants: true
   });
+  if (onStarted && child.pid !== undefined) onStarted(child.pid);
   let termination: "cancelled" | "timed_out" | null = null;
   const terminate = async (
     reason: "cancelled" | "timed_out"

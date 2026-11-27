@@ -26,6 +26,7 @@ import {
   unboundPlaytestMethods,
   usesGenericPlaytestAdapter
 } from "@simulatorlife/autodev-core";
+import { isPathWithin } from "@simulatorlife/autodev-data/files";
 
 import {
   derivedBenchmarkDigests,
@@ -132,13 +133,7 @@ function declaredBenchmarkPath(checkoutRoot: string): string | null {
   // The declared name is the same relative reference the config's other
   // manifests use, so it must stay inside the integration directory.
   const resolved = path.resolve(root, declared);
-  const relative = path.relative(root, resolved);
-  if (
-    relative === ".." ||
-    relative.startsWith(`..${path.sep}`) ||
-    path.isAbsolute(relative)
-  )
-    return null;
+  if (!isPathWithin(root, resolved)) return null;
   return existsSync(resolved) ? resolved : null;
 }
 

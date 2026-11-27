@@ -28,6 +28,8 @@ import {
   CreateTaskResultSchema
 } from "@modelcontextprotocol/sdk/types.js";
 
+import { externalMcpBackend } from "../src/mcp/chatgpt-filesystem-sandbox.ts";
+
 const SERVER = path.resolve(
   import.meta.dirname,
   "..",
@@ -202,6 +204,54 @@ test(
     );
     const payload = taskResult.structuredContent as { commandId: string };
     assert.equal(payload.commandId, "git_status");
+  }
+);
+
+test(
+  "the server runs commands when launched exactly as the gateway launches it",
+  {
+    skip: process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec")
+  },
+  async (t) => {
+    // The server is a trusted broker that confines each command under its own
+    // Seatbelt profile. macOS refuses that profile from inside any restrictive
+    // one, so a gateway launch that wrapped the server in a sandbox ran no
+    // command at all (exit 71, `sandbox_apply: Operation not permitted`)
+    // while the server started from its own entry point worked.
+    const workspace = workspaceFixture();
+    t.after(() => rmSync(workspace, { recursive: true, force: true }));
+    const home = process.env.HOME!;
+    const launch = externalMcpBackend(
+      "commands",
+      path.resolve(import.meta.dirname, "../.."),
+      workspace,
+      process.execPath,
+      home,
+      process.env.CODEX_HOME ?? path.join(home, ".codex"),
+      { role: "worker" }
+    );
+    assert.notEqual(launch.command, "/usr/bin/sandbox-exec");
+    const client = new Client({ name: "commands-gateway-launch", version: "1.0.0" });
+    await client.connect(
+      new StdioClientTransport({
+        command: launch.command,
+        args: launch.args,
+        cwd: workspace,
+        env: processEnvironment()
+      })
+    );
+    t.after(() => client.close());
+
+    const result = await client.callTool({ name: "git_status", arguments: {} });
+    const structured = result.structuredContent as {
+      status: string;
+      exitCode: number | null;
+      stdout: string;
+      stderr: string;
+    };
+    assert.equal(structured.status, "succeeded", structured.stderr);
+    assert.equal(structured.exitCode, 0);
+    assert.match(structured.stdout, /README\.md/u);
   }
 );
 

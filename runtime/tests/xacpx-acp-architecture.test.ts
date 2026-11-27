@@ -244,10 +244,18 @@ test("ACP sessions reach their role's MCP servers only through the gateway clien
     assert.deepEqual(server.args, [client, server.name]);
     assert.equal(JSON.stringify(server).includes("context7-secret"), false);
     const grant = server.env.find((entry) => entry.name === MCP_GRANT_ENV)?.value;
-    // The session's grant names its own workspace, role and session.
+    // The session's grant names its own workspace, role and session. A session
+    // the Runtime issued is marked as its own, so telemetry can join it to the
+    // AutoDev session rather than to a random client session.
     assert.deepEqual(
       { ...verifySessionGrant(readLocalAdmission(process.env.CODEX_HOME!)!.secret, grant), expiresAt: 0 },
-      { workspace: realpathSync(REPO_ROOT), role: "docs-researcher", session: "sess-gateway", expiresAt: 0 }
+      {
+        workspace: realpathSync(REPO_ROOT),
+        role: "docs-researcher",
+        session: "sess-gateway",
+        runtimeSession: true,
+        expiresAt: 0
+      }
     );
   }
   // Without an installed gateway, or in the home directory, no MCP is offered.

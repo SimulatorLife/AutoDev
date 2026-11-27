@@ -10,18 +10,17 @@ install-time probe build the same admission from the same files, so the probe
 exercises exactly what the service runs.
 */
 import { randomBytes } from "node:crypto";
-import {
-  chmodSync,
-  lstatSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync
-} from "node:fs";
+import { lstatSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
 import { autodevHome } from "../shared/autodev-home.ts";
 import { roleContract } from "../shared/execution-contract.ts";
+import {
+  assertPrivateDirectory,
+  ensurePrivateDirectory,
+  privateRead
+} from "../shared/private-service-files.ts";
 import {
   MCP_FILESYSTEM_READ_ONLY_ENV,
   MCP_SERVER_XACPX
@@ -56,42 +55,54 @@ export function localAdmissionPaths(codexHome: string): {
   };
 }
 
-function readPrivate(file: string): string | null {
+const ADMISSION_KEY = /^[0-9a-f]{64}$/u;
+
+function readAdmissionKey(file: string): string {
+  const value = privateRead(file);
+  if (!ADMISSION_KEY.test(value)) {
+    throw new Error("Missing or invalid private gateway admission key.");
+  }
+  return value;
+}
+
+/** The keys are usable only in the gateway's owned private directory. */
+export function readLocalAdmission(
+  codexHome: string
+): { key: string; secret: string } | null {
   try {
-    const stat = lstatSync(file);
-    if (!stat.isFile() || (stat.mode & 0o077) !== 0) return null;
-    return readFileSync(file, "utf8").trim() || null;
+    assertPrivateDirectory(mcpGatewayDirectory(codexHome));
+    const files = localAdmissionPaths(codexHome);
+    return {
+      key: readAdmissionKey(files.keyFile),
+      secret: readAdmissionKey(files.secretFile)
+    };
   } catch {
     return null;
   }
 }
 
-/**
-The local key and admission secret, or null when either is missing or exposed.
-*/
-export function readLocalAdmission(
-  codexHome: string
-): { key: string; secret: string } | null {
-  const files = localAdmissionPaths(codexHome);
-  const key = readPrivate(files.keyFile);
-  const secret = readPrivate(files.secretFile);
-  return key && secret ? { key, secret } : null;
-}
-
-/**
-Create any missing admission file; existing keys are kept.
-*/
+/** Generate missing keys exclusively; never rotate or repair an existing key silently. */
 export function ensureLocalAdmission(codexHome: string): void {
+  ensurePrivateDirectory(mcpGatewayDirectory(codexHome));
   const files = localAdmissionPaths(codexHome);
-  mkdirSync(mcpGatewayDirectory(codexHome), { recursive: true, mode: 0o700 });
   for (const file of [files.keyFile, files.secretFile]) {
-    if (readPrivate(file)) continue;
-    writeFileSync(file, randomBytes(32).toString("hex") + "\n", {
-      mode: 0o600
-    });
-    chmodSync(file, 0o600);
+    try {
+      lstatSync(file);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      try {
+        writeFileSync(file, randomBytes(32).toString("hex") + "\n", {
+          mode: 0o600,
+          flag: "wx"
+        });
+      } catch (creationError) {
+        if ((creationError as NodeJS.ErrnoException).code !== "EEXIST") {
+          throw creationError;
+        }
+      }
+    }
+    readAdmissionKey(file);
   }
-
 }
 
 /**
@@ -104,13 +115,15 @@ export function localSurfaceUrl(
   server: string
 ): URL | null {
   try {
+    if (!/^[a-z0-9-]+$/u.test(role) || !/^[a-zA-Z0-9_.-]+$/u.test(server) ||
+        server === "." || server === "..") return null;
+    const directory = mcpGatewayDirectory(codexHome);
+    assertPrivateDirectory(directory);
     const { mcpPort } = JSON.parse(
-      readFileSync(
-        path.join(mcpGatewayDirectory(codexHome), "gateway.json"),
-        "utf8"
-      )
+      privateRead(path.join(directory, "gateway.json"))
     ) as { mcpPort?: unknown };
-    return Number.isSafeInteger(mcpPort)
+    return typeof mcpPort === "number" && Number.isSafeInteger(mcpPort) &&
+      mcpPort > 0 && mcpPort <= 65535
       ? new URL(
           `http://127.0.0.1:${String(mcpPort)}/local/${role}/${server}/mcp`
         )

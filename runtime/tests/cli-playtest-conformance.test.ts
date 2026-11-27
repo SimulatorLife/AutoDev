@@ -255,6 +255,24 @@ test("an entry outside the approved checkout is refused", async () => {
   }
 });
 
+test("an entry that resolves to the checkout's own parent is refused", async () => {
+  const fixture = checkout(WORKING_GAME);
+  try {
+    // One level above the checkout is not inside it. This name resolves to the
+    // checkout's parent rather than to a path that walks out of the checkout,
+    // so a check that only looks for a ".." segment lets it through.
+    setBinding(fixture.root, { entry: "../.." });
+    const report = await runPlaytestConformance(fixture.root);
+    assert.equal(report.ok, false);
+    assert.match(
+      formatConformanceReport(report),
+      /must resolve inside the approved checkout/u
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("a checkout with no integration directory says so", async () => {
   const root = mkdtempSync(
     path.join(realpathSync(tmpdir()), "autodev-playtest-empty-")

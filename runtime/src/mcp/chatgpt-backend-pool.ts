@@ -48,6 +48,7 @@ import { createInterface, type Interface } from "node:readline";
 
 import { isTerminal } from "@modelcontextprotocol/sdk/experimental/tasks/interfaces.js";
 import {
+  CancelledNotificationSchema,
   CreateTaskResultSchema,
   GetTaskPayloadResultSchema,
   type JSONRPCMessage,
@@ -1226,25 +1227,31 @@ class PooledBackendController {
     return tracked;
   }
 
-  handleCancellation(sessionId: string, requestId: JsonRpcId): void {
-    for (const entry of this.pending.values()) {
-      if (entry.sessionId === sessionId && entry.clientId === requestId) {
-        entry.cancelled = true;
-        if (entry.createsTask) this.uncertainTaskBackend = entry.backend;
-        clearTimeout(entry.timer);
-        entry.backend.send({
-          jsonrpc: "2.0",
-          method: "notifications/cancelled",
-          params: { requestId: entry.internalId }
-        });
-        entry.resolve(
-          errorResponse(requestId, "External MCP request cancelled")
-        );
-        // Keep entry in `this.pending` briefly? No — removing immediately drops any late reply cleanly.
-        this.pending.delete(entry.internalId);
-        this.armIdleTimer();
-      }
-    }
+  handleCancellation(
+    sessionId: string,
+    requestId: JsonRpcId,
+    owner?: string
+  ): void {
+    // An ambiguous request ID is not authority to cancel multiple requests.
+    const matches = [...this.pending.values()].filter(
+      (entry) =>
+        entry.sessionId === sessionId &&
+        entry.clientId === requestId &&
+        (owner === undefined || entry.taskOwner === owner)
+    );
+    const [entry] = matches;
+    if (!entry || matches.length !== 1) return;
+    entry.cancelled = true;
+    if (entry.createsTask) this.uncertainTaskBackend = entry.backend;
+    clearTimeout(entry.timer);
+    entry.backend.send({
+      jsonrpc: "2.0",
+      method: "notifications/cancelled",
+      params: { requestId: entry.internalId }
+    });
+    this.pending.delete(entry.internalId);
+    entry.resolve(errorResponse(requestId, "External MCP request cancelled"));
+    this.armIdleTimer();
   }
 
   async handleRequest(
@@ -1271,11 +1278,17 @@ class PooledBackendController {
     }
 
     if (method === "notifications/cancelled") {
-      if (sessionId && isRecord(message.params)) {
-        const reqId = message.params.requestId;
-        if (typeof reqId === "string" || typeof reqId === "number") {
-          this.handleCancellation(sessionId, reqId);
-        }
+      const parsed = CancelledNotificationSchema.safeParse(message);
+      if (
+        sessionId &&
+        parsed.success &&
+        parsed.data.params.requestId !== undefined
+      ) {
+        this.handleCancellation(
+          sessionId,
+          parsed.data.params.requestId,
+          ownerOverride
+        );
       }
       return null;
     }
@@ -1607,12 +1620,18 @@ class ScopedController {
   ): Promise<JsonRecord | null> {
     const method = message.method;
     if (method === "notifications/cancelled") {
-      // The request being cancelled ran in exactly one scope's backend; the
-      // others hold no matching pending request.
-      await Promise.all(
-        this.scopes
-          .values()
-          .map((controller) => controller.handleRequest(message, sessionId))
+      // Resolve the same scope and owner as the original invocation.
+      // A cancellation never provisions a new backend or searches unrelated
+      // scopes. Missing/expired grants and ambiguous identities fail closed.
+      const resolution = this.resolve(message);
+      if (!sessionId || typeof resolution === "string") return null;
+      const owner =
+        resolution.owner ?? taskOwner(resolution.message.params, sessionId);
+      if (owner === null) return null;
+      await this.scopes.get(resolution.key)?.handleRequest(
+        resolution.message,
+        sessionId,
+        owner
       );
       return null;
     }

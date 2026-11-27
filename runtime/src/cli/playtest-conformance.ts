@@ -19,6 +19,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { PassThrough } from "node:stream";
+import { pathToFileURL } from "node:url";
 
 import {
   type PlaytestAdapterBinding,
@@ -29,6 +30,7 @@ import {
 } from "@simulatorlife/autodev-core";
 
 import { PlaytestAdapterClient } from "../playtesting/adapter-client.ts";
+import { resolveEntryModule } from "../playtesting/entry-module-boundary.ts";
 import { startGenericAdapterHost } from "../playtesting/generic-adapter-host.ts";
 import { readAdapterContext } from "../playtesting/generic-adapter-main.ts";
 
@@ -336,23 +338,9 @@ function createConformanceEntryLoader(
   factory: string;
 }) => Promise<Record<string, unknown>> {
   return async ({ entry, factory }) => {
-    const root = path.resolve(integrationDir);
-    const boundary = path.resolve(checkoutRoot);
-    const resolved = path.isAbsolute(entry)
-      ? path.normalize(entry)
-      : path.resolve(root, entry);
-    const relative = path.relative(boundary, resolved);
-    if (
-      relative === "" ||
-      relative.startsWith(`..${path.sep}`) ||
-      path.isAbsolute(relative)
-    ) {
-      throw new TypeError(
-        "The declared entry module must resolve inside the approved checkout."
-      );
-    }
+    const resolved = resolveEntryModule(integrationDir, checkoutRoot, entry);
     const module: unknown = await import(
-      /* @vite-ignore */ `file://${resolved}`
+      /* @vite-ignore */ pathToFileURL(resolved).href
     );
     const create = (module as Record<string, unknown>)[factory];
     if (typeof create !== "function") {

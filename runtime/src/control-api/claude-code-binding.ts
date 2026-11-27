@@ -10,7 +10,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 import { isRecord } from "@simulatorlife/autodev-core";
-import { pathsOverlap } from "@simulatorlife/autodev-data/files";
+import { isPathWithin, pathsOverlap } from "@simulatorlife/autodev-data/files";
 import { parse as parseToml } from "smol-toml";
 
 const MAX_BINDING_FILE_BYTES = 32 * 1024;
@@ -299,10 +299,7 @@ export function resolveClaudeCodeWorkspaceBinding(
     // inside a subdirectory of an authorized repo (or outside it). The
     // canonical binding is anchored at the repository root, so any
     // subdirectory is treated as unauthorized.
-    if (
-      resolvedCwd.startsWith(workspace.canonicalRoot + path.sep) ||
-      workspace.canonicalRoot.startsWith(resolvedCwd + path.sep)
-    ) {
+    if (pathsOverlap(workspace.canonicalRoot, resolvedCwd)) {
       return {
         ok: false,
         failure: "workspace_unauthorized",
@@ -369,16 +366,9 @@ export function resolveClaudeCodeTranscriptBinding(
       failureMessage: "Claude Code transcript path failed to realpath."
     };
   }
-  const relative = path.relative(
-    workspace.canonicalTranscriptRoot,
-    resolvedTranscript
-  );
   const inside =
-    Boolean(relative) &&
-    relative !== ".." &&
-    !relative.startsWith(`..${path.sep}`) &&
-    !path.isAbsolute(relative) &&
-    relative !== ".";
+    isPathWithin(workspace.canonicalTranscriptRoot, resolvedTranscript) &&
+    resolvedTranscript !== workspace.canonicalTranscriptRoot;
   if (!inside) {
     return {
       ok: false,

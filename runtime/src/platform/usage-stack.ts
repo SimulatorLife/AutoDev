@@ -34,6 +34,16 @@ const STACK_READY_TIMEOUT_MS = 120_000;
 const DOCKER_PROBE_TIMEOUT_MS = 5000;
 
 /** Whether something is listening on a loopback port. */
+/**
+ * OpenLIT's HTTP readiness probe. Its root answers with a redirect to
+ * `/dashboard`, which the shared health probe refuses by design, so the probe
+ * asks for the page that is actually served.
+ */
+export const openlitHttpReady = httpHealthProbe(
+  `http://127.0.0.1:${OPENLIT_PORT}/dashboard`,
+  { cache: "no-store" }
+);
+
 export function isPortListening(
   port: number,
   host = "127.0.0.1",
@@ -108,9 +118,7 @@ function defaultDependencies(): UsageStackDependencies {
   return {
     runCommand: runUsageCommand,
     isPortListening: (port) => isPortListening(port),
-    isOpenlitHttpReady: httpHealthProbe(`http://127.0.0.1:${OPENLIT_PORT}`, {
-      cache: "no-store"
-    }),
+    isOpenlitHttpReady: openlitHttpReady,
     sleep,
     writeLine,
     runnerEnv: { ...process.env }

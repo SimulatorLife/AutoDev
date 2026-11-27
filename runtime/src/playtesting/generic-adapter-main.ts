@@ -24,6 +24,7 @@ import {
 } from "@simulatorlife/autodev-core";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 
+import { resolveEntryModule } from "./entry-module-boundary.ts";
 import {
   type GenericAdapterHostOptions,
   startGenericAdapterHost
@@ -91,38 +92,20 @@ export function readAdapterContext(integrationDir: string): EntryContext {
 }
 
 /**
- * Import the game's entry module and call its factory.
- *
- * The module is resolved inside the approved checkout and loaded by URL, so the
- * sandbox's read-only checkout mount is the boundary — not the integration
- * directory. A game's code lives in its own source tree, and a binding that
- * could only name a module beside the binding file would force every game to
- * keep a copy of its entry point inside `.autodev/`.
- */
+Import the game's entry module and call its factory.
+
+The module is resolved inside the approved checkout and loaded by URL, so the
+sandbox's read-only checkout mount is the boundary — not the integration
+directory. The boundary itself is decided by the one owner of path
+containment: `resolveEntryModule`.
+*/
 export function createEntryLoader(
   integrationDir: string,
   checkoutRoot: string = PLAYTESTS_ADAPTER_CHECKOUT_ROOT
 ): GenericAdapterHostOptions["loadEntry"] {
-  const root = path.resolve(integrationDir);
   const boundary = path.resolve(checkoutRoot);
   return async ({ entry, factory }) => {
-    // A relative entry is declared against the integration directory, so a
-    // binding that says `adapter.js` keeps working. An absolute entry is
-    // already stated in container terms and is taken as-is, then held to the
-    // same containment check.
-    const resolved = path.isAbsolute(entry)
-      ? path.normalize(entry)
-      : path.resolve(root, entry);
-    const relative = path.relative(boundary, resolved);
-    if (
-      relative === "" ||
-      relative.startsWith(`..${path.sep}`) ||
-      path.isAbsolute(relative)
-    ) {
-      throw new TypeError(
-        "The declared entry module must resolve inside the approved checkout."
-      );
-    }
+    const resolved = resolveEntryModule(integrationDir, boundary, entry);
     const module: unknown = await import(pathToFileURL(resolved).href);
     if (typeof module !== "object" || module === null) {
       throw new TypeError("The entry module did not export an object.");

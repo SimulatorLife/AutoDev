@@ -708,3 +708,18 @@ test("an entry module outside the approved checkout is still refused", () => {
     /must resolve inside the approved checkout/u
   );
 });
+
+test("an entry module that resolves to the checkout's own parent is refused", () => {
+  const loader = createEntryLoader(
+    "/workspace/.autodev",
+    "/workspace"
+  ) as (input: { entry: string; factory: string }) => Promise<unknown>;
+  // One level above the checkout is not inside it. This name resolves to the
+  // checkout's parent, which is not a path that walks out of the checkout the
+  // way "../../etc/passwd" does, so a check that only looks for a ".."
+  // segment lets it through.
+  return assert.rejects(
+    loader({ entry: "../..", factory: "makeGame" }),
+    /must resolve inside the approved checkout/u
+  );
+});

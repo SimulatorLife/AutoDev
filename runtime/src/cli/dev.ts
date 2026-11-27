@@ -7,8 +7,8 @@ import path from "node:path";
 
 import {
   ensureUsageStack,
-  httpHealthProbe,
   isPortListening,
+  openlitHttpReady,
   sleep,
   waitForProbe
 } from "@simulatorlife/autodev-runtime/platform";
@@ -130,7 +130,6 @@ export function ensureConsoleSecrets(root = repoRoot): void {
   }
 }
 
-const OPENLIT_PORT = 3000;
 const DEFAULT_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
 const CONTROL_API_BASE_URL_DEFAULT_PATTERN =
   /^\$\{AUTODEV_CONTROL_API_BASE_URL:-([^{}]+)\}$/u;
@@ -254,9 +253,7 @@ function defaultBackendDependencies(): DevBackendDependencies {
     repoRoot,
     runCommand: runDevCommand,
     isPortListening: (port) => isPortListening(port),
-    isOpenlitHttpReady: httpHealthProbe(`http://127.0.0.1:${OPENLIT_PORT}`, {
-      cache: "no-store"
-    }),
+    isOpenlitHttpReady: openlitHttpReady,
     openlitUsageConfig: () => readDevOpenLITUsageConfig(),
     sleep,
     writeLine

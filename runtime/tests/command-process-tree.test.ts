@@ -113,6 +113,82 @@ function readPids(pidFile: string): { group: number; detached: number } {
   return { group: Number(group), detached: Number(detached) };
 }
 
+/**
+The process groups the operating system reports, recorded continuously.
+
+A detached descendant does not stay alive: the executor terminates it on its
+own sweep, a few hundred milliseconds after the command started. Sampling the
+listing once, after the fixture has reported its process ids, can therefore
+miss it entirely on a loaded runner. Recording the listing continuously keeps
+the sighting the assertion is about.
+
+Every group a process was ever seen in is kept, because a process that
+detaches is briefly visible in its parent's group before it has called
+setsid().
+*/
+function startProcessGroupRecorder(): {
+  readonly groupsByPid: Map<string, Set<string>>;
+  stop(): void;
+} {
+  const groupsByPid = new Map<string, Set<string>>();
+  let isRecording = true;
+  const record = (): void => {
+    if (!isRecording) return;
+    let listing: string;
+    try {
+      listing = execFileSync("/bin/ps", ["-A", "-o", "pid=", "-o", "pgid="], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"]
+      });
+    } catch {
+      return;
+    }
+    for (const line of listing.split("\n")) {
+      const [pid, group] = line.trim().split(/\s+/u, 2);
+      if (!pid || !group) continue;
+      let seen = groupsByPid.get(pid);
+      if (!seen) {
+        seen = new Set<string>();
+        groupsByPid.set(pid, seen);
+      }
+      seen.add(group);
+    }
+  };
+  record();
+  const timer = setInterval(record, 50);
+  timer.unref();
+  return {
+    groupsByPid,
+    stop() {
+      isRecording = false;
+      clearInterval(timer);
+    }
+  };
+}
+
+/**
+Wait until the operating system has reported both descendants.
+
+The recording is sampled, so a descendant the fixture has just spawned may
+not be in it yet.
+*/
+async function waitForRecorded(
+  recorder: { readonly groupsByPid: Map<string, Set<string>> },
+  pids: { group: number; detached: number }
+): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (
+      recorder.groupsByPid.has(String(pids.group)) &&
+      recorder.groupsByPid.has(String(pids.detached))
+    )
+      return;
+    await new Promise((resolve) => {
+      setTimeout(resolve, 25);
+    });
+  }
+}
+
 async function waitForPids(
   pidFile: string
 ): Promise<{ group: number; detached: number }> {
@@ -288,6 +364,11 @@ test(
       timeoutMs: 60_000
     } satisfies CommandDefinition;
     const controller = new AbortController();
+    // The listing is recorded from before the command starts, so the
+    // detached descendant is seen even though the executor terminates it on
+    // its own sweep moments later.
+    const recorder = startProcessGroupRecorder();
+    t.after(() => recorder.stop());
     const pending = runApprovedCommand(
       "tree",
       definition,
@@ -302,21 +383,16 @@ test(
     });
     // The operating system reports both descendants of the command, and it
     // reports the detached one in a process group of its own.
-    const listing = execFileSync(
-      "/bin/ps",
-      ["-A", "-o", "pid=", "-o", "pgid="],
-      { encoding: "utf8" }
+    await waitForRecorded(recorder, pids);
+    const groupChild = recorder.groupsByPid.get(String(pids.group));
+    const detachedChild = recorder.groupsByPid.get(String(pids.detached));
+    assert.ok(groupChild, "the operating system never reported the descendant");
+    assert.ok(
+      detachedChild,
+      "the operating system never reported the detached descendant"
     );
-    const groups = new Map<string, string>();
-    for (const line of listing.split("\n")) {
-      const [pid, group] = line.trim().split(/\s+/u, 2);
-      if (pid && group) groups.set(pid, group);
-    }
-    assert.ok(groups.has(String(pids.group)));
-    assert.ok(groups.has(String(pids.detached)));
-    assert.notEqual(
-      groups.get(String(pids.group)),
-      groups.get(String(pids.detached)),
+    assert.ok(
+      [...detachedChild].some((group) => !groupChild.has(group)),
       "the detached descendant left the command's process group"
     );
     controller.abort();

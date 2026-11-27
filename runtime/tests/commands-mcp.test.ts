@@ -12,7 +12,6 @@ import {
   rmSync,
   statSync,
   symlinkSync,
-  utimesSync,
   writeFileSync
 } from "node:fs";
 import { once } from "node:events";
@@ -63,6 +62,7 @@ import {
   startRegistryProxy
 } from "../src/mcp/commands-registry-proxy.ts";
 import {
+  type CommandWorkspaceLease,
   isCommandEligibleInWorkspace,
   createCommandsMcpServer,
   effectiveCommands
@@ -73,6 +73,18 @@ import {
   setTestExporter,
   shutdownTelemetryForTest
 } from "../src/mcp/mcp-telemetry.ts";
+
+/**
+A lease that records no command and does nothing when it is released.
+
+Most tests only need the server to believe it holds the workspace.
+*/
+function inertLease(onRelease: () => void = () => {}): CommandWorkspaceLease {
+  return {
+    noteCommand: () => {},
+    release: onRelease
+  };
+}
 
 const PRINTF = realpathSync("/usr/bin/printf");
 const SHELL = realpathSync("/bin/sh");
@@ -448,7 +460,7 @@ test(
       scope,
       taskDirectory,
       isAuthorized: () => true,
-      tryAcquireWorkspace: () => () => {}
+      tryAcquireWorkspace: () => inertLease()
     });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
@@ -523,7 +535,7 @@ test(
       scope,
       taskDirectory,
       isAuthorized: () => isAuthorized,
-      tryAcquireWorkspace: () => () => {}
+      tryAcquireWorkspace: () => inertLease()
     });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
@@ -598,7 +610,9 @@ test("registered commands match discovery, and request cancellation and revocati
     tryAcquireWorkspace: () => {
       if (held) return null;
       held = true;
-      return () => { held = false; };
+      return inertLease(() => {
+        held = false;
+      });
     }
   });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -683,7 +697,7 @@ test(
       scope,
       taskDirectory: taskDirectoryFixture(),
       isAuthorized: () => true,
-      tryAcquireWorkspace: () => () => {}
+      tryAcquireWorkspace: () => inertLease()
     });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
@@ -917,66 +931,6 @@ test("approved catalogue reads are bounded and private state directories cannot 
       /role/u
     );
     assert.throws(() => commandTaskRoot(run, "worker", ".."), /workspace key/u);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("a workspace lease is exclusive across sessions and released on completion", () => {
-  const root = mkdtempSync(path.join(tmpdir(), "autodev-command-lease-"));
-  try {
-    const lease = createWorkspaceLease(root, "workspace-key");
-    const release = lease.tryAcquire();
-    assert.ok(release);
-    assert.equal(lease.tryAcquire(), null);
-    release!();
-    const second = lease.tryAcquire();
-    assert.ok(second);
-    second();
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("an old lease is not proof that its command stopped", () => {
-  const root = mkdtempSync(path.join(tmpdir(), "autodev-command-lease-"));
-  try {
-    const lease = createWorkspaceLease(root, "workspace-key");
-    const release = lease.tryAcquire();
-    assert.ok(release);
-    const lock = path.join(root, "command-workspace-key.lock");
-    const old = new Date(0);
-    utimesSync(lock, old, old);
-    assert.equal(lease.tryAcquire(), null);
-    // Even an operator-replaced lock is not ours to release.
-    rmSync(lock);
-    writeFileSync(lock, "replacement");
-    release();
-    assert.equal(readFileSync(lock, "utf8"), "replacement");
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("a lease never acquires or removes a lock in a replacement run directory", () => {
-  const root = mkdtempSync(path.join(tmpdir(), "autodev-command-replaced-run-"));
-  try {
-    const run = path.join(root, "run");
-    const retired = path.join(root, "retired");
-    const key = "workspace-key";
-    const lease = createWorkspaceLease(run, key);
-    const release = lease.tryAcquire();
-    assert.ok(release);
-    renameSync(run, retired);
-    mkdirSync(run, { mode: 0o700 });
-    const lock = path.join(run, `command-${key}.lock`);
-    writeFileSync(lock, "replacement");
-    assert.equal(lease.tryAcquire(), null);
-    release();
-    assert.equal(readFileSync(lock, "utf8"), "replacement");
-    rmSync(lock);
-    assert.equal(lease.tryAcquire(), null);
-    assert.equal(existsSync(lock), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -4,7 +4,11 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 import { isRecord } from "@simulatorlife/autodev-core";
-import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
+import {
+  atomicWriteSync,
+  isPathWithin,
+  pathsOverlap
+} from "@simulatorlife/autodev-data/files";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { declaredRoleNames } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import {
@@ -187,14 +191,6 @@ export function resolveMcpCommand(
   throw new Error(`unsupported AutoDev MCP: ${name || "<missing>"}`);
 }
 
-function isWithin(child: string, parent: string): boolean {
-  const relative = path.relative(parent, child);
-  return (
-    relative === "" ||
-    (!relative.startsWith("..") && !path.isAbsolute(relative))
-  );
-}
-
 /**
  * The directories the `filesystem` server may touch: the workspace, and the
  * skill roots outside it.
@@ -217,7 +213,7 @@ export function filesystemDirectoryArgs(
   const root = physicalPath(workspace);
   const readOnly = [
     ...new Set(resolveSkillRoots(repoRoot).map(physicalPath))
-  ].filter((dir) => !isWithin(dir, root) && !isWithin(root, dir));
+  ].filter((dir) => !pathsOverlap(dir, root));
   return [
     "--confine-roots",
     ...readOnly.flatMap((dir) => ["--read-only-dir", dir]),
@@ -304,9 +300,7 @@ export function resolveCocoindexInitRoot(
     }
     dir = parent;
   }
-  const relativeToRoot = path.relative(root, resolvedHome);
-  const coversHome =
-    !relativeToRoot.startsWith("..") && !path.isAbsolute(relativeToRoot);
+  const coversHome = isPathWithin(root, resolvedHome);
   if (coversHome || path.dirname(root) === root)
     throw new Error(
       `AutoDev cocoindex-code will not index ${root}: it is the home directory, one of its ancestors or the filesystem root. Start the server inside a project workspace or point AUTODEV_MCP_WORKSPACE at one.`

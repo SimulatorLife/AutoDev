@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { httpHealthProbe } from "@simulatorlife/autodev-runtime/platform/health-probe";
+import { openlitHttpReady } from "@simulatorlife/autodev-runtime/platform/usage-stack";
 
 interface FetchCall {
   readonly url: string;
@@ -128,6 +129,20 @@ test("a health probe refuses redirects and cancels its unread body", async () =>
     assert.equal(await probe(), true);
     assert.equal(stub.calls[0]?.init.redirect, "error");
     assert.equal(cancelled, true);
+  } finally {
+    stub.restore();
+  }
+});
+
+test("OpenLIT readiness asks for the page OpenLIT serves, not its redirecting root", async () => {
+  // OpenLIT's root answers 307 -> /dashboard, and the probe refuses redirects,
+  // so probing the root failed every install against a healthy OpenLIT.
+  const stub = stubFetch((url) => ({
+    ok: new URL(url).pathname === "/dashboard"
+  }));
+  try {
+    assert.equal(await openlitHttpReady(), true);
+    assert.equal(stub.calls[0]?.url, "http://127.0.0.1:3000/dashboard");
   } finally {
     stub.restore();
   }

@@ -11,10 +11,13 @@ import { createHash } from "node:crypto";
 import {
   closeSync,
   constants,
+  existsSync,
   fstatSync,
   lstatSync,
   mkdirSync,
   openSync,
+  readdirSync,
+  readFileSync,
   readSync,
   realpathSync,
   statSync,
@@ -45,7 +48,11 @@ import {
   resolveTrustedExecutables
 } from "./commands-execution.ts";
 import { startRegistryProxy } from "./commands-registry-proxy.ts";
-import { createCommandsMcpServer, effectiveCommands } from "./commands-server.ts";
+import {
+  type CommandWorkspaceLease,
+  createCommandsMcpServer,
+  effectiveCommands
+} from "./commands-server.ts";
 import {
   configureCommandExecutionTelemetry,
   shutdownTelemetry
@@ -287,65 +294,384 @@ function sameDirectory(
 }
 
 /**
+Who holds a lease, and which command it was taken for.
+
+The holder is the server process that took the lease; the command is the
+process the lease protects, recorded once it has started.
+*/
+interface CommandLeaseRecord {
+  readonly holder: number;
+  readonly command: number | null;
+}
+
+/**
+What a lease's record says about the workspace it protects.
+
+`held` is a lease whose holder is alive. `abandoned` is one whose holder and
+whose command are both gone: the command it protected has finished, and the
+lease was never released. `unverifiable` is everything else -- a record that
+cannot be read, a holder that is gone but whose command was never recorded,
+or a command that is still running.
+*/
+export type CommandLeaseState = "held" | "abandoned" | "unverifiable";
+
+export interface CommandLeaseReport {
+  readonly workspaceKey: string;
+  readonly state: CommandLeaseState;
+  readonly holder: number | null;
+  readonly command: number | null;
+  /*
+  Whether the holder is still running, as the operating system reports it.
+  */
+  readonly isHolderAlive: boolean;
+  /*
+  Whether the command is still running, as the operating system reports it.
+  */
+  readonly isCommandAlive: boolean;
+}
+
+const LEASE_PROCESS_ID = /^[0-9]+$/u;
+const LEASE_KEY_ORDER = new Intl.Collator();
+const LEASE_FILE_PREFIX = "command-";
+const LEASE_FILE_SUFFIX = ".lock";
+const LEASE_HOLDER_KEY = "holder";
+const LEASE_COMMAND_KEY = "command";
+
+/**
+Whether a process is still running.
+
+`kill(pid, 0)` asks the operating system without signalling anything:
+`ESRCH` means there is no such process, and `EPERM` means there is one this
+process may not signal. A process id that has been reused names a different,
+live process, which keeps a lease closed -- the direction that is safe.
+*/
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+Read a lease's record.
+
+A record this cannot read is one whose provenance is unknown, and a lease
+whose provenance is unknown is never reclaimed.
+*/
+function readLeaseRecord(content: string): CommandLeaseRecord | null {
+  let holder: number | null = null;
+  let command: number | null = null;
+  for (const line of content.split("\n")) {
+    if (line.length === 0) continue;
+    const separator = line.indexOf("=");
+    if (separator <= 0) return null;
+    const key = line.slice(0, separator);
+    const value = line.slice(separator + 1);
+    if (!LEASE_PROCESS_ID.test(value)) return null;
+    const pid = Number(value);
+    if (!Number.isSafeInteger(pid) || pid <= 0) return null;
+    if (key === LEASE_HOLDER_KEY) {
+      if (holder !== null) return null;
+      holder = pid;
+    } else if (key === LEASE_COMMAND_KEY) {
+      if (command !== null) return null;
+      command = pid;
+    } else {
+      return null;
+    }
+  }
+  if (holder === null) return null;
+  return { holder, command };
+}
+
+/**
+Read the lease file, if it is a readable regular file with a readable record.
+*/
+function readLeaseFile(lockPath: string): CommandLeaseRecord | null {
+  try {
+    if (!lstatSync(lockPath).isFile()) return null;
+    return readLeaseRecord(readFileSync(lockPath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/**
+What a lease's record says about the workspace it protects.
+*/
+interface CommandLeaseAssessment {
+  readonly state: CommandLeaseState;
+  readonly holder: number | null;
+  readonly command: number | null;
+  readonly isHolderAlive: boolean;
+  readonly isCommandAlive: boolean;
+}
+
+/**
+The state of a lease, from its record and the operating system's own view.
+*/
+function assessLease(
+  record: CommandLeaseRecord | null
+): CommandLeaseAssessment {
+  if (!record) {
+    return {
+      state: "unverifiable",
+      holder: null,
+      command: null,
+      isHolderAlive: false,
+      isCommandAlive: false
+    };
+  }
+  const isHolderAlive = isProcessAlive(record.holder);
+  const isCommandAlive =
+    record.command !== null && isProcessAlive(record.command);
+  return {
+    state: leaseState(isHolderAlive, record.command),
+    holder: record.holder,
+    command: record.command,
+    isHolderAlive,
+    isCommandAlive
+  };
+}
+
+/**
+The state a lease's record and the operating system's view imply.
+
+A lease is held while its holder runs. It is abandoned only when its holder
+is gone *and* the command it was taken for has finished: a lease whose
+command was never recorded, or whose command is still running, cannot say
+that the workspace is idle.
+*/
+function leaseState(
+  isHolderAlive: boolean,
+  command: number | null
+): CommandLeaseState {
+  if (isHolderAlive) return "held";
+  if (command === null || isProcessAlive(command)) return "unverifiable";
+  return "abandoned";
+}
+
+/**
+Where one workspace's lease lives.
+*/
+export function commandWorkspaceLeasePath(
+  runDirectory: string,
+  workspaceKey: string
+): string {
+  return path.join(
+    runDirectory,
+    `${LEASE_FILE_PREFIX}${workspaceKey.replaceAll(/[^A-Za-z0-9._-]/gu, "_")}${LEASE_FILE_SUFFIX}`
+  );
+}
+
+/**
+Open the lease file, or report that it is already held.
+
+`wx` creates the file only when it does not exist, so exactly one server can
+take the lease for a workspace.
+*/
+function openLease(lockPath: string): number | null {
+  try {
+    return openSync(lockPath, "wx", 0o600);
+  } catch {
+    return null;
+  }
+}
+
+/**
+Reclaim a lease whose holder and whose command are both gone.
+
+The lock file is removed only when the record proves the workspace is idle.
+Anything unproven leaves the lease in place: an uncertain overlap between two
+commands is worse than a workspace that stays closed until the operator has
+looked at it.
+*/
+function reclaimAbandonedLease(lockPath: string): void {
+  let identity: ReturnType<typeof lstatSync>;
+  try {
+    identity = lstatSync(lockPath);
+  } catch {
+    return;
+  }
+  // A record that cannot be read leaves the lease unverifiable, which is not
+  // the same as abandoned.
+  if (
+    !identity.isFile() ||
+    assessLease(readLeaseFile(lockPath)).state !== "abandoned"
+  ) {
+    return;
+  }
+  try {
+    const current = lstatSync(lockPath);
+    if (current.dev !== identity.dev || current.ino !== identity.ino) return;
+    unlinkSync(lockPath);
+  } catch {
+    // The lease could not be removed, so it stays held.
+  }
+}
+
+/**
 A workspace-wide exclusive lease.
 
 Two sessions in one workspace must not run commands against it at the same
 time: an install and a test would race over the same build outputs. The
-lease is a file in the Runtime's own run directory, so it is shared by
-every session's server process and never by the workspace itself.
+lease is a file in the Runtime's own run directory, so it is shared by every
+session's server process and never by the workspace itself.
 */
 export function createWorkspaceLease(
   runDirectory: string,
   workspaceKey: string
 ): {
-  tryAcquire(): (() => void) | null;
+  tryAcquire(): CommandWorkspaceLease | null;
 } {
   const physicalRun = ensureCommandRunDirectory(runDirectory);
   const runIdentity = commandDirectoryIdentity(physicalRun, false);
-  const lockPath = path.join(
-    physicalRun,
-    `command-${workspaceKey.replaceAll(/[^A-Za-z0-9._-]/gu, "_")}.lock`
-  );
+  const lockPath = commandWorkspaceLeasePath(physicalRun, workspaceKey);
   return {
-    tryAcquire(): (() => void) | null {
+    tryAcquire(): CommandWorkspaceLease | null {
       if (!sameDirectory(physicalRun, runIdentity)) return null;
-      // A timestamp cannot prove that a command or detached descendant
-      // has stopped. An abandoned lease stays closed until the Runtime
-      // can prove recovery (or the operator verifies it and removes it).
-      let descriptor: number;
-      try {
-        descriptor = openSync(lockPath, "wx", 0o600);
-      } catch {
-        return null;
+      let descriptor = openLease(lockPath);
+      if (descriptor === null) {
+        // The lease exists. It is abandoned only when the process that took
+        // it and the command it was taken for are both gone; anything else
+        // keeps the workspace closed. Opening it again succeeds only when
+        // the reclaim really removed it.
+        reclaimAbandonedLease(lockPath);
+        descriptor = openLease(lockPath);
+        if (descriptor === null) return null;
       }
-      let identity;
+      let identity: ReturnType<typeof fstatSync>;
       try {
         identity = fstatSync(descriptor);
-        writeSync(descriptor, `${process.pid}\n`);
+        writeSync(descriptor, `${LEASE_HOLDER_KEY}=${process.pid}\n`);
       } catch {
         closeSync(descriptor);
         // Preserve the lease on an uncertain acquisition failure.
         return null;
       }
       let isReleased = false;
-      return () => {
-        if (isReleased) return;
-        isReleased = true;
-        try {
-          if (!sameDirectory(physicalRun, runIdentity)) return;
-          const current = lstatSync(lockPath);
-          if (current.dev === identity.dev && current.ino === identity.ino) {
-            unlinkSync(lockPath);
+      return {
+        noteCommand(pid: number): void {
+          if (isReleased || !Number.isSafeInteger(pid) || pid <= 0) return;
+          try {
+            writeSync(descriptor, `${LEASE_COMMAND_KEY}=${pid}\n`);
+          } catch {
+            // The lease stays held; its record simply does not name the
+            // command, so it can never be proven abandoned later.
           }
-        } catch {
-          // The lock is already gone or cannot safely be inspected.
-        } finally {
-          // Retain the descriptor until release to prevent inode reuse
-          // from making a replacement lock look like our original.
-          closeSync(descriptor);
+        },
+        release(): void {
+          if (isReleased) return;
+          isReleased = true;
+          try {
+            if (!sameDirectory(physicalRun, runIdentity)) return;
+            const current = lstatSync(lockPath);
+            if (current.dev === identity.dev && current.ino === identity.ino) {
+              unlinkSync(lockPath);
+            }
+          } catch {
+            // The lock is already gone or cannot safely be inspected.
+          } finally {
+            // Retain the descriptor until release to prevent inode reuse
+            // from making a replacement lock look like our original.
+            closeSync(descriptor);
+          }
         }
       };
     }
+  };
+}
+
+/**
+The leases the run directory holds, and what can be said about each.
+*/
+export function inspectCommandLeases(
+  runDirectory: string
+): CommandLeaseReport[] {
+  const physicalRun = ensureCommandRunDirectory(runDirectory);
+  const reports: CommandLeaseReport[] = [];
+  const entries = readdirSync(physicalRun, { withFileTypes: true });
+  for (const entry of entries) {
+    if (
+      !entry.isFile() ||
+      !entry.name.startsWith(LEASE_FILE_PREFIX) ||
+      !entry.name.endsWith(LEASE_FILE_SUFFIX)
+    ) {
+      continue;
+    }
+    const workspaceKey = entry.name.slice(
+      LEASE_FILE_PREFIX.length,
+      entry.name.length - LEASE_FILE_SUFFIX.length
+    );
+    const assessment = assessLease(
+      readLeaseFile(path.join(physicalRun, entry.name))
+    );
+    reports.push({ workspaceKey, ...assessment });
+  }
+  return reports.sort((left, right) =>
+    LEASE_KEY_ORDER.compare(left.workspaceKey, right.workspaceKey)
+  );
+}
+
+/**
+Release one lease, when the operator has decided it may be released.
+
+A lease whose holder and whose command are both gone is released on that
+evidence. A lease that cannot be read, or whose command may still be
+running, is released only when the operator forces it: they are the only
+authority on whether the workspace is really idle.
+*/
+export function releaseCommandLease(
+  runDirectory: string,
+  workspaceKey: string,
+  options: { readonly force: boolean }
+): { readonly released: boolean; readonly reason: string } {
+  const physicalRun = ensureCommandRunDirectory(runDirectory);
+  const lockPath = commandWorkspaceLeasePath(physicalRun, workspaceKey);
+  const record = readLeaseFile(lockPath);
+  if (!record) {
+    return {
+      released: false,
+      reason: "there is no readable lease for that workspace"
+    };
+  }
+  const assessment = assessLease(record);
+  if (assessment.state === "held") {
+    return {
+      released: false,
+      reason: "the lease is held by a running server"
+    };
+  }
+  if (assessment.state === "abandoned") {
+    reclaimAbandonedLease(lockPath);
+    if (existsSync(lockPath)) {
+      return {
+        released: false,
+        reason: "the lease changed while it was being released"
+      };
+    }
+    return {
+      released: true,
+      reason: "the lease's holder and its command are both gone"
+    };
+  }
+  if (!options.force) {
+    return {
+      released: false,
+      reason:
+        "the lease cannot be verified as abandoned; release it with --force once you have checked the workspace"
+    };
+  }
+  try {
+    unlinkSync(lockPath);
+  } catch {
+    return { released: false, reason: "the lease could not be removed" };
+  }
+  return {
+    released: true,
+    reason: "the lease was released on the operator's authority"
   };
 }
 

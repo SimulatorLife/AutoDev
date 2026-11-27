@@ -4,11 +4,11 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
+import { pathsOverlap } from "@simulatorlife/autodev-data/files";
 import { z } from "zod";
 
 import { findRuntimePackageDirectory } from "../shared/executables.ts";
 import { isReadOnlyRole } from "../shared/execution-contract.ts";
-import { commandWorkspaceKey } from "./commands-execution.ts";
 import { resolveSkillRoots } from "../shared/skill-reads.ts";
 import {
   MCP_SERVER_COCOINDEX,
@@ -73,14 +73,6 @@ function physicalPath(target: string): string {
   }
 }
 
-function isWithin(child: string, parent: string): boolean {
-  const relative = path.relative(parent, child);
-  return (
-    relative === "" ||
-    (!relative.startsWith("..") && !path.isAbsolute(relative))
-  );
-}
-
 /**
 The Runtime source tree this module was loaded from.
 */
@@ -131,7 +123,7 @@ function externalSkillReadRoots(
       roots
         .filter((dir) => existsSync(dir))
         .map(physicalPath)
-        .filter((dir) => !isWithin(dir, workspace) && !isWithin(workspace, dir))
+        .filter((dir) => !pathsOverlap(dir, workspace))
     )
   ];
 }
@@ -306,27 +298,17 @@ export function externalMcpBackend(
     };
   }
   if (server === MCP_SERVER_COMMANDS) {
-    // The Commands MCP server itself needs to read the approved catalogue,
-    // write its private scratch and cache roots, spawn the confined command
-    // processes, and reach its own loopback registry proxy. The commands it
-    // runs are confined again, far more tightly, by their own profile.
-    const key = commandWorkspaceKey(physicalWorkspace);
+    // The Commands MCP server is a trusted execution broker, not a workload:
+    // it runs only the installed Runtime against the operator-approved
+    // catalogue, and confinement is applied once, at the boundary to
+    // untrusted execution -- every command it runs starts under its own
+    // mandatory Seatbelt profile (`commands-execution.ts`), and a profile
+    // that cannot be applied refuses the command. It cannot itself run under
+    // Seatbelt: macOS refuses `sandbox_apply` from inside any profile that
+    // restricts anything, so a wrapped server could run no command at all.
     return {
-      command: sandboxExecutable,
+      command: binary,
       args: [
-        "-p",
-        workspaceCodeToolSandboxProfile({
-          workspace: physicalWorkspace,
-          home: physicalHome,
-          codexHome: physicalCodexHome,
-          writableSubpaths: [
-            path.join(physicalCodexHome, "run"),
-            path.join(physicalCodexHome, "run", "command-scratch", key),
-            path.join(physicalCodexHome, "run", "command-cache", key)
-          ],
-          allowLocalhostNetwork: true
-        }),
-        binary,
         launcher,
         MCP_SERVER_COMMANDS,
         // The Runtime knows the role and the workspace; the agent never

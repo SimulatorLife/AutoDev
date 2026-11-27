@@ -160,6 +160,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/shared/error-message.ts",
   "runtime/src/shared/executables.ts",
   "runtime/src/shared/runtime-secrets.ts",
+  "runtime/src/shared/private-service-files.ts",
   "runtime/src/shared/runtime-source-root.ts",
   "runtime/src/shared/installed-skills.ts",
   "runtime/src/shared/mcp-headers.ts",

@@ -70,7 +70,12 @@ const STUBS = {
   hook: { run: () => 0 },
   repo: { bootstrap: () => 0 },
   playtest: { init: () => 0, check: () => 0, conformance: () => 0 },
-  install: { install: () => 0 }
+  install: { install: () => 0 },
+  lease: {
+    location: "/tmp/run",
+    list: () => [],
+    release: () => ({ released: true, reason: "released" })
+  }
 };
 
 test("a command invoked without its subcommand names the values it accepts", () => {
@@ -86,7 +91,8 @@ test("a command invoked without its subcommand names the values it accepts", () 
     ["provider", "provider", "claude, mcode, copilot, or antigravity"],
     ["hook", "hook", "session-start, or skill-read"],
     ["repo", "repo subcommand", "bootstrap"],
-    ["playtest", "playtest subcommand", "init, check, or conformance"]
+    ["playtest", "playtest subcommand", "init, check, or conformance"],
+    ["lease", "lease subcommand", "list, or release"]
   ] as const) {
     assert.throws(
       () => runMain([command], STUBS),
@@ -112,7 +118,8 @@ test("an unusable value reports what was accepted, not just what was typed", () 
     ["provider", "provider"],
     ["hook", "hook"],
     ["repo", "repo subcommand"],
-    ["playtest", "playtest subcommand"]
+    ["playtest", "playtest subcommand"],
+    ["lease", "lease subcommand"]
   ] as const) {
     assert.throws(
       () => runMain([command, "definitely-not-a-command"], STUBS),
@@ -152,6 +159,9 @@ function acceptedList(command: string): string {
     case "playtest": {
       return "init, check, or conformance";
     }
+    case "lease": {
+      return "list, or release";
+    }
     default: {
       throw new Error(`no accepted list for ${command}`);
     }
@@ -164,7 +174,7 @@ test("an unknown command lists the families instead of blaming a migration", () 
     (error: unknown) => {
       assert.equal(
         messageOf(error),
-        "unsupported command: definitely-not-a-command (expected one of: check, render, router, provider, hook, repo, diagnostics, playtest, or install)"
+        "unsupported command: definitely-not-a-command (expected one of: check, render, router, provider, hook, repo, diagnostics, playtest, install, or lease)"
       );
       return true;
     }
@@ -189,7 +199,8 @@ test("help advertises exactly what each command accepts", async () => {
       "repo",
       "diagnostics",
       "playtest",
-      "install"
+      "install",
+      "lease"
     ]
   );
 
