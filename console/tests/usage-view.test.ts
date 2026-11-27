@@ -790,7 +790,7 @@ const sampleMcpServers: readonly McpServerResource[] = [
 
 const sampleMcpRuntime: ControlApiMcpRuntimeResponse = {
   schema: "autodev-control-mcp-runtime-v1",
-  source: "runtime.telemetry",
+  source: "mcp-gateway",
   observedServers: 2,
   health: { ready: 1, error: 1, stale: 0, configured: 0, observed: 0 },
   servers: [
@@ -804,7 +804,14 @@ const sampleMcpRuntime: ControlApiMcpRuntimeResponse = {
       toolCalls: 12,
       failures: 2,
       averageDurationMs: 42,
-      roles: [],
+      roles: [
+        {
+          role: "worker",
+          health: "error",
+          lastSeenAt: "2026-11-21T09:00:00.000Z",
+          lastStatus: "error"
+        }
+      ],
       tools: [{ name: "browser_click", count: 12, errors: 2 }]
     },
     {
@@ -854,6 +861,17 @@ test("UsageView renders MCP servers exposed vs. used alongside MCP Calls by Tool
   assert.match(markup, /data-mcp-usage-state="disabled"/u);
   assert.match(markup, /ephemeral-mcp/u);
   assert.match(markup, /data-mcp-usage-state="observed-unconfigured"/u);
+  // Exposure and use per role are separate facts: playwright is exposed to
+  // orchestrator and worker, but only worker's calls reached it.
+  const usedByRoles = [
+    ...markup.matchAll(/data-chips="usage-mcp-used-by-roles"[^>]*>(.*?)<\/ul>/gu)
+  ].map((match) => match[1] ?? "");
+  assert.equal(usedByRoles.length, 1);
+  assert.match(usedByRoles[0] ?? "", />worker</u);
+  assert.doesNotMatch(usedByRoles[0] ?? "", /orchestrator/u);
+  // lsp was exposed but never called; ephemeral-mcp was called by no verified
+  // role; legacy-disabled was never called.
+  assert.equal([...markup.matchAll(/No verified role/gu)].length, 3);
 });
 
 test("UsageView renders explicit unavailable state when Control API MCP inventory or runtime observations fail", () => {

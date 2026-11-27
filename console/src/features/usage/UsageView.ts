@@ -1498,6 +1498,11 @@ interface UsageMcpServerRow {
   readonly name: string;
   readonly configured: boolean;
   readonly roles: readonly string[];
+  /**
+  The roles whose verified calls the gateway served, or null when the
+  Runtime published no observations.
+  */
+  readonly usedByRoles: readonly string[] | null;
   readonly enabled: boolean | null;
   readonly usageState:
     | "used"
@@ -1509,6 +1514,12 @@ interface UsageMcpServerRow {
     | "not-observed";
   readonly toolCalls: number | null;
   readonly failures: number | null;
+}
+
+function observedRoles(
+  observation: ControlApiMcpRuntimeResponse["servers"][number] | undefined
+): readonly string[] {
+  return (observation?.roles ?? []).map((seen) => seen.role);
 }
 
 function buildUsageMcpRows(
@@ -1528,6 +1539,7 @@ function buildUsageMcpRows(
         name: server.name,
         configured: true,
         roles: server.roles,
+        usedByRoles: null,
         enabled: server.enabled,
         usageState: "not-observed",
         toolCalls: null,
@@ -1550,6 +1562,7 @@ function buildUsageMcpRows(
       name: server.name,
       configured: true,
       roles: server.roles,
+      usedByRoles: observedRoles(observation),
       enabled: server.enabled,
       usageState,
       toolCalls,
@@ -1564,6 +1577,7 @@ function buildUsageMcpRows(
         name: observed.name,
         configured: false,
         roles: [],
+        usedByRoles: observedRoles(observed),
         enabled: null,
         usageState: "observed-unconfigured",
         toolCalls: observed.toolCalls,
@@ -1705,6 +1719,19 @@ function renderMcpServersPanel(
             : "Not in catalog",
           testId: "usage-mcp-roles"
         }),
+      meta: { align: "tokens", weight: 210 }
+    },
+    {
+      id: "usedByRoles",
+      header: "Used by roles",
+      cell: ({ row: { original: server } }) =>
+        server.usedByRoles === null
+          ? NOT_OBSERVED_LABEL
+          : chipList({
+              items: server.usedByRoles,
+              emptyLabel: "No verified role",
+              testId: "usage-mcp-used-by-roles"
+            }),
       meta: { align: "tokens", weight: 210 }
     },
     {
