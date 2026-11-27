@@ -913,3 +913,63 @@ test("an XACPX session's turns are each one measured request, and their boundari
     );
   });
 });
+
+test("an XACPX turn whose executor never started is a launch failure, apart from a turn that failed at its work", async () => {
+  resetRouterWorkspaceGitObserversForTest();
+  resetTelemetryExporter();
+  ensureLocalAdmission(process.env.CODEX_HOME!);
+
+  await withGitRepository(async (root) => {
+    const notInstalled = new XacpxSessionManager({
+      eventSink: XACPX_TURN_OBSERVATION,
+      acpTransportFactory: () => {
+        throw new Error("ACP executor 'codex-acp' for provider 'codex' is not installed.");
+      }
+    });
+    const failingAgent = new XacpxSessionManager({
+      eventSink: XACPX_TURN_OBSERVATION,
+      acpTransportFactory: () => ({
+        target: new AgentApp({ name: "failing-agent" })
+          .onRequest(AGENT_METHODS.initialize, async () => ({
+            protocolVersion: PROTOCOL_VERSION,
+            agentCapabilities: { loadSession: false }
+          }))
+          .onRequest(AGENT_METHODS.session_new, async () => ({
+            sessionId: "acp-failing-agent"
+          }))
+          .onRequest(AGENT_METHODS.session_prompt, async () => {
+            throw new Error("the work failed");
+          })
+      })
+    });
+    const turn = (sessionId: string) => ({
+      sessionId,
+      role: "worker",
+      cwd: root,
+      systemPrompt: "Worker prompt",
+      promptOrTask: "do the work"
+    });
+    try {
+      await assert.rejects(
+        notInstalled.executeTurn(turn("xacpx-not-installed")),
+        /is not installed/u
+      );
+      await assert.rejects(failingAgent.executeTurn(turn("xacpx-failing")));
+    } finally {
+      await failingAgent.closeAllSessions();
+    }
+
+    const errorTypes = (sessionId: string) =>
+      getFinishedSpans()
+        .filter(
+          (span) =>
+            span.name === "gen_ai.client_operation" &&
+            span.attributes["autodev.session.id"] === sessionId
+        )
+        .map((span) => span.attributes["error.type"]);
+    assert.deepEqual(errorTypes("xacpx-not-installed"), [
+      "failed_before_start"
+    ]);
+    assert.deepEqual(errorTypes("xacpx-failing"), ["turn_failed"]);
+  });
+});

@@ -195,7 +195,9 @@ function startTurnSpans(event: XacpxTurnEvent): void {
   openTurnSpans.set(event.turnId, { logical, attempt });
 }
 
-function endTurnSpans(event: XacpxTurnEvent): void {
+function endTurnSpans(
+  event: Exclude<XacpxTurnEvent, { readonly type: "turn_started" }>
+): void {
   const open = openTurnSpans.get(event.turnId);
   if (!open) return;
   openTurnSpans.delete(event.turnId);
@@ -211,11 +213,14 @@ function endTurnSpans(event: XacpxTurnEvent): void {
     });
     return;
   }
-  // The failure's own text stays out of telemetry; its kind is enough.
-  const errorType =
-    event.type === "turn_failed" && event.cancelled
-      ? "cancelled"
-      : "turn_failed";
+  // The failure's own text stays out of telemetry; its kind is enough. An
+  // executor that never started is a launch failure, kept apart from a
+  // turn that failed while doing its work.
+  const errorType = event.cancelled
+    ? "cancelled"
+    : event.started
+      ? "turn_failed"
+      : "failed_before_start";
   endAttemptSpan(open.attempt, { status: "error", errorType });
   endLogicalRequestSpan(open.logical, {
     status: "error",

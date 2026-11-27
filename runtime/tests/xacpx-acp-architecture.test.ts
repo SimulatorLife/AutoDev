@@ -457,11 +457,11 @@ test("an ACP executor is spawned from where it is installed, with only the host 
 
 test("a turn on a provider whose ACP executor is not installed fails the turn instead of the Runtime", async () => {
   const home = mkdtempSync(path.join(tmpdir(), "autodev-acp-missing-"));
-  const events: string[] = [];
+  const events: XacpxTurnEvent[] = [];
   const manager = new XacpxSessionManager({
     eventSink: {
       emit: (event) => {
-        events.push(event.type);
+        events.push(event);
       }
     }
   });
@@ -495,7 +495,13 @@ test("a turn on a provider whose ACP executor is not installed fails the turn in
       ),
       /ACP executor '[^']+' for provider '[^']+' is not installed\./u
     );
-    assert.deepEqual(events, ["turn_started", "turn_failed"]);
+    assert.deepEqual(
+      events.map((event) => event.type),
+      ["turn_started", "turn_failed"]
+    );
+    // The executor never ran, so this is a launch failure.
+    const failed = events[1];
+    assert.equal(failed?.type === "turn_failed" && failed.started, false);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

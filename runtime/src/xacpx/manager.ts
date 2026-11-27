@@ -137,6 +137,13 @@ export type XacpxTurnEvent = {
   | {
       readonly type: "turn_failed";
       readonly cancelled: boolean;
+      /**
+      Whether the turn reached a running executor: a live ACP session, or
+      an OpenCLI run handed to its site. False when the executor never
+      started (not installed, failed ACP initialize or session/new), so the
+      failure is a launch failure rather than a failure of the work.
+      */
+      readonly started: boolean;
       readonly detail: string;
     }
 );
@@ -837,6 +844,7 @@ export class XacpxSessionManager {
     } as const;
     this.eventSink?.emit({ ...turn, type: "turn_started" });
     let isOpencliCancelled = false;
+    let executorStarted = false;
     let opencli: LiveOpencliSessionHandle | undefined;
     if (plan.kind === "opencli") {
       opencli = this.opencliSessions.get(request.sessionId) ?? {
@@ -856,6 +864,7 @@ export class XacpxSessionManager {
         const abort = (): void => controller.abort();
         signal?.addEventListener("abort", abort, { once: true });
         let result: OpencliRunResult;
+        executorStarted = true;
         try {
           result = await this.opencliRunner(plan.task, controller.signal);
           if (controller.signal.aborted) {
@@ -909,6 +918,7 @@ export class XacpxSessionManager {
         );
         this.liveSessions.set(request.sessionId, handle);
       }
+      executorStarted = true;
 
       const onAbort = (): void => {
         void this.cancelSession(request.sessionId).catch(() => undefined);
@@ -958,6 +968,7 @@ export class XacpxSessionManager {
         ...turn,
         type: "turn_failed",
         cancelled,
+        started: executorStarted,
         detail
       });
       throw error;
