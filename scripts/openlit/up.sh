@@ -204,7 +204,7 @@ wait_for_engine() {
 # the path to it is slow -- and the reverse is true too, so the probe accepts
 # either path rather than failing a stack that is up on one of them.
 clickhouse_accepts_query() {
-	if curl --fail --silent --show-error --max-time 10 \
+	if curl --fail --silent --show-error --max-time 10 -G \
 		--user "${OPENLIT_DB_USER:-default}:${OPENLIT_DB_PASSWORD}" \
 		--data-urlencode "query=SELECT 1" \
 		"http://127.0.0.1:${CLICKHOUSE_HTTP_PORT}/" >/dev/null 2>&1; then
@@ -232,9 +232,17 @@ openlit_http_ready() {
 # writes to, and the Console then shows a stack that ingests nothing. One
 # query decides; the initialization runs only when the tables are absent.
 clickhouse_has_otel_schema() {
+	local query="SELECT count() FROM system.tables WHERE database = '${OPENLIT_DB_NAME:-openlit}' AND name = 'otel_traces'"
+	if curl --fail --silent --max-time 10 -G \
+		--user "${OPENLIT_DB_USER:-default}:${OPENLIT_DB_PASSWORD}" \
+		--data-urlencode "query=${query}" \
+		"http://127.0.0.1:${CLICKHOUSE_HTTP_PORT}/" 2>/dev/null \
+		| tr -d '[:space:]' | grep -qx "1"; then
+		return 0
+	fi
 	"${DOCKER_COMPOSE[@]}" -f "$COMPOSE_FILE" exec -T clickhouse \
 		clickhouse-client \
-		--query="SELECT count() FROM system.tables WHERE database = '${OPENLIT_DB_NAME:-openlit}' AND name = 'otel_traces'" \
+		--query="$query" \
 		2>/dev/null | tr -d '[:space:]' | grep -qx "1"
 }
 
@@ -288,11 +296,20 @@ SYSTEM_LOG_RETENTION_TIMEOUT_SECONDS=3600
 # this script having to know the name.
 clickhouse_system_log_tables() {
 	local window="$1"
+	local query="SELECT name, position(create_table_query, 'TTL event_date + toIntervalSecond(${window})') > 0 FROM system.tables WHERE database = 'system' AND engine = 'MergeTree' ORDER BY name FORMAT TSV"
+	local http_rows=""
+	if http_rows="$(curl --fail --silent --max-time 10 -G \
+		--user "${OPENLIT_DB_USER:-default}:${OPENLIT_DB_PASSWORD}" \
+		--data-urlencode "query=${query}" \
+		"http://127.0.0.1:${CLICKHOUSE_HTTP_PORT}/" 2>/dev/null)" && [[ -n "$http_rows" ]]; then
+		printf '%s\n' "$http_rows"
+		return 0
+	fi
 	"${DOCKER_COMPOSE[@]}" -f "$COMPOSE_FILE" exec -T clickhouse \
 		clickhouse-client \
 		--user="${OPENLIT_DB_USER:-default}" \
 		--password="$OPENLIT_DB_PASSWORD" \
-		--query="SELECT name, position(create_table_query, 'TTL event_date + toIntervalSecond(${window})') > 0 FROM system.tables WHERE database = 'system' AND engine = 'MergeTree' ORDER BY name FORMAT TSV" \
+		--query="$query" \
 		2>/dev/null || true
 }
 
@@ -464,15 +481,21 @@ if ! ensure_system_log_retention; then
 fi
 
 echo "==> Verifying the deployed AutoDev Usage response contract"
-# Invoke node via `pnpm --dir ... exec` instead of `pnpm --filter ... run`:
-# pnpm's recursive runner swallows exit code 75 (EX_TEMPFAIL) as 1, hiding
-# whether the Usage API is still warming up vs permanently broken.
+# Invoke node directly when available (or via `pnpm --dir ... exec` instead of
+# `pnpm --filter ... run`, which swallows exit code 75 (EX_TEMPFAIL) as 1,
+# hiding whether the Usage API is still warming up vs permanently broken).
 USAGE_VERIFY_DEADLINE=$((SECONDS + USAGE_VERIFY_TIMEOUT_SECONDS))
 while :; do
 	verify_status=0
-	AUTODEV_OPENLIT_USAGE_URL="${AUTODEV_OPENLIT_USAGE_URL:-http://127.0.0.1:${PORT:-3000}}" \
-	AUTODEV_OPENLIT_USAGE_TOKEN="${CONSOLE_USAGE_TOKEN_OVERRIDE:-$AUTODEV_OPENLIT_USAGE_TOKEN}" \
-		pnpm --dir "$REPO_ROOT/runtime" exec node src/platform/usage-contract.ts || verify_status=$?
+	if command -v node >/dev/null 2>&1; then
+		AUTODEV_OPENLIT_USAGE_URL="${AUTODEV_OPENLIT_USAGE_URL:-http://127.0.0.1:${PORT:-3000}}" \
+		AUTODEV_OPENLIT_USAGE_TOKEN="${CONSOLE_USAGE_TOKEN_OVERRIDE:-$AUTODEV_OPENLIT_USAGE_TOKEN}" \
+			node "$REPO_ROOT/runtime/src/platform/usage-contract.ts" || verify_status=$?
+	else
+		AUTODEV_OPENLIT_USAGE_URL="${AUTODEV_OPENLIT_USAGE_URL:-http://127.0.0.1:${PORT:-3000}}" \
+		AUTODEV_OPENLIT_USAGE_TOKEN="${CONSOLE_USAGE_TOKEN_OVERRIDE:-$AUTODEV_OPENLIT_USAGE_TOKEN}" \
+			pnpm --dir "$REPO_ROOT/runtime" exec node src/platform/usage-contract.ts || verify_status=$?
+	fi
 	if [[ "$verify_status" -eq 0 ]]; then
 		break
 	fi
@@ -484,10 +507,17 @@ while :; do
 done
 
 echo "==> Synchronizing AutoDev provider models, pricing, and workspace architecture"
-pnpm --filter @simulatorlife/autodev-data openlit:sync-models &
-sync_models_pid=$!
-pnpm --filter @simulatorlife/autodev-data openlit:sync-workspaces &
-sync_workspaces_pid=$!
+if command -v node >/dev/null 2>&1; then
+	node "$REPO_ROOT/data/src/openlit/sync-model-catalogue.ts" &
+	sync_models_pid=$!
+	node "$REPO_ROOT/data/src/openlit/sync-workspace-catalogue.ts" &
+	sync_workspaces_pid=$!
+else
+	pnpm --filter @simulatorlife/autodev-data openlit:sync-models &
+	sync_models_pid=$!
+	pnpm --filter @simulatorlife/autodev-data openlit:sync-workspaces &
+	sync_workspaces_pid=$!
+fi
 if ! wait "$sync_models_pid"; then
 	echo "Warning: model synchronization failed" >&2
 fi

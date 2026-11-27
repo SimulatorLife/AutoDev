@@ -59,7 +59,7 @@ function writeExecutable(path: string, content: string): void {
 }
 
 /**
-A throwaway repository root with stubbed `docker`, `curl`, and `pnpm` on the
+A throwaway repository root with stubbed `docker`, `curl`, `node` and `pnpm` on the
 PATH, so the real `up.sh` runs end to end without a Docker Engine, a
 ClickHouse, or a network.
 */
@@ -233,15 +233,16 @@ exit 0
 
   // The catalog synchronization steps are not what this test governs.
   // Optional stub script overrides how Usage contract verification behaves.
-  writeExecutable(
-    join(bin, "pnpm"),
-    `#!/usr/bin/env bash
+  // `up.sh` runs these scripts with `node` when it is on the PATH and through
+  // `pnpm` otherwise, so both are stubbed the same way.
+  const scriptStub = `#!/usr/bin/env bash
 if [[ "$*" == *"usage-contract.ts"* && -n "\${STUB_VERIFY_SCRIPT:-}" ]]; then
   exec bash "$STUB_VERIFY_SCRIPT"
 fi
 exit 0
-`
-  );
+`;
+  writeExecutable(join(bin, "pnpm"), scriptStub);
+  writeExecutable(join(bin, "node"), scriptStub);
 
   return { root, codexHome, bin, state };
 }
