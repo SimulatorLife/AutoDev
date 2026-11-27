@@ -27,10 +27,15 @@ test("keeps an unrecognised originator distinct from an unobserved one", () => {
 
 test("reads the originator from the User-Agent product token", () => {
   assert.equal(
-    clientSurfaceFromUserAgent("codex_exec/0.171.0 (Mac OS 26.5.0; arm64) xterm"),
+    clientSurfaceFromUserAgent(
+      "codex_exec/0.171.0 (Mac OS 26.5.0; arm64) xterm"
+    ),
     "codex_exec"
   );
-  assert.equal(clientSurfaceFromUserAgent("Codex Desktop/0.171.0-alpha.13"), "codex_desktop");
+  assert.equal(
+    clientSurfaceFromUserAgent("Codex Desktop/0.171.0-alpha.13"),
+    "codex_desktop"
+  );
   assert.equal(clientSurfaceFromUserAgent(""), null);
 });
 

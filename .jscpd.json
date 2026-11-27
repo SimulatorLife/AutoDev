@@ -1,6 +1,6 @@
 {
-  "minLines": 10,
-  "minTokens": 100,
+  "minLines": 8,
+  "minTokens": 85,
   "mode": "weak",
   "gitignore": true,
   "absolute": false,

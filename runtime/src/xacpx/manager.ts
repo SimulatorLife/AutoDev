@@ -163,8 +163,7 @@ function rejectPermissionResponse(
   request: RequestPermissionRequest
 ): RequestPermissionResponse {
   const rejectOption = request.options.find(
-    (option) =>
-      option.kind === "reject_once" || option.kind === "reject_always"
+    (option) => option.kind === "reject_once" || option.kind === "reject_always"
   );
   if (rejectOption) {
     return {
@@ -264,11 +263,18 @@ export function resolveAcpPermissionResponse(
     return rejectPermissionResponse(request);
   }
   const contract = roleContract(role);
-  const toolName = (request.toolCall.name ?? request.toolCall.title ?? "").trim();
+  const toolName = (
+    request.toolCall.name ??
+    request.toolCall.title ??
+    ""
+  ).trim();
   if (!toolName || isDisabledNativeFileTool(toolName)) {
     return rejectPermissionResponse(request);
   }
-  if (contract.shell === false && isShellToolName(normalizeToolName(toolName))) {
+  if (
+    contract.shell === false &&
+    isShellToolName(normalizeToolName(toolName))
+  ) {
     return rejectPermissionResponse(request);
   }
   const mcpTool = parseQualifiedMcpTool(toolName);
@@ -376,7 +382,12 @@ export function resolveXacpxBinaries(
       "AUTODEV_XACPX_BIN",
       environment
     ),
-    acpxBin: resolvePackageBinary("acpx", "acpx", "AUTODEV_ACPX_BIN", environment)
+    acpxBin: resolvePackageBinary(
+      "acpx",
+      "acpx",
+      "AUTODEV_ACPX_BIN",
+      environment
+    )
   };
 }
 
@@ -449,7 +460,10 @@ orchestrator tier additionally requires the canonical XACPX delegation path.
 export class XacpxSessionManager {
   private readonly pins = new Map<string, PinnedSessionRecord>();
   private readonly liveSessions = new Map<string, LiveAcpSessionHandle>();
-  private readonly opencliSessions = new Map<string, LiveOpencliSessionHandle>();
+  private readonly opencliSessions = new Map<
+    string,
+    LiveOpencliSessionHandle
+  >();
   private readonly policy: RoutingPolicy;
   private readonly consoleSink: AcpConsoleSink | null;
   private readonly acpTransportFactory: AcpTransportFactory;
@@ -550,7 +564,9 @@ export class XacpxSessionManager {
           ? this.policy.config.orchestrator.tier
           : this.policy.tierForRole(role);
       const scope = role === "orchestrator" ? "orchestrator" : "subagent";
-      const blockers = tier ? this.policy.tierServingBlockers(tier, scope) : null;
+      const blockers = tier
+        ? this.policy.tierServingBlockers(tier, scope)
+        : null;
       const excluded = tier ? this.policy.excludedProviders(tier, scope) : [];
       const reasons = new Map(
         excluded.map(({ provider, reason }) => [provider, reason])
@@ -620,7 +636,9 @@ export class XacpxSessionManager {
       (existing.cwd !== cwd ||
         existing.parentSessionId !== (request.parentSessionId ?? null))
     ) {
-      throw new Error("Pinned session workspace or parent identity cannot change.");
+      throw new Error(
+        "Pinned session workspace or parent identity cannot change."
+      );
     }
     const opencli = this.opencliSessions.get(request.sessionId);
     if (opencli?.active) {
@@ -709,7 +727,7 @@ export class XacpxSessionManager {
         cwd,
         systemPrompt,
         sessionId: request.sessionId,
-            reasoningEffort: chosen.reasoningEffort ?? null,
+        reasoningEffort: chosen.reasoningEffort ?? null,
         env: environment
       })
     };
@@ -790,7 +808,8 @@ export class XacpxSessionManager {
           conversationId: result.conversationId
         };
       }
-      if (plan.kind !== "acp") throw new Error("Missing OpenCLI session state.");
+      if (plan.kind !== "acp")
+        throw new Error("Missing OpenCLI session state.");
 
       let handle = this.liveSessions.get(request.sessionId);
       if (!handle) {

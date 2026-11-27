@@ -1246,7 +1246,14 @@ function mcpLaunchConfiguration(
       : undefined
   );
   if (entry === null) return { name };
-  const launch = mcpLaunchKeys(entry);
+  return publishMcpLaunchConfiguration(name, mcpLaunchKeys(entry));
+}
+
+/** Publish launch keys under their Control API names, preserving absent keys. */
+function publishMcpLaunchConfiguration(
+  name: string,
+  launch: ReturnType<typeof mcpLaunchKeys>
+): McpServerLaunchConfiguration {
   const published: {
     name: string;
     command?: string;
@@ -2247,27 +2254,7 @@ export class RuleSyncRepository {
         // here would report a difference the projection never had.
         if (Object.keys(launch).length === 0 && entry.disabled !== true)
           return null;
-        // The launch keys are published under their contract names, and a key
-        // the declaration does not carry is absent rather than empty: an
-        // absent key and an empty one are different configurations.
-        const published: {
-          name: string;
-          command?: string;
-          args?: readonly string[];
-          cwd?: string;
-          url?: string;
-          bearerTokenEnvVar?: string;
-          httpHeaders?: Record<string, string>;
-        } = { name };
-        if (launch.command !== undefined) published.command = launch.command;
-        if (launch.args !== undefined) published.args = launch.args;
-        if (launch.cwd !== undefined) published.cwd = launch.cwd;
-        if (launch.url !== undefined) published.url = launch.url;
-        if (launch.bearer_token_env_var !== undefined)
-          published.bearerTokenEnvVar = launch.bearer_token_env_var;
-        if (launch.http_headers !== undefined)
-          published.httpHeaders = launch.http_headers;
-        return published;
+        return publishMcpLaunchConfiguration(name, launch);
       })
       .filter(
         (server): server is McpServerLaunchConfiguration => server !== null

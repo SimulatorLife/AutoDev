@@ -34,9 +34,7 @@ export const ACP_PROVIDER_IDS = [
 export type AcpProviderId = (typeof ACP_PROVIDER_IDS)[number];
 
 export type AcpIsolationEnforcement =
-  | "enforced"
-  | "runtime_permission_guard"
-  | "unverified_gap";
+  "enforced" | "runtime_permission_guard" | "unverified_gap";
 
 export interface AcpProviderIsolationSurface {
   readonly nativeTools: AcpIsolationEnforcement;
@@ -151,7 +149,10 @@ function buildAcpMcpServers(
   const handedOver = [
     { name: MCP_GRANT_ENV, value: grant },
     { name: "HOME", value: home },
-    { name: "CODEX_HOME", value: env.CODEX_HOME?.trim() || path.join(home, ".codex") }
+    {
+      name: "CODEX_HOME",
+      value: env.CODEX_HOME?.trim() || path.join(home, ".codex")
+    }
   ];
   return contract.mcp.map((name) => ({
     name,
@@ -259,7 +260,7 @@ export function buildAcpProviderLaunchSpec(
           nativeMcps: "enforced",
           systemPromptInjection: "initial_turn",
           gaps: [
-            "agy acp does not expose a CLI --tools \"\" or --system-prompt flag; native tool denial and system prompt injection are enforced at AutoDev's ACP permission/turn boundary"
+            'agy acp does not expose a CLI --tools "" or --system-prompt flag; native tool denial and system prompt injection are enforced at AutoDev\'s ACP permission/turn boundary'
           ]
         }
       };

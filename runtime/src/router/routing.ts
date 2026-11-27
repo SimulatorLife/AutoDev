@@ -29,10 +29,7 @@ import {
   resolveManagedSecret
 } from "@simulatorlife/autodev-runtime/shared/runtime-secrets";
 
-import {
-  providerCapabilities,
-  providerDeliversRoleMcp
-} from "./subagents.ts";
+import { providerCapabilities, providerDeliversRoleMcp } from "./subagents.ts";
 
 export const ROLE_NAMES = [
   "default",
@@ -724,7 +721,8 @@ export class RoutingPolicy {
     provider: unknown,
     agentRole: string | null | undefined
   ): boolean {
-    if (typeof provider !== "string" || provider.trim().length === 0) return false;
+    if (typeof provider !== "string" || provider.trim().length === 0)
+      return false;
     const role = agentRole?.trim().toLowerCase();
     if (!role || !hasRoleContract(role)) return true;
     const contract = roleContract(role);

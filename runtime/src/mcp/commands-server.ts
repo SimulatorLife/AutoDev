@@ -131,7 +131,11 @@ export function effectiveCommands(
   const catalogue = parseCommandCatalogue(grant.catalogue);
   const effective = new Map<string, CommandDefinition>();
   for (const [commandId, definition] of Object.entries(catalogue.commands)) {
-    if (!allowed.has(commandId) || !isCommandEligibleInWorkspace(definition, grant.workspaceId)) continue;
+    if (
+      !allowed.has(commandId) ||
+      !isCommandEligibleInWorkspace(definition, grant.workspaceId)
+    )
+      continue;
     effective.set(commandId, definition);
   }
   return effective;
@@ -166,7 +170,9 @@ export interface CommandsServer {
   close(): Promise<void>;
 }
 
-export function createCommandsMcpServer(grant: CommandsServerGrant): CommandsServer {
+export function createCommandsMcpServer(
+  grant: CommandsServerGrant
+): CommandsServer {
   let isClosed = false;
   let closing: Promise<void> | undefined;
   let revoked = false;
@@ -272,7 +278,9 @@ export function createCommandsMcpServer(grant: CommandsServerGrant): CommandsSer
             // response. Cancel the former without making the latter depend
             // on later status/result requests.
             const abortRequest = (): void => execution.controller.abort();
-            extra.signal.addEventListener("abort", abortRequest, { once: true });
+            extra.signal.addEventListener("abort", abortRequest, {
+              once: true
+            });
             if (extra.signal.aborted) abortRequest();
             const revocationCheck = setInterval(() => {
               if (!isAuthorized()) execution.controller.abort();
@@ -307,7 +315,8 @@ export function createCommandsMcpServer(grant: CommandsServerGrant): CommandsSer
                     stdout: "",
                     // An exception from a process runner can include argv,
                     // paths and environment values. Do not return it verbatim.
-                    stderr: "Command could not be executed within the approved scope.",
+                    stderr:
+                      "Command could not be executed within the approved scope.",
                     outputTruncated: false
                   };
                 }
@@ -353,7 +362,9 @@ export function createCommandsMcpServer(grant: CommandsServerGrant): CommandsSer
         },
         getTaskResult: async (_arguments, extra) => {
           authorize();
-          return CallToolResultSchema.parse(await extra.taskStore.getTaskResult(extra.taskId));
+          return CallToolResultSchema.parse(
+            await extra.taskStore.getTaskResult(extra.taskId)
+          );
         }
       }
     );
@@ -371,18 +382,19 @@ export function createCommandsMcpServer(grant: CommandsServerGrant): CommandsSer
         execution.cancelling = true;
         execution.controller.abort();
       }
-      closing = Promise.allSettled(executions.map((execution) => execution.done))
-        .then(async () => {
-          // A command that was still running when the backend closed has an
-          // unknown outcome. It is recorded as failed, never as completed.
-          for (const taskId of outstanding) {
-            store.interrupt(
-              taskId,
-              "The command was interrupted when the backend closed before it produced a result."
-            );
-          }
-          await server.close();
-        });
+      closing = Promise.allSettled(
+        executions.map((execution) => execution.done)
+      ).then(async () => {
+        // A command that was still running when the backend closed has an
+        // unknown outcome. It is recorded as failed, never as completed.
+        for (const taskId of outstanding) {
+          store.interrupt(
+            taskId,
+            "The command was interrupted when the backend closed before it produced a result."
+          );
+        }
+        await server.close();
+      });
       return closing;
     }
   };

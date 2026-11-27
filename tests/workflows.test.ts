@@ -582,8 +582,14 @@ test("ACP provider profiles declare truthful isolation surfaces so RuleSync and 
     "utf8"
   );
   assert.match(profiles, /isolation:\s*\{/);
-  assert.match(profiles, /nativeTools:\s*"(?:enforced|runtime_permission_guard)"/);
-  assert.match(profiles, /systemPromptInjection:\s*"(?:cli_flag|initial_turn)"/);
+  assert.match(
+    profiles,
+    /nativeTools:\s*"(?:enforced|runtime_permission_guard)"/
+  );
+  assert.match(
+    profiles,
+    /systemPromptInjection:\s*"(?:cli_flag|initial_turn)"/
+  );
   assert.match(profiles, /acpMcpServers/);
   assert.match(profiles, /compactionManagedByProvider:\s*true/);
   assert.match(profiles, /"mcode"/);
@@ -1129,7 +1135,10 @@ test("Node actions use the pnpm-compatible .node-version pin", async () => {
   ) as { engines: { node: string }; devDependencies: Record<string, string> };
   assert.equal(manifest.engines.node, `>=${pin} <${Number(major) + 1}`);
   assert.equal(manifest.devDependencies["@types/node"], "catalog:");
-  const workspace = await readFile(path.join(root, "pnpm-workspace.yaml"), "utf8");
+  const workspace = await readFile(
+    path.join(root, "pnpm-workspace.yaml"),
+    "utf8"
+  );
   assert.match(workspace, new RegExp(`"@types/node": \\^${major}\\.`, "u"));
   for (const directory of ["runtime", "data", "console"]) {
     const pkg = JSON.parse(

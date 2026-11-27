@@ -148,7 +148,9 @@ export function applyCommandCatalogueApproval(
   ]) {
     try {
       if (lstatSync(candidate).isSymbolicLink()) {
-        throw new Error("Refusing command catalogue approval through a symbolic link.");
+        throw new Error(
+          "Refusing command catalogue approval through a symbolic link."
+        );
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;

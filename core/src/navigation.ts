@@ -42,8 +42,7 @@ export const CANONICAL_NAV_GROUPS = [
   {
     id: "Observe",
     label: "Observe",
-    description:
-      "Telemetry, evaluations, and playtesting behavior.",
+    description: "Telemetry, evaluations, and playtesting behavior.",
     sections: ["Usage", "Evaluations", "Playtesting"]
   },
   {

@@ -159,7 +159,10 @@ export function resolveMcpCommand(
     };
   }
   if (tool === MCP_SERVER_XACPX) {
-    const args = [resolveRuntimePackageBin("@ganglion/xacpx", "xacpx"), "mcp-stdio"];
+    const args = [
+      resolveRuntimePackageBin("@ganglion/xacpx", "xacpx"),
+      "mcp-stdio"
+    ];
     const coordinatorSession = env.AUTODEV_XACPX_COORDINATOR_SESSION?.trim();
     if (coordinatorSession)
       args.push("--coordinator-session", coordinatorSession);

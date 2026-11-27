@@ -36,7 +36,8 @@
     },
     "console": {
       "entry": [
-        // Imported by next.config.ts, which Knip treats as build-only config.
+        // Imported by next.config.ts, which Knip reads as plugin configuration
+        // and never as a production entry.
         "src/lib/build-output.ts!",
         // Alternative Playwright configs passed with `playwright test --config`.
         "playwright.*.config.ts"
@@ -63,6 +64,9 @@
         "src/playtesting/mcp-main.ts!",
         "src/mcp/chatgpt-supergateway-probe.ts!",
         "src/telemetry/otel-headers-helper.ts!",
+        // Launchd entry of the unfinished zero-downtime Router generation
+        // workstream (docs/autodev-console-migration.md); not yet installed.
+        "src/router/ingress-main.ts!",
         // Started by scripts/run-autodev-console.sh and package scripts (which
         // production mode does not read).
         "src/cli/verify-control-api.ts!",

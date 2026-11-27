@@ -206,7 +206,11 @@ async function dispatch(
     isError?: boolean;
     content: readonly { text: string }[];
   };
-  assert.equal(response.isError, undefined, response.content[0]?.text ?? "unexpected tool error");
+  assert.equal(
+    response.isError,
+    undefined,
+    response.content[0]?.text ?? "unexpected tool error"
+  );
   return JSON.parse(response.content[0]!.text);
 }
 

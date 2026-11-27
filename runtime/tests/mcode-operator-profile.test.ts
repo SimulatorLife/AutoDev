@@ -61,7 +61,10 @@ const OPERATOR_MCP = `${JSON.stringify({
   mcpServers: {
     "cocoindex-code": {
       command: "bash",
-      args: ["-lc", 'exec "$HOME/.codex/hooks/run-autodev-mcp.sh" cocoindex-code']
+      args: [
+        "-lc",
+        'exec "$HOME/.codex/hooks/run-autodev-mcp.sh" cocoindex-code'
+      ]
     }
   }
 })}\n`;
@@ -74,7 +77,10 @@ One rendering of the canonical sources per home, shared by every test.
 function artifactsFor(home: string): McodeProfileArtifacts {
   let artifacts = renderings.get(home);
   if (!artifacts) {
-    artifacts = renderMcodeProfileArtifacts({ repositoryRoot: REPO_ROOT, home });
+    artifacts = renderMcodeProfileArtifacts({
+      repositoryRoot: REPO_ROOT,
+      home
+    });
     renderings.set(home, artifacts);
   }
   return artifacts;
@@ -110,7 +116,10 @@ function seedOperatorProfile(fixture: Fixture): void {
   const profile = fixture.operatorProfile;
   mkdirSync(path.join(profile, "auth"), { recursive: true });
   writeFileSync(path.join(profile, "AGENTS.md"), OPERATOR_INSTRUCTIONS);
-  writeFileSync(path.join(profile, "config.yaml"), "defaultModel: minimax/MiniMax-M3\n");
+  writeFileSync(
+    path.join(profile, "config.yaml"),
+    "defaultModel: minimax/MiniMax-M3\n"
+  );
   writeFileSync(path.join(profile, "auth", "token"), "secret\n");
   writeFileSync(path.join(profile, "mcp.json"), OPERATOR_MCP);
   writeFileSync(
@@ -139,7 +148,10 @@ function readJson(filePath: string): Record<string, unknown> {
 }
 
 function hookGroups(profile: string): Record<string, unknown[]> {
-  return readJson(path.join(profile, "hooks.json")).hooks as Record<string, unknown[]>;
+  return readJson(path.join(profile, "hooks.json")).hooks as Record<
+    string,
+    unknown[]
+  >;
 }
 
 // ---------------------------------------------------------------------------
@@ -165,7 +177,9 @@ test("enrollment adds the canonical projection and preserves operator state", ()
     for (const [event, canonical] of Object.entries(artifacts.hooks)) {
       for (const group of canonical as unknown[]) {
         assert.ok(
-          groups[event]?.some((entry) => JSON.stringify(entry) === JSON.stringify(group)),
+          groups[event]?.some(
+            (entry) => JSON.stringify(entry) === JSON.stringify(group)
+          ),
           `canonical ${event} hook enrolled`
         );
       }
@@ -175,16 +189,25 @@ test("enrollment adds the canonical projection and preserves operator state", ()
     assert.deepEqual(permission.allow, [OPERATOR_ALLOW]);
     assert.deepEqual(permission.ask, []);
     assert.deepEqual(permission.deny, [OPERATOR_DENY, ...artifacts.deny]);
-    assert.ok(artifacts.deny.length > 0, "the canonical source denies something");
+    assert.ok(
+      artifacts.deny.length > 0,
+      "the canonical source denies something"
+    );
 
     // Model configuration, credentials and MCP registrations are the
     // operator's and are not reconciled here.
-    assert.equal(readFileSync(path.join(profile, "mcp.json"), "utf8"), OPERATOR_MCP);
+    assert.equal(
+      readFileSync(path.join(profile, "mcp.json"), "utf8"),
+      OPERATOR_MCP
+    );
     assert.equal(
       readFileSync(path.join(profile, "config.yaml"), "utf8"),
       "defaultModel: minimax/MiniMax-M3\n"
     );
-    assert.equal(readFileSync(path.join(profile, "auth", "token"), "utf8"), "secret\n");
+    assert.equal(
+      readFileSync(path.join(profile, "auth", "token"), "utf8"),
+      "secret\n"
+    );
   });
 });
 
@@ -199,7 +222,10 @@ test("an operator profile with no AutoDev files gains the canonical ones", () =>
       readJson(path.join(fixture.operatorProfile, "permission.json")),
       { version: 2, allow: [], ask: [], deny: artifacts.deny }
     );
-    assert.equal(existsSync(path.join(fixture.operatorProfile, "mcp.json")), false);
+    assert.equal(
+      existsSync(path.join(fixture.operatorProfile, "mcp.json")),
+      false
+    );
   });
 });
 
@@ -259,7 +285,12 @@ test("reconciliation retires only AutoDev's former contributions", () => {
     seedOperatorProfile(fixture);
     // The record holds each contribution as JSON with sorted keys.
     const staleHook = {
-      hooks: [{ command: "~/.autodev/hooks/run-autodev-hook.sh retired.ts", type: "command" }],
+      hooks: [
+        {
+          command: "~/.autodev/hooks/run-autodev-hook.sh retired.ts",
+          type: "command"
+        }
+      ],
       matcher: "bash"
     };
     const staleDeny = {
@@ -312,12 +343,18 @@ test("operator choices enrollment would override are reported, not changed", () 
 
     const result = enroll(fixture);
     assert.equal(result.conflicts.length, 3);
-    assert.equal(readFileSync(path.join(profile, "hooks.json"), "utf8"), disabledHooks);
+    assert.equal(
+      readFileSync(path.join(profile, "hooks.json"), "utf8"),
+      disabledHooks
+    );
     assert.equal(
       readFileSync(path.join(profile, "permission.json"), "utf8"),
       foreignPermission
     );
-    assert.equal(readFileSync(path.join(profile, "AGENTS.md"), "utf8"), oversized);
+    assert.equal(
+      readFileSync(path.join(profile, "AGENTS.md"), "utf8"),
+      oversized
+    );
   });
 });
 
@@ -331,8 +368,14 @@ test("dormant operator hooks and unreadable documents are left alone", () => {
 
     const result = enroll(fixture);
     assert.equal(result.conflicts.length, 2);
-    assert.equal(readFileSync(path.join(profile, "hooks.json"), "utf8"), dormant);
-    assert.equal(readFileSync(path.join(profile, "permission.json"), "utf8"), "{ not json");
+    assert.equal(
+      readFileSync(path.join(profile, "hooks.json"), "utf8"),
+      dormant
+    );
+    assert.equal(
+      readFileSync(path.join(profile, "permission.json"), "utf8"),
+      "{ not json"
+    );
   });
 });
 
@@ -410,7 +453,10 @@ test("both profiles reconcile from one rendering and then verify clean", () => {
     assert.deepEqual(check.managed.drifted, []);
     assert.deepEqual(check.operator.drifted, []);
     // The managed profile still holds no MCP list, and the operator's is untouched.
-    assert.equal(existsSync(path.join(fixture.managedProfile, "mcp.json")), false);
+    assert.equal(
+      existsSync(path.join(fixture.managedProfile, "mcp.json")),
+      false
+    );
     assert.equal(
       readFileSync(path.join(fixture.operatorProfile, "mcp.json"), "utf8"),
       OPERATOR_MCP

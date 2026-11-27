@@ -88,7 +88,9 @@ test("MCP launcher runs Node servers from the Runtime's own dependency tree with
     "--isolated"
   ]);
   assert.deepEqual(
-    resolveMcpCommand("playwright", { AUTODEV_PLAYWRIGHT_HEADED: "1" }).args.slice(1),
+    resolveMcpCommand("playwright", {
+      AUTODEV_PLAYWRIGHT_HEADED: "1"
+    }).args.slice(1),
     ["--no-sandbox", "--isolated"]
   );
   for (const server of ["filesystem", "github"]) {
@@ -208,14 +210,18 @@ test("the MCP launcher hook finds pnpm Node with a minimal PATH", () => {
     writeFileSync(pnpmNode, `#!/bin/sh\nprintf '%s\\n' "$@" > "${seen}"\n`);
     chmodSync(pnpmNode, 0o755);
 
-    const result = spawnSync("bash", [installHook(root, "scripts"), "filesystem"], {
-      env: {
-        HOME: root,
-        PATH: "/usr/bin:/bin",
-        PNPM_HOME: join(root, "pnpm")
-      },
-      encoding: "utf8"
-    });
+    const result = spawnSync(
+      "bash",
+      [installHook(root, "scripts"), "filesystem"],
+      {
+        env: {
+          HOME: root,
+          PATH: "/usr/bin:/bin",
+          PNPM_HOME: join(root, "pnpm")
+        },
+        encoding: "utf8"
+      }
+    );
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(readFileSync(seen, "utf8").trim().split("\n"), [
       launcher,
@@ -232,13 +238,17 @@ test("the MCP launcher hook reports a root that holds no gateway client", () => 
     const fakeNode = join(empty, "fake-node");
     writeFileSync(fakeNode, "#!/usr/bin/env bash\nexit 0\n");
     chmodSync(fakeNode, 0o755);
-    const result = spawnSync("bash", [installHook(empty, "hooks"), "filesystem"], {
-      env: {
-        ...process.env,
-        AUTODEV_NODE_BIN: fakeNode
-      },
-      encoding: "utf8"
-    });
+    const result = spawnSync(
+      "bash",
+      [installHook(empty, "hooks"), "filesystem"],
+      {
+        env: {
+          ...process.env,
+          AUTODEV_NODE_BIN: fakeNode
+        },
+        encoding: "utf8"
+      }
+    );
     assert.equal(result.status, 127);
     assert.match(result.stderr, /mcp\/gateway-client\.ts not found/);
   } finally {
@@ -254,10 +264,16 @@ test("the MCP launcher hook runs a Playtesting run's server itself, never throug
     const launcher = join(root, "src", "mcp", "launcher.ts");
     mkdirSync(dirname(launcher), { recursive: true });
     writeFileSync(launcher, "export {};\n");
-    writeFileSync(join(root, "src", "mcp", "gateway-client.ts"), "export {};\n");
+    writeFileSync(
+      join(root, "src", "mcp", "gateway-client.ts"),
+      "export {};\n"
+    );
     const seen = join(root, "seen-args");
     const fakeNode = join(root, "fake-node");
-    writeFileSync(fakeNode, `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${seen}"\n`);
+    writeFileSync(
+      fakeNode,
+      `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${seen}"\n`
+    );
     chmodSync(fakeNode, 0o755);
     const result = spawnSync("bash", [installHook(root, "hooks"), "playtest"], {
       env: { ...process.env, AUTODEV_NODE_BIN: fakeNode },
@@ -308,14 +324,11 @@ test("the launcher resolves installed tools from the home the server runs with",
       args: ["mcp"],
       pathPrepend: []
     });
-    assert.deepEqual(
-      resolveMcpCommand(MCP_SERVER_CODEGRAPHCONTEXT, env),
-      {
-        binary: join(bin, "codegraphcontext"),
-        args: ["mcp", "start"],
-        pathPrepend: []
-      }
-    );
+    assert.deepEqual(resolveMcpCommand(MCP_SERVER_CODEGRAPHCONTEXT, env), {
+      binary: join(bin, "codegraphcontext"),
+      args: ["mcp", "start"],
+      pathPrepend: []
+    });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -344,10 +357,7 @@ test("a home with no install does not shadow the copy on PATH", () => {
 });
 
 test("MCP launcher rejects unknown tools", () => {
-  assert.throws(
-    () => resolveMcpCommand("unknown"),
-    /unsupported AutoDev MCP/
-  );
+  assert.throws(() => resolveMcpCommand("unknown"), /unsupported AutoDev MCP/);
 });
 
 test("runMcp auto-initializes cocoindex-code if .cocoindex_code is absent", () => {
@@ -619,7 +629,15 @@ test("the LSP server finds the language servers AutoDev pins, whatever PATH Code
   );
   assert.equal(
     languageServer,
-    join(import.meta.dirname, "..", "..", "runtime", "node_modules", ".bin", "typescript-language-server")
+    join(
+      import.meta.dirname,
+      "..",
+      "..",
+      "runtime",
+      "node_modules",
+      ".bin",
+      "typescript-language-server"
+    )
   );
 });
 

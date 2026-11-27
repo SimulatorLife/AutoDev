@@ -1,8 +1,4 @@
-import {
-  type APIRequestContext,
-  expect,
-  test
-} from "@playwright/test";
+import { type APIRequestContext, expect, test } from "@playwright/test";
 
 const FIXTURE_BASE_URL = `http://127.0.0.1:${process.env.AUTODEV_PLAYTEST_FIXTURE_PORT ?? "4311"}`;
 const PERMISSIONS_URL = "/permissions";
@@ -55,24 +51,39 @@ test.afterEach(async ({ request }) => {
   await resetPermissionPolicy(request);
 });
 
-test("the permission policy is read-only and reflects an observed source revision", async ({ page, request }) => {
+test("the permission policy is read-only and reflects an observed source revision", async ({
+  page,
+  request
+}) => {
   await resetPermissionPolicy(request);
   const before = await readPermissionPolicy(request);
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto(PERMISSIONS_URL);
   const policy = page.getByRole("region", { name: "Permission Policy" });
-  await expect(policy.getByText(before.approvalPolicy, { exact: true })).toBeVisible();
-  await expect(policy.getByText(before.approvalsReviewer, { exact: true })).toBeVisible();
-  await expect(policy.getByText(before.webSearch ? "Enabled" : "Disabled", { exact: true })).toBeVisible();
+  await expect(
+    policy.getByText(before.approvalPolicy, { exact: true })
+  ).toBeVisible();
+  await expect(
+    policy.getByText(before.approvalsReviewer, { exact: true })
+  ).toBeVisible();
+  await expect(
+    policy.getByText(before.webSearch ? "Enabled" : "Disabled", { exact: true })
+  ).toBeVisible();
   await expect(policy.locator("form, input, select, textarea")).toHaveCount(0);
-  await expect(policy.getByText(`revision ${before.revision.slice(0, 12)}`)).toBeVisible();
+  await expect(
+    policy.getByText(`revision ${before.revision.slice(0, 12)}`)
+  ).toBeVisible();
 
-  const moved = await request.post(`${FIXTURE_BASE_URL}/fixture/permissions/state?state=revision-moved`);
+  const moved = await request.post(
+    `${FIXTURE_BASE_URL}/fixture/permissions/state?state=revision-moved`
+  );
   expect(moved.ok()).toBe(true);
   const after = await readPermissionPolicy(request);
   expect(after.revision).not.toBe(before.revision);
   await page.reload();
-  await expect(policy.getByText(`revision ${after.revision.slice(0, 12)}`)).toBeVisible();
+  await expect(
+    policy.getByText(`revision ${after.revision.slice(0, 12)}`)
+  ).toBeVisible();
   expect(await readPermissionPolicy(request)).toEqual(after);
 });
 

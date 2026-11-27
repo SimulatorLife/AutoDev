@@ -506,9 +506,14 @@ export function PromptDetailView({
       React.createElement(SourceView, {
         source: prompt.content,
         format: "Source",
-        rendered: prompt.preview.length > 0
-          ? React.createElement(PromptMarkdown, { body: prompt.preview })
-          : React.createElement("p", { className: MUTED_BODY_CLASS }, "The canonical Markdown body is empty.")
+        rendered:
+          prompt.preview.length > 0
+            ? React.createElement(PromptMarkdown, { body: prompt.preview })
+            : React.createElement(
+                "p",
+                { className: MUTED_BODY_CLASS },
+                "The canonical Markdown body is empty."
+              )
       })
     ),
     renderPromptHistory(

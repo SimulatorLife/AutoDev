@@ -6,25 +6,24 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   filterPrompts,
-  promptsListHref,
   readPromptsQuery
 } from "../src/features/prompts/prompts-list-url.ts";
 import { PromptsView } from "../src/features/prompts/PromptsView.ts";
 
 /**
- * The prompts list can be narrowed.
- *
- * The list is the whole RuleSync catalog -- every canonical command and role
- * prompt in the repository -- and it was the only large list in the Console
- * with no way to narrow it, while the Tools list beside it filtered by source
- * and role, the Evaluations list filtered and paginated, and the Memory list
- * filtered, searched and paginated. Measured against the live Console that is
- * 76 rows, and the operator had to scroll to reach the one they meant.
- *
- * The narrowing is the product's own: a filter bar that submits a normal GET
- * navigation, so the narrowed list is addressable, bookmarkable and shareable
- * like every other filtered view.
- */
+The prompts list can be narrowed.
+
+The list is the whole RuleSync catalog -- every canonical command and role
+prompt in the repository -- and it was the only large list in the Console
+with no way to narrow it, while the Tools list beside it filtered by source
+and role, the Evaluations list filtered and paginated, and the Memory list
+filtered, searched and paginated. Measured against the live Console that is
+76 rows, and the operator had to scroll to reach the one they meant.
+
+The narrowing is the product's own: a filter bar that submits a normal GET
+navigation, so the narrowed list is addressable, bookmarkable and shareable
+like every other filtered view.
+*/
 
 const CATALOG = [
   {
@@ -65,10 +64,7 @@ test("an empty query is the whole catalog", () => {
   assert.equal(filterPrompts(CATALOG, "   ").length, CATALOG.length);
 });
 
-test("the list's address carries the query, and reads it back", () => {
-  assert.equal(promptsListHref(""), "/prompts");
-  assert.equal(promptsListHref("  "), "/prompts");
-  assert.equal(promptsListHref("code review"), "/prompts?q=code%20review");
+test("the list reads its query back from the address", () => {
   assert.equal(readPromptsQuery({ q: "code review" }), "code review");
   assert.equal(readPromptsQuery({ q: " code review " }), "code review");
   assert.equal(readPromptsQuery({ q: ["first", "second"] }), "first");

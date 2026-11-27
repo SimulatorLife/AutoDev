@@ -1,17 +1,23 @@
 /** Read-only source and rendered content share one loaded revision. */
 
-import {
-  type APIRequestContext,
-  expect,
-  test
-} from "@playwright/test";
+import { type APIRequestContext, expect, test } from "@playwright/test";
 
 import { waitForPageContent } from "./acceptance-helpers.ts";
 
 const FIXTURE_BASE_URL = `http://127.0.0.1:${process.env.AUTODEV_PLAYTEST_FIXTURE_PORT ?? "4311"}`;
 const cases = [
-  { kind: "skill", name: "code-review", path: "/skills/code-review", body: "Review a diff for defects." },
-  { kind: "prompt", name: "review", path: "/prompts/review", body: "Review the pending diff and report what changed." }
+  {
+    kind: "skill",
+    name: "code-review",
+    path: "/skills/code-review",
+    body: "Review a diff for defects."
+  },
+  {
+    kind: "prompt",
+    name: "review",
+    path: "/prompts/review",
+    body: "Review the pending diff and report what changed."
+  }
 ] as const;
 const MOVED_MARKER = "Moved by another editor.";
 
@@ -73,12 +79,17 @@ test.afterEach(async ({ request }) => {
 });
 
 for (const item of cases) {
-  test(`${item.kind} displays the loaded revision, not a later source, until reload`, async ({ page, request }) => {
+  test(`${item.kind} displays the loaded revision, not a later source, until reload`, async ({
+    page,
+    request
+  }) => {
     const original = await storedCanonicalSource(request, item.kind, item.name);
     await page.goto(item.path);
     await waitForPageContent(page);
     const view = page.locator("[data-source-view]");
-    await expect(view.locator("[data-source-rendered]")).toContainText(item.body);
+    await expect(view.locator("[data-source-rendered]")).toContainText(
+      item.body
+    );
 
     await moveCanonicalSource(request, item.kind, item.name);
     const moved = await storedCanonicalSource(request, item.kind, item.name);
@@ -87,21 +98,30 @@ for (const item of cases) {
 
     const mutations: string[] = [];
     page.on("request", (request) => {
-      if (request.url().includes("/api/") && request.method() !== "GET") mutations.push(request.url());
+      if (request.url().includes("/api/") && request.method() !== "GET")
+        mutations.push(request.url());
     });
     const source = view.getByRole("button", { name: "Source", exact: true });
     await source.click();
-    expect(await view.getByLabel("Canonical source").textContent()).toBe(original);
+    expect(await view.getByLabel("Canonical source").textContent()).toBe(
+      original
+    );
     await expect(source).toBeFocused();
     await view.getByRole("button", { name: "Rendered", exact: true }).click();
-    await expect(view.locator("[data-source-rendered]")).not.toContainText(MOVED_MARKER);
+    await expect(view.locator("[data-source-rendered]")).not.toContainText(
+      MOVED_MARKER
+    );
     expect(mutations).toEqual([]);
-    expect(await storedCanonicalSource(request, item.kind, item.name)).toBe(moved);
+    expect(await storedCanonicalSource(request, item.kind, item.name)).toBe(
+      moved
+    );
     await expect(page.locator("textarea, form[method=POST]")).toHaveCount(0);
 
     await page.reload();
     await waitForPageContent(page);
-    await expect(view.locator("[data-source-rendered]")).toContainText(MOVED_MARKER);
+    await expect(view.locator("[data-source-rendered]")).toContainText(
+      MOVED_MARKER
+    );
     await source.click();
     expect(await view.getByLabel("Canonical source").textContent()).toBe(moved);
   });

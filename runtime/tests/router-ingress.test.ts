@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { createServer, type Server, type ServerResponse } from "node:http";
+import {
+  createServer,
+  type IncomingHttpHeaders,
+  type IncomingMessage,
+  request as httpRequest,
+  type Server,
+  type ServerResponse
+} from "node:http";
 import test from "node:test";
 
 import {
@@ -43,6 +50,23 @@ async function worker(
     ) {
       response.writeHead(401);
       response.end("unauthorized");
+      return;
+    }
+    if (request.url === "/headers") {
+      response.writeHead(200, {
+        connection: "close, X-Worker-Hop",
+        "x-worker-hop": "private",
+        "proxy-authenticate": "Basic realm=worker",
+        "proxy-authorization": "private",
+        "proxy-connection": "private",
+        te: "trailers",
+        trailer: "X-Worker-Trailer",
+        upgrade: "private",
+        "x-end-to-end": "preserved"
+      });
+      response.write(JSON.stringify(request.headers));
+      response.addTrailers({ "X-Worker-Trailer": "private" });
+      response.end();
       return;
     }
     if (request.url === "/stream") {
@@ -175,6 +199,104 @@ test("cutover preserves established SSE and waits for safe retirement", async ()
       close(previous.server),
       close(successor.server)
     ]);
+  }
+});
+
+async function ingressRequest(
+  port: number,
+  path: string,
+  headers: IncomingHttpHeaders
+): Promise<IncomingMessage> {
+  const request = httpRequest({ host: "127.0.0.1", port, path, headers });
+  const response = new Promise<IncomingMessage>((resolve, reject) => {
+    request.once("response", resolve);
+    request.once("error", reject);
+    request.once("upgrade", (_response, socket) => {
+      socket.destroy();
+      reject(new Error("Unexpected protocol upgrade"));
+    });
+  });
+  request.end();
+  return response;
+}
+
+test("ingress strips hop-by-hop headers in both directions", async () => {
+  const ingress = new RouterIngress();
+  const current = await worker("current");
+  try {
+    await ingress.listen(0, "127.0.0.1");
+    await ingress.activateGeneration(current.endpoint);
+    const address = ingress.server.address();
+    assert.ok(address && typeof address !== "string");
+    const response = await ingressRequest(address.port, "/headers", {
+      connection: "close, X-Client-Hop, X-Request-ID",
+      "x-client-hop": "private",
+      "x-request-id": "connection-scoped-id",
+      "proxy-authorization": "Basic private",
+      "proxy-authenticate": "private",
+      "proxy-connection": "private",
+      te: "trailers",
+      authorization: "Bearer fixture",
+      "x-end-to-end": "preserved"
+    });
+    const chunks: Buffer[] = [];
+    for await (const chunk of response) chunks.push(chunk as Buffer);
+    const observed = JSON.parse(
+      Buffer.concat(chunks).toString("utf8")
+    ) as IncomingHttpHeaders;
+    assert.equal(response.statusCode, 200);
+    for (const name of [
+      "proxy-authorization",
+      "proxy-authenticate",
+      "proxy-connection",
+      "te",
+      "trailer",
+      "upgrade"
+    ]) {
+      assert.equal(observed[name], undefined, name);
+      assert.equal(response.headers[name], undefined, name);
+    }
+    assert.equal(observed["x-client-hop"], undefined);
+    assert.equal(response.headers["x-worker-hop"], undefined);
+    assert.deepEqual(response.trailers, {});
+    assert.equal(observed.authorization, "Bearer fixture");
+    assert.equal(observed["x-end-to-end"], "preserved");
+    assert.equal(response.headers["x-end-to-end"], "preserved");
+    assert.match(observed["x-request-id"] as string, /^[\da-f-]{36}$/i);
+  } finally {
+    await Promise.all([close(ingress.server), close(current.server)]);
+  }
+});
+
+test("ingress explicitly refuses upgrades without admitting them", async () => {
+  const ingress = new RouterIngress();
+  const current = await worker("current");
+  try {
+    await ingress.listen(0, "127.0.0.1");
+    await ingress.activateGeneration(current.endpoint);
+    const address = ingress.server.address();
+    assert.ok(address && typeof address !== "string");
+    let forwarded = 0;
+    current.server.on("request", () => {
+      forwarded += 1;
+    });
+    current.server.on("upgrade", (_request, socket) => {
+      forwarded += 1;
+      socket.destroy();
+    });
+    const response = await ingressRequest(address.port, "/stream", {
+      connection: "Upgrade",
+      upgrade: "websocket"
+    });
+    response.resume();
+    assert.equal(response.statusCode, 501);
+    assert.equal(response.headers.connection, "close");
+    assert.equal(forwarded, 0);
+    assert.equal(ingress.getStatus().generations[0]?.inFlight, 0);
+    const ordinary = await fetch("http://127.0.0.1:" + address.port + "/");
+    assert.equal(await ordinary.text(), "current");
+  } finally {
+    await Promise.all([close(ingress.server), close(current.server)]);
   }
 });
 

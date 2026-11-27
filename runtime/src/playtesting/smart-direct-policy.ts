@@ -21,7 +21,8 @@ import {
   type PlaytestVisualHistoryEntry,
   type PlaytestVisualObservation,
   type PlaytestVisualPolicy,
-  type WorkspaceVisualPlaytestTargetApproval} from "@simulatorlife/autodev-core";
+  type WorkspaceVisualPlaytestTargetApproval
+} from "@simulatorlife/autodev-core";
 import { isDirectory } from "@simulatorlife/autodev-runtime/shared/resolve-workspace";
 
 const SMART_MODEL_ALIAS = "autodev/smart" as const;

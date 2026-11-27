@@ -96,7 +96,9 @@ test("isCccInvocation reads a heredoc body as data, not as commands", () => {
     false
   );
   assert.equal(
-    isCccInvocation("cat > /tmp/p.json <<'EOF'\nccc is only data\nEOF\nccc index"),
+    isCccInvocation(
+      "cat > /tmp/p.json <<'EOF'\nccc is only data\nEOF\nccc index"
+    ),
     true
   );
 });
@@ -105,7 +107,9 @@ test("splitShellSegments splits on the shell's separators only", () => {
   assert.deepEqual(splitShellSegments("echo a; echo b"), ["echo a", "echo b"]);
   assert.deepEqual(splitShellSegments("echo 'a; b'"), ["echo 'a; b'"]);
   assert.deepEqual(splitShellSegments('echo "a | b"'), ['echo "a | b"']);
-  assert.deepEqual(splitShellSegments("echo $(ccc index)"), ["echo $(ccc index)"]);
+  assert.deepEqual(splitShellSegments("echo $(ccc index)"), [
+    "echo $(ccc index)"
+  ]);
 });
 
 test("maskHeredocBodies blanks a heredoc body and keeps its delimiters", () => {

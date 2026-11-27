@@ -92,9 +92,13 @@ function runHelper(
   repository: string,
   ...arguments_: string[]
 ): { readonly status: number | null; readonly stdout: string } {
-  const result = spawnSync("python3", [helperPath, "--repo", repository, ...arguments_], {
-    encoding: "utf8"
-  });
+  const result = spawnSync(
+    "python3",
+    [helperPath, "--repo", repository, ...arguments_],
+    {
+      encoding: "utf8"
+    }
+  );
   return { status: result.status, stdout: result.stdout };
 }
 

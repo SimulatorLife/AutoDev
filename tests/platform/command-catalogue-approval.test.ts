@@ -37,7 +37,11 @@ function fixture(): { checkout: string; home: string; cleanup: () => void } {
     path.join(repositoryRoot, "config", "commands.json"),
     path.join(checkout, "config", "commands.json")
   );
-  return { checkout, home, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+  return {
+    checkout,
+    home,
+    cleanup: () => rmSync(root, { recursive: true, force: true })
+  };
 }
 
 /**
@@ -73,7 +77,9 @@ test("the operator approves exactly the revision they reviewed", () => {
   const { checkout, home, cleanup } = fixture();
   try {
     const proposed = commandCatalogueApproval(checkout, home).proposedDigest;
-    const result = applyCommandCatalogueApproval(checkout, home, { approvedDigest: proposed });
+    const result = applyCommandCatalogueApproval(checkout, home, {
+      approvedDigest: proposed
+    });
     assert.equal(result.state, "approved");
     assert.equal(result.approvedDigest, proposed);
     assert.deepEqual(
@@ -81,7 +87,10 @@ test("the operator approves exactly the revision they reviewed", () => {
       readFileSync(path.join(checkout, "config", "commands.json"))
     );
     // Reinstalling the same revision needs no further approval.
-    assert.equal(applyCommandCatalogueApproval(checkout, home).state, "approved");
+    assert.equal(
+      applyCommandCatalogueApproval(checkout, home).state,
+      "approved"
+    );
   } finally {
     cleanup();
   }
@@ -97,11 +106,16 @@ test("an agent's edit to the checkout catalogue is not approved by a reinstall",
     escalate(checkout);
     // A reinstall carrying the *previous* approval, or none, changes nothing.
     for (const approvedDigest of [undefined, original]) {
-      const result = applyCommandCatalogueApproval(checkout, home, { approvedDigest });
+      const result = applyCommandCatalogueApproval(checkout, home, {
+        approvedDigest
+      });
       assert.equal(result.state, "pending");
       assert.equal(result.approvedDigest, original);
       assert.notEqual(result.proposedDigest, original);
-      assert.deepEqual(readFileSync(approvedCommandCataloguePath(home)), approvedBefore);
+      assert.deepEqual(
+        readFileSync(approvedCommandCataloguePath(home)),
+        approvedBefore
+      );
     }
   } finally {
     cleanup();
@@ -139,7 +153,10 @@ test("explicit approval cannot overwrite a symlink target", () => {
     symlinkSync(outside, approved);
     assert.equal(commandCatalogueApproval(checkout, home).approvedDigest, null);
     assert.throws(
-      () => applyCommandCatalogueApproval(checkout, home, { approvedDigest: proposed }),
+      () =>
+        applyCommandCatalogueApproval(checkout, home, {
+          approvedDigest: proposed
+        }),
       /symbolic link/u
     );
     assert.equal(readFileSync(outside, "utf8"), "untouched");
@@ -149,7 +166,10 @@ test("explicit approval cannot overwrite a symlink target", () => {
     // an approved installed revision.
     assert.equal(commandCatalogueApproval(checkout, home).approvedDigest, null);
     assert.throws(
-      () => applyCommandCatalogueApproval(checkout, home, { approvedDigest: proposed }),
+      () =>
+        applyCommandCatalogueApproval(checkout, home, {
+          approvedDigest: proposed
+        }),
       /symbolic link/u
     );
   } finally {
@@ -162,7 +182,10 @@ test("an invalid proposal is never offered for approval", () => {
   try {
     writeFileSync(
       path.join(checkout, "config", "commands.json"),
-      JSON.stringify({ version: 1, commands: { x: { executable: "sh", shell: true } } })
+      JSON.stringify({
+        version: 1,
+        commands: { x: { executable: "sh", shell: true } }
+      })
     );
     assert.throws(() => commandCatalogueApproval(checkout, home));
     assert.equal(existsSync(approvedCommandCataloguePath(home)), false);
@@ -191,7 +214,10 @@ test("a proposal that declares a command twice is never offered for approval", (
         })},`
       )
     );
-    assert.throws(() => commandCatalogueApproval(checkout, home), /more than once/u);
+    assert.throws(
+      () => commandCatalogueApproval(checkout, home),
+      /more than once/u
+    );
     assert.equal(existsSync(approvedCommandCataloguePath(home)), false);
   } finally {
     cleanup();

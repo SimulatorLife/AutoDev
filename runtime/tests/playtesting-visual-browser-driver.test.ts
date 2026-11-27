@@ -434,7 +434,9 @@ test("visual browser refuses a game action that attempts unapproved navigation",
     assert.equal(
       captured.status,
       "observed",
-      captured.status === "blocked" ? `blocked: ${captured.reason}` : "expected observed status"
+      captured.status === "blocked"
+        ? `blocked: ${captured.reason}`
+        : "expected observed status"
     );
     if (captured.status !== "observed") return;
     const link = captured.observation.controls.find(
@@ -526,7 +528,9 @@ test("visual browser stops before further input when a password gate appears mid
     assert.equal(
       captured.status,
       "observed",
-      captured.status === "blocked" ? `blocked: ${captured.reason}` : "expected observed status"
+      captured.status === "blocked"
+        ? `blocked: ${captured.reason}`
+        : "expected observed status"
     );
     if (captured.status !== "observed") return;
     const continueControl = captured.observation.controls.find(

@@ -1,7 +1,6 @@
 /** How the Console presents an analyst review's own words. */
 import type { ControlApiPlaytestingReview } from "@simulatorlife/autodev-core";
 
-
 /**
  * What the analyst wrote when it wrote nothing.
  *

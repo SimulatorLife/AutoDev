@@ -434,9 +434,14 @@ export function SkillsView({
       cell: ({ row: { original: skill } }) => {
         const item = eligibility.find((e) => e.skill === skill.name);
         return chipList({
-          items: executionContractObserved && executionContractRevision !== null ? item?.roles ?? [] : [],
+          items:
+            executionContractObserved && executionContractRevision !== null
+              ? (item?.roles ?? [])
+              : [],
           emptyLabel:
-            !executionContractObserved || executionContractRevision === null || item === undefined
+            !executionContractObserved ||
+            executionContractRevision === null ||
+            item === undefined
               ? NOT_OBSERVED_LABEL
               : "No roles assigned",
           testId: "skill-roles"

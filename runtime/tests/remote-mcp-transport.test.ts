@@ -44,7 +44,10 @@ test("remote transport diagnostics never expose raw URLs or exception contents",
     { code: 401, message: SECRET },
     SECRET
   ]) {
-    assert.equal(remoteTransportErrorMessage(error), "Remote MCP request failed.");
+    assert.equal(
+      remoteTransportErrorMessage(error),
+      "Remote MCP request failed."
+    );
   }
 });
 
@@ -71,9 +74,9 @@ async function remoteFixture() {
         return;
       }
       const reply = (fields: Record<string, unknown>) => {
-        res.writeHead(200, { "content-type": "application/json" }).end(
-          JSON.stringify({ jsonrpc: "2.0", id: message.id, ...fields })
-        );
+        res
+          .writeHead(200, { "content-type": "application/json" })
+          .end(JSON.stringify({ jsonrpc: "2.0", id: message.id, ...fields }));
       };
       if (message.method === "initialize") {
         reply({
@@ -107,13 +110,17 @@ async function remoteFixture() {
             reply({
               result: {
                 isError: true,
-                content: [{ type: "text", text: "legitimate tool-level diagnostic" }]
+                content: [
+                  { type: "text", text: "legitimate tool-level diagnostic" }
+                ]
               }
             });
             break;
           default:
             reply({
-              result: { content: [{ type: "text", text: "ordinary tool result" }] }
+              result: {
+                content: [{ type: "text", text: "ordinary tool result" }]
+              }
             });
         }
       } else {
@@ -128,7 +135,9 @@ async function remoteFixture() {
   return {
     url: `http://127.0.0.1:${address.port}/mcp`,
     close: async () => {
-      const closed = new Promise<void>((resolve) => server.close(() => resolve()));
+      const closed = new Promise<void>((resolve) =>
+        server.close(() => resolve())
+      );
       server.closeAllConnections();
       await closed;
     }
@@ -136,7 +145,10 @@ async function remoteFixture() {
 }
 
 async function assertRemoteBehavior(client: Client): Promise<void> {
-  assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name), ["fixture"]);
+  assert.deepEqual(
+    (await client.listTools()).tools.map((tool) => tool.name),
+    ["fixture"]
+  );
   const call = (mode: string) =>
     client.callTool({ name: "fixture", arguments: { mode } });
   await assert.rejects(
@@ -162,33 +174,44 @@ async function assertRemoteBehavior(client: Client): Promise<void> {
   assert.match(JSON.stringify(await call("success")), /ordinary tool result/u);
 }
 
-test("the warm MCP pool redacts upstream HTTP and JSON-RPC diagnostics", { timeout: 30_000 }, async () => {
-  const fixture = await remoteFixture();
-  let pool: Awaited<ReturnType<typeof startChatgptBackendPool>> | undefined;
-  const client = new Client({ name: "remote-error-pool-test", version: "1" });
-  try {
-    pool = await startChatgptBackendPool({
-      version: 1,
-      servers: {
-        "orchestrator.fixture": {
-          kind: "remote",
-          url: fixture.url,
-          bearer_token_env_var: "FIXTURE_TOKEN",
-          tools: ["fixture"]
+test(
+  "the warm MCP pool redacts upstream HTTP and JSON-RPC diagnostics",
+  { timeout: 30_000 },
+  async () => {
+    const fixture = await remoteFixture();
+    let pool: Awaited<ReturnType<typeof startChatgptBackendPool>> | undefined;
+    const client = new Client({ name: "remote-error-pool-test", version: "1" });
+    try {
+      pool = await startChatgptBackendPool(
+        {
+          version: 1,
+          servers: {
+            "orchestrator.fixture": {
+              kind: "remote",
+              url: fixture.url,
+              bearer_token_env_var: "FIXTURE_TOKEN",
+              tools: ["fixture"]
+            }
+          }
+        },
+        {
+          gatewayEnv: {},
+          secretEnv: { FIXTURE_TOKEN: SECRET }
         }
-      }
-    }, {
-      gatewayEnv: {},
-      secretEnv: { FIXTURE_TOKEN: SECRET }
-    });
-    await client.connect(new StreamableHTTPClientTransport(
-      new URL(`http://127.0.0.1:${pool.port}/mcp/orchestrator.fixture`),
-      { requestInit: { headers: { Authorization: `Bearer ${pool.token}` } } }
-    ));
-    await assertRemoteBehavior(client);
-  } finally {
-    await client.close().catch(() => {});
-    await pool?.close();
-    await fixture.close();
+      );
+      await client.connect(
+        new StreamableHTTPClientTransport(
+          new URL(`http://127.0.0.1:${pool.port}/mcp/orchestrator.fixture`),
+          {
+            requestInit: { headers: { Authorization: `Bearer ${pool.token}` } }
+          }
+        )
+      );
+      await assertRemoteBehavior(client);
+    } finally {
+      await client.close().catch(() => {});
+      await pool?.close();
+      await fixture.close();
+    }
   }
-});
+);

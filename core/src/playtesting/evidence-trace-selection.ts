@@ -65,7 +65,6 @@ export function isText(value: unknown, max = 256): value is string {
   );
 }
 
-
 export function isJson(value: unknown, depth = 0): boolean {
   if (depth > 48) return false;
   if (

@@ -187,7 +187,13 @@ test("unrelated native chats sharing the projected hooks are never governed", ()
   // A Claude Code or Copilot chat in this repository: no Runtime environment
   // and no AutoDev-routed model. Its agent types are the host's own subagent
   // names, including ones that collide with AutoDev role names.
-  for (const agentType of [undefined, "Explore", "general-purpose", "explorer", "orchestrator"]) {
+  for (const agentType of [
+    undefined,
+    "Explore",
+    "general-purpose",
+    "explorer",
+    "orchestrator"
+  ]) {
     for (const command of ["rm -rf build", "git log -p -5"]) {
       const raw = JSON.stringify({
         session_id: "native-session",

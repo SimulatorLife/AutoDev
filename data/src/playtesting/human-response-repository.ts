@@ -103,6 +103,50 @@ interface StudyState {
   tombstones: HumanStudyTombstoneMetadata[];
 }
 
+type HumanStudyAuthorizationValidators = Pick<
+  HumanStudyImportValidators,
+  | "isApprovedStudy"
+  | "isWorkspaceAllowed"
+  | "isBuildAllowed"
+  | "isParticipantWithdrawn"
+  | "isConsentValid"
+>;
+
+/** Repository-owned authorization checks shared by both human response import formats. */
+function restrictHumanStudyValidators(
+  state: StudyState,
+  validators: HumanStudyAuthorizationValidators
+): HumanStudyAuthorizationValidators {
+  return {
+    isApprovedStudy: (study) =>
+      study.approved && validators.isApprovedStudy(study),
+    isWorkspaceAllowed: (study, workspaceId) =>
+      workspaceId === study.workspaceId &&
+      validators.isWorkspaceAllowed(study, workspaceId),
+    isBuildAllowed: (study, build) =>
+      study.allowedBuilds.some((allowed) =>
+        samePlaytestBuild(allowed, build)
+      ) && validators.isBuildAllowed(study, build),
+    isParticipantWithdrawn: (study, participantId) =>
+      state.withdrawnTokens.includes(hashParticipant(state, participantId)) ||
+      validators.isParticipantWithdrawn(study, participantId),
+    isConsentValid: (study, participantId, version, scope) => {
+      const stored = state.consents.find(
+        (entry) => entry.participantId === participantId
+      );
+      return (
+        !state.withdrawnTokens.includes(
+          hashParticipant(state, participantId)
+        ) &&
+        stored !== undefined &&
+        stored.consentVersion === version &&
+        stored.consentScope === scope &&
+        validators.isConsentValid(study, participantId, version, scope)
+      );
+    }
+  };
+}
+
 export interface HumanPreferenceImportReport {
   readonly studyId: string;
   readonly revision: number;
@@ -1230,15 +1274,7 @@ export class RestrictedHumanResponseRepository {
     const state = this.requireState(studyId);
     const restrictedValidators: HumanStudyPreferenceImportValidators = {
       ...validators,
-      isApprovedStudy: (study) =>
-        study.approved && validators.isApprovedStudy(study),
-      isWorkspaceAllowed: (study, workspaceId) =>
-        workspaceId === study.workspaceId &&
-        validators.isWorkspaceAllowed(study, workspaceId),
-      isBuildAllowed: (study, build) =>
-        study.allowedBuilds.some((allowed) =>
-          samePlaytestBuild(allowed, build)
-        ) && validators.isBuildAllowed(study, build),
+      ...restrictHumanStudyValidators(state, validators),
       isTrustedPreferenceQuestion: (study, plan) =>
         study.preferencePlan !== undefined &&
         JSON.stringify(study.preferencePlan) === JSON.stringify(plan) &&
@@ -1281,23 +1317,6 @@ export class RestrictedHumanResponseRepository {
             plan,
             exposures
           )
-        );
-      },
-      isParticipantWithdrawn: (study, participantId) =>
-        state.withdrawnTokens.includes(hashParticipant(state, participantId)) ||
-        validators.isParticipantWithdrawn(study, participantId),
-      isConsentValid: (study, participantId, version, scope) => {
-        const stored = state.consents.find(
-          (entry) => entry.participantId === participantId
-        );
-        return (
-          !state.withdrawnTokens.includes(
-            hashParticipant(state, participantId)
-          ) &&
-          stored !== undefined &&
-          stored.consentVersion === version &&
-          stored.consentScope === scope &&
-          validators.isConsentValid(study, participantId, version, scope)
         );
       }
     };
@@ -1397,36 +1416,11 @@ export class RestrictedHumanResponseRepository {
     }
     const restrictedValidators: HumanStudyImportValidators = {
       ...validators,
-      isApprovedStudy: (study) =>
-        study.approved && validators.isApprovedStudy(study),
-      isWorkspaceAllowed: (study, workspaceId) =>
-        workspaceId === study.workspaceId &&
-        validators.isWorkspaceAllowed(study, workspaceId),
-      isBuildAllowed: (study, build) =>
-        study.allowedBuilds.some((allowed) =>
-          samePlaytestBuild(allowed, build)
-        ) && validators.isBuildAllowed(study, build),
+      ...restrictHumanStudyValidators(state, validators),
       isTrustedPxiItemConstructMapping: (study, mapping) =>
         study.pxiItemConstructMappingHash ===
           hashHumanStudyPxiItemConstructMapping(mapping) &&
-        validators.isTrustedPxiItemConstructMapping(study, mapping),
-      isParticipantWithdrawn: (study, participantId) =>
-        state.withdrawnTokens.includes(hashParticipant(state, participantId)) ||
-        validators.isParticipantWithdrawn(study, participantId),
-      isConsentValid: (study, participantId, version, scope) => {
-        const stored = state.consents.find(
-          (entry) => entry.participantId === participantId
-        );
-        return (
-          !state.withdrawnTokens.includes(
-            hashParticipant(state, participantId)
-          ) &&
-          stored !== undefined &&
-          stored.consentVersion === version &&
-          stored.consentScope === scope &&
-          validators.isConsentValid(study, participantId, version, scope)
-        );
-      }
+        validators.isTrustedPxiItemConstructMapping(study, mapping)
     };
     const outcome = importHumanStudyResponses(
       state.study,

@@ -153,7 +153,12 @@ test("orchestration skill keeps playtest execution, analysis, validation, and pu
     ".rulesync/skills/orchestration/references/playtesting.md"
   );
   // The four canonical playtesting roles have to be routed by name.
-  for (const role of ["playtester", "playtest-analyst", "validator", "browser-tester"]) {
+  for (const role of [
+    "playtester",
+    "playtest-analyst",
+    "validator",
+    "browser-tester"
+  ]) {
     assert.match(
       skill,
       new RegExp(`\`${role}\``, "u"),
@@ -175,7 +180,7 @@ test("orchestration skill keeps playtest execution, analysis, validation, and pu
   ]) {
     assert.match(
       skill,
-      new RegExp(authority.replaceAll('-', "[- ]"), "iu"),
+      new RegExp(authority.replaceAll("-", "[- ]"), "iu"),
       `the orchestration skill does not reserve ${authority} to the root`
     );
   }
@@ -296,7 +301,9 @@ test("playtest-analyst reuses autodev/smart model tier without inheriting smart 
   );
   const analystPlaytestTools = getEnabledTools(analystServers);
   assert.deepEqual(
-    [...analystPlaytestTools].sort((left, right) => collator.compare(left, right)),
+    [...analystPlaytestTools].sort((left, right) =>
+      collator.compare(left, right)
+    ),
     [
       "playtest.compare",
       "playtest.listEpisodes",

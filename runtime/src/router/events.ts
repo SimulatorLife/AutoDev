@@ -1,7 +1,8 @@
 import {
   type ClientSurface,
   isClientSurface,
-  SIGN_IN_REQUIRED_FAILURE_CLASS} from "@simulatorlife/autodev-core";
+  SIGN_IN_REQUIRED_FAILURE_CLASS
+} from "@simulatorlife/autodev-core";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   providerRequestUnsupported,

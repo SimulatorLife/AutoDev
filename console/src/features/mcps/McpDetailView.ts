@@ -100,25 +100,22 @@ function ApprovedCataloguePanel({
             className: "flex flex-col gap-1",
             "data-mcp-approved-catalogue": catalogue.state
           },
-          React.createElement(
-            StatusBadge,
-            {
-              status:
-                catalogue.state === "approved"
-                  ? "ready"
-                  : catalogue.state === "pending"
-                    ? "pending"
-                    : catalogue.state === "unavailable"
-                      ? "unavailable"
-                      : NOT_OBSERVED_STATUS,
-              label: {
-                approved: "Approved",
-                pending: "Pending approval",
-                unavailable: "Unavailable",
-                unknown: "Not observed"
-              }[catalogue.state]
-            }
-          ),
+          React.createElement(StatusBadge, {
+            status:
+              catalogue.state === "approved"
+                ? "ready"
+                : catalogue.state === "pending"
+                  ? "pending"
+                  : catalogue.state === "unavailable"
+                    ? "unavailable"
+                    : NOT_OBSERVED_STATUS,
+            label: {
+              approved: "Approved",
+              pending: "Pending approval",
+              unavailable: "Unavailable",
+              unknown: "Not observed"
+            }[catalogue.state]
+          }),
           React.createElement(
             "span",
             { className: MONO_META_CLASS },

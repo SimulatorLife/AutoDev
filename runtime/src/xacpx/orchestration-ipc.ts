@@ -205,7 +205,10 @@ export async function startXacpxOrchestrationIpcServer(
     DEFAULT_MAX_CONCURRENT_CHILDREN;
   const repositoryRoot =
     options.repositoryRoot ??
-    resolveRuntimeSourceRoot(import.meta.dirname, options.env?.AUTODEV_REPO_ROOT);
+    resolveRuntimeSourceRoot(
+      import.meta.dirname,
+      options.env?.AUTODEV_REPO_ROOT
+    );
   const env = options.env ?? process.env;
   const globalWorkspaceRoot = options.authorizedWorkspaceRoot?.trim() || null;
 
@@ -568,7 +571,8 @@ export async function startXacpxOrchestrationIpcServer(
             ? "next_event"
             : "until_attention_or_terminal";
         const rawTimeout =
-          typeof params.timeoutMs === "number" && Number.isFinite(params.timeoutMs)
+          typeof params.timeoutMs === "number" &&
+          Number.isFinite(params.timeoutMs)
             ? Math.floor(params.timeoutMs)
             : DEFAULT_WATCH_TIMEOUT_MS;
         const timeoutMs = Math.min(
@@ -682,7 +686,9 @@ export async function startXacpxOrchestrationIpcServer(
           task.summary = "Delegated task cancelled by coordinator";
           abortControllers.get(taskId)?.abort();
           abortControllers.delete(taskId);
-          await manager.cancelSession(task.workerSession).catch(() => undefined);
+          await manager
+            .cancelSession(task.workerSession)
+            .catch(() => undefined);
           await manager.closeSession(task.workerSession).catch(() => undefined);
           workerBusy.delete(task.workerSession);
           appendEvent(task, {
@@ -704,9 +710,7 @@ export async function startXacpxOrchestrationIpcServer(
         }
         const owned = manager
           .listPinnedSessions()
-          .filter(
-            (session) => session.parentSessionId === coordinatorSession
-          );
+          .filter((session) => session.parentSessionId === coordinatorSession);
         return owned.map((session) => ({
           address: { nodeId: "autodev-local", endpointId: session.sessionId },
           handle: session.sessionId,
@@ -745,9 +749,7 @@ export async function startXacpxOrchestrationIpcServer(
         const selector = isRecord(params.selector) ? params.selector : null;
         const owned = manager
           .listPinnedSessions()
-          .filter(
-            (session) => session.parentSessionId === coordinatorSession
-          );
+          .filter((session) => session.parentSessionId === coordinatorSession);
         const target = targetHandle
           ? owned.find((session) => session.sessionId === targetHandle)
           : selector

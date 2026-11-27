@@ -63,7 +63,9 @@ export function remoteTransportErrorMessage(error: unknown): string {
  * Keep the SDK's response identity and numeric code, not arbitrary text.
  * Successful responses (including tool-level isError results) are unchanged.
  */
-export function publicRemoteMcpMessage(message: JSONRPCMessage): JSONRPCMessage {
+export function publicRemoteMcpMessage(
+  message: JSONRPCMessage
+): JSONRPCMessage {
   if (!isJSONRPCErrorResponse(message)) return message;
   return {
     jsonrpc: "2.0",

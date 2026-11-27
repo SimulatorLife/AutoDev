@@ -74,7 +74,9 @@ export function assertPrivateDirectory(directory: string): void {
     (stat.mode & 0o077) !== 0 ||
     (process.getuid && stat.uid !== process.getuid())
   ) {
-    throw new Error("Service directory must be private and owned: " + directory);
+    throw new Error(
+      "Service directory must be private and owned: " + directory
+    );
   }
 }
 
@@ -82,7 +84,10 @@ export function assertPrivateDirectory(directory: string): void {
 export function ensurePrivateDirectory(directory: string): void {
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const stat = lstatSync(directory);
-  if (!stat.isDirectory() || (process.getuid && stat.uid !== process.getuid())) {
+  if (
+    !stat.isDirectory() ||
+    (process.getuid && stat.uid !== process.getuid())
+  ) {
     throw new Error(
       "Service directory must be an owned directory, not a symlink: " +
         directory

@@ -1207,7 +1207,8 @@ export const PLAYTEST_HIGHLIGHT_REASONS = [
   "session-summary"
 ] as const;
 
-export type PlaytestHighlightReason = (typeof PLAYTEST_HIGHLIGHT_REASONS)[number];
+export type PlaytestHighlightReason =
+  (typeof PLAYTEST_HIGHLIGHT_REASONS)[number];
 
 /** Bounded animated GIF clip highlighting an important playtest sequence. */
 export interface PlaytestHighlightClip {
@@ -1249,7 +1250,9 @@ export function assertPlaytestHighlightClips(
     throw new TypeError("Playtest highlightClips must be an array.");
   }
   if (value.length > PLAYTEST_HIGHLIGHT_MAX_CLIPS_PER_EPISODE) {
-    throw new TypeError("Playtest highlightClips exceeds maximum clips per episode.");
+    throw new TypeError(
+      "Playtest highlightClips exceeds maximum clips per episode."
+    );
   }
   const seenIds = new Set<string>();
   for (const item of value) {
@@ -1266,10 +1269,14 @@ export function assertPlaytestHighlightClips(
     }
     seenIds.add(item.id);
     if (item.mediaType !== PLAYTEST_HIGHLIGHT_MEDIA_TYPE) {
-      throw new TypeError("Playtest highlight clip mediaType must be image/gif.");
+      throw new TypeError(
+        "Playtest highlight clip mediaType must be image/gif."
+      );
     }
     if (typeof item.sha256 !== "string" || !SHA256_PATTERN.test(item.sha256)) {
-      throw new TypeError("Playtest highlight clip sha256 must be a SHA-256 hex digest.");
+      throw new TypeError(
+        "Playtest highlight clip sha256 must be a SHA-256 hex digest."
+      );
     }
     if (
       !Number.isSafeInteger(item.bytes) ||
@@ -1280,37 +1287,62 @@ export function assertPlaytestHighlightClips(
     }
     assertNonEmptyArtifactString(item.title, "Playtest highlight clip title");
     if (item.title.length > MAX_HIGHLIGHT_TITLE_LENGTH) {
-      throw new TypeError("Playtest highlight clip title exceeds maximum length.");
+      throw new TypeError(
+        "Playtest highlight clip title exceeds maximum length."
+      );
     }
-    if (!(PLAYTEST_HIGHLIGHT_REASONS as readonly unknown[]).includes(item.reason)) {
+    if (
+      !(PLAYTEST_HIGHLIGHT_REASONS as readonly unknown[]).includes(item.reason)
+    ) {
       throw new TypeError("Playtest highlight clip reason is unsupported.");
     }
-    if (!Number.isSafeInteger(item.startStep) || (item.startStep as number) < 0) {
-      throw new TypeError("Playtest highlight clip startStep must be a non-negative integer.");
+    if (
+      !Number.isSafeInteger(item.startStep) ||
+      (item.startStep as number) < 0
+    ) {
+      throw new TypeError(
+        "Playtest highlight clip startStep must be a non-negative integer."
+      );
     }
     if (
       !Number.isSafeInteger(item.endStep) ||
       (item.endStep as number) < (item.startStep as number)
     ) {
-      throw new TypeError("Playtest highlight clip endStep must be >= startStep.");
+      throw new TypeError(
+        "Playtest highlight clip endStep must be >= startStep."
+      );
     }
     if (
       !Number.isSafeInteger(item.frameCount) ||
       (item.frameCount as number) < 1 ||
       (item.frameCount as number) > PLAYTEST_HIGHLIGHT_MAX_FRAMES_PER_CLIP
     ) {
-      throw new TypeError("Playtest highlight clip frameCount is out of bounds.");
+      throw new TypeError(
+        "Playtest highlight clip frameCount is out of bounds."
+      );
     }
-    if (!Number.isSafeInteger(item.durationMs) || (item.durationMs as number) <= 0) {
-      throw new TypeError("Playtest highlight clip durationMs must be a positive integer.");
+    if (
+      !Number.isSafeInteger(item.durationMs) ||
+      (item.durationMs as number) <= 0
+    ) {
+      throw new TypeError(
+        "Playtest highlight clip durationMs must be a positive integer."
+      );
     }
-    if (!Array.isArray(item.frameIds) || item.frameIds.length !== item.frameCount) {
-      throw new TypeError("Playtest highlight clip frameIds must match frameCount.");
+    if (
+      !Array.isArray(item.frameIds) ||
+      item.frameIds.length !== item.frameCount
+    ) {
+      throw new TypeError(
+        "Playtest highlight clip frameIds must match frameCount."
+      );
     }
     for (const frameId of item.frameIds) {
       assertNonEmptyArtifactString(frameId, "Playtest highlight clip frameId");
       if (frameId.length > MAX_HIGHLIGHT_ID_LENGTH) {
-        throw new TypeError("Playtest highlight clip frameId exceeds maximum length.");
+        throw new TypeError(
+          "Playtest highlight clip frameId exceeds maximum length."
+        );
       }
     }
   }

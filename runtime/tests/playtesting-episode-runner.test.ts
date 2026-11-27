@@ -32,7 +32,8 @@ import {
   PLAYTESTS_SESSION_REVIEW_SCHEMA,
   type PlaytestSessionReview,
   type WorkspacePlaytestApproval,
-  type WorkspacePlaytestBuild} from "@simulatorlife/autodev-core";
+  type WorkspacePlaytestBuild
+} from "@simulatorlife/autodev-core";
 
 import type {
   PlaytestAdapterExit,

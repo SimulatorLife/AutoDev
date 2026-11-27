@@ -147,9 +147,9 @@ export function isClientDisconnectError(error: unknown): boolean {
   const cause = (error as { cause?: { code?: string } }).cause;
   return Boolean(
     cause &&
-      typeof cause === "object" &&
-      typeof cause.code === "string" &&
-      CLIENT_DISCONNECT_CODES.has(cause.code)
+    typeof cause === "object" &&
+    typeof cause.code === "string" &&
+    CLIENT_DISCONNECT_CODES.has(cause.code)
   );
 }
 

@@ -1,10 +1,9 @@
-import {
-  type APIRequestContext,
-  expect,
-  test
-} from "@playwright/test";
+import { type APIRequestContext, expect, test } from "@playwright/test";
 
-import { documentFitsViewport, waitForPageContent } from "./acceptance-helpers.ts";
+import {
+  documentFitsViewport,
+  waitForPageContent
+} from "./acceptance-helpers.ts";
 
 const FIXTURE_BASE_URL = `http://127.0.0.1:${process.env.AUTODEV_PLAYTEST_FIXTURE_PORT ?? "4311"}`;
 const SKILL_NAME = "code-review";
@@ -89,12 +88,20 @@ test("the Agents list keeps the enabled agent apart from the one the Runtime cou
   ).toBeDisabled();
 });
 
-test("the Skills catalog shows read-only role assignments", async ({ page, request }) => {
+test("the Skills catalog shows read-only role assignments", async ({
+  page,
+  request
+}) => {
   await resetSkillAssignment(request);
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/skills");
-  await expect(page.locator("[data-skill-source-validity]")).toHaveAttribute("data-skill-source-validity", "true");
-  const row = page.getByRole("row").filter({ has: page.getByRole("link", { name: SKILL_NAME, exact: true }) });
+  await expect(page.locator("[data-skill-source-validity]")).toHaveAttribute(
+    "data-skill-source-validity",
+    "true"
+  );
+  const row = page
+    .getByRole("row")
+    .filter({ has: page.getByRole("link", { name: SKILL_NAME, exact: true }) });
   await expect(row.getByText("worker", { exact: true })).toBeVisible();
   await expect(row.locator('input[type="checkbox"]')).toHaveCount(0);
   await expect(page.locator('form[method="POST"]')).toHaveCount(0);
@@ -209,17 +216,22 @@ for (const { path, pattern } of [
   { path: "/skills/code-review", pattern: SKILL_SOURCE_PATTERN },
   { path: "/prompts/review", pattern: PROMPT_SOURCE_PATTERN }
 ]) {
-  test(`${path} switches between the same rendered and source document without mutation`, async ({ page }) => {
+  test(`${path} switches between the same rendered and source document without mutation`, async ({
+    page
+  }) => {
     const mutations: string[] = [];
     page.on("request", (request) => {
-      if (request.url().includes("/api/") && request.method() !== "GET") mutations.push(request.url());
+      if (request.url().includes("/api/") && request.method() !== "GET")
+        mutations.push(request.url());
     });
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto(path);
     await waitForPageContent(page);
     const view = page.locator("[data-source-view]");
     await expect(view).toHaveAttribute("data-source-view", "rendered");
-    await expect(view.getByRole("button", { name: "Rendered", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(
+      view.getByRole("button", { name: "Rendered", exact: true })
+    ).toHaveAttribute("aria-pressed", "true");
     const url = page.url();
     const source = view.getByRole("button", { name: "Source", exact: true });
     await source.click();

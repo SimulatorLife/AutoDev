@@ -2,15 +2,13 @@ import assert from "node:assert/strict";
 import { userInfo } from "node:os";
 import test from "node:test";
 
-import {
-  claudeKeychainAccount,
-  claudeQuotaAxiEnvironment
-} from "../src/providers/claude-credential.ts";
+import { claudeQuotaAxiEnvironment } from "../src/providers/claude-credential.ts";
+import { keychainAccount } from "../src/shared/runtime-secrets.ts";
 
-test("claudeKeychainAccount falls back to the OS account when USER is missing", () => {
-  assert.equal(claudeKeychainAccount({ USER: "claude-user" }), "claude-user");
+test("the Keychain account falls back to the OS account when USER is missing", () => {
+  assert.equal(keychainAccount({ USER: "claude-user" }), "claude-user");
   assert.equal(
-    claudeKeychainAccount({ USER: "", LOGNAME: "root" }),
+    keychainAccount({ USER: "", LOGNAME: "root" }),
     userInfo().username
   );
 });

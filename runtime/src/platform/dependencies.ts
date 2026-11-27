@@ -106,7 +106,9 @@ export function homebrewInvocation(
     deps.capture("sysctl", ["-n", "sysctl.proc_translated"]) === "1" &&
     deps.capture("sysctl", ["-n", "hw.optional.arm64"]) === "1";
   if (translated) {
-    writeErrorLine("running Homebrew natively (this process is translated under Rosetta)");
+    writeErrorLine(
+      "running Homebrew natively (this process is translated under Rosetta)"
+    );
     return { command: "arch", args: ["-arm64", "brew", ...args] };
   }
   return { command: brew, args: [...args] };
@@ -124,7 +126,11 @@ function ensurePipx(options: DependencyOptions, deps: DependencyDeps): string {
   const brew = deps.commandPath("brew");
   let userPipx: string | null = null;
   if (brew) {
-    const { command, args } = homebrewInvocation(brew, ["install", "pipx"], deps);
+    const { command, args } = homebrewInvocation(
+      brew,
+      ["install", "pipx"],
+      deps
+    );
     writeErrorLine("installing pipx with Homebrew");
     deps.run(command, args);
   } else {

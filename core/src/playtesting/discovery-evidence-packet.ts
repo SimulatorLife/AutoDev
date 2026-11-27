@@ -1594,10 +1594,11 @@ function assertDiscoveryWindowStep(
   }
 }
 
-/** The v1/v2 step record: the recorded observation plus the affordance index. */
-function assertStepEvidenceV2(
+/** Validate the fields shared by the supported discovery step versions. */
+function assertCommonStepEvidence(
   value: unknown
-): asserts value is PlaytestDiscoveryStepEvidenceV2 {
+): asserts value is Omit<PlaytestDiscoveryStepEvidenceV2, "affordanceNotes"> &
+  Record<string, unknown> {
   if (
     !isRecord(value) ||
     !isCount(value.step) ||
@@ -1657,6 +1658,13 @@ function assertStepEvidenceV2(
       throw new TypeError("Discovery packet observation note is malformed.");
     }
   }
+}
+
+/** The v1/v2 step record: the recorded observation plus the affordance index. */
+function assertStepEvidenceV2(
+  value: unknown
+): asserts value is PlaytestDiscoveryStepEvidenceV2 {
+  assertCommonStepEvidence(value);
   if (!Array.isArray(value.affordanceNotes)) {
     throw new TypeError(
       "Discovery packet affordance notes array is malformed."
@@ -1683,65 +1691,7 @@ function assertStepEvidenceV2(
 function assertStepEvidence(
   value: unknown
 ): asserts value is PlaytestDiscoveryStepEvidence {
-  if (
-    !isRecord(value) ||
-    !isCount(value.step) ||
-    !["structured", "visual-only"].includes(
-      value.observationVisibility as string
-    ) ||
-    (value.phaseId !== null && !isText(value.phaseId)) ||
-    !Array.isArray(value.legalActionIds) ||
-    value.legalActionIds.some((id: unknown) => !isText(id)) ||
-    (value.selectedActionId !== null && !isText(value.selectedActionId)) ||
-    !Array.isArray(value.frameIds) ||
-    value.frameIds.some((id: unknown) => !isText(id))
-  ) {
-    throw new TypeError(
-      "Discovery evidence packet step evidence is malformed."
-    );
-  }
-  if (
-    value.selectedActionId !== null &&
-    !value.legalActionIds.includes(value.selectedActionId)
-  ) {
-    throw new TypeError(
-      "Discovery packet selected action must belong to the legal action set."
-    );
-  }
-  if (
-    value.preActionPrediction !== null &&
-    (!isRecord(value.preActionPrediction) ||
-      !isText(
-        (value.preActionPrediction as Record<string, unknown>).intention
-      ) ||
-      !isText(
-        (value.preActionPrediction as Record<string, unknown>)
-          .predictedVisibleEffect
-      ))
-  ) {
-    throw new TypeError(
-      "Discovery packet pre-action prediction must carry intention and predictedVisibleEffect."
-    );
-  }
-  if (value.actionReceipt !== null) {
-    assertActionReceipt(value.actionReceipt);
-  }
-  if (!Array.isArray(value.observationNotes)) {
-    throw new TypeError(
-      "Discovery packet observation notes array is malformed."
-    );
-  }
-  for (const note of value.observationNotes) {
-    if (
-      !isRecord(note) ||
-      !isText(note.noteId) ||
-      !isCount(note.step) ||
-      !isText(note.label) ||
-      !isText(note.detail, MAX_SUMMARY_TEXT)
-    ) {
-      throw new TypeError("Discovery packet observation note is malformed.");
-    }
-  }
+  assertCommonStepEvidence(value);
   assertPlaytestDiscoveryVisibleState(value.visibleObservation);
 }
 

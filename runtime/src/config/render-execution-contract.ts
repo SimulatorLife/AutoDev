@@ -65,10 +65,7 @@ export function validateProviderContracts(value: unknown): UnknownRecord {
       );
     }
     const mcpIngress = provider.mcpIngress;
-    if (
-      typeof mcpIngress !== "string" ||
-      !MCP_INGRESS_MODES.has(mcpIngress)
-    ) {
+    if (typeof mcpIngress !== "string" || !MCP_INGRESS_MODES.has(mcpIngress)) {
       throw new ConfigError(
         `provider '${name}' must declare mcpIngress as one of: ${[...MCP_INGRESS_MODES].join(", ")}`
       );
@@ -265,7 +262,9 @@ function readDeclaredMcpServers(mcpSourcePath: string): Set<string> {
     const topLevel = record(parsed.mcpServers);
     return new Set(
       Object.entries(topLevel)
-        .filter(([, value]) => value !== null && record(value).disabled !== true)
+        .filter(
+          ([, value]) => value !== null && record(value).disabled !== true
+        )
         .map(([name]) => name)
     );
   }

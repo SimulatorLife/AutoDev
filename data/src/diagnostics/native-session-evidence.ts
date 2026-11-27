@@ -1,9 +1,13 @@
-/** Native lifecycle evidence from the existing rotated router event log. */
+/**
+Native lifecycle evidence from the existing rotated router event log.
+*/
 import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 
 import {
-  isRecord,
   type ClientSurface,
+  isNativeSessionClient,
+  isNativeSessionEvent,
+  isRecord,
   type NativeSessionEvidence,
   safeAutoDevSessionId
 } from "@simulatorlife/autodev-core";
@@ -21,7 +25,10 @@ export interface ObservedNativeSession extends NativeSessionEvidence {
 function readLogTail(file: string): string[] {
   let fd: number;
   try {
-    fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    fd = openSync(
+      file,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+    );
   } catch {
     return [];
   }
@@ -45,20 +52,35 @@ function nativeEvent(line: string) {
   if (!line.includes('"phase":"native_session"')) return null;
   try {
     const raw: unknown = JSON.parse(line);
-    if (!isRecord(raw) || raw.schema !== "autodev-router-event-v1" ||
-        raw.phase !== "native_session" || raw.origin !== "native_session") return null;
+    if (
+      !isRecord(raw) ||
+      raw.schema !== "autodev-router-event-v1" ||
+      raw.phase !== "native_session" ||
+      raw.origin !== "native_session"
+    )
+      return null;
     const client = raw.clientSurface;
-    if (client !== "claude_code" && client !== "minimax_code") return null;
+    if (!isNativeSessionClient(client)) return null;
     const id = safeAutoDevSessionId(raw.thread);
     if (!id?.startsWith(`native:${client}:`)) return null;
     const event = raw.outcome;
-    if (event !== "start" && event !== "prompt" && event !== "stop" && event !== "end") return null;
-    if (typeof raw.timestamp !== "string" || !Number.isFinite(Date.parse(raw.timestamp))) return null;
+    if (!isNativeSessionEvent(event)) return null;
+    if (
+      typeof raw.timestamp !== "string" ||
+      !Number.isFinite(Date.parse(raw.timestamp))
+    )
+      return null;
     const at = new Date(raw.timestamp).toISOString();
-    const model = typeof raw.model === "string" && /^[A-Za-z0-9_.:/-]{1,128}$/u.test(raw.model)
-      ? raw.model : null;
-    const workspace = typeof raw.workspace === "string" && /^[A-Za-z0-9_. -]{1,128}$/u.test(raw.workspace)
-      ? raw.workspace : null;
+    const model =
+      typeof raw.model === "string" &&
+      /^[A-Za-z0-9_.:/-]{1,128}$/u.test(raw.model)
+        ? raw.model
+        : null;
+    const workspace =
+      typeof raw.workspace === "string" &&
+      /^[A-Za-z0-9_. -]{1,128}$/u.test(raw.workspace)
+        ? raw.workspace
+        : null;
     return { id, client, event, at, model, workspace } as const;
   } catch {
     return null;
@@ -66,12 +88,16 @@ function nativeEvent(line: string) {
 }
 
 /**
- * A bounded historical window, not the live-session authority. The first
- * observed event in the tail need not be the session's start.
- */
-export function readNativeSessionEvidence(routerLog: string): ObservedNativeSession[] {
+A bounded historical window, not the live-session authority. The first
+observed event in the tail need not be the session's start.
+*/
+export function readNativeSessionEvidence(
+  routerLog: string
+): ObservedNativeSession[] {
   const sessions = new Map<string, ObservedNativeSession>();
-  for (const file of routerLogFiles(routerLog).slice(0, MAX_LOG_FILES).reverse()) {
+  for (const file of routerLogFiles(routerLog)
+    .slice(0, MAX_LOG_FILES)
+    .reverse()) {
     for (const line of readLogTail(file)) {
       const observed = nativeEvent(line);
       if (!observed) continue;
@@ -82,11 +108,14 @@ export function readNativeSessionEvidence(routerLog: string): ObservedNativeSess
       sessions.set(observed.id, {
         id: observed.id,
         clientSurface: observed.client,
-        startedAt: opening ? observed.at : previous?.startedAt ?? null,
+        startedAt: opening ? observed.at : (previous?.startedAt ?? null),
         lastObservedAt: observed.at,
-        endedAt: observed.event === "end"
-          ? observed.at
-          : opening || resumed ? null : previous?.endedAt ?? null,
+        endedAt:
+          observed.event === "end"
+            ? observed.at
+            : opening || resumed
+              ? null
+              : (previous?.endedAt ?? null),
         model: observed.model ?? previous?.model ?? null,
         workspace: observed.workspace ?? previous?.workspace ?? null
       });

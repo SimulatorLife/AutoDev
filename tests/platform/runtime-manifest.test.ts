@@ -548,10 +548,7 @@ test("MCP implementations are Runtime-owned and installed at canonical paths", (
   ) as { exports: Record<string, string> };
   assert.equal(runtimePackage.exports["./mcp"], "./src/mcp/index.ts");
 
-  const mcpModules = [
-    "mcp-telemetry.ts",
-    "launcher.ts"
-  ];
+  const mcpModules = ["mcp-telemetry.ts", "launcher.ts"];
   const runtimeModules = RUNTIME_MODULES as readonly string[];
   const mcpExports = readFileSync(
     join(repositoryRoot, "runtime/src/mcp/index.ts"),
@@ -652,11 +649,7 @@ test("Control API implementation is Runtime-owned outside the model router", () 
     runtimePackage.exports["./control-api"],
     "./src/control-api/request-handler.ts"
   );
-  for (const name of [
-    "request-handler.ts",
-    "body.ts",
-    "github.ts"
-  ]) {
+  for (const name of ["request-handler.ts", "body.ts", "github.ts"]) {
     const runtimePath = `runtime/src/control-api/${name}`;
     assert.equal(existsSync(join(repositoryRoot, runtimePath)), true);
     assert.ok((RUNTIME_MODULES as readonly string[]).includes(runtimePath));
@@ -1004,7 +997,9 @@ test("opencli provider implementation is Runtime-owned behind workspace exports"
     (RUNTIME_MODULES as readonly string[]).includes(legacyProviderPath),
     false
   );
-  assert.ok(runtimeProviders.includes('export * as opencli from "./opencli.ts";'));
+  assert.ok(
+    runtimeProviders.includes('export * as opencli from "./opencli.ts";')
+  );
   assert.equal(existsSync(join(repositoryRoot, "src/providers")), false);
 });
 

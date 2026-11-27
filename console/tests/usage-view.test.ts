@@ -840,7 +840,10 @@ test("UsageView renders MCP servers exposed vs. used alongside MCP Calls by Tool
   assert.match(markup, /mcp__playwright__test/u);
   assert.match(markup, /data-mcp-inventory-status="observed"/u);
   assert.match(markup, /accumulated since router start/u);
-  assert.match(markup, /3 configured · 2 exposed · 2 used · 1 exposed, never used/u);
+  assert.match(
+    markup,
+    /3 configured · 2 exposed · 2 used · 1 exposed, never used/u
+  );
   assert.match(markup, /playwright/u);
   assert.match(markup, /data-mcp-usage-state="used-with-errors"/u);
   assert.match(markup, /Used \(errors\)/u);
@@ -867,7 +870,10 @@ test("UsageView renders explicit unavailable state when Control API MCP inventor
   assert.match(unavailable, /data-mcp-inventory-status="unavailable"/u);
   assert.match(unavailable, /MCP server inventory is unavailable/u);
   assert.match(unavailable, /autodev_control_api_unreachable/u);
-  assert.doesNotMatch(unavailable, /No MCP servers are configured or observed/u);
+  assert.doesNotMatch(
+    unavailable,
+    /No MCP servers are configured or observed/u
+  );
 
   const runtimeUnavailable = renderToStaticMarkup(
     React.createElement(UsageView, {

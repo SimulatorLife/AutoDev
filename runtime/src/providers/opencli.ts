@@ -35,8 +35,15 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 
 import { isLoopbackAddress, routerAuthorizationValid } from "../router/auth.ts";
-import { type ProviderRoute, ROUTES, ROUTING_POLICY } from "../router/routing.ts";
-import { hasRoleContract, providerContract } from "../shared/execution-contract.ts";
+import {
+  type ProviderRoute,
+  ROUTES,
+  ROUTING_POLICY
+} from "../router/routing.ts";
+import {
+  hasRoleContract,
+  providerContract
+} from "../shared/execution-contract.ts";
 import {
   executeOpencliRoleTurn,
   OPENCLI_DEFAULT_PORT,
@@ -252,12 +259,15 @@ export function processRunner(
         cleanup();
         if (!settled) {
           settled = true;
-          const reason = (error as NodeJS.ErrnoException).code ?? "unknown reason";
-          reject(new OpencliCommandError(
-            `OpenCLI could not start process: ${reason}`,
-            "COMMAND_EXEC",
-            null
-          ));
+          const reason =
+            (error as NodeJS.ErrnoException).code ?? "unknown reason";
+          reject(
+            new OpencliCommandError(
+              `OpenCLI could not start process: ${reason}`,
+              "COMMAND_EXEC",
+              null
+            )
+          );
         }
       });
       child.once("close", (code, terminationSignal) => {
@@ -429,7 +439,8 @@ export function createOpencliHealthServer(
         for await (const chunk of request) {
           const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
           bytes += buffer.length;
-          if (bytes > MAX_ROLE_TURN_BYTES) throw new Error("body exceeds limit");
+          if (bytes > MAX_ROLE_TURN_BYTES)
+            throw new Error("body exceeds limit");
           chunks.push(buffer);
         }
         body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
@@ -450,7 +461,11 @@ export function createOpencliHealthServer(
         (ingress === "gateway" && !task.mcpApp) ||
         (ingress !== "gateway" && task.mcpApp !== null)
       ) {
-        fail(403, "OpenCLI transport cannot serve this role surface.", "AUTH_REQUIRED");
+        fail(
+          403,
+          "OpenCLI transport cannot serve this role surface.",
+          "AUTH_REQUIRED"
+        );
         return;
       }
       const disconnected = new AbortController();

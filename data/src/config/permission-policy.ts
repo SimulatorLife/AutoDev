@@ -187,7 +187,10 @@ type PolicyFileRead =
     };
 
 function unavailablePolicy(reason: string): PolicyFileRead {
-  return { ok: false, result: { status: "unavailable", reason, revision: null } };
+  return {
+    ok: false,
+    result: { status: "unavailable", reason, revision: null }
+  };
 }
 
 function invalidPolicy(reason: string): PolicyFileRead {
@@ -220,7 +223,9 @@ function readRegularPolicyFile(file: string, canonical = true): PolicyFileRead {
     try {
       const before = fstatSync(descriptor, { bigint: true });
       if (!before.isFile()) {
-        return unavailablePolicy("The permission policy is not a regular file.");
+        return unavailablePolicy(
+          "The permission policy is not a regular file."
+        );
       }
       if (before.size > BigInt(POLICY_MAX_BYTES)) return oversizedPolicy();
 
@@ -248,7 +253,9 @@ function readRegularPolicyFile(file: string, canonical = true): PolicyFileRead {
         after.mtimeNs !== before.mtimeNs ||
         after.ctimeNs !== before.ctimeNs
       ) {
-        return unavailablePolicy("The permission policy changed during the read.");
+        return unavailablePolicy(
+          "The permission policy changed during the read."
+        );
       }
 
       try {
@@ -310,7 +317,9 @@ Read the canonical permission policy from `.rulesync/permissions.jsonc`.
 The source travels with the policy it states, so a reader that shows the
 source and a reader that shows the values describe the same bytes.
 */
-export function readPermissionPolicySource(file: string): PermissionPolicySource {
+export function readPermissionPolicySource(
+  file: string
+): PermissionPolicySource {
   const read = readRegularPolicyFile(file);
   if (!read.ok) return { read: read.result, content: null };
   return {

@@ -44,7 +44,11 @@ export function environmentVariableName(value: string): string | null {
 }
 
 /** Use native HTTP validation and case-insensitive Headers semantics. */
-function addDeclaredHeader(headers: Headers, name: string, value: string): void {
+function addDeclaredHeader(
+  headers: Headers,
+  name: string,
+  value: string
+): void {
   try {
     validateHeaderName(name);
     validateHeaderValue(name, value);
@@ -127,7 +131,8 @@ export function resolveRemoteMcpHeaders(
   for (const [name, declared] of Object.entries(spec.http_headers ?? {})) {
     const resolved = declared.replaceAll(ENVIRONMENT_TEMPLATE, (reference) => {
       const variable = environmentVariableName(reference);
-      if (!variable) throw new Error("Invalid remote MCP credential reference.");
+      if (!variable)
+        throw new Error("Invalid remote MCP credential reference.");
       return resolveSecret(variable);
     });
     addDeclaredHeader(headers, name, resolved);

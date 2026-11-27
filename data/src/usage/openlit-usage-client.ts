@@ -29,7 +29,8 @@ import {
   type UsageVariableId,
   type UsageWidgetId,
   type UsageWorkspaceRequestBreakdown,
-  type UsageWorkspaceRequestCount} from "@simulatorlife/autodev-core";
+  type UsageWorkspaceRequestCount
+} from "@simulatorlife/autodev-core";
 
 const TRAILING_SLASHES = /\/+$/u;
 const USAGE_API_PATH = "/api/autodev/usage";

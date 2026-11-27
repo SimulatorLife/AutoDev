@@ -792,9 +792,11 @@ test("Copilot drops a persisted placeholder when no provider-owned listing is co
         "No machine-readable model discovery adapter is configured for this provider."
     });
     assert.equal(
-      (providerModelDiscoveryPersistenceSnapshot() as {
-        providers: Array<{ provider: string }>;
-      }).providers.some(({ provider }) => provider === "copilot"),
+      (
+        providerModelDiscoveryPersistenceSnapshot() as {
+          providers: Array<{ provider: string }>;
+        }
+      ).providers.some(({ provider }) => provider === "copilot"),
       false
     );
     assert.equal(

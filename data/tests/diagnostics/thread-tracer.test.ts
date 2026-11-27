@@ -123,7 +123,12 @@ test("filesystem MCP calls are the investigation's reads, searches and first edi
     const mcp = (at: string, tool: string, args: Record<string, unknown>) =>
       rolloutLine(at, "event_msg", {
         type: "item_completed",
-        item: { type: "McpToolCall", server: "filesystem", tool, arguments: args }
+        item: {
+          type: "McpToolCall",
+          server: "filesystem",
+          tool,
+          arguments: args
+        }
       });
     writeFileSync(
       file,

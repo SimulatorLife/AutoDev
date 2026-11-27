@@ -58,10 +58,10 @@ test("operator settings are preserved and operator values are reported, not over
     "http://collector.example:4318"
   );
   assert.equal(environment.CLAUDE_CODE_ENABLE_TELEMETRY, "1");
-  assert.deepEqual(new Set(plan.conflicts), new Set([
-    "env.OTEL_EXPORTER_OTLP_ENDPOINT",
-    "env.OTEL_LOG_USER_PROMPTS"
-  ]));
+  assert.deepEqual(
+    new Set(plan.conflicts),
+    new Set(["env.OTEL_EXPORTER_OTLP_ENDPOINT", "env.OTEL_LOG_USER_PROMPTS"])
+  );
   // The input object itself is not mutated.
   assert.equal(
     (existing.env as Record<string, string>).CLAUDE_CODE_ENABLE_TELEMETRY,
@@ -100,7 +100,10 @@ test("the headers helper reads the receiver key from the private secret file onl
   try {
     const secretFile = path.join(home, "openlit-secrets.env");
     assert.equal(
-      renderOtlpHeaders({ HOME: home, AUTODEV_OPENLIT_SECRET_FILE: secretFile }),
+      renderOtlpHeaders({
+        HOME: home,
+        AUTODEV_OPENLIT_SECRET_FILE: secretFile
+      }),
       null
     );
     writeFileSync(secretFile, "OPENLIT_OTLP_API_KEY=fixture-receiver-key\n", {

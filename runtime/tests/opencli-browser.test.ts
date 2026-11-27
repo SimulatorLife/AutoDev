@@ -241,14 +241,22 @@ test("a failed health probe does not restart Chromium during an active turn", as
     try {
       setVersionStatus(503);
       await assert.rejects(
-        browser.run("gemini", AbortSignal.timeout(1000), async () => "unexpected"),
+        browser.run(
+          "gemini",
+          AbortSignal.timeout(1000),
+          async () => "unexpected"
+        ),
         /health probe failed while commands are active/u
       );
       assert.equal(children.length, 1);
       assert.equal(children[0]?.killed, false);
       setVersionStatus(200);
       assert.equal(
-        await browser.run("gemini", AbortSignal.timeout(1000), async () => "ok"),
+        await browser.run(
+          "gemini",
+          AbortSignal.timeout(1000),
+          async () => "ok"
+        ),
         "ok"
       );
     } finally {
@@ -342,13 +350,20 @@ test("foreground lease activates the exact target and excludes competing native 
   await fixture(async ({ browser, activatedTargets }) => {
     let release!: () => void;
     let entered!: () => void;
-    const started = new Promise<void>((resolve) => { entered = resolve; });
-    const hold = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     const first = browser.run(
       "chatgpt",
       AbortSignal.timeout(2000),
       async (endpoint) => {
-        assert.equal(activatedTargets.at(-1), new URL(endpoint).pathname.split("/").pop());
+        assert.equal(
+          activatedTargets.at(-1),
+          new URL(endpoint).pathname.split("/").pop()
+        );
         entered();
         await hold;
       },
@@ -356,16 +371,29 @@ test("foreground lease activates the exact target and excludes competing native 
     );
     await started;
     const waiting = new AbortController();
-    const second = browser.run("gemini", waiting.signal, async () => {
-      assert.fail("A competing turn must not steal foreground");
-    }, true);
+    const second = browser.run(
+      "gemini",
+      waiting.signal,
+      async () => {
+        assert.fail("A competing turn must not steal foreground");
+      },
+      true
+    );
     waiting.abort();
     await assert.rejects(second, /cancelled/u);
     assert.equal(activatedTargets.length, 1);
     release();
     await first;
-    const target = await browser.run("gemini", AbortSignal.timeout(1000), async (endpoint) => endpoint, true);
-    assert.equal(activatedTargets.at(-1), new URL(target).pathname.split("/").pop());
+    const target = await browser.run(
+      "gemini",
+      AbortSignal.timeout(1000),
+      async (endpoint) => endpoint,
+      true
+    );
+    assert.equal(
+      activatedTargets.at(-1),
+      new URL(target).pathname.split("/").pop()
+    );
   });
 });
 
@@ -583,7 +611,8 @@ test("creates new-window CDP targets and restores minimized windows before activ
   const root = mkdtempSync(join(tmpdir(), "opencli-browser-cdp-"));
   const profile = join(root, "private-profile");
   const targets: Target[] = [];
-  const cdpCalls: Array<{ method: string; params: Record<string, unknown> }> = [];
+  const cdpCalls: Array<{ method: string; params: Record<string, unknown> }> =
+    [];
   let nextId = 0;
   const port = 9444;
   const browser = new OpencliBrowser({
@@ -595,7 +624,9 @@ test("creates new-window CDP targets and restores minimized windows before activ
       const url = new URL(typeof input === "string" ? input : input.toString());
       if (url.pathname === "/json/version") {
         return Response.json(
-          { webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/browser/root` },
+          {
+            webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/browser/root`
+          },
           { status: 200 }
         );
       }
@@ -646,7 +677,8 @@ test("creates new-window CDP targets and restores minimized windows before activ
         (c) =>
           c.method === "Browser.setWindowBounds" &&
           c.params.windowId === 77 &&
-          (c.params.bounds as { windowState?: string })?.windowState === "normal"
+          (c.params.bounds as { windowState?: string })?.windowState ===
+            "normal"
       )
     );
     assert.ok(cdpCalls.some((c) => c.method === "Target.activateTarget"));

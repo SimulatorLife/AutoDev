@@ -171,7 +171,10 @@ test("the catalogue publishes that it is read-only and carries the facts it is d
     // carries the contract's own revision and the roles it declares.
     assert.equal(response.body?.executionContractRevision, h.revision());
     assert.equal(response.body?.executionContractObserved, true);
-    assert.deepEqual(response.body?.assignmentRoles, ["orchestrator", "worker"]);
+    assert.deepEqual(response.body?.assignmentRoles, [
+      "orchestrator",
+      "worker"
+    ]);
     const row = (
       response.body?.skills as { name: string; roles: string[] }[]
     ).find((entry) => entry.name === "release-checklist");
@@ -188,10 +191,14 @@ test("the role-assignment route is absent", async () => {
     // write removes the route: a caller gets the same answer it gets for any
     // path that does not exist.
     for (const method of ["GET", "PATCH", "POST", "PUT", "DELETE"]) {
-      const response = await h.call(method, "/control/skills/release-checklist", {
-        expectedRevision: h.revision(),
-        roles: ["worker"]
-      });
+      const response = await h.call(
+        method,
+        "/control/skills/release-checklist",
+        {
+          expectedRevision: h.revision(),
+          roles: ["worker"]
+        }
+      );
       assert.equal(response.status, 404, method);
     }
     // And the contract is exactly as it was: nothing was assigned.
@@ -213,7 +220,8 @@ test("the canonical source route reads and refuses every write", async () => {
     for (const method of ["PATCH", "POST", "PUT", "DELETE"]) {
       const response = await h.call(method, sourceUrl, {
         expectedRevision: read.body?.revision,
-        content: "---\nname: release-checklist\ndescription: Edited.\n---\n\nEdited.\n"
+        content:
+          "---\nname: release-checklist\ndescription: Edited.\n---\n\nEdited.\n"
       });
       assert.equal(response.status, 405, method);
       assert.equal(response.headers.allow, "GET", method);

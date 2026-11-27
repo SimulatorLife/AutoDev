@@ -34,10 +34,7 @@ test("repositoryRoot resolves the Runtime source tree without a configured overr
       path.resolve(fileURLToPath(new URL("../../", import.meta.url)))
     );
     assert.equal(
-      resolveRuntimeSourcePath(
-        hookRoots.repositoryRoot(),
-        "mcp/launcher.ts"
-      ),
+      resolveRuntimeSourcePath(hookRoots.repositoryRoot(), "mcp/launcher.ts"),
       path.resolve(
         fileURLToPath(new URL("../src/mcp/launcher.ts", import.meta.url))
       )

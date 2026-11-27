@@ -141,8 +141,7 @@ export function samePlaytestCheckpoint(
 export function assertPlaytestAssignmentBranch(
   value: unknown
 ): asserts value is PlaytestAssignmentBranch {
-  if (!isRecord(value))
-    throw new TypeError("Branch source must be an object.");
+  if (!isRecord(value)) throw new TypeError("Branch source must be an object.");
   const expected = [
     "parentEpisodeId",
     "parentEpisodeRevision",

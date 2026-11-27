@@ -40,7 +40,8 @@ import {
   samePlaytestRngCheckpoint,
   SHA256_PATTERN,
   type WorkspacePlaytestApproval,
-  type WorkspacePlaytestBuild} from "@simulatorlife/autodev-core";
+  type WorkspacePlaytestBuild
+} from "@simulatorlife/autodev-core";
 
 import {
   type PlaytestAdapterCallResult,

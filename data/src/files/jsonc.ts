@@ -1,4 +1,8 @@
-import { parse as parseJsonc, type ParseError, printParseErrorCode } from "jsonc-parser";
+import {
+  parse as parseJsonc,
+  type ParseError,
+  printParseErrorCode
+} from "jsonc-parser";
 
 import { isRecord } from "@simulatorlife/autodev-core";
 

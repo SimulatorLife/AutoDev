@@ -181,11 +181,7 @@ test("the permissions read publishes the canonical source beside the policy", as
   // The composed user configuration beside it is published as the policy it
   // states and never as text: it is the file that can hold credentials.
   const applied = path.join(options.codexHome, "config.toml");
-  writeFileSync(
-    applied,
-    'approval_policy = "never"\n',
-    "utf8"
-  );
+  writeFileSync(applied, 'approval_policy = "never"\n', "utf8");
   const withApplied = await call("GET", "/control/permissions", options);
   assert.equal(withApplied.statusCode, 200);
   assert.equal(withApplied.body?.sourceText, POLICY_SOURCE);
@@ -220,23 +216,46 @@ test("Permissions rejects every non-GET method for both authorized roles without
   const options = fixture();
   t.after(() => rmSync(options.root, { recursive: true, force: true }));
   const appliedPath = path.join(options.codexHome, "config.toml");
-  const applied = 'approval_policy = "never"\napprovals_reviewer = "user"\n[tools]\nweb_search = true\n';
+  const applied =
+    'approval_policy = "never"\napprovals_reviewer = "user"\n[tools]\nweb_search = true\n';
   writeFileSync(appliedPath, applied);
 
   for (const actor of [OPERATOR_ACTOR, VIEWER_ACTOR]) {
-    const read = await call("GET", "/control/permissions", options, undefined, actor);
+    const read = await call(
+      "GET",
+      "/control/permissions",
+      options,
+      undefined,
+      actor
+    );
     assert.equal(read.statusCode, 200);
     assert.equal(read.body?.readOnly, true);
     assert.deepEqual(read.body?.applied, read.body?.policy);
-    for (const method of ["PATCH", "POST", "PUT", "DELETE", "HEAD", "OPTIONS"]) {
-      const result = await call(method, "/control/permissions", options, {
-        expectedRevision: read.body?.revision,
-        approvalPolicy: "on-request",
-        webSearch: false
-      }, actor);
+    for (const method of [
+      "PATCH",
+      "POST",
+      "PUT",
+      "DELETE",
+      "HEAD",
+      "OPTIONS"
+    ]) {
+      const result = await call(
+        method,
+        "/control/permissions",
+        options,
+        {
+          expectedRevision: read.body?.revision,
+          approvalPolicy: "on-request",
+          webSearch: false
+        },
+        actor
+      );
       assert.equal(result.statusCode, 405, `${actor} ${method}`);
       assert.equal(result.headers.allow, "GET");
-      assert.equal(errorCode(result.body), "autodev_control_api_method_not_allowed");
+      assert.equal(
+        errorCode(result.body),
+        "autodev_control_api_method_not_allowed"
+      );
       assert.equal(readFileSync(options.policyPath, "utf8"), POLICY_SOURCE);
       assert.equal(readFileSync(appliedPath, "utf8"), applied);
     }
@@ -247,14 +266,20 @@ test("Permissions reports an external repository edit without applying it", asyn
   const options = fixture();
   t.after(() => rmSync(options.root, { recursive: true, force: true }));
   const before = await call("GET", "/control/permissions", options);
-  const changed = POLICY_SOURCE.replace('"approval_policy": "never"', '"approval_policy": "on-request"');
+  const changed = POLICY_SOURCE.replace(
+    '"approval_policy": "never"',
+    '"approval_policy": "on-request"'
+  );
   writeFileSync(options.policyPath, changed);
   const after = await call("GET", "/control/permissions", options);
   assert.equal(after.statusCode, 200);
   assert.equal(after.body?.readOnly, true);
   assert.notEqual(after.body?.revision, before.body?.revision);
   assert.equal(after.body?.revision, sha256(Buffer.from(changed)));
-  assert.equal((after.body?.policy as { approvalPolicy: string }).approvalPolicy, "on-request");
+  assert.equal(
+    (after.body?.policy as { approvalPolicy: string }).approvalPolicy,
+    "on-request"
+  );
   assert.equal(after.body?.applied, null);
 });
 
@@ -262,7 +287,14 @@ test("Permissions rejects unauthenticated reads and writes", async (t) => {
   const options = fixture();
   t.after(() => rmSync(options.root, { recursive: true, force: true }));
   for (const method of ["GET", "PATCH"]) {
-    const result = await call(method, "/control/permissions", options, undefined, OPERATOR_ACTOR, null);
+    const result = await call(
+      method,
+      "/control/permissions",
+      options,
+      undefined,
+      OPERATOR_ACTOR,
+      null
+    );
     assert.equal(result.statusCode, 401);
   }
   assert.equal(readFileSync(options.policyPath, "utf8"), POLICY_SOURCE);

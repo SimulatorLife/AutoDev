@@ -372,7 +372,9 @@ test("the MiniMax CLI is looked for in the environment it was handed", (t) => {
 test("a MiniMax CLI is found in the home it was asked about", (t) => {
   const fixture = homeFixture();
   t.after(fixture.cleanup);
-  const binary = installExecutable(join(fixture.home, ".local", "bin", "mcode"));
+  const binary = installExecutable(
+    join(fixture.home, ".local", "bin", "mcode")
+  );
   assert.equal(
     findMcodeBinary({ PATH: "", HOME: fixture.home }, fixture.home),
     binary

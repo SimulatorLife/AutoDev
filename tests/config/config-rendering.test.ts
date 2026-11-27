@@ -61,7 +61,10 @@ test("native role rendering round-trips literal prompts and structured MCP confi
       },
       skills: { config: [{ name: "example", enabled: false }] }
     };
-    await writeFile(source, "# role-access: read-only\n" + serializeToml(config));
+    await writeFile(
+      source,
+      "# role-access: read-only\n" + serializeToml(config)
+    );
     const servers: TomlTable = {
       "server.with.dot": {
         url: "https://example.invalid/mcp",
@@ -485,6 +488,23 @@ test("execution-contract provider delegation is explicit and rejects legacy fiel
   );
 });
 
+/**
+The Commands tools the canonical orchestrator role source enables.
+*/
+function orchestratorRoleCommands(): string[] {
+  const role = parse(
+    readFileSync("agents/roles/orchestrator.toml", "utf8")
+  ) as {
+    mcp_servers?: { commands?: { enabled_tools?: unknown } };
+  };
+  const tools = role.mcp_servers?.commands?.enabled_tools;
+  assert.ok(
+    Array.isArray(tools) && tools.every((tool) => typeof tool === "string"),
+    "the orchestrator role must enable an explicit Commands tool list"
+  );
+  return tools;
+}
+
 test("orchestrator MCP contract is provider-agnostic and omits Codex-only plugin MCPs", () => {
   const contract = JSON.parse(
     readFileSync("config/execution-contract.json", "utf8")
@@ -502,7 +522,14 @@ test("orchestrator MCP contract is provider-agnostic and omits Codex-only plugin
   assert.ok(orchestrator, "orchestrator role must be declared");
   assert.deepEqual(
     orchestrator.mcp,
-    ["filesystem", "lsp", "cocoindex-code", "codegraphcontext", "xacpx", "commands"],
+    [
+      "filesystem",
+      "lsp",
+      "cocoindex-code",
+      "codegraphcontext",
+      "xacpx",
+      "commands"
+    ],
     "orchestrator MCPs must be provider-agnostic and include xacpx in deterministic order"
   );
   assert.equal("allowProviderHop" in orchestrator, false);
@@ -513,16 +540,9 @@ test("orchestrator MCP contract is provider-agnostic and omits Codex-only plugin
       "analyze_code_relationships",
       "get_repository_stats"
     ],
-    commands: [
-      "install_dependencies",
-      "typecheck",
-      "test",
-      "lint_fix",
-      "git_status",
-      "git_diff",
-      "git_stage",
-      "git_commit"
-    ]
+    // The Commands grant is the role source's own list, in its order; the
+    // contract must carry it unchanged rather than a copy maintained here.
+    commands: orchestratorRoleCommands()
   });
 
   for (const [roleName, roleCfg] of Object.entries(contract.roles)) {

@@ -166,7 +166,9 @@ export function externalMcpBackend(
       path.join(runtimeSource, "mcp")
     );
     if (!packageDirectory)
-      throw new Error("Filesystem MCP package is not in the Runtime dependency tree");
+      throw new Error(
+        "Filesystem MCP package is not in the Runtime dependency tree"
+      );
     const packageRoot = realpathSync(packageDirectory);
     // The server reads its own manifest and dependencies from where they
     // physically live. pnpm's isolated layout links the package out of the
@@ -193,12 +195,10 @@ export function externalMcpBackend(
       command: sandboxExecutable,
       args: [
         "-p",
-        filesystemSandboxProfile(
-          physicalWorkspace,
-          modules,
-          binary,
-          { readOnly, readOnlySkillRoots: skillRoots }
-        ),
+        filesystemSandboxProfile(physicalWorkspace, modules, binary, {
+          readOnly,
+          readOnlySkillRoots: skillRoots
+        }),
         binary,
         script,
         ...(readOnly ? ["--read-only"] : []),
@@ -320,10 +320,7 @@ export function externalMcpBackend(
       ]
     };
   }
-  if (
-    server === MCP_SERVER_PLAYWRIGHT ||
-    server === MCP_SERVER_GITHUB
-  ) {
+  if (server === MCP_SERVER_PLAYWRIGHT || server === MCP_SERVER_GITHUB) {
     return {
       command: binary,
       args: [launcher, server]

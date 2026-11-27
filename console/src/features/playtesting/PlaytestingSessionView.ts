@@ -52,6 +52,7 @@ import {
 import {
   executionModeLabel,
   executionStateExplanation,
+  missingReasonLabel,
   playerDebriefStatusLabel,
   policyLabel,
   reviewSectionStatusLabel,
@@ -69,12 +70,12 @@ import { PlaytestingSessionLiveWatch } from "./PlaytestingSessionLiveWatch.ts";
 import { PlaytestingSpectatorAnalystButton } from "./PlaytestingSpectatorAnalystButton.ts";
 
 /**
- * The surfaces the spectator renders.
- *
- * They are repeated across the step controls and the panels around them, and
- * a control that is styled one way in one place and another way in the next
- * is a control the operator cannot read.
- */
+The surfaces the spectator renders.
+
+They are repeated across the step controls and the panels around them, and
+a control that is styled one way in one place and another way in the next
+is a control the operator cannot read.
+*/
 const DISABLED_STEP_BUTTON_CLASS =
   "rounded-md border border-border px-2.5 py-1 text-xs text-fg-muted/40 cursor-not-allowed";
 const STEP_BUTTON_CLASS =
@@ -87,44 +88,48 @@ const SURFACE_PANEL_CLASS = "rounded-lg border border-border bg-surface p-3";
 const EVIDENCE_LINK_CLASS = `text-xs ${ACTION_LINK_CLASS}`;
 
 /**
- * The heading of a panel that names what the panel is about.
- *
- * Two panels in the playtest record -- the intention and the effect it was
- * predicted to have -- are headed in the accent colour with an icon beside the
- * name, while every other label in the Console is the quiet muted one. The
- * accent is the whole difference between these two and the rest, so it is the
- * one thing they spell here rather than the muted colour they do not carry.
- */
+The heading of a panel that names what the panel is about.
+
+Two panels in the playtest record -- the intention and the effect it was
+predicted to have -- are headed in the accent colour with an icon beside the
+name, while every other label in the Console is the quiet muted one. The
+accent is the whole difference between these two and the rest, so it is the
+one thing they spell here rather than the muted colour they do not carry.
+*/
 const ACCENT_PANEL_LABEL_CLASS =
   "flex items-center gap-1.5 text-xs font-semibold text-accent uppercase tracking-wider";
 
 /**
- * A label on the densest surface in the Console: the claim kind inside a
- * synthesis card.
- *
- * It is the section label at the `meta` step, which exists for exactly these
- * dense panels, and its tracking matches every other label so that a label
- * never changes width between one surface and the next.
- */
+A label on the densest surface in the Console: the claim kind inside a
+synthesis card.
+
+It is the section label at the `meta` step, which exists for exactly these
+dense panels, and its tracking matches every other label so that a label
+never changes width between one surface and the next.
+*/
 const META_LABEL_CLASS =
   "text-meta font-semibold uppercase tracking-wider text-fg-muted";
 
 /**
- * The word for a fact the record does not carry.
- *
- * "Not observed" is a measurement that was taken and found nothing; "Not
- * recorded" is a fact that was never captured. A cockpit that fills an
- * unrecorded field with a plausible sentence is not a cockpit, it is a
- * narrator -- and a reader who trusts it is reading something the run never
- * observed. The trace reader below already keeps absence as absence all the
- * way through; the view has to keep that promise.
- */
+The word for a fact the record does not carry.
+
+"Not observed" is a measurement that was taken and found nothing; "Not
+recorded" is a fact that was never captured. A cockpit that fills an
+unrecorded field with a plausible sentence is not a cockpit, it is a
+narrator -- and a reader who trusts it is reading something the run never
+observed. The trace reader below already keeps absence as absence all the
+way through; the view has to keep that promise.
+*/
 const NOT_RECORDED_LABEL = "Not recorded";
 
-/** How many visible controls are named before the rest are counted. */
+/**
+How many visible controls are named before the rest are counted.
+*/
 const VISIBLE_CONTROL_PREVIEW_COUNT = 6;
 
-/** A JSON object read off a recorded trace line. */
+/**
+A JSON object read off a recorded trace line.
+*/
 type TraceRecord = Readonly<Record<string, unknown>>;
 
 export interface PlaytestingSessionViewProps {
@@ -146,7 +151,9 @@ function renderJson(value: PlaytestJsonValue): string {
   return JSON.stringify(value, null, 2);
 }
 
-/** Keys that name a nested object, used to read an identifier out of one. */
+/**
+Keys that name a nested object, used to read an identifier out of one.
+*/
 const NAMED_SCALAR_KEYS = [
   "actionId",
   "eventId",
@@ -164,12 +171,12 @@ function asTraceRecord(value: unknown): TraceRecord | null {
 }
 
 /**
- * The recorded scalar behind one field, or null when the line does not record
- * it. A nested object is read through its own identifier field, so an action
- * object still yields its actionId. Anything richer than a scalar or a named
- * object is left to the full JSON disclosure rather than summarized: a summary
- * that guesses at structure would be an explanation the trace never made.
- */
+The recorded scalar behind one field, or null when the line does not record
+it. A nested object is read through its own identifier field, so an action
+object still yields its actionId. Anything richer than a scalar or a named
+object is left to the full JSON disclosure rather than summarized: a summary
+that guesses at structure would be an explanation the trace never made.
+*/
 function recordedScalar(value: unknown): string | null {
   if (typeof value === "string") {
     const trimmed = value.trim();
@@ -188,7 +195,9 @@ function recordedScalar(value: unknown): string | null {
   return null;
 }
 
-/** First recorded value for these keys, scanning the given records in order. */
+/**
+First recorded value for these keys, scanning the given records in order.
+*/
 function readRecorded(
   records: readonly (TraceRecord | null)[],
   keys: readonly string[]
@@ -205,11 +214,11 @@ function readRecorded(
 }
 
 /**
- * The scan dimensions of one trace line, each read only from fields the line
- * actually records. Every dimension can legitimately be absent -- a line that
- * records only an event id has no action -- so absence stays null all the way
- * to the view, which reports it as unrecorded rather than filling it in.
- */
+The scan dimensions of one trace line, each read only from fields the line
+actually records. Every dimension can legitimately be absent -- a line that
+records only an event id has no action -- so absence stays null all the way
+to the view, which reports it as unrecorded rather than filling it in.
+*/
 interface TraceStepFacts {
   readonly step: number | null;
   readonly lineKind: string | null;
@@ -228,34 +237,34 @@ interface TraceStepFacts {
   readonly visibleProgress: string | null;
   readonly frameId: string | null;
   /**
-   * The failure the runtime recorded against this step, if it recorded one.
-   *
-   * A step the runtime ended on carries the code it ended with, and that code
-   * is the only place the run's own cause is written down. The episode's own
-   * state says only that the run failed; the cause is here.
-   */
+  The failure the runtime recorded against this step, if it recorded one.
+  
+  A step the runtime ended on carries the code it ended with, and that code
+  is the only place the run's own cause is written down. The episode's own
+  state says only that the run failed; the cause is here.
+  */
   readonly runtimeFailureCode: string | null;
   /**
-   * How much of the screen the decision backend was asked about.
-   *
-   * The offer is the choice the backend made from, and its bound is the
-   * choice contract's: a screen with more actionable controls than the
-   * contract carries leaves some of them out of the question. A reader needs
-   * that number to tell "it did not choose that button" from "it was never
-   * asked about that button". Null when the step records no offer.
-   */
+  How much of the screen the decision backend was asked about.
+  
+  The offer is the choice the backend made from, and its bound is the
+  choice contract's: a screen with more actionable controls than the
+  contract carries leaves some of them out of the question. A reader needs
+  that number to tell "it did not choose that button" from "it was never
+  asked about that button". Null when the step records no offer.
+  */
   readonly offeredCandidates: number | null;
   readonly actionableControls: number | null;
   readonly controlsNotOffered: number | null;
 }
 
 /**
- * A recorded count, or null when the line does not record it.
- *
- * A count is a count: a line that records one records a whole number, and a
- * value that is not one is left unread rather than rounded into a number the
- * trace never wrote.
- */
+A recorded count, or null when the line does not record it.
+
+A count is a count: a line that records one records a whole number, and a
+value that is not one is left unread rather than rounded into a number the
+trace never wrote.
+*/
 function recordedCount(value: unknown): number | null {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
     ? value
@@ -435,7 +444,9 @@ function metricTable(
   });
 }
 
-/** The distinct step indexes the fetched window actually indexes. */
+/**
+The distinct step indexes the fetched window actually indexes.
+*/
 function windowStepList(
   window: ControlApiPlaytestingWindowResponse
 ): readonly number[] {
@@ -448,13 +459,13 @@ function windowStepList(
 }
 
 /**
- * Previous/next navigation across the steps this window already fetched. It
- * moves by link rather than by client state so the step stays address state --
- * workspace, filters and the originating list cursor all survive the move, and
- * a shared URL still reproduces the step an analyst was reading. Navigation
- * never leaves the fetched window: a step outside it is not a step this page
- * has evidence for.
- */
+Previous/next navigation across the steps this window already fetched. It
+moves by link rather than by client state so the step stays address state --
+workspace, filters and the originating list cursor all survive the move, and
+a shared URL still reproduces the step an analyst was reading. Navigation
+never leaves the fetched window: a step outside it is not a step this page
+has evidence for.
+*/
 function stepNavigation(
   scope: PlaytestingScope,
   episodeId: string,
@@ -513,7 +524,9 @@ function stepNavigation(
   );
 }
 
-/** One scan dimension of a trace line, or an explicit unrecorded state. */
+/**
+One scan dimension of a trace line, or an explicit unrecorded state.
+*/
 function traceFact(
   label: string,
   fact: string,
@@ -543,7 +556,9 @@ function traceFact(
   );
 }
 
-/** One-line human reading of a trace line, assembled from recorded fields. */
+/**
+One-line human reading of a trace line, assembled from recorded fields.
+*/
 function stepSummaryLine(facts: TraceStepFacts): string {
   const parts: string[] = [];
   if (facts.eventType !== null)
@@ -563,7 +578,9 @@ function stepSummaryLine(facts: TraceStepFacts): string {
     : "No event, selected action or phase is recorded on this line. Open the recorded JSON to see every field it carries.";
 }
 
-/** The raw line is always secondary to the readable step summary. */
+/**
+The raw line is always secondary to the readable step summary.
+*/
 function recordedJsonDisclosure(
   step: number | null,
   entry: PlaytestJsonValue
@@ -1028,11 +1045,11 @@ function reviewPanel(
 }
 
 /**
- * The sentence that says which guard cut a truncated episode short.
- *
- * Each limit and each guard is a different fact with a different consequence
- * for the operator, so each one is spelled out rather than summarised.
- */
+The sentence that says which guard cut a truncated episode short.
+
+Each limit and each guard is a different fact with a different consequence
+for the operator, so each one is spelled out rather than summarised.
+*/
 function budgetTruncationSentence(
   episode: ControlApiPlaytestingEpisodeDetailResponse["record"],
   stopStep: number | null
@@ -1096,15 +1113,15 @@ function truncationExplanation(
 }
 
 /**
- * The notice for an episode the runtime ended because it refused the action.
- *
- * A refusal that says the page moved is recovered from: the episode observes
- * the game again and continues, bounded by the approved budgets. An episode
- * ends on a refusal only when the refusal is final -- the action was not
- * allowed, the game needs setup, or the episode is out of budget -- so the
- * notice says that the run stopped on a refusal, at which step, and that no
- * game outcome was observed.
- */
+The notice for an episode the runtime ended because it refused the action.
+
+A refusal that says the page moved is recovered from: the episode observes
+the game again and continues, bounded by the approved budgets. An episode
+ends on a refusal only when the refusal is final -- the action was not
+allowed, the game needs setup, or the episode is out of budget -- so the
+notice says that the run stopped on a refusal, at which step, and that no
+game outcome was observed.
+*/
 function refusalExplanation(
   episode: ControlApiPlaytestingEpisodeDetailResponse["record"],
   scope: PlaytestingScope
@@ -1143,19 +1160,19 @@ function refusalExplanation(
 }
 
 /**
- * The notice for an episode the runtime itself ended.
- *
- * "Failed (infrastructure)" is the state machine's word, and it says that
- * something below the product broke without saying what. The cause the
- * Runtime recorded against the failing step does say what: the target could
- * not be reached, the decision backend's answer could not be read, the
- * approved budget ran out. Those are different facts with different
- * consequences, and an operator whose run dies needs the one they can act on.
- *
- * The cause is read from the trace, because that is where the Runtime writes
- * it down. When the read window does not carry it, the notice says so rather
- * than guessing at a cause.
- */
+The notice for an episode the runtime itself ended.
+
+"Failed (infrastructure)" is the state machine's word, and it says that
+something below the product broke without saying what. The cause the
+Runtime recorded against the failing step does say what: the target could
+not be reached, the decision backend's answer could not be read, the
+approved budget ran out. Those are different facts with different
+consequences, and an operator whose run dies needs the one they can act on.
+
+The cause is read from the trace, because that is where the Runtime writes
+it down. When the read window does not carry it, the notice says so rather
+than guessing at a cause.
+*/
 function runtimeFailureExplanation(
   episode: ControlApiPlaytestingEpisodeDetailResponse["record"],
   scope: PlaytestingScope,
@@ -1229,7 +1246,9 @@ function replayStatusBadge(
   });
 }
 
-/** One recorded status dimension in the compact summary strip. */
+/**
+One recorded status dimension in the compact summary strip.
+*/
 function statusTile(
   label: string,
   dimension: string,
@@ -1299,10 +1318,10 @@ function compactStat(label: string, value: string | number): React.JSX.Element {
 }
 
 /**
- * The badge for the episode's own completeness token. The token is mapped, not
- * interpreted: `partial` is a recorded gap and `unknown` is an unrecorded
- * dimension, so neither borrows the other's tone.
- */
+The badge for the episode's own completeness token. The token is mapped, not
+interpreted: `partial` is a recorded gap and `unknown` is an unrecorded
+dimension, so neither borrows the other's tone.
+*/
 function completenessBadge(
   completeness: ControlApiPlaytestingEpisodeDetailResponse["record"]["completeness"]
 ): React.JSX.Element {
@@ -1325,11 +1344,11 @@ function completenessBadge(
 }
 
 /**
- * The step the spectator is on when the address does not name one.
- *
- * The last recorded frame is the latest evidence of where the episode got
- * to, so that is where the spectator starts.
- */
+The step the spectator is on when the address does not name one.
+
+The last recorded frame is the latest evidence of where the episode got
+to, so that is where the spectator starts.
+*/
 function spectatorLatestStep(
   totalSteps: number,
   lastFrame: PlaytestEpisode["frames"][number] | undefined
@@ -1340,11 +1359,11 @@ function spectatorLatestStep(
 }
 
 /**
- * The steps the spectator can move between.
- *
- * A recorded window names its own steps; an episode with no window yet has
- * only the steps it has run.
- */
+The steps the spectator can move between.
+
+A recorded window names its own steps; an episode with no window yet has
+only the steps it has run.
+*/
 function spectatorAvailableSteps(
   window: ControlApiPlaytestingWindowResponse | null,
   totalSteps: number
@@ -1355,21 +1374,21 @@ function spectatorAvailableSteps(
 }
 
 /**
- * The visible controls of one step, bounded.
- *
- * A screen can carry thirty controls, and their accessible names run to
- * fifteen hundred characters; joined into one line they are a wall a reader
- * can neither use nor skip. The first few are named, the rest are counted,
- * and the whole list stays one disclosure away. A step that recorded no
- * controls says so: a screen with no controls and a screen whose controls
- * were never captured are different facts.
- *
- * The names are listed rather than run together. A game's own accessible
- * name for a control can be a whole sentence -- "Breakneck GP - #1 -
- * Position 5 - Lap 4, 65% of the lap - Delta +7.6 seconds" -- and six of
- * those joined with separators is a paragraph nobody can scan. One name per
- * line is a list a reader can skip down.
- */
+The visible controls of one step, bounded.
+
+A screen can carry thirty controls, and their accessible names run to
+fifteen hundred characters; joined into one line they are a wall a reader
+can neither use nor skip. The first few are named, the rest are counted,
+and the whole list stays one disclosure away. A step that recorded no
+controls says so: a screen with no controls and a screen whose controls
+were never captured are different facts.
+
+The names are listed rather than run together. A game's own accessible
+name for a control can be a whole sentence -- "Breakneck GP - #1 -
+Position 5 - Lap 4, 65% of the lap - Delta +7.6 seconds" -- and six of
+those joined with separators is a paragraph nobody can scan. One name per
+line is a list a reader can skip down.
+*/
 function visibleControlsSummary(names: readonly string[]): React.JSX.Element {
   if (names.length === 0) {
     return React.createElement(
@@ -1418,12 +1437,12 @@ function visibleControlsSummary(names: readonly string[]): React.JSX.Element {
 }
 
 /**
- * The action the run took, with the reason it took it.
- *
- * A reason code belongs to an action. When no action was executed there was
- * no reason either, and a step that recorded neither says so once rather
- * than inventing a policy name to fill the space.
- */
+The action the run took, with the reason it took it.
+
+A reason code belongs to an action. When no action was executed there was
+no reason either, and a step that recorded neither says so once rather
+than inventing a policy name to fill the space.
+*/
 function spectatorActionReasonText(
   executedAction: string | null,
   reasonCode: string | null | undefined
@@ -1434,13 +1453,13 @@ function spectatorActionReasonText(
 }
 
 /**
- * The four cockpit panels: what the player planned, what it expected to
- * see, what it actually did, and what the screen offered.
- *
- * Each panel reports what the step recorded. A step that recorded nothing
- * says "Not recorded" in every panel rather than a sentence about a racing
- * car the run never saw.
- */
+The four cockpit panels: what the player planned, what it expected to
+see, what it actually did, and what the screen offered.
+
+Each panel reports what the step recorded. A step that recorded nothing
+says "Not recorded" in every panel rather than a sentence about a racing
+car the run never saw.
+*/
 function spectatorCockpitPanels(
   facts: TraceStepFacts | null,
   executedAction: string | null,
@@ -1533,14 +1552,14 @@ function spectatorCockpitPanels(
 }
 
 /**
- * The offer, as the cockpit states it.
- *
- * The visible controls are everything the screen showed; the offer is what
- * the decision was made from. When the choice contract's bound left some of
- * the screen out of the question, the cockpit says so: without it, "it did
- * not choose that button" and "it was never asked about that button" look
- * the same to a reader. A step that records no offer says nothing.
- */
+The offer, as the cockpit states it.
+
+The visible controls are everything the screen showed; the offer is what
+the decision was made from. When the choice contract's bound left some of
+the screen out of the question, the cockpit says so: without it, "it did
+not choose that button" and "it was never asked about that button" look
+the same to a reader. A step that records no offer says nothing.
+*/
 function spectatorOfferSummary(
   facts: TraceStepFacts | null
 ): React.JSX.Element | null {
@@ -1564,12 +1583,12 @@ function spectatorOfferSummary(
 }
 
 /**
- * The telemetry strip: the run's own facts about itself.
- *
- * A purse is a fact about a particular game. A game that records no
- * bankroll gets no purse tile: a default of "100 Gold" would be a number
- * the run never observed, sitting in a panel that says it is the game's.
- */
+The telemetry strip: the run's own facts about itself.
+
+A purse is a fact about a particular game. A game that records no
+bankroll gets no purse tile: a default of "100 Gold" would be a number
+the run never observed, sitting in a panel that says it is the game's.
+*/
 function spectatorTelemetryStrip(
   episode: PlaytestEpisode,
   executedAction: string | null,
@@ -2855,7 +2874,7 @@ export function PlaytestingSessionView({
         : React.createElement(
             "p",
             { className: MUTED_META_CLASS },
-            `Recorded missing reasons: ${episode.missingReasons.join(", ")}`
+            `Recorded missing reasons: ${episode.missingReasons.map(missingReasonLabel).join(", ")}`
           )
     ),
     React.createElement(

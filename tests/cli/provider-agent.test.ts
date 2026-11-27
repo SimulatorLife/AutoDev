@@ -437,7 +437,9 @@ test("provider agent builds the bounded prompt and role-specific Codex flags", a
       false
     );
     assert.equal(
-      calls[0]?.args.some((arg) => arg.startsWith("mcp_servers.autodev_memory.")),
+      calls[0]?.args.some((arg) =>
+        arg.startsWith("mcp_servers.autodev_memory.")
+      ),
       false,
       "retired custom Memory MCP must never be configured"
     );

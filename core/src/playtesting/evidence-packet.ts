@@ -717,8 +717,7 @@ export function assertPlaytestEvidencePacket(
   const packetKeys =
     isRecord(value) && value.schema === PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1
       ? PACKET_V1_KEYS
-      : isRecord(value) &&
-          value.schema === PLAYTESTS_EVIDENCE_PACKET_SCHEMA
+      : isRecord(value) && value.schema === PLAYTESTS_EVIDENCE_PACKET_SCHEMA
         ? PACKET_V4_KEYS
         : PACKET_KEYS;
   if (
@@ -938,10 +937,7 @@ function assertCrossSessionContext(
   value: unknown,
   packet: Record<string, unknown>
 ): asserts value is PlaytestEvidenceCrossSessionContext {
-  if (
-    !isRecord(value) ||
-    !SHA256_PATTERN.test(String(value.inventoryHash))
-  ) {
+  if (!isRecord(value) || !SHA256_PATTERN.test(String(value.inventoryHash))) {
     throw new TypeError("Evidence packet cross-session context is malformed.");
   }
   if (value.status === "unavailable") {

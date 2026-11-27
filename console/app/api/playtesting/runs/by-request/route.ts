@@ -1,11 +1,11 @@
 /** Server-only recovery of a launch whose POST acknowledgement was uncertain. */
-import { type NextRequest, NextResponse } from "next/server.js";
+import type { NextRequest, NextResponse } from "next/server.js";
 
-import { jsonErrorResponse } from "../../../../../src/lib/server/api-response.ts";
 import {
-  controlApiFailureCode,
-  readControlApiConfig
-} from "../../../../../src/lib/server/control-api.ts";
+  controlApiReadResponse,
+  jsonErrorResponse
+} from "../../../../../src/lib/server/api-response.ts";
+import { readControlApiConfig } from "../../../../../src/lib/server/control-api.ts";
 import { fetchPlaytestingRunRequest } from "../../../../playtesting/playtesting-server.ts";
 
 export const dynamic = "force-dynamic";
@@ -46,19 +46,5 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     requestId,
     config
   );
-  if (result.kind !== "ok") {
-    return jsonErrorResponse(
-      result.kind === "http-error" || result.kind === "unauthorized"
-        ? result.status
-        : result.kind === "unreachable"
-          ? 503
-          : 502,
-      controlApiFailureCode(result),
-      result.message
-    );
-  }
-  return NextResponse.json(
-    { kind: "ok", data: result.data },
-    { status: 200, headers: { "cache-control": "no-store" } }
-  );
+  return controlApiReadResponse(result);
 }

@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempDisposableSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempDisposableSync,
+  realpathSync,
+  symlinkSync,
+  writeFileSync
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -38,7 +44,9 @@ test("relative paths are compared after resolution against the working directory
 });
 
 test("uncreated paths resolve physical ancestors and reject dangling redirects", () => {
-  using root = mkdtempDisposableSync(path.join(tmpdir(), "autodev-path-ancestor-"));
+  using root = mkdtempDisposableSync(
+    path.join(tmpdir(), "autodev-path-ancestor-")
+  );
   const base = realpathSync(root.path);
   const directory = path.join(base, "directory");
   mkdirSync(directory);
@@ -50,10 +58,14 @@ test("uncreated paths resolve physical ancestors and reject dangling redirects",
   );
   const dangling = path.join(base, "dangling");
   symlinkSync(path.join(base, "missing"), dangling);
-  assert.throws(() => resolvePathWithExistingAncestor(path.join(dangling, "child")));
+  assert.throws(() =>
+    resolvePathWithExistingAncestor(path.join(dangling, "child"))
+  );
   const file = path.join(base, "file");
   writeFileSync(file, "");
-  assert.throws(() => resolvePathWithExistingAncestor(path.join(file, "child")));
+  assert.throws(() =>
+    resolvePathWithExistingAncestor(path.join(file, "child"))
+  );
 });
 
 test("overlap is symmetric and includes equal paths, not prefix siblings", () => {

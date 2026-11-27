@@ -1383,6 +1383,31 @@ export class PlaytestArtifactStore {
     return "present";
   }
 
+  /** Verify stored size and content hash after the caller authorizes the file. */
+  private readVerifiedBytes(
+    file: string,
+    metadata: Pick<PlaytestArtifactMetadata, "artifactId" | "bytes" | "sha256">
+  ): Uint8Array {
+    const raw = this.fileSystem.readFileSync(file);
+    const bytes = new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
+    if (bytes.byteLength !== metadata.bytes) {
+      throw new PlaytestArtifactIntegrityError(
+        metadata.artifactId,
+        metadata.sha256,
+        `size-mismatch:${bytes.byteLength}`
+      );
+    }
+    const actual = this.hash(bytes);
+    if (actual !== metadata.sha256) {
+      throw new PlaytestArtifactIntegrityError(
+        metadata.artifactId,
+        metadata.sha256,
+        actual
+      );
+    }
+    return bytes;
+  }
+
   /**
    * Read a blob artifact and verify its content hash. Throws when the
    * reference is not authorized for the bound workspace, when the
@@ -1427,23 +1452,7 @@ export class PlaytestArtifactStore {
         `Artifact file ${blobFile} must not be a symbolic link.`
       );
     }
-    const raw = this.fileSystem.readFileSync(blobFile);
-    const bytes = new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
-    if (bytes.byteLength !== auth.metadata.bytes) {
-      throw new PlaytestArtifactIntegrityError(
-        auth.metadata.artifactId,
-        auth.metadata.sha256,
-        `size-mismatch:${bytes.byteLength}`
-      );
-    }
-    const actual = this.hash(bytes);
-    if (actual !== auth.metadata.sha256) {
-      throw new PlaytestArtifactIntegrityError(
-        auth.metadata.artifactId,
-        auth.metadata.sha256,
-        actual
-      );
-    }
+    const bytes = this.readVerifiedBytes(blobFile, auth.metadata);
     return {
       bytes,
       reference,
@@ -1491,23 +1500,7 @@ export class PlaytestArtifactStore {
         `Window file ${windowFile} must not be a symbolic link.`
       );
     }
-    const raw = this.fileSystem.readFileSync(windowFile);
-    const bytes = new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
-    if (bytes.byteLength !== auth.metadata.bytes) {
-      throw new PlaytestArtifactIntegrityError(
-        auth.metadata.artifactId,
-        auth.metadata.sha256,
-        `size-mismatch:${bytes.byteLength}`
-      );
-    }
-    const actual = this.hash(bytes);
-    if (actual !== auth.metadata.sha256) {
-      throw new PlaytestArtifactIntegrityError(
-        auth.metadata.artifactId,
-        auth.metadata.sha256,
-        actual
-      );
-    }
+    const bytes = this.readVerifiedBytes(windowFile, auth.metadata);
     return {
       reference,
       bytes,

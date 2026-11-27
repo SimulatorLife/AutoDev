@@ -26,8 +26,8 @@ import {
   serializeToml,
   type TomlTable
 } from "@simulatorlife/autodev-runtime/config";
-import { listBundledPlugins } from "@simulatorlife/autodev-runtime/shared/bundled-plugins";
 import { autodevHome as resolveAutodevHome } from "@simulatorlife/autodev-runtime/shared/autodev-home";
+import { listBundledPlugins } from "@simulatorlife/autodev-runtime/shared/bundled-plugins";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { findCopilotBinary } from "@simulatorlife/autodev-runtime/shared/executables";
 import {
@@ -44,12 +44,15 @@ import {
   claudeCodeHeadersHelperCommand,
   reconcileClaudeCodeTelemetry
 } from "./claude-code-telemetry.ts";
-import { reconcileMcodeProfiles } from "./mcode-profile.ts";
 import { createCodexMcpSource } from "./codex-mcp-source.ts";
 import { createCodexPermissionsSource } from "./codex-permissions-source.ts";
 import {
-  type CodexHookTrustEntry,
-  codexHookTrustEntries
+  applyCommandCatalogueApproval,
+  pendingCommandCatalogueMessage
+} from "./command-catalogue-approval.ts";
+import {
+  codexHookTrustEntries,
+  type CodexHookTrustEntry
 } from "./hook-trust.ts";
 import {
   type LaunchAgentPaths,
@@ -57,6 +60,13 @@ import {
   resolveLaunchAgentValues
 } from "./macos/launchagent.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
+import { reconcileMcodeProfiles } from "./mcode-profile.ts";
+import {
+  collectRuntimeDependencyClosures,
+  materializeRuntimeDependencyClosure,
+  referencedRuntimeDependencyClosure,
+  runtimeDependencyClosure
+} from "./runtime-dependency-closure.ts";
 import {
   computeRepoPathsFingerprint,
   linkRuntimeSource,
@@ -82,16 +92,6 @@ import {
   materializeRuntimeSourceGeneration,
   type RuntimeSourceTree
 } from "./runtime-source-generation.ts";
-import {
-  applyCommandCatalogueApproval,
-  pendingCommandCatalogueMessage
-} from "./command-catalogue-approval.ts";
-import {
-  collectRuntimeDependencyClosures,
-  materializeRuntimeDependencyClosure,
-  referencedRuntimeDependencyClosure,
-  runtimeDependencyClosure
-} from "./runtime-dependency-closure.ts";
 import { userLevelSkills } from "./user-level-skills.ts";
 
 const OBSOLETE_RUNTIME_PATH_REASON = "obsolete-runtime-path";
@@ -105,7 +105,6 @@ export const RUNTIME_MODULES = [
   "runtime/src/telemetry/resource-context/index.ts",
   "runtime/src/telemetry/workspace-commit-observer.ts",
   "runtime/src/router/agent-event-ingest.ts",
-  "runtime/src/control-api/claude-code-binding.ts",
   "runtime/src/control-api/body.ts",
   "runtime/src/control-api/diagnostics.ts",
   "runtime/src/router/routing.ts",
@@ -340,11 +339,11 @@ export const ROLES = [
 ] as const;
 export const PROMPT_ROLES = [...ROLES, "orchestrator"] as const;
 /**
- * Codex custom prompts (slash commands) are materialized at
- * `$CODEX_HOME/prompts/<name>.md` from the canonical `.rulesync/commands/`
- * source. Data owns parsing and validation; Runtime selects the `codexcli`
- * target and manages its generated projection.
- */
+Codex custom prompts (slash commands) are materialized at
+`$CODEX_HOME/prompts/<name>.md` from the canonical `.rulesync/commands/`
+source. Data owns parsing and validation; Runtime selects the `codexcli`
+target and manages its generated projection.
+*/
 export const LEGACY_SKILL_DIRS = ["skills", "agents/skills"] as const;
 export const RULES = ["rulesync.rules"] as const;
 export const LAUNCH_LABELS = [
@@ -403,25 +402,27 @@ export const OBSOLETE_HOOKS = [
 ] as const;
 export const OBSOLETE_DIRS = ["scripts", "codex", "codex/skills"] as const;
 /**
- * The trust hashes Codex expects for the canonical hooks.
- *
- * Codex hashes each hook it is asked to run and refuses to run one whose hash
- * is not trusted, so the installer has to write the hash Codex computes for
- * the hook definition it is given. The key is the hook's position in the
- * projected `hooks.json` -- `<event>:<group>:<hook>` -- and the value is that
- * hash.
- *
- * The hash belongs to the definition, not to a table, so it is computed from
- * the installed hooks file rather than kept here: a table of hashes drifts
- * from the declaration the moment the declaration changes, and Codex skips a
- * drifted or unlisted hook without saying so.
- */
+The trust hashes Codex expects for the canonical hooks.
+
+Codex hashes each hook it is asked to run and refuses to run one whose hash
+is not trusted, so the installer has to write the hash Codex computes for
+the hook definition it is given. The key is the hook's position in the
+projected `hooks.json` -- `<event>:<group>:<hook>` -- and the value is that
+hash.
+
+The hash belongs to the definition, not to a table, so it is computed from
+the installed hooks file rather than kept here: a table of hashes drifts
+from the declaration the moment the declaration changes, and Codex skips a
+drifted or unlisted hook without saying so.
+*/
 const CONFIG_TOML_KEY_PREFIX = "config.toml:";
 const HOOKS_JSON = "hooks.json";
 const OBSOLETE_RUNTIME_DIRECTORY = "obsolete-runtime-directory";
 const CONFIG_TOML_FILE = "config.toml";
 
-/** The trust entries for the hooks Codex is given at user level. */
+/**
+The trust entries for the hooks Codex is given at user level.
+*/
 function codexUserHookTrustEntries(codexHome: string): CodexHookTrustEntry[] {
   const hooksPath = path.join(codexHome, HOOKS_JSON);
   if (!exists(hooksPath)) return [];
@@ -530,10 +531,10 @@ interface MaterializeOptions {
   materializeOnly: boolean;
   codexMcpSource: string;
   /**
-   * The command catalogue digest the operator approved on the installer's
-   * command line, never from the environment (which loads the checkout's
-   * `.env`).
-   */
+  The command catalogue digest the operator approved on the installer's
+  command line, never from the environment (which loads the checkout's
+  `.env`).
+  */
   approvedCommandCatalogue?: string | undefined;
 }
 
@@ -542,11 +543,11 @@ function commandAvailable(command: string): boolean {
 }
 
 /**
- * Installed native CLI harnesses whose global MCP configuration RuleSync can
- * project today. Both materialization and read-only drift checks consume this
- * discovery function. App-only enrollment must qualify the native harness and
- * its configuration scope before adding a target.
- */
+Installed native CLI harnesses whose global MCP configuration RuleSync can
+project today. Both materialization and read-only drift checks consume this
+discovery function. App-only enrollment must qualify the native harness and
+its configuration scope before adding a target.
+*/
 export function installedGlobalMcpTargets(
   isInstalled: (command: string) => boolean = (command) =>
     command === "copilot"
@@ -565,11 +566,11 @@ export function installedGlobalMcpTargets(
 }
 
 /**
- * Regenerate and verify the canonical RuleSync skill projections. A successful
- * generation alone is not enough to report convergence: the pinned CLI's
- * `--check` must also confirm that every configured target matches the
- * canonical `.rulesync/skills` source.
- */
+Regenerate and verify the canonical RuleSync skill projections. A successful
+generation alone is not enough to report convergence: the pinned CLI's
+`--check` must also confirm that every configured target matches the
+canonical `.rulesync/skills` source.
+*/
 export function materializeRuleSyncSkillProjections(
   repositoryRoot: string
 ): void {
@@ -1184,15 +1185,17 @@ function removeObsoleteRuntimeArtifacts(
 
 type FileTarget = (filePath: string) => string;
 
-/** The prefix of every manifest entry installed into the source generation. */
+/**
+The prefix of every manifest entry installed into the source generation.
+*/
 const RUNTIME_SOURCE_PREFIX = "runtime/src/";
 
 /**
- * The installed Runtime source tree: every `runtime/src` manifest module at
- * its path under `$CODEX_HOME/src`, the mirror package manifest, and the
- * protected dependency closure the tree resolves Runtime's own dependencies
- * through (`runtime-dependency-closure.ts`).
- */
+The installed Runtime source tree: every `runtime/src` manifest module at
+its path under `$CODEX_HOME/src`, the mirror package manifest, and the
+protected dependency closure the tree resolves Runtime's own dependencies
+through (`runtime-dependency-closure.ts`).
+*/
 export function runtimeSourceTree(
   repositoryRoot: string,
   codexHome: string
@@ -1218,13 +1221,13 @@ export function runtimeSourceTree(
 }
 
 /**
- * Install the Runtime-owned files.
- *
- * Everything outside `runtime/src` -- prompts and the vendored playtest core
- * -- is written file by file before the source tree changes, so the new tree
- * finds them in place. The source tree itself is published as one generation
- * and swapped in atomically: see `runtime-source-generation.ts`.
- */
+Install the Runtime-owned files.
+
+Everything outside `runtime/src` -- prompts and the vendored playtest core
+-- is written file by file before the source tree changes, so the new tree
+finds them in place. The source tree itself is published as one generation
+and swapped in atomically: see `runtime-source-generation.ts`.
+*/
 function materializeRuntimeTree(
   repositoryRoot: string,
   codexHome: string,
@@ -1251,10 +1254,10 @@ function materializeRuntimeTree(
 }
 
 /**
- * The closures some retained source generation still resolves through: a
- * replaced generation keeps running long-lived sessions, so its closure stays
- * until the generation itself is collected.
- */
+The closures some retained source generation still resolves through: a
+replaced generation keeps running long-lived sessions, so its closure stays
+until the generation itself is collected.
+*/
 function referencedRuntimeDependencyClosures(codexHome: string): Set<string> {
   const referenced = new Set<string>();
   for (const name of readdirSync(codexHome)) {
@@ -1296,16 +1299,16 @@ function linkRuntimeConfigs(codexHome: string, source: FileTarget): void {
 }
 
 /**
- * Install AutoDev's Codex command rules as regular-file copies.
- *
- * Codex loads a rules entry only when it resolves to a file directly inside
- * `$CODEX_HOME/rules/`; anything else — a symlink into the checkout, for
- * example — is skipped silently. A symlinked `default.rules` left every rule
- * inert: `forbidden` commands ran, and the `allow` rule for `git add`/`git
- * commit` never lifted the workspace-write sandbox, so agents failed with
- * `.git/index.lock: Operation not permitted`. `docs/local-setup.md` records
- * the reproduction.
- */
+Install AutoDev's Codex command rules as regular-file copies.
+
+Codex loads a rules entry only when it resolves to a file directly inside
+`$CODEX_HOME/rules/`; anything else — a symlink into the checkout, for
+example — is skipped silently. A symlinked `default.rules` left every rule
+inert: `forbidden` commands ran, and the `allow` rule for `git add`/`git
+commit` never lifted the workspace-write sandbox, so agents failed with
+`.git/index.lock: Operation not permitted`. `docs/local-setup.md` records
+the reproduction.
+*/
 export function materializeCommandRules(
   repositoryRoot: string,
   rules: string,
@@ -1332,11 +1335,11 @@ export function materializeCommandRules(
 }
 
 /**
- * Before the protected dependency closure, `$CODEX_HOME/node_modules` linked
- * the checkout's root `node_modules`, which let installed launchers resolve
- * MCP server binaries from the editable checkout. Nothing installed resolves
- * through it now; a link that is still there is removed.
- */
+Before the protected dependency closure, `$CODEX_HOME/node_modules` linked
+the checkout's root `node_modules`, which let installed launchers resolve
+MCP server binaries from the editable checkout. Nothing installed resolves
+through it now; a link that is still there is removed.
+*/
 function removeCheckoutNodeModulesLink(codexHome: string): void {
   const link = path.join(codexHome, "node_modules");
   if (isSymlink(link)) unlinkSync(link);
@@ -1366,10 +1369,10 @@ function replaceSkillSymlinks(
 }
 
 /**
- * Links in the user's skills directory that point into the canonical source
- * at a skill that is no longer user-level (deleted, or now repository-only).
- * A link to anything else is the user's own and is left alone.
- */
+Links in the user's skills directory that point into the canonical source
+at a skill that is no longer user-level (deleted, or now repository-only).
+A link to anything else is the user's own and is left alone.
+*/
 export function staleUserSkillLinks(
   skillsRoot: string,
   userSkills: string,
@@ -1390,19 +1393,19 @@ export function staleUserSkillLinks(
 }
 
 /**
- * Whether the runtime has this skill installed from this canonical source.
- *
- * A skill is not projected into the runtime the way a command is: the
- * installer links the canonical source into the user's skills directory, so
- * the runtime reads the canonical source itself rather than a copy of it.
- * That makes the link the runtime's observation of the skill -- when the link
- * holds this source, the runtime is running exactly this canonical source,
- * and when it does not, the runtime's skill is something else or is not
- * installed at all.
- *
- * The layout of the user's skills directory is this module's to answer, so the
- * Control API asks it rather than repeating the path.
- */
+Whether the runtime has this skill installed from this canonical source.
+
+A skill is not projected into the runtime the way a command is: the
+installer links the canonical source into the user's skills directory, so
+the runtime reads the canonical source itself rather than a copy of it.
+That makes the link the runtime's observation of the skill -- when the link
+holds this source, the runtime is running exactly this canonical source,
+and when it does not, the runtime's skill is something else or is not
+installed at all.
+
+The layout of the user's skills directory is this module's to answer, so the
+Control API asks it rather than repeating the path.
+*/
 export function installedSkillMatches(args: {
   readonly repositoryRoot: string;
   readonly home: string;
@@ -1442,17 +1445,17 @@ function materializeRenderedAgents(
 }
 
 /**
- * Apply the canonical MCP declaration to the runtime's applied state.
- *
- * Three artifacts carry the MCP configuration the runtime applies: the bridge
- * catalogue the MCP bridge reads, the role contracts that say which server a
- * role may use, and the composed user configuration Codex reads. They are
- * written from one projection, so the applied state cannot be one file that
- * was updated and another that was not.
- *
- * The composed configuration keeps the user's own MCP servers, because it is
- * composed with the configuration that is already there rather than over it.
- */
+Apply the canonical MCP declaration to the runtime's applied state.
+
+Three artifacts carry the MCP configuration the runtime applies: the bridge
+catalogue the MCP bridge reads, the role contracts that say which server a
+role may use, and the composed user configuration Codex reads. They are
+written from one projection, so the applied state cannot be one file that
+was updated and another that was not.
+
+The composed configuration keeps the user's own MCP servers, because it is
+composed with the configuration that is already there rather than over it.
+*/
 export function materializeMcpConfiguration(options: {
   readonly repositoryRoot: string;
   readonly codexHome: string;
@@ -1497,32 +1500,32 @@ export function materializeMcpConfiguration(options: {
 }
 
 /**
- * Apply the canonical hook declaration, projected from the declaration as it
- * is now.
- *
- * The projection is generated from the canonical source rather than taken from
- * the install, so a declaration that changed since the last install is applied
- * as it stands. The generated projection is checked as well as written: a
- * generation that succeeded is not a projection that matches the source, and
- * the two are different facts.
- *
- * Only the hooks feature is generated. The other features' projections are
- * left exactly as they are, because a declaration of hooks says nothing about
- * the skills or the commands a repository also projects.
- *
- * Codex reads both `$CODEX_HOME/hooks.json` and the working project's
- * `.codex/hooks.json`. Projecting Codex hooks into this checkout as well as
- * the user level ran every Codex hook twice in AutoDev sessions (the root
- * bootstrap was injected 2-4 times per turn), so Codex hooks are written only
- * at user level by {@link writeCodexUserHooks}; `rulesync.jsonc` therefore
- * gives the `codexcli` target no `hooks` feature, and the repository
- * projection covers every other configured target.
- */
+Apply the canonical hook declaration, projected from the declaration as it
+is now.
+
+The projection is generated from the canonical source rather than taken from
+the install, so a declaration that changed since the last install is applied
+as it stands. The generated projection is checked as well as written: a
+generation that succeeded is not a projection that matches the source, and
+the two are different facts.
+
+Only the hooks feature is generated. The other features' projections are
+left exactly as they are, because a declaration of hooks says nothing about
+the skills or the commands a repository also projects.
+
+Codex reads both `$CODEX_HOME/hooks.json` and the working project's
+`.codex/hooks.json`. Projecting Codex hooks into this checkout as well as
+the user level ran every Codex hook twice in AutoDev sessions (the root
+bootstrap was injected 2-4 times per turn), so Codex hooks are written only
+at user level by {@link writeCodexUserHooks}; `rulesync.jsonc` therefore
+gives the `codexcli` target no `hooks` feature, and the repository
+projection covers every other configured target.
+*/
 
 /**
- * Run the repository's `rulesync.jsonc` generation (or its `--check`), with
- * hooks projected for every configured target except the user-level ones.
- */
+Run the repository's `rulesync.jsonc` generation (or its `--check`), with
+hooks projected for every configured target except the user-level ones.
+*/
 const REPOSITORY_RULESYNC_FINGERPRINT_PATHS = [
   "rulesync.jsonc",
   "rulesync.lock",
@@ -1557,20 +1560,20 @@ function computeRepositoryRulesyncFingerprint(repositoryRoot: string): string {
 }
 
 /**
- * The repository's Rulesync generation.
- *
- * The per-target map in `rulesync.jsonc` is the only shape that can give a
- * shared output tree a single owner. `.agents/skills/` is read by Codex CLI
- * and Antigravity CLI alike, so a second writer would have to produce
- * byte-identical files, and a skill whose frontmatter one client reads and the
- * other ignores (such as `user-invocable`) makes that impossible. Naming the
- * owner per target keeps one writer per tree.
- *
- * RuleSync reads that map itself. A run that names its targets or its
- * features replaces the map with a flat selection, and a flat selection cannot
- * express "this target owns that feature", so the repository runs the whole
- * configuration and lets RuleSync resolve the owners.
- */
+The repository's Rulesync generation.
+
+The per-target map in `rulesync.jsonc` is the only shape that can give a
+shared output tree a single owner. `.agents/skills/` is read by Codex CLI
+and Antigravity CLI alike, so a second writer would have to produce
+byte-identical files, and a skill whose frontmatter one client reads and the
+other ignores (such as `user-invocable`) makes that impossible. Naming the
+owner per target keeps one writer per tree.
+
+RuleSync reads that map itself. A run that names its targets or its
+features replaces the map with a flat selection, and a flat selection cannot
+express "this target owns that feature", so the repository runs the whole
+configuration and lets RuleSync resolve the owners.
+*/
 export function generateRepositoryRulesync(
   repositoryRoot: string,
   options: {
@@ -1609,7 +1612,9 @@ export function generateRepositoryRulesync(
   });
 }
 
-/** Render the Codex hooks file Rulesync projects for a user-level install. */
+/**
+Render the Codex hooks file Rulesync projects for a user-level install.
+*/
 export function renderCodexUserHooks(repositoryRoot: string): string {
   const projectedHome = mkdtempSync(
     path.join(repositoryRoot, ".autodev-hooks-home-")
@@ -1633,9 +1638,9 @@ export function renderCodexUserHooks(repositoryRoot: string): string {
 }
 
 /**
- * Write the user-level Codex hooks file and remove the repository projection
- * an earlier install left, which Codex would otherwise load a second time.
- */
+Write the user-level Codex hooks file and remove the repository projection
+an earlier install left, which Codex would otherwise load a second time.
+*/
 export function writeCodexUserHooks(
   repositoryRoot: string,
   codexHome: string
@@ -1665,13 +1670,13 @@ export function materializeCurrentHookProjections(options: {
 }
 
 /**
- * Apply the canonical MCP declaration, projected from the declaration as it
- * is now.
- *
- * The projection is generated from the canonical source rather than taken from
- * the install, so a declaration that changed since the last install is applied
- * as it stands.
- */
+Apply the canonical MCP declaration, projected from the declaration as it
+is now.
+
+The projection is generated from the canonical source rather than taken from
+the install, so a declaration that changed since the last install is applied
+as it stands.
+*/
 export function materializeCurrentMcpConfiguration(options: {
   readonly repositoryRoot: string;
   readonly codexHome: string;
@@ -1721,18 +1726,18 @@ export function loadCodexCommands(repositoryRoot: string) {
 }
 
 /**
- * Project canonical RuleSync commands into `$CODEX_HOME/prompts/`.
- *
- * Rulesync's `codexcli` commands feature is global-only and honors `$HOME`
- * rather than `$CODEX_HOME`, so we run rulesync with `$HOME` pointing at a
- * throwaway directory and copy each generated prompt into the real Codex home.
- * The directory is reconciled against canonical commands whose targets
- * include `codexcli` or `*`.
- *
- * Returns the names of prompts whose installed content changed (added,
- * rewritten, or removed), sorted, so the caller can tell the user a running
- * Codex app must be restarted to see them.
- */
+Project canonical RuleSync commands into `$CODEX_HOME/prompts/`.
+
+Rulesync's `codexcli` commands feature is global-only and honors `$HOME`
+rather than `$CODEX_HOME`, so we run rulesync with `$HOME` pointing at a
+throwaway directory and copy each generated prompt into the real Codex home.
+The directory is reconciled against canonical commands whose targets
+include `codexcli` or `*`.
+
+Returns the names of prompts whose installed content changed (added,
+rewritten, or removed), sorted, so the caller can tell the user a running
+Codex app must be restarted to see them.
+*/
 export function materializeCommands(
   options: Pick<MaterializeOptions, "repositoryRoot">,
   promptsDir: string
@@ -1818,12 +1823,12 @@ export function materializeCommands(
 }
 
 /**
- * Regenerate every command projection from the canonical
- * `.rulesync/commands/` source: the repository outputs `rulesync.jsonc`
- * configures (Claude Code, Copilot, Antigravity CLI), verified with
- * `--check`, and the user-level Codex prompts Rulesync only projects
- * globally. Returns the Codex prompts whose installed content changed.
- */
+Regenerate every command projection from the canonical
+`.rulesync/commands/` source: the repository outputs `rulesync.jsonc`
+configures (Claude Code, Copilot, Antigravity CLI), verified with
+`--check`, and the user-level Codex prompts Rulesync only projects
+globally. Returns the Codex prompts whose installed content changed.
+*/
 export function materializeCurrentCommandProjections(options: {
   readonly repositoryRoot: string;
   readonly codexHome: string;
@@ -1876,10 +1881,10 @@ const STALE_ORCHESTRATOR_DEFAULTS: Record<
 };
 
 /**
- * Upgrade known legacy degraded orchestrator entries in a persisted router
- * state file so stale snapshots from older defaults cannot shadow updated
- * `config/model-routing.json` priorities or reasoning efforts.
- */
+Upgrade known legacy degraded orchestrator entries in a persisted router
+state file so stale snapshots from older defaults cannot shadow updated
+`config/model-routing.json` priorities or reasoning efforts.
+*/
 export function reconcileStaleOrchestratorState(codexHome: string): boolean {
   const statePath = path.join(codexHome, "codex-router-state.json");
   if (!exists(statePath)) return false;
@@ -2015,11 +2020,11 @@ function prepareRunLogs(codexHome: string): void {
 }
 
 /**
- * Re-render the execution contract from `agents/roles/*.toml` against the
- * freshly-generated rulesync projection. The result is written in place to
- * the repo's `config/execution-contract.json` and to its installed copy under
- * `$CODEX_HOME/config`. Idempotent: same inputs produce the same output.
- */
+Re-render the execution contract from `agents/roles/*.toml` against the
+freshly-generated rulesync projection. The result is written in place to
+the repo's `config/execution-contract.json` and to its installed copy under
+`$CODEX_HOME/config`. Idempotent: same inputs produce the same output.
+*/
 function renderAndMaterializeContract(
   repositoryRoot: string,
   target: FileTarget
@@ -2035,21 +2040,21 @@ function renderAndMaterializeContract(
 }
 
 /**
- * The tools AutoDev exposes through the bundled Codex App tools plugin.
- *
- * Plan mode instructs the model to call `request_user_input`; everything else
- * the plugin ships (thread create/fork/handoff/read/wait/list/archive,
- * automations) belongs to the one delegation surface, Codex's own
- * `multi_agent_v1__*` functions, and must not reach a model through `codex_app`.
- */
+The tools AutoDev exposes through the bundled Codex App tools plugin.
+
+Plan mode instructs the model to call `request_user_input`; everything else
+the plugin ships (thread create/fork/handoff/read/wait/list/archive,
+automations) belongs to the one delegation surface, Codex's own
+`multi_agent_v1__*` functions, and must not reach a model through `codex_app`.
+*/
 const CODEX_APP_ENABLED_TOOLS = ["request_user_input"] as const;
 
 /**
- * Sentinel written under `$CODEX_HOME/autodev/`, outside the plugin cache that
- * Codex Desktop regenerates on startup. It is the durable record of what the
- * last install asserted and of the cache state that install found, so drift
- * introduced between installs is visible rather than silently re-fixed.
- */
+Sentinel written under `$CODEX_HOME/autodev/`, outside the plugin cache that
+Codex Desktop regenerates on startup. It is the durable record of what the
+last install asserted and of the cache state that install found, so drift
+introduced between installs is visible rather than silently re-fixed.
+*/
 const AUTODEV_CODEX_APP_SENTINEL_PATH = path.join(
   "autodev",
   "codex-app-tools-state.json"
@@ -2058,22 +2063,32 @@ const AUTODEV_CODEX_APP_SENTINEL_TAG = "autodev-codex-app-tools-v1";
 
 interface CodexAppVersionState {
   lastAssertedAt: string;
-  /** Cache `enabled` flag observed before this install re-asserted it. */
+  /**
+  Cache `enabled` flag observed before this install re-asserted it.
+  */
   observedEnabled: boolean;
-  /** Cache tool allowlist observed before this install re-asserted it. */
+  /**
+  Cache tool allowlist observed before this install re-asserted it.
+  */
   observedTools: string[] | null;
-  /** Whether this install had to repair drift in the plugin cache. */
+  /**
+  Whether this install had to repair drift in the plugin cache.
+  */
   rewrotePluginCache: boolean;
 }
 interface CodexAppSentinel {
   sentinel: string;
   lastAssertedAt: string;
-  /** Whether the most recent install found and repaired cache drift. */
+  /**
+  Whether the most recent install found and repaired cache drift.
+  */
   lastInstallRepairedDrift: boolean;
   versions: Record<string, CodexAppVersionState>;
 }
 
-/** A sentinel with no usable prior state. */
+/**
+A sentinel with no usable prior state.
+*/
 function emptyCodexAppSentinel(): CodexAppSentinel {
   return {
     sentinel: AUTODEV_CODEX_APP_SENTINEL_TAG,
@@ -2083,7 +2098,9 @@ function emptyCodexAppSentinel(): CodexAppSentinel {
   };
 }
 
-/** Prior sentinel state, or a fresh one when it is absent or unrecognised. */
+/**
+Prior sentinel state, or a fresh one when it is absent or unrecognised.
+*/
 function loadCodexAppSentinel(sentinelPath: string): CodexAppSentinel {
   let parsed: Partial<CodexAppSentinel>;
   try {
@@ -2110,7 +2127,9 @@ function loadCodexAppSentinel(sentinelPath: string): CodexAppSentinel {
   };
 }
 
-/** The `codex_app` server entry in a cached `.mcp.json`, or null when absent. */
+/**
+The `codex_app` server entry in a cached `.mcp.json`, or null when absent.
+*/
 function readCodexAppCacheEntry(configPath: string): {
   document: Record<string, unknown>;
   server: Record<string, unknown>;
@@ -2134,9 +2153,9 @@ function readCodexAppCacheEntry(configPath: string): {
 }
 
 /**
- * Re-assert one cached plugin version, returning what was observed before the
- * assertion and whether the cache had to be repaired.
- */
+Re-assert one cached plugin version, returning what was observed before the
+assertion and whether the cache had to be repaired.
+*/
 function assertCodexAppCacheVersion(
   configPath: string,
   now: string
@@ -2174,7 +2193,9 @@ function assertCodexAppCacheVersion(
   };
 }
 
-/** Cached plugin version directories, newest-first order not required. */
+/**
+Cached plugin version directories, newest-first order not required.
+*/
 function codexAppCacheVersions(cacheRoot: string): string[] {
   try {
     return readdirSync(cacheRoot).filter((entry) => {
@@ -2191,17 +2212,17 @@ function codexAppCacheVersions(cacheRoot: string): string[] {
 }
 
 /**
- * Idempotently re-assert the `codex_app` MCP server gates inside every cached
- * version of the bundled `codex-app-tools` plugin, then record the outcome in
- * the sentinel.
- *
- * Codex Desktop rewrites this cache on startup, so the assertion is
- * unconditional: each install compares the cache against the declared
- * `enabled`/`enabled_tools` state, repairs any difference, and writes the
- * sentinel whether or not a repair was needed. The sentinel is a record, never
- * a short-circuit. The user-level gate itself is declared in
- * `config/config.autodev.toml` and re-asserted by `compose`.
- */
+Idempotently re-assert the `codex_app` MCP server gates inside every cached
+version of the bundled `codex-app-tools` plugin, then record the outcome in
+the sentinel.
+
+Codex Desktop rewrites this cache on startup, so the assertion is
+unconditional: each install compares the cache against the declared
+`enabled`/`enabled_tools` state, repairs any difference, and writes the
+sentinel whether or not a repair was needed. The sentinel is a record, never
+a short-circuit. The user-level gate itself is declared in
+`config/config.autodev.toml` and re-asserted by `compose`.
+*/
 export function ensureCodexAppMcpServerEnabled(codexHome: string): void {
   const cacheRoot = path.join(
     codexHome,
@@ -2364,9 +2385,9 @@ export function materializeInstallation(options: MaterializeOptions): void {
 }
 
 /**
- * Enable Claude Code's native OTel exporter in the operator's user settings,
- * so standalone Claude Code sessions report to OpenLIT themselves.
- */
+Enable Claude Code's native OTel exporter in the operator's user settings,
+so standalone Claude Code sessions report to OpenLIT themselves.
+*/
 function applyClaudeCodeTelemetryIfInstalled(
   options: MaterializeOptions,
   autodevHome: string

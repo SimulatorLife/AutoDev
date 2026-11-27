@@ -96,7 +96,8 @@ export interface McpServerResource extends McpServerDefinition {
    * reader does not have to tell "no approval exists" from "no approval was
    * read".
    */
-  readonly approvedCatalogues?: readonly McpServerApprovedCatalogue[] | undefined;
+  readonly approvedCatalogues?:
+    readonly McpServerApprovedCatalogue[] | undefined;
 }
 
 /**

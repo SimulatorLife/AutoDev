@@ -5,10 +5,7 @@ import {
   spawn,
   spawnSync
 } from "node:child_process";
-import { createServer as createHttpServer } from "node:http";
-import { createServer as createNetServer } from "node:net";
 import { once } from "node:events";
-import { setTimeout as delay } from "node:timers/promises";
 import {
   cpSync,
   existsSync,
@@ -20,9 +17,12 @@ import {
   symlinkSync,
   writeFileSync
 } from "node:fs";
+import { createServer as createHttpServer } from "node:http";
+import { createServer as createNetServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -46,19 +46,19 @@ import {
   CHATGPT_MCP_POOL_TOKEN_ENV,
   startChatgptBackendPool
 } from "../src/mcp/chatgpt-backend-pool.ts";
-import { probeSupergateway } from "../src/mcp/chatgpt-supergateway-probe.ts";
 import {
   externalMcpBackend,
   filesystemSandboxProfile
 } from "../src/mcp/chatgpt-filesystem-sandbox.ts";
+import { probeSupergateway } from "../src/mcp/chatgpt-supergateway-probe.ts";
 import {
   assertTunnelScope,
-  chatgptTunnelStatus,
   chatgptTunnelChannels,
+  type ChatgptTunnelDependencies,
+  chatgptTunnelStatus,
   checkChatgptTunnel,
   createTunnel,
   ensureChatgptTunnel,
-  type ChatgptTunnelDependencies,
   runChatgptTunnelDaemon,
   tunnelClientMcpEnv,
   tunnelClientSupported,
@@ -80,9 +80,9 @@ import {
   runMcpGatewayDaemon,
   serviceReady
 } from "../src/platform/mcp-gateway-service.ts";
-import { roleContract } from "../src/shared/execution-contract.ts";
-import { resolveCocoIndexBinary } from "../src/shared/executables.ts";
 import { resolveCommandOnPath } from "../src/platform/runtime-files.ts";
+import { resolveCocoIndexBinary } from "../src/shared/executables.ts";
+import { roleContract } from "../src/shared/execution-contract.ts";
 import { XacpxSessionManager } from "../src/xacpx/manager.ts";
 import {
   resolveXacpxOrchestrationSocketPath,
@@ -204,7 +204,9 @@ async function startSupergatewayServer(
       });
       if (response.ok) return child;
     } catch {
-      /* waiting for Supergateway */
+      /*
+      waiting for Supergateway
+      */
     }
     await delay(200);
   }
@@ -2390,7 +2392,9 @@ test(
             break;
           }
         } catch {
-          /* waiting for proxy readiness */
+          /*
+          waiting for proxy readiness
+          */
         }
       }
       assert.ok(
@@ -2714,7 +2718,9 @@ test(
               if (proxyUrl) break;
             }
           } catch {
-            /* waiting for proxy readiness */
+            /*
+            waiting for proxy readiness
+            */
           }
         }
         assert.ok(proxyUrl, "tunnel-client dev proxy did not report mcp_url");
@@ -2888,7 +2894,9 @@ test(
           process.kill(daemonPid, "SIGKILL");
         }
       } catch {
-        /* daemon may not have been started */
+        /*
+        daemon may not have been started
+        */
       }
       rmSync(root, { recursive: true, force: true });
     }
@@ -3326,7 +3334,9 @@ test(
               if (proxyUrl) break;
             }
           } catch {
-            /* waiting for proxy readiness */
+            /*
+            waiting for proxy readiness
+            */
           }
         }
         assert.ok(proxyUrl, "tunnel-client dev proxy did not report mcp_url");
@@ -3917,7 +3927,9 @@ lines.on("line", (line) => {
           try {
             process.kill(grandchildPid, "SIGKILL");
           } catch {
-            /* ignore */
+            /*
+            ignore
+            */
           }
         }
         assert.equal(

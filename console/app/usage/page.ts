@@ -558,50 +558,45 @@ async function renderSessionScopedPage(
   // Diagnostics, the requested span page, and selected trace read are
   // independent and degrade separately. Thread provider attribution comes
   // from the Runtime's per-thread router summary in the diagnostics report.
-  const [diagnosticsResult, spansResult, traceResult] =
-    await Promise.all([
-      config === null
-        ? Promise.resolve({
-            kind: "failed" as const,
-            failure: diagnosticsFailure(
-              "autodev_control_api_not_configured",
-              "The Control API credential is not configured, so the session diagnostics cannot be read."
-            )
-          })
-        : fetchSessionDiagnostics(
-            sessionId,
-            {
-              includeEfficiency: true,
-              includeFailures: true,
-              includeEvents: true,
-              eventsLimit: viewState.eventsLimit,
-              eventsOffset: viewState.eventsOffset,
-              includeItems: true,
-              itemsLimit: viewState.itemsLimit,
-              itemsOffset: viewState.itemsOffset,
-              ...(viewState.threadId === undefined
-                ? {}
-                : { threadId: viewState.threadId })
-            },
-            config
-          ).then((result) =>
-            result.kind === "ok"
-              ? { kind: "ok" as const, report: result.data }
-              : { kind: "failed" as const, failure: controlApiFailure(result) }
-          ),
-      loadOpenLITSessionUsage(
-        sessionId,
-        sessionQuerySelection(state.selection),
-        {
-          limit: viewState.spanLimit,
-          offset: viewState.spanOffset,
-          sortDirection: viewState.spanSort
-        }
-      ),
-      selectedSpanId === undefined
-        ? Promise.resolve(undefined)
-        : loadOpenLITTrace(selectedSpanId)
-    ]);
+  const [diagnosticsResult, spansResult, traceResult] = await Promise.all([
+    config === null
+      ? Promise.resolve({
+          kind: "failed" as const,
+          failure: diagnosticsFailure(
+            "autodev_control_api_not_configured",
+            "The Control API credential is not configured, so the session diagnostics cannot be read."
+          )
+        })
+      : fetchSessionDiagnostics(
+          sessionId,
+          {
+            includeEfficiency: true,
+            includeFailures: true,
+            includeEvents: true,
+            eventsLimit: viewState.eventsLimit,
+            eventsOffset: viewState.eventsOffset,
+            includeItems: true,
+            itemsLimit: viewState.itemsLimit,
+            itemsOffset: viewState.itemsOffset,
+            ...(viewState.threadId === undefined
+              ? {}
+              : { threadId: viewState.threadId })
+          },
+          config
+        ).then((result) =>
+          result.kind === "ok"
+            ? { kind: "ok" as const, report: result.data }
+            : { kind: "failed" as const, failure: controlApiFailure(result) }
+        ),
+    loadOpenLITSessionUsage(sessionId, sessionQuerySelection(state.selection), {
+      limit: viewState.spanLimit,
+      offset: viewState.spanOffset,
+      sortDirection: viewState.spanSort
+    }),
+    selectedSpanId === undefined
+      ? Promise.resolve(undefined)
+      : loadOpenLITTrace(selectedSpanId)
+  ]);
 
   const report =
     diagnosticsResult.kind === "ok" ? diagnosticsResult.report : null;

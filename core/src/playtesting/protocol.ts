@@ -199,10 +199,7 @@ export function assertPlaytestJsonRpcNotification(
 export function assertPlaytestJsonRpcSuccess(
   value: unknown
 ): asserts value is PlaytestJsonRpcSuccess {
-  if (
-    !isRecord(value) ||
-    !hasOnlyKeys(value, ["jsonrpc", "id", "result"])
-  ) {
+  if (!isRecord(value) || !hasOnlyKeys(value, ["jsonrpc", "id", "result"])) {
     throw new TypeError(
       "JSON-RPC success must contain only jsonrpc, id, and result."
     );
@@ -224,10 +221,7 @@ export function assertPlaytestJsonRpcSuccess(
 export function assertPlaytestJsonRpcError(
   value: unknown
 ): asserts value is PlaytestJsonRpcError {
-  if (
-    !isRecord(value) ||
-    !hasOnlyKeys(value, ["jsonrpc", "id", "error"])
-  ) {
+  if (!isRecord(value) || !hasOnlyKeys(value, ["jsonrpc", "id", "error"])) {
     throw new TypeError(
       "JSON-RPC error must contain only jsonrpc, id, and error."
     );
@@ -239,10 +233,7 @@ export function assertPlaytestJsonRpcError(
     throw new TypeError("JSON-RPC error id must be a bounded string or null.");
   }
   const error = value.error;
-  if (
-    !isRecord(error) ||
-    !hasOnlyKeys(error, ["code", "message", "data"])
-  ) {
+  if (!isRecord(error) || !hasOnlyKeys(error, ["code", "message", "data"])) {
     throw new TypeError(
       "JSON-RPC error envelope must contain code, message, and optional data."
     );

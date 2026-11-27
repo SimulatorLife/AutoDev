@@ -380,8 +380,13 @@ export function usageKey(
   return `${requestId}\0${provider}\0${model}`;
 }
 
-export function safeWorkspaceId(value: unknown): string {
-  if (typeof value !== "string" || !value.trim()) return "unknown";
+/** Keep path-like identities out of metric dimensions with stable, scoped hashes. */
+function safePrivateIdentity(
+  value: unknown,
+  prefix: "ws" | "agent",
+  fallback: string
+): string {
+  if (typeof value !== "string" || !value.trim()) return fallback;
   const trimmed = value.trim();
   if (
     trimmed.startsWith("/") ||
@@ -395,51 +400,27 @@ export function safeWorkspaceId(value: unknown): string {
       .update(trimmed)
       .digest("hex")
       .slice(0, 12);
-    return `ws_${digest}`;
+    return `${prefix}_${digest}`;
   }
-  return safeMetricLabel(trimmed);
+  return safeMetricLabel(trimmed, fallback);
+}
+
+export function safeWorkspaceId(value: unknown): string {
+  return safePrivateIdentity(value, "ws", "unknown");
 }
 
 export function safeAgentIdentity(
   value: unknown,
   fallback: string = UNATTRIBUTED_DIMENSION
 ): string {
-  if (typeof value !== "string" || !value.trim()) return fallback;
-  const trimmed = value.trim();
-  if (
-    trimmed.startsWith("/") ||
-    trimmed.startsWith("~") ||
-    trimmed.includes("\\") ||
-    trimmed.includes("/Users/") ||
-    trimmed.includes("/home/") ||
-    trimmed.includes("CODEX_HOME")
-  ) {
-    return `agent_${createHash("sha256").update(trimmed).digest("hex").slice(0, 12)}`;
-  }
-  return safeMetricLabel(trimmed, fallback);
+  return safePrivateIdentity(value, "agent", fallback);
 }
 
 export function safePrivacyWorkspace(
   value: unknown,
   fallback: string = UNATTRIBUTED_DIMENSION
 ): string {
-  if (typeof value !== "string" || !value.trim()) return fallback;
-  const trimmed = value.trim();
-  if (
-    trimmed.startsWith("/") ||
-    trimmed.startsWith("~") ||
-    trimmed.includes("\\") ||
-    trimmed.includes("/Users/") ||
-    trimmed.includes("/home/") ||
-    trimmed.includes("CODEX_HOME")
-  ) {
-    const digest = createHash("sha256")
-      .update(trimmed)
-      .digest("hex")
-      .slice(0, 12);
-    return `ws_${digest}`;
-  }
-  return safeMetricLabel(trimmed, fallback);
+  return safePrivateIdentity(value, "ws", fallback);
 }
 
 export function extractWorkspaceIdWithAmbiguity(attributes: unknown): {

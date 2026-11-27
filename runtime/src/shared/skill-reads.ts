@@ -183,9 +183,7 @@ export function matchSkillReadTarget(
   customRoots?: readonly string[]
 ): { skill: string; root: string } | null {
   if (!filePath) return null;
-  const normalised = path.normalize(
-    filePath.replaceAll(/[\\/]+/g, path.sep)
-  );
+  const normalised = path.normalize(filePath.replaceAll(/[\\/]+/g, path.sep));
   if (!isSkillMarkdownPath(normalised)) return null;
   const roots = customRoots ?? resolveSkillRoots();
   for (const rootRaw of roots) {

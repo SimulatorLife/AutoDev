@@ -21,10 +21,9 @@ test("a whole environment reference names exactly one variable", () => {
 });
 
 test("Codex's environment header table preserves references without resolving credentials", () => {
-  assert.deepEqual(
-    codexEnvironmentHeaders({ "X-Api-Key": "FIXTURE_TOKEN" }),
-    { "X-Api-Key": "${FIXTURE_TOKEN}" }
-  );
+  assert.deepEqual(codexEnvironmentHeaders({ "X-Api-Key": "FIXTURE_TOKEN" }), {
+    "X-Api-Key": "${FIXTURE_TOKEN}"
+  });
   assert.deepEqual(codexEnvironmentHeaders({}), {});
   for (const invalid of [
     null,
@@ -41,10 +40,14 @@ test("Codex's environment header table preserves references without resolving cr
 });
 
 test("remote credentials resolve only against the backend environment and existing secret reader", () => {
-  const temporary = mkdtempDisposableSync(path.join(tmpdir(), "autodev-mcp-header-"));
+  const temporary = mkdtempDisposableSync(
+    path.join(tmpdir(), "autodev-mcp-header-")
+  );
   try {
     const secretFile = path.join(temporary.path, "fixture.env");
-    writeFileSync(secretFile, "FIXTURE_FILE_KEY=fixture-file-value\n", { mode: 0o600 });
+    writeFileSync(secretFile, "FIXTURE_FILE_KEY=fixture-file-value\n", {
+      mode: 0o600
+    });
     const env = {
       AUTODEV_OPENLIT_SECRET_FILE: secretFile,
       FIXTURE_BEARER: "fixture-bearer",
@@ -75,7 +78,9 @@ test("remote credentials resolve only against the backend environment and existi
 });
 
 test("missing and malformed remote credential references fail closed", () => {
-  const temporary = mkdtempDisposableSync(path.join(tmpdir(), "autodev-mcp-header-"));
+  const temporary = mkdtempDisposableSync(
+    path.join(tmpdir(), "autodev-mcp-header-")
+  );
   try {
     const env: NodeJS.ProcessEnv = Object.assign(
       Object.create({ FIXTURE_INHERITED: "not-an-owned-credential" }),
@@ -84,32 +89,63 @@ test("missing and malformed remote credential references fail closed", () => {
         FIXTURE_EMPTY: " "
       }
     );
-    for (const variable of ["FIXTURE_MISSING", "FIXTURE_EMPTY", "FIXTURE_INHERITED"]) {
+    for (const variable of [
+      "FIXTURE_MISSING",
+      "FIXTURE_EMPTY",
+      "FIXTURE_INHERITED"
+    ]) {
       assert.throws(
-        () => resolveRemoteMcpHeaders({
-          url: URL,
-          http_headers: { "X-Key": "${" + variable + "}" }
-        }, "fixture", env),
+        () =>
+          resolveRemoteMcpHeaders(
+            {
+              url: URL,
+              http_headers: { "X-Key": "${" + variable + "}" }
+            },
+            "fixture",
+            env
+          ),
         /Missing credential for remote MCP server fixture/u
       );
       assert.throws(
-        () => resolveRemoteMcpHeaders({
-          url: URL,
-          bearer_token_env_var: variable
-        }, "fixture", env),
+        () =>
+          resolveRemoteMcpHeaders(
+            {
+              url: URL,
+              bearer_token_env_var: variable
+            },
+            "fixture",
+            env
+          ),
         /Missing credential for remote MCP server fixture/u
       );
     }
-    for (const invalid of ["${TOKEN:-fallback}", "${TOKEN", "${}", "${9TOKEN}", "${TOKEN NAME}"]) {
+    for (const invalid of [
+      "${TOKEN:-fallback}",
+      "${TOKEN",
+      "${}",
+      "${9TOKEN}",
+      "${TOKEN NAME}"
+    ]) {
       assert.throws(
-        () => resolveRemoteMcpHeaders({
-          url: URL, http_headers: { "X-Key": invalid }
-        }, "fixture", env),
+        () =>
+          resolveRemoteMcpHeaders(
+            {
+              url: URL,
+              http_headers: { "X-Key": invalid }
+            },
+            "fixture",
+            env
+          ),
         /Invalid remote MCP credential reference/u
       );
     }
     assert.throws(
-      () => resolveRemoteMcpHeaders({ url: URL, bearer_token_env_var: "" }, "fixture", env),
+      () =>
+        resolveRemoteMcpHeaders(
+          { url: URL, bearer_token_env_var: "" },
+          "fixture",
+          env
+        ),
       /Invalid remote MCP credential reference/u
     );
   } finally {
@@ -119,29 +155,51 @@ test("missing and malformed remote credential references fail closed", () => {
 
 test("remote declarations cannot override transport state, merge duplicate headers, or leak invalid values", () => {
   const sentinel = "fixture-private-marker";
-  const env = { FIXTURE_TOKEN: "valid-fixture", FIXTURE_BAD: sentinel + "\r\ninjected" };
+  const env = {
+    FIXTURE_TOKEN: "valid-fixture",
+    FIXTURE_BAD: sentinel + "\r\ninjected"
+  };
   const invalid: RemoteBackendSpec[] = [
-    { url: URL, bearer_token_env_var: "FIXTURE_TOKEN", http_headers: { authorization: sentinel } },
+    {
+      url: URL,
+      bearer_token_env_var: "FIXTURE_TOKEN",
+      http_headers: { authorization: sentinel }
+    },
     { url: URL, http_headers: { "X-Key": sentinel, "x-key": "duplicate" } },
     { url: URL, http_headers: { "Invalid Name": sentinel } },
     { url: URL, http_headers: { "X-Key": "${FIXTURE_BAD}" } },
     { url: URL, http_headers: { "X-Key": sentinel + "\r\ninjected" } },
-    ...["Mcp-Session-Id", "MCP-Protocol-Version", "Last-Event-ID", "Host",
-      "Content-Length", "Content-Type", "Accept", "Transfer-Encoding"].map(
-      (name) => ({ url: URL, http_headers: { [name]: sentinel } })
-    )
+    ...[
+      "Mcp-Session-Id",
+      "MCP-Protocol-Version",
+      "Last-Event-ID",
+      "Host",
+      "Content-Length",
+      "Content-Type",
+      "Accept",
+      "Transfer-Encoding"
+    ].map((name) => ({ url: URL, http_headers: { [name]: sentinel } }))
   ];
   for (const spec of invalid) {
     assert.throws(
       () => resolveRemoteMcpHeaders(spec, "fixture", env),
       (error: unknown) =>
         error instanceof Error &&
-        error.message === "Invalid or conflicting remote MCP header declaration." &&
+        error.message ===
+          "Invalid or conflicting remote MCP header declaration." &&
         error.cause === undefined &&
         !String(error).includes(sentinel)
     );
   }
-  assert.equal(resolveRemoteMcpHeaders({
-    url: URL, http_headers: { Authorization: "Bearer explicit-fixture" }
-  }, "fixture", env).get("Authorization"), "Bearer explicit-fixture");
+  assert.equal(
+    resolveRemoteMcpHeaders(
+      {
+        url: URL,
+        http_headers: { Authorization: "Bearer explicit-fixture" }
+      },
+      "fixture",
+      env
+    ).get("Authorization"),
+    "Bearer explicit-fixture"
+  );
 });

@@ -36,7 +36,9 @@ export function userLevelSkills(skillsRoot: string): string[] {
 function declaresTargets(document: string): boolean {
   const frontmatter = parseRuleSyncFrontmatter(document);
   if (frontmatter.kind !== "valid") {
-    throw new Error("invalid-skill-document: expected YAML frontmatter mapping");
+    throw new Error(
+      "invalid-skill-document: expected YAML frontmatter mapping"
+    );
   }
   const { metadata } = frontmatter;
   if (!Object.hasOwn(metadata, "targets")) return false;

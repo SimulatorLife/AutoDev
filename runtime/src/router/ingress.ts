@@ -8,6 +8,29 @@ import {
   type ServerResponse
 } from "node:http";
 
+const HOP_BY_HOP_HEADERS = [
+  "connection",
+  "proxy-connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade"
+];
+
+/** Forward end-to-end headers only, including Connection-nominated fields. */
+function endToEndHeaders(headers: IncomingHttpHeaders): IncomingHttpHeaders {
+  const result = { ...headers };
+  const connectionTokens = String(headers.connection ?? "")
+    .split(",")
+    .map((token) => token.trim().toLowerCase());
+  for (const token of [...HOP_BY_HOP_HEADERS, ...connectionTokens])
+    delete result[token];
+  return result;
+}
+
 /** A worker's private listener; only the ingress owns the public port. */
 export interface RouterGenerationEndpoint {
   id: string;
@@ -59,6 +82,15 @@ export class RouterIngress {
     this.server = createServer((request, response) =>
       this.forward(request, response)
     );
+    // HTTP upgrades cannot be forwarded by the HTTP/SSE adapter. Refuse
+    // explicitly before admission rather than silently dropping the socket.
+    this.server.on("upgrade", (_request, socket) => {
+      socket.once("error", () => socket.destroy());
+      socket.end(
+        "HTTP/1.1 501 Not Implemented\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+        () => socket.destroy()
+      );
+    });
     this.server.keepAliveTimeout = 65_000;
     this.server.headersTimeout = 66_000;
   }
@@ -260,26 +292,11 @@ export class RouterIngress {
       return;
     }
     generation.inFlight += 1;
-    const requestIdHeader = request.headers["x-request-id"];
+    const headers = endToEndHeaders(request.headers);
+    const requestIdHeader = headers["x-request-id"];
     const requestId =
       typeof requestIdHeader === "string" ? requestIdHeader : randomUUID();
-    const headers: IncomingHttpHeaders = {
-      ...request.headers,
-      "x-request-id": requestId
-    };
-    // Reconstruct hop-by-hop transport headers for the backend connection.
-    const connectionTokens = String(headers.connection ?? "")
-      .split(",")
-      .map((token) => token.trim().toLowerCase());
-    for (const token of [
-      "connection",
-      "proxy-connection",
-      "keep-alive",
-      "transfer-encoding",
-      "upgrade",
-      ...connectionTokens
-    ])
-      delete headers[token];
+    headers["x-request-id"] = requestId;
     let finished = false;
     let backendCompleted = false;
     const finish = () => {
@@ -297,20 +314,7 @@ export class RouterIngress {
         headers
       },
       (upstream) => {
-        const responseHeaders = { ...upstream.headers };
-        const responseConnectionTokens = String(
-          responseHeaders.connection ?? ""
-        )
-          .split(",")
-          .map((token) => token.trim().toLowerCase());
-        for (const token of [
-          "connection",
-          "proxy-connection",
-          "keep-alive",
-          "transfer-encoding",
-          ...responseConnectionTokens
-        ])
-          delete responseHeaders[token];
+        const responseHeaders = endToEndHeaders(upstream.headers);
         response.writeHead(upstream.statusCode ?? 502, responseHeaders);
         upstream.pipe(response);
         upstream.once("end", () => {

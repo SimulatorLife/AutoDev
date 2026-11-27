@@ -94,14 +94,8 @@ test("opentelemetry skill is project-independent and retains its current reposit
   // The safety rules of the discipline.
   assert.match(body, /configured receiver/iu);
   assert.match(body, /authorized (?:control plane|owner)/iu);
-  assert.match(
-    body,
-    /prefer established[^.]*semantic conventions/isu
-  );
-  assert.match(
-    body,
-    /never fabricate an attribute/iu
-  );
+  assert.match(body, /prefer established[^.]*semantic conventions/isu);
+  assert.match(body, /never fabricate an attribute/iu);
 });
 
 test("AutoDev's target-state document owns its concrete observability architecture", () => {

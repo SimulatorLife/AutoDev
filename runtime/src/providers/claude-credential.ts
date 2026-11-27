@@ -1,28 +1,20 @@
 /**
- * The Claude Code account credential the Runtime uses for provider-owned
- * model discovery.
- *
- * The Anthropic model listing authenticates with the account's own OAuth
- * token, so the Runtime learns the models the signed-in account can actually
- * run instead of a static catalog. The token is the one the Claude Code
- * bridge already authenticates its turns with, and it lives either in the
- * environment or in the owner-only keychain item the bridge writes.
- */
-import {
-  keychainAccount,
-  readKeychainSecret
-} from "@simulatorlife/autodev-runtime/shared/runtime-secrets";
+The Claude Code account credential the Runtime uses for provider-owned
+model discovery.
+
+The Anthropic model listing authenticates with the account's own OAuth
+token, so the Runtime learns the models the signed-in account can actually
+run instead of a static catalog. The token is the one the Claude Code
+bridge already authenticates its turns with, and it lives either in the
+environment or in the owner-only keychain item the bridge writes.
+*/
+import { readKeychainSecret } from "@simulatorlife/autodev-runtime/shared/runtime-secrets";
 
 const KEYCHAIN_SERVICE = "com.codex.claude-bridge.oauth-token";
 
-/** The Keychain item account; launchd may omit USER and inherit LOGNAME=root. */
-export function claudeKeychainAccount(
-  env: NodeJS.ProcessEnv = process.env
-): string {
-  return keychainAccount(env);
-}
-
-/** The Claude Code account's OAuth token, or an empty string when absent. */
+/**
+The Claude Code account's OAuth token, or an empty string when absent.
+*/
 export function readClaudeOAuthToken(
   env: NodeJS.ProcessEnv = process.env
 ): string {
@@ -34,10 +26,10 @@ export function readClaudeOAuthToken(
 }
 
 /**
- * Forward the existing Claude Code OAuth token only to the quota-axi child
- * environment so its read-only Claude quota request can authenticate. The
- * child report does not contain the token.
- */
+Forward the existing Claude Code OAuth token only to the quota-axi child
+environment so its read-only Claude quota request can authenticate. The
+child report does not contain the token.
+*/
 export function claudeQuotaAxiEnvironment(
   baseEnv: NodeJS.ProcessEnv = process.env
 ): NodeJS.ProcessEnv {

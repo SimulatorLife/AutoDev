@@ -195,11 +195,20 @@ test("the hook declaration publishes the canonical source beside the events", as
 test("hook collections are GET-only and former event mutation paths are absent", async (t) => {
   const options = fixture();
   t.after(() => rmSync(options.root, { recursive: true, force: true }));
-  const declarationPath = path.join(options.repositoryRoot, ".rulesync", "hooks.jsonc");
+  const declarationPath = path.join(
+    options.repositoryRoot,
+    ".rulesync",
+    "hooks.jsonc"
+  );
   const appliedPath = path.join(options.codexHome, "hooks.json");
   const applied = JSON.stringify({
     hooks: {
-      SessionStart: [{ matcher: ".*", hooks: [{ type: "command", command: "node session-start.ts" }] }]
+      SessionStart: [
+        {
+          matcher: ".*",
+          hooks: [{ type: "command", command: "node session-start.ts" }]
+        }
+      ]
     }
   });
   writeFileSync(appliedPath, applied);
@@ -212,19 +221,38 @@ test("hook collections are GET-only and former event mutation paths are absent",
       actions: [{ type: "command", command: "node changed.ts" }]
     };
     for (const resource of ["/control/hooks", "/control/hooks-applied"]) {
-      assert.equal((await call("GET", resource, options, undefined, actor)).statusCode, 200);
-      for (const method of ["PATCH", "POST", "PUT", "DELETE", "HEAD", "OPTIONS"]) {
+      assert.equal(
+        (await call("GET", resource, options, undefined, actor)).statusCode,
+        200
+      );
+      for (const method of [
+        "PATCH",
+        "POST",
+        "PUT",
+        "DELETE",
+        "HEAD",
+        "OPTIONS"
+      ]) {
         const denied = await call(method, resource, options, body, actor);
         assert.equal(denied.statusCode, 405, `${actor} ${method} ${resource}`);
         assert.equal(denied.headers.allow, "GET");
-        assert.equal(errorCode(denied.body), "autodev_control_api_method_not_allowed");
+        assert.equal(
+          errorCode(denied.body),
+          "autodev_control_api_method_not_allowed"
+        );
       }
     }
-    for (const resource of ["/control/hooks/sessionStart", "/control/hooks/sessionStartt"]) {
+    for (const resource of [
+      "/control/hooks/sessionStart",
+      "/control/hooks/sessionStartt"
+    ]) {
       for (const method of ["GET", "PATCH", "POST", "DELETE"]) {
         const removed = await call(method, resource, options, body, actor);
         assert.equal(removed.statusCode, 404, `${actor} ${method} ${resource}`);
-        assert.equal(errorCode(removed.body), "autodev_control_api_unknown_path");
+        assert.equal(
+          errorCode(removed.body),
+          "autodev_control_api_unknown_path"
+        );
       }
     }
     assert.equal(readFileSync(declarationPath, "utf8"), DECLARATION);
@@ -236,12 +264,20 @@ test("external hook changes update the declared side without generating a projec
   const options = fixture();
   t.after(() => rmSync(options.root, { recursive: true, force: true }));
   const before = await call("GET", "/control/hooks", options);
-  const changed = DECLARATION.replace("node session-start.ts", "node changed.ts");
-  writeFileSync(path.join(options.repositoryRoot, ".rulesync", "hooks.jsonc"), changed);
+  const changed = DECLARATION.replace(
+    "node session-start.ts",
+    "node changed.ts"
+  );
+  writeFileSync(
+    path.join(options.repositoryRoot, ".rulesync", "hooks.jsonc"),
+    changed
+  );
   const after = await call("GET", "/control/hooks", options);
   assert.equal(after.statusCode, 200);
   assert.notEqual(after.body?.revision, before.body?.revision);
-  const events = after.body?.events as readonly { actions: readonly { command: string }[] }[];
+  const events = after.body?.events as readonly {
+    actions: readonly { command: string }[];
+  }[];
   assert.equal(events[0]?.actions[0]?.command, "node changed.ts");
   const applied = await call("GET", "/control/hooks-applied", options);
   assert.equal(applied.body?.available, false);
@@ -258,7 +294,12 @@ test("hook reads and retired writes require authentication", async (t) => {
       ["PATCH", "/control/hooks/sessionStart"]
     ] as const) {
       const response = responseRecorder();
-      await handleControlApiRequest(makeRequest(method, resource), response, resource, options);
+      await handleControlApiRequest(
+        makeRequest(method, resource),
+        response,
+        resource,
+        options
+      );
       assert.equal(response.statusCode, 401);
     }
   });

@@ -109,8 +109,15 @@ test("runtime publishes explicit distinct tracker session identities and unattri
   });
   assert.equal(tracker.getRecord("request-subject-a")?.provider, "provider-z");
   assert.deepEqual(tracker.listLiveSessions(30).identitiesObserved[0], {
-    sessionId: "session-a", state: "active", lastActivityAt: 20,
-    provider: "provider-z", model: "model-x", role: "worker"
+    sessionId: "session-a",
+    state: "active",
+    lastActivityAt: 20,
+    provider: "provider-z",
+    model: "model-x",
+    role: "worker",
+    // The client surface is noted on the usage tracker, not the activity
+    // records, so the bare tracker reports it as unobserved.
+    clientSurface: null
   });
   setControlApiLiveSessionsSource((now) => usage.listLiveSessions(now)!);
   try {

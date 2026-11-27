@@ -204,7 +204,9 @@ function threadEfficiency(): SessionThreadEfficiency {
   };
 }
 
-/** A report whose one thread carries efficiency evidence. */
+/**
+A report whose one thread carries efficiency evidence.
+*/
 function measuredReport(
   prompt: Partial<SessionThreadEfficiency["prompt"]> = {},
   aggregateOverrides: Partial<SessionDiagnosticsAggregates> = {}
@@ -236,7 +238,9 @@ function measuredReport(
   };
 }
 
-/** A measured report whose prompt lacks its character count. */
+/**
+A measured report whose prompt lacks its character count.
+*/
 function withoutPromptChars(): unknown {
   const base = measuredReport();
   const thread = base.threads[0]!;
@@ -520,14 +524,19 @@ test("the text report names the session, its threads and its failures", () => {
   assert.match(text, /autodev\/worker/u);
 });
 
-test("a report that matched no rollout says so instead of rendering nothing", () => {
+test("a report that matched no rollout or native observation says so instead of rendering nothing", () => {
   const text = renderSessionDiagnosticsReport({
     ...report(),
     found: false,
     threads: [],
     router: []
   });
-  assert.match(text, /No rollout found/u);
+  // `found: false` means neither evidence source matched, so the text names
+  // both rather than implying only rollouts were searched.
+  assert.match(
+    text,
+    /No rollout or retained native lifecycle observation found/u
+  );
 });
 
 test("the recent-sessions text lists the session and its thread count", () => {

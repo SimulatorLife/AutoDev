@@ -60,6 +60,7 @@ import {
   evidenceStatusLabel,
   findingSeverityLabel,
   findingStatusLabel,
+  missingReasonLabel,
   reviewClaimStatusLabel
 } from "./playtesting-labels.ts";
 import {
@@ -84,22 +85,22 @@ import {
 import { PlaytestingFindingDetail } from "./PlaytestingFindingDetail.ts";
 
 /**
- * The stack a drawer's sections are laid out in.
- *
- * The drawer's body is a run of labelled sections, and every one of them
- * needs the same vertical rhythm. Spelling it inline in each section is how
- * two adjacent sections end up a pixel apart.
- */
+The stack a drawer's sections are laid out in.
+
+The drawer's body is a run of labelled sections, and every one of them
+needs the same vertical rhythm. Spelling it inline in each section is how
+two adjacent sections end up a pixel apart.
+*/
 const SECTION_STACK_CLASS = "flex flex-col gap-2";
 
 /**
- * The views this page has, and what each one answers.
- *
- * The tabs are nouns and the page is a tool, so a reader who lands on
- * "Findings" has to guess whether it holds findings, the analyst's opinions
- * or something else entirely. The sentence under the tabs answers that, and
- * it lives beside the tab it describes so the two cannot drift apart.
- */
+The views this page has, and what each one answers.
+
+The tabs are nouns and the page is a tool, so a reader who lands on
+"Findings" has to guess whether it holds findings, the analyst's opinions
+or something else entirely. The sentence under the tabs answers that, and
+it lives beside the tab it describes so the two cannot drift apart.
+*/
 const VIEW_TABS = [
   {
     id: "overview",
@@ -128,12 +129,12 @@ const VIEW_TABS = [
 ] as const;
 
 /**
- * What the view the reader is looking at answers.
- *
- * A view that has no sentence of its own would leave the reader with the tab
- * name alone, which is what made this page hard to read: four nouns and no
- * statement of what any of them was for.
- */
+What the view the reader is looking at answers.
+
+A view that has no sentence of its own would leave the reader with the tab
+name alone, which is what made this page hard to read: four nouns and no
+statement of what any of them was for.
+*/
 function viewSummary(view: PlaytestingScope["view"]): string {
   return VIEW_TABS.find((tab) => tab.id === view)?.summary ?? "";
 }
@@ -143,15 +144,17 @@ export interface PlaytestingOverviewData {
   readonly batchCount: number;
   readonly episodeCount: number;
   readonly findingCount: number;
-  /** Persisted analyst reviews; the record that survives a Runtime restart. */
+  /**
+  Persisted analyst reviews; the record that survives a Runtime restart.
+  */
   readonly reviewCount: number;
   /**
-   * The newest analyst conclusions.
-   *
-   * The overview counts the reviews and used to stop there, so the number of
-   * conclusions was on the page and none of the conclusions were. These are
-   * the rows the overview shows; the rest of the list is one click away.
-   */
+  The newest analyst conclusions.
+  
+  The overview counts the reviews and used to stop there, so the number of
+  conclusions was on the page and none of the conclusions were. These are
+  the rows the overview shows; the rest of the list is one click away.
+  */
   readonly latestReviews: readonly ControlApiPlaytestingReview[];
   readonly latestEpisodes: readonly PlaytestEpisode[];
 }
@@ -176,15 +179,17 @@ export type PlaytestingListData =
       readonly total: number;
       readonly nextCursor: string | null;
       /**
-       * The analyst's persisted reviews for this workspace.
-       *
-       * Null when the review read failed: the session list is still the
-       * session list without it, and a row must not claim that a session was
-       * never analysed just because the counts could not be read.
-       */
+      The analyst's persisted reviews for this workspace.
+      
+      Null when the review read failed: the session list is still the
+      session list without it, and a row must not claim that a session was
+      never analysed just because the counts could not be read.
+      */
       readonly reviews?:
         readonly ControlApiPlaytestingReview[] | null | undefined;
-      /** How many reviews the workspace holds in all. */
+      /**
+      How many reviews the workspace holds in all.
+      */
       readonly reviewTotal?: number | null | undefined;
     }
   | {
@@ -192,17 +197,19 @@ export type PlaytestingListData =
       readonly rows: readonly PlaytestFinding[];
       readonly total: number;
       readonly nextCursor: string | null;
-      /** The analyst's persisted hypotheses about these sessions. */
+      /**
+      The analyst's persisted hypotheses about these sessions.
+      */
       readonly reviews?: readonly ControlApiPlaytestingReview[] | undefined;
       readonly reviewTotal?: number | undefined;
       /**
-       * The finding whose detail is open, when the address names one.
-       *
-       * It is read on its own rather than taken from the page, because a
-       * finding is opened from links that name it -- a review that raised it,
-       * a shared address -- and those links must resolve even when the
-       * finding is not on the page the list happens to be showing.
-       */
+      The finding whose detail is open, when the address names one.
+      
+      It is read on its own rather than taken from the page, because a
+      finding is opened from links that name it -- a review that raised it,
+      a shared address -- and those links must resolve even when the
+      finding is not on the page the list happens to be showing.
+      */
       readonly selectedFinding?: PlaytestFinding | null | undefined;
     }
   | {
@@ -416,12 +423,12 @@ function PageSummary({
 }
 
 /**
- * The badge for one measurement-coverage cell.
- *
- * Each coverage state has its own word: "Not assigned" is not "Partial", and
- * neither is "Unsupported". Collapsing them into one badge would claim the
- * operator had measured something they had not.
- */
+The badge for one measurement-coverage cell.
+
+Each coverage state has its own word: "Not assigned" is not "Partial", and
+neither is "Unsupported". Collapsing them into one badge would claim the
+operator had measured something they had not.
+*/
 function coverageCellBadge(status: PlaytestCoverageCellStatus): {
   readonly status: StatusBadgeVariant;
   readonly label: string;
@@ -447,12 +454,12 @@ function coverageCellBadge(status: PlaytestCoverageCellStatus): {
 }
 
 /**
- * The panel for the most recent run.
- *
- * It says what the run was, whether it finished, and which build it ran
- * against — including when that build is not the one currently available to
- * run, which is the fact an operator comparing results needs most.
- */
+The panel for the most recent run.
+
+It says what the run was, whether it finished, and which build it ran
+against — including when that build is not the one currently available to
+run, which is the fact an operator comparing results needs most.
+*/
 function latestResultSection(
   latest: PlaytestBatch | undefined,
   latestSourceLabel: string | null,
@@ -559,11 +566,11 @@ function latestResultSection(
 }
 
 /**
- * The panel for the sessions recorded most recently.
- *
- * Each row leads with the outcome in words and carries the session's own id,
- * so a reader can tell two similar runs apart before opening either.
- */
+The panel for the sessions recorded most recently.
+
+Each row leads with the outcome in words and carries the session's own id,
+so a reader can tell two similar runs apart before opening either.
+*/
 function recentSessionsSection(
   recentEpisodes: readonly PlaytestEpisode[],
   episodeCount: number,
@@ -666,15 +673,15 @@ function recentSessionsSection(
 }
 
 /**
- * The analyst's newest conclusions, on the overview.
- *
- * The overview is the page an operator opens first, and the question it is
- * read for is "what did the analyst conclude". It counted the reviews and
- * showed none of them, so the answer was one tab away with no path to it --
- * and the number of conclusions was on the page while the conclusions were
- * not. Each conclusion here opens the review's own detail, which is where
- * the whole conclusion is readable.
- */
+The analyst's newest conclusions, on the overview.
+
+The overview is the page an operator opens first, and the question it is
+read for is "what did the analyst conclude". It counted the reviews and
+showed none of them, so the answer was one tab away with no path to it --
+and the number of conclusions was on the page while the conclusions were
+not. Each conclusion here opens the review's own detail, which is where
+the whole conclusion is readable.
+*/
 function latestConclusions(
   reviews: readonly ControlApiPlaytestingReview[],
   reviewCount: number,
@@ -839,7 +846,7 @@ function overview(
                   label: badge.label,
                   title:
                     cell.missingReasons.length > 0
-                      ? cell.missingReasons.join(", ")
+                      ? cell.missingReasons.map(missingReasonLabel).join(", ")
                       : undefined
                 })
               );
@@ -899,19 +906,19 @@ function overview(
 }
 
 /**
- * The detail of one analyst review.
- *
- * The list clamps the headline so a column of them stays scannable, which is
- * right for scanning and wrong for reading: the analyst's conclusion is the
- * reason an operator comes to this view. The drawer is where the whole
- * conclusion is readable, and it is address state, so one review can be
- * linked to and a Back returns to it still open.
- *
- * The title is the conclusion and the review id is the subtitle. The id is a
- * hash of the review's identity: it says which record this is and nothing
- * about what was found, so a panel whose loudest element is the id is
- * answering a question the operator did not ask.
- */
+The detail of one analyst review.
+
+The list clamps the headline so a column of them stays scannable, which is
+right for scanning and wrong for reading: the analyst's conclusion is the
+reason an operator comes to this view. The drawer is where the whole
+conclusion is readable, and it is address state, so one review can be
+linked to and a Back returns to it still open.
+
+The title is the conclusion and the review id is the subtitle. The id is a
+hash of the review's identity: it says which record this is and nothing
+about what was found, so a panel whose loudest element is the id is
+answering a question the operator did not ask.
+*/
 function analystReviewDetail(
   review: ControlApiPlaytestingReview,
   scope: PlaytestingScope
@@ -1112,13 +1119,13 @@ function analystReviewDetail(
 }
 
 /**
- * The analyst's hypotheses about this workspace's sessions.
- *
- * A discovery review is an unscored hypothesis set about what the analyst
- * saw on screen. It is the analyst's own conclusion, it is persisted, and
- * it is the thing a reader comes to this view for — so it is shown as
- * what it is: a hypothesis, not a defect.
- */
+The analyst's hypotheses about this workspace's sessions.
+
+A discovery review is an unscored hypothesis set about what the analyst
+saw on screen. It is the analyst's own conclusion, it is persisted, and
+it is the thing a reader comes to this view for — so it is shown as
+what it is: a hypothesis, not a defect.
+*/
 function analystHypotheses(
   reviews: readonly ControlApiPlaytestingReview[],
   reviewTotal: number,
@@ -1895,13 +1902,13 @@ function activeList(
 }
 
 /**
- * The filters that are actually narrowing this list.
- *
- * A collapsed filter panel that says only "Filters" tells the reader
- * nothing about whether the list in front of them is the whole workspace
- * or a narrow slice of it. Saying how many filters are active answers
- * that at a glance, which is the question the reader actually has.
- */
+The filters that are actually narrowing this list.
+
+A collapsed filter panel that says only "Filters" tells the reader
+nothing about whether the list in front of them is the whole workspace
+or a narrow slice of it. Saying how many filters are active answers
+that at a glance, which is the question the reader actually has.
+*/
 function activeFilterCount(
   scope: PlaytestingScope,
   fields: ReturnType<typeof filterFields>

@@ -114,4 +114,3 @@ test("a module imported by package name and by path is one module in the install
     "the installed tree loaded two copies of one Runtime module"
   );
 });
-

@@ -7,30 +7,29 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   filterSkills,
-  readSkillsFilters,
-  skillsListHref
+  readSkillsFilters
 } from "../src/features/skills/skills-list-url.ts";
 import { SkillsView } from "../src/features/skills/SkillsView.ts";
 
 /**
- * The skill catalogue can be narrowed, and the narrowing survives a reload.
- *
- * Sixteen entries in the live instance, so the table runs to about three
- * screenfuls. The question the page is about -- which skills may role X
- * invoke -- had no answer on it: the operator had to read the Eligible Roles
- * column of every row, sixty-four role chips spread down three screenfuls, to
- * find out.
- *
- * The narrowing is by role rather than by name, because the catalogue is
- * sorted by name and sixteen short names in one column are a cheap scan,
- * while the role question is the expensive one.
- *
- * And it is by role rather than a text search for a second reason: the only
- * control on this page applies the moment it changes, so the page must not
- * carry a submit button, and a text search has nowhere to put its Apply. A
- * role is a bounded set, so the control that chooses one is a single-choice
- * select -- which is what the shared filter bar's on-change mode is for.
- */
+The skill catalogue can be narrowed, and the narrowing survives a reload.
+
+Sixteen entries in the live instance, so the table runs to about three
+screenfuls. The question the page is about -- which skills may role X
+invoke -- had no answer on it: the operator had to read the Eligible Roles
+column of every row, sixty-four role chips spread down three screenfuls, to
+find out.
+
+The narrowing is by role rather than by name, because the catalogue is
+sorted by name and sixteen short names in one column are a cheap scan,
+while the role question is the expensive one.
+
+And it is by role rather than a text search for a second reason: the only
+control on this page applies the moment it changes, so the page must not
+carry a submit button, and a text search has nowhere to put its Apply. A
+role is a bounded set, so the control that chooses one is a single-choice
+select -- which is what the shared filter bar's on-change mode is for.
+*/
 
 const CATALOG: readonly ScopedSkillDefinition[] = [
   {
@@ -122,10 +121,7 @@ test("an empty role is the whole catalogue", () => {
   );
 });
 
-test("the list's address carries the role, and reads it back", () => {
-  assert.equal(skillsListHref({ role: "" }), "/skills");
-  assert.equal(skillsListHref({ role: "worker" }), "/skills?role=worker");
-
+test("the list reads its role back from the address", () => {
   assert.deepEqual(readSkillsFilters({ role: "worker" }), { role: "worker" });
   assert.deepEqual(readSkillsFilters({}), { role: "" });
   // A repeated parameter takes its first value, which is what the browser's
@@ -198,18 +194,4 @@ test("the list carries no assignment control: the catalogue is read-only", () =>
   assert.doesNotMatch(markup, /data-skill-assignment=/u);
   // The filter bar is the only form on the page, and it only narrows.
   assert.equal(markup.match(/<form\b/gu)?.length, 1);
-});
-
-test("the narrowing is carried as a query, never as a path", () => {
-  // A value that tries to be a path is still a query: the route rebuilds the
-  // address from the value, so there is nothing in the flow that could point
-  // anywhere but the skill list.
-  const href = skillsListHref({ role: "/../tools" });
-  assert.ok(href.startsWith("/skills?"), `unexpected address: ${href}`);
-  assert.equal(href.includes("/../tools"), false);
-  // And it reads back as the same value it went in as.
-  const round = new URL(href, "http://skills.invalid").searchParams.get("role");
-  assert.deepEqual(readSkillsFilters({ role: round ?? "" }), {
-    role: "/../tools"
-  });
 });

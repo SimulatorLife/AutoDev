@@ -1837,6 +1837,13 @@ export function createPlaytestMcpServer(
       })
   );
 
+  const discoveryHypothesisSchema = z.strictObject({
+    hypothesisId: z.string().min(1).max(256),
+    status: z.enum(["hypothesis", "not-observed"]),
+    text: z.string().min(1).max(4096),
+    evidenceRefs: z.array(evidenceLocatorSchema).min(1).max(64)
+  });
+
   // Discovery reviews are a separate unscored write contract; the confirmatory
   // submitReview DTO stays adapter/rubric-bound.
   mcp.registerTool(
@@ -1851,38 +1858,9 @@ export function createPlaytestMcpServer(
         packetArtifactId: z.string().min(1).max(128),
         packetSha256: z.string().regex(SHA256_PATTERN),
         chronologicalSummary: z.string().min(1).max(4096),
-        observations: z
-          .array(
-            z.strictObject({
-              hypothesisId: z.string().min(1).max(256),
-              status: z.enum(["hypothesis", "not-observed"]),
-              text: z.string().min(1).max(4096),
-              evidenceRefs: z.array(evidenceLocatorSchema).min(1).max(64)
-            })
-          )
-          .min(1)
-          .max(64),
-        interpretations: z
-          .array(
-            z.strictObject({
-              hypothesisId: z.string().min(1).max(256),
-              status: z.enum(["hypothesis", "not-observed"]),
-              text: z.string().min(1).max(4096),
-              evidenceRefs: z.array(evidenceLocatorSchema).min(1).max(64)
-            })
-          )
-          .min(1)
-          .max(64),
-        alternativeExplanations: z
-          .array(
-            z.strictObject({
-              hypothesisId: z.string().min(1).max(256),
-              status: z.enum(["hypothesis", "not-observed"]),
-              text: z.string().min(1).max(4096),
-              evidenceRefs: z.array(evidenceLocatorSchema).min(1).max(64)
-            })
-          )
-          .max(32),
+        observations: z.array(discoveryHypothesisSchema).min(1).max(64),
+        interpretations: z.array(discoveryHypothesisSchema).min(1).max(64),
+        alternativeExplanations: z.array(discoveryHypothesisSchema).max(32),
         experiments: z
           .array(
             z.strictObject({

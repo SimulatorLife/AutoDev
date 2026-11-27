@@ -12,9 +12,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import {
-  MCP_SERVER_COCOINDEX
-} from "@simulatorlife/autodev-runtime/shared/tool-names";
+import { MCP_SERVER_COCOINDEX } from "@simulatorlife/autodev-runtime/shared/tool-names";
 
 import { headings } from "./support/skill-document.ts";
 
@@ -66,7 +64,9 @@ test("architecture skill stays structural, evidence-driven, and repository-agnos
 test("diagnosing skill requires root-cause evidence and verification of the original symptom", () => {
   assert.match(diagnosing, /^name: diagnosing-bugs$/mu);
   // The method is a fixed number of phases; the wording of each is not.
-  const phases = diagnosingHeadings.filter((title) => /^phase \d+/iu.test(title));
+  const phases = diagnosingHeadings.filter((title) =>
+    /^phase \d+/iu.test(title)
+  );
   assert.ok(phases.length >= 5, "the diagnosing skill declares its phases");
   assert.match(diagnosing, /failure signal/iu);
   assert.match(diagnosing, /root cause/iu);
@@ -90,7 +90,10 @@ test("semantic and language-aware skills do not require a structural graph provi
       /CodeGraphContext|\bCGC\b|list_indexed_repositories/
     );
     assert.match(body, /structural (?:code )?analysis|code context graph/i);
-    assert.match(body, /when available|when exposed|not required|Neither is required/i);
+    assert.match(
+      body,
+      /when available|when exposed|not required|Neither is required/i
+    );
   }
   assert.match(
     read(".rulesync/skills/ccc/SKILL.md"),

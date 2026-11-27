@@ -12,7 +12,11 @@ export function HookActionsView({
   readonly actions: readonly HookAction[];
 }): React.JSX.Element {
   if (actions.length === 0) {
-    return React.createElement("p", { className: MUTED_META_CLASS }, "No hook actions configured.");
+    return React.createElement(
+      "p",
+      { className: MUTED_META_CLASS },
+      "No hook actions configured."
+    );
   }
   return React.createElement(
     "ol",
@@ -24,10 +28,22 @@ export function HookActionsView({
         React.createElement(
           DetailGrid,
           { columns: 2 },
-          React.createElement(DetailValue, { label: "Matcher" }, action.matcher ?? "*"),
-          React.createElement(DetailValue, { label: "Status message" }, action.statusMessage ?? "Not specified")
+          React.createElement(
+            DetailValue,
+            { label: "Matcher" },
+            action.matcher ?? "*"
+          ),
+          React.createElement(
+            DetailValue,
+            { label: "Status message" },
+            action.statusMessage ?? "Not specified"
+          )
         ),
-        React.createElement(CodeBlock, { content: action.command, ariaLabel: "Hook command", height: "auto" })
+        React.createElement(CodeBlock, {
+          content: action.command,
+          ariaLabel: "Hook command",
+          height: "auto"
+        })
       )
     )
   );

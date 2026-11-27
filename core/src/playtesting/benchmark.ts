@@ -307,8 +307,7 @@ function assertBenchmarkMetadata(value: Record<string, unknown>): void {
 export function assertPlaytestBenchmark(
   value: unknown
 ): asserts value is PlaytestBenchmark {
-  if (!isRecord(value))
-    throw new TypeError("Benchmark must be an object.");
+  if (!isRecord(value)) throw new TypeError("Benchmark must be an object.");
   assertOnlyKeys(value, BENCHMARK_KEYS, "Benchmark");
   if (!nonEmpty(value.benchmarkId) || !nonEmpty(value.workspaceId)) {
     throw new TypeError("Benchmark requires a stable ID and workspace.");

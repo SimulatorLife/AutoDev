@@ -45,18 +45,20 @@ test("a gateway tools/call span carries the verified role, workspace and session
   assert.equal(span.attributes["autodev.workspace"], "owner/repository");
   assert.equal(span.attributes["autodev.session.id"], "019a-session_1");
   // The propagated parent is honoured, so the span joins the caller's trace.
-  assert.equal(
-    span.spanContext().traceId,
-    "0af7651916cd43dd8448eb211c80319c"
-  );
+  assert.equal(span.spanContext().traceId, "0af7651916cd43dd8448eb211c80319c");
 });
 
 test("unverifiable correlation is Not observed, never a placeholder or a raw path", async () => {
-  await recordToolCallSpan("write_file", async () => ({ status: "ok" }), undefined, {
-    role: "unknown",
-    workspace: "/Users/someone/private-project",
-    sessionId: "process-fallback"
-  });
+  await recordToolCallSpan(
+    "write_file",
+    async () => ({ status: "ok" }),
+    undefined,
+    {
+      role: "unknown",
+      workspace: "/Users/someone/private-project",
+      sessionId: "process-fallback"
+    }
+  );
   await recordToolCallSpan("write_file", async () => ({ status: "ok" }));
   const spans = getFinishedSpans();
   assert.equal(spans.length, 2);

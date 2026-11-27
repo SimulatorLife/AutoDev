@@ -255,29 +255,28 @@ export const MCODE_NATIVE_TOOL_NAMES: Readonly<Record<string, string>> = {
  * (`view_image`, `write_stdin`, Antigravity's `call_mcp_tool` dispatcher) is
  * absent here and therefore not projected.
  */
-export const CANONICAL_TO_MCODE_TOOL_NAMES: Readonly<Record<string, string>> =
-  {
-    apply_patch: "apply_patch",
-    bash: "bash",
-    exec_command: "bash",
-    execute_command: "bash",
-    glob: "glob",
-    grep: "grep",
-    list: "list",
-    multi_replace_file_content: "edit",
-    read: "read",
-    read_file: "read",
-    read_multiple_files: "read",
-    read_text_file: "read",
-    replace_file_content: "edit",
-    run_command: "bash",
-    sh: "bash",
-    shell: "bash",
-    unified_exec: "bash",
-    view_file: "read",
-    write_to_file: "write",
-    zsh: "bash"
-  };
+export const CANONICAL_TO_MCODE_TOOL_NAMES: Readonly<Record<string, string>> = {
+  apply_patch: "apply_patch",
+  bash: "bash",
+  exec_command: "bash",
+  execute_command: "bash",
+  glob: "glob",
+  grep: "grep",
+  list: "list",
+  multi_replace_file_content: "edit",
+  read: "read",
+  read_file: "read",
+  read_multiple_files: "read",
+  read_text_file: "read",
+  replace_file_content: "edit",
+  run_command: "bash",
+  sh: "bash",
+  shell: "bash",
+  unified_exec: "bash",
+  view_file: "read",
+  write_to_file: "write",
+  zsh: "bash"
+};
 
 /** Flat set of every documented CLI exception. */
 export const ALL_DOCUMENTED_EXCEPTIONS: ReadonlySet<string> = new Set([

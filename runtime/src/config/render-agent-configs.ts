@@ -126,9 +126,7 @@ export function renderRole(
   try {
     config = parse(text) as TomlTable;
   } catch (error) {
-    throw new ConfigError(
-      `role source is invalid TOML: ${source}: ${error}`
-    );
+    throw new ConfigError(`role source is invalid TOML: ${source}: ${error}`);
   }
   const template = config.developer_instructions;
   if (

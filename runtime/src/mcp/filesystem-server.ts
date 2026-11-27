@@ -76,8 +76,7 @@ export function readBridgeMcpCatalogue(
   const cataloguePath = bridgeMcpCataloguePath(codexHome);
   try {
     const catalogue: unknown = JSON.parse(readFileSync(cataloguePath, "utf8"));
-    if (isJsonRecord(catalogue))
-      return catalogue as Record<string, JsonRecord>;
+    if (isJsonRecord(catalogue)) return catalogue as Record<string, JsonRecord>;
   } catch {
     /* reported below */
   }
@@ -87,7 +86,9 @@ export function readBridgeMcpCatalogue(
 }
 
 /** The `filesystem` server's launch for one turn, scoped to its workspace and sandbox. */
-export function filesystemMcpServer(scope: FilesystemScope): StdioMcpServerLaunch {
+export function filesystemMcpServer(
+  scope: FilesystemScope
+): StdioMcpServerLaunch {
   if (!path.isAbsolute(scope.workspace))
     throw new Error(
       `the ${MCP_SERVER_FILESYSTEM} MCP server needs an absolute workspace; got "${scope.workspace}"`

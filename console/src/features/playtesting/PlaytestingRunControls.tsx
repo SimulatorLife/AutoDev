@@ -9,7 +9,8 @@ import {
   isRecord,
   PLAYTEST_LAUNCH_REQUEST_SCHEMA,
   type PlaytestLaunchRequest,
-  type PlaytestSessionReference} from "@simulatorlife/autodev-core";
+  type PlaytestSessionReference
+} from "@simulatorlife/autodev-core";
 import { useRouter } from "next/navigation";
 import React, { useEffect, useRef, useState } from "react";
 

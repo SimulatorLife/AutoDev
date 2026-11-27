@@ -13,7 +13,10 @@ import {
 } from "@simulatorlife/autodev-core";
 import { type NextRequest, NextResponse } from "next/server.js";
 
-import { jsonErrorResponse } from "../../../../src/lib/server/api-response.ts";
+import {
+  controlApiReadResponse,
+  jsonErrorResponse
+} from "../../../../src/lib/server/api-response.ts";
 import {
   controlApiFailureCode,
   readControlApiConfig
@@ -124,21 +127,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
   }
   const result = await fetchPlaytestingActiveRuns(workspaceId, config);
-  if (result.kind !== "ok") {
-    return jsonErrorResponse(
-      result.kind === "http-error" || result.kind === "unauthorized"
-        ? result.status
-        : result.kind === "unreachable"
-          ? 503
-          : 502,
-      controlApiFailureCode(result),
-      result.message
-    );
-  }
-  return NextResponse.json(
-    { kind: "ok", data: result.data },
-    { status: 200, headers: { "cache-control": "no-store" } }
-  );
+  return controlApiReadResponse(result);
 }
 
 function boundedText(value: unknown, maximum: number): string | null {

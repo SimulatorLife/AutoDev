@@ -205,7 +205,10 @@ export function extractHookToolCall(
     {};
 
   return {
-    ...unwrapCallMcpTool(canonicalToolName(rawToolName, environment), toolInput),
+    ...unwrapCallMcpTool(
+      canonicalToolName(rawToolName, environment),
+      toolInput
+    ),
     rawToolName
   };
 }

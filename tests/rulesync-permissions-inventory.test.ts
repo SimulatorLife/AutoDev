@@ -188,7 +188,9 @@ The mode is asserted on the written file rather than on the source of the
 writer, so a refactor of the writer cannot silently widen it.
 */
 test("the Antigravity permissions file is written for its owner only", () => {
-  const directory = mkdtempSync(path.join(tmpdir(), "autodev-agy-permissions-"));
+  const directory = mkdtempSync(
+    path.join(tmpdir(), "autodev-agy-permissions-")
+  );
   try {
     const settingsPath = join(directory, "settings.json");
     updateAntigravityPermissions(settingsPath, [directory], directory);
@@ -281,13 +283,13 @@ test("the permission inventory reads sources without changing them", () => {
     ".rulesync/mcp.jsonc",
     ".rulesync/permissions.jsonc"
   ];
-  const before = paths.map((relativePath) =>
-    statSync(join(repositoryRoot, relativePath)).mtimeMs
+  const before = paths.map(
+    (relativePath) => statSync(join(repositoryRoot, relativePath)).mtimeMs
   );
   const contents = paths.map(read);
   for (const content of contents) assert.ok(content.length > 0);
-  const after = paths.map((relativePath) =>
-    statSync(join(repositoryRoot, relativePath)).mtimeMs
+  const after = paths.map(
+    (relativePath) => statSync(join(repositoryRoot, relativePath)).mtimeMs
   );
   assert.deepEqual(after, before);
 });

@@ -94,12 +94,21 @@ test("native hook aliases preserve the observed tool name and only translate kno
       name
     );
   }
-  assert.equal(extractHookToolCall({ tool_name: "read" }, {})?.toolName, "read");
+  assert.equal(
+    extractHookToolCall({ tool_name: "read" }, {})?.toolName,
+    "read"
+  );
 });
 
 test("skill read identities are bounded, retry-stable, and scoped to observed turns or calls", () => {
   const session = "session".repeat(100);
-  const id = skillReadEventId(session, "turn-1", "call-1", "example", "/skills");
+  const id = skillReadEventId(
+    session,
+    "turn-1",
+    "call-1",
+    "example",
+    "/skills"
+  );
   assert.match(id ?? "", /^read:[a-f0-9]{64}$/u);
   assert.equal(
     skillReadEventId(session, "turn-1", "call-2", "example", "/skills"),
@@ -117,7 +126,10 @@ test("skill read identities are bounded, retry-stable, and scoped to observed tu
     skillReadEventId(session, null, "call-1", "example", "/skills"),
     skillReadEventId(session, null, "call-2", "example", "/skills")
   );
-  assert.equal(skillReadEventId(session, null, null, "example", "/skills"), null);
+  assert.equal(
+    skillReadEventId(session, null, null, "example", "/skills"),
+    null
+  );
 });
 
 test("hook retries reach the router with the same identity; unidentified calls do not invent usage", async (t) => {

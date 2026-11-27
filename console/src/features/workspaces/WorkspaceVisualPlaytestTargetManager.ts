@@ -5,7 +5,8 @@ import {
   type ControlApiWorkspaceVisualPlaytestTargetsResponse,
   isRecord,
   playtestVisualProgressPolicy,
-  type WorkspaceVisualPlaytestTargetApproval} from "@simulatorlife/autodev-core";
+  type WorkspaceVisualPlaytestTargetApproval
+} from "@simulatorlife/autodev-core";
 import React, { useEffect, useState } from "react";
 
 import { Button } from "../../components/forms/Button.ts";

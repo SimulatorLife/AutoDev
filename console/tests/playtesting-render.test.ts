@@ -148,7 +148,9 @@ function scope(
   return parsePlaytestingScope({ workspaceId: WORKSPACE, ...input });
 }
 
-/** A fetched window whose lines record different subsets of the same fields. */
+/**
+A fetched window whose lines record different subsets of the same fields.
+*/
 function traceWindow(): ControlApiPlaytestingWindowResponse {
   return {
     schema: "autodev-control-playtesting-window-v1",
@@ -845,6 +847,12 @@ test("a loop-guard stop explains the repeated decision and opens its stop step b
   );
   assert.match(html, /Game outcome<\/dt>[^]*?No game outcome[^]*?unknown/u);
   assert.doesNotMatch(explanation, /Game lost|Player lost/u);
+  // A missing reason is named in the operator's words, not as its wire code.
+  assert.match(
+    html,
+    /Recorded missing reasons: A limit cut the episode short/u
+  );
+  assert.doesNotMatch(html, /Recorded missing reasons: budget-truncated/u);
 });
 
 test("a no-progress stop says the game stopped advancing and opens its stop step", () => {

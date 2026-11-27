@@ -239,9 +239,7 @@ function bindingRngError(value: Record<string, unknown>): string | null {
 
 function bindingSchemaError(value: Record<string, unknown>): string | null {
   for (const key of ["observation", "action", "event"]) {
-    const schema = isRecord(value.schemas)
-      ? value.schemas[key]
-      : undefined;
+    const schema = isRecord(value.schemas) ? value.schemas[key] : undefined;
     if (!isRecord(schema)) {
       return `The adapter binding must declare the game's ${key} schema.`;
     }

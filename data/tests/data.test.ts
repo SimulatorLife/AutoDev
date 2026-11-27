@@ -74,7 +74,8 @@ test("the shared RuleSync frontmatter decoder uses YAML semantics", () => {
   }
   for (const targets of ["null", "copilot", "[1]"]) {
     assert.throws(
-      () => parseRuleSyncCommand("audit", `---\ntargets: ${targets}\n---\nBody.\n`),
+      () =>
+        parseRuleSyncCommand("audit", `---\ntargets: ${targets}\n---\nBody.\n`),
       RuleSyncCommandValidationError
     );
   }
@@ -1452,7 +1453,9 @@ test("RuleSync hook state reports where each event is declared and exposes no wr
     // from, so the two views of the declaration cannot disagree.
     assert.equal(
       state.revision,
-      createHash("sha256").update(state.content ?? "", "utf8").digest("hex")
+      createHash("sha256")
+        .update(state.content ?? "", "utf8")
+        .digest("hex")
     );
 
     // The event every target inherits is declared in the shared block, and the

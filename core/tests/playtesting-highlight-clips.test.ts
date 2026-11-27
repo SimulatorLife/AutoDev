@@ -8,7 +8,9 @@ import {
   type PlaytestHighlightClip
 } from "../src/index.ts";
 
-function sampleClip(overrides: Partial<PlaytestHighlightClip> = {}): PlaytestHighlightClip {
+function sampleClip(
+  overrides: Partial<PlaytestHighlightClip> = {}
+): PlaytestHighlightClip {
   return {
     id: "highlight-1",
     mediaType: PLAYTEST_HIGHLIGHT_MEDIA_TYPE,
@@ -44,7 +46,10 @@ test("assertPlaytestHighlightClips accepts valid bounded highlight clips", () =>
 test("assertPlaytestHighlightClips rejects malformed, duplicate, or unbounded clips", () => {
   assert.throws(() => assertPlaytestHighlightClips("nope"), TypeError);
   assert.throws(
-    () => assertPlaytestHighlightClips([sampleClip({ mediaType: "image/png" as "image/gif" })]),
+    () =>
+      assertPlaytestHighlightClips([
+        sampleClip({ mediaType: "image/png" as "image/gif" })
+      ]),
     TypeError
   );
   assert.throws(
@@ -52,19 +57,28 @@ test("assertPlaytestHighlightClips rejects malformed, duplicate, or unbounded cl
     TypeError
   );
   assert.throws(
-    () => assertPlaytestHighlightClips([sampleClip({ startStep: 5, endStep: 3 })]),
+    () =>
+      assertPlaytestHighlightClips([sampleClip({ startStep: 5, endStep: 3 })]),
     TypeError
   );
   assert.throws(
-    () => assertPlaytestHighlightClips([sampleClip({ frameCount: 2, frameIds: ["frame-1"] })]),
+    () =>
+      assertPlaytestHighlightClips([
+        sampleClip({ frameCount: 2, frameIds: ["frame-1"] })
+      ]),
     TypeError
   );
   assert.throws(
-    () => assertPlaytestHighlightClips([sampleClip({ id: "dup" }), sampleClip({ id: "dup" })]),
+    () =>
+      assertPlaytestHighlightClips([
+        sampleClip({ id: "dup" }),
+        sampleClip({ id: "dup" })
+      ]),
     TypeError
   );
-  const tooMany = Array.from({ length: PLAYTEST_HIGHLIGHT_MAX_CLIPS_PER_EPISODE + 1 }, (_, i) =>
-    sampleClip({ id: "clip-" + String(i) })
+  const tooMany = Array.from(
+    { length: PLAYTEST_HIGHLIGHT_MAX_CLIPS_PER_EPISODE + 1 },
+    (_, i) => sampleClip({ id: "clip-" + String(i) })
   );
   assert.throws(() => assertPlaytestHighlightClips(tooMany), TypeError);
 });

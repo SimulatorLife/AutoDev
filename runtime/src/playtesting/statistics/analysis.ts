@@ -1,28 +1,28 @@
 /**
- * Runtime-owned, narrow invocation API for the Playtesting statistical
- * analysis path required by `docs/playtesting-measurement-contract.md`
- * §4-5.
- *
- * The Core comparison module accepts a `PlaytestNumericInterval` from
- * any trusted source; this file is the only place inside the Runtime
- * that produces such an interval. It shells out to a hash-locked Python
- * worker (see `environment.ts`) over a one-request JSON-RPC channel on the
- * worker's stdio.
- *
- * The API exposes narrow calls that delegate every numerical method to the
- * locked Python/SciPy/statsmodels worker:
- *
- *   pairedBootstrapPercentileInterval(input) -> PlaytestNumericInterval
- *   exactBinomialProportionInterval(input)    -> PlaytestNumericInterval
- *   multiplicityAdjustedPValues(input)        -> PlaytestMultiplicityResult
- *
- * Both share the same isolation guarantees: hash-locked env, frozen
- * pip cache, no system-Python fallback, no implicit defaults for the
- * named-in-fixture inputs (seed, resamples, confidence level).
- *
- * No homegrown bootstrap math lives here. The Python worker is the
- * single source of inference; the Runtime only marshals bytes.
- */
+Runtime-owned, narrow invocation API for the Playtesting statistical
+analysis path required by `docs/playtesting-measurement-contract.md`
+§4-5.
+
+The Core comparison module accepts a `PlaytestNumericInterval` from
+any trusted source; this file is the only place inside the Runtime
+that produces such an interval. It shells out to a hash-locked Python
+worker (see `environment.ts`) over a one-request JSON-RPC channel on the
+worker's stdio.
+
+The API exposes narrow calls that delegate every numerical method to the
+locked Python/SciPy/statsmodels worker:
+
+  pairedBootstrapPercentileInterval(input) -> PlaytestNumericInterval
+  exactBinomialProportionInterval(input)    -> PlaytestNumericInterval
+  multiplicityAdjustedPValues(input)        -> PlaytestMultiplicityResult
+
+Both share the same isolation guarantees: hash-locked env, frozen
+pip cache, no system-Python fallback, no implicit defaults for the
+named-in-fixture inputs (seed, resamples, confidence level).
+
+No homegrown bootstrap math lives here. The Python worker is the
+single source of inference; the Runtime only marshals bytes.
+*/
 
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -43,7 +43,9 @@ import {
   type PlaytestStatisticFixture
 } from "./lock-manifest.ts";
 
-/** One JSON-RPC 2.0 envelope the worker answers a request with. */
+/**
+One JSON-RPC 2.0 envelope the worker answers a request with.
+*/
 type JsonRpcEnvelope =
   | {
       readonly kind: "response";
@@ -73,15 +75,25 @@ const MULTIPLICITY_METHODS = new Set<string>([
   "fdr_tsbky"
 ]);
 
-/** Statistical operations the Runtime exposes to the comparison layer. */
+/**
+Statistical operations the Runtime exposes to the comparison layer.
+*/
 export interface PlaytestBootstrapInput {
-  /** Ordered paired-difference array; positive == candidate wins. */
+  /**
+  Ordered paired-difference array; positive == candidate wins.
+  */
   readonly array: readonly number[];
-  /** Bootstrap resample count. Must be a positive integer. */
+  /**
+  Bootstrap resample count. Must be a positive integer.
+  */
   readonly resamples?: number;
-  /** Confidence level for the percentile interval; (0, 1). */
+  /**
+  Confidence level for the percentile interval; (0, 1).
+  */
   readonly confidenceLevel?: number;
-  /** Integer seed for `numpy.random.default_rng`. */
+  /**
+  Integer seed for `numpy.random.default_rng`.
+  */
   readonly seed?: number;
 }
 
@@ -143,7 +155,9 @@ export class PlaytestStatisticTransportError extends Error {
   }
 }
 
-/** Lower-level handle for tests and the integration runner. */
+/**
+Lower-level handle for tests and the integration runner.
+*/
 export interface RuntimePlaytestStatAnalysisOptions {
   readonly timeoutMs?: number;
   readonly uvBinary?: string;
@@ -167,7 +181,9 @@ export class RuntimePlaytestStatAnalysis {
     this.fixtureTextOverride = options.fixtureTextOverride;
   }
 
-  /** Run scipy.stats.bootstrap against the isolated worker. */
+  /**
+  Run scipy.stats.bootstrap against the isolated worker.
+  */
   async pairedBootstrapPercentileInterval(
     input: PlaytestBootstrapInput
   ): Promise<PlaytestNumericInterval> {
@@ -193,7 +209,9 @@ export class RuntimePlaytestStatAnalysis {
     return parseNumericInterval(intervalEnvelope as Record<string, unknown>);
   }
 
-  /** Run SciPy's exact Clopper-Pearson binomial preference interval. */
+  /**
+  Run SciPy's exact Clopper-Pearson binomial preference interval.
+  */
   async exactBinomialProportionInterval(
     input: PlaytestBinomialProportionInput
   ): Promise<PlaytestNumericInterval> {
@@ -234,7 +252,9 @@ export class RuntimePlaytestStatAnalysis {
     return interval;
   }
 
-  /** Run statsmodels.stats.multitest.multipletests against the worker. */
+  /**
+  Run statsmodels.stats.multitest.multipletests against the worker.
+  */
   async multiplicityAdjustedPValues(
     input: PlaytestMultiplicityInput
   ): Promise<PlaytestMultiplicityResult> {
@@ -290,15 +310,15 @@ export class RuntimePlaytestStatAnalysis {
   }
 
   /**
-   * Run the §4 worked A/B fixture once for each arm. Returns the
-   * `PlaytestNumericInterval`s and the fixture hash so an acceptance
-   * test can reproduce an earlier run exactly.
-   *
-   * Throws if the worker's results do not exactly equal the contract's
-   * `expectedInterval`. The comparison uses integer-rounded checks
-   * against the expected two-decimal bounds the contract records
-   * (e.g. `[+0.05, +0.16]` and `[−0.39, −0.21]`).
-   */
+  Run the §4 worked A/B fixture once for each arm. Returns the
+  `PlaytestNumericInterval`s and the fixture hash so an acceptance
+  test can reproduce an earlier run exactly.
+  
+  Throws if the worker's results do not exactly equal the contract's
+  `expectedInterval`. The comparison uses integer-rounded checks
+  against the expected two-decimal bounds the contract records
+  (e.g. `[+0.05, +0.16]` and `[−0.39, −0.21]`).
+  */
   async runWorkedFixture(): Promise<{
     readonly primary: PlaytestNumericInterval;
     readonly guardrail: PlaytestNumericInterval;
@@ -338,7 +358,9 @@ export class RuntimePlaytestStatAnalysis {
     };
   }
 
-  /** Hash fingerprint of the locked Python environment (see environment.ts). */
+  /**
+  Hash fingerprint of the locked Python environment (see environment.ts).
+  */
   environmentFingerprint(): string {
     return this.environment.contentHash;
   }
@@ -563,7 +585,9 @@ function validateBinomialProportionInput(
   }
 }
 
-/** Validate and return a plain object ready to be marshalled to Python. */
+/**
+Validate and return a plain object ready to be marshalled to Python.
+*/
 function validateBootstrapInput(input: PlaytestBootstrapInput): void {
   if (!Array.isArray(input.array) || input.array.length === 0) {
     throw new PlaytestStatisticInputError(

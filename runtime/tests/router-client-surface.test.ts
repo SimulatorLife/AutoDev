@@ -25,7 +25,9 @@ import {
 } from "../src/router/telemetry.ts";
 import { UsageTracker } from "../src/router/usage.ts";
 
-function mockRequest(headers: Record<string, string | string[]>): IncomingMessage {
+function mockRequest(
+  headers: Record<string, string | string[]>
+): IncomingMessage {
   return { headers } as unknown as IncomingMessage;
 }
 
@@ -232,12 +234,18 @@ test("router spans omit absent clientSurface while metrics label null as unknown
     "gen_ai.client.token.usage"
   ]) {
     const surfaces = new Set(
-      metricPoints
-        .filter((p) => p.name === metricName)
-        .map((p) => p.surface)
+      metricPoints.filter((p) => p.name === metricName).map((p) => p.surface)
     );
-    assert.equal(surfaces.has("codex_exec"), true, `${metricName} should record codex_exec`);
-    assert.equal(surfaces.has("unknown"), true, `${metricName} should label null as unknown`);
+    assert.equal(
+      surfaces.has("codex_exec"),
+      true,
+      `${metricName} should record codex_exec`
+    );
+    assert.equal(
+      surfaces.has("unknown"),
+      true,
+      `${metricName} should label null as unknown`
+    );
   }
 });
 

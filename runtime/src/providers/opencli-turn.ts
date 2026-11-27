@@ -23,8 +23,7 @@ export interface OpencliReply {
 export interface OpencliSiteSpec {
   readonly site: OpencliSite;
   readonly models:
-    | readonly string[]
-    | ((exec: OpencliExec) => Promise<string[]>);
+    readonly string[] | ((exec: OpencliExec) => Promise<string[]>);
 }
 
 export const GEMINI_REPLY_PREFIX = "💬 ";

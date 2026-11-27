@@ -85,12 +85,17 @@ export function renderBridgeMcpCatalogue(source: string): string {
         `unable to read MCP source ${source}: ${errorMessage(error)}`
       );
     }
-    if (!isRecord(parsed.mcpServers) || Object.keys(parsed.mcpServers).length === 0) {
+    if (
+      !isRecord(parsed.mcpServers) ||
+      Object.keys(parsed.mcpServers).length === 0
+    ) {
       throw new ConfigError(`MCP source declares no mcpServers: ${source}`);
     }
     const merged: Record<string, unknown> = { ...parsed.mcpServers };
     if (isRecord(parsed.codexcli) && isRecord(parsed.codexcli.mcpServers)) {
-      for (const [name, override] of Object.entries(parsed.codexcli.mcpServers)) {
+      for (const [name, override] of Object.entries(
+        parsed.codexcli.mcpServers
+      )) {
         if (override === null) {
           delete merged[name];
           continue;
@@ -103,7 +108,10 @@ export function renderBridgeMcpCatalogue(source: string): string {
           delete base.command;
           delete base.args;
           delete base.cwd;
-        } else if (override.command !== undefined && override.url === undefined) {
+        } else if (
+          override.command !== undefined &&
+          override.url === undefined
+        ) {
           delete base.url;
           delete base.bearer_token_env_var;
           delete base.headers;

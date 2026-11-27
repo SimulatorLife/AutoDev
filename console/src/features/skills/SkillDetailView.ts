@@ -165,9 +165,14 @@ export function SkillDetailView({
       React.createElement(SourceView, {
         source: source.content,
         format: "Source",
-        rendered: parsed.kind === "valid"
-          ? React.createElement(PromptMarkdown, { body: parsed.body })
-          : React.createElement("p", { className: MUTED_META_CLASS, role: "status" }, "Skill frontmatter could not be read. Inspect the source.")
+        rendered:
+          parsed.kind === "valid"
+            ? React.createElement(PromptMarkdown, { body: parsed.body })
+            : React.createElement(
+                "p",
+                { className: MUTED_META_CLASS, role: "status" },
+                "Skill frontmatter could not be read. Inspect the source."
+              )
       })
     )
   );

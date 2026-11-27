@@ -1141,9 +1141,7 @@ function checkMcodeProfile(
       `ok MiniMax Code profile (${profileDir}) generated from ${paths.repositoryRoot}/.rulesync`
     );
     if (operator.profileDirectory === null) {
-      writeLine(
-        "ok MiniMax Code operator profile absent; nothing to enroll"
-      );
+      writeLine("ok MiniMax Code operator profile absent; nothing to enroll");
     } else if (operator.conflicts.length > 0) {
       for (const conflict of operator.conflicts)
         writeLine(`conflict MiniMax Code operator profile: ${conflict}`);

@@ -26,10 +26,7 @@ void test("unknown, empty, or null roles fail closed (read-only and no writable 
     assert.equal(isReadOnlyRole(invalid), true);
     assert.equal(hasRoleContract(invalid), false);
     assert.equal(findRoleContract(invalid), null);
-    assert.throws(
-      () => roleContract(invalid),
-      /Unknown AutoDev agent role/u
-    );
+    assert.throws(() => roleContract(invalid), /Unknown AutoDev agent role/u);
   }
 });
 
@@ -39,7 +36,10 @@ void test("isReadOnlyRole and roleContract: case-insensitive role keys and full 
   assert.equal(roleContract("browser-tester").shell, false);
   assert.equal(roleContract("browser-tester").hooks, false);
   assert.equal(roleContract("playtest-analyst").shell, false);
-  assert.equal(roleContract("playtest-analyst").skillsPolicy?.bundledEnabled, false);
+  assert.equal(
+    roleContract("playtest-analyst").skillsPolicy?.bundledEnabled,
+    false
+  );
   assert.equal(roleContract("worker").shell, true);
   assert.equal(roleContract("worker").hooks, true);
   assert.equal(roleContract("orchestrator").mcpApprovalMode?.xacpx, "approve");

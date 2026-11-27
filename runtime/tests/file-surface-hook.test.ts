@@ -37,7 +37,11 @@ test("Codex's native file tools are refused with the filesystem tool to use inst
 });
 
 test("every other tool, and an unreadable payload, is left to the other policies", () => {
-  for (const tool of ["exec_command", "mcp__filesystem__read_media_file", "wait"])
+  for (const tool of [
+    "exec_command",
+    "mcp__filesystem__read_media_file",
+    "wait"
+  ])
     assert.equal(evaluateFileSurfaceHook(payload(tool)).denied, false, tool);
   assert.equal(evaluateFileSurfaceHook("not json").denied, false);
 });

@@ -8,8 +8,7 @@ export function isRuleSyncTargetList(value: unknown): value is string[] {
   );
 }
 
-const FRONTMATTER_PATTERN =
-  /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)([\s\S]*)$/u;
+const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)([\s\S]*)$/u;
 
 export type RuleSyncFrontmatter =
   | {

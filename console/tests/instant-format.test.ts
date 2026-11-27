@@ -71,13 +71,19 @@ const evaluation: EvaluationResult = {
 test("relative time reads how far a moment is from now, truncated, in both directions", () => {
   assert.equal(relativeInstantText(TIMESTAMP, AT + 3 * HOUR), "3 hours ago");
   // Fifty-nine minutes ago has not yet been an hour ago.
-  assert.equal(relativeInstantText(TIMESTAMP, AT + 59 * MINUTE), "59 minutes ago");
+  assert.equal(
+    relativeInstantText(TIMESTAMP, AT + 59 * MINUTE),
+    "59 minutes ago"
+  );
   assert.equal(relativeInstantText(TIMESTAMP, AT + 1 * MINUTE), "1 minute ago");
   assert.equal(relativeInstantText(TIMESTAMP, AT + 2 * DAY), "2 days ago");
   assert.equal(relativeInstantText(TIMESTAMP, AT + 400 * DAY), "1 year ago");
   // A moment that is now has just passed; a quota reset is still ahead.
   assert.equal(relativeInstantText(TIMESTAMP, AT), "0 seconds ago");
-  assert.equal(relativeInstantText(TIMESTAMP, AT - 20 * MINUTE), "in 20 minutes");
+  assert.equal(
+    relativeInstantText(TIMESTAMP, AT - 20 * MINUTE),
+    "in 20 minutes"
+  );
   // A value that is not an instant is shown whole.
   assert.equal(
     relativeInstantText("when the runtime said so", AT),
@@ -90,7 +96,10 @@ test("local time is the full date and time in the operator's zone, never a fixed
     localInstantText(TIMESTAMP, "America/New_York"),
     "Oct 7, 2026, 8:00 AM"
   );
-  assert.equal(localInstantText(TIMESTAMP, "Asia/Tokyo"), "Oct 7, 2026, 9:00 PM");
+  assert.equal(
+    localInstantText(TIMESTAMP, "Asia/Tokyo"),
+    "Oct 7, 2026, 9:00 PM"
+  );
   assert.equal(
     localInstantText("when the runtime said so", "UTC"),
     "when the runtime said so"
@@ -106,7 +115,10 @@ test("the storage form names its zone and leaves a non-instant whole", () => {
     instantLabel("2026-10-07T12:00:00+02:00"),
     "2026-10-07 12:00:00 +02:00"
   );
-  assert.equal(instantLabel("when the runtime said so"), "when the runtime said so");
+  assert.equal(
+    instantLabel("when the runtime said so"),
+    "when the runtime said so"
+  );
   assert.equal(instantLabel(undefined), "");
   assert.equal(isReadableInstant(TIMESTAMP), true);
   assert.equal(isReadableInstant("2026-10-07 12:00:00"), true);
@@ -139,7 +151,9 @@ test("InstantDisplay server-renders the machine value and its storage form, neve
   // A calendar date names a day, not a moment, so it never becomes a relative
   // or local time (which, west of UTC, would read as the previous day).
   assert.equal(
-    renderToStaticMarkup(React.createElement(InstantDisplay, { value: "2026-10-07" })),
+    renderToStaticMarkup(
+      React.createElement(InstantDisplay, { value: "2026-10-07" })
+    ),
     '<time dateTime="2026-10-07">2026-10-07</time>'
   );
 });
@@ -155,7 +169,11 @@ test("the inline display toggle cycles representations behind a labelled native 
       dataAttribute: "instant",
       representations: [
         { id: "relative", text: "3 hours ago", name: "relative time" },
-        { id: "local", text: "Oct 7, 2026, 8:00 AM", name: "local date and time" }
+        {
+          id: "local",
+          text: "Oct 7, 2026, 8:00 AM",
+          name: "local date and time"
+        }
       ]
     })
   );
@@ -185,7 +203,10 @@ test("a size cycles the measurements its source took, and an unmeasured unit say
   assert.equal(measureText({ id: "bytes", value: 1200 }), "1,200 bytes");
   assert.equal(measureText({ id: "characters", value: 1 }), "1 character");
   assert.equal(measureText({ id: "tokens", value: 0 }), "0 tokens");
-  assert.equal(measureText({ id: "tokens", value: null }), "Not observed (tokens)");
+  assert.equal(
+    measureText({ id: "tokens", value: null }),
+    "Not observed (tokens)"
+  );
   assert.deepEqual(
     measureRepresentations([
       { id: "bytes", value: 1200 },
@@ -227,7 +248,10 @@ test("the same instant reads the same on the Usage trace and the Evaluations tra
   );
   const rendered = `<time dateTime="${TIMESTAMP}">2026-10-07 12:00:00 UTC</time>`;
   for (const markup of [usage, evaluations]) {
-    assert.ok(markup.includes(rendered), "the instant renders through InstantDisplay");
+    assert.ok(
+      markup.includes(rendered),
+      "the instant renders through InstantDisplay"
+    );
   }
 });
 
@@ -241,7 +265,10 @@ test("an instant has one owner, so no view can spell one of its own", () => {
   // moment in the server's own zone.
   const consoleRoot = join(import.meta.dirname, "..");
   const ui = join(consoleRoot, "src", "components", "ui");
-  const owners = new Set([join(ui, "instant.ts"), join(ui, "InstantDisplay.ts")]);
+  const owners = new Set([
+    join(ui, "instant.ts"),
+    join(ui, "InstantDisplay.ts")
+  ]);
   const offenders: string[] = [];
   for (const dir of ["src", "app"]) {
     for (const relative of readdirSync(join(consoleRoot, dir), {
@@ -262,9 +289,12 @@ test("an instant has one owner, so no view can spell one of its own", () => {
           trimmed.includes("Intl.DateTimeFormat(") ||
           trimmed.includes("Intl.RelativeTimeFormat(") ||
           /new Date\([^)]*\)\.toLocaleString\(/u.test(trimmed) ||
-          /function (?:format|split|instant)\w*(?:Instant|Timestamp)\w*\s*\(/u.test(trimmed) ||
+          /function (?:format|split|instant)\w*(?:Instant|Timestamp)\w*\s*\(/u.test(
+            trimmed
+          ) ||
           /from "[./]*(?:components\/ui\/)?instant\.ts"/u.test(trimmed);
-        if (offence) offenders.push(`${relative.toString()}:${index + 1} ${trimmed}`);
+        if (offence)
+          offenders.push(`${relative.toString()}:${index + 1} ${trimmed}`);
       });
     }
   }

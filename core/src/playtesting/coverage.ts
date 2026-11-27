@@ -119,7 +119,6 @@ export interface PlaytestCoverageEpisode {
   readonly metrics: readonly PlaytestNumericResult[];
 }
 
-
 function isText(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }

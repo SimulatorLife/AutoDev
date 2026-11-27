@@ -2178,15 +2178,15 @@ test("canonical target treats ChatGPT as a first-class role-governed participant
     doc.indexOf("### Unified user-chat and CLI execution entrypoints"),
     doc.indexOf("### Role-oriented execution and provider routing")
   );
-  assert.match(entrypoints, /first-class, provider-agnostic agent participants/u);
+  assert.match(
+    entrypoints,
+    /first-class, provider-agnostic agent participants/u
+  );
   assert.match(
     entrypoints,
     /never treated as a permanently restricted read-only external MCP consumer/u
   );
-  assert.match(
-    entrypoints,
-    /never\*\* a separate read-only capability model/u
-  );
+  assert.match(entrypoints, /never\*\* a separate read-only capability model/u);
   assert.match(entrypoints, /workspace-confined filesystem mutations/u);
   assert.match(entrypoints, /canonical `xacpx` MCP interface/u);
   assert.doesNotMatch(
@@ -2197,10 +2197,7 @@ test("canonical target treats ChatGPT as a first-class role-governed participant
     new URL("docs/chatgpt-secure-mcp-tunnel.md", repositoryRoot),
     "utf8"
   );
-  assert.doesNotMatch(
-    tunnelDoc,
-    /restricted to stateless, read-only tools/u
-  );
+  assert.doesNotMatch(tunnelDoc, /restricted to stateless, read-only tools/u);
   assert.match(tunnelDoc, /Role-driven MCP access policy/u);
 });
 

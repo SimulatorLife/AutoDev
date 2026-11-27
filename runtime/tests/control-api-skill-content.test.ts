@@ -173,7 +173,8 @@ test("the canonical skill source is read-only: a write is refused and the source
     // touched: a refused write must not half-apply.
     const written = await h.call("PATCH", sourceUrl, {
       expectedRevision: read.body?.revision,
-      content: "---\nname: release-checklist\ndescription: Edited.\n---\n\nEdited.\n"
+      content:
+        "---\nname: release-checklist\ndescription: Edited.\n---\n\nEdited.\n"
     });
     assert.equal(written.status, 405);
     assert.equal(written.headers.allow, "GET");

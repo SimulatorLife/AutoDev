@@ -834,7 +834,6 @@ test("operator PATCH validates fields, persists provider state, and audits the a
   }
 });
 
-
 test("POST /control/providers/:provider/check runs the router's check for an operator", async () => {
   const saved = saveEnv();
   const checked: string[] = [];
@@ -1089,7 +1088,6 @@ test("operator role PATCH configures and validates reasoning effort, respecting 
   }
 });
 
-
 test("failed persistence rolls back the in-memory provider policy", async () => {
   const saved = saveEnv();
   const previous = ROUTING_POLICY.assignmentFor("claude", "subagent");
@@ -1125,7 +1123,6 @@ test("failed persistence rolls back the in-memory provider policy", async () => 
     restoreEnv(saved);
   }
 });
-
 
 test("provider enablement disables globally while preserving its roles and limits", async () => {
   const saved = saveEnv();
@@ -1324,7 +1321,6 @@ test("provider agent limits accept Unlimited and reject values that are not limi
   }
 });
 
-
 test("a failed provider limits persist leaves no limits behind", async () => {
   const saved = saveEnv();
   const originalPersistence = setDefaultPersistenceManager({
@@ -1354,7 +1350,6 @@ test("a failed provider limits persist leaves no limits behind", async () => {
     restoreEnv(saved);
   }
 });
-
 
 test("a failed persist cannot leave behind an assignment that had none before", async () => {
   const saved = saveEnv();
@@ -1393,7 +1388,6 @@ test("a failed persist cannot leave behind an assignment that had none before", 
     restoreEnv(saved);
   }
 });
-
 
 test("provider reset requires an operator actor and a body of exactly { confirm: true }", async () => {
   const saved = saveEnv();
@@ -1446,7 +1440,6 @@ test("provider reset requires an operator actor and a body of exactly { confirm:
     restoreEnv(saved);
   }
 });
-
 
 test("provider reset clears only role assignments, provider disables, model disables, and provider limits, and preserves everything else", async () => {
   const saved = saveEnv();
@@ -1623,7 +1616,6 @@ test("provider reset clears only role assignments, provider disables, model disa
   }
 });
 
-
 test("a failed provider reset persist restores the exact prior provider state", async () => {
   const saved = saveEnv();
   const priorState = ROUTING_POLICY.runtimeState();
@@ -1665,7 +1657,6 @@ test("a failed provider reset persist restores the exact prior provider state", 
     restoreEnv(saved);
   }
 });
-
 
 test("provider reset serializes with a concurrent provider role mutation on the shared router-state queue", async () => {
   const saved = saveEnv();
@@ -1740,7 +1731,6 @@ test("provider reset serializes with a concurrent provider role mutation on the 
     restoreEnv(saved);
   }
 });
-
 
 test("providers v2 reports routes, credential presence, tier models, priorities, and router health only when observed", async () => {
   const saved = saveEnv();
@@ -2111,7 +2101,6 @@ test("operator model PATCH validates, persists, audits, and rolls back on persis
   }
 });
 
-
 test("operator cannot change model enablement without current routeable availability", async () => {
   const saved = saveEnv();
   const configured = ROUTING_POLICY.configuredModels()[0]!;
@@ -2170,7 +2159,6 @@ test("operator cannot change model enablement without current routeable availabi
     restoreEnv(saved);
   }
 });
-
 
 test("provider role edits preserve an unavailable current model but accept new models only from current routeable discovery", async () => {
   const saved = saveEnv();
@@ -2296,7 +2284,6 @@ test("provider role edits preserve an unavailable current model but accept new m
     restoreEnv(saved);
   }
 });
-
 
 test("read-only collections reject mutations and the removed admin route stays absent", async () => {
   const saved = saveEnv();
@@ -2529,7 +2516,9 @@ test("a skill whose catalogue could not be read is not an unknown skill", async 
     assert.equal(catalogue.body.valid, false);
     assert.ok(catalogue.body.issues.length > 0);
     assert.match(
-      catalogue.body.issues.map((issue: { message: string }) => issue.message).join("\n"),
+      catalogue.body.issues
+        .map((issue: { message: string }) => issue.message)
+        .join("\n"),
       /frontmatter/u
     );
 
@@ -2846,7 +2835,6 @@ test("Agent enablement is Runtime-owned, revision-bound, and independent of prov
   }
 });
 
-
 test("Agent detail and mutation paths canonicalize role aliases before applying policy", async () => {
   const saved = saveEnv();
   const previousPolicyState = ROUTING_POLICY.runtimeState();
@@ -2879,7 +2867,6 @@ test("Agent detail and mutation paths canonicalize role aliases before applying 
     restoreEnv(saved);
   }
 });
-
 
 test("concurrent Agent enablement writes compare revisions after the prior persist completes", async () => {
   const saved = saveEnv();
@@ -2945,7 +2932,6 @@ test("concurrent Agent enablement writes compare revisions after the prior persi
     restoreEnv(saved);
   }
 });
-
 
 test("Control API surfaces all 13 typed resource families", async () => {
   const saved = saveEnv();
@@ -4644,7 +4630,6 @@ test("queued provider role patches revalidate an unchanged model after reset cle
   }
 });
 
-
 test("queued provider role patches recheck provider enablement after a disable commits", async () => {
   const saved = saveEnv();
   const priorState = ROUTING_POLICY.runtimeState();
@@ -4720,7 +4705,6 @@ test("queued provider role patches recheck provider enablement after a disable c
     restoreEnv(saved);
   }
 });
-
 
 test("a provider role accepts a model no catalog declares, and keeps the effort it carries", async () => {
   // A provider offers models that no catalog declares: the Claude account's own
@@ -4851,7 +4835,10 @@ test("Control API /control/chatgpt-tunnel exposes status and enforces operator a
     const home = join(root, "home");
     const codexHome = join(home, ".codex");
     mkdirSync(codexHome, { recursive: true });
-    const options: ControlApiRequestOptions = { repositoryRoot: repo, codexHome };
+    const options: ControlApiRequestOptions = {
+      repositoryRoot: repo,
+      codexHome
+    };
 
     const getResult = await call(
       "GET",
@@ -4889,10 +4876,7 @@ test("Control API /control/chatgpt-tunnel exposes status and enforces operator a
       options
     );
     assert.equal(invalid.response.statusCode, 400);
-    assert.equal(
-      invalid.body?.error?.code,
-      "autodev_control_api_invalid_body"
-    );
+    assert.equal(invalid.body?.error?.code, "autodev_control_api_invalid_body");
 
     const methodNotAllowed = await call(
       "DELETE",

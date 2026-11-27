@@ -1896,46 +1896,10 @@ export class CorrelationTracker {
   resetCorrelation(): void {
     this.skillFailureKeys.clear();
     this.telemetry.mcpServers.clear();
-    this.telemetry.dimensions = {
-      bridge: {
-        byRole: {},
-        byWorkspace: {},
-        byModel: {},
-        byAgent: {}
-      }
-    };
-    this.telemetry.skills.used = {
-      total: 0,
-      bySkill: new Map(),
-      byRole: {},
-      byWorkspace: {},
-      byModel: {},
-      byAgent: {},
-      lastSeenAt: null
-    };
-    this.telemetry.bridgeEvents = {
-      toolExecuted: { total: 0, byTool: new Map(), byWorkspace: new Map() },
-      toolRequested: { total: 0, byTool: new Map(), byWorkspace: new Map() },
-      toolUnavailable: {
-        total: 0,
-        byTool: new Map(),
-        byWorkspace: new Map(),
-        byReason: {}
-      },
-      skillExposed: { total: 0, bySkill: new Map(), byWorkspace: new Map() },
-      skillUsed: {
-        total: 0,
-        bySkill: new Map(),
-        byWorkspace: new Map(),
-        seenKeys: new Set()
-      },
-      mcpExposed: {
-        total: 0,
-        byServer: new Map(),
-        byWorkspace: new Map(),
-        seenKeys: new Set()
-      }
-    };
+    const empty = createEmptyCorrelation();
+    this.telemetry.dimensions = empty.dimensions;
+    this.telemetry.skills.used = empty.skills.used;
+    this.telemetry.bridgeEvents = empty.bridgeEvents;
     // The correlation is what records the attribution decisions and the
     // workspace facts below, so resetting it resets the ones it wrote: a
     // diagnostic that still counted observations the correlation no longer

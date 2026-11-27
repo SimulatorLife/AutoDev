@@ -40,7 +40,8 @@ import {
   type PlaytestVisualHistoryEntry,
   type PlaytestVisualPolicy,
   type PlaytestVisualPolicyUsage,
-  type WorkspaceVisualPlaytestTargetApproval} from "@simulatorlife/autodev-core";
+  type WorkspaceVisualPlaytestTargetApproval
+} from "@simulatorlife/autodev-core";
 
 /** The upstream `qev` server's System One endpoint, relative to the base. */
 const SYSTEMONE_PATH = "/v1/systemone";

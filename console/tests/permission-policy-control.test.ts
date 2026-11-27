@@ -5,9 +5,7 @@ import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import {
-  PermissionsView
-} from "../src/features/permissions/index.ts";
+import { PermissionsView } from "../src/features/permissions/index.ts";
 
 /** Read-only permission-policy presentation and effective role evidence. */
 
@@ -67,7 +65,10 @@ test("the policy renders repository values without a mutation control", () => {
   assert.match(rendered, />never</u);
   assert.match(rendered, />user</u);
   assert.match(rendered, />Enabled</u);
-  assert.doesNotMatch(rendered, /<form|<select|<textarea|name="expectedRevision"|action="\/api\/permissions"/u);
+  assert.doesNotMatch(
+    rendered,
+    /<form|<select|<textarea|name="expectedRevision"|action="\/api\/permissions"/u
+  );
 });
 
 test("an unreadable policy is not a fabricated default or disabled editor", () => {
@@ -76,7 +77,10 @@ test("an unreadable policy is not a fabricated default or disabled editor", () =
     revision: null,
     policyStatus: "unavailable"
   });
-  assert.match(rendered, /The canonical permission policy could not be read\./u);
+  assert.match(
+    rendered,
+    /The canonical permission policy could not be read\./u
+  );
   assert.match(rendered, /Not observed/u);
   assert.doesNotMatch(rendered, /<form|<select|<textarea|>never</u);
 });
@@ -111,9 +115,7 @@ test("the applied state is shown beside the canonical source", () => {
 });
 
 test("the Permissions page reaches the feature through its entrypoint", () => {
-  const callers = [
-    new URL("../app/permissions/page.tsx", import.meta.url)
-  ];
+  const callers = [new URL("../app/permissions/page.tsx", import.meta.url)];
   for (const caller of callers) {
     const source = readFileSync(caller, "utf8");
     assert.match(

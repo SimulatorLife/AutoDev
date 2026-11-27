@@ -46,16 +46,24 @@ test("no route shows a moment in a storage or server-zone spelling", async ({
         if (!text) continue;
         for (const shape of STORAGE_SPELLINGS) {
           const hit = shape.exec(text);
-          if (hit !== null) findings.push(`${hit[0]} in "${text.slice(0, 60)}"`);
+          if (hit !== null)
+            findings.push(`${hit[0]} in "${text.slice(0, 60)}"`);
         }
       }
       // Every machine-readable moment is shown through the shared toggle; a
       // calendar date names a day rather than a moment and stays a date.
-      for (const time of Array.from(document.querySelectorAll("main time[datetime]"))) {
+      for (const time of Array.from(
+        document.querySelectorAll("main time[datetime]")
+      )) {
         if (time.closest("[data-verbatim='true']") !== null) continue;
-        if (/^\d{4}-\d{2}-\d{2}$/u.test(time.getAttribute("datetime") ?? "")) continue;
-        if (time.querySelector("[data-inline-display-toggle='instant']") === null) {
-          findings.push(`<time> without the toggle: "${(time.textContent ?? "").slice(0, 60)}"`);
+        if (/^\d{4}-\d{2}-\d{2}$/u.test(time.getAttribute("datetime") ?? ""))
+          continue;
+        if (
+          time.querySelector("[data-inline-display-toggle='instant']") === null
+        ) {
+          findings.push(
+            `<time> without the toggle: "${(time.textContent ?? "").slice(0, 60)}"`
+          );
         }
       }
       return findings;
@@ -95,7 +103,9 @@ test("a timestamp toggles between relative and local time by pointer and keyboar
     await expect(toggle).toHaveAttribute("data-representation", "local");
     // "Nov 19, 2026, 10:30 AM": the full date with its year, in the
     // operator's zone, and never a zone the operator has to convert from.
-    await expect(toggle).toHaveText(/^[A-Z][a-z]{2} \d{1,2}, \d{4}, \d{1,2}:\d{2}\s[AP]M$/u);
+    await expect(toggle).toHaveText(
+      /^[A-Z][a-z]{2} \d{1,2}, \d{4}, \d{1,2}:\d{2}\s[AP]M$/u
+    );
     await expect(toggle).not.toHaveText(/UTC/u);
 
     await toggle.focus();

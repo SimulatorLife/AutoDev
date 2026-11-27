@@ -22,7 +22,10 @@ const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const installerScriptPath = path.join(repositoryRoot, "scripts", "install.sh");
 
 test("global MCP projection targets follow installed CLI harnesses", () => {
-  assert.deepEqual(installedGlobalMcpTargets(() => false), []);
+  assert.deepEqual(
+    installedGlobalMcpTargets(() => false),
+    []
+  );
   assert.deepEqual(
     installedGlobalMcpTargets((command) => command === "copilot"),
     ["copilotcli"]

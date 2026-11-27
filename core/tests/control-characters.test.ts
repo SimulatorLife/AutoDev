@@ -10,7 +10,11 @@ import { hasControlCharacters } from "../src/shared/control-characters.ts";
  */
 test("every C0 control character and DEL is refused", () => {
   for (let code = 0; code <= 0x1f; code += 1) {
-    assert.equal(hasControlCharacters(`a${String.fromCharCode(code)}b`), true, `U+${code.toString(16)}`);
+    assert.equal(
+      hasControlCharacters(`a${String.fromCharCode(code)}b`),
+      true,
+      `U+${code.toString(16)}`
+    );
   }
   assert.equal(hasControlCharacters("a\u007Fb"), true);
 });

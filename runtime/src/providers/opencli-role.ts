@@ -56,9 +56,7 @@ export function isOpencliProvider(
 
 /** The site an opencli provider drives. */
 export function opencliProviderSite(provider: string): OpencliSite | null {
-  return isOpencliProvider(provider)
-    ? OPENCLI_PROVIDER_SITES[provider]
-    : null;
+  return isOpencliProvider(provider) ? OPENCLI_PROVIDER_SITES[provider] : null;
 }
 
 export interface OpencliRoleTaskSpec {
@@ -160,7 +158,8 @@ export function buildOpencliRoleTaskSpec(options: {
       repository: options.repository ?? null,
       mcpApp: options.mcpApp ?? null
     }),
-    timeoutSeconds: options.timeoutSeconds ?? DEFAULT_OPENCLI_TURN_TIMEOUT_SECONDS
+    timeoutSeconds:
+      options.timeoutSeconds ?? DEFAULT_OPENCLI_TURN_TIMEOUT_SECONDS
   };
 }
 
@@ -175,7 +174,11 @@ export const opencliRoleTurnSchema = z.strictObject({
   provider: z.enum(OPENCLI_PROVIDERS),
   model: z.string().min(1).max(128),
   reasoningEffort: z.string().min(1).max(64).nullable().optional(),
-  conversationId: z.string().regex(/^[\w-]+$/u).max(256).nullable(),
+  conversationId: z
+    .string()
+    .regex(/^[\w-]+$/u)
+    .max(256)
+    .nullable(),
   mcpApp: z.string().min(1).max(256).nullable(),
   prompt: z.string().min(1).max(100_000),
   timeoutSeconds: z.number().int().positive().max(900)
@@ -250,7 +253,10 @@ export async function executeOpencliRoleTurn(
         signal
       });
     } catch (error) {
-      if (requestedThinking !== null && isGeminiThinkingSelectionFailure(error)) {
+      if (
+        requestedThinking !== null &&
+        isGeminiThinkingSelectionFailure(error)
+      ) {
         writeErrorLine(
           `opencli gemini could not switch to ${requestedThinking}: ${errorMessage(error)}`
         );
@@ -344,7 +350,9 @@ export async function runOpencliRoleTurn(
       null
     );
   }
-  const port = Number(process.env.CODEX_OPENCLI_PROXY_PORT || OPENCLI_DEFAULT_PORT);
+  const port = Number(
+    process.env.CODEX_OPENCLI_PROXY_PORT || OPENCLI_DEFAULT_PORT
+  );
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error("Invalid OpenCLI service port.");
   }
@@ -365,16 +373,19 @@ export async function runOpencliRoleTurn(
   const authority = host === "::1" ? "[::1]" : host;
   let response: Response;
   try {
-    response = await fetch(`http://${authority}:${port}${OPENCLI_ROLE_TURN_PATH}`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${token}`,
-        "content-type": "application/json"
-      },
-      redirect: "error",
-      body: JSON.stringify(body),
-      signal: requestSignal
-    });
+    response = await fetch(
+      `http://${authority}:${port}${OPENCLI_ROLE_TURN_PATH}`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json"
+        },
+        redirect: "error",
+        body: JSON.stringify(body),
+        signal: requestSignal
+      }
+    );
   } catch {
     throw new OpencliCommandError(
       signal?.aborted

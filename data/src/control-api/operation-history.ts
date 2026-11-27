@@ -17,7 +17,8 @@
 import {
   isRecord,
   type OperationHistoryEntry,
-  type ReconciliationDiff} from "@simulatorlife/autodev-core";
+  type ReconciliationDiff
+} from "@simulatorlife/autodev-core";
 
 const AUDIT_SCHEMA = "autodev-control-api-audit-v1";
 const RESOURCE_MAX_LEN = 200;

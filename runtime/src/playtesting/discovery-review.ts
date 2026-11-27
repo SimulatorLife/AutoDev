@@ -18,7 +18,8 @@ import {
   PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MAX_TOKENS,
   PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MEDIA_TYPE,
   PLAYTESTS_DISCOVERY_MAX_CONTROLS_PER_STEP,
-  type PlaytestVisualBatch} from "@simulatorlife/autodev-core";
+  type PlaytestVisualBatch
+} from "@simulatorlife/autodev-core";
 
 import {
   type PlaytestArtifactStore,

@@ -2,7 +2,8 @@ import type { ServerResponse } from "node:http";
 
 import {
   isRecord,
-  SIGN_IN_REQUIRED_FAILURE_CLASS} from "@simulatorlife/autodev-core";
+  SIGN_IN_REQUIRED_FAILURE_CLASS
+} from "@simulatorlife/autodev-core";
 
 import { writeErrorLine } from "./output.ts";
 import { INCOMPLETE_REASON_CODEX_TOOLS_UNREACHABLE } from "./provider-limits.ts";

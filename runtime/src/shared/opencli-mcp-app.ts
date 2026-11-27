@@ -30,7 +30,8 @@ export function resolveChatgptMcpApp(
   const explicit = environment[CHATGPT_MCP_APP_ENV]?.trim();
   if (explicit) return explicit;
   const base =
-    environment[CHATGPT_MCP_APP_BASE_ENV]?.trim() || DEFAULT_CHATGPT_MCP_APP_BASE;
+    environment[CHATGPT_MCP_APP_BASE_ENV]?.trim() ||
+    DEFAULT_CHATGPT_MCP_APP_BASE;
   const normalized = role.trim().toLowerCase();
   return normalized === DEFAULT_CHATGPT_MCP_APP_ROLE
     ? base

@@ -1,8 +1,4 @@
-import {
-  type APIRequestContext,
-  expect,
-  test
-} from "@playwright/test";
+import { type APIRequestContext, expect, test } from "@playwright/test";
 
 const FIXTURE_BASE_URL = `http://127.0.0.1:${process.env.AUTODEV_PLAYTEST_FIXTURE_PORT ?? "4311"}`;
 const NOT_OBSERVED = "Not observed";
@@ -65,7 +61,9 @@ test("the hooks page shows the target's effective events and where each is decla
   // published. The two differ here -- the Runtime is behind the declaration --
   // so the field can only be showing one of them.
   const declaration = page.locator(`[data-hook-event="${SHARED_EVENT}"]`);
-  await expect(declaration.getByLabel("Hook command")).toHaveText(DECLARED_COMMAND);
+  await expect(declaration.getByLabel("Hook command")).toHaveText(
+    DECLARED_COMMAND
+  );
   await expect(declaration.locator("form, input, textarea")).toHaveCount(0);
 });
 
@@ -134,7 +132,9 @@ test("the hook event's own page carries the same read-only actions the list carr
   await expect(trail.locator('[aria-current="page"]')).toHaveText(SHARED_EVENT);
 
   const declaration = page.getByRole("list", { name: "Declared hook actions" });
-  await expect(declaration.getByLabel("Hook command")).toHaveText(DECLARED_COMMAND);
+  await expect(declaration.getByLabel("Hook command")).toHaveText(
+    DECLARED_COMMAND
+  );
   await expect(page.locator("form, input, textarea")).toHaveCount(0);
   // The origin is the same fact the card shows.
   await expect(
@@ -172,5 +172,7 @@ test("an event the target does not declare has no page", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "Page not found" })
   ).toBeVisible();
-  await expect(page.getByRole("list", { name: "Declared hook actions" })).toHaveCount(0);
+  await expect(
+    page.getByRole("list", { name: "Declared hook actions" })
+  ).toHaveCount(0);
 });

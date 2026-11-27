@@ -25,8 +25,7 @@ export type LiveFeedCategory = (typeof LIVE_FEED_CATEGORIES)[number];
  * per-record `lastSeenAt` fields; they remain current-state buckets
  * used unchanged for the `All` view.
  */
-export interface LiveFeedEvent {
-  timestamp: string;
+interface LiveFeedFields {
   category: LiveFeedCategory;
   type: string;
   summary: string;
@@ -55,33 +54,12 @@ export interface LiveFeedEvent {
   [key: string]: unknown;
 }
 
-export interface LiveFeedRecordInput {
-  category: LiveFeedCategory;
-  type: string;
-  summary: string;
+export interface LiveFeedEvent extends LiveFeedFields {
+  timestamp: string;
+}
+
+export interface LiveFeedRecordInput extends LiveFeedFields {
   timestamp?: string | null | undefined;
-  requestId?: string | null | undefined;
-  agent?: string | null | undefined;
-  provider?: string | null | undefined;
-  model?: string | null | undefined;
-  role?: string | null | undefined;
-  workspace?: string | null | undefined;
-  phase?: string | null | undefined;
-  outcome?: string | null | undefined;
-  status?: string | number | null | undefined;
-  failureClass?: string | null | undefined;
-  denialReason?: string | null | undefined;
-  spawnFailureReason?: string | null | undefined;
-  durationMs?: number | null | undefined;
-  durationSeconds?: number | null | undefined;
-  name?: string | null | undefined;
-  server?: string | null | undefined;
-  source?: string | null | undefined;
-  tool?: string | null | undefined;
-  skill?: string | null | undefined;
-  hook?: string | null | undefined;
-  handlerType?: string | null | undefined;
-  [key: string]: unknown;
 }
 
 const PRESERVED_SCALAR_KEYS = [

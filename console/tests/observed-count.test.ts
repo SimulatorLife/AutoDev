@@ -13,7 +13,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   countValue,
-  observedTotal,
   scopedCount
 } from "../src/components/status/observed-count.ts";
 import {
@@ -27,37 +26,41 @@ import {
 } from "../src/features/workspaces/WorkspacesView.ts";
 
 /**
- * A count the Console did not observe is not a count.
- *
- * The target state's state-correctness rule (`docs/autodev-console-target-state.md`,
- * "State correctness") says missing evidence stays explicit: never synthesize
- * zero, ready, converged or healthy because the telemetry is absent. A count is
- * where that rule was being broken most often, because a count over a scope
- * whose elements were only partly read still *looks* like a measurement: the
- * number is exactly right for the elements that were read and merely incomplete
- * for the ones that were not.
- *
- * Four surfaces were doing it, each in its own way:
- *
- * - the memory experience panel printed "0 observed injections" for a read that
- *   never answered;
- * - the memory cohort filter printed "0 cohort cells" for a read that never
- *   answered, beside panels saying the data was unavailable;
- * - the workspaces card counted an unreadable approval as "not approved", while
- *   the row badge beside it said "Unavailable";
- * - the providers card counted a provider whose health was never observed as
- *   unready, while the row badge beside it said "Not observed".
- *
- * The rule is stated once, in `console/src/components/status/observed-count.ts`,
- * and these tests hold each surface to it.
- */
+A count the Console did not observe is not a count.
 
-/** A provider whose health was never observed: no success, no failure. */
+The target state's state-correctness rule (`docs/autodev-console-target-state.md`,
+"State correctness") says missing evidence stays explicit: never synthesize
+zero, ready, converged or healthy because the telemetry is absent. A count is
+where that rule was being broken most often, because a count over a scope
+whose elements were only partly read still *looks* like a measurement: the
+number is exactly right for the elements that were read and merely incomplete
+for the ones that were not.
+
+Four surfaces were doing it, each in its own way:
+
+- the memory experience panel printed "0 observed injections" for a read that
+  never answered;
+- the memory cohort filter printed "0 cohort cells" for a read that never
+  answered, beside panels saying the data was unavailable;
+- the workspaces card counted an unreadable approval as "not approved", while
+  the row badge beside it said "Unavailable";
+- the providers card counted a provider whose health was never observed as
+  unready, while the row badge beside it said "Not observed".
+
+The rule is stated once, in `console/src/components/status/observed-count.ts`,
+and these tests hold each surface to it.
+*/
+
+/**
+A provider whose health was never observed: no success, no failure.
+*/
 function unobservedHealth(): ControlApiProviderHealth | null {
   return null;
 }
 
-/** A provider health record that proves a successful request. */
+/**
+A provider health record that proves a successful request.
+*/
 function readyHealth(): ControlApiProviderHealth {
   return {
     cooldown: null,
@@ -119,7 +122,9 @@ function provider(
   } as ControlApiProviderRecord;
 }
 
-/** One role's assignment: the row control reads the priority and the model. */
+/**
+One role's assignment: the row control reads the priority and the model.
+*/
 function roleAssignment(): {
   readonly priority: 1;
   readonly model: string | null;
@@ -183,7 +188,9 @@ function workspace(id: string): ControlApiWorkspaceRecord {
   } as ControlApiWorkspaceRecord;
 }
 
-/** An approval that was granted and never revoked. */
+/**
+An approval that was granted and never revoked.
+*/
 function activeApproval(workspaceId: string): WorkspacePlaytestApproval {
   return {
     schema: "autodev-workspace-playtest-approval-v2",
@@ -233,9 +240,9 @@ function renderWorkspaces(
 }
 
 /**
- * One stat card's own markup, so an assertion about a card's value cannot be
- * satisfied by a number somewhere else on the page.
- */
+One stat card's own markup, so an assertion about a card's value cannot be
+satisfied by a number somewhere else on the page.
+*/
 function statCard(markup: string, title: string): string {
   const start = markup.indexOf(`>${title}</dt>`);
   assert.notEqual(start, -1, `the ${title} card must be rendered`);
@@ -288,16 +295,6 @@ test("a fully observed scope counts as a number, including a measured zero", () 
     0,
     "a measured zero is a measurement and stays a number"
   );
-});
-
-test("a measurement that was never taken is not a zero", () => {
-  assert.equal(observedTotal(null).observed, false);
-  assert.equal(observedTotal(undefined).observed, false);
-  assert.equal(observedTotal(null).value, null);
-
-  const measured = observedTotal(0);
-  assert.equal(measured.observed, true);
-  assert.equal(measured.value, 0);
 });
 
 test("a provider whose health was never observed does not make the Ready count a zero", () => {

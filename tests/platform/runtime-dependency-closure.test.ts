@@ -54,7 +54,10 @@ function fakeDeploy(calls: string[]) {
     calls.push(target);
     mkdirSync(path.join(target, "node_modules", ".pnpm"), { recursive: true });
     mkdirSync(path.join(target, "node_modules", "zod"), { recursive: true });
-    writeFileSync(path.join(target, "node_modules", "zod", "package.json"), "{}\n");
+    writeFileSync(
+      path.join(target, "node_modules", "zod", "package.json"),
+      "{}\n"
+    );
     mkdirSync(path.join(target, "src"));
     writeFileSync(path.join(target, "package.json"), "{}\n");
   };
@@ -66,12 +69,17 @@ test("the closure name follows the deploy inputs, including injected workspace s
     const initial = runtimeDependencyClosureName(root);
     assert.match(initial, /^\.deps-[0-9a-f]{16}$/u);
     // Dependency and build output inside a workspace package is not input.
-    mkdirSync(path.join(root, "core", "node_modules", "x"), { recursive: true });
+    mkdirSync(path.join(root, "core", "node_modules", "x"), {
+      recursive: true
+    });
     writeFileSync(path.join(root, "core", "tsconfig.tsbuildinfo"), "{}");
     assert.equal(runtimeDependencyClosureName(root), initial);
     // Any change to code the closure carries names a different closure, so an
     // edited workspace package is never served from a closure built before it.
-    writeFileSync(path.join(root, "core", "src", "index.ts"), "export const x = 1;\n");
+    writeFileSync(
+      path.join(root, "core", "src", "index.ts"),
+      "export const x = 1;\n"
+    );
     assert.notEqual(runtimeDependencyClosureName(root), initial);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -83,12 +91,22 @@ test("a closure is deployed once, keeps only node_modules, and lives under the R
   const home = temporary("autodev-closure-home-");
   try {
     const calls: string[] = [];
-    const first = materializeRuntimeDependencyClosure(root, home, fakeDeploy(calls));
+    const first = materializeRuntimeDependencyClosure(
+      root,
+      home,
+      fakeDeploy(calls)
+    );
     assert.equal(first.deployed, true);
     assert.equal(first.nodeModules, runtimeDependencyClosure(root, home));
     assert.equal(path.dirname(path.dirname(first.nodeModules)), home);
-    assert.deepEqual(readdirSync(path.dirname(first.nodeModules)), ["node_modules"]);
-    const second = materializeRuntimeDependencyClosure(root, home, fakeDeploy(calls));
+    assert.deepEqual(readdirSync(path.dirname(first.nodeModules)), [
+      "node_modules"
+    ]);
+    const second = materializeRuntimeDependencyClosure(
+      root,
+      home,
+      fakeDeploy(calls)
+    );
     assert.equal(second.deployed, false);
     assert.equal(calls.length, 1);
     // The deploy ran beside its final name; nothing of the build is left over.
@@ -129,10 +147,16 @@ test("closures are collected once no retained generation links them", () => {
     mkdirSync(path.join(home, ".deps-cccccccccccccccc.tmp-999999999"));
     mkdirSync(path.join(home, ".src-1111111111111111"));
     const link = path.join(home, ".src-1111111111111111", "node_modules");
-    symlinkSync(path.join(home, ".deps-aaaaaaaaaaaaaaaa", "node_modules"), link);
+    symlinkSync(
+      path.join(home, ".deps-aaaaaaaaaaaaaaaa", "node_modules"),
+      link
+    );
     const referenced = referencedRuntimeDependencyClosure(home, link);
     assert.equal(referenced, ".deps-aaaaaaaaaaaaaaaa");
-    const collected = collectRuntimeDependencyClosures(home, new Set([referenced!]));
+    const collected = collectRuntimeDependencyClosures(
+      home,
+      new Set([referenced!])
+    );
     assert.deepEqual(collected.toSorted(new Intl.Collator("en").compare), [
       ".deps-bbbbbbbbbbbbbbbb",
       ".deps-cccccccccccccccc.tmp-999999999"
@@ -233,15 +257,22 @@ test("a checkout edit after install does not change the closure it was installed
   const root = fixtureCheckout();
   const home = temporary("autodev-closure-home-");
   try {
-    const installed = materializeRuntimeDependencyClosure(root, home, fakeDeploy([]));
+    const installed = materializeRuntimeDependencyClosure(
+      root,
+      home,
+      fakeDeploy([])
+    );
     const snapshot = path.join(home, "snapshot");
     cpSync(installed.nodeModules, snapshot, { recursive: true });
-    writeFileSync(path.join(root, "core", "src", "index.ts"), "export const pwned = true;\n");
-    assert.notEqual(runtimeDependencyClosure(root, home), installed.nodeModules);
-    assert.deepEqual(
-      readdirSync(installed.nodeModules),
-      readdirSync(snapshot)
+    writeFileSync(
+      path.join(root, "core", "src", "index.ts"),
+      "export const pwned = true;\n"
     );
+    assert.notEqual(
+      runtimeDependencyClosure(root, home),
+      installed.nodeModules
+    );
+    assert.deepEqual(readdirSync(installed.nodeModules), readdirSync(snapshot));
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });

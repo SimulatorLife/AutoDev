@@ -753,8 +753,7 @@ function expandCoverageRequirements(
   const seen = new Set<string>();
   return raw.map((entry, index) => {
     const field = "coverageRequirements[" + String(index) + "]";
-    if (!isRecord(entry))
-      throw new TypeError(field + " must be an object.");
+    if (!isRecord(entry)) throw new TypeError(field + " must be an object.");
     const keys = [
       "coverageMetricId",
       "mechanicKey",

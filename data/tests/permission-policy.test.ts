@@ -226,7 +226,10 @@ test("permission reads reject nonregular files and symlinked canonical sources",
   const linkedDirectory = path.join(directory, "linked-directory");
   const sourceDirectory = path.join(directory, "real-directory");
   await mkdir(sourceDirectory);
-  await writeFile(path.join(sourceDirectory, "permissions.jsonc"), POLICY_SOURCE);
+  await writeFile(
+    path.join(sourceDirectory, "permissions.jsonc"),
+    POLICY_SOURCE
+  );
   await symlink(sourceDirectory, linkedDirectory, "dir");
 
   for (const candidate of [
@@ -238,7 +241,10 @@ test("permission reads reject nonregular files and symlinked canonical sources",
     assert.equal(read.status, "unavailable");
     assert.equal(read.revision, null);
   }
-  assert.equal(readAppliedPermissionPolicyFile(linkedFile).status, "unavailable");
+  assert.equal(
+    readAppliedPermissionPolicyFile(linkedFile).status,
+    "unavailable"
+  );
   assert.deepEqual(readAntigravityCliPermissionDefaults(linkedFile), {
     agentMode: null,
     toolPermission: null
@@ -246,31 +252,39 @@ test("permission reads reject nonregular files and symlinked canonical sources",
   assert.equal(await readFile(file, "utf8"), POLICY_SOURCE);
 });
 
-test("permission reads reject a FIFO without waiting for a writer", {
-  skip: process.platform !== "darwin" && process.platform !== "linux"
-}, async (t) => {
-  const { directory } = await policyFixture();
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  const fifo = path.join(directory, "policy-fifo");
-  execFileSync("mkfifo", [fifo]);
-  const moduleUrl = new URL(
-    "../src/config/permission-policy.ts",
-    import.meta.url
-  );
-  // Isolate the read so a regression to a blocking open cannot hang the suite.
-  const child = spawnSync(process.execPath, [
-    "--input-type=module",
-    "--eval",
-    `import { readPermissionPolicyFile } from ${JSON.stringify(moduleUrl.href)};
+test(
+  "permission reads reject a FIFO without waiting for a writer",
+  {
+    skip: process.platform !== "darwin" && process.platform !== "linux"
+  },
+  async (t) => {
+    const { directory } = await policyFixture();
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const fifo = path.join(directory, "policy-fifo");
+    execFileSync("mkfifo", [fifo]);
+    const moduleUrl = new URL(
+      "../src/config/permission-policy.ts",
+      import.meta.url
+    );
+    // Isolate the read so a regression to a blocking open cannot hang the suite.
+    const child = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        `import { readPermissionPolicyFile } from ${JSON.stringify(moduleUrl.href)};
      process.stdout.write(JSON.stringify(readPermissionPolicyFile(process.argv[1])));`,
-    fifo
-  ], { encoding: "utf8", timeout: 10_000 });
-  assert.ifError(child.error);
-  assert.equal(child.status, 0, child.stderr);
-  const read = JSON.parse(child.stdout);
-  assert.equal(read.status, "unavailable");
-  assert.equal(read.revision, null);
-});
+        fifo
+      ],
+      { encoding: "utf8", timeout: 10_000 }
+    );
+    assert.ifError(child.error);
+    assert.equal(child.status, 0, child.stderr);
+    const read = JSON.parse(child.stdout);
+    assert.equal(read.status, "unavailable");
+    assert.equal(read.revision, null);
+  }
+);
 
 test("applied permission parse errors never include private configuration text", async (t) => {
   const { directory, file } = await policyFixture(

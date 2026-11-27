@@ -164,9 +164,13 @@ test("a partial record a dead backend left behind is removed, a live writer's is
     const abandoned = `${taskId}.json.${exited.pid}.0.tmp`;
     const inFlight = `${taskId}.json.${process.pid}.0.tmp`;
     for (const entry of [abandoned, inFlight]) {
-      writeFileSync(path.join(directory, entry), '{"result":"private output"}', {
-        mode: 0o600
-      });
+      writeFileSync(
+        path.join(directory, entry),
+        '{"result":"private output"}',
+        {
+          mode: 0o600
+        }
+      );
     }
     new DurableCommandTaskStore({ directory, authorize: () => {} });
     const remaining = readdirSync(directory);

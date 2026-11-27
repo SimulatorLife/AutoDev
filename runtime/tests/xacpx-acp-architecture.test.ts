@@ -37,7 +37,10 @@ import {
   extractHookToolCall
 } from "../src/hooks/hook-payload.ts";
 import { evaluateRoleSandboxHook } from "../src/hooks/role-sandbox.ts";
-import { ensureLocalAdmission, readLocalAdmission } from "../src/mcp/gateway-admission.ts";
+import {
+  ensureLocalAdmission,
+  readLocalAdmission
+} from "../src/mcp/gateway-admission.ts";
 import { MCP_GRANT_ENV } from "../src/mcp/gateway-client.ts";
 import { resolveMcpCommand } from "../src/mcp/launcher.ts";
 import { verifySessionGrant } from "../src/mcp/session-grant.ts";
@@ -233,7 +236,9 @@ test("ACP sessions reach their role's MCP servers only through the gateway clien
   assert.equal(spec.env.CONTEXT7_API_KEY, undefined);
   assert.equal(spec.env.GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY, undefined);
   // The gateway client of this Runtime, never one a repository override names.
-  const client = realpathSync(new URL("../src/mcp/gateway-client.ts", import.meta.url));
+  const client = realpathSync(
+    new URL("../src/mcp/gateway-client.ts", import.meta.url)
+  );
   assert.deepEqual(
     spec.acpMcpServers.map((server) => server.name),
     roleContract("docs-researcher").mcp
@@ -243,12 +248,20 @@ test("ACP sessions reach their role's MCP servers only through the gateway clien
     assert.equal(server.command, process.execPath);
     assert.deepEqual(server.args, [client, server.name]);
     assert.equal(JSON.stringify(server).includes("context7-secret"), false);
-    const grant = server.env.find((entry) => entry.name === MCP_GRANT_ENV)?.value;
+    const grant = server.env.find(
+      (entry) => entry.name === MCP_GRANT_ENV
+    )?.value;
     // The session's grant names its own workspace, role and session. A session
     // the Runtime issued is marked as its own, so telemetry can join it to the
     // AutoDev session rather than to a random client session.
     assert.deepEqual(
-      { ...verifySessionGrant(readLocalAdmission(process.env.CODEX_HOME!)!.secret, grant), expiresAt: 0 },
+      {
+        ...verifySessionGrant(
+          readLocalAdmission(process.env.CODEX_HOME!)!.secret,
+          grant
+        ),
+        expiresAt: 0
+      },
       {
         workspace: realpathSync(REPO_ROOT),
         role: "docs-researcher",
@@ -261,7 +274,11 @@ test("ACP sessions reach their role's MCP servers only through the gateway clien
   // Without an installed gateway, or in the home directory, no MCP is offered.
   const empty = mkdtempSync(path.join(tmpdir(), "autodev-no-gateway-"));
   assert.throws(
-    () => buildAcpProviderLaunchSpec({ ...options, env: { ...options.env, CODEX_HOME: empty } }),
+    () =>
+      buildAcpProviderLaunchSpec({
+        ...options,
+        env: { ...options.env, CODEX_HOME: empty }
+      }),
     /MCP gateway is not installed/u
   );
   assert.throws(
@@ -579,8 +596,14 @@ test("a site without a gateway ingress is refused for roles the gateway owns, wi
   const manager = new XacpxSessionManager({ policy });
   // The `github` surface is the site's own integration, so that role is
   // deliverable; a role whose tools live in the gateway is not.
-  assert.equal(policy.providerReachesRoleMcp("opencli-gemini", "github-worker"), true);
-  assert.equal(policy.providerReachesRoleMcp("opencli-gemini", "worker"), false);
+  assert.equal(
+    policy.providerReachesRoleMcp("opencli-gemini", "github-worker"),
+    true
+  );
+  assert.equal(
+    policy.providerReachesRoleMcp("opencli-gemini", "worker"),
+    false
+  );
   assert.throws(
     () => manager.selectCandidateForSession("gemini-parity-worker", "worker"),
     /cannot reach the MCP surface of role 'worker'/u
@@ -686,7 +709,10 @@ test("OpenCLI sessions resume the verified conversation and never replay an unce
   try {
     const turn = cancellingManager.executeTurn(request);
     const rejection = assert.rejects(turn, /cancelled/u);
-    assert.equal(await cancellingManager.cancelSession(request.sessionId), true);
+    assert.equal(
+      await cancellingManager.cancelSession(request.sessionId),
+      true
+    );
     await rejection;
     assert.equal(COOLDOWNS.isCooling(provider, Date.now(), model), false);
     await assert.rejects(

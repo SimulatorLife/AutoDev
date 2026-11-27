@@ -5,7 +5,8 @@ import {
   type ControlApiPlaytestingAnalysesResponse,
   type ControlApiPlaytestingAnalysisDispatchResponse,
   isRecord,
-  PLAYTESTS_MAX_ANALYSIS_SESSIONS} from "@simulatorlife/autodev-core";
+  PLAYTESTS_MAX_ANALYSIS_SESSIONS
+} from "@simulatorlife/autodev-core";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "../../components/forms/Button.ts";

@@ -1,6 +1,4 @@
-import {
-  isRecord,
-  type ProviderRole} from "@simulatorlife/autodev-core";
+import { isRecord, type ProviderRole } from "@simulatorlife/autodev-core";
 import {
   isHardLimitClass,
   normalizeResetsAt

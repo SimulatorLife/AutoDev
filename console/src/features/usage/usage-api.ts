@@ -23,7 +23,8 @@
 
 import {
   isRecord,
-  type UsageWorkspaceRequestBreakdown} from "@simulatorlife/autodev-core";
+  type UsageWorkspaceRequestBreakdown
+} from "@simulatorlife/autodev-core";
 
 /** The version of the contract this Console speaks. */
 export const USAGE_API_SCHEMA = "autodev-console-usage-v1";

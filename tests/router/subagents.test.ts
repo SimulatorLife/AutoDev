@@ -301,10 +301,17 @@ test("capabilities and telemetry headers resolve properly", () => {
     }
   };
 
-  assert.equal(providerCapabilities("claude", mockExecutionContract).subagentSpawn, true);
-  assert.equal(providerCapabilities("copilot", mockExecutionContract).subagentSpawn, true);
   assert.equal(
-    providerCapabilities("opencli-chatgpt", mockExecutionContract).subagentSpawn,
+    providerCapabilities("claude", mockExecutionContract).subagentSpawn,
+    true
+  );
+  assert.equal(
+    providerCapabilities("copilot", mockExecutionContract).subagentSpawn,
+    true
+  );
+  assert.equal(
+    providerCapabilities("opencli-chatgpt", mockExecutionContract)
+      .subagentSpawn,
     false
   );
   assert.equal(
@@ -336,7 +343,10 @@ test("capabilities and telemetry headers resolve properly", () => {
     assert.equal(unknownRequirements.mcp.size, 0);
     assert.equal(unknownRequirements.skills.size, 0);
     assert.equal(unknownRequirements.webResearch.search, false);
-    assert.deepEqual(mcpContractForRole(unknownRole, mockExecutionContract), []);
+    assert.deepEqual(
+      mcpContractForRole(unknownRole, mockExecutionContract),
+      []
+    );
   }
 
   // bridgeTelemetryHeaders for codex returns empty

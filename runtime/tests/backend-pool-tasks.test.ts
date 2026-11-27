@@ -21,7 +21,9 @@ async function fixture(conversationScoped = false) {
   );
   try {
     const script = path.join(temporary.path, "backend.mjs");
-    writeFileSync(script, String.raw`import { createInterface } from "node:readline";
+    writeFileSync(
+      script,
+      String.raw`import { createInterface } from "node:readline";
 const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\n");
 const tasks = new Map();
 let next = 0;
@@ -79,7 +81,8 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     reply(task);
   }
 });
-`);
+`
+    );
     const pool = await startChatgptBackendPool(
       {
         version: 1,
@@ -112,7 +115,11 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       authorization: `Bearer ${pool.token}`,
       "content-type": "application/json"
     };
-    const request = async (session: string | null, method: string, params: unknown) => {
+    const request = async (
+      session: string | null,
+      method: string,
+      params: unknown
+    ) => {
       const response = await fetch(url, {
         method: "POST",
         headers: session ? { ...headers, "mcp-session-id": session } : headers,
@@ -120,7 +127,10 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         signal: AbortSignal.timeout(5_000)
       });
       assert.equal(response.status, 200);
-      return { session: response.headers.get("mcp-session-id"), body: await response.json() };
+      return {
+        session: response.headers.get("mcp-session-id"),
+        body: await response.json()
+      };
     };
     const open = async () => {
       const response = await request(null, "initialize", {
@@ -160,176 +170,223 @@ async function waitForReap(
   assert.fail("backend did not become idle after the task retention window");
 }
 
-test("native task handles retain their backend past idle and unrelated RPC timeout", {
-  timeout: 15_000
-}, async (t) => {
-  const f = await fixture();
-  try {
-    const session = await f.open();
-    const call = (params: unknown) => f.request(session, "tools/call", params);
-    const { body } = await call({ name: "echo", arguments: {}, task: { ttl: TTL_MS } });
-    const { task } = CreateTaskResultSchema.parse(body.result);
-    assert.equal(f.pool.stats().fixture?.retainedTasks, 1);
-    assert.equal(f.pool.stats().fixture?.activeCalls, 0);
-    await delay(TTL_MS + IDLE_MS, undefined, { signal: t.signal });
-    assert.equal(f.pool.stats().fixture?.running, true);
-    const lost = await call({ name: "echo", arguments: { loseReply: true } });
-    assert.match(lost.body.error.message, /timed out/u);
-    assert.equal(f.pool.stats().fixture?.running, true);
-    assert.equal(f.pool.stats().fixture?.spawns, 1);
-    const working = await f.request(session, "tasks/get", { taskId: task.taskId });
-    assert.equal(TaskSchema.parse(working.body.result).status, "working");
-    const completed = await f.request(session, "tasks/get", {
-      taskId: task.taskId,
-      _meta: { finishFixture: true }
-    });
-    assert.equal(TaskSchema.parse(completed.body.result).status, "completed");
-    const result = await f.request(session, "tasks/result", { taskId: task.taskId });
-    assert.match(JSON.stringify(result.body.result), /retained result/u);
-    assert.equal(f.pool.stats().fixture?.retainedTasks, 1);
-    await waitForReap(f.pool, t.signal);
-    assert.equal(f.pool.stats().fixture?.retainedTasks, 0);
-  } finally {
-    await f.close();
-  }
-});
-
-test("a retained task prevents conversation eviction until its retention expires", {
-  timeout: 15_000
-}, async (t) => {
-  const f = await fixture(true);
-  try {
-    const session = await f.open();
-    const call = (conversation: string, task = false) =>
-      f.request(session, "tools/call", {
+test(
+  "native task handles retain their backend past idle and unrelated RPC timeout",
+  {
+    timeout: 15_000
+  },
+  async (t) => {
+    const f = await fixture();
+    try {
+      const session = await f.open();
+      const call = (params: unknown) =>
+        f.request(session, "tools/call", params);
+      const { body } = await call({
         name: "echo",
         arguments: {},
-        _meta: { "openai/session": conversation },
-        ...(task ? { task: { ttl: TTL_MS } } : {})
-      });
-    const { task } = CreateTaskResultSchema.parse((await call("a", true)).body.result);
-    await delay(IDLE_MS * 3, undefined, { signal: t.signal });
-    assert.match((await call("b")).body.error.message, /busy/u);
-    const status = await f.request(session, "tasks/get", {
-      taskId: task.taskId,
-      _meta: { "openai/session": "a", finishFixture: true }
-    });
-    assert.equal(TaskSchema.parse(status.body.result).status, "completed");
-    assert.match((await call("b")).body.error.message, /busy/u);
-    await waitForReap(f.pool, t.signal);
-    assert.match(JSON.stringify((await call("b")).body.result), /ordinary/u);
-  } finally {
-    await f.close();
-  }
-});
-
-test("a native terminal status notification releases retention without a client poll", {
-  timeout: 15_000
-}, async (t) => {
-  const f = await fixture();
-  try {
-    const session = await f.open();
-    await f.request(session, "tools/call", {
-      name: "echo", arguments: {}, task: { ttl: TTL_MS }
-    });
-    assert.equal(f.pool.stats().fixture?.retainedTasks, 1);
-    await f.request(session, "tools/call", {
-      name: "echo", arguments: { finishAll: true }
-    });
-    assert.equal(f.pool.stats().fixture?.retainedTasks, 1);
-    await waitForReap(f.pool, t.signal);
-    assert.equal(f.pool.stats().fixture?.retainedTasks, 0);
-  } finally {
-    await f.close();
-  }
-});
-
-test("an uncertain task creation is not treated as idle or safe to retry", {
-  timeout: 15_000
-}, async (t) => {
-  const f = await fixture();
-  try {
-    const session = await f.open();
-    const call = (loseReply: boolean) =>
-      f.request(session, "tools/call", {
-        name: "echo",
-        arguments: { loseReply },
         task: { ttl: TTL_MS }
       });
-    assert.match((await call(true)).body.error.message, /timed out/u);
-    await delay(IDLE_MS * 3, undefined, { signal: t.signal });
-    assert.equal(f.pool.stats().fixture?.running, true);
-    assert.equal(f.pool.stats().fixture?.uncertainTaskCreation, true);
-    assert.match((await call(false)).body.error.message, /retention capacity/u);
-    assert.equal(f.pool.stats().fixture?.spawns, 1);
-  } finally {
-    await f.close();
-  }
-});
-
-test("a task is visible only to the session or conversation that created it", {
-  timeout: 15_000
-}, async () => {
-  const f = await fixture();
-  try {
-    const owner = await f.open();
-    const other = await f.open();
-    const created = await f.request(owner, "tools/call", {
-      name: "echo",
-      arguments: {},
-      task: { ttl: TTL_MS }
-    });
-    const { task } = CreateTaskResultSchema.parse(created.body.result);
-    for (const method of ["tasks/get", "tasks/result", "tasks/cancel"]) {
-      const foreign = await f.request(other, method, { taskId: task.taskId });
-      assert.equal(foreign.body.error?.message, "Task not found", method);
-    }
-    const foreignList = await f.request(other, "tasks/list", {});
-    assert.deepEqual(foreignList.body.result, { tasks: [] });
-    for (const fixtureList of ["malformed", "error"]) {
-      const invalid = await f.request(other, "tasks/list", {
-        _meta: { fixtureList }
+      const { task } = CreateTaskResultSchema.parse(body.result);
+      assert.equal(f.pool.stats().fixture?.retainedTasks, 1);
+      assert.equal(f.pool.stats().fixture?.activeCalls, 0);
+      await delay(TTL_MS + IDLE_MS, undefined, { signal: t.signal });
+      assert.equal(f.pool.stats().fixture?.running, true);
+      const lost = await call({ name: "echo", arguments: { loseReply: true } });
+      assert.match(lost.body.error.message, /timed out/u);
+      assert.equal(f.pool.stats().fixture?.running, true);
+      assert.equal(f.pool.stats().fixture?.spawns, 1);
+      const working = await f.request(session, "tasks/get", {
+        taskId: task.taskId
       });
-      assert.equal(invalid.body.error?.message, "Backend task list unavailable");
-      assert.equal(invalid.body.result, undefined);
-      assert.equal(invalid.body.error?.data, undefined);
-      assert.doesNotMatch(JSON.stringify(invalid.body), /foreign-task-fixture-private/u);
+      assert.equal(TaskSchema.parse(working.body.result).status, "working");
+      const completed = await f.request(session, "tasks/get", {
+        taskId: task.taskId,
+        _meta: { finishFixture: true }
+      });
+      assert.equal(TaskSchema.parse(completed.body.result).status, "completed");
+      const result = await f.request(session, "tasks/result", {
+        taskId: task.taskId
+      });
+      assert.match(JSON.stringify(result.body.result), /retained result/u);
+      assert.equal(f.pool.stats().fixture?.retainedTasks, 1);
+      await waitForReap(f.pool, t.signal);
+      assert.equal(f.pool.stats().fixture?.retainedTasks, 0);
+    } finally {
+      await f.close();
     }
-    const ownList = await f.request(owner, "tasks/list", {});
-    assert.equal(ownList.body.result._meta, undefined);
-    assert.deepEqual(
-      ownList.body.result.tasks.map((entry: { taskId: string }) => entry.taskId),
-      [task.taskId]
-    );
-    const own = await f.request(owner, "tasks/get", { taskId: task.taskId });
-    assert.equal(TaskSchema.parse(own.body.result).status, "working");
-
-    // A platform conversation identity owns its tasks across MCP sessions,
-    // and a different conversation on the same session sees none of them.
-    const meta = (conversation: string) => ({
-      _meta: { "openai/session": conversation }
-    });
-    const viaConversation = await f.request(owner, "tools/call", {
-      name: "echo",
-      arguments: {},
-      task: { ttl: TTL_MS },
-      ...meta("conversation-a")
-    });
-    const conversationTask = CreateTaskResultSchema.parse(
-      viaConversation.body.result
-    ).task;
-    const sameConversation = await f.request(other, "tasks/get", {
-      taskId: conversationTask.taskId,
-      ...meta("conversation-a")
-    });
-    assert.equal(TaskSchema.parse(sameConversation.body.result).status, "working");
-    const otherConversation = await f.request(owner, "tasks/get", {
-      taskId: conversationTask.taskId,
-      ...meta("conversation-b")
-    });
-    assert.equal(otherConversation.body.error?.message, "Task not found");
-
-  } finally {
-    await f.close();
   }
-});
+);
+
+test(
+  "a retained task prevents conversation eviction until its retention expires",
+  {
+    timeout: 15_000
+  },
+  async (t) => {
+    const f = await fixture(true);
+    try {
+      const session = await f.open();
+      const call = (conversation: string, task = false) =>
+        f.request(session, "tools/call", {
+          name: "echo",
+          arguments: {},
+          _meta: { "openai/session": conversation },
+          ...(task ? { task: { ttl: TTL_MS } } : {})
+        });
+      const { task } = CreateTaskResultSchema.parse(
+        (await call("a", true)).body.result
+      );
+      await delay(IDLE_MS * 3, undefined, { signal: t.signal });
+      assert.match((await call("b")).body.error.message, /busy/u);
+      const status = await f.request(session, "tasks/get", {
+        taskId: task.taskId,
+        _meta: { "openai/session": "a", finishFixture: true }
+      });
+      assert.equal(TaskSchema.parse(status.body.result).status, "completed");
+      assert.match((await call("b")).body.error.message, /busy/u);
+      await waitForReap(f.pool, t.signal);
+      assert.match(JSON.stringify((await call("b")).body.result), /ordinary/u);
+    } finally {
+      await f.close();
+    }
+  }
+);
+
+test(
+  "a native terminal status notification releases retention without a client poll",
+  {
+    timeout: 15_000
+  },
+  async (t) => {
+    const f = await fixture();
+    try {
+      const session = await f.open();
+      await f.request(session, "tools/call", {
+        name: "echo",
+        arguments: {},
+        task: { ttl: TTL_MS }
+      });
+      assert.equal(f.pool.stats().fixture?.retainedTasks, 1);
+      await f.request(session, "tools/call", {
+        name: "echo",
+        arguments: { finishAll: true }
+      });
+      assert.equal(f.pool.stats().fixture?.retainedTasks, 1);
+      await waitForReap(f.pool, t.signal);
+      assert.equal(f.pool.stats().fixture?.retainedTasks, 0);
+    } finally {
+      await f.close();
+    }
+  }
+);
+
+test(
+  "an uncertain task creation is not treated as idle or safe to retry",
+  {
+    timeout: 15_000
+  },
+  async (t) => {
+    const f = await fixture();
+    try {
+      const session = await f.open();
+      const call = (loseReply: boolean) =>
+        f.request(session, "tools/call", {
+          name: "echo",
+          arguments: { loseReply },
+          task: { ttl: TTL_MS }
+        });
+      assert.match((await call(true)).body.error.message, /timed out/u);
+      await delay(IDLE_MS * 3, undefined, { signal: t.signal });
+      assert.equal(f.pool.stats().fixture?.running, true);
+      assert.equal(f.pool.stats().fixture?.uncertainTaskCreation, true);
+      assert.match(
+        (await call(false)).body.error.message,
+        /retention capacity/u
+      );
+      assert.equal(f.pool.stats().fixture?.spawns, 1);
+    } finally {
+      await f.close();
+    }
+  }
+);
+
+test(
+  "a task is visible only to the session or conversation that created it",
+  {
+    timeout: 15_000
+  },
+  async () => {
+    const f = await fixture();
+    try {
+      const owner = await f.open();
+      const other = await f.open();
+      const created = await f.request(owner, "tools/call", {
+        name: "echo",
+        arguments: {},
+        task: { ttl: TTL_MS }
+      });
+      const { task } = CreateTaskResultSchema.parse(created.body.result);
+      for (const method of ["tasks/get", "tasks/result", "tasks/cancel"]) {
+        const foreign = await f.request(other, method, { taskId: task.taskId });
+        assert.equal(foreign.body.error?.message, "Task not found", method);
+      }
+      const foreignList = await f.request(other, "tasks/list", {});
+      assert.deepEqual(foreignList.body.result, { tasks: [] });
+      for (const fixtureList of ["malformed", "error"]) {
+        const invalid = await f.request(other, "tasks/list", {
+          _meta: { fixtureList }
+        });
+        assert.equal(
+          invalid.body.error?.message,
+          "Backend task list unavailable"
+        );
+        assert.equal(invalid.body.result, undefined);
+        assert.equal(invalid.body.error?.data, undefined);
+        assert.doesNotMatch(
+          JSON.stringify(invalid.body),
+          /foreign-task-fixture-private/u
+        );
+      }
+      const ownList = await f.request(owner, "tasks/list", {});
+      assert.equal(ownList.body.result._meta, undefined);
+      assert.deepEqual(
+        ownList.body.result.tasks.map(
+          (entry: { taskId: string }) => entry.taskId
+        ),
+        [task.taskId]
+      );
+      const own = await f.request(owner, "tasks/get", { taskId: task.taskId });
+      assert.equal(TaskSchema.parse(own.body.result).status, "working");
+
+      // A platform conversation identity owns its tasks across MCP sessions,
+      // and a different conversation on the same session sees none of them.
+      const meta = (conversation: string) => ({
+        _meta: { "openai/session": conversation }
+      });
+      const viaConversation = await f.request(owner, "tools/call", {
+        name: "echo",
+        arguments: {},
+        task: { ttl: TTL_MS },
+        ...meta("conversation-a")
+      });
+      const conversationTask = CreateTaskResultSchema.parse(
+        viaConversation.body.result
+      ).task;
+      const sameConversation = await f.request(other, "tasks/get", {
+        taskId: conversationTask.taskId,
+        ...meta("conversation-a")
+      });
+      assert.equal(
+        TaskSchema.parse(sameConversation.body.result).status,
+        "working"
+      );
+      const otherConversation = await f.request(owner, "tasks/get", {
+        taskId: conversationTask.taskId,
+        ...meta("conversation-b")
+      });
+      assert.equal(otherConversation.body.error?.message, "Task not found");
+    } finally {
+      await f.close();
+    }
+  }
+);

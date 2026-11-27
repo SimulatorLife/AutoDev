@@ -39,19 +39,22 @@ export function nativeHookObservation(
       ? "claude_code"
       : null;
   if (!client) return null;
-  const workspace = context.cwd && path.isAbsolute(context.cwd)
-    ? path.basename(context.cwd)
-    : null;
+  const workspace =
+    context.cwd && path.isAbsolute(context.cwd)
+      ? path.basename(context.cwd)
+      : null;
   const parsed = nativeSessionObservationSchema.safeParse({
     client,
     sessionId: context.sessionId,
     event,
-    model: context.model && /^[A-Za-z0-9_.:/-]{1,128}$/u.test(context.model)
-      ? context.model
-      : null,
-    workspace: workspace && /^[A-Za-z0-9_. -]{1,128}$/u.test(workspace)
-      ? workspace
-      : null
+    model:
+      context.model && /^[A-Za-z0-9_.:/-]{1,128}$/u.test(context.model)
+        ? context.model
+        : null,
+    workspace:
+      workspace && /^[A-Za-z0-9_. -]{1,128}$/u.test(workspace)
+        ? workspace
+        : null
   });
   return parsed.success ? parsed.data : null;
 }
@@ -64,7 +67,8 @@ export async function reportNativeSession(
     const observation = nativeHookObservation(input, event);
     if (!observation) return;
     const home = process.env.HOME?.trim() || homedir();
-    const codexHome = process.env.CODEX_HOME?.trim() || path.join(home, ".codex");
+    const codexHome =
+      process.env.CODEX_HOME?.trim() || path.join(home, ".codex");
     const admission = readLocalAdmission(codexHome);
     if (!admission) return;
     const port = Number(process.env.CODEX_MODEL_ROUTER_PORT ?? "4100");
