@@ -84,7 +84,6 @@ import {
 import {
   handleControlApiRequest,
   setControlApiLiveAgentCountsSource,
-  setControlApiMcpObservationsSource,
   setControlApiProviderHealthSource
 } from "../control-api/request-handler.ts";
 import { readLocalAdmission } from "../mcp/gateway-admission.ts";
@@ -105,7 +104,6 @@ import {
   correlationStatus,
   CorrelationTracker,
   MCP_OBSERVATION_TTL_MS,
-  mcpServerObservations,
   restoreCorrelation,
   setDefaultCorrelationTracker
 } from "./correlation.ts";
@@ -1151,10 +1149,6 @@ export async function checkProvider(
   };
 }
 setControlApiLiveAgentCountsSource(controlApiLiveAgentCounts);
-// The MCP observations are the router's own telemetry of the MCP servers it
-// has reached, so the Control API publishes them rather than reaching into
-// the tracker itself.
-setControlApiMcpObservationsSource(mcpServerObservations);
 
 function buildRouterStatus(now = Date.now()) {
   const projection = getDefaultUsageTracker().projectLiveAgents(now);

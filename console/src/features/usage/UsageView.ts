@@ -1619,7 +1619,7 @@ function renderMcpServersPanel(
   const windowNote = React.createElement(
     "p",
     { className: `${MUTED_META_CLASS} mb-3` },
-    "Inventory from Control API (/control/mcps). Observed calls and failures come from Runtime observations (/control/mcp-runtime) accumulated since router start — independent of the OpenLIT time range and filters above."
+    "Inventory from Control API (/control/mcps). Observed calls and failures come from Runtime observations (/control/mcp-runtime): every call the shared MCP gateway served since it started — independent of the OpenLIT time range and filters above."
   );
 
   if (mcpInventory === undefined || mcpInventory.kind === "unavailable") {

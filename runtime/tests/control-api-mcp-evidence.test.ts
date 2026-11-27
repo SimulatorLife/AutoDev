@@ -1,24 +1,23 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
 
-import type { ControlApiMcpRuntimeServer } from "@simulatorlife/autodev-core";
-
+import { handleControlApiRequest } from "../src/control-api/request-handler.ts";
+import { mcpGatewayDirectory } from "../src/mcp/gateway-admission.ts";
 import {
-  handleControlApiRequest,
-  setControlApiMcpObservationsSource
-} from "../src/control-api/request-handler.ts";
-import {
-  getDefaultCorrelationTracker,
-  mcpServerObservations,
-  resetCorrelation
-} from "../src/router/correlation.ts";
+  GatewayCallObservations,
+  mcpRuntimeServersFromGateway,
+  publishedGatewayCallObservations
+} from "../src/mcp/gateway-observations.ts";
+import { ensurePrivateDirectory } from "../src/shared/private-service-files.ts";
 import { responseRecorder } from "./support/control-api-harness.ts";
 
 const SERVICE_TOKEN = "m".repeat(64);
 const OPERATOR_ACTOR = "mcp-evidence-operator";
-const OBSERVED_SERVER = "lsp";
 
 interface McpCatalogRecord {
   readonly name: string;
@@ -45,7 +44,7 @@ function request(method: string, url: string): IncomingMessage {
   }) as unknown as IncomingMessage;
 }
 
-function harness(): {
+function harness(codexHome?: string): {
   readonly restore: () => void;
   readonly call: Call;
 } {
@@ -68,7 +67,8 @@ function harness(): {
       await handleControlApiRequest(
         request(method, pathname),
         response,
-        pathname
+        pathname,
+        codexHome === undefined ? {} : { codexHome }
       );
       let parsed: Record<string, unknown> | null = null;
       if (response.body) {
@@ -91,58 +91,22 @@ async function readCatalog(call: Call): Promise<readonly McpCatalogRecord[]> {
 }
 
 /**
-Records the Runtime's observation of a server and of the calls on it.
-
-The observation is the one the bridges report: a call that ran against the
-server and came back. That is the evidence the server's health is read
-from, and it is the only evidence the Runtime has now that the OTLP
-receiver is gone.
+A Codex home whose gateway directory exists, as an installed gateway's does.
 */
-function observeServer(serverName: string, calls: number): void {
-  const tracker = getDefaultCorrelationTracker();
-  for (let index = 0; index < calls; index += 1) {
-    tracker.recordBridgeToolObservation({
-      event: {
-        type: "tool_executed",
-        tool: "lsp_goto_definition",
-        server: serverName,
-        status: "ok",
-        callId: `call-${String(index)}`,
-        durationMs: 40
-      },
-      context: {
-        server_name: serverName,
-        workspace: "SimulatorLife/AutoDev",
-        role: "orchestrator",
-        model: "gpt-5"
-      }
-    });
-  }
+function gatewayHome(): { readonly codexHome: string; remove(): void } {
+  const root = mkdtempSync(path.join(tmpdir(), "autodev-mcp-evidence-"));
+  const codexHome = path.join(root, ".codex");
+  ensurePrivateDirectory(codexHome);
+  ensurePrivateDirectory(mcpGatewayDirectory(codexHome));
+  return {
+    codexHome,
+    remove: () => rmSync(root, { recursive: true, force: true })
+  };
 }
 
-const OBSERVATION: ControlApiMcpRuntimeServer = {
-  name: OBSERVED_SERVER,
-  health: "ready",
-  lastSeenAt: "2026-10-22T12:00:00.000Z",
-  lastStatus: "ready",
-  initAttempts: 2,
-  toolDiscoveryAttempts: 1,
-  failures: 0,
-  toolCalls: 6,
-  averageDurationMs: 128,
-  roles: [
-    {
-      role: "orchestrator",
-      health: "ready",
-      lastSeenAt: "2026-10-22T12:00:00.000Z",
-      lastStatus: "ready"
-    }
-  ],
-  tools: [{ name: "lsp_goto_definition", count: 6, errors: 0 }]
-};
+const AT = new Date("2026-11-27T12:00:00.000Z");
 
 test("the MCP catalog stays a configuration read and carries no runtime evidence", async () => {
-  resetCorrelation();
   const h = harness();
   try {
     const read = await h.call("GET", "/control/mcps");
@@ -162,60 +126,35 @@ test("the MCP catalog stays a configuration read and carries no runtime evidence
     }
   } finally {
     h.restore();
-    resetCorrelation();
   }
 });
 
-test("the MCP runtime read reports unavailable observations when no source is attached", async () => {
-  setControlApiMcpObservationsSource(null);
-  const h = harness();
+test("the MCP runtime read reports unavailable observations when no gateway has published", async () => {
+  const home = gatewayHome();
+  const h = harness(home.codexHome);
   try {
     const read = await h.call("GET", "/control/mcp-runtime");
     assert.equal(read.status, 200);
     assert.equal(read.body?.schema, "autodev-control-mcp-runtime-v1");
-    // A Control API with no router attached has not been asked. Reporting an
-    // empty observation here would say "the Runtime reached no MCP server",
-    // which is a different claim from "nothing could be asked".
+    assert.equal(read.body?.source, "mcp-gateway");
+    // No gateway has reported. Reporting an empty observation here would say
+    // "agents reached no MCP server", which is a different claim from
+    // "nothing could be asked".
     assert.equal(read.body?.observedServers, null);
     assert.equal(read.body?.health, null);
     assert.deepEqual(read.body?.servers, []);
   } finally {
     h.restore();
-    setControlApiMcpObservationsSource(null);
+    home.remove();
   }
 });
 
-test("the MCP runtime read publishes the observations its source reports", async () => {
-  setControlApiMcpObservationsSource(() => [OBSERVATION]);
-  const h = harness();
+test("a running gateway that has served nothing is an observation of nothing", async () => {
+  const home = gatewayHome();
+  const ledger = publishedGatewayCallObservations(home.codexHome);
+  const h = harness(home.codexHome);
   try {
     const read = await h.call("GET", "/control/mcp-runtime");
-    assert.equal(read.status, 200);
-    assert.deepEqual(read.body?.servers, [OBSERVATION]);
-    assert.equal(read.body?.observedServers, 1);
-    // The counts are the runtime's, published in its own vocabulary, so the
-    // console renders them rather than counting the servers itself.
-    assert.deepEqual(read.body?.health, {
-      ready: 1,
-      error: 0,
-      stale: 0,
-      configured: 0,
-      observed: 0
-    });
-  } finally {
-    h.restore();
-    setControlApiMcpObservationsSource(null);
-  }
-});
-
-test("the MCP runtime read distinguishes an observation of nothing from an unavailable read", async () => {
-  setControlApiMcpObservationsSource(() => []);
-  const h = harness();
-  try {
-    const read = await h.call("GET", "/control/mcp-runtime");
-    assert.equal(read.status, 200);
-    // The Runtime was asked and reached no MCP server. That is a finding, and
-    // it is not the same as never having been asked.
     assert.equal(read.body?.observedServers, 0);
     assert.deepEqual(read.body?.health, {
       ready: 0,
@@ -225,46 +164,108 @@ test("the MCP runtime read distinguishes an observation of nothing from an unava
       observed: 0
     });
   } finally {
+    ledger.close();
     h.restore();
-    setControlApiMcpObservationsSource(null);
+    home.remove();
   }
 });
 
-test("the runtime projects its own telemetry into the MCP observations it publishes", () => {
-  resetCorrelation();
+test("the MCP runtime read publishes the calls the gateway served", async () => {
+  const home = gatewayHome();
+  const ledger = publishedGatewayCallObservations(home.codexHome, {
+    delayMs: 0,
+    now: () => AT
+  });
+  const h = harness(home.codexHome);
   try {
-    const observedAt = new Date().toISOString();
-    observeServer(OBSERVED_SERVER, 3);
+    const call = { server: "lsp", tool: "lsp_goto_definition" } as const;
+    ledger.observations.record({
+      ...call,
+      role: "worker",
+      status: "ok",
+      durationMs: 30
+    });
+    ledger.observations.record({
+      ...call,
+      role: "worker",
+      status: "ok",
+      durationMs: 50
+    });
+    ledger.observations.record({
+      server: "context7",
+      tool: "resolve-library-id",
+      role: null,
+      status: "error",
+      durationMs: 10
+    });
+    ledger.close();
 
-    const servers = mcpServerObservations();
-    const server = servers.find((entry) => entry.name === OBSERVED_SERVER);
-    assert.ok(server, `the projection must carry ${OBSERVED_SERVER}`);
-    // The health is the runtime's own verdict, and it is fresh because the
-    // observation carries the current time.
-    assert.equal(server.health, "ready");
-    assert.equal(server.lastStatus, "ready");
-    // The observation is stamped by the runtime, from the span it recorded.
-    assert.ok(server.lastSeenAt, "an observed server carries a last-seen time");
-    assert.ok(
-      Math.abs(Date.parse(server.lastSeenAt) - Date.parse(observedAt)) < 5000,
-      "the last-seen time is the observation the runtime recorded"
-    );
-    // Nothing observes the MCP client's own initialization, so the Runtime
-    // publishes no count for it: a zero would claim the server was never
-    // brought up, which is a claim about a read that never happens.
-    assert.equal(server.initAttempts, null);
-    assert.equal(server.toolDiscoveryAttempts, null);
-    assert.equal(server.failures, 0);
-    // The tool call the runtime saw is the server's observed call count.
-    assert.equal(server.toolCalls, 3);
-    assert.deepEqual(server.tools, [
-      { name: "lsp_goto_definition", count: 3, errors: 0 }
+    const read = await h.call("GET", "/control/mcp-runtime");
+    assert.equal(read.status, 200);
+    assert.equal(read.body?.observedServers, 2);
+    assert.deepEqual(read.body?.health, {
+      ready: 1,
+      error: 1,
+      stale: 0,
+      configured: 0,
+      observed: 0
+    });
+    assert.deepEqual(read.body?.servers, [
+      {
+        name: "context7",
+        health: "error",
+        lastSeenAt: AT.toISOString(),
+        lastStatus: "error",
+        initAttempts: null,
+        toolDiscoveryAttempts: null,
+        failures: 1,
+        toolCalls: 1,
+        averageDurationMs: 10,
+        // The call's admission verified no role, so none is claimed.
+        roles: [],
+        tools: [{ name: "resolve-library-id", count: 1, errors: 1 }]
+      },
+      {
+        name: "lsp",
+        health: "ready",
+        lastSeenAt: AT.toISOString(),
+        lastStatus: "ok",
+        initAttempts: null,
+        toolDiscoveryAttempts: null,
+        failures: 0,
+        toolCalls: 2,
+        averageDurationMs: 40,
+        roles: [
+          {
+            role: "worker",
+            health: "ready",
+            lastSeenAt: AT.toISOString(),
+            lastStatus: "ok"
+          }
+        ],
+        tools: [{ name: "lsp_goto_definition", count: 2, errors: 0 }]
+      }
     ]);
-    // The role the server was seen from is reported with its own health.
-    assert.equal(server.roles.length, 1);
-    assert.equal(server.roles[0]?.role, "orchestrator");
-    assert.equal(server.roles[0]?.health, "ready");
   } finally {
-    resetCorrelation();
+    h.restore();
+    home.remove();
   }
+});
+
+test("a ledger whose gateway has exited describes the past, not a server that is up", () => {
+  const observations = new GatewayCallObservations({ now: () => AT });
+  observations.record({
+    server: "lsp",
+    tool: "lsp_hover",
+    role: "explorer",
+    status: "ok",
+    durationMs: 5
+  });
+  const [server] = mcpRuntimeServersFromGateway(
+    observations.snapshot(),
+    () => false
+  );
+  assert.equal(server?.health, "stale");
+  assert.equal(server?.roles[0]?.health, "stale");
+  assert.equal(server?.toolCalls, 1);
 });

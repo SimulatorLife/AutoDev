@@ -1,8 +1,3 @@
-import type {
-  ControlApiMcpRuntimeHealth,
-  ControlApiMcpRuntimeServer
-} from "@simulatorlife/autodev-core";
-
 import { safeMetricLabel } from "./metric-label.ts";
 import { recordSkillObservation } from "./telemetry.ts";
 import {
@@ -684,10 +679,9 @@ function bucketHealth(
   now: number,
   healthTtlMs: number
 ): string {
-  const lastSeenMs = bucket.lastSeenAt
-    ? Date.parse(bucket.lastSeenAt)
-    : NaN;
-  const isFresh = Number.isFinite(lastSeenMs) && now - lastSeenMs <= healthTtlMs;
+  const lastSeenMs = bucket.lastSeenAt ? Date.parse(bucket.lastSeenAt) : NaN;
+  const isFresh =
+    Number.isFinite(lastSeenMs) && now - lastSeenMs <= healthTtlMs;
   return isFresh ? bucket.lastStatus : "stale";
 }
 
@@ -930,7 +924,9 @@ export class CorrelationTracker {
     ]);
     if (direct) return safeMetricLabel(direct);
     if (requestContext?.model ?? requestContext?.requestedModel) {
-      return safeMetricLabel(requestContext.model ?? requestContext.requestedModel);
+      return safeMetricLabel(
+        requestContext.model ?? requestContext.requestedModel
+      );
     }
     const threadModel = (thread as RequestContext | null)?.model;
     if (threadModel) return safeMetricLabel(threadModel);
@@ -961,7 +957,11 @@ export class CorrelationTracker {
       attributes?.agentName
     ]);
     if (direct) return safeAgentIdentity(direct);
-    if (requestContext?.childId ?? requestContext?.agentId ?? requestContext?.agent) {
+    if (
+      requestContext?.childId ??
+      requestContext?.agentId ??
+      requestContext?.agent
+    ) {
       return safeAgentIdentity(
         requestContext.childId ?? requestContext.agentId ?? requestContext.agent
       );
@@ -996,7 +996,8 @@ export class CorrelationTracker {
       attributes?.["agent.kind"]
     ]);
     if (direct) return safeMetricLabel(direct);
-    if (requestContext?.agentKind) return safeMetricLabel(requestContext.agentKind);
+    if (requestContext?.agentKind)
+      return safeMetricLabel(requestContext.agentKind);
     const sessionSource = firstString([
       attributes?.session_source,
       resourceAttributes?.session_source,
@@ -1228,7 +1229,7 @@ export class CorrelationTracker {
     const bucket = buckets[key] ?? {
       count: 0,
       lastSeenAt: null,
-      ...((dimension === "byAgent") && { agentKind: context.agentKind })
+      ...(dimension === "byAgent" && { agentKind: context.agentKind })
     };
     bucket.count += count;
     if (
@@ -1464,7 +1465,13 @@ export class CorrelationTracker {
     const verdict =
       status === "ok" ? "ready" : status === "error" ? "error" : "observed";
     this.noteMcpDimension(mcp, "byRole", context.role, context, verdict);
-    this.noteMcpDimension(mcp, "byWorkspace", context.workspace, context, verdict);
+    this.noteMcpDimension(
+      mcp,
+      "byWorkspace",
+      context.workspace,
+      context,
+      verdict
+    );
     this.noteMcpDimension(mcp, "byModel", context.model, context, verdict);
     this.noteMcpDimension(mcp, "byAgent", context.agent, context, verdict);
     if (
@@ -1509,7 +1516,13 @@ export class CorrelationTracker {
     const context_ = this.resolveCorrelationContext(eventMap, {}, { context });
     this.noteContextDimension("bridge", context_);
     if (server) {
-      this.noteBridgeToolMcpObservation(server, context_, event.type, event, status);
+      this.noteBridgeToolMcpObservation(
+        server,
+        context_,
+        event.type,
+        event,
+        status
+      );
     }
     const toolBucketKey = callId ? `${tool}::${callId}` : tool;
     this.incrementBridgeToolRow(
@@ -1810,7 +1823,9 @@ export class CorrelationTracker {
       source,
       role: typeof context.role === "string" ? context.role : null,
       workspace:
-        context_.workspace === UNATTRIBUTED_DIMENSION ? null : { key: context_.workspace }
+        context_.workspace === UNATTRIBUTED_DIMENSION
+          ? null
+          : { key: context_.workspace }
     });
     return true;
   }
@@ -1894,7 +1909,9 @@ export class CorrelationTracker {
       source,
       role: typeof context.role === "string" ? context.role : null,
       workspace:
-        context_.workspace === UNATTRIBUTED_DIMENSION ? null : { key: context_.workspace }
+        context_.workspace === UNATTRIBUTED_DIMENSION
+          ? null
+          : { key: context_.workspace }
     });
     return true;
   }
@@ -2181,9 +2198,9 @@ export class CorrelationTracker {
       count: isFiniteNonnegative(bucket.count) ? bucket.count : 0,
       lastSeenAt:
         typeof bucket.lastSeenAt === "string" ? bucket.lastSeenAt : null,
-      ...((dimension === "byAgent") && {
-            agentKind: safeMetricLabel(bucket.agentKind, UNATTRIBUTED_DIMENSION)
-          })
+      ...(dimension === "byAgent" && {
+        agentKind: safeMetricLabel(bucket.agentKind, UNATTRIBUTED_DIMENSION)
+      })
     };
   }
 
@@ -2475,103 +2492,6 @@ export function resetCorrelation(): void {
 
 export function correlationStatus(now: number = Date.now()): CorrelationStatus {
   return defaultCorrelationTracker.correlationStatus(now);
-}
-
-/**
-The Runtime's health verdict for an MCP server, in the Control API's
-vocabulary.
-
-The telemetry records a free-form status; the contract publishes the five
-words the Runtime actually uses. Anything else is reported as `stale`: an
-unrecognized verdict is not a readiness claim.
-*/
-function mcpHealthVerdict(value: string): ControlApiMcpRuntimeHealth {
-  if (
-    value === "ready" ||
-    value === "error" ||
-    value === "configured" ||
-    value === "observed"
-  ) {
-    return value;
-  }
-  return "stale";
-}
-
-/**
-Sorts the observed role and tool names the same way every read does.
-*/
-const MCP_OBSERVATION_COLLATOR = new Intl.Collator();
-
-/**
-What the Runtime has observed of each MCP server.
-
-The telemetry already tracks every MCP server the Runtime has seen: the
-initialization and tool-discovery attempts, the failures, the call
-durations, the roles the server was used from, and the tools it was observed
-calling. This projects that per-server view into the shape the Control API
-publishes, so the page can show the Runtime's own evidence next to the
-canonical declaration instead of a placeholder.
-
-A server the Runtime has never observed has no evidence at all, which is a
-distinct state from a server it observed and counted zero: the first means
-"nothing has been seen", the second would mean "something was seen and it
-did nothing". The projection therefore carries only the servers the Runtime
-actually saw.
-*/
-export function mcpServerObservations(): ControlApiMcpRuntimeServer[] {
-  const telemetry = correlationStatus();
-  // The observed tool calls are the ones the bridges reported executing. The
-  // router records one row per call, so the rows are folded back into one
-  // entry per tool before they are published.
-  const toolsByServer = new Map<
-    string,
-    Map<string, { count: number; errors: number }>
-  >();
-  for (const row of telemetry.bridgeEvents.toolExecuted.byTool) {
-    if (!row.server) continue;
-    const byTool = toolsByServer.get(row.server) ?? new Map();
-    const tool = byTool.get(row.tool) ?? { count: 0, errors: 0 };
-    tool.count += row.count;
-    tool.errors += row.byStatus.error ?? 0;
-    byTool.set(row.tool, tool);
-    toolsByServer.set(row.server, byTool);
-  }
-  return telemetry.mcpServers.map((server) => {
-    const byTool = toolsByServer.get(server.name) ?? new Map();
-    const tools = Array.from(byTool.entries(), ([name, counts]) => ({
-      name,
-      count: counts.count,
-      errors: counts.errors
-    }));
-    return {
-      name: server.name,
-      health: mcpHealthVerdict(server.health),
-      lastSeenAt: server.lastSeenAt,
-      lastStatus: server.lastStatus,
-      // The router does not observe the MCP client's own initialization, so
-      // it publishes no count for it: a count of zero would claim the server
-      // was never brought up, which is a claim about a read that never
-      // happens.
-      initAttempts: null,
-      toolDiscoveryAttempts: null,
-      failures: server.failures,
-      toolCalls: tools.reduce((total, tool) => total + tool.count, 0),
-      averageDurationMs: server.averageDurationMs,
-      roles: Object.entries(server.byRole)
-        .map(([role, bucket]) => ({
-          role,
-          health: mcpHealthVerdict(bucket.health ?? "stale"),
-          lastSeenAt: bucket.lastSeenAt,
-          lastStatus: bucket.lastStatus
-        }))
-        .sort((left, right) =>
-          MCP_OBSERVATION_COLLATOR.compare(left.role, right.role)
-        ),
-      tools: tools.sort((left, right) =>
-        MCP_OBSERVATION_COLLATOR.compare(left.name, right.name)
-      )
-    };
-  });
 }
 
 export function correlationSnapshot(): CorrelationSnapshot {

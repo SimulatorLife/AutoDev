@@ -78,6 +78,11 @@ import {
   mcpGatewayDirectory,
   readLocalAdmission
 } from "../mcp/gateway-admission.ts";
+import {
+  mcpRuntimeServersFromGateway,
+  publishedGatewayCallObservations,
+  readMcpGatewayObservations
+} from "../mcp/gateway-observations.ts";
 import { isEntryPoint } from "../shared/entry-point.ts";
 import { runtimeBinDirectory } from "../shared/executables.ts";
 import {
@@ -626,15 +631,17 @@ async function discoverServerTools(
             headers: resolveRemoteMcpHeaders(
               {
                 url: String(descriptor.url),
-                ...((typeof descriptor.bearer_token_env_var === "string") && { bearer_token_env_var: descriptor.bearer_token_env_var }),
+                ...(typeof descriptor.bearer_token_env_var === "string" && {
+                  bearer_token_env_var: descriptor.bearer_token_env_var
+                }),
                 ...(descriptor.http_headers &&
-                typeof descriptor.http_headers === "object" &&
-                !Array.isArray(descriptor.http_headers) && {
-                      http_headers: descriptor.http_headers as Record<
-                        string,
-                        string
-                      >
-                    })
+                  typeof descriptor.http_headers === "object" &&
+                  !Array.isArray(descriptor.http_headers) && {
+                    http_headers: descriptor.http_headers as Record<
+                      string,
+                      string
+                    >
+                  })
               },
               server,
               environment
@@ -872,6 +879,17 @@ export function readMcpGatewayState(
   }
   const result = gatewayStateSchema.safeParse(parsed);
   return result.success ? result.data : undefined;
+}
+
+/**
+The MCP servers the gateway has served calls for since it started, in the
+Control API's shape; null when no gateway has published its ledger.
+*/
+export function readMcpGatewayRuntimeServers(
+  codexHome: string
+): ReturnType<typeof mcpRuntimeServersFromGateway> | null {
+  const ledger = readMcpGatewayObservations(codexHome);
+  return ledger === null ? null : mcpRuntimeServersFromGateway(ledger);
 }
 
 /**
@@ -1558,11 +1576,13 @@ export async function runMcpGatewayDaemon(
     state.servicePath,
     { role: state.role }
   );
+  const ledger = publishedGatewayCallObservations(paths.codexHome);
   const backendPool: ChatgptBackendPoolHandle = await startChatgptBackendPool(
     chatgptBackendPoolConfigSchema.parse(JSON.parse(poolRaw)),
     {
       gatewayEnv: gatewayEnvironment,
       secretEnv: environment,
+      observations: ledger.observations,
       admission: createGatewayAdmission({
         repositoryRoot: paths.repositoryRoot,
         node: state.node,
@@ -1590,7 +1610,10 @@ export async function runMcpGatewayDaemon(
       stdio: ["pipe", "inherit", "inherit"]
     }
   );
-  return superviseChild(gateway, "Supergateway", () => backendPool.close());
+  return superviseChild(gateway, "Supergateway", async () => {
+    await backendPool.close();
+    ledger.close();
+  });
 }
 
 /**

@@ -81,6 +81,7 @@ import {
   publicRemoteMcpMessage,
   remoteTransportErrorMessage
 } from "./remote-transport.ts";
+import type { GatewayCallObservations } from "./gateway-observations.ts";
 import { SESSION_GRANT_META_KEY, verifySessionGrant } from "./session-grant.ts";
 
 type JsonRecord = Record<string, unknown>;
@@ -241,6 +242,10 @@ export interface ChatgptBackendPoolOptions {
   Admits locally granted sessions to `admitted` servers.
   */
   readonly admission?: GatewayAdmission;
+  /**
+  The gateway's ledger of the tool calls it served.
+  */
+  readonly observations?: GatewayCallObservations;
 }
 
 export interface GatewayAdmission {
@@ -468,6 +473,7 @@ class PooledBackendController {
   private readonly idleTimeoutMs: number;
   private readonly toolCallTimeoutMs: number;
   private readonly requestTimeoutMs: number;
+  private readonly observations: GatewayCallObservations | null;
 
   private live: LiveBackend | null = null;
   private starting: Promise<LiveBackend> | null = null;
@@ -503,6 +509,33 @@ class PooledBackendController {
       options.idleTimeoutMs ?? DEFAULT_BACKEND_IDLE_TIMEOUT_MS;
     this.toolCallTimeoutMs = options.toolCallTimeoutMs ?? TOOL_CALL_TIMEOUT_MS;
     this.requestTimeoutMs = options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
+    this.observations = options.observations ?? null;
+  }
+
+  /**
+  Run one admitted tool call and record what the gateway saw of it: the
+  canonical server, the tool, the verified role, the outcome and the time.
+  */
+  private async observedToolCall(
+    toolName: string,
+    correlation: McpToolCallCorrelation | undefined,
+    call: () => Promise<ToolCallOutcome>
+  ): Promise<void> {
+    const startedAt = performance.now();
+    let status: ToolCallOutcome["status"] = "error";
+    try {
+      status = (await call()).status;
+    } finally {
+      this.observations?.record({
+        server:
+          correlation?.server ??
+          ("server" in this.spec ? this.spec.server : this.name),
+        tool: toolName,
+        role: correlation?.role ?? null,
+        status,
+        durationMs: performance.now() - startedAt
+      });
+    }
   }
 
   private pruneTaskPins(): void {
@@ -629,7 +662,7 @@ class PooledBackendController {
         tasks: tasks.filter(
           (task) => this.taskPins.get(task.taskId)?.owner === owner
         ),
-        ...((nextCursor !== undefined) && { nextCursor })
+        ...(nextCursor !== undefined && { nextCursor })
       }
     };
   }
@@ -780,8 +813,10 @@ class PooledBackendController {
     if (this.taskPins.size > 0) {
       // A terminal task still owns its advertised result-retention window.
       // Active/unobserved tasks never expire merely because of elapsed time.
-      const deadlines = Array.from(this.taskPins.values(), (pin) => pin.expiresAt)
-        .filter((deadline): deadline is number => deadline !== null);
+      const deadlines = Array.from(
+        this.taskPins.values(),
+        (pin) => pin.expiresAt
+      ).filter((deadline): deadline is number => deadline !== null);
       if (deadlines.length > 0) {
         this.idleTimer = setTimeout(
           () => this.armIdleTimer(),
@@ -899,11 +934,14 @@ class PooledBackendController {
       }
     }
     const childEnvironment: NodeJS.ProcessEnv = {
-      ...(isSandboxed && server === MCP_SERVER_COCOINDEX && {
-            HF_HUB_OFFLINE: "1",
-            TRANSFORMERS_OFFLINE: "1",
-            ...(isCocoindexSupervised && { COCOINDEX_CODE_DAEMON_SUPERVISED: "1" })
-          }),
+      ...(isSandboxed &&
+        server === MCP_SERVER_COCOINDEX && {
+          HF_HUB_OFFLINE: "1",
+          TRANSFORMERS_OFFLINE: "1",
+          ...(isCocoindexSupervised && {
+            COCOINDEX_CODE_DAEMON_SUPERVISED: "1"
+          })
+        }),
       ...this.gatewayEnv,
       // The role-scoped environment is applied last so one role's identity and
       // coordinator always win over the gateway's shared defaults.
@@ -987,7 +1025,7 @@ class PooledBackendController {
         Surface errors through pending requests rather than leaking URLs/headers.
         */
       };
-      transport.addEventListener('close', () => {
+      transport.addEventListener("close", () => {
         if (isClosed) {
           return;
         }
@@ -1067,7 +1105,9 @@ class PooledBackendController {
     taskOwner: string | null = null
   ): Promise<JsonRecord> {
     const createsTask =
-      method === "tools/call" && isRecord(parameters) && parameters.task !== undefined;
+      method === "tools/call" &&
+      isRecord(parameters) &&
+      parameters.task !== undefined;
     if (createsTask && !this.canCreateTask()) {
       return Promise.resolve(
         errorResponse(clientId, "Backend task retention capacity unavailable")
@@ -1079,7 +1119,9 @@ class PooledBackendController {
         : undefined;
     const internalId = `pool:${++this.nextInternalId}`;
     const meta =
-      isRecord(parameters) && isRecord(parameters._meta) ? parameters._meta : null;
+      isRecord(parameters) && isRecord(parameters._meta)
+        ? parameters._meta
+        : null;
     const progressToken = ProgressTokenSchema.safeParse(meta?.progressToken);
     const forwardedParameters =
       progressToken.success && isRecord(parameters)
@@ -1102,10 +1144,12 @@ class PooledBackendController {
         // If no other calls are active, recycle a backend that timed out so a
         // wedged server does not poison subsequent requests.
         this.pruneTaskPins();
-        if (this.live !== backend ||
+        if (
+          this.live !== backend ||
           this.pending.size > 0 ||
           this.taskPins.size > 0 ||
-          this.uncertainTaskBackend !== null) {
+          this.uncertainTaskBackend !== null
+        ) {
           return;
         }
 
@@ -1122,7 +1166,7 @@ class PooledBackendController {
         sessionId,
         method,
         createsTask,
-        ...((taskId !== undefined) && { taskId }),
+        ...(taskId !== undefined && { taskId }),
         taskOwner,
         ...(progressToken.success && { progressToken: progressToken.data }),
         timer,
@@ -1134,7 +1178,9 @@ class PooledBackendController {
         jsonrpc: "2.0",
         id: internalId,
         method,
-        ...((forwardedParameters !== undefined) && { params: forwardedParameters })
+        ...(forwardedParameters !== undefined && {
+          params: forwardedParameters
+        })
       });
     });
   }
@@ -1408,7 +1454,9 @@ class PooledBackendController {
             this.toolCallTimeoutMs,
             owner
           );
-          const resultObject = isRecord(response.result) ? response.result : null;
+          const resultObject = isRecord(response.result)
+            ? response.result
+            : null;
           const outcome: ToolCallOutcome =
             response.error || resultObject?.isError === true
               ? { status: "error", errorType: "tool_error" }
@@ -1417,22 +1465,23 @@ class PooledBackendController {
         };
 
         let callResult: JsonRecord | undefined;
+        const runCall = async (): Promise<ToolCallOutcome> => {
+          const { response, outcome } = await executeCall();
+          callResult = response;
+          return outcome;
+        };
         try {
           const telemetry = await loadSharedTelemetry().catch(() => null);
-          if (telemetry) {
-            await telemetry.recordToolCallSpan(
-              `${this.name}__${toolName}`,
-              async () => {
-                const { response, outcome } = await executeCall();
-                callResult = response;
-                return outcome;
-              },
-              parameters?._meta,
-              correlation
-            );
-          } else {
-            callResult = (await executeCall()).response;
-          }
+          await this.observedToolCall(toolName, correlation, () =>
+            telemetry
+              ? telemetry.recordToolCallSpan(
+                  `${this.name}__${toolName}`,
+                  runCall,
+                  parameters?._meta,
+                  correlation
+                )
+              : runCall()
+          );
         } catch (error) {
           return errorResponse(
             id,
@@ -1522,7 +1571,10 @@ const TASK_OWNER_REQUIRED =
 Who owns the tasks a request creates or names: the ChatGPT conversation when
 the platform supplies one, otherwise the MCP session the request arrived on.
 */
-function taskOwner(parameters: unknown, sessionId: string | null): string | null {
+function taskOwner(
+  parameters: unknown,
+  sessionId: string | null
+): string | null {
   const conversation = isRecord(parameters)
     ? chatgptConversationKey(parameters._meta)
     : null;
@@ -1569,7 +1621,8 @@ to start that scope's backend, who owns the tasks it creates, and the request
 as the backend should see it. A string is the refusal sent instead.
 */
 type ScopeResolution =
-  string | {
+  | string
+  | {
       readonly key: string;
       readonly spec: () => PooledBackendSpec;
       readonly owner?: string;
@@ -1962,7 +2015,9 @@ export async function startChatgptBackendPool(
       }
       const messages: JsonRecord[] = rawMessages;
 
-      const hasInitialize = messages.some((message) => message.method === "initialize");
+      const hasInitialize = messages.some(
+        (message) => message.method === "initialize"
+      );
       let session: LogicalSession | undefined;
       if (sessionIdHeader) {
         session = controller.getSession(sessionIdHeader);

@@ -235,6 +235,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/mcp/chatgpt-backend-pool.ts",
   "runtime/src/mcp/chatgpt-supergateway-probe.ts",
   "runtime/src/mcp/gateway-admission.ts",
+  "runtime/src/mcp/gateway-observations.ts",
   "runtime/src/mcp/gateway-client.ts",
   "runtime/src/mcp/session-grant.ts",
   "runtime/src/mcp/chatgpt-filesystem-sandbox.ts",
@@ -515,8 +516,8 @@ export function checkHookTrust(
         { trusted_hash?: string } | undefined;
       if (userEntry?.trusted_hash !== entry.hash) return false;
     }
-    return Object.keys(stateTable).every((key) =>
-      !key.startsWith(`${projectHooksJson}:`)
+    return Object.keys(stateTable).every(
+      (key) => !key.startsWith(`${projectHooksJson}:`)
     );
   } catch {
     return false;
@@ -606,7 +607,9 @@ const REPOMIX_CONFIG_CANDIDATES = [
   "repomix.config.cjs"
 ] as const;
 
-function repositoryNeedsBootstrapExclusionsRun(options: MaterializeOptions): boolean {
+function repositoryNeedsBootstrapExclusionsRun(
+  options: MaterializeOptions
+): boolean {
   if (process.env.CGC_MODE === "per_repo") {
     return true;
   }
@@ -967,7 +970,8 @@ export function patchCodeGraphContextFalkorDb(cgcDir: string): void {
       "atexit.register(self.shutdown)",
       "atexit.register(self.close_driver)"
     );
-    if (updated !== original) writeFileSync(databaseFalkorFile, updated, "utf8");
+    if (updated !== original)
+      writeFileSync(databaseFalkorFile, updated, "utf8");
   }
   const workerFile = path.join(cgcDir, "core", "falkor_worker.py");
   if (exists(workerFile)) {
@@ -1057,7 +1061,9 @@ function ensureGlobalCodeGraphContext(options: MaterializeOptions): void {
   const cgcDir = path.join(options.home, ".codegraphcontext");
   mkdirSync(cgcDir, { recursive: true });
   const environmentFile = path.join(cgcDir, ".env");
-  const existingEnvironment = exists(environmentFile) ? readFileSync(environmentFile, "utf8") : "";
+  const existingEnvironment = exists(environmentFile)
+    ? readFileSync(environmentFile, "utf8")
+    : "";
   const environmentLines = existingEnvironment.split(LINE_SPLIT_PATTERN);
   let isFound = false;
   const requiredDirectories = CGC_IGNORE_DIRS.split(",");
@@ -1065,7 +1071,9 @@ function ensureGlobalCodeGraphContext(options: MaterializeOptions): void {
     if (IGNORE_DIRS_LINE_PATTERN.test(line)) {
       isFound = true;
       const existingDirectories = extractIgnoreDirectories(line);
-      const set = new Set(existingDirectories.map((d) => d.trim()).filter(Boolean));
+      const set = new Set(
+        existingDirectories.map((d) => d.trim()).filter(Boolean)
+      );
       for (const d of requiredDirectories) set.add(d.trim());
       return `IGNORE_DIRS="${Array.from(set).join(",")}"`;
     }
@@ -1412,7 +1420,12 @@ export function installedSkillMatches(arguments_: {
   readonly name: string;
 }): boolean {
   return skillLinkMatches(
-    path.join(arguments_.repositoryRoot, ".rulesync", "skills", arguments_.name),
+    path.join(
+      arguments_.repositoryRoot,
+      ".rulesync",
+      "skills",
+      arguments_.name
+    ),
     path.join(arguments_.home, ".agents", "skills", arguments_.name)
   );
 }
@@ -2141,7 +2154,11 @@ function readCodexAppCacheEntry(configPath: string): {
       unknown
     >;
   } catch (error) {
-    if (((error as NodeJS.ErrnoException).code === "ENOENT") || (error instanceof SyntaxError)) return null;
+    if (
+      (error as NodeJS.ErrnoException).code === "ENOENT" ||
+      error instanceof SyntaxError
+    )
+      return null;
     throw error;
   }
   const servers = document.mcpServers;

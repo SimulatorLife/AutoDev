@@ -839,7 +839,7 @@ test("UsageView renders MCP servers exposed vs. used alongside MCP Calls by Tool
   assert.match(markup, /MCP Calls by Tool Name/u);
   assert.match(markup, /mcp__playwright__test/u);
   assert.match(markup, /data-mcp-inventory-status="observed"/u);
-  assert.match(markup, /accumulated since router start/u);
+  assert.match(markup, /every call the shared MCP gateway served since it started/u);
   assert.match(
     markup,
     /3 configured · 2 exposed · 2 used · 1 exposed, never used/u

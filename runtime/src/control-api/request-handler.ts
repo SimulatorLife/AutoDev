@@ -27,7 +27,6 @@ import {
   type ControlApiMcpGateway,
   type ControlApiMcpRuntimeHealth,
   type ControlApiMcpRuntimeHealthCounts,
-  type ControlApiMcpRuntimeServer,
   type ControlApiMcpServerPatchResponse,
   type ControlApiMcpsResponse,
   type ControlApiModelPatchResponse,
@@ -127,6 +126,7 @@ import {
   type McpGatewayState,
   mcpGatewaySurfaceStatus,
   publishedCommandCatalogueApproval,
+  readMcpGatewayRuntimeServers,
   readMcpGatewayState,
   tunnelMutationSchema
 } from "@simulatorlife/autodev-runtime/platform";
@@ -523,7 +523,7 @@ Named so the reader can tell an observation apart from a declaration: the
 MCP catalog's source is `.rulesync/mcp.jsonc`, and this is the Runtime's own
 telemetry of the servers it has seen.
 */
-const MCP_RUNTIME_EVIDENCE_SOURCE = "runtime.telemetry";
+const MCP_RUNTIME_EVIDENCE_SOURCE = "mcp-gateway";
 
 export type ControlApiRole = "viewer" | "operator";
 
@@ -828,16 +828,6 @@ export type ControlApiLiveSessionsSource = (
   now: number
 ) => ControlApiLiveSessions;
 
-/**
-The Runtime's observation of the MCP servers it has seen.
-
-Registered by the router, like the live agent counts: a Control API that
-runs without a router has no live evidence to publish, and it says so
-rather than reporting an empty observation as a fact.
-*/
-export type ControlApiMcpObservationsSource =
-  () => readonly ControlApiMcpRuntimeServer[];
-
 let providerHealthSource: ControlApiProviderHealthSource | null = null;
 let providerCheckSource: ControlApiProviderCheckSource | null = null;
 let providerQuotaAxiSource: (() => QuotaAxiResponse | null) | null = null;
@@ -852,7 +842,6 @@ export function setControlApiProviderCheckSource(
 }
 let liveAgentCountsSource: ControlApiLiveAgentCountsSource | null = null;
 let liveSessionsSource: ControlApiLiveSessionsSource | null = null;
-let mcpObservationsSource: ControlApiMcpObservationsSource | null = null;
 let providerModelDiscoverySource:
   (() => ControlApiProviderModelsResponse) | null = null;
 
@@ -893,17 +882,6 @@ export function setControlApiLiveSessionsSource(
   source: ControlApiLiveSessionsSource | null
 ): void {
   liveSessionsSource = source;
-}
-
-/**
-The router registers its observation of the MCP servers it has seen here.
-Without a registered source the MCP runtime read reports the evidence as
-unavailable rather than reporting an empty observation.
-*/
-export function setControlApiMcpObservationsSource(
-  source: ControlApiMcpObservationsSource | null
-): void {
-  mcpObservationsSource = source;
 }
 
 /**
@@ -1292,7 +1270,7 @@ function assignableRoles(): string[] {
 }
 
 /**
-The Runtime's observation of the MCP servers it has seen.
+The Runtime's observation of the MCP servers its agents have reached.
 
 This is published on its own path rather than folded into the MCP catalog.
 The catalog answers "what is declared"; this answers "what has the Runtime
@@ -1300,15 +1278,13 @@ actually reached". A page composes the two, and the contract keeps them
 apart so that a server's presence in the catalog never reads as evidence
 that the server was reached.
 
-The observations arrive through a registered source rather than through a
-direct call into the router's telemetry, for the same reason the live agent
-counts do: a Control API with no router attached has no live evidence, and
-it says so rather than reporting an empty observation as a fact.
+Every agent's MCP calls pass through the shared gateway, so the evidence is
+the ledger the gateway publishes (`gateway-observations.ts`): what it served
+since it started. No published ledger means no gateway has reported, which
+is reported as unavailable rather than as an observation of nothing.
 */
-function mcpRuntimeView(): Record<string, unknown> {
-  // `null` means no observation source is attached: the Runtime could not be
-  // asked, which is a different fact from having observed no server at all.
-  const observed = mcpObservationsSource?.() ?? null;
+function mcpRuntimeView(codexHome: string): Record<string, unknown> {
+  const observed = readMcpGatewayRuntimeServers(codexHome);
   const servers = observed ?? [];
   // Accumulated in a mutable local and frozen into the published shape: the
   // contract's counts are readonly, so they are built rather than incremented
@@ -1434,7 +1410,8 @@ function mcpAppliedEntry(name: string, value: unknown): McpLaunchEntry | null {
   const arguments_ = value.args;
   if (
     arguments_ !== undefined &&
-    (!Array.isArray(arguments_) || arguments_.some((argument) => typeof argument !== "string"))
+    (!Array.isArray(arguments_) ||
+      arguments_.some((argument) => typeof argument !== "string"))
   )
     return null;
   const headers = value.http_headers;
@@ -1753,7 +1730,7 @@ async function mcpsView(
     ...server,
     declared: true,
     roles: rolesByServer.get(server.name) ?? [],
-    ...((server.name === MCP_SERVER_COMMANDS) && { approvedCatalogues })
+    ...(server.name === MCP_SERVER_COMMANDS && { approvedCatalogues })
   }));
   // Typed rather than left to inference: `transport: "unknown"` in an inferred
   // array widens to `string`, which quietly stopped satisfying the declared
@@ -3252,7 +3229,13 @@ function appliedHookAction(
   value: unknown,
   matcher: unknown
 ): HookAction | null {
-  if (!isPlainRecord(value) || (value.type !== "command") || (typeof value.command !== "string") || (value.command.trim().length === 0)) return null;
+  if (
+    !isPlainRecord(value) ||
+    value.type !== "command" ||
+    typeof value.command !== "string" ||
+    value.command.trim().length === 0
+  )
+    return null;
   const actionMatcher =
     typeof matcher === "string"
       ? matcher
@@ -3675,7 +3658,9 @@ function promptsView(
       ? commandState.commands.map((command) => ({
           name: command.name,
           path: command.path,
-          ...(command.description !== undefined && { description: command.description })
+          ...(command.description !== undefined && {
+            description: command.description
+          })
         }))
       : [];
   const rolePromptsDir = path.join(
@@ -5683,7 +5668,11 @@ const READ_ONLY_COLLECTIONS: ReadonlyMap<string, ReadOnlyCollectionRenderer> =
       CONTROL_API_PATHS.mcps,
       (_actor, root, codexHome) => mcpsView(root, codexHome)
     ],
-    [CONTROL_API_PATHS.mcpRuntime, () => mcpRuntimeView()],
+    [
+      CONTROL_API_PATHS.mcpRuntime,
+      (_actor, _root, codexHome) =>
+        mcpRuntimeView(codexHome ?? defaultCodexHomeForReconciliation())
+    ],
     [
       CONTROL_API_PATHS.mcpApplied,
       (_actor, root, codexHome) => mcpAppliedView(root, codexHome)
@@ -5958,7 +5947,10 @@ function mcpBodyArgumentsValue(
   | { readonly kind: "invalid" } {
   if (raw === undefined) return { kind: "absent" };
   if (raw === null) return { kind: "remove" };
-  if (!Array.isArray(raw) || raw.some((argument) => typeof argument !== "string"))
+  if (
+    !Array.isArray(raw) ||
+    raw.some((argument) => typeof argument !== "string")
+  )
     return { kind: "invalid" };
   return { kind: "set", value: raw as string[] };
 }
@@ -6609,8 +6601,12 @@ function workspacePlaytestingApprovalRoute(
     pathname,
     actor,
     {
-      ...(options.repositoryRoot !== undefined && { repositoryRoot: options.repositoryRoot }),
-      ...(options.workspacePlaytestApprovalRepository !== undefined && { repository: options.workspacePlaytestApprovalRepository }),
+      ...(options.repositoryRoot !== undefined && {
+        repositoryRoot: options.repositoryRoot
+      }),
+      ...(options.workspacePlaytestApprovalRepository !== undefined && {
+        repository: options.workspacePlaytestApprovalRepository
+      }),
       audit: (event) =>
         auditMutation({
           actor: actor.actor,
@@ -6639,8 +6635,12 @@ function workspaceVisualPlaytestTargetsRoute(
     pathname,
     actor,
     {
-      ...(options.repositoryRoot !== undefined && { repositoryRoot: options.repositoryRoot }),
-      ...(options.workspaceVisualPlaytestTargetRepository !== undefined && { repository: options.workspaceVisualPlaytestTargetRepository }),
+      ...(options.repositoryRoot !== undefined && {
+        repositoryRoot: options.repositoryRoot
+      }),
+      ...(options.workspaceVisualPlaytestTargetRepository !== undefined && {
+        repository: options.workspaceVisualPlaytestTargetRepository
+      }),
       audit: (event) =>
         auditMutation({
           actor: actor.actor,
@@ -6711,17 +6711,18 @@ function playtestingRunControlRoute(
     pathname,
     actor,
     {
-      ...(options.repositoryRoot !== undefined && { repositoryRoot: options.repositoryRoot }),
+      ...(options.repositoryRoot !== undefined && {
+        repositoryRoot: options.repositoryRoot
+      }),
       runControl:
         options.playtestingRunControl ?? getDefaultPlaytestRunControl(),
       ...(options.workspaceVisualPlaytestTargetRepository !== undefined && {
-            visualTargetRepository:
-              options.workspaceVisualPlaytestTargetRepository
-          }),
+        visualTargetRepository: options.workspaceVisualPlaytestTargetRepository
+      }),
       requireSessionHeader: actor.playtestingService === true,
       ...(actor.playtestingService && {
-            trustedSessionRole: actor.playtestingServiceRole ?? ""
-          }),
+        trustedSessionRole: actor.playtestingServiceRole ?? ""
+      }),
       audit: (event) =>
         auditMutation({
           actor: actor.actor,
@@ -6746,8 +6747,12 @@ async function playtestingRoute(
 ): Promise<boolean> {
   if (!pathname.startsWith(CONTROL_API_PATHS.playtesting + "/")) return false;
   await handlePlaytestingControlApiRequest(request, response, pathname, actor, {
-    ...(options.repositoryRoot !== undefined && { repositoryRoot: options.repositoryRoot }),
-    ...(options.playtestingRepository !== undefined && { repository: options.playtestingRepository })
+    ...(options.repositoryRoot !== undefined && {
+      repositoryRoot: options.repositoryRoot
+    }),
+    ...(options.playtestingRepository !== undefined && {
+      repository: options.playtestingRepository
+    })
   });
   return true;
 }
@@ -7207,7 +7212,8 @@ export async function handleControlApiRequest(
   if (!actor) return true;
   if (pathname === CHATGPT_TUNNEL_CONTROL_PATH)
     return chatgptTunnelRoute(request, response, actor, method, options);
-  if ((await workspaceVisualPlaytestTargetsRoute(
+  if (
+    (await workspaceVisualPlaytestTargetsRoute(
       request,
       response,
       pathname,
@@ -7220,19 +7226,23 @@ export async function handleControlApiRequest(
       pathname,
       actor,
       options
-    )) || (await playtestingHumanStudyRoute(
+    )) ||
+    (await playtestingHumanStudyRoute(
       request,
       response,
       pathname,
       actor,
       options
-    )) || (await playtestingRunControlRoute(
+    )) ||
+    (await playtestingRunControlRoute(
       request,
       response,
       pathname,
       actor,
       options
-    )) || (await playtestingRoute(request, response, pathname, actor, options)))
+    )) ||
+    (await playtestingRoute(request, response, pathname, actor, options))
+  )
     return true;
   const providerMatch = pathname.match(PROVIDER_ROLE_PATH);
   if (providerMatch) {
@@ -7330,7 +7340,10 @@ export async function handleControlApiRequest(
       workspaceMatch[2]!,
       options
     );
-  if ((await respondDiagnosticsRoute(request, response, pathname, options)) || (await readOnlyCollection(pathname, method, response, actor, options)))
+  if (
+    (await respondDiagnosticsRoute(request, response, pathname, options)) ||
+    (await readOnlyCollection(pathname, method, response, actor, options))
+  )
     return true;
   auditRejectedRequest(
     request,

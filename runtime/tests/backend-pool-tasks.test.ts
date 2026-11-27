@@ -11,11 +11,15 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 import { startChatgptBackendPool } from "../src/mcp/chatgpt-backend-pool.ts";
+import { GatewayCallObservations } from "../src/mcp/gateway-observations.ts";
 
 const TTL_MS = 500;
 const IDLE_MS = 80;
 
-async function fixture(conversationScoped = false) {
+async function fixture(
+  conversationScoped = false,
+  observations?: GatewayCallObservations
+) {
   const temporary = mkdtempDisposableSync(
     path.join(tmpdir(), "autodev-pool-task-")
   );
@@ -95,9 +99,9 @@ createInterface({ input: process.stdin }).on("line", (line) => {
             cwd: temporary.path,
             tools: ["echo"],
             ...(conversationScoped && {
-                  conversationScopedEnv: "AUTODEV_XACPX_COORDINATOR_SESSION",
-                  env: { AUTODEV_XACPX_COORDINATOR_SESSION: "fixture" }
-                })
+              conversationScopedEnv: "AUTODEV_XACPX_COORDINATOR_SESSION",
+              env: { AUTODEV_XACPX_COORDINATOR_SESSION: "fixture" }
+            })
           }
         }
       },
@@ -105,7 +109,8 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         gatewayEnv: {},
         idleTimeoutMs: IDLE_MS,
         toolCallTimeoutMs: 800,
-        maxConversations: 1
+        maxConversations: 1,
+        ...(observations && { observations })
       }
     );
     const url = `http://127.0.0.1:${pool.port}/mcp/fixture`;
@@ -121,7 +126,12 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       const response = await fetch(url, {
         method: "POST",
         headers: session ? { ...headers, "mcp-session-id": session } : headers,
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: parameters }),
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method,
+          params: parameters
+        }),
         signal: AbortSignal.timeout(5000)
       });
       assert.equal(response.status, 200);
@@ -383,6 +393,39 @@ test(
         ...meta("conversation-b")
       });
       assert.equal(otherConversation.body.error?.message, "Task not found");
+    } finally {
+      await f.close();
+    }
+  }
+);
+
+test(
+  "the gateway's ledger records each tool call it served, including a lost reply",
+  { timeout: 15_000 },
+  async () => {
+    const observations = new GatewayCallObservations();
+    const f = await fixture(false, observations);
+    try {
+      const session = await f.open();
+      await f.request(session, "tools/call", { name: "echo", arguments: {} });
+      await f.request(session, "tools/call", { name: "echo", arguments: {} });
+      // A backend that never answers ends the call as a failure.
+      await f.request(session, "tools/call", {
+        name: "echo",
+        arguments: { loseReply: true }
+      });
+      // A refused tool never reached a backend, so it is not a served call.
+      await f.request(session, "tools/call", { name: "absent", arguments: {} });
+      const [server, ...others] = observations.snapshot().servers;
+      assert.deepEqual(others, []);
+      assert.equal(server?.name, "fixture");
+      assert.equal(server.calls, 3);
+      assert.equal(server.failures, 1);
+      assert.equal(server.lastStatus, "error");
+      // The pooled ChatGPT surface verifies no role, so none is recorded.
+      assert.deepEqual(server.roles, []);
+      assert.deepEqual(server.tools, [{ name: "echo", calls: 3, failures: 1 }]);
+      assert.ok(server.totalDurationMs > 0);
     } finally {
       await f.close();
     }
