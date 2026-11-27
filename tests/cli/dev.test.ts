@@ -76,6 +76,43 @@ function createFakeDependencies(
   return { dependencies, commands, loggedMessages, sleptDurations };
 }
 
+/**
+A Providers v5 body the preflight's schema accepts, listing these providers.
+The probe reads only their ids; every other field is the smallest valid one.
+*/
+function providersResponseBody(...ids: string[]) {
+  const status = {
+    convergence: "converged",
+    desiredGeneration: "gen-1",
+    observedGeneration: "gen-1",
+    lastApplyAt: null,
+    lastObservationAt: null,
+    lastError: null,
+    explanation: "Converged."
+  };
+  const role = { priority: 1, model: null, mutable: true, convergence: status };
+  return {
+    schema: "autodev-control-providers-v5",
+    orchestratorTier: "balanced",
+    quotaAxi: null,
+    tiers: [],
+    providers: ids.map((id) => ({
+      id,
+      links: { usage: null, documentation: null },
+      credential: { envKey: null, configured: false },
+      disabled: false,
+      roles: { orchestrator: role, subagent: role },
+      agentLimits: { perSession: null, acrossSessions: null },
+      agentModels: [],
+      models: [],
+      priorities: [],
+      orchestratorReasoningEffort: "medium",
+      health: null,
+      reconciliation: { status, history: [] }
+    }))
+  };
+}
+
 test("Console development uses only the backend-validated root entrypoint", () => {
   const rootPackage = JSON.parse(
     readFileSync(join(repoRoot, "package.json"), "utf8")
@@ -141,16 +178,7 @@ test("dev Control API probe accepts the current provider, model-discovery, and P
       schema: CONTROL_API_CONTRACT.schema,
       version: CONTROL_API_CONTRACT.version
     }),
-    Response.json({
-      schema: "autodev-control-providers-v5",
-      quotaAxi: null,
-      providers: [
-        {
-          id: "copilot",
-          links: { usage: null, documentation: "https://example.test/docs" }
-        }
-      ]
-    }),
+    Response.json(providersResponseBody("copilot")),
     Response.json({
       schema: "autodev-control-provider-model-discovery-v1",
       source: "runtime-provider-discovery",
@@ -206,6 +234,10 @@ test("dev Control API probe accepts the current provider, model-discovery, and P
     }),
     Response.json({
       schema: "autodev-control-evaluations-v1",
+      source: "openlit_evaluation",
+      readOnly: true,
+      totalEvaluations: 0,
+      truncated: false,
       evaluations: []
     })
   ];
@@ -255,16 +287,7 @@ test("dev Control API probe rejects a Runtime without the current contract hands
       );
     }
     if (url.endsWith("/control/providers")) {
-      return Response.json({
-        schema: "autodev-control-providers-v5",
-        quotaAxi: null,
-        providers: [
-          {
-            id: "copilot",
-            links: { usage: null, documentation: "https://example.test/docs" }
-          }
-        ]
-      });
+      return Response.json(providersResponseBody("copilot"));
     }
     return Response.json({
       schema: "autodev-control-playtesting-capabilities-v2",
@@ -363,14 +386,19 @@ test("dev Control API probe rejects an incomplete Providers v5 response", async 
   let requestCount = 0;
   const fetchImpl: typeof fetch = async () => {
     requestCount += 1;
-    return Response.json(requestCount === 1 ? {
-          schema: CONTROL_API_CONTRACT.schema,
-          version: CONTROL_API_CONTRACT.version
-        } : {
-          schema: "autodev-control-providers-v5",
-          quotaAxi: null,
-          providers: [{ id: "codex" }]
-        });
+    return Response.json(
+      requestCount === 1
+        ? {
+            schema: CONTROL_API_CONTRACT.schema,
+            version: CONTROL_API_CONTRACT.version
+          }
+        : {
+            // A provider row without the fields the v5 contract requires.
+            schema: "autodev-control-providers-v5",
+            quotaAxi: null,
+            providers: [{ id: "codex" }]
+          }
+    );
   };
 
   await assert.rejects(
@@ -401,13 +429,7 @@ test("dev Control API probe blocks a Runtime missing model-discovery states", as
       });
     }
     if (requestCount === 2) {
-      return Response.json({
-        schema: "autodev-control-providers-v5",
-        quotaAxi: null,
-        providers: [
-          { id: "copilot", links: { usage: null, documentation: null } }
-        ]
-      });
+      return Response.json(providersResponseBody("copilot"));
     }
     return Response.json(
       { error: { code: "autodev_control_api_unknown_path" } },
@@ -469,13 +491,7 @@ test("dev Control API probe rejects a Runtime that does not register Playtesting
       schema: CONTROL_API_CONTRACT.schema,
       version: CONTROL_API_CONTRACT.version
     }),
-    Response.json({
-      schema: "autodev-control-providers-v5",
-      quotaAxi: null,
-      providers: [
-        { id: "copilot", links: { usage: null, documentation: null } }
-      ]
-    }),
+    Response.json(providersResponseBody("copilot")),
     Response.json({
       schema: "autodev-control-provider-model-discovery-v1",
       source: "runtime-provider-discovery",
@@ -580,7 +596,10 @@ test("OpenLIT reconciliation fingerprints mounted config for service restarts", 
     join(repoRoot, "scripts", "openlit", "up.sh"),
     "utf8"
   );
-  const [clickhouseService, openlitService = ""] = compose.split("  openlit:", 2);
+  const [clickhouseService, openlitService = ""] = compose.split(
+    "  openlit:",
+    2
+  );
 
   assert.match(
     runner,
@@ -679,7 +698,7 @@ test("ensureConsoleSecrets synchronizes only a temporary Console environment", (
 test("already-ready services still reconcile the current image and config", async () => {
   const { dependencies, commands, loggedMessages } = createFakeDependencies({
     isPortListening: async (port) => {
-      return (port === 8123) || (port === 4100);
+      return port === 8123 || port === 4100;
     },
     isOpenlitHttpReady: async () => true
   });
@@ -704,7 +723,9 @@ test("already-ready services still reconcile the current image and config", asyn
     "test-usage-token"
   );
   assert.ok(
-    loggedMessages.some((message) => message.includes("Reconciling the OpenLIT"))
+    loggedMessages.some((message) =>
+      message.includes("Reconciling the OpenLIT")
+    )
   );
   assert.ok(
     loggedMessages.some((message) =>
@@ -725,12 +746,19 @@ test("macOS opens Docker when daemon is absent and then starts OpenLIT", async (
       if (command === "docker" && arguments_[0] === "info") {
         dockerProbeCount += 1;
         // First probe fails (daemon absent); second probe (during wait) succeeds.
-        return ({ status: dockerProbeCount === 1 ? 1 : 0 });
+        return { status: dockerProbeCount === 1 ? 1 : 0 };
       }
-      if (command === "open" && arguments_[0] === "-a" && arguments_[1] === "Docker") {
+      if (
+        command === "open" &&
+        arguments_[0] === "-a" &&
+        arguments_[1] === "Docker"
+      ) {
         return { status: 0 };
       }
-      if (command === "bash" && arguments_[0]?.endsWith("scripts/openlit/up.sh")) {
+      if (
+        command === "bash" &&
+        arguments_[0]?.endsWith("scripts/openlit/up.sh")
+      ) {
         isUpScriptRan = true;
         return { status: 0 };
       }
@@ -801,7 +829,10 @@ test("other platform without Docker fails before running up", async () => {
       await ensureBackends(dependencies);
     },
     (error: Error) => {
-      assert.match(error.message, /Docker Engine is required for OpenLIT Usage/);
+      assert.match(
+        error.message,
+        /Docker Engine is required for OpenLIT Usage/
+      );
       return true;
     }
   );
@@ -811,7 +842,8 @@ test("other platform without Docker fails before running up", async () => {
   assert.equal(
     commands.some(
       (command) =>
-        command.command === "open" || command.args.some((argument) => argument.includes("up.sh"))
+        command.command === "open" ||
+        command.args.some((argument) => argument.includes("up.sh"))
     ),
     false,
     "Must not launch Docker Desktop or run up.sh on non-macOS platform"
@@ -827,7 +859,10 @@ test("startup script failure propagates", async () => {
       if (command === "docker" && arguments_[0] === "info") {
         return { status: 0 };
       }
-      if (command === "bash" && arguments_[0]?.endsWith("scripts/openlit/up.sh")) {
+      if (
+        command === "bash" &&
+        arguments_[0]?.endsWith("scripts/openlit/up.sh")
+      ) {
         return {
           status: 1,
           error: new Error("Container build error")
@@ -862,7 +897,10 @@ test("successful startup waits for ClickHouse and HTTP readiness", async () => {
     repoRoot: "/mock/repo",
     runCommand: (command, arguments_, options): DevCommandResult => {
       commands.push({ command, args: arguments_, options });
-      if (command === "bash" && arguments_[0]?.endsWith("scripts/openlit/up.sh")) {
+      if (
+        command === "bash" &&
+        arguments_[0]?.endsWith("scripts/openlit/up.sh")
+      ) {
         isUpScriptRan = true;
       }
       return { status: 0 };
@@ -898,7 +936,8 @@ test("successful startup waits for ClickHouse and HTTP readiness", async () => {
   assert.ok(
     commands.some(
       (command) =>
-        command.command === "bash" && command.args.some((argument) => argument.includes("up.sh"))
+        command.command === "bash" &&
+        command.args.some((argument) => argument.includes("up.sh"))
     )
   );
 });
@@ -967,7 +1006,9 @@ test("ensureModelRouter materializes runtime and kickstarts launchd service when
   );
   assert.equal(commands[0]?.command, "node");
   assert.ok(
-    commands[0]?.args.some((argument) => argument.includes("--materialize-only"))
+    commands[0]?.args.some((argument) =>
+      argument.includes("--materialize-only")
+    )
   );
   assert.equal(commands[1]?.command, "launchctl");
   assert.equal(commands[1]?.args[0], "print");
@@ -1009,7 +1050,9 @@ test("ensureModelRouter restarts router when forceRestart is true even if ports 
   );
   assert.equal(commands[0]?.command, "node");
   assert.ok(
-    commands[0]?.args.some((argument) => argument.includes("--materialize-only"))
+    commands[0]?.args.some((argument) =>
+      argument.includes("--materialize-only")
+    )
   );
   assert.equal(commands[1]?.command, "launchctl");
   assert.equal(commands[1]?.args[0], "print");
@@ -1074,10 +1117,14 @@ test("ensureConsolePortAvailable stops conflicting launchd console service when 
   assert.equal(commands[1]?.args[0], "bootout");
   assert.ok(
     loggedMessages.some((message) =>
-      message.includes("Stopping conflicting LaunchAgent com.codex.autodev-console")
+      message.includes(
+        "Stopping conflicting LaunchAgent com.codex.autodev-console"
+      )
     )
   );
   assert.ok(
-    loggedMessages.some((message) => message.includes("Port 3300 is now available"))
+    loggedMessages.some((message) =>
+      message.includes("Port 3300 is now available")
+    )
   );
 });
