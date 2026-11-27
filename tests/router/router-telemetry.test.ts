@@ -451,9 +451,6 @@ test(
   }
 );
 
-delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
-delete process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
-delete process.env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT;
 const telemetryTestExporter = new InMemorySpanExporter();
 const telemetryMetricExporter = new InMemoryMetricExporter(
   AggregationTemporality.CUMULATIVE

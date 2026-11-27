@@ -11,13 +11,18 @@ Routes:
 
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import path from "node:path";
 
 import { isRecord } from "@simulatorlife/autodev-core";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import {
+  type AcpConsoleSink,
   type PlanSessionRequest,
   XacpxSessionManager
 } from "@simulatorlife/autodev-runtime/xacpx/manager";
+
+import { ROUTER_INSTANCE_ID } from "../router/proxy.ts";
+import { observeRouterWorkspaceGitCommits } from "../router/telemetry.ts";
 
 const MAX_BODY_BYTES = 1_048_576;
 const METHOD_NOT_ALLOWED_ERROR = "Method not allowed";
@@ -141,7 +146,26 @@ async function handleSessionPromptRoute(
   }
 }
 
-export const SHARED_XACPX_SESSION_MANAGER = new XacpxSessionManager();
+/**
+Every XACPX turn boundary is a commit boundary. Agent turns no longer pass
+through the Router's routed-request events, so without this the commits an
+ACP or OpenCLI session made were never measured. The workspace is labelled
+the way XACPX labels it everywhere else (the directory's name); the actor
+is read back from each commit, never from the session.
+*/
+export const XACPX_SESSION_COMMIT_OBSERVATION: AcpConsoleSink = {
+  emit(event) {
+    void observeRouterWorkspaceGitCommits({
+      workspaceKey: path.basename(event.cwd),
+      workspacePath: event.cwd,
+      routerInstanceId: ROUTER_INSTANCE_ID
+    });
+  }
+};
+
+export const SHARED_XACPX_SESSION_MANAGER = new XacpxSessionManager({
+  consoleSink: XACPX_SESSION_COMMIT_OBSERVATION
+});
 
 export async function didHandleAcpRoute(
   request: IncomingMessage,

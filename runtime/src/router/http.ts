@@ -136,6 +136,7 @@ import {
   closeBridgeSubagentsForRequest,
   getDefaultExecutionContract,
   getWorkspaceMetadata,
+  getWorkspacePath,
   providerCapabilities,
   recordSpawnFailure,
   rememberWorkspaceMetadata,
@@ -329,6 +330,13 @@ function applyProviderHealthEvent(event: RouterEvent): void {
   }
 }
 
+// A routed request's turn boundaries: the baseline before the provider is
+// called and the measurement after it answered.
+const GIT_OBSERVATION_PHASES: ReadonlySet<string> = new Set([
+  "selected",
+  "result"
+]);
+
 const routerEvents = new RouterEventRecorder({
   maxRecentEvents: MAX_RECENT_EVENTS,
   routerInstanceId: ROUTER_INSTANCE_ID,
@@ -337,23 +345,24 @@ const routerEvents = new RouterEventRecorder({
     // Native observations are persisted by the existing event recorder, but
     // are not model routing, provider health, Git or managed usage events.
     if (event.phase === "native_session") return;
-    const workspaceSessionKey =
-      event.thread ??
-      (event.activitySubject?.startsWith("thread:")
-        ? event.activitySubject.slice("thread:".length)
-        : event.activitySubject);
-    void observeRouterWorkspaceGitCommits({
-      phase: event.phase,
-      workspaceKey: event.workspace,
-      // The observer reads the workspace's repository, and the session is
-      // what knows which directory that is. The remembered turn metadata is
-      // a JSON document rather than a path, and handing that over made the
-      // observer's directory check fail for every request -- so no commit
-      // was ever measured, and the Git metrics stayed empty no matter what
-      // the agents committed.
-      sessionKey: workspaceSessionKey,
-      routerInstanceId: ROUTER_INSTANCE_ID
-    });
+    if (GIT_OBSERVATION_PHASES.has(event.phase)) {
+      const workspaceSessionKey =
+        event.thread ??
+        (event.activitySubject?.startsWith("thread:")
+          ? event.activitySubject.slice("thread:".length)
+          : event.activitySubject);
+      void observeRouterWorkspaceGitCommits({
+        workspaceKey: event.workspace,
+        // The observer reads the workspace's repository, and the session is
+        // what knows which directory that is. The remembered turn metadata
+        // is a JSON document rather than a path, and handing that over made
+        // the observer's directory check fail for every request -- so no
+        // commit was ever measured, and the Git metrics stayed empty no
+        // matter what the agents committed.
+        workspacePath: getWorkspacePath(workspaceSessionKey),
+        routerInstanceId: ROUTER_INSTANCE_ID
+      });
+    }
     liveFeedEvents.record({
       category: "routing",
       type: `routing.${event.phase}`,
@@ -830,7 +839,7 @@ function scopedProviderCooldowns(
       ])
     );
   return {
-    ...((Object.keys(models).length > 0) && { modelCooldowns: serialize(models) })
+    ...(Object.keys(models).length > 0 && { modelCooldowns: serialize(models) })
   };
 }
 
@@ -976,7 +985,9 @@ function controlApiProviderHealth(
           : null;
       const health: ControlApiProviderHealth = {
         cooldown: cooldown ? serializeProviderCooldown(cooldown, now) : null,
-        ...((modelCooldownEntries.length > 0) && { modelCooldowns: Object.fromEntries(modelCooldownEntries) }),
+        ...(modelCooldownEntries.length > 0 && {
+          modelCooldowns: Object.fromEntries(modelCooldownEntries)
+        }),
         failureStreak: COOLDOWNS.failureStreak(route.provider) ?? 0,
         probeFailureStreak: COOLDOWNS.probeFailureStreak(route.provider) ?? 0,
         inFlightRequests: getActiveRequests(route.provider),
@@ -990,7 +1001,9 @@ function controlApiProviderHealth(
               at: activeLastFailure.timestamp,
               failureClass: activeLastFailure.class,
               status: activeLastFailure.status ?? null,
-              ...(activeLastFailure.model !== undefined && { model: activeLastFailure.model })
+              ...(activeLastFailure.model !== undefined && {
+                model: activeLastFailure.model
+              })
             }
           : null,
         lastCheck: state.lastCheck

@@ -34,6 +34,15 @@ if (process.env.CODEX_ROUTER_STATE_FILE === undefined) {
 // that exercise authentication set their own token.
 delete process.env.CODEX_ROUTER_AUTH_TOKEN;
 
+// An agent session that runs the suite inherits the live OTLP receiver's
+// endpoint and credential. A test that drives a real telemetry producer would
+// then export its fixtures -- commits in `ws-test-commit-output`, sessions in
+// `ws-session-workspace` -- into the operator's Usage history, where they read
+// as agent output. Tests that exercise export name their own endpoint.
+for (const name of Object.keys(process.env)) {
+  if (name.startsWith("OTEL_EXPORTER_OTLP_")) delete process.env[name];
+}
+
 // Keep unit tests isolated from the operator's live macOS Keychain items;
 // tests that exercise Keychain integration explicitly opt back in.
 if (process.env.AUTODEV_DISABLE_KEYCHAIN === undefined) {

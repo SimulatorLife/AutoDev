@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test from "node:test";
 
 import {
@@ -11,8 +11,18 @@ import {
   InMemoryMetricExporter
 } from "@opentelemetry/sdk-metrics";
 
+import {
+  AGENT_METHODS,
+  AgentApp,
+  PROTOCOL_VERSION
+} from "@agentclientprotocol/sdk";
+
+import { ensureLocalAdmission } from "../src/mcp/gateway-admission.ts";
 import { resetRouterWorkspaceGitObserversForTest } from "../src/router/git-commit-observation.ts";
-import { rememberWorkspaceMetadata } from "../src/router/subagents.ts";
+import {
+  getWorkspacePath,
+  rememberWorkspaceMetadata
+} from "../src/router/subagents.ts";
 import {
   flushTelemetryMetrics,
   METRIC_GIT_COMMITS,
@@ -24,6 +34,8 @@ import {
   gitCommitIdentity,
   gitCommitIdentityEnv as gitCommitIdentityEnvironment
 } from "../src/telemetry/git-commit-identity.ts";
+import { XACPX_SESSION_COMMIT_OBSERVATION } from "../src/xacpx/http.ts";
+import { XacpxSessionManager } from "../src/xacpx/manager.ts";
 import {
   createWorkspaceCommitObserver,
   gitCommitObservationToRecordOptions,
@@ -601,26 +613,21 @@ test("reset() clears the per-observer cursor", async () => {
   });
 });
 
-test("Router selected/result events emit only commit-identity Git metrics", async () => {
+test("a workspace boundary emits only commit-identity Git metrics", async () => {
   resetRouterWorkspaceGitObserversForTest();
   resetTrackedGitCommitsForTest();
   metricExporter.reset();
 
   await withGitRepository(async (root) => {
     const workspaceKey = "ws-test-commit-output";
-    const sessionKey = "session-commit-output";
-    // The Router remembers the session's workspace from the request's own
-    // structured fields; the observer then reads that workspace's repository.
-    rememberWorkspaceMetadata(sessionKey, root);
-    const observe = (phase: "selected" | "result") =>
+    const observe = () =>
       observeRouterWorkspaceGitCommits({
-        phase,
         workspaceKey,
-        sessionKey,
+        workspacePath: root,
         routerInstanceId: "router-commit-observer-test"
       });
 
-    await observe("selected");
+    await observe();
 
     await writeFile(join(root, "operator.txt"), "operator\n");
     execGit(root, ["add", "."]);
@@ -634,7 +641,7 @@ test("Router selected/result events emit only commit-identity Git metrics", asyn
       env: gitCommitIdentityEnvironment({ role: "worker", provider: "codex" })
     });
 
-    await observe("result");
+    await observe();
     await flushTelemetryMetrics();
 
     const metric = metricExporter
@@ -665,7 +672,7 @@ test("Router selected/result events emit only commit-identity Git metrics", asyn
   });
 });
 
-test("the Router observes the workspace the session works in, not the session's metadata", async () => {
+test("a routed session resolves to the workspace it works in, not its metadata", async () => {
   resetRouterWorkspaceGitObserversForTest();
   resetTrackedGitCommitsForTest();
   metricExporter.reset();
@@ -675,15 +682,14 @@ test("the Router observes the workspace the session works in, not the session's 
     const sessionKey = "session-workspace-path";
     rememberWorkspaceMetadata(sessionKey, root);
 
-    const observe = (phase: "selected" | "result") =>
+    const observe = () =>
       observeRouterWorkspaceGitCommits({
-        phase,
         workspaceKey,
-        sessionKey,
+        workspacePath: getWorkspacePath(sessionKey),
         routerInstanceId: "router-session-workspace-test"
       });
 
-    await observe("selected");
+    await observe();
 
     await writeFile(join(root, "agent.txt"), "agent\n");
     execGit(root, ["add", "."]);
@@ -691,7 +697,7 @@ test("the Router observes the workspace the session works in, not the session's 
       env: gitCommitIdentityEnvironment({ role: "worker", provider: "codex" })
     });
 
-    await observe("result");
+    await observe();
     await flushTelemetryMetrics();
 
     const points = metricExporter
@@ -728,9 +734,8 @@ test("a session with no remembered workspace observes nothing", async () => {
 
   await withGitRepository(async (_root) => {
     await observeRouterWorkspaceGitCommits({
-      phase: "selected",
       workspaceKey: "ws-unknown-session",
-      sessionKey: "session-that-never-had-a-workspace",
+      workspacePath: getWorkspacePath("session-that-never-had-a-workspace"),
       routerInstanceId: "router-unknown-session-test"
     });
     await flushTelemetryMetrics();
@@ -754,6 +759,103 @@ test("a session with no remembered workspace observes nothing", async () => {
           point.attributes["autodev.workspace"] === "ws-unknown-session"
       ),
       false
+    );
+  });
+});
+
+test("an XACPX session's turn boundaries measure the commits its agent made", async () => {
+  resetRouterWorkspaceGitObserversForTest();
+  resetTrackedGitCommitsForTest();
+  metricExporter.reset();
+  // ACP sessions are admitted to the shared MCP gateway.
+  ensureLocalAdmission(process.env.CODEX_HOME!);
+
+  await withGitRepository(async (root) => {
+    // The agent commits under its own identity while serving the turn,
+    // the way an agent's Git tool does inside its own process.
+    const agent = () =>
+      new AgentApp({ name: "committing-agent" })
+        .onRequest(AGENT_METHODS.initialize, async () => ({
+          protocolVersion: PROTOCOL_VERSION,
+          agentCapabilities: { loadSession: false }
+        }))
+        .onRequest(AGENT_METHODS.session_new, async () => ({
+          sessionId: "acp-committing-agent"
+        }))
+        .onRequest(AGENT_METHODS.session_prompt, async ({ params }) => {
+          const prompt = params.prompt
+            .map((block) => (block.type === "text" ? block.text : ""))
+            .join("");
+          if (prompt.includes("commit")) {
+            await writeFile(join(root, "agent.txt"), "agent\n");
+            execGit(root, ["add", "."]);
+            execGit(root, ["commit", "-q", "-m", "agent"], {
+              env: gitCommitIdentityEnvironment({
+                role: "worker",
+                provider: "codex"
+              })
+            });
+          }
+          return { stopReason: "end_turn" };
+        });
+    const manager = new XacpxSessionManager({
+      consoleSink: XACPX_SESSION_COMMIT_OBSERVATION,
+      acpTransportFactory: () => ({ target: agent() })
+    });
+    // Observations are serialized per workspace, so awaiting one more after
+    // a turn waits for every boundary the turn reported.
+    const settled = () =>
+      observeRouterWorkspaceGitCommits({
+        workspaceKey: basename(root),
+        workspacePath: root,
+        routerInstanceId: "xacpx-commit-observation-test"
+      });
+
+    try {
+      await manager.executeTurn({
+        sessionId: "xacpx-commit-session",
+        role: "worker",
+        cwd: root,
+        systemPrompt: "Worker prompt",
+        promptOrTask: "look around"
+      });
+      await settled();
+      await manager.promptSession("xacpx-commit-session", "commit the change");
+      await settled();
+      await flushTelemetryMetrics();
+    } finally {
+      await manager.closeAllSessions();
+    }
+
+    const points = metricExporter
+      .getMetrics()
+      .flatMap((resource) => resource.scopeMetrics)
+      .flatMap((scope) => scope.metrics)
+      .filter((metric) => metric.descriptor.name === METRIC_GIT_COMMITS)
+      .flatMap(
+        (metric) =>
+          metric.dataPoints as unknown as readonly {
+            readonly attributes: Readonly<Record<string, unknown>>;
+            readonly value: number;
+          }[]
+      );
+    // Cumulative counters keep the earlier tests' workspaces; this one's is
+    // the session's directory label.
+    assert.deepEqual(
+      points
+        .filter(
+          (point) => point.attributes["autodev.workspace"] === basename(root)
+        )
+        .map((point) => ({ ...point.attributes, value: point.value })),
+      [
+        {
+          "autodev.workspace": basename(root),
+          "autodev.agent.role": "worker",
+          "gen_ai.provider.name": "codex",
+          "autodev.git.attribution": "commit_identity",
+          value: 1
+        }
+      ]
     );
   });
 });

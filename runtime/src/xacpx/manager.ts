@@ -105,6 +105,11 @@ export interface AcpConsoleSessionEvent {
   readonly provider: string;
   readonly model: string;
   readonly role: string;
+  /**
+  The directory the session works in; turn boundaries are where the
+  Runtime measures what the session committed there.
+  */
+  readonly cwd: string;
   readonly detail?: string;
 }
 
@@ -597,8 +602,10 @@ export class XacpxSessionManager {
           `its transport cannot reach the MCP surface of role '${role}'`
         );
       }
-      const details = Array.from(reasons, ([provider, reason]) => `${provider}: ${reason}`)
-        .join("; ");
+      const details = Array.from(
+        reasons,
+        ([provider, reason]) => `${provider}: ${reason}`
+      ).join("; ");
       throw new Error(
         `No eligible provider candidate found for role '${role}'.${details ? ` ${details}.` : ""}`
       );
@@ -675,7 +682,8 @@ export class XacpxSessionManager {
       sessionId: session.sessionId,
       provider: session.provider,
       model: session.model,
-      role: session.role
+      role: session.role,
+      cwd: session.cwd
     });
 
     if (isOpencliProvider(chosen.provider)) {
@@ -795,7 +803,8 @@ export class XacpxSessionManager {
           sessionId: plan.session.sessionId,
           provider: plan.session.provider,
           model: plan.session.model,
-          role: plan.session.role
+          role: plan.session.role,
+          cwd: plan.session.cwd
         });
         return {
           session: plan.session,
@@ -846,6 +855,7 @@ export class XacpxSessionManager {
         provider: plan.session.provider,
         model: plan.session.model,
         role: plan.session.role,
+        cwd: plan.session.cwd,
         detail: promptResponse.stopReason
       });
       return {
@@ -870,6 +880,7 @@ export class XacpxSessionManager {
         provider: plan.session.provider,
         model: plan.session.model,
         role: plan.session.role,
+        cwd: plan.session.cwd,
         detail
       });
       throw error;

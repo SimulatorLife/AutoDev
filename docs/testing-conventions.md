@@ -134,6 +134,10 @@ be derived.
 | `tests/rulesync-mcp.test.ts` | The canonical MCP catalogue |
 | `tests/agent-instructions.test.ts` | One instruction file, and no copies of it |
 
+## Isolation from the operator's live state
+
+Every Runtime and root test process loads `runtime/tests/support/isolate-autodev-state.ts` first (the `test` scripts pass it with `--import`). It gives the process its own `CODEX_HOME` and router state file, drops the live router bearer token, keeps Keychain access off, and removes every inherited `OTEL_EXPORTER_OTLP_*` variable. The last one matters because an agent session that runs the suite inherits the live OpenLIT receiver's endpoint and credential: a test that drives a real telemetry producer would otherwise export its fixtures into the operator's Usage history, where they read as agent output. A test that exercises export names its own endpoint or installs an in-memory exporter; none removes these variables itself. Run single files through the same preload (`node --import ./runtime/tests/support/isolate-autodev-state.ts --test <file>`).
+
 ## Changing the canonical source
 
 1. Edit the source under `.rulesync/`.

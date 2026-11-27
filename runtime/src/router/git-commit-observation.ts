@@ -1,10 +1,11 @@
 /**
-Router-event integration for source-confirmed Git output metrics.
+Turn-boundary integration for source-confirmed Git output metrics.
 
-The provider process executes Git and receives the bounded commit
-identity from `gitCommitIdentityEnv`. The Router only discovers changed
-commit objects at selected/result boundaries; identity and all actor
-dimensions are read back from each commit by the telemetry observer.
+The process that executes Git carries the bounded commit identity from
+`gitCommitIdentityEnv`. The Router discovers changed commit objects at turn
+boundaries it owns -- a routed request's selected/result events and an
+XACPX session turn's start and end -- and reads identity and every actor
+dimension back out of each commit through the telemetry observer.
 */
 
 import path from "node:path";
@@ -19,10 +20,8 @@ import {
   type WorkspaceCommitError,
   type WorkspaceCommitObserver
 } from "../telemetry/workspace-commit-observer.ts";
-import { getWorkspacePath } from "./subagents.ts";
 import type { RecordGitCommitOptions } from "./telemetry.ts";
 
-const OBSERVABLE_PHASES = new Set(["selected", "result"]);
 const MAX_WORKSPACE_OBSERVERS = 128;
 const observers = new Map<string, WorkspaceCommitObserver>();
 const reportedFailures = new Map<string, WorkspaceCommitError["kind"]>();
@@ -85,35 +84,28 @@ function reportObservationFailure(
 }
 
 /**
-Observe one source-owned workspace boundary without delaying the provider
-response. The observer serializes events for the same working tree; the
-shared metric emitter owns cross-observer SHA idempotency.
+Observe one source-owned workspace boundary without delaying the turn. The
+first observation of a workspace records its baseline; later ones measure
+every commit since. The observer serializes events for the same working
+tree; the shared metric emitter owns cross-observer SHA idempotency.
 */
 export function createRouterWorkspaceGitCommitObserver(
   recordGitCommit: (options: RecordGitCommitOptions) => boolean
 ): (arguments_: {
-  readonly phase: string;
   /**
-  Canonical bounded workspace identity from the Router event.
+  Bounded workspace identity: a canonical key or a directory label.
   */
   readonly workspaceKey: string | null;
   /**
-  The session the event belongs to.
-  
-  The observer reads the workspace's repository, and the session is what
-  knows which directory that is: the Router resolved it from the
-  request's own structured workspace fields and remembered it. A session
-  with no remembered workspace has no directory to read, and there is
-  nothing to observe.
+  The directory the turn worked in. Without one there is nothing to read.
   */
-  readonly sessionKey: string | null | undefined;
+  readonly workspacePath: string | null;
   readonly routerInstanceId: string;
 }) => Promise<void> {
   return (arguments_) => {
-    if (!OBSERVABLE_PHASES.has(arguments_.phase)) return Promise.resolve();
     const workspace = workspaceContext(
       arguments_.workspaceKey,
-      getWorkspacePath(arguments_.sessionKey)
+      arguments_.workspacePath
     );
     if (!workspace) return Promise.resolve();
     const observer = observerFor(workspace);
