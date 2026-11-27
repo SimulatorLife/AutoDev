@@ -108,35 +108,16 @@ export interface WorkspaceSkill {
   byPlugin: Record<string, number>;
 }
 
-export interface WorkspaceMcpEntry {
-  server: string;
-  count: number;
-}
-
-export interface WorkspaceBridgeTool {
-  tool: string;
-  server: string;
-  count: number;
-  byStatus: Record<string, number>;
-}
-
 export interface WorkspaceUsageBucket extends UsageBucket {
   cwd: string | null;
   skillUses: number;
   byRole: Record<string, UsageBucket>;
   byModel: Record<string, UsageBucket>;
   byProvider: Record<string, UsageBucket>;
-  byMcp: Record<string, number>;
   skills: Map<string, WorkspaceSkill>;
-  toolsExecuted: number;
-  toolsRequested: number;
-  toolsUnavailable: number;
   skillsExposed: number;
   skillsCapable: boolean;
-  mcpCapable: boolean;
-  mcpExposed: Map<string, WorkspaceMcpEntry>;
   bridgeObservations: {
-    tools: Map<string, WorkspaceBridgeTool>;
     skills: Map<string, number>;
   };
 }
@@ -521,23 +502,6 @@ export function formatWorkspaceSkills(
   })).sort((a, b) => STRING_COLLATOR.compare(a.skill, b.skill));
 }
 
-export function formatWorkspaceMcpExposed(
-  mcpExposedMap?: Map<string, WorkspaceMcpEntry> | null
-): WorkspaceMcpEntry[] {
-  if (!mcpExposedMap) return [];
-  return Array.from(mcpExposedMap.values(), (row) => ({ ...row })).sort(
-    (a, b) => STRING_COLLATOR.compare(a.server, b.server)
-  );
-}
-
-export function formatWorkspaceMcpUses(
-  byMcp?: Record<string, number> | null
-): WorkspaceMcpEntry[] {
-  return Object.entries(byMcp ?? {})
-    .map(([server, count]) => ({ server, count }))
-    .sort((a, b) => STRING_COLLATOR.compare(a.server, b.server));
-}
-
 export function restoreUsageBucket(
   target: UsageBucket,
   saved: Record<string, unknown>
@@ -640,16 +604,10 @@ function createWorkspaceBucket(cwd: string | null): WorkspaceUsageBucket {
     byRole: {},
     byModel: {},
     byProvider: {},
-    byMcp: {},
     skills: new Map(),
-    toolsExecuted: 0,
-    toolsRequested: 0,
-    toolsUnavailable: 0,
     skillsExposed: 0,
     skillsCapable: false,
-    mcpCapable: false,
-    mcpExposed: new Map(),
-    bridgeObservations: { tools: new Map(), skills: new Map() }
+    bridgeObservations: { skills: new Map() }
   };
 }
 
@@ -658,20 +616,12 @@ function normalizeWorkspaceBucket(
   cwd: string | null
 ): WorkspaceUsageBucket {
   if (cwd && !bucket.cwd) bucket.cwd = cwd;
-  if (!bucket.byMcp) bucket.byMcp = {};
   if (!bucket.skills) bucket.skills = new Map();
-  if (!bucket.mcpExposed) bucket.mcpExposed = new Map();
   if (typeof bucket.skillUses !== "number") bucket.skillUses = 0;
-  if (typeof bucket.toolsExecuted !== "number") bucket.toolsExecuted = 0;
-  if (typeof bucket.toolsRequested !== "number") bucket.toolsRequested = 0;
-  if (typeof bucket.toolsUnavailable !== "number") bucket.toolsUnavailable = 0;
   if (typeof bucket.skillsExposed !== "number") bucket.skillsExposed = 0;
   if (typeof bucket.skillsCapable !== "boolean") bucket.skillsCapable = false;
-  if (typeof bucket.mcpCapable !== "boolean") bucket.mcpCapable = false;
   if (!bucket.bridgeObservations)
-    bucket.bridgeObservations = { tools: new Map(), skills: new Map() };
-  if (!bucket.bridgeObservations.tools)
-    bucket.bridgeObservations.tools = new Map();
+    bucket.bridgeObservations = { skills: new Map() };
   if (!bucket.bridgeObservations.skills)
     bucket.bridgeObservations.skills = new Map();
   return bucket;
@@ -684,16 +634,6 @@ export function workspaceBucket(
 ): WorkspaceUsageBucket {
   if (!collection[key]) collection[key] = createWorkspaceBucket(cwd);
   return normalizeWorkspaceBucket(collection[key], cwd);
-}
-
-export function workspaceMcpBucket(
-  wsBucket: WorkspaceUsageBucket,
-  server: string
-): WorkspaceMcpEntry {
-  if (!wsBucket.mcpExposed) wsBucket.mcpExposed = new Map();
-  if (!wsBucket.mcpExposed.has(server))
-    wsBucket.mcpExposed.set(server, { server, count: 0 });
-  return wsBucket.mcpExposed.get(server)!;
 }
 
 export function workspaceSkillBucket(
@@ -880,13 +820,12 @@ function withoutWorkspaceTransientFields(
   bucket: WorkspaceUsageBucket
 ): Omit<
   WorkspaceUsageBucket,
-  "active" | "skills" | "bridgeObservations" | "mcpExposed"
+  "active" | "skills" | "bridgeObservations"
 > {
   const {
     active: _active,
     skills: _skills,
     bridgeObservations: _bridgeObservations,
-    mcpExposed: _mcpExposed,
     ...copy
   } = bucket;
   return copy;
@@ -1014,13 +953,6 @@ export class UsageTracker {
       );
     }
     return workspaceBucket(collectionOrKey, keyOrCwd!, cwd);
-  }
-
-  workspaceMcpBucket(
-    wsBucket: WorkspaceUsageBucket,
-    server: string
-  ): WorkspaceMcpEntry {
-    return workspaceMcpBucket(wsBucket, server);
   }
 
   workspaceSkillBucket(
@@ -1434,10 +1366,8 @@ export class UsageTracker {
   clearWorkspaceCapabilities(): void {
     for (const bucket of Object.values(this.usageTelemetry.byWorkspace)) {
       bucket.skills?.clear();
-      bucket.mcpExposed?.clear();
       bucket.skillUses = 0;
       bucket.skillsCapable = false;
-      bucket.mcpCapable = false;
     }
   }
 
@@ -1706,39 +1636,19 @@ export class UsageTracker {
           byRole: {},
           byModel: {},
           byProvider: {},
-          byMcp: {},
           skills: new Map(),
-          toolsExecuted: 0,
-          toolsRequested: 0,
-          toolsUnavailable: 0,
           skillsExposed: 0,
           skillsCapable: false,
-          mcpCapable: false,
-          mcpExposed: new Map(),
-          bridgeObservations: {
-            tools: new Map(),
-            skills: new Map()
-          }
+          bridgeObservations: { skills: new Map() }
         };
         const {
           skills,
           bridgeObservations,
-          mcpExposed,
           skillsCapable: _skillsCapable,
-          mcpCapable: _mcpCapable,
           ...publicBucket
         } = bucket;
         const isSkillsCapable =
           bucket.skillsCapable === true || (bucket.skillsExposed ?? 0) > 0;
-        const formatBridgeTools = (
-          map: Map<string, WorkspaceBridgeTool> | undefined
-        ) =>
-          map
-            ? Array.from(map.values(), (entry) => ({
-                ...entry,
-                byStatus: { ...entry.byStatus }
-              })).sort((a, b) => STRING_COLLATOR.compare(a.tool, b.tool))
-            : [];
         const formatBridgeSkills = (map: Map<string, number> | undefined) =>
           map
             ? Array.from(map.entries(), ([skill, value]) => ({
@@ -1767,24 +1677,11 @@ export class UsageTracker {
             byProvider: usageSnapshot(bucket.byProvider, "provider", proj, {
               workspace: key
             }),
-            byMcp: bucket.mcpCapable ? { ...bucket.byMcp } : null,
-            mcpExposed: bucket.mcpCapable
-              ? formatWorkspaceMcpExposed(mcpExposed)
-              : null,
-            mcpUses: bucket.mcpCapable
-              ? formatWorkspaceMcpUses(bucket.byMcp)
-              : null,
-            toolsExecuted: bucket.toolsExecuted ?? 0,
-            toolsRequested: bucket.toolsRequested ?? 0,
-            toolsUnavailable: bucket.toolsUnavailable ?? 0,
             skillsExposed: bucket.skillsExposed ?? 0,
-             bySkill: isSkillsCapable ? formatWorkspaceSkills(skills) : null ,
-            ...(bridgeObservations &&
-            (bridgeObservations.tools?.size > 0 ||
-              bridgeObservations.skills?.size > 0) && {
-                  bridgeTools: formatBridgeTools(bridgeObservations.tools),
-                  bridgeSkills: formatBridgeSkills(bridgeObservations.skills)
-                })
+            bySkill: isSkillsCapable ? formatWorkspaceSkills(skills) : null,
+            ...(bridgeObservations?.skills?.size > 0 && {
+              bridgeSkills: formatBridgeSkills(bridgeObservations.skills)
+            })
           }
         ];
       })
@@ -1841,12 +1738,7 @@ export class UsageTracker {
           {
             ...withoutWorkspaceTransientFields(bucket),
             skillUses: bucket.skillUses ?? 0,
-            toolsExecuted: bucket.toolsExecuted ?? 0,
-            toolsRequested: bucket.toolsRequested ?? 0,
-            toolsUnavailable: bucket.toolsUnavailable ?? 0,
             skillsExposed: bucket.skillsExposed ?? 0,
-            byMcp: { ...bucket.byMcp },
-            mcpExposed: formatWorkspaceMcpExposed(bucket.mcpExposed),
             byRole: Object.fromEntries(
               Object.entries(bucket.byRole).map(([name, value]) => [
                 name,
@@ -1873,10 +1765,6 @@ export class UsageTracker {
               byModel: { ...s.byModel },
               byPlugin: { ...s.byPlugin }
             })),
-            bridgeTools: Array.from(
-              bucket.bridgeObservations?.tools?.values() ?? [],
-              (entry) => ({ ...entry, byStatus: { ...entry.byStatus } })
-            ),
             bridgeSkills: Array.from(
               bucket.bridgeObservations?.skills?.entries() ?? [],
               ([skill, count]) => ({ skill, count })
@@ -1948,8 +1836,7 @@ function restoreWorkspaceSnapshots(
     );
     restoreUsageBucket(workspace, value);
     restoreWorkspaceCounters(workspace, value);
-    restoreWorkspaceMcp(workspace, value);
-    restoreWorkspaceBridgeData(workspace, value);
+    restoreWorkspaceBridgeSkills(workspace, value);
     restoreWorkspaceUsageDimensions(workspace, value);
   }
 }
@@ -1966,91 +1853,17 @@ function restoreWorkspaceCounters(
   ) {
     current.skillUses = skillUses;
   }
-  for (const counter of [
-    "toolsExecuted",
-    "toolsRequested",
-    "toolsUnavailable",
-    "skillsExposed"
-  ] as const) {
-    const value = saved[counter];
-    if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
-      current[counter] = value;
-    }
+  const skillsExposed = saved.skillsExposed;
+  if (
+    typeof skillsExposed === "number" &&
+    Number.isInteger(skillsExposed) &&
+    skillsExposed >= 0
+  ) {
+    current.skillsExposed = skillsExposed;
   }
-  for (const flag of ["skillsCapable", "mcpCapable"] as const) {
-    if (saved[flag] === true) current[flag] = true;
-  }
+  if (saved.skillsCapable === true) current.skillsCapable = true;
 }
 
-function restoreWorkspaceMcp(
-  current: WorkspaceUsageBucket,
-  saved: Record<string, unknown>
-): void {
-  if (isPlainRecord(saved.byMcp)) {
-    for (const [mcp, count] of Object.entries(saved.byMcp)) {
-      if (typeof count !== "number" || !Number.isFinite(count) || !(count >= 0)) {
-        continue;
-      }
-
-      current.byMcp[safeMetricLabel(mcp)] = count;
-      current.mcpCapable = true;
-    }
-  }
-  const mcpExposed = saved.mcpExposed;
-  if (!isUnknownArray(mcpExposed)) return;
-  for (const row of mcpExposed) {
-    if (!isPlainRecord(row)) continue;
-    if (
-      typeof row.server === "string" &&
-      row.server.trim() &&
-      typeof row.count === "number" &&
-      row.count >= 0
-    ) {
-      const restored = workspaceMcpBucket(current, safeMetricLabel(row.server));
-      restored.count = row.count;
-      current.mcpCapable = true;
-    }
-  }
-}
-
-function restoreWorkspaceBridgeData(
-  current: WorkspaceUsageBucket,
-  saved: Record<string, unknown>
-): void {
-  restoreWorkspaceBridgeTools(current, saved);
-  restoreWorkspaceBridgeSkills(current, saved);
-}
-
-function restoreWorkspaceBridgeTools(
-  current: WorkspaceUsageBucket,
-  saved: Record<string, unknown>
-): void {
-  const bridgeTools = saved.bridgeTools;
-  if (!isUnknownArray(bridgeTools)) return;
-  for (const tool of bridgeTools) {
-    if (!isPlainRecord(tool) || typeof tool.tool !== "string") continue;
-    const restored = {
-      tool: safeMetricLabel(tool.tool),
-      server:
-        typeof tool.server === "string" ? safeMetricLabel(tool.server) : "",
-      count: typeof tool.count === "number" && tool.count >= 0 ? tool.count : 0,
-      byStatus: {} as Record<string, number>
-    };
-    restoreBridgeToolStatuses(restored, tool);
-    current.bridgeObservations.tools.set(restored.tool, restored);
-  }
-}
-
-function restoreBridgeToolStatuses(
-  restored: { byStatus: Record<string, number> },
-  tool: Record<string, unknown>
-): void {
-  if (!isPlainRecord(tool.byStatus)) return;
-  for (const [status, count] of Object.entries(tool.byStatus)) {
-    if (typeof count === "number" && count >= 0)
-      restored.byStatus[safeMetricLabel(status)] = count;
-  }
-}
 
 function restoreWorkspaceBridgeSkills(
   current: WorkspaceUsageBucket,

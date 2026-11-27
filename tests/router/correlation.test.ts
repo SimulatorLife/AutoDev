@@ -16,8 +16,8 @@ The router's live correlation with the agents it serves.
 
 The OTLP receiver that used to feed this module is gone: the agents export
 their telemetry to OpenLIT, and the router keeps only what it observes
-itself -- the calls the bridges report, the servers they called, and the
-skills they used.
+itself -- the skills the agents read. MCP server evidence comes from the
+shared MCP gateway (`runtime/src/mcp/gateway-observations.ts`), not from here.
 */
 
 function createMockUsageTracker(): UsageTracker {
@@ -30,15 +30,9 @@ test("zeroed initial state", () => {
   });
   const status = tracker.correlationStatus();
 
-  assert.equal(status.mcpServers.length, 0);
-  assert.equal(status.mcpSummary.observed, 0);
   assert.equal(status.skills.used.total, 0);
-  assert.equal(status.bridgeEvents.toolExecuted.total, 0);
-  assert.equal(status.bridgeEvents.toolRequested.total, 0);
-  assert.equal(status.bridgeEvents.toolUnavailable.total, 0);
   assert.equal(status.bridgeEvents.skillExposed.total, 0);
   assert.equal(status.bridgeEvents.skillUsed.total, 0);
-  assert.equal(status.bridgeEvents.mcpExposed.total, 0);
 });
 
 test("request-context correlation preserves exact source request IDs and alias priority", () => {
@@ -61,36 +55,9 @@ test("request-context correlation preserves exact source request IDs and alias p
   assert.deepEqual(observedRequestIds, [" request-native ", "  ", "fallback"]);
 });
 
-test("bridge observation events: tool, skill, and mcp exposure", () => {
+test("bridge skill events: exposure and use", () => {
   const usageTracker = createMockUsageTracker();
   const tracker = new CorrelationTracker({ usageTracker });
-
-  tracker.recordBridgeToolObservation({
-    event: {
-      type: "tool_executed",
-      tool: "view_file",
-      server: "file-tools",
-      status: "ok",
-      callId: "c-1"
-    },
-    context: { workspace: "AutoDev/Platform" }
-  });
-  tracker.recordBridgeToolObservation({
-    event: {
-      type: "tool_unavailable",
-      tool: "write_file",
-      server: "file-tools",
-      reason: "policy_denied"
-    },
-    context: { workspace: "AutoDev/Platform" }
-  });
-
-  tracker.recordMcpExposure({
-    server: "playwright",
-    source: "role_contract",
-    context: { workspace: "AutoDev/Platform" },
-    requestId: "req-1"
-  });
 
   tracker.recordBridgeSkillExposure({
     event: { skill: "diagnosing-bugs", source: "builtin", pluginId: "core" },
@@ -104,12 +71,6 @@ test("bridge observation events: tool, skill, and mcp exposure", () => {
   assert.equal(skillUsedResult, true);
 
   const status = tracker.correlationStatus();
-  assert.equal(status.bridgeEvents.toolExecuted.total, 1);
-  assert.deepEqual(status.bridgeEvents.toolExecuted.byReason, {});
-  assert.deepEqual(status.bridgeEvents.toolRequested.byReason, {});
-  assert.equal(status.bridgeEvents.toolUnavailable.total, 1);
-  assert.equal(status.bridgeEvents.toolUnavailable.byReason.policy_denied, 1);
-  assert.equal(status.bridgeEvents.mcpExposed.total, 1);
   assert.equal(status.bridgeEvents.skillExposed.total, 1);
   assert.equal(status.bridgeEvents.skillUsed.total, 1);
 
@@ -117,100 +78,13 @@ test("bridge observation events: tool, skill, and mcp exposure", () => {
     usageTracker.usageTelemetry.byWorkspace,
     "AutoDev/Platform"
   );
-  assert.equal(wsBucket.toolsExecuted, 1);
-  assert.equal(wsBucket.toolsUnavailable, 1);
-  assert.equal(wsBucket.mcpCapable, true);
   assert.equal(wsBucket.skillsCapable, true);
   assert.equal(wsBucket.skillUses, 1);
-});
-
-test("a call against a server is the evidence the server's health is read from", () => {
-  const tracker = new CorrelationTracker({
-    usageTracker: createMockUsageTracker()
-  });
-
-  tracker.recordBridgeToolObservation({
-    event: {
-      type: "tool_executed",
-      tool: "view_file",
-      server: "file-tools",
-      status: "ok",
-      callId: "c-1",
-      durationMs: 40
-    },
-    context: { workspace: "AutoDev/Platform", role: "orchestrator" }
-  });
-
-  const server = tracker
-    .correlationStatus()
-    .mcpServers.find((entry) => entry.name === "file-tools");
-  assert.ok(server, "the observed server is published");
-  assert.equal(server.lastStatus, "ready");
-  assert.equal(server.health, "ready");
-  assert.equal(server.failures, 0);
-  assert.equal(server.averageDurationMs, 40);
-  assert.ok(server.lastSeenAt, "an observed server carries a last-seen time");
-  // The role that made the call saw the server answer, so its own bucket
-  // carries the same verdict.
-  assert.equal(server.byRole.orchestrator?.lastStatus, "ready");
-  assert.equal(server.byRole.orchestrator?.health, "ready");
-});
-
-test("a call that failed is a failure of the server, and a refusal is not", () => {
-  const tracker = new CorrelationTracker({
-    usageTracker: createMockUsageTracker()
-  });
-
-  tracker.recordBridgeToolObservation({
-    event: {
-      type: "tool_executed",
-      tool: "view_file",
-      server: "file-tools",
-      status: "error",
-      callId: "c-1"
-    },
-    context: { workspace: "AutoDev/Platform" }
-  });
-  tracker.recordBridgeToolObservation({
-    event: {
-      type: "tool_unavailable",
-      tool: "write_file",
-      server: "other-tools",
-      reason: "policy_denied"
-    },
-    context: { workspace: "AutoDev/Platform" }
-  });
-
-  const status = tracker.correlationStatus();
-  const failed = status.mcpServers.find((entry) => entry.name === "file-tools");
-  assert.ok(failed);
-  assert.equal(failed.lastStatus, "error");
-  assert.equal(failed.failures, 1);
-
-  // The refusal was the router's own: the server was never exercised, so it
-  // carries no verdict of its own.
-  const refused = status.mcpServers.find(
-    (entry) => entry.name === "other-tools"
-  );
-  assert.ok(refused);
-  assert.equal(refused.failures, 0);
-  assert.notEqual(refused.lastStatus, "error");
 });
 
 test("bridge observation events: activitySubject is local active correlation, not an OTel dimension", () => {
   const usageTracker = createMockUsageTracker();
   const tracker = new CorrelationTracker({ usageTracker });
-
-  tracker.recordBridgeToolObservation({
-    event: {
-      type: "tool_executed",
-      tool: "view_file",
-      server: "file-tools",
-      status: "ok",
-      callId: "c-activity-1"
-    },
-    context: { workspace: "AutoDev/Platform", activitySubject: "child-42" }
-  });
 
   const skillUsedResult = tracker.recordBridgeSkillUsed({
     event: { skill: "racecar-movement", eventId: "evt-skill-activity-1" },
@@ -231,15 +105,6 @@ test("bridge observation events: activitySubject is local active correlation, no
   assert.equal(status.skills.used.byAgent["child-42"], undefined);
   assert.equal(status.skills.used.byAgent.unattributed, 1);
 
-  // The MCP cumulative agent dimension likewise stays unattributed; the
-  // bridge's separate live-feed event carries the exact activity subject.
-  const mcpServer = status.mcpServers.find(
-    (entry: any) => entry.name === "file-tools"
-  );
-  assert.ok(mcpServer, "expected file-tools mcp server entry");
-  assert.equal(mcpServer.byAgent["child-42"], undefined);
-  assert.equal(mcpServer.byAgent.unattributed.observed, 1);
-
   const activeUsage = usageTracker.activeUsageSnapshot(["child-42"]);
   assert.equal(activeUsage.skillUses, 1);
   assert.deepEqual(activeUsage.bySkill, [
@@ -257,20 +122,14 @@ test("persistence snapshot and restoration", () => {
   const usageTracker = createMockUsageTracker();
   const tracker = new CorrelationTracker({ usageTracker });
 
-  tracker.recordBridgeToolObservation({
-    event: {
-      type: "tool_executed",
-      tool: "view_file",
-      server: "file-tools",
-      status: "ok",
-      callId: "c-1"
-    },
+  tracker.recordBridgeSkillUsed({
+    event: { skill: "diagnosing-bugs", eventId: "evt-persist-1" },
     context: { workspace: "AutoDev/Platform" }
   });
 
   const snapshot = tracker.correlationSnapshot();
   assert.equal(snapshot.schemaVersion, TELEMETRY_CORRELATION_SCHEMA_VERSION);
-  assert.equal(snapshot.bridgeEvents.toolExecuted.total, 1);
+  assert.equal(snapshot.bridgeEvents.skillUsed.total, 1);
 
   // Restore into a fresh tracker
   const freshTracker = new CorrelationTracker({
@@ -279,9 +138,8 @@ test("persistence snapshot and restoration", () => {
   freshTracker.restoreCorrelation(snapshot);
 
   const restoredStatus = freshTracker.correlationStatus();
-  assert.equal(restoredStatus.bridgeEvents.toolExecuted.total, 1);
-  assert.equal(restoredStatus.mcpServers.length, 1);
-  assert.equal(restoredStatus.mcpServers[0]?.name, "file-tools");
+  assert.equal(restoredStatus.bridgeEvents.skillUsed.total, 1);
+  assert.equal(restoredStatus.skills.used.total, 1);
 });
 
 test("the restore accepts partial snapshots and ignores invalid top-level input", () => {
@@ -291,19 +149,15 @@ test("the restore accepts partial snapshots and ignores invalid top-level input"
 
   tracker.restoreCorrelation({
     schemaVersion: TELEMETRY_CORRELATION_SCHEMA_VERSION,
-    mcpServers: [{ name: "partial-server", lastStatus: "ready" }],
     skills: { used: { total: 4 } }
   });
 
   const restoredStatus = tracker.correlationStatus();
   assert.equal(restoredStatus.skills.used.total, 4);
-  assert.equal(restoredStatus.mcpServers.length, 1);
-  assert.equal(restoredStatus.mcpServers[0]?.name, "partial-server");
 
   assert.doesNotThrow(() =>
     tracker.restoreCorrelation({
       schemaVersion: TELEMETRY_CORRELATION_SCHEMA_VERSION,
-      mcpServers: [null, { name: 3 }],
       skills: { used: { bySkill: [null, { skill: 1 }] } }
     })
   );
@@ -335,23 +189,10 @@ test("resetCorrelation clears the correlation and triggers usageTracker reset", 
     "2026-09-27T17:00:00.000Z"
   );
 
-  tracker.recordBridgeToolObservation({
-    event: {
-      type: "tool_executed",
-      tool: "view_file",
-      server: "file-tools",
-      status: "ok",
-      callId: "c-1"
-    },
-    context: { workspace: "AutoDev/Core" }
-  });
-
   tracker.resetCorrelation();
 
   const status = tracker.correlationStatus();
   assert.equal(status.skills.used.total, 0);
-  assert.equal(status.mcpServers.length, 0);
-  assert.equal(status.bridgeEvents.toolExecuted.total, 0);
   assert.equal(usageTracker.attributionDiagnostics.total, 0);
 });
 

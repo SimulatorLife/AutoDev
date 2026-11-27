@@ -400,27 +400,6 @@ function renderEfficiencySection(
       `${INDENT}provider ${provider.provider}: status=${provider.status ?? DASH} cooldown=${provider.cooldownKind ?? "none"} lastFailure=${provider.lastFailureClass ?? DASH} (${provider.lastFailureStatus ?? DASH})`
     );
   }
-  for (const workspace of efficiency.workspaces ?? []) {
-    const servers = new Set([
-      ...Object.keys(workspace.exposed),
-      ...Object.keys(workspace.used)
-    ]);
-    const mcpPairs = [...servers]
-      .sort()
-      .map(
-        (server) =>
-          `${server}:${workspace.used[server] ?? 0}/${workspace.exposed[server] ?? 0}`
-      )
-      .join(" ");
-    lines.push(
-      `${INDENT}workspace ${workspace.workspace} mcp(used/exposed): ${mcpPairs || "none"}`
-    );
-    if (workspace.topTools.length > 0) {
-      lines.push(
-        `${INDENT}  topTools: ${workspace.topTools.map((tool) => `${tool.tool}(ok=${tool.ok},err=${tool.error})`).join(" ")}`
-      );
-    }
-  }
   return lines;
 }
 

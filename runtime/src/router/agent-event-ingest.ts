@@ -6,11 +6,9 @@ import {
 } from "@simulatorlife/autodev-runtime/router/live-feed";
 
 import {
-  recordBridgeMcpExposure,
   recordBridgeSkillExposure,
   recordBridgeSkillFailed,
-  recordBridgeSkillUsed,
-  recordBridgeToolObservation
+  recordBridgeSkillUsed
 } from "./correlation.ts";
 import { safeMetricLabel } from "./metric-label.ts";
 import {
@@ -31,13 +29,9 @@ const INGESTED_AGENT_EVENTS = Object.freeze(
     "subagent_spawn",
     "subagent_result",
     "subagent_tools_unavailable",
-    "tool_executed",
-    "tool_requested",
-    "tool_unavailable",
     "skill_exposed",
     "skill_used",
     "skill_failed",
-    "mcp_exposed",
     "activity",
     "heartbeat"
   ])
@@ -233,9 +227,7 @@ function recordSubagentSpawnUsage(
 }
 
 function liveFeedCategoryForAgentEvent(type: string): LiveFeedCategory {
-  if (type.startsWith("tool_")) return "tools";
   if (type.startsWith("skill_")) return "skills";
-  if (type.startsWith("mcp_")) return "mcp";
   if (type.startsWith("hook_")) return "hooks";
   return "runtime";
 }
@@ -298,14 +290,6 @@ function agentEventDuration(event: Record<string, unknown>): number | null {
   return Number.isFinite(duration) && duration >= 0 ? duration : null;
 }
 
-function applyMcpExposedEvent(
-  event: Record<string, unknown>,
-  context: BridgeRequestContext,
-  requestId: string
-): void {
-  recordBridgeMcpExposure({ event, context, requestId });
-}
-
 function applyAgentEvent(
   dependencies: AgentEventIngestDeps,
   event: Record<string, unknown>,
@@ -336,21 +320,8 @@ function applyAgentEvent(
     counters.unavailable += 1;
     return;
   }
-  if (
-    type === "tool_executed" ||
-    type === "tool_requested" ||
-    type === "tool_unavailable"
-  ) {
-    recordBridgeToolObservation({ event, context });
-    touchAgentActivity(dependencies, context);
-    return;
-  }
   if (type === "skill_exposed") {
     recordBridgeSkillExposure({ event, context });
-    return;
-  }
-  if (type === "mcp_exposed") {
-    applyMcpExposedEvent(event, context, requestId);
     return;
   }
   if (isHeartbeatAgentEvent(event)) {

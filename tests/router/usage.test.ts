@@ -5,8 +5,6 @@ import { createAgentActivityTracker } from "@simulatorlife/autodev-runtime/agent
 import {
   emptyUsageBucket,
   extractWorkspaceIdWithAmbiguity,
-  formatWorkspaceMcpExposed,
-  formatWorkspaceMcpUses,
   formatWorkspaceSkills,
   getDefaultUsageTracker,
   MAX_UNKNOWN_WORKSPACE_IDS,
@@ -254,20 +252,6 @@ test("Workspace bucket management and formatting", () => {
   const formattedSkills = formatWorkspaceSkills(wsBucket.skills);
   assert.equal(formattedSkills.length, 1);
   assert.equal(formattedSkills[0]!.skill, "git-commit");
-
-  const mcp = tracker.workspaceMcpBucket(wsBucket, "github");
-  mcp.count = 7;
-  const formattedMcp = formatWorkspaceMcpExposed(wsBucket.mcpExposed);
-  assert.equal(formattedMcp.length, 1);
-  assert.equal(formattedMcp[0]!.server, "github");
-  assert.equal(formattedMcp[0]!.count, 7);
-
-  wsBucket.byMcp = { filesystem: 4, github: 2 };
-  const formattedUses = formatWorkspaceMcpUses(wsBucket.byMcp);
-  assert.deepEqual(formattedUses, [
-    { server: "filesystem", count: 4 },
-    { server: "github", count: 2 }
-  ]);
 });
 
 test("recordUsageEvent updates counters across phase transitions", () => {
@@ -423,8 +407,6 @@ test("usagePersistenceSnapshot and restoreUsagePersistenceSnapshot preserve full
   const wsBucket = tracker.workspaceBucket("RepoPersistence");
   wsBucket.skillUses = 5;
   wsBucket.skillsCapable = true;
-  wsBucket.mcpCapable = true;
-  wsBucket.byMcp = { filesystem: 3 };
 
   const snapshot = tracker.usagePersistenceSnapshot();
   assert.equal(snapshot.schemaVersion, 8);
@@ -436,11 +418,11 @@ test("usagePersistenceSnapshot and restoreUsagePersistenceSnapshot preserve full
   assert.ok(
     persistedWorkspace &&
       typeof persistedWorkspace === "object" &&
-      "mcpExposed" in persistedWorkspace
+      "skillUses" in persistedWorkspace
   );
-  for (const transientMapField of ["tools", "skills", "bridgeObservations"])
+  for (const transientMapField of ["skills", "bridgeObservations"])
     assert.equal(Object.hasOwn(persistedWorkspace, transientMapField), false);
-  assert.ok(Array.isArray(persistedWorkspace.mcpExposed));
+  assert.equal(persistedWorkspace.skillUses, 5);
 
   // Restore into a clean tracker
   const cleanTracker = new UsageTracker();
@@ -455,8 +437,6 @@ test("usagePersistenceSnapshot and restoreUsagePersistenceSnapshot preserve full
   assert.equal(restoredWs.attempts, 1);
   assert.equal(restoredWs.skillUses, 5);
   assert.equal(restoredWs.skillsCapable, true);
-  assert.equal(restoredWs.mcpCapable, true);
-  assert.equal(restoredWs.byMcp.filesystem, 3);
   assert.equal(
     cleanTracker.workspaceIdRegistry.get(safeWorkspaceId("ws-pers")),
     "RepoPersistence"
@@ -497,7 +477,6 @@ test("usagePersistenceSnapshot and restoreUsagePersistenceSnapshot preserve full
   // Verify clearWorkspaceCapabilities
   cleanTracker.clearWorkspaceCapabilities();
   assert.equal(restoredWs.skillsCapable, false);
-  assert.equal(restoredWs.mcpCapable, false);
   assert.equal(restoredWs.skillUses, 0);
 });
 

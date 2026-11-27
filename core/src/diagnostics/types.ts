@@ -402,20 +402,6 @@ export interface SessionLiveReport {
 }
 
 /**
-One workspace's MCP exposure against what it actually used.
-*/
-export interface SessionEfficiencyWorkspaceMcpSummary {
-  readonly workspace: string;
-  readonly exposed: Readonly<Record<string, number>>;
-  readonly used: Readonly<Record<string, number>>;
-  readonly topTools: readonly {
-    readonly tool: string;
-    readonly ok: number;
-    readonly error: number;
-  }[];
-}
-
-/**
 The persisted router state, read beside the live one.
 */
 export interface SessionEfficiencySummary {
@@ -428,7 +414,6 @@ export interface SessionEfficiencySummary {
     readonly lastFailureClass: string | null;
     readonly lastFailureStatus: number | null;
   }[];
-  readonly workspaces?: readonly SessionEfficiencyWorkspaceMcpSummary[];
 }
 
 /**
@@ -1141,25 +1126,6 @@ function isProviderLastFailure(value: unknown): boolean {
   );
 }
 
-function isWorkspaceTopTool(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    typeof value.tool === "string" &&
-    isNumber(value.ok) &&
-    isNumber(value.error)
-  );
-}
-
-function isWorkspaceMcpSummary(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.workspace === "string" &&
-    isCountMap(value.exposed) &&
-    isCountMap(value.used) &&
-    isEveryEntry(value.topTools, isWorkspaceTopTool)
-  );
-}
-
 function isSessionEfficiencySummary(
   value: unknown
 ): value is SessionEfficiencySummary {
@@ -1169,9 +1135,6 @@ function isSessionEfficiencySummary(
     isStringList(value.nullRoleModels) &&
     isAbsentOr(value.providerLastFailures, (failures) =>
       isEveryEntry(failures, isProviderLastFailure)
-    ) &&
-    isAbsentOr(value.workspaces, (workspaces) =>
-      isEveryEntry(workspaces, isWorkspaceMcpSummary)
     )
   );
 }

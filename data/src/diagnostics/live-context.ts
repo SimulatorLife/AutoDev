@@ -28,7 +28,6 @@ import path from "node:path";
 import type {
   SessionBridgeLogAlert,
   SessionEfficiencySummary,
-  SessionEfficiencyWorkspaceMcpSummary,
   SessionLiveReport,
   SessionLogFileSummary
 } from "@simulatorlife/autodev-core";
@@ -313,67 +312,6 @@ function readRouterStateFields(codexHome: string): {
   }
 }
 
-function parseExposedServers(raw: unknown): Record<string, number> {
-  const exposed: Record<string, number> = {};
-  if (!Array.isArray(raw)) return exposed;
-  for (const row of raw) {
-    if (
-      isRecord(row) &&
-      typeof row.server === "string" &&
-      typeof row.count === "number"
-    ) {
-      exposed[row.server] = row.count;
-    }
-  }
-  return exposed;
-}
-
-function parseUsedServers(raw: unknown): Record<string, number> {
-  const used: Record<string, number> = {};
-  if (!isRecord(raw)) return used;
-  for (const [server, count] of Object.entries(raw)) {
-    if (typeof count === "number") used[server] = count;
-  }
-  return used;
-}
-
-function parseTopBridgeTools(
-  raw: unknown
-): { tool: string; ok: number; error: number }[] {
-  if (!Array.isArray(raw)) return [];
-  const tools: { tool: string; ok: number; error: number }[] = [];
-  for (const row of raw) {
-    if (!isRecord(row) || typeof row.tool !== "string") continue;
-    const byStatus = isRecord(row.byStatus) ? row.byStatus : {};
-    const ok = typeof byStatus.ok === "number" ? byStatus.ok : 0;
-    const error = typeof byStatus.error === "number" ? byStatus.error : 0;
-    tools.push({ tool: row.tool, ok, error });
-  }
-  tools.sort((a, b) => b.ok + b.error - (a.ok + a.error));
-  return tools.slice(0, 8);
-}
-
-function readWorkspaceMcpSummaries(
-  status: RouterStatusBody
-): SessionEfficiencyWorkspaceMcpSummary[] {
-  const byWorkspace =
-    isRecord(status.usage) && isRecord(status.usage.byWorkspace)
-      ? status.usage.byWorkspace
-      : null;
-  if (!byWorkspace) return [];
-  const out: SessionEfficiencyWorkspaceMcpSummary[] = [];
-  for (const [workspace, entry] of Object.entries(byWorkspace)) {
-    if (!isRecord(entry)) continue;
-    out.push({
-      workspace,
-      exposed: parseExposedServers(entry.mcpExposed),
-      used: parseUsedServers(entry.byMcp),
-      topTools: parseTopBridgeTools(entry.bridgeTools)
-    });
-  }
-  return out;
-}
-
 function readProviderFailuresSummary(
   status: RouterStatusBody
 ): NonNullable<SessionEfficiencySummary["providerLastFailures"]> {
@@ -419,12 +357,10 @@ export function buildEfficiencySummary(
     readRouterStateFields(codexHome);
   if (!status) return { disabledProviders, nullRoleModels };
   const providerLastFailures = readProviderFailuresSummary(status);
-  const workspaces = readWorkspaceMcpSummaries(status);
   return {
     disabledProviders,
     nullRoleModels,
-    ...((providerLastFailures.length > 0) && { providerLastFailures }),
-    ...((workspaces.length > 0) && { workspaces })
+    ...((providerLastFailures.length > 0) && { providerLastFailures })
   };
 }
 

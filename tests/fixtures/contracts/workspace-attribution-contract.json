@@ -1,6 +1,6 @@
 {
-  "schema": "autodev-workspace-attribution-v2",
-  "description": "Deterministic contract for workspace-scoped tool, skill, and MCP attribution on the router's live bridge-observation path. It freezes fail-closed unavailable-versus-empty behavior, exposure-versus-use separation, bridge evidence deduplication, and privacy normalization. Refreshing this fixture is the intentional signal that attribution ownership or wire shape changed.",
+  "schema": "autodev-workspace-attribution-v3",
+  "description": "Deterministic contract for workspace-scoped skill attribution on the router's live bridge-observation path. It freezes fail-closed unavailable-versus-empty behavior, exposure-versus-use separation, bridge evidence deduplication, and privacy normalization. MCP and tool evidence is the shared MCP gateway's, not the router's. Refreshing this fixture is the intentional signal that attribution ownership or wire shape changed.",
   "scenarios": {
     "empty_workspace_is_unavailable": {
       "operations": [
@@ -19,121 +19,13 @@
         {
           "op": "assert",
           "workspace": "SimulatorLife/Empty",
-          "field": "byMcp",
-          "expected": null
-        },
-        {
-          "op": "assert",
-          "workspace": "SimulatorLife/Empty",
-          "field": "mcpUses",
-          "expected": null
-        },
-        {
-          "op": "assert",
-          "workspace": "SimulatorLife/Empty",
-          "field": "mcpExposed",
-          "expected": null
-        },
-        {
-          "op": "assert",
-          "workspace": "SimulatorLife/Empty",
-          "field": "toolsExecuted",
-          "expected": 0
-        },
-        {
-          "op": "assert",
-          "workspace": "SimulatorLife/Empty",
           "field": "skillsExposed",
           "expected": 0
         },
         {
           "op": "assertFieldAbsent",
           "workspace": "SimulatorLife/Empty",
-          "field": "bridgeTools"
-        }
-      ]
-    },
-    "bridge_tool_capability_is_workspace_local": {
-      "operations": [
-        {
-          "op": "bridgeRequest",
-          "requestId": "tool-1",
-          "workspace": "SimulatorLife/Tools",
-          "provider": "claude",
-          "model": "sonnet",
-          "role": "default"
-        },
-        {
-          "op": "bridgeEvents",
-          "requestId": "tool-1",
-          "events": [
-            {
-              "type": "tool_executed",
-              "tool": "apply_patch",
-              "callId": "call-1",
-              "status": "ok",
-              "server": "codex-builtin"
-            },
-            {
-              "type": "tool_executed",
-              "tool": "apply_patch",
-              "callId": "call-2",
-              "status": "error",
-              "server": "codex-builtin"
-            },
-            {
-              "type": "tool_requested",
-              "tool": "web_search",
-              "callId": "call-3"
-            },
-            {
-              "type": "tool_unavailable",
-              "tool": "manage_subagents",
-              "reason": "denied"
-            }
-          ]
-        },
-        {
-          "op": "record",
-          "requestId": "blank",
-          "phase": "selected",
-          "workspace": "SimulatorLife/Blank"
-        },
-        {
-          "op": "assert",
-          "workspace": "SimulatorLife/Tools",
-          "field": "toolsExecuted",
-          "expected": 2
-        },
-        {
-          "op": "assert",
-          "workspace": "SimulatorLife/Tools",
-          "field": "toolsRequested",
-          "expected": 1
-        },
-        {
-          "op": "assert",
-          "workspace": "SimulatorLife/Tools",
-          "field": "toolsUnavailable",
-          "expected": 1
-        },
-        {
-          "op": "assert",
-          "workspace": "SimulatorLife/Tools",
-          "field": "bridgeTools",
-          "expected": [
-            {
-              "tool": "apply_patch",
-              "server": "codex-builtin",
-              "count": 2,
-              "byStatus": { "ok": 1, "error": 1 }
-            }
-          ]
-        },
-        {
-          "op": "assertFieldAbsent",
-          "workspace": "SimulatorLife/Blank",
-          "field": "bridgeTools"
+          "field": "bridgeSkills"
         }
       ]
     },
@@ -205,70 +97,12 @@
           "op": "assert",
           "workspace": "SimulatorLife/Skills",
           "field": "bridgeSkills",
-          "expected": [{ "skill": "ccc", "count": 1 }]
-        }
-      ]
-    },
-    "mcp_exposure_and_use_are_distinct": {
-      "operations": [
-        {
-          "op": "bridgeRequest",
-          "requestId": "mcp-1",
-          "workspace": "SimulatorLife/Mcp",
-          "provider": "claude",
-          "model": "sonnet",
-          "role": "default"
-        },
-        {
-          "op": "bridgeEvents",
-          "requestId": "mcp-1",
-          "events": [
+          "expected": [
             {
-              "type": "mcp_exposed",
-              "server": "playwright",
-              "source": "role_contract"
-            },
-            {
-              "type": "mcp_exposed",
-              "server": "playwright",
-              "source": "role_contract"
-            },
-            {
-              "type": "tool_requested",
-              "tool": "browser_navigate",
-              "server": "playwright"
-            },
-            {
-              "type": "tool_unavailable",
-              "tool": "browser_navigate",
-              "server": "playwright",
-              "reason": "denied"
-            },
-            {
-              "type": "tool_executed",
-              "tool": "browser_navigate",
-              "server": "playwright",
-              "status": "ok"
+              "skill": "ccc",
+              "count": 1
             }
           ]
-        },
-        {
-          "op": "assert",
-          "workspace": "SimulatorLife/Mcp",
-          "field": "mcpExposed",
-          "expected": [{ "server": "playwright", "count": 1 }]
-        },
-        {
-          "op": "assert",
-          "workspace": "SimulatorLife/Mcp",
-          "field": "mcpUses",
-          "expected": [{ "server": "playwright", "count": 1 }]
-        },
-        {
-          "op": "assert",
-          "workspace": "SimulatorLife/Mcp",
-          "field": "byMcp",
-          "expected": { "playwright": 1 }
         }
       ]
     },

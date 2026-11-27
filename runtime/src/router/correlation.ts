@@ -18,34 +18,6 @@ every read of one goes through a guard rather than a cast.
 */
 export type AttributeMap = Record<string, unknown>;
 
-export const MCP_OBSERVATION_TTL_MS = Number.parseInt(
-  process.env.CODEX_ROUTER_MCP_OBSERVATION_TTL_MS ?? "120000"
-);
-
-export interface McpServerDimensionBucket {
-  observed: number;
-  lastSeenAt: string | null;
-  lastStatus: string;
-  agentKind?: string;
-  ready?: number;
-  error?: number;
-  stale?: number;
-  health?: string;
-}
-
-export interface McpServerEntry {
-  name: string;
-  lastSeenAt: string | null;
-  failures: number;
-  durationMs: number;
-  durationCount: number;
-  lastStatus: string;
-  byRole: Record<string, McpServerDimensionBucket>;
-  byWorkspace: Record<string, McpServerDimensionBucket>;
-  byModel: Record<string, McpServerDimensionBucket>;
-  byAgent: Record<string, McpServerDimensionBucket>;
-}
-
 export interface ContextDimensionBucket {
   count: number;
   lastSeenAt: string | null;
@@ -94,29 +66,6 @@ export interface SkillUsedEntry {
   lastSeenAt: string | null;
 }
 
-export interface BridgeToolRow {
-  tool: string;
-  server: string;
-  callId?: string | null;
-  count: number;
-  byStatus: Record<string, number>;
-}
-
-export interface BridgeWorkspaceRow {
-  workspaceKey: string;
-  count: number;
-  byTool: Map<string, BridgeToolRow>;
-  bySkill?: Map<string, number>;
-  byStatus: Record<string, number>;
-}
-
-export interface BridgeToolBucket {
-  total: number;
-  byTool: Map<string, BridgeToolRow>;
-  byWorkspace: Map<string, BridgeWorkspaceRow>;
-  byReason?: Record<string, number>;
-}
-
 export interface BridgeSkillEntry {
   skill: string;
   source: string;
@@ -135,29 +84,9 @@ export interface BridgeSkillBucket {
   seenKeys?: Set<string>;
 }
 
-export interface BridgeMcpEntry {
-  server: string;
-  source: string;
-  count: number;
-}
-
-export interface BridgeMcpBucket {
-  total: number;
-  byServer: Map<string, BridgeMcpEntry>;
-  byWorkspace: Map<
-    string,
-    { workspaceKey: string; count: number; byServer: Map<string, number> }
-  >;
-  seenKeys?: Set<string>;
-}
-
 export interface BridgeEventsState {
-  toolExecuted: BridgeToolBucket;
-  toolRequested: BridgeToolBucket;
-  toolUnavailable: BridgeToolBucket & { byReason: Record<string, number> };
   skillExposed: BridgeSkillBucket;
   skillUsed: BridgeSkillBucket & { seenKeys: Set<string> };
-  mcpExposed: BridgeMcpBucket & { seenKeys: Set<string> };
 }
 
 /**
@@ -180,7 +109,6 @@ describes a shape this one does not have and must not be read as one.
 export const TELEMETRY_CORRELATION_SCHEMA_VERSION = 7;
 
 export interface CorrelationState {
-  mcpServers: Map<string, McpServerEntry>;
   dimensions: {
     bridge: ContextDimensions;
   };
@@ -205,7 +133,6 @@ export interface CorrelationContext {
 }
 
 export interface CorrelationTrackerOptions {
-  healthTtlMs?: number;
   usageTracker?: UsageTracker;
   getConversationThread?: (
     conversationId: string
@@ -295,7 +222,6 @@ export interface ResolveCorrelationContextOptions {
 interface CorrelationSnapshot {
   schemaVersion: typeof TELEMETRY_CORRELATION_SCHEMA_VERSION;
   dimensions: Record<string, ContextDimensions>;
-  mcpServers: McpServerEntry[];
   skills: { used: SkillUsedStatusView };
   bridgeEvents: BridgeEventsStatusView;
 }
@@ -303,25 +229,8 @@ interface CorrelationSnapshot {
 interface CorrelationRestoreInput {
   schemaVersion: typeof TELEMETRY_CORRELATION_SCHEMA_VERSION;
   dimensions?: unknown;
-  mcpServers?: unknown;
   skills?: unknown;
   bridgeEvents?: unknown;
-}
-
-interface McpServerStatusView extends McpServerEntry {
-  health: string;
-  averageDurationMs: number;
-}
-
-interface McpSummaryView {
-  observed: number;
-  ready: number;
-  error: number;
-  stale: number;
-  byRole: Record<string, DimensionSummaryBucket>;
-  byWorkspace: Record<string, DimensionSummaryBucket>;
-  byModel: Record<string, DimensionSummaryBucket>;
-  byAgent: Record<string, DimensionSummaryBucket>;
 }
 
 interface SkillUsedSkillBucketStatusView {
@@ -344,29 +253,6 @@ interface SkillUsedStatusView {
   bySkill: SkillUsedSkillBucketStatusView[];
 }
 
-interface BridgeToolRowStatusView {
-  tool: string;
-  server: string;
-  callId?: string | null;
-  count: number;
-  byStatus: Record<string, number>;
-}
-
-interface BridgeWorkspaceRowStatusView {
-  workspaceKey: string;
-  count: number;
-  byTool: BridgeToolRowStatusView[];
-  bySkill: Array<{ skill: string; count: number }>;
-  byStatus: Record<string, number>;
-}
-
-interface BridgeToolBucketStatusView {
-  total: number;
-  byTool: BridgeToolRowStatusView[];
-  byWorkspace: BridgeWorkspaceRowStatusView[];
-  byReason: Record<string, number>;
-}
-
 interface BridgeSkillEntryStatusView {
   skill: string;
   source: string;
@@ -384,29 +270,9 @@ interface BridgeSkillBucketStatusView {
   }>;
 }
 
-interface BridgeMcpEntryStatusView {
-  server: string;
-  source: string;
-  count: number;
-}
-
-interface BridgeMcpBucketStatusView {
-  total: number;
-  byServer: BridgeMcpEntryStatusView[];
-  byWorkspace: Array<{
-    workspaceKey: string;
-    count: number;
-    byServer: Array<{ server: string; count: number }>;
-  }>;
-}
-
 interface BridgeEventsStatusView {
-  toolExecuted: BridgeToolBucketStatusView;
-  toolRequested: BridgeToolBucketStatusView;
-  toolUnavailable: BridgeToolBucketStatusView;
   skillExposed: BridgeSkillBucketStatusView;
   skillUsed: BridgeSkillBucketStatusView;
-  mcpExposed: BridgeMcpBucketStatusView;
 }
 
 /**
@@ -417,22 +283,7 @@ aggregation the router used to build from an OTLP receiver is not here:
 OpenLIT is the system of record for history, and a status that carried a
 second, stale copy of it was a second answer to a question that has one.
 */
-function timestampNotOlder(
-  next: string | null | undefined,
-  previous: string | null | undefined
-): boolean {
-  if (!next || !previous) return true;
-  const nextMs = Date.parse(next);
-  const previousMs = Date.parse(previous);
-  return (
-    !Number.isFinite(nextMs) ||
-    !Number.isFinite(previousMs) ||
-    nextMs >= previousMs
-  );
-}
 export interface CorrelationStatus {
-  mcpSummary: McpSummaryView;
-  mcpServers: McpServerStatusView[];
   dimensions: Record<string, ContextDimensions>;
   skills: { used: SkillUsedStatusView };
   bridgeEvents: BridgeEventsStatusView;
@@ -454,71 +305,8 @@ function formatContextDimensions(
   );
 }
 
-function formatMcpDimensionBuckets(
-  dimensions: Record<string, McpServerDimensionBucket> | null | undefined,
-  now: number,
-  healthTtlMs: number = MCP_OBSERVATION_TTL_MS
-): Record<string, McpServerDimensionBucket> {
-  return Object.fromEntries(
-    Object.entries(dimensions ?? {}).map(([key, bucket]) => {
-      const lastSeenMs = bucket.lastSeenAt
-        ? Date.parse(bucket.lastSeenAt)
-        : NaN;
-      const health =
-        Number.isFinite(lastSeenMs) && now - lastSeenMs <= healthTtlMs
-          ? bucket.lastStatus
-          : "stale";
-      return [
-        key,
-        {
-          ...bucket,
-          observed: 1,
-          ready: health === "ready" ? 1 : 0,
-          error: health === "error" ? 1 : 0,
-          stale: health === "stale" ? 1 : 0,
-          health
-        }
-      ];
-    })
-  );
-}
-
 function formatBridgeEvents(events: BridgeEventsState): BridgeEventsStatusView {
-  const formatBucket = (bucket: BridgeToolBucket) => ({
-    total: bucket.total,
-    byReason: {},
-    byTool: Array.from(bucket.byTool.values(), (entry) => ({
-      ...entry,
-      byStatus: { ...entry.byStatus }
-    })).sort((a, b) =>
-      STRING_COLLATOR.compare(`${a.tool}/${a.server}`, `${b.tool}/${b.server}`)
-    ),
-    byWorkspace: Array.from(
-      bucket.byWorkspace.entries(),
-      ([workspaceKey, row]) => ({
-        workspaceKey,
-        count: row.count,
-        byTool: Array.from(row.byTool.values(), (entry) => ({
-          ...entry,
-          byStatus: { ...entry.byStatus }
-        })).sort((a, b) => STRING_COLLATOR.compare(a.tool, b.tool)),
-        bySkill: row.bySkill
-          ? Array.from(row.bySkill.entries(), ([skill, count]) => ({
-              skill,
-              count
-            })).sort((a, b) => STRING_COLLATOR.compare(a.skill, b.skill))
-          : [],
-        byStatus: { ...row.byStatus }
-      })
-    ).sort((a, b) => STRING_COLLATOR.compare(a.workspaceKey, b.workspaceKey))
-  });
   return {
-    toolExecuted: formatBucket(events.toolExecuted),
-    toolRequested: formatBucket(events.toolRequested),
-    toolUnavailable: {
-      ...formatBucket(events.toolUnavailable),
-      byReason: { ...events.toolUnavailable.byReason }
-    },
     skillExposed: {
       total: events.skillExposed.total,
       bySkill: Array.from(events.skillExposed.bySkill.values(), (entry) => ({
@@ -552,30 +340,12 @@ function formatBridgeEvents(events: BridgeEventsState): BridgeEventsStatusView {
           }))
         })
       ).sort((a, b) => STRING_COLLATOR.compare(a.workspaceKey, b.workspaceKey))
-    },
-    mcpExposed: {
-      total: events.mcpExposed.total,
-      byServer: Array.from(events.mcpExposed.byServer.values(), (entry) => ({
-        ...entry
-      })).sort((a, b) => STRING_COLLATOR.compare(a.server, b.server)),
-      byWorkspace: Array.from(
-        events.mcpExposed.byWorkspace.entries(),
-        ([workspaceKey, row]) => ({
-          workspaceKey,
-          count: row.count,
-          byServer: Array.from(row.byServer.entries(), ([server, count]) => ({
-            server,
-            count
-          }))
-        })
-      ).sort((a, b) => STRING_COLLATOR.compare(a.workspaceKey, b.workspaceKey))
     }
   };
 }
 
 function createEmptyCorrelation(): CorrelationState {
   return {
-    mcpServers: new Map(),
     dimensions: {
       bridge: {
         byRole: {},
@@ -596,24 +366,10 @@ function createEmptyCorrelation(): CorrelationState {
       }
     },
     bridgeEvents: {
-      toolExecuted: { total: 0, byTool: new Map(), byWorkspace: new Map() },
-      toolRequested: { total: 0, byTool: new Map(), byWorkspace: new Map() },
-      toolUnavailable: {
-        total: 0,
-        byTool: new Map(),
-        byWorkspace: new Map(),
-        byReason: {}
-      },
       skillExposed: { total: 0, bySkill: new Map(), byWorkspace: new Map() },
       skillUsed: {
         total: 0,
         bySkill: new Map(),
-        byWorkspace: new Map(),
-        seenKeys: new Set()
-      },
-      mcpExposed: {
-        total: 0,
-        byServer: new Map(),
         byWorkspace: new Map(),
         seenKeys: new Set()
       }
@@ -666,76 +422,7 @@ function restoreNumberFields(
   }
 }
 
-interface DimensionSummaryBucket {
-  observed: number;
-  ready: number;
-  error: number;
-  stale: number;
-  lastSeenAt: string | null;
-}
-
-function bucketHealth(
-  bucket: { lastSeenAt: string | null; lastStatus: string },
-  now: number,
-  healthTtlMs: number
-): string {
-  const lastSeenMs = bucket.lastSeenAt ? Date.parse(bucket.lastSeenAt) : NaN;
-  const isFresh =
-    Number.isFinite(lastSeenMs) && now - lastSeenMs <= healthTtlMs;
-  return isFresh ? bucket.lastStatus : "stale";
-}
-
-function mergeBucketSummary(
-  target: DimensionSummaryBucket,
-  health: string,
-  bucket: { lastSeenAt: string | null }
-): void {
-  target.observed += 1;
-  if (health === "ready") target.ready += 1;
-  else if (health === "error") target.error += 1;
-  else if (health === "stale") target.stale += 1;
-  if (
-    !target.lastSeenAt ||
-    (bucket.lastSeenAt &&
-      Date.parse(bucket.lastSeenAt) > Date.parse(target.lastSeenAt))
-  ) {
-    target.lastSeenAt = bucket.lastSeenAt;
-  }
-}
-
-function emptyDimensionSummary(): DimensionSummaryBucket {
-  return {
-    observed: 0,
-    ready: 0,
-    error: 0,
-    stale: 0,
-    lastSeenAt: null
-  };
-}
-
-function summarizeMcpDimension(
-  mcpServers: McpServerEntry[],
-  now: number,
-  healthTtlMs: number
-): (
-  dimension: "byRole" | "byWorkspace" | "byModel" | "byAgent"
-) => Record<string, DimensionSummaryBucket> {
-  return (dimension) => {
-    const summary: Record<string, DimensionSummaryBucket> = {};
-    for (const server of mcpServers) {
-      for (const [key, bucket] of Object.entries(server[dimension] ?? {})) {
-        const health = bucketHealth(bucket, now, healthTtlMs);
-        const target = summary[key] ?? emptyDimensionSummary();
-        mergeBucketSummary(target, health, bucket);
-        summary[key] = target;
-      }
-    }
-    return summary;
-  };
-}
-
 export class CorrelationTracker {
-  healthTtlMs: number;
   usageTracker: UsageTracker;
   getConversationThread?:
     ((conversationId: string) => RequestContext | null | undefined) | undefined;
@@ -754,7 +441,6 @@ export class CorrelationTracker {
   private readonly skillFailureKeys = new Set<string>();
 
   constructor(options: CorrelationTrackerOptions = {}) {
-    this.healthTtlMs = options.healthTtlMs ?? MCP_OBSERVATION_TTL_MS;
     this.usageTracker = options.usageTracker ?? getDefaultUsageTracker();
     this.getConversationThread = options.getConversationThread;
     this.getBridgeRequestContext = options.getBridgeRequestContext;
@@ -764,8 +450,6 @@ export class CorrelationTracker {
   }
 
   configure(options: Partial<CorrelationTrackerOptions>): this {
-    if (options.healthTtlMs !== undefined)
-      this.healthTtlMs = options.healthTtlMs;
     if (options.usageTracker !== undefined)
       this.usageTracker = options.usageTracker;
     if (options.getConversationThread !== undefined)
@@ -775,25 +459,6 @@ export class CorrelationTracker {
     if (options.onSchedulePersist !== undefined)
       this.onSchedulePersist = options.onSchedulePersist;
     return this;
-  }
-
-  mcpServer(name: string): McpServerEntry {
-    const cleanName = safeMetricLabel(name, "unknown");
-    if (!this.telemetry.mcpServers.has(cleanName)) {
-      this.telemetry.mcpServers.set(cleanName, {
-        name: cleanName,
-        lastSeenAt: null,
-        failures: 0,
-        durationMs: 0,
-        durationCount: 0,
-        lastStatus: "unknown",
-        byRole: {},
-        byWorkspace: {},
-        byModel: {},
-        byAgent: {}
-      });
-    }
-    return this.telemetry.mcpServers.get(cleanName)!;
   }
 
   /**
@@ -1173,51 +838,6 @@ export class CorrelationTracker {
     }
   }
 
-  noteMcpDimension(
-    server: McpServerEntry,
-    dimension: "byRole" | "byWorkspace" | "byModel" | "byAgent",
-    key: string,
-    context: CorrelationContext,
-    status?: string
-  ): void {
-    this.mergeMcpDimensionBucket(
-      server[dimension],
-      dimension,
-      key,
-      context,
-      status
-    );
-  }
-
-  mergeMcpDimensionBucket(
-    buckets: Record<string, McpServerDimensionBucket>,
-    dimension: string,
-    key: string,
-    context: CorrelationContext,
-    status?: string
-  ): void {
-    const existing = buckets[key];
-    const bucket = existing ?? {
-      observed: 1,
-      lastSeenAt: null,
-      lastStatus: "observed"
-    };
-    bucket.observed = 1;
-    const nextStatus = status ?? bucket.lastStatus;
-    const isReplace =
-      !existing ||
-      !bucket.lastSeenAt ||
-      (nextStatus === "configured"
-        ? bucket.lastStatus === "configured"
-        : bucket.lastStatus === "configured" ||
-          timestampNotOlder(context.timestamp, bucket.lastSeenAt));
-    if (isReplace) {
-      bucket.lastSeenAt = context.timestamp;
-      bucket.lastStatus = nextStatus;
-    }
-    if (dimension === "byAgent") bucket.agentKind = context.agentKind;
-    buckets[key] = bucket;
-  }
   mergeContextDimensionBucket(
     buckets: Record<string, ContextDimensionBucket>,
     dimension: string,
@@ -1296,385 +916,6 @@ export class CorrelationTracker {
       const wsSkill = this.usageTracker.workspaceSkillBucket(workspace, skill);
       wsSkill.uses = (wsSkill.uses ?? 0) + count;
     }
-  }
-
-  private bridgeToolObservationStatus(
-    event: BridgeObservationEventInput
-  ): string {
-    if (event.type === "tool_unavailable") return "unavailable";
-    if (event.status === "error" || event.status === "failure") return "error";
-    if (event.status === "ok" || event.status === "success") return "ok";
-    return "unknown";
-  }
-
-  private bridgeToolBucketFor(eventType: unknown): BridgeToolBucket {
-    if (eventType === "tool_executed")
-      return this.telemetry.bridgeEvents.toolExecuted;
-    if (eventType === "tool_requested")
-      return this.telemetry.bridgeEvents.toolRequested;
-    return this.telemetry.bridgeEvents.toolUnavailable;
-  }
-
-  private incrementBridgeToolRow(
-    bucket: BridgeToolBucket,
-    toolBucketKey: string,
-    tool: string,
-    server: string | null,
-    callId: string | null,
-    statusKey: string
-  ): void {
-    const toolRow = bucket.byTool.get(toolBucketKey) ?? {
-      tool,
-      server: server ?? "",
-      callId: callId ?? null,
-      count: 0,
-      byStatus: {}
-    };
-    toolRow.count += 1;
-    if (server && !toolRow.server) toolRow.server = server;
-    const statusMap = toolRow.byStatus as Record<string, number>;
-    statusMap[statusKey] = (statusMap[statusKey] ?? 0) + 1;
-    bucket.byTool.set(toolBucketKey, toolRow);
-  }
-
-  private incrementBridgeWorkspaceRow(
-    bucket: BridgeToolBucket,
-    workspaceKey: string,
-    tool: string,
-    server: string | null,
-    statusKey: string
-  ): void {
-    const wsRow = bucket.byWorkspace.get(workspaceKey) ?? {
-      workspaceKey,
-      count: 0,
-      byTool: new Map(),
-      byStatus: {}
-    };
-    wsRow.count += 1;
-    (wsRow.byStatus as Record<string, number>)[statusKey] =
-      ((wsRow.byStatus as Record<string, number>)[statusKey] ?? 0) + 1;
-    const wsToolRow = wsRow.byTool.get(tool) ?? {
-      tool,
-      server: server ?? "",
-      count: 0,
-      byStatus: {}
-    };
-    wsToolRow.count += 1;
-    if (server && !wsToolRow.server) wsToolRow.server = server;
-    (wsToolRow.byStatus as Record<string, number>)[statusKey] =
-      ((wsToolRow.byStatus as Record<string, number>)[statusKey] ?? 0) + 1;
-    wsRow.byTool.set(tool, wsToolRow);
-    bucket.byWorkspace.set(workspaceKey, wsRow);
-  }
-
-  private accumulateBridgeUnavailableReason(
-    bucket: BridgeToolBucket & { byReason?: Record<string, number> },
-    reason: unknown
-  ): void {
-    const cleanReason =
-      typeof reason === "string" && reason.trim()
-        ? reason.trim().slice(0, 64)
-        : "denied";
-    bucket.byReason = bucket.byReason ?? {};
-    bucket.byReason[cleanReason] = (bucket.byReason[cleanReason] ?? 0) + 1;
-  }
-
-  private accumulateWorkspaceBridgeObservation(
-    workspaceKey: string,
-    tool: string,
-    server: string | null,
-    statusKey: string
-  ): void {
-    const wsBucket = this.usageTracker.workspaceBucket(
-      this.usageTracker.usageTelemetry.byWorkspace,
-      workspaceKey
-    );
-    wsBucket.toolsExecuted = (wsBucket.toolsExecuted ?? 0) + 1;
-    const toolBucket = wsBucket.bridgeObservations.tools.get(tool) ?? {
-      tool,
-      server: server ?? "",
-      count: 0,
-      byStatus: {}
-    };
-    toolBucket.count += 1;
-    if (server && !toolBucket.server) toolBucket.server = server;
-    toolBucket.byStatus[statusKey] = (toolBucket.byStatus[statusKey] ?? 0) + 1;
-    wsBucket.bridgeObservations.tools.set(tool, toolBucket);
-  }
-
-  private incrementWorkspaceCounter(
-    workspaceKey: string,
-    field: "toolsRequested" | "toolsUnavailable"
-  ): void {
-    const wsBucket = this.usageTracker.workspaceBucket(
-      this.usageTracker.usageTelemetry.byWorkspace,
-      workspaceKey
-    );
-    wsBucket[field] = (wsBucket[field] ?? 0) + 1;
-  }
-
-  /**
-  What the router saw of one MCP server, from a bridge's report of a call
-  against it.
-  
-  A call that ran and came back is the server being reachable, so it is the
-  evidence the server's health is read from. A call that was refused before
-  it ran says nothing about the server -- the refusal was the router's --
-  so it leaves the server's own observation alone.
-  */
-  private noteMcpServerObservation(
-    mcp: McpServerEntry,
-    context: CorrelationContext,
-    event: BridgeObservationEventInput,
-    status: string
-  ): void {
-    if (event.type === "tool_unavailable") return;
-    const observedAt = context.timestamp;
-    if (!mcp.lastSeenAt || observedAt >= mcp.lastSeenAt)
-      mcp.lastSeenAt = observedAt;
-    if (event.type !== "tool_executed") return;
-    const duration = Number((event as { durationMs?: unknown }).durationMs);
-    if (Number.isFinite(duration) && duration >= 0) {
-      mcp.durationMs += duration;
-      mcp.durationCount += 1;
-    }
-    if (status === "ok") {
-      mcp.lastStatus = "ready";
-      return;
-    }
-    if (status !== "error") {
-      return;
-    }
-
-    mcp.lastStatus = "error";
-    mcp.failures += 1;
-  }
-
-  private noteBridgeToolMcpObservation(
-    server: string,
-    context: CorrelationContext,
-    eventType: unknown,
-    event: BridgeObservationEventInput,
-    status: string
-  ): void {
-    const mcp = this.mcpServer(server);
-    this.noteMcpServerObservation(mcp, context, event, status);
-    // The dimension buckets carry the same verdict the server carries: a call
-    // that ran and came back is the evidence that the server was ready, and a
-    // role that made that call saw it.
-    const verdict =
-      status === "ok" ? "ready" : status === "error" ? "error" : "observed";
-    this.noteMcpDimension(mcp, "byRole", context.role, context, verdict);
-    this.noteMcpDimension(
-      mcp,
-      "byWorkspace",
-      context.workspace,
-      context,
-      verdict
-    );
-    this.noteMcpDimension(mcp, "byModel", context.model, context, verdict);
-    this.noteMcpDimension(mcp, "byAgent", context.agent, context, verdict);
-    if (
-      context.workspace !== UNATTRIBUTED_DIMENSION &&
-      eventType === "tool_executed"
-    ) {
-      const wsBucket = this.usageTracker.workspaceBucket(
-        this.usageTracker.usageTelemetry.byWorkspace,
-        context.workspace
-      );
-      wsBucket.mcpCapable = true;
-      wsBucket.byMcp[server] = (wsBucket.byMcp[server] ?? 0) + 1;
-    }
-  }
-
-  recordBridgeToolObservation({
-    event,
-    context
-  }: {
-    event: BridgeObservationEventInput;
-    context: BridgeObservationContextInput;
-  }): void {
-    const eventMap = event as unknown as AttributeMap;
-    const tool =
-      typeof event.tool === "string" && event.tool.trim()
-        ? safeMetricLabel(event.tool)
-        : null;
-    if (!tool) return;
-    const server =
-      typeof event.server === "string" && event.server.trim()
-        ? safeMetricLabel(event.server)
-        : null;
-    const workspaceKey =
-      typeof context.workspace === "string" ? context.workspace : null;
-    const callId =
-      typeof event.callId === "string" && event.callId.trim()
-        ? event.callId.trim()
-        : null;
-    const status = this.bridgeToolObservationStatus(event);
-    const bucket = this.bridgeToolBucketFor(event.type);
-    bucket.total += 1;
-    const context_ = this.resolveCorrelationContext(eventMap, {}, { context });
-    this.noteContextDimension("bridge", context_);
-    if (server) {
-      this.noteBridgeToolMcpObservation(
-        server,
-        context_,
-        event.type,
-        event,
-        status
-      );
-    }
-    const toolBucketKey = callId ? `${tool}::${callId}` : tool;
-    this.incrementBridgeToolRow(
-      bucket,
-      toolBucketKey,
-      tool,
-      server,
-      callId,
-      status
-    );
-    if (workspaceKey) {
-      this.incrementBridgeWorkspaceRow(
-        bucket,
-        workspaceKey,
-        tool,
-        server,
-        status
-      );
-    }
-    if (event.type === "tool_unavailable") {
-      this.accumulateBridgeUnavailableReason(bucket, event.reason);
-    }
-    if (workspaceKey && event.type === "tool_executed") {
-      this.accumulateWorkspaceBridgeObservation(
-        workspaceKey,
-        tool,
-        server,
-        status
-      );
-    }
-    if (workspaceKey && event.type === "tool_requested") {
-      this.incrementWorkspaceCounter(workspaceKey, "toolsRequested");
-    }
-    if (workspaceKey && event.type === "tool_unavailable") {
-      this.incrementWorkspaceCounter(workspaceKey, "toolsUnavailable");
-    }
-  }
-
-  recordMcpExposure({
-    server,
-    source = null,
-    context,
-    requestId = null
-  }: {
-    server: string;
-    source?: string | null;
-    context: BridgeObservationContextInput;
-    requestId?: string | null;
-  }): boolean {
-    if (typeof server !== "string" || !server.trim()) return false;
-    const cleanServer = safeMetricLabel(server);
-    const contextMap = context as unknown as AttributeMap;
-    const mcpContext = this.resolveCorrelationContext(
-      {},
-      {},
-      { context: contextMap }
-    );
-    const workspaceKey =
-      typeof mcpContext.workspace === "string" ? mcpContext.workspace : null;
-    const store = this.telemetry.bridgeEvents.mcpExposed;
-    const dedupeKey = requestId
-      ? `${requestId}\0${workspaceKey ?? UNATTRIBUTED_DIMENSION}\0${cleanServer}`
-      : null;
-    if (dedupeKey && store.seenKeys?.has(dedupeKey)) return false;
-    if (dedupeKey) store.seenKeys?.add(dedupeKey);
-    const cleanSource =
-      typeof source === "string" && source.trim()
-        ? safeMetricLabel(source)
-        : null;
-    this.noteContextDimension("bridge", mcpContext);
-    store.total += 1;
-    const serverRow = store.byServer.get(cleanServer) ?? {
-      server: cleanServer,
-      source: cleanSource ?? "",
-      count: 0
-    };
-    serverRow.count += 1;
-    if (cleanSource && !serverRow.source) serverRow.source = cleanSource;
-    store.byServer.set(cleanServer, serverRow);
-    if (workspaceKey) {
-      const wsRow = store.byWorkspace.get(workspaceKey) ?? {
-        workspaceKey,
-        count: 0,
-        byServer: new Map()
-      };
-      wsRow.count += 1;
-      wsRow.byServer.set(
-        cleanServer,
-        (wsRow.byServer.get(cleanServer) ?? 0) + 1
-      );
-      store.byWorkspace.set(workspaceKey, wsRow);
-      const wsBucket = this.usageTracker.workspaceBucket(
-        this.usageTracker.usageTelemetry.byWorkspace,
-        workspaceKey
-      );
-      wsBucket.mcpCapable = true;
-      const mcpRow = this.usageTracker.workspaceMcpBucket(
-        wsBucket,
-        cleanServer
-      );
-      mcpRow.count += 1;
-    }
-    const mcp = this.mcpServer(cleanServer);
-    if (mcp.lastStatus === "unknown") mcp.lastStatus = "configured";
-    if (!mcp.lastSeenAt || mcpContext.timestamp >= mcp.lastSeenAt)
-      mcp.lastSeenAt = mcpContext.timestamp;
-    this.noteMcpDimension(
-      mcp,
-      "byRole",
-      mcpContext.role,
-      mcpContext,
-      "configured"
-    );
-    this.noteMcpDimension(
-      mcp,
-      "byWorkspace",
-      mcpContext.workspace,
-      mcpContext,
-      "configured"
-    );
-    this.noteMcpDimension(
-      mcp,
-      "byModel",
-      mcpContext.model,
-      mcpContext,
-      "configured"
-    );
-    this.noteMcpDimension(
-      mcp,
-      "byAgent",
-      mcpContext.agent,
-      mcpContext,
-      "configured"
-    );
-    return true;
-  }
-
-  recordBridgeMcpExposure({
-    event,
-    context,
-    requestId = null
-  }: {
-    event: BridgeObservationEventInput;
-    context: BridgeObservationContextInput;
-    requestId?: string | null;
-  }): boolean {
-    return this.recordMcpExposure({
-      server: typeof event?.server === "string" ? event.server : "",
-      source: typeof event?.source === "string" ? event.source : null,
-      context,
-      requestId
-    });
   }
 
   recordBridgeSkillExposure({
@@ -1918,7 +1159,6 @@ export class CorrelationTracker {
 
   resetCorrelation(): void {
     this.skillFailureKeys.clear();
-    this.telemetry.mcpServers.clear();
     const empty = createEmptyCorrelation();
     this.telemetry.dimensions = empty.dimensions;
     this.telemetry.skills.used = empty.skills.used;
@@ -1931,72 +1171,9 @@ export class CorrelationTracker {
     this.usageTracker.clearWorkspaceCapabilities();
   }
 
-  correlationStatus(now: number = Date.now()): CorrelationStatus {
-    const mcpServers = Array.from(
-      this.telemetry.mcpServers.values(),
-      (server) => {
-        const lastSeenMs = server.lastSeenAt
-          ? Date.parse(server.lastSeenAt)
-          : NaN;
-        const isFresh =
-          Number.isFinite(lastSeenMs) && now - lastSeenMs <= this.healthTtlMs;
-        return {
-          ...server,
-          health: isFresh ? server.lastStatus : "stale",
-          averageDurationMs: server.durationCount
-            ? Math.round(server.durationMs / server.durationCount)
-            : 0,
-          byRole: formatMcpDimensionBuckets(
-            server.byRole,
-            now,
-            this.healthTtlMs
-          ),
-          byWorkspace: formatMcpDimensionBuckets(
-            server.byWorkspace,
-            now,
-            this.healthTtlMs
-          ),
-          byModel: formatMcpDimensionBuckets(
-            server.byModel,
-            now,
-            this.healthTtlMs
-          ),
-          byAgent: formatMcpDimensionBuckets(
-            server.byAgent,
-            now,
-            this.healthTtlMs
-          )
-        };
-      }
-    ).sort((a, b) => STRING_COLLATOR.compare(a.name, b.name));
-    const summarizeDimension = summarizeMcpDimension(
-      mcpServers,
-      now,
-      this.healthTtlMs
-    );
-    const mcpSummary: McpSummaryView = mcpServers.reduce(
-      (summary, server) => {
-        summary.observed += 1;
-        if (server.health === "ready") summary.ready += 1;
-        if (server.health === "error") summary.error += 1;
-        if (server.health === "stale") summary.stale += 1;
-        return summary;
-      },
-      {
-        observed: 0,
-        ready: 0,
-        error: 0,
-        stale: 0,
-        byRole: summarizeDimension("byRole"),
-        byWorkspace: summarizeDimension("byWorkspace"),
-        byModel: summarizeDimension("byModel"),
-        byAgent: summarizeDimension("byAgent")
-      }
-    );
+  correlationStatus(): CorrelationStatus {
     const used = this.telemetry.skills.used;
     return {
-      mcpSummary,
-      mcpServers,
       dimensions: formatContextDimensions(this.telemetry.dimensions),
       skills: {
         used: {
@@ -2024,13 +1201,6 @@ export class CorrelationTracker {
     return {
       schemaVersion: TELEMETRY_CORRELATION_SCHEMA_VERSION,
       dimensions: telemetry.dimensions,
-      mcpServers: Array.from(this.telemetry.mcpServers.values(), (server) => ({
-        ...server,
-        byRole: { ...server.byRole },
-        byWorkspace: { ...server.byWorkspace },
-        byModel: { ...server.byModel },
-        byAgent: { ...server.byAgent }
-      })),
       skills: telemetry.skills,
       bridgeEvents: telemetry.bridgeEvents
     };
@@ -2042,12 +1212,8 @@ export class CorrelationTracker {
       : undefined;
     if (!bridgeEvents) return;
     const families: Array<keyof BridgeEventsState> = [
-      "toolExecuted",
-      "toolRequested",
-      "toolUnavailable",
       "skillExposed",
-      "skillUsed",
-      "mcpExposed"
+      "skillUsed"
     ];
     for (const family of families) {
       const source = bridgeEvents[family];
@@ -2107,57 +1273,6 @@ export class CorrelationTracker {
     }
   }
 
-  private restoreMcpExposedServers(source: CorrelationRecord): void {
-    const destination = this.telemetry.bridgeEvents.mcpExposed;
-    const entries = Array.isArray(source.byServer) ? source.byServer : [];
-    for (const entry of entries) {
-      if (
-        !isCorrelationRecord(entry) ||
-        typeof entry.server !== "string" ||
-        typeof entry.count !== "number"
-      ) {
-        continue;
-      }
-      destination.byServer.set(safeMetricLabel(entry.server), {
-        server: safeMetricLabel(entry.server),
-        source: safeMetricLabel(entry.source, ""),
-        count: entry.count
-      });
-    }
-  }
-
-  private buildMcpWorkspaceMap(row: CorrelationRecord): Map<string, number> {
-    const entries = Array.isArray(row.byServer) ? row.byServer : [];
-    return new Map(
-      entries.flatMap((entry) =>
-        isCorrelationRecord(entry) &&
-        typeof entry.server === "string" &&
-        typeof entry.count === "number"
-          ? [[safeMetricLabel(entry.server), entry.count] as const]
-          : []
-      )
-    );
-  }
-
-  private restoreMcpExposedWorkspaces(source: CorrelationRecord): void {
-    const destination = this.telemetry.bridgeEvents.mcpExposed;
-    const rows = Array.isArray(source.byWorkspace) ? source.byWorkspace : [];
-    for (const row of rows) {
-      if (
-        !isCorrelationRecord(row) ||
-        typeof row.workspaceKey !== "string" ||
-        typeof row.count !== "number"
-      ) {
-        continue;
-      }
-      destination.byWorkspace.set(safeMetricLabel(row.workspaceKey), {
-        workspaceKey: safeMetricLabel(row.workspaceKey),
-        count: row.count,
-        byServer: this.buildMcpWorkspaceMap(row)
-      });
-    }
-  }
-
   private restoreBridgeFamily(
     family: keyof BridgeEventsState,
     source: CorrelationRecord
@@ -2168,25 +1283,6 @@ export class CorrelationTracker {
     if (family === "skillUsed") {
       this.restoreSkillUsedEntries(source);
       this.restoreSkillUsedWorkspaces(source);
-    } else if (family === "mcpExposed") {
-      this.restoreMcpExposedServers(source);
-      this.restoreMcpExposedWorkspaces(source);
-    }
-    if (
-      family === "toolExecuted" ||
-      family === "toolRequested" ||
-      family === "toolUnavailable"
-    ) {
-      const destination = this.telemetry.bridgeEvents[family];
-      const byReason = source.byReason;
-      if (isCorrelationRecord(byReason)) {
-        destination.byReason = destination.byReason ?? {};
-        for (const [key, count] of Object.entries(byReason)) {
-          if (typeof count === "number" && count >= 0) {
-            destination.byReason[safeMetricLabel(key)] = count;
-          }
-        }
-      }
     }
   }
 
@@ -2234,96 +1330,6 @@ export class CorrelationTracker {
     const bridge = dimensions.bridge;
     if (isCorrelationRecord(bridge))
       this.restoreCorrelationDimensionsFamily("bridge", bridge);
-  }
-
-  private restoreCorrelationMcpServers(
-    snapshot: CorrelationRestoreInput
-  ): void {
-    const servers = Array.isArray(snapshot.mcpServers)
-      ? snapshot.mcpServers
-      : [];
-    for (const server of servers) {
-      if (
-        !isCorrelationRecord(server) ||
-        typeof server.name !== "string" ||
-        !server.name
-      ) {
-        continue;
-      }
-      this.restoreSingleMcpServer(server);
-    }
-  }
-
-  private restoreMcpServerDimensionBucket(v: {
-    observed?: unknown;
-    lastSeenAt?: unknown;
-    lastStatus?: unknown;
-    agentKind?: unknown;
-  }): McpServerDimensionBucket {
-    return {
-      observed: 1,
-      lastSeenAt: typeof v.lastSeenAt === "string" ? v.lastSeenAt : null,
-      lastStatus: safeMetricLabel(v.lastStatus, "observed")
-    };
-  }
-
-  private restoreMcpServerDimension(
-    restored: McpServerEntry,
-    server: Record<string, unknown>,
-    dim: "byRole" | "byWorkspace" | "byModel" | "byAgent"
-  ): void {
-    const dimSource = server[dim];
-    if (!isCorrelationRecord(dimSource)) return;
-    for (const [k, v] of Object.entries(dimSource)) {
-      if (isFiniteNonnegative(v)) {
-        restored[dim][safeMetricLabel(k)] = {
-          observed: 1,
-          lastSeenAt: null,
-          lastStatus: "observed"
-        };
-      } else if (isCorrelationRecord(v)) {
-        const dimBucket = v;
-        if (!isFiniteNonnegative(dimBucket.observed)) continue;
-        const restoredBucket = this.restoreMcpServerDimensionBucket(dimBucket);
-        if (dim === "byAgent") {
-          restoredBucket.agentKind = safeMetricLabel(
-            dimBucket.agentKind,
-            UNATTRIBUTED_DIMENSION
-          );
-        }
-        restored[dim][safeMetricLabel(k)] = restoredBucket;
-      }
-    }
-  }
-
-  private restoreSingleMcpServer(server: CorrelationRecord): void {
-    const restored: McpServerEntry = {
-      name: safeMetricLabel(server.name),
-      lastSeenAt:
-        typeof server.lastSeenAt === "string" ? server.lastSeenAt : null,
-      failures: 0,
-      durationMs: 0,
-      durationCount: 0,
-      lastStatus: safeMetricLabel(server.lastStatus),
-      byRole: {},
-      byWorkspace: {},
-      byModel: {},
-      byAgent: {}
-    };
-    restoreNumberFields(restored, server, [
-      "failures",
-      "durationMs",
-      "durationCount"
-    ]);
-    for (const dim of [
-      "byRole",
-      "byWorkspace",
-      "byModel",
-      "byAgent"
-    ] as const) {
-      this.restoreMcpServerDimension(restored, server, dim);
-    }
-    this.telemetry.mcpServers.set(restored.name, restored);
   }
 
   private restoreSkillUsedState(source: CorrelationRecord): void {
@@ -2387,7 +1393,6 @@ export class CorrelationTracker {
   restoreCorrelation(snapshot: unknown): void {
     if (!isCorrelationRestoreInput(snapshot)) return;
     this.restoreCorrelationDimensions(snapshot);
-    this.restoreCorrelationMcpServers(snapshot);
     this.restoreCorrelationSkills(snapshot);
     this.restoreCorrelationCounters(snapshot);
   }
@@ -2403,51 +1408,6 @@ export function setDefaultCorrelationTracker(
   tracker: CorrelationTracker
 ): void {
   defaultCorrelationTracker = tracker;
-}
-
-export function recordBridgeToolObservation({
-  event,
-  context
-}: {
-  event: BridgeObservationEventInput;
-  context: BridgeObservationContextInput;
-}): void {
-  defaultCorrelationTracker.recordBridgeToolObservation({ event, context });
-}
-
-export function recordMcpExposure({
-  server,
-  source = null,
-  context,
-  requestId = null
-}: {
-  server: string;
-  source?: string | null;
-  context: BridgeObservationContextInput;
-  requestId?: string | null;
-}): boolean {
-  return defaultCorrelationTracker.recordMcpExposure({
-    server,
-    source,
-    context,
-    requestId
-  });
-}
-
-export function recordBridgeMcpExposure({
-  event,
-  context,
-  requestId = null
-}: {
-  event: BridgeObservationEventInput;
-  context: BridgeObservationContextInput;
-  requestId?: string | null;
-}): boolean {
-  return defaultCorrelationTracker.recordBridgeMcpExposure({
-    event,
-    context,
-    requestId
-  });
 }
 
 export function recordBridgeSkillExposure({
@@ -2490,8 +1450,8 @@ export function resetCorrelation(): void {
   defaultCorrelationTracker.resetCorrelation();
 }
 
-export function correlationStatus(now: number = Date.now()): CorrelationStatus {
-  return defaultCorrelationTracker.correlationStatus(now);
+export function correlationStatus(): CorrelationStatus {
+  return defaultCorrelationTracker.correlationStatus();
 }
 
 export function correlationSnapshot(): CorrelationSnapshot {

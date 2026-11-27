@@ -103,7 +103,6 @@ import {
   correlationSnapshot,
   correlationStatus,
   CorrelationTracker,
-  MCP_OBSERVATION_TTL_MS,
   restoreCorrelation,
   setDefaultCorrelationTracker
 } from "./correlation.ts";
@@ -412,7 +411,6 @@ const subagentRegistry = new SubagentRegistry({
 setDefaultSubagentRegistry(subagentRegistry);
 
 const otelTracker = new CorrelationTracker({
-  healthTtlMs: MCP_OBSERVATION_TTL_MS,
   usageTracker: getDefaultUsageTracker(),
   getConversationThread: () => null,
   getBridgeRequestContext: (id) => subagentRegistry.getBridgeRequestContext(id),

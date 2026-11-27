@@ -26,7 +26,7 @@ const contract = await import(
   "./fixtures/contracts/workspace-attribution-contract.json",
   { with: { type: "json" } }
 ).then((m) => (m.default ?? m) as Contract);
-assert.equal(contract.schema, "autodev-workspace-attribution-v2");
+assert.equal(contract.schema, "autodev-workspace-attribution-v3");
 
 const stringValue = (op: Operation, key: string): string => String(op[key]);
 
