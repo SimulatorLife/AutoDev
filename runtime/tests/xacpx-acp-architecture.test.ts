@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { once } from "node:events";
 import {
   existsSync,
@@ -413,15 +414,15 @@ test("ACP provider profiles project canonical role capabilities, native mcpServe
   assert.equal(ghTask.site, "chatgpt");
 });
 
-test("an ACP executor is spawned from where it is installed, with only the host variables it needs", () => {
+test("a vendor ACP executor is spawned from where it is installed, with only the host variables it needs", () => {
   const bin = mkdtempSync(path.join(tmpdir(), "autodev-acp-bin-"));
   try {
-    const executor = path.join(bin, "claude-agent-acp");
+    const executor = path.join(bin, "agy");
     writeFileSync(executor, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
     const spec = buildAcpProviderLaunchSpec({
-      provider: "claude",
+      provider: "antigravity",
       role: "worker",
-      model: "sonnet",
+      model: "gemini-3.8-flash",
       cwd: REPO_ROOT,
       systemPrompt: "Worker",
       sessionId: "sess-executor-path",
@@ -430,16 +431,17 @@ test("an ACP executor is spawned from where it is installed, with only the host 
         HOME: homedir(),
         USER: "operator",
         LANG: "en_US.UTF-8",
+        AGY_CLI_PATH: executor,
         CODEX_HOME: process.env.CODEX_HOME!,
-        CLAUDE_AGENT_ACP_PATH_UNUSED: "x",
         CODEX_ROUTER_AUTH_TOKEN: "router-secret",
         AUTODEV_CONTROL_API_TOKEN: "control-secret",
         PNPM_HOME: path.join(bin, "pnpm")
       }
     });
     // The name an operator types stays the command; the file found is spawned.
-    assert.equal(spec.command, "claude-agent-acp");
+    assert.equal(spec.command, "agy");
     assert.equal(spec.program, executor);
+    assert.deepEqual(spec.programArgs, []);
     // The executor's own directory leads PATH, then the Runtime's search path.
     assert.equal(spec.env.PATH, [bin, "/usr/bin", "/bin"].join(path.delimiter));
     assert.equal(spec.env.HOME, homedir());
@@ -448,17 +450,75 @@ test("an ACP executor is spawned from where it is installed, with only the host 
     // Runtime tokens and unrelated variables are never handed over.
     assert.equal(spec.env.CODEX_ROUTER_AUTH_TOKEN, undefined);
     assert.equal(spec.env.AUTODEV_CONTROL_API_TOKEN, undefined);
-    assert.equal(spec.env.CLAUDE_AGENT_ACP_PATH_UNUSED, undefined);
+    assert.equal(spec.env.AGY_CLI_PATH, undefined);
     assert.equal(spec.env.PNPM_HOME, undefined);
   } finally {
     rmSync(bin, { recursive: true, force: true });
   }
 });
 
+test("the Claude and Codex ACP adapters run from the Runtime's own dependencies under its Node, whatever PATH says", () => {
+  for (const [provider, packageName, command] of [
+    ["claude", "@agentclientprotocol/claude-agent-acp", "claude-agent-acp"],
+    ["codex", "@agentclientprotocol/codex-acp", "codex-acp"]
+  ] as const) {
+    const spec = buildAcpProviderLaunchSpec({
+      provider,
+      role: "worker",
+      model: "model",
+      cwd: REPO_ROOT,
+      systemPrompt: "Worker",
+      sessionId: `sess-runtime-adapter-${provider}`,
+      env: {
+        PATH: "/nonexistent",
+        HOME: homedir(),
+        CODEX_HOME: process.env.CODEX_HOME!
+      }
+    });
+    assert.equal(spec.command, command);
+    assert.equal(spec.program, process.execPath);
+    const [entry, ...rest] = spec.programArgs;
+    assert.deepEqual(rest, []);
+    const packageSegment = `${path.sep}${path.join(...packageName.split("/"))}${path.sep}`;
+    assert.ok(
+      entry?.includes(packageSegment),
+      `${provider} entry ${entry} is in ${packageName}`
+    );
+    // The Runtime's Node directory leads PATH, so the adapter's own Node
+    // subprocesses resolve the same Node.
+    assert.equal(
+      spec.env.PATH?.split(path.delimiter)[0],
+      path.dirname(process.execPath)
+    );
+    // The adapter actually starts from that launch.
+    const version = spawnSync(
+      spec.program,
+      [...spec.programArgs, "--version"],
+      { env: spec.env, encoding: "utf8", input: "", timeout: 20_000 }
+    );
+    assert.equal(version.status, 0, version.stderr);
+    assert.match(version.stdout, /\d+\.\d+\.\d+/u);
+  }
+});
+
 test("a turn on a provider whose ACP executor is not installed fails the turn instead of the Runtime", async () => {
   const home = mkdtempSync(path.join(tmpdir(), "autodev-acp-missing-"));
+  // Only an Antigravity worker is routable: its vendor CLI is looked up in
+  // this empty home, so it is not installed whatever this machine has.
+  const policy = new RoutingPolicy(
+    ROUTING_POLICY.config,
+    ROUTING_POLICY.configFile,
+    {}
+  );
+  for (const provider of policy.providerIds()) {
+    policy.setProviderAssignment(provider, "subagent", {
+      priority: provider === "antigravity-gemini" ? 1 : "disabled",
+      model: null
+    });
+  }
   const events: XacpxTurnEvent[] = [];
   const manager = new XacpxSessionManager({
+    policy,
     eventSink: {
       emit: (event) => {
         events.push(event);
@@ -482,6 +542,7 @@ test("a turn on a provider whose ACP executor is not installed fails the turn in
       environment
     );
     assert.equal(plan.kind, "acp");
+    assert.equal(plan.session.provider, "antigravity-gemini");
     await assert.rejects(
       manager.executeTurn(
         {

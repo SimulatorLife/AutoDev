@@ -398,11 +398,15 @@ turn instead of an unhandled event that would take the Runtime down.
 async function startedExecutor(
   launch: AcpProviderLaunchSpec
 ): Promise<ChildProcess> {
-  const child: ChildProcess = spawn(launch.program, [...launch.args], {
-    cwd: launch.cwd,
-    env: launch.env,
-    stdio: ["pipe", "pipe", "pipe"]
-  });
+  const child: ChildProcess = spawn(
+    launch.program,
+    [...launch.programArgs, ...launch.args],
+    {
+      cwd: launch.cwd,
+      env: launch.env,
+      stdio: ["pipe", "pipe", "pipe"]
+    }
+  );
   try {
     await once(child, "spawn");
   } catch (error) {

@@ -121,6 +121,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@agentclientprotocol/claude-agent-acp": "0.107.2",
+    "@agentclientprotocol/codex-acp": "2.2.2",
     "@agentclientprotocol/sdk": "2.9.1",
     "@ganglion/xacpx": "0.24.10",
     "@jackwener/opencli": "2.0.3",

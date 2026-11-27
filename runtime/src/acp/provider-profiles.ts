@@ -11,7 +11,7 @@ AutoDev's ACP `session/request_permission` boundary enforces the canonical role
 contract uniformly across all providers.
 */
 
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -20,9 +20,8 @@ import { autodevHome } from "@simulatorlife/autodev-runtime/shared/autodev-home"
 import {
   findAgyBinary,
   findCopilotBinary,
-  findExecutable,
   findMcodeBinary,
-  findPnpmGlobalBinary
+  findRuntimePackageBin
 } from "@simulatorlife/autodev-runtime/shared/executables";
 import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { resolveManagedSecret } from "@simulatorlife/autodev-runtime/shared/runtime-secrets";
@@ -83,11 +82,21 @@ export interface AcpProviderLaunchSpec {
   */
   readonly command: string;
   /**
-  The file that is spawned: the executor found through the same lookups the
-  Runtime's CLI-version reader uses, or `command` itself when it is not
-  installed (the spawn then fails the turn as a missing executor).
+  The file that is spawned. A Runtime-shipped adapter runs its package's
+  entry script under the Runtime's own Node; a vendor CLI is the executable
+  found through the same lookups the Runtime's CLI-version reader uses.
+  When the executor is not installed this is `command` itself, and the
+  spawn then fails the turn as a missing executor.
   */
   readonly program: string;
+  /**
+  What `program` needs before the executor's own arguments: the adapter's
+  entry script when `program` is Node, otherwise nothing.
+  */
+  readonly programArgs: readonly string[];
+  /**
+  The executor's own command-line arguments.
+  */
   readonly args: readonly string[];
   readonly env: Readonly<Record<string, string>>;
   readonly cwd: string;
@@ -143,25 +152,43 @@ const EXECUTOR_HOST_VARIABLES = [
   "LC_CTYPE"
 ] as const;
 
+interface AcpExecutor {
+  readonly program: string;
+  readonly programArgs: readonly string[];
+}
+
 /**
-Where each provider's ACP executor is, or null when it is not installed.
-Launchd starts the Runtime with a minimal PATH, so each lookup also covers
-the install locations a login shell would add.
+How to start each provider's ACP executor, or null when it is not
+installed. A Runtime-shipped adapter is read from the Runtime's own
+dependency tree and run with the Runtime's Node, so neither a shell PATH
+nor a package-manager shim chooses what runs. A vendor CLI is looked up the
+way a login shell would find it, because launchd starts the Runtime with a
+minimal PATH.
 */
 function findAcpExecutor(
   provider: AcpProviderId,
   environment: NodeJS.ProcessEnv
-): string | null {
+): AcpExecutor | null {
+  const runtimeAdapter = (packageName: string): AcpExecutor | null => {
+    const entry = findRuntimePackageBin(
+      packageName,
+      ACP_EXECUTOR_COMMANDS[provider]
+    );
+    return entry && existsSync(entry)
+      ? { program: process.execPath, programArgs: [entry] }
+      : null;
+  };
+  const vendorCli = (program: string | null): AcpExecutor | null =>
+    program ? { program, programArgs: [] } : null;
   const home = environment.HOME?.trim() || homedir();
-  const onPathOrPnpm = (name: string) =>
-    findExecutable(name, environment.PATH ?? "") ??
-    findPnpmGlobalBinary(name, home, environment);
-  const lookups: Record<AcpProviderId, () => string | null> = {
-    claude: () => onPathOrPnpm(ACP_EXECUTOR_COMMANDS.claude),
-    codex: () => onPathOrPnpm(ACP_EXECUTOR_COMMANDS.codex),
-    antigravity: () => findAgyBinary(environment),
-    copilot: () => findCopilotBinary(environment, home),
-    mcode: () => findMcodeBinary(environment, home)
+  // The adapters pin the versions XACPX's adapter catalog names; the
+  // Runtime package manifest owns them.
+  const lookups: Record<AcpProviderId, () => AcpExecutor | null> = {
+    claude: () => runtimeAdapter("@agentclientprotocol/claude-agent-acp"),
+    codex: () => runtimeAdapter("@agentclientprotocol/codex-acp"),
+    antigravity: () => vendorCli(findAgyBinary(environment)),
+    copilot: () => vendorCli(findCopilotBinary(environment, home)),
+    mcode: () => vendorCli(findMcodeBinary(environment, home))
   };
   return lookups[provider]();
 }
@@ -277,14 +304,17 @@ export function buildAcpProviderLaunchSpec(
   const isShell = contract.shell !== false;
   const isHooks = contract.hooks !== false;
   const command = ACP_EXECUTOR_COMMANDS[options.provider];
-  const program =
-    findAcpExecutor(options.provider, options.env ?? process.env) ?? command;
+  const { program, programArgs } = findAcpExecutor(
+    options.provider,
+    options.env ?? process.env
+  ) ?? { program: command, programArgs: [] };
   const baseEnvironment = sharedIsolationEnvironment(options, contract, program);
   const acpMcpServers = buildAcpMcpServers(options, contract);
 
   const sharedFields = {
     command,
     program,
+    programArgs,
     role: options.role,
     model: options.model,
     cwd: options.cwd,
