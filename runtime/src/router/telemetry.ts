@@ -174,6 +174,13 @@ const METRIC_LOGICAL_REQUEST_DURATION =
 const METRIC_CACHE_READ_TOKENS = "autodev.gen_ai.cache_read.input_tokens";
 const METRIC_SKILL_EVENTS = "autodev.skill.events";
 /**
+Agent launch attempts by stage: one point per stage an attempt reached.
+*/
+export const METRIC_AGENT_LAUNCHES = "autodev.agent.launches";
+const ATTR_AUTODEV_LAUNCH_KIND = "autodev.launch.kind";
+const ATTR_AUTODEV_LAUNCH_STAGE = "autodev.launch.stage";
+const ATTR_AUTODEV_LAUNCH_REASON = "autodev.launch.reason";
+/**
 Seconds one attempt spent in a bridge-reported phase (`autodev.provider.phase`).
 */
 export const METRIC_PROVIDER_PHASE_DURATION = "autodev.provider.phase.duration";
@@ -256,6 +263,7 @@ interface RouterMetricInstruments {
   genAiTokenUsage: ReturnType<Meter["createHistogram"]>;
   cacheReadTokens: ReturnType<Meter["createHistogram"]>;
   skillEvents: ReturnType<Meter["createCounter"]>;
+  agentLaunches: ReturnType<Meter["createCounter"]>;
   gitCommits: ReturnType<Meter["createCounter"]>;
   gitFilesChanged: ReturnType<Meter["createCounter"]>;
   gitFilesAdded: ReturnType<Meter["createCounter"]>;
@@ -400,6 +408,11 @@ function createMetricInstruments(meter: Meter): RouterMetricInstruments {
       description:
         "Accepted AutoDev skill lifecycle observations; skill names are intentionally excluded from metric dimensions.",
       unit: "{event}"
+    }),
+    agentLaunches: meter.createCounter(METRIC_AGENT_LAUNCHES, {
+      description:
+        "Root and child agent launch attempts by stage; each attempt reaches each stage at most once.",
+      unit: "{attempt}"
     }),
     gitCommits: meter.createCounter(METRIC_GIT_COMMITS, {
       description: "Commits created by AutoDev-managed agent work.",
@@ -698,6 +711,72 @@ export interface RecordGitCommitOptions {
   the commit, and a blended number is worse than an unattributed one.
   */
   readonly actorFromCommitIdentity?: boolean | undefined;
+}
+
+/**
+The stages of one agent launch attempt, in order: received; the
+routing/permission decision; the executor result; then the work's outcome
+after start. An attempt that never started has no outcome stage.
+*/
+export type AgentLaunchStage =
+  | "attempted"
+  | "admitted"
+  | "rejected"
+  | "started"
+  | "failed_before_start"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+/**
+Why an attempt was rejected, as a bounded category; the refusal's own
+message never reaches telemetry.
+*/
+export type AgentLaunchRejection =
+  | "invalid_request"
+  | "invalid_role"
+  | "workspace_denied"
+  | "unknown_group"
+  | "concurrency_limit"
+  | "dispatch_refused";
+
+export interface RecordAgentLaunchStageOptions {
+  /**
+  A root launch has no parent session; a child is delegated by one.
+  */
+  readonly kind: "root" | "child";
+  readonly stage: AgentLaunchStage;
+  readonly role?: string | null | undefined;
+  readonly workspace?: string | null | undefined;
+  readonly provider?: string | null | undefined;
+  readonly model?: string | null | undefined;
+  readonly reason?: AgentLaunchRejection | undefined;
+}
+
+/**
+Record that one launch attempt reached `stage`. Launch success is
+started / (started + rejected + failed_before_start); attempts that have
+not resolved are the attempted count less those three.
+*/
+export function recordAgentLaunchStage(
+  options: RecordAgentLaunchStageOptions
+): void {
+  ensureOtelInitialized();
+  if (!instruments) return;
+  const attributes = metricAttributes({
+    provider: options.provider,
+    model: options.model,
+    workspace: options.workspace ? { key: options.workspace } : null,
+    role: options.role
+  });
+  attributes[ATTR_AUTODEV_LAUNCH_KIND] = options.kind;
+  attributes[ATTR_AUTODEV_LAUNCH_STAGE] = options.stage;
+  if (options.reason) attributes[ATTR_AUTODEV_LAUNCH_REASON] = options.reason;
+  try {
+    instruments.agentLaunches.add(1, attributes);
+  } catch {
+    logTelemetryError("agent_launch_recording_failed");
+  }
 }
 
 /**

@@ -176,6 +176,14 @@ The Router's own bridge tool/MCP bookkeeping is removed with it, since nothing p
 
 **Evidence:** `runtime/tests/xacpx-acp-architecture.test.ts` checks that an executor found on the end of `PATH` is spawned by absolute path with its directory leading `PATH` and no Runtime secrets, and that a turn on a provider with no installed executor fails with `turn_started`, `turn_failed` and the not-installed error; `runtime/tests/workspace-commit-observer.test.ts` checks the attempt spans of a never-started executor (`failed_before_start`) and of an agent that failed its prompt (`turn_failed`).
 
+## Launch attempts are recorded by stage; Usage does not show them yet — pending
+
+**Observed (2026-11-27):** the target's attempt semantics (root launch and child spawn: attempted, admitted or rejected, started or failed before start, then the work's outcome) had no producer. A refused delegation, a provider that could not be dispatched and an executor that never started were all invisible, or folded into one `turn_failed`.
+
+**Done:** `recordAgentLaunchStage` in `runtime/src/router/telemetry.ts` owns the `autodev.agent.launches` counter. `XacpxSessionManager.executeTurn` records every stage of a turn that has to start its session's executor (root without a parent session, child with one): `attempted`, `rejected` (`dispatch_refused`) when `planDispatch` refuses, `admitted`, `started` once a live ACP session exists or an OpenCLI run is handed to its site, and then `succeeded`, `failed` or `cancelled` -- or `failed_before_start` with no outcome stage. The orchestration IPC records a delegation it refuses itself as a child `attempted` plus `rejected` with its category (`invalid_request`, `invalid_role`, `workspace_denied`, `unknown_group`, `concurrency_limit`), since the session manager never sees it. `runtime/tests/agent-launch-telemetry.test.ts` checks each path, including that a follow-up turn on a live executor is not another launch.
+
+**Pending:** Usage does not yet query or show launch success (started / resolved) or the rejection and failed-before-start reasons; that is a Data query plus a Usage widget over this counter.
+
 ## Session diagnostics cannot attribute current threads to their ACP pin — pending
 
 **Observed (2026-11-27):** the target says per-thread provider attribution in session diagnostics uses the owning Runtime/ACP session pin for current sessions. The diagnostics engine (`data/src/diagnostics`) reads Codex rollouts and derives a thread's provider only from the Router's `autodev-router-event-v1` events, which stopped on 2026-11-24 when agent execution moved to XACPX. So every current session shows its routed provider as Not observed.

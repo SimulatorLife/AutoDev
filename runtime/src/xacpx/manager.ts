@@ -49,6 +49,10 @@ import {
   ROUTING_POLICY,
   type RoutingPolicy
 } from "@simulatorlife/autodev-runtime/router/routing";
+import {
+  type AgentLaunchStage,
+  recordAgentLaunchStage
+} from "@simulatorlife/autodev-runtime/router/telemetry";
 import { runtimeBinDirectory } from "@simulatorlife/autodev-runtime/shared/executables";
 import {
   hasRoleContract,
@@ -820,6 +824,17 @@ export class XacpxSessionManager {
   }
 
   /**
+  Whether a turn on this session has to start its executor: no live ACP
+  session holds it and no OpenCLI conversation continues it.
+  */
+  private startsExecutor(sessionId: string): boolean {
+    return (
+      !this.liveSessions.has(sessionId) &&
+      !this.opencliSessions.get(sessionId)?.conversationId
+    );
+  }
+
+  /**
   Dispatch and execute one turn for a session via native ACP or an opencli
   site, reusing pinned live sessions across follow-up turns.
   */
@@ -831,7 +846,37 @@ export class XacpxSessionManager {
     if (signal?.aborted) {
       throw new Error("Session turn cancelled before dispatch.");
     }
-    const plan = this.planDispatch(request, environment);
+    // A turn that must start the session's executor is a launch attempt:
+    // the first turn of a session, or one whose executor is gone.
+    const launchKind = this.startsExecutor(request.sessionId)
+      ? request.parentSessionId
+        ? "child"
+        : "root"
+      : null;
+    const recordLaunch = (
+      stage: AgentLaunchStage,
+      session?: PinnedSessionRecord
+    ): void => {
+      if (!launchKind) return;
+      recordAgentLaunchStage({
+        kind: launchKind,
+        stage,
+        role: session?.role ?? request.role,
+        workspace: path.basename(session?.cwd ?? request.cwd),
+        provider: session?.provider,
+        model: session?.model,
+        ...(stage === "rejected" && { reason: "dispatch_refused" })
+      });
+    };
+    recordLaunch("attempted");
+    let plan: SessionDispatchPlan;
+    try {
+      plan = this.planDispatch(request, environment);
+    } catch (error) {
+      recordLaunch("rejected");
+      throw error;
+    }
+    recordLaunch("admitted", plan.session);
     const turn = {
       turnId: randomUUID(),
       sessionId: plan.session.sessionId,
@@ -865,6 +910,7 @@ export class XacpxSessionManager {
         signal?.addEventListener("abort", abort, { once: true });
         let result: OpencliRunResult;
         executorStarted = true;
+        recordLaunch("started", plan.session);
         try {
           result = await this.opencliRunner(plan.task, controller.signal);
           if (controller.signal.aborted) {
@@ -891,6 +937,7 @@ export class XacpxSessionManager {
           opencli.active = null;
           settle();
         }
+        recordLaunch("succeeded", plan.session);
         this.eventSink?.emit({
           ...turn,
           type: "turn_completed",
@@ -919,6 +966,7 @@ export class XacpxSessionManager {
         this.liveSessions.set(request.sessionId, handle);
       }
       executorStarted = true;
+      recordLaunch("started", plan.session);
 
       const onAbort = (): void => {
         void this.cancelSession(request.sessionId).catch(() => undefined);
@@ -941,6 +989,7 @@ export class XacpxSessionManager {
       } finally {
         signal?.removeEventListener("abort", onAbort);
       }
+      recordLaunch("succeeded", plan.session);
       this.eventSink?.emit({
         ...turn,
         type: "turn_completed",
@@ -964,6 +1013,14 @@ export class XacpxSessionManager {
           model: plan.session.model
         });
       }
+      recordLaunch(
+        executorStarted
+          ? cancelled
+            ? "cancelled"
+            : "failed"
+          : "failed_before_start",
+        plan.session
+      );
       this.eventSink?.emit({
         ...turn,
         type: "turn_failed",

@@ -26,6 +26,10 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 import { isRecord } from "@simulatorlife/autodev-core";
+import {
+  type AgentLaunchRejection,
+  recordAgentLaunchStage
+} from "@simulatorlife/autodev-runtime/router/telemetry";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
@@ -337,22 +341,39 @@ export async function startXacpxOrchestrationIpcServer(
         const sourceHandle = nonEmptyString(parameters.sourceHandle);
         const targetAgent = nonEmptyString(parameters.targetAgent);
         const taskPrompt = nonEmptyString(parameters.task);
-        if (!sourceHandle || !targetAgent || !taskPrompt) {
-          throw new OrchestrationRpcError(
+        const requestedRole =
+          nonEmptyString(parameters.role) ?? targetAgent ?? null;
+        // A refused delegation is a child launch attempt that was rejected
+        // here, before the session manager ever saw it.
+        const refuse = (
+          reason: AgentLaunchRejection,
+          message: string
+        ): OrchestrationRpcError => {
+          for (const stage of ["attempted", "rejected"] as const) {
+            recordAgentLaunchStage({
+              kind: "child",
+              stage,
+              role: requestedRole,
+              ...(stage === "rejected" && { reason })
+            });
+          }
+          return new OrchestrationRpcError(
             "ORCHESTRATION_INVALID_REQUEST",
+            message
+          );
+        };
+        if (!sourceHandle || !targetAgent || !taskPrompt || !requestedRole) {
+          throw refuse(
+            "invalid_request",
             "sourceHandle, targetAgent, and task are required"
           );
         }
         const coordinatorSession = sourceHandle;
-        const requestedRole = nonEmptyString(parameters.role) ?? targetAgent;
         let validatedRole: string;
         try {
           validatedRole = validateDelegatedRole(requestedRole);
         } catch (error) {
-          throw new OrchestrationRpcError(
-            "ORCHESTRATION_INVALID_REQUEST",
-            errorMessage(error)
-          );
+          throw refuse("invalid_role", errorMessage(error));
         }
 
         const boundWorkspaceRoot =
@@ -366,26 +387,23 @@ export async function startXacpxOrchestrationIpcServer(
             boundWorkspaceRoot
           );
         } catch (error) {
-          throw new OrchestrationRpcError(
-            "ORCHESTRATION_INVALID_REQUEST",
-            errorMessage(error)
-          );
+          throw refuse("workspace_denied", errorMessage(error));
         }
 
         const groupId = nonEmptyString(parameters.groupId) ?? undefined;
         if (groupId) {
           const group = groups.get(groupId);
           if (!group || group.coordinatorSession !== coordinatorSession) {
-            throw new OrchestrationRpcError(
-              "ORCHESTRATION_INVALID_REQUEST",
+            throw refuse(
+              "unknown_group",
               `Unknown or unauthorized group '${groupId}'`
             );
           }
         }
 
         if (activeChildCount(coordinatorSession) >= maxConcurrent) {
-          throw new OrchestrationRpcError(
-            "ORCHESTRATION_INVALID_REQUEST",
+          throw refuse(
+            "concurrency_limit",
             `Concurrency limit reached (${maxConcurrent} active delegated children for coordinator session)`
           );
         }
