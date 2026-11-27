@@ -85,6 +85,7 @@ import {
 import { registerTracerProvider } from "@simulatorlife/autodev-runtime/telemetry/tracer-provider";
 
 import { createRouterWorkspaceGitCommitObserver } from "./git-commit-observation.ts";
+import type { RouterIngressEvent } from "./ingress.ts";
 import { safeMetricLabel } from "./metric-label.ts";
 // Experimental (incubating) attribute keys are imported via the package's
 // `./incubating` subpath. NodeNext module resolution does not always resolve
@@ -268,7 +269,8 @@ let instruments: RouterMetricInstruments | null = null;
 function safeTrim(value: string | null | undefined): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
-  if ((trimmed.length === 0) || (trimmed.length > ATTR_VALUE_MAX_LENGTH)) return null;
+  if (trimmed.length === 0 || trimmed.length > ATTR_VALUE_MAX_LENGTH)
+    return null;
   return trimmed;
 }
 
@@ -661,8 +663,18 @@ aliasing or a competing source of truth is intentionally avoided.
 export function sanitizeCategoricalLabel(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
-  if (!trimmed || trimmed.length > ATTR_VALUE_MAX_LENGTH || trimmed === "unattributed" || trimmed.toLowerCase() === "unknown" || !SAFE_CATEGORICAL_LABEL_PATTERN.test(trimmed) || UUID_PATTERN.test(trimmed) || hasProhibitedIdPrefixWithDigit(trimmed) ||
-    PROHIBITED_RAW_ID_PATTERN.test(trimmed) || HEX_HASH_PATTERN.test(trimmed)) return null;
+  if (
+    !trimmed ||
+    trimmed.length > ATTR_VALUE_MAX_LENGTH ||
+    trimmed === "unattributed" ||
+    trimmed.toLowerCase() === "unknown" ||
+    !SAFE_CATEGORICAL_LABEL_PATTERN.test(trimmed) ||
+    UUID_PATTERN.test(trimmed) ||
+    hasProhibitedIdPrefixWithDigit(trimmed) ||
+    PROHIBITED_RAW_ID_PATTERN.test(trimmed) ||
+    HEX_HASH_PATTERN.test(trimmed)
+  )
+    return null;
   return trimmed;
 }
 
@@ -954,7 +966,8 @@ export function recordSkillObservation(options: {
 
     instruments?.skillEvents.add(1, {
       "autodev.skill.event": options.event,
-      ...(role && METRIC_AGENT_ROLES.has(role) && { [ATTR_AUTODEV_AGENT_ROLE]: role }),
+      ...(role &&
+        METRIC_AGENT_ROLES.has(role) && { [ATTR_AUTODEV_AGENT_ROLE]: role }),
       ...(workspace && { [ATTR_AUTODEV_WORKSPACE]: workspace })
     });
     return true;
@@ -1181,4 +1194,51 @@ export function withExtractedTraceContext<T>(
 
 export function routerTelemetryTracer(): Tracer {
   return ensureOtelInitialized();
+}
+
+const ROUTER_INGRESS_FAILURE_PHASES: ReadonlySet<RouterIngressEvent["phase"]> =
+  new Set([
+    "successor_readiness_failed",
+    "generation_worker_exited",
+    "generation_restart_exhausted",
+    "generation_drain_deadline_expired",
+    "backend_connection_failed"
+  ]);
+
+/**
+One span per ingress generation transition (activation, readiness failure,
+worker exit, restart, rollback, drain expiry, retirement, client disconnect).
+Generation IDs are installer- or operator-chosen release names matching the
+supervisor's 128-character pattern; request IDs are not attached, because a
+transition is about the generation, not about one request's identity.
+*/
+export function recordRouterIngressEvent(event: RouterIngressEvent): void {
+  const attributes: Record<string, string | number> = {
+    "autodev.router.ingress.phase": event.phase,
+    "autodev.router.generation.id": event.generationId
+  };
+  if ("inFlight" in event)
+    attributes["autodev.router.generation.in_flight"] = event.inFlight;
+  if ("sourceGenerationId" in event)
+    attributes["autodev.router.generation.source_id"] =
+      event.sourceGenerationId;
+  if ("exitCode" in event && event.exitCode !== null)
+    attributes["process.exit.code"] = event.exitCode;
+  if ("signal" in event && event.signal !== null)
+    attributes["autodev.router.worker.signal"] = event.signal;
+  const isFailure = ROUTER_INGRESS_FAILURE_PHASES.has(event.phase);
+  try {
+    const span = ensureOtelInitialized().startSpan("autodev.router.ingress", {
+      kind: SpanKind.INTERNAL,
+      attributes
+    });
+    span.setStatus(
+      isFailure
+        ? { code: SpanStatusCode.ERROR, message: event.phase }
+        : { code: SpanStatusCode.OK }
+    );
+    span.end();
+  } catch {
+    logTelemetryError("router_ingress_event_failed");
+  }
 }

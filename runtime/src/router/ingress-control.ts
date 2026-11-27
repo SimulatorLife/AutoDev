@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { timingSafeEqual } from "node:crypto";
-import { chmod, realpath, stat } from "node:fs/promises";
+import { chmod, lstat, realpath, stat } from "node:fs/promises";
 import {
   createServer,
   type IncomingMessage,
@@ -10,13 +10,28 @@ import {
 import path from "node:path";
 
 import { isPathWithin } from "@simulatorlife/autodev-data/files";
+import { ExponentialBackoff, handleAll, retry } from "cockatiel";
 
-import type { RouterGenerationEndpoint, RouterIngress } from "./ingress.ts";
+import {
+  createSerialQueue,
+  type RouterGenerationEndpoint,
+  type RouterIngress
+} from "./ingress.ts";
 
 const DEFAULT_WORKER_SHUTDOWN_TIMEOUT_MS = 60_000;
+// A worker that served this long before crashing was healthy; its crash
+// starts a fresh restart streak instead of extending a crash loop.
+const WORKER_STABLE_MS = 60_000;
+const MAX_CONSECUTIVE_CRASH_RESTARTS = 3;
+const RESTART_ACTIVATION_RETRIES = 3;
+const MAX_GENERATION_ID_LENGTH = 128;
+const RESTART_SUFFIX_PATTERN = /\.restart-\d+$/u;
 
 const WORKER_ENTRY_PATTERN = /\.[cm]?[jt]s$/u;
 const GENERATION_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/u;
+const STATUS_PATH = "/v1/status";
+const GENERATIONS_PATH = "/v1/generations";
+const ROLLBACK_PATH = "/v1/rollback";
 const GENERATION_RETIREMENT_PATH_PATTERN =
   /^\/v1\/generations\/([a-zA-Z0-9._-]+)\/retirement$/u;
 
@@ -29,8 +44,21 @@ export interface RouterIngressSupervisorOptions {
   workerShutdownTimeoutMs?: number;
 }
 
+interface ActivationResult {
+  activeGenerationId: string;
+  retiringGenerationId: string | null;
+}
+
+class NoRollbackTargetError extends Error {}
+
 /**
 Private management server; never shares the public TCP listener.
+
+It owns each worker process for its whole life: an active worker that exits
+on its own is detected, the ingress stops routing to it, and its release is
+restarted under a new generation ID (bounded, so a crash loop ends in an
+explicit unavailable state rather than spinning). The generation that was
+active before the current one stays retained as the rollback target.
 */
 export class RouterIngressSupervisor {
   readonly controlServer: Server;
@@ -42,7 +70,13 @@ export class RouterIngressSupervisor {
   private readonly shutdownTimeoutMs: number;
   private readonly workers = new Map<string, ChildProcess>();
   private readonly stoppingWorkers = new WeakMap<ChildProcess, Promise<void>>();
-  private activationQueue: Promise<void> = Promise.resolve();
+  // Verified worker entry of the active and rollback generations only.
+  private readonly releases = new Map<string, string>();
+  private readonly lifetime = new AbortController();
+  private readonly serialized = createSerialQueue();
+  private rollbackGenerationId: string | null = null;
+  private crashStreak = 0;
+  private restartCount = 0;
 
   constructor(options: RouterIngressSupervisorOptions) {
     if (!options.controlToken || options.controlToken.length < 32) {
@@ -84,6 +118,9 @@ export class RouterIngressSupervisor {
   }
 
   async listen(): Promise<void> {
+    // The socket is reachable the moment it binds, before any chmod could
+    // narrow it, so its directory must already exclude everyone else.
+    await this.assertPrivateSocketDirectory();
     // Do not unlink an existing socket: it could belong to a running ingress.
     await new Promise<void>((resolve, reject) => {
       const onError = (error: Error) => {
@@ -101,12 +138,26 @@ export class RouterIngressSupervisor {
     await chmod(this.controlSocket, 0o600);
   }
 
+  private async assertPrivateSocketDirectory(): Promise<void> {
+    const directory = await lstat(path.dirname(this.controlSocket));
+    if (
+      !directory.isDirectory() ||
+      (directory.mode & 0o077) !== 0 ||
+      directory.uid !== process.getuid?.()
+    ) {
+      throw new Error(
+        "Ingress control socket directory must be a private (0700) directory owned by this user"
+      );
+    }
+  }
+
   /**
   Explicit process teardown for tests and ingress shutdown. This is not
   called during generation cutover: retiring workers retain their admitted
   HTTP/SSE requests until completion or the ingress drain deadline.
   */
   async close(): Promise<void> {
+    this.lifetime.abort();
     const workers = [...this.workers.values()];
     await Promise.all(workers.map((child) => this.stopWorker(child)));
     this.workers.clear();
@@ -116,9 +167,7 @@ export class RouterIngressSupervisor {
 
     this.controlServer.closeAllConnections();
     await new Promise<void>((resolve, reject) => {
-      this.controlServer.close((error) =>
-        error ? reject(error) : resolve()
-      );
+      this.controlServer.close((error) => (error ? reject(error) : resolve()));
     });
   }
 
@@ -239,40 +288,150 @@ export class RouterIngressSupervisor {
   /**
   Spawn + readiness check + atomic cutover; old streams retain their worker.
   */
-  activate(
+  activate(id: string, entry: string): Promise<ActivationResult> {
+    return this.serialized(() => {
+      this.crashStreak = 0;
+      return this.activateNow(id, entry);
+    });
+  }
+
+  /**
+  Reactivate the retained prior release under a new generation ID, through
+  the same verification and readiness gate as a forward activation.
+  */
+  rollback(id: string): Promise<ActivationResult> {
+    return this.serialized(async () => {
+      const source = this.rollbackGenerationId;
+      const entry = source === null ? undefined : this.releases.get(source);
+      if (source === null || entry === undefined)
+        throw new NoRollbackTargetError(
+          "No retained generation to roll back to"
+        );
+      this.crashStreak = 0;
+      const result = await this.activateNow(id, entry);
+      this.ingress.report({
+        phase: "generation_rolled_back",
+        generationId: id,
+        sourceGenerationId: source
+      });
+      return result;
+    });
+  }
+
+  getStatus(): ReturnType<RouterIngress["getStatus"]> & {
+    rollbackGenerationId: string | null;
+  } {
+    return {
+      ...this.ingress.getStatus(),
+      rollbackGenerationId: this.rollbackGenerationId
+    };
+  }
+
+  private async activateNow(
     id: string,
     entry: string
-  ): Promise<{
-    activeGenerationId: string;
-    retiringGenerationId: string | null;
-  }> {
-    const operation = this.activationQueue.then(async () => {
-      if (
-        !GENERATION_ID_PATTERN.test(id) ||
-        this.workers.has(id) ||
-        this.ingress
-          .getStatus()
-          .generations.some((generation) => generation.id === id)
-      ) {
-        throw new Error("Invalid or duplicate generation ID");
-      }
-      const verified = await this.verifiedEntry(entry);
-      const { child, endpoint } = await this.spawnWorker(id, verified);
-      try {
-        const previous = await this.ingress.activateGeneration(endpoint);
-        this.workers.set(id, child);
-        if (previous) void this.retire(previous);
-        return { activeGenerationId: id, retiringGenerationId: previous };
-      } catch (error) {
-        child.kill("SIGTERM");
-        throw error;
-      }
+  ): Promise<ActivationResult> {
+    if (
+      !GENERATION_ID_PATTERN.test(id) ||
+      this.workers.has(id) ||
+      this.ingress
+        .getStatus()
+        .generations.some((generation) => generation.id === id)
+    ) {
+      throw new Error("Invalid or duplicate generation ID");
+    }
+    const verified = await this.verifiedEntry(entry);
+    const { child, endpoint } = await this.spawnWorker(id, verified);
+    let previous: string | null;
+    try {
+      previous = await this.ingress.activateGeneration(endpoint);
+    } catch (error) {
+      child.kill("SIGTERM");
+      throw error;
+    }
+    this.workers.set(id, child);
+    this.superviseWorker(id, child);
+    this.releases.set(id, verified);
+    if (previous) {
+      this.rollbackGenerationId = previous;
+      void this.retire(previous);
+    }
+    for (const generationId of this.releases.keys()) {
+      if (generationId !== id && generationId !== this.rollbackGenerationId)
+        this.releases.delete(generationId);
+    }
+    return { activeGenerationId: id, retiringGenerationId: previous };
+  }
+
+  /**
+  An exit the supervisor did not ask for. The ingress stops routing to the
+  generation at once; an active generation is then restarted from its own
+  release. Exits caused by stopWorker are retirement, not failure.
+  */
+  private superviseWorker(id: string, child: ChildProcess): void {
+    const startedAt = performance.now();
+    child.once("exit", (exitCode, signal) => {
+      if (this.stoppingWorkers.has(child)) return;
+      this.workers.delete(id);
+      const wasActive = this.ingress.getStatus().activeGenerationId === id;
+      this.ingress.report({
+        phase: "generation_worker_exited",
+        generationId: id,
+        exitCode,
+        signal
+      });
+      this.ingress.failGeneration(id);
+      if (wasActive) void this.restart(id, performance.now() - startedAt);
     });
-    this.activationQueue = operation.then(
-      () => undefined,
-      () => undefined
+  }
+
+  private async restart(failedId: string, uptimeMs: number): Promise<void> {
+    const entry = this.releases.get(failedId);
+    if (entry === undefined || this.lifetime.signal.aborted) return;
+    this.crashStreak = uptimeMs >= WORKER_STABLE_MS ? 1 : this.crashStreak + 1;
+    if (this.crashStreak > MAX_CONSECUTIVE_CRASH_RESTARTS) {
+      this.ingress.report({
+        phase: "generation_restart_exhausted",
+        generationId: failedId
+      });
+      return;
+    }
+    const policy = retry(handleAll, {
+      maxAttempts: RESTART_ACTIVATION_RETRIES,
+      backoff: new ExponentialBackoff()
+    });
+    try {
+      await policy.execute(
+        () =>
+          this.serialized(async () => {
+            // An operator activation or rollback during the backoff wins.
+            if (this.ingress.getStatus().activeGenerationId !== null) return;
+            const id = this.restartGenerationId(failedId);
+            await this.activateNow(id, entry);
+            this.ingress.report({
+              phase: "generation_restarted",
+              generationId: id,
+              sourceGenerationId: failedId
+            });
+          }),
+        this.lifetime.signal
+      );
+    } catch {
+      if (!this.lifetime.signal.aborted)
+        this.ingress.report({
+          phase: "generation_restart_exhausted",
+          generationId: failedId
+        });
+    }
+  }
+
+  private restartGenerationId(failedId: string): string {
+    const suffix = `.restart-${++this.restartCount}`;
+    return (
+      failedId
+        .replace(RESTART_SUFFIX_PATTERN, "")
+        .slice(0, MAX_GENERATION_ID_LENGTH - suffix.length) + suffix
     );
-    return operation;
   }
 
   private stopWorker(child: ChildProcess): Promise<void> {
@@ -313,8 +472,8 @@ export class RouterIngressSupervisor {
       return;
     }
     const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
-    if (request.method === "GET" && pathname === "/v1/status") {
-      this.json(response, 200, this.ingress.getStatus());
+    if (request.method === "GET" && pathname === STATUS_PATH) {
+      this.json(response, 200, this.getStatus());
       return;
     }
     const retirement = GENERATION_RETIREMENT_PATH_PATTERN.exec(pathname);
@@ -335,24 +494,49 @@ export class RouterIngressSupervisor {
       }
       return;
     }
-    if (request.method !== "POST" || pathname !== "/v1/generations") {
-      this.json(response, 404, { error: "not_found" });
+    if (
+      request.method === "POST" &&
+      (pathname === GENERATIONS_PATH || pathname === ROLLBACK_PATH)
+    ) {
+      await this.handleActivation(
+        pathname === ROLLBACK_PATH,
+        request,
+        response
+      );
+      return;
+    }
+    this.json(response, 404, { error: "not_found" });
+  }
+
+  private async handleActivation(
+    isRollback: boolean,
+    request: IncomingMessage,
+    response: ServerResponse
+  ): Promise<void> {
+    let input: unknown;
+    try {
+      input = await this.readBody(request);
+    } catch {
+      input = null;
+    }
+    const { id, entry } =
+      input && typeof input === "object" && !Array.isArray(input)
+        ? (input as Record<string, unknown>)
+        : {};
+    if (typeof id !== "string" || (!isRollback && typeof entry !== "string")) {
+      this.json(response, 400, { error: "invalid_generation" });
       return;
     }
     try {
-      const input = await this.readBody(request);
-      if (!input || typeof input !== "object" || Array.isArray(input)) {
-        this.json(response, 400, { error: "invalid_generation" });
-        return;
-      }
-      const { id, entry } = input as Record<string, unknown>;
-      if (typeof id !== "string" || typeof entry !== "string") {
-        this.json(response, 400, { error: "invalid_generation" });
-        return;
-      }
-      const activated = await this.activate(id, entry);
+      const activated = isRollback
+        ? await this.rollback(id)
+        : await this.activate(id, entry as string);
       this.json(response, 200, activated);
     } catch (error) {
+      if (error instanceof NoRollbackTargetError) {
+        this.json(response, 409, { error: "no_rollback_target" });
+        return;
+      }
       this.json(response, 422, {
         error: "activation_failed",
         message:

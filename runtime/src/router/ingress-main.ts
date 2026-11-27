@@ -9,6 +9,7 @@ import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point"
 
 import { RouterIngress } from "./ingress.ts";
 import { RouterIngressSupervisor } from "./ingress-control.ts";
+import { recordRouterIngressEvent } from "./telemetry.ts";
 
 export async function startRouterIngressProcess(
   environment: NodeJS.ProcessEnv = process.env
@@ -27,16 +28,22 @@ export async function startRouterIngressProcess(
     throw new Error("Invalid ingress public port");
   }
   const drainTimeout = environment.AUTODEV_ROUTER_INGRESS_DRAIN_MS;
-  const workerShutdownTimeout = environment.AUTODEV_ROUTER_INGRESS_WORKER_SHUTDOWN_MS;
+  const workerShutdownTimeout =
+    environment.AUTODEV_ROUTER_INGRESS_WORKER_SHUTDOWN_MS;
   const ingress = new RouterIngress({
-    ...(drainTimeout !== undefined && { retirementDrainTimeoutMs: Number(drainTimeout) })
+    onEvent: recordRouterIngressEvent,
+    ...(drainTimeout !== undefined && {
+      retirementDrainTimeoutMs: Number(drainTimeout)
+    })
   });
   const supervisor = new RouterIngressSupervisor({
     ingress,
     controlSocket,
     controlToken,
     releasesDirectory,
-    ...(workerShutdownTimeout !== undefined && { workerShutdownTimeoutMs: Number(workerShutdownTimeout) })
+    ...(workerShutdownTimeout !== undefined && {
+      workerShutdownTimeoutMs: Number(workerShutdownTimeout)
+    })
   });
   await supervisor.listen();
   try {

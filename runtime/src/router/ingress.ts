@@ -36,6 +36,27 @@ function endToEndHeaders(headers: IncomingHttpHeaders): IncomingHttpHeaders {
 }
 
 /**
+Runs operations one at a time in call order; a failed operation does not
+block the ones queued after it.
+*/
+export function createSerialQueue(): <T>(
+  operation: () => Promise<T>
+) => Promise<T> {
+  let tail: Promise<void> = Promise.resolve();
+  return async (operation) => {
+    const previous = tail;
+    const { promise, resolve } = Promise.withResolvers<void>();
+    tail = promise;
+    try {
+      await previous;
+      return await operation();
+    } finally {
+      resolve();
+    }
+  };
+}
+
+/**
 A worker's private listener; only the ingress owns the public port.
 */
 export interface RouterGenerationEndpoint {
@@ -44,6 +65,10 @@ export interface RouterGenerationEndpoint {
   port: number;
 }
 
+/**
+Every generation transition the ingress and its supervisor report. Restart
+and rollback name the generation whose release the new one runs.
+*/
 export type RouterIngressEvent =
   | { phase: "generation_activated"; generationId: string }
   | { phase: "generation_retired"; generationId: string }
@@ -53,6 +78,18 @@ export type RouterIngressEvent =
       inFlight: number;
     }
   | { phase: "successor_readiness_failed"; generationId: string }
+  | {
+      phase: "generation_worker_exited";
+      generationId: string;
+      exitCode: number | null;
+      signal: string | null;
+    }
+  | {
+      phase: "generation_restarted" | "generation_rolled_back";
+      generationId: string;
+      sourceGenerationId: string;
+    }
+  | { phase: "generation_restart_exhausted"; generationId: string }
   | { phase: "client_disconnected"; generationId: string; requestId: string }
   | {
       phase: "backend_connection_failed";
@@ -85,7 +122,7 @@ export class RouterIngress {
   readonly server: Server;
   private readonly generations = new Map<string, Generation>();
   private active: Generation | null = null;
-  private activationQueue: Promise<void> = Promise.resolve();
+  private readonly serialized = createSerialQueue();
   private readonly readinessTimeoutMs: number;
   private readonly retirementDrainTimeoutMs: number;
   private readonly onEvent: (event: RouterIngressEvent) => void;
@@ -160,7 +197,7 @@ export class RouterIngress {
   activateGeneration(
     endpoint: RouterGenerationEndpoint
   ): Promise<string | null> {
-    const operation = this.activationQueue.then(async () => {
+    return this.serialized(async () => {
       if (
         !endpoint.id ||
         endpoint.host !== "127.0.0.1" ||
@@ -172,7 +209,7 @@ export class RouterIngress {
       if (this.generations.has(endpoint.id))
         throw new Error(`Router generation id already used: ${endpoint.id}`);
       if (!(await this.probeReadiness(endpoint))) {
-        this.emit({
+        this.report({
           phase: "successor_readiness_failed",
           generationId: endpoint.id
         });
@@ -192,15 +229,10 @@ export class RouterIngress {
       };
       this.generations.set(endpoint.id, generation);
       this.active = generation;
-      this.emit({ phase: "generation_activated", generationId: endpoint.id });
+      this.report({ phase: "generation_activated", generationId: endpoint.id });
       if (previous) this.beginRetirement(previous);
       return previous?.endpoint.id ?? null;
     });
-    this.activationQueue = operation.then(
-      () => undefined,
-      () => undefined
-    );
-    return operation;
   }
 
   /**
@@ -217,11 +249,26 @@ export class RouterIngress {
     await generation.retired;
   }
 
+  /**
+  The generation's worker is gone: stop admitting to it, flip readiness to
+  unavailable if it was active, and cancel what it had admitted (those
+  requests have no backend left) so it retires at once instead of answering
+  502 until someone notices.
+  */
+  failGeneration(generationId: string): void {
+    const generation = this.generations.get(generationId);
+    if (!generation || generation.state === "retired") return;
+    if (this.active === generation) this.active = null;
+    generation.state = "retiring";
+    for (const request of generation.requests) request.abort();
+    this.finishRetirement(generation);
+  }
+
   private beginRetirement(generation: Generation): void {
     generation.state = "retiring";
     if (generation.requests.size > 0) {
       generation.drainTimer = setTimeout(() => {
-        this.emit({
+        this.report({
           phase: "generation_drain_deadline_expired",
           generationId: generation.endpoint.id,
           inFlight: generation.requests.size
@@ -234,18 +281,20 @@ export class RouterIngress {
   }
 
   private finishRetirement(generation: Generation): void {
-    if (generation.state !== "retiring" || generation.requests.size > 0)
-      return;
+    if (generation.state !== "retiring" || generation.requests.size > 0) return;
     clearTimeout(generation.drainTimer);
     generation.state = "retired";
     generation.resolveRetired();
-    this.emit({
+    this.report({
       phase: "generation_retired",
       generationId: generation.endpoint.id
     });
   }
 
-  private emit(event: RouterIngressEvent): void {
+  /**
+  The one telemetry sink for ingress and supervisor transitions.
+  */
+  report(event: RouterIngressEvent): void {
     try {
       this.onEvent(event);
     } catch {
@@ -386,7 +435,7 @@ export class RouterIngress {
         !response.writableEnded &&
         !isBackendCompleted
       )
-        this.emit({
+        this.report({
           phase: "client_disconnected",
           generationId: generation.endpoint.id,
           requestId
@@ -399,7 +448,7 @@ export class RouterIngress {
       if (response.headersSent) {
         response.destroy();
       } else {
-        this.emit({
+        this.report({
           phase: "backend_connection_failed",
           generationId: generation.endpoint.id,
           requestId
