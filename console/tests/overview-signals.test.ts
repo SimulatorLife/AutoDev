@@ -256,6 +256,8 @@ test("overview renders distinct live facts, verdicts, failures and telemetry", (
   assert.match(html, /Failed attempts<\/dt><dd[^>]*>Not observed</u);
   assert.match(html, /Provider attempts<\/dt><dd[^>]*>0</u);
   assert.match(html, /up to 5 minutes old/u);
+  // A snapshot, not a directory: the navigation reaches every resource.
+  assert.doesNotMatch(html, /<a\b/u);
 });
 
 test("overview reports quota evidence quality and marks unusable counts not observed", () => {

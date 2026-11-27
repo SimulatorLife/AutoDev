@@ -92,7 +92,7 @@ export async function expectRouteHeading(
 The canonical resources the target state names.
 
 The grouping is presentation only: all fifteen resources have first-class
-routes. Overview links to those resources; the other routes answer with
+routes. Overview summarizes live signals without linking to them; the other routes answer with
 their own resource rather than a shared summary surface.
 */
 export const CANONICAL_ROUTES: readonly CanonicalRoute[] = [
@@ -315,7 +315,8 @@ export function illegibleText(
         while (node !== null) {
           const colour = parse(getComputedStyle(node).backgroundColor, pattern);
           if (colour !== null && colour.a > 0) {
-            accumulator = accumulator === null ? colour : over(accumulator, colour);
+            accumulator =
+              accumulator === null ? colour : over(accumulator, colour);
             if (accumulator.a >= 1) return accumulator;
           }
           node = node.parentElement;
@@ -356,7 +357,8 @@ export function illegibleText(
         // still reports a box and a colour -- so a sweep that measures it is
         // measuring something no operator can see.
         if (!element.checkVisibility()) return null;
-        if ((style.webkitTextFillColor === "transparent") || isInactive(element)) return null;
+        if (style.webkitTextFillColor === "transparent" || isInactive(element))
+          return null;
         const foreground = parse(style.color, pattern);
         if (foreground === null) return null;
         const opacity = opacityOf(element);
@@ -526,7 +528,14 @@ export function clippedContent(page: Page): Promise<readonly ClippedContent[]> {
     const findings: Array<{ description: string; overflowPx: number }> = [];
     for (const element of Array.from(document.querySelectorAll("main *"))) {
       const style = globalThis.getComputedStyle(element);
-      if (style.overflowX === "auto" || style.overflowX === "scroll" || (style.textOverflow === "ellipsis") || (element.clientWidth === 0) || (element.tagName === "INPUT")) continue;
+      if (
+        style.overflowX === "auto" ||
+        style.overflowX === "scroll" ||
+        style.textOverflow === "ellipsis" ||
+        element.clientWidth === 0 ||
+        element.tagName === "INPUT"
+      )
+        continue;
       // Content inside a closed disclosure is not rendered, so it cannot be
       // read as cut off: nobody is looking at it, and opening the disclosure
       // lays it out again.

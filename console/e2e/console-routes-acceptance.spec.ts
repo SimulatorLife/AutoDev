@@ -136,7 +136,11 @@ test("every canonical resource route answers with its own resource", async ({
   );
 });
 
-test("Overview is a static resource landing page linking to canonical destinations", async ({
+/**
+Overview is a snapshot, not a directory: the shared navigation already
+reaches every resource, so the page carries no links into the Console.
+*/
+test("Overview shows live signals and links to no other Console page", async ({
   page
 }) => {
   await page.goto("/overview");
@@ -149,28 +153,9 @@ test("Overview is a static resource landing page linking to canonical destinatio
     "aria-current",
     "page"
   );
-  for (const destination of [
-    "Agents",
-    "Providers",
-    "MCPs",
-    "Skills",
-    "Hooks",
-    "Prompts",
-    "Permissions",
-    "Tools",
-    "Usage",
-    "Evaluations",
-    "Playtesting",
-    "Workspaces",
-    "GitHub"
-  ]) {
-    await expect(
-      page.getByRole("link", { name: destination, exact: true }).last()
-    ).toHaveAttribute("href", `/${destination.toLowerCase()}`);
-  }
-  await expect(
-    page.getByText(/system health|active agents|resource counts/i)
-  ).toHaveCount(0);
+  await expect(page.locator("[data-overview-signals]")).toBeVisible();
+  await expect(page.locator('[data-feature="overview"] a')).toHaveCount(0);
+  await expect(page.getByText(/system health|resource counts/i)).toHaveCount(0);
 });
 
 /**

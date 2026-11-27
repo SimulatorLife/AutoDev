@@ -7,7 +7,6 @@ import {
   DETAIL_PANEL_CLASS,
   NESTED_PANEL_CLASS
 } from "../../components/layout/Panel.ts";
-import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
 import { InstantDisplay } from "../../components/ui/InstantDisplay.ts";
 import {
@@ -175,12 +174,7 @@ function providersBody(data: OverviewProviderVerdicts): React.JSX.Element {
     h(
       "p",
       { className: MUTED_META_CLASS },
-      "Each provider counts once, under its single Providers verdict. ",
-      h(
-        NavigationLink,
-        { href: "/providers", className: "underline underline-offset-4" },
-        "Open Providers"
-      )
+      "Each provider counts once, under its single Providers verdict."
     )
   );
 }
@@ -251,16 +245,7 @@ function telemetryBody(metrics: UsageMetricsData): React.JSX.Element {
           : `$${metrics.estimatedCostUsd.toFixed(2)}`,
         "Pricing-catalog estimate"
       )
-    ]),
-    h(
-      "p",
-      { className: MUTED_META_CLASS },
-      h(
-        NavigationLink,
-        { href: "/usage", className: "underline underline-offset-4" },
-        "Open Usage"
-      )
-    )
+    ])
   );
 }
 

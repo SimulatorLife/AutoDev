@@ -144,7 +144,7 @@ The canonical [zero-downtime Router generation deployment target](autodev-consol
 ## Current baseline
 
 The repository is on the four-workspace TypeScript layout (Console, Runtime, Core, Data) and the obsolete root implementation tree is gone. OpenLIT plus the AutoDev Control API are the target observability/control foundation, but the migration is not complete: the unified Console still lacks full feature parity, the OpenLIT product shell still contains unwanted generic product code, RuleSync role/permission parity is incomplete, and router-owned direct OTLP/history paths remain.
-The top-level Overview route and navigation item show a cross-system operational snapshot (live Runtime activity, provider verdict/quota counts, bounded recent failures, and ranged telemetry) alongside canonical-resource links; unknown and unavailable reads remain distinct from zero. The root route continues to redirect to `/agents`.
+The top-level Overview route and navigation item show a cross-system operational snapshot (live Runtime activity, provider verdict/quota counts, bounded recent failures, and ranged telemetry) with no links into other Console pages (2026-11-27: the Configure/Observe/Operate link sections and the per-signal "Open Providers"/"Open Usage" links were removed; the shared navigation reaches every resource); unknown and unavailable reads remain distinct from zero. The root route continues to redirect to `/agents`.
 
 The active local OpenLIT baseline is:
 
