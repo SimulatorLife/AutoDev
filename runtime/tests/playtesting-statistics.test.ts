@@ -1,22 +1,22 @@
 /**
- * Runtime-side invocation tests for the Playtesting statistical-analysis
- * API. These tests assert the contract that:
- *
- *   1. `RuntimePlaytestStatAnalysis.runWorkedFixture()` produces
- *      intervals at the exact §4 bounds (`[+0.05,+0.16]` and
- *      `[-0.39,-0.21]`) when run against the locked environment.
- *   2. `pairedBootstrapPercentileInterval` rejects non-finite,
- *      empty, or shape-violating inputs as `PlaytestStatisticInputError`.
- *   3. `runWorkedFixture` rejects a mutated fixture with the
- *      `PlaytestStatisticLockDriftError` (the API is the only honest
- *      failure path; silently swapping intervals is forbidden by §4).
- *   4. Transport-level failures produce a categorised error rather than
- *      an uncaught `Error`.
- *
- * The tests skip the long-running fixture unless the dev sets
- * `RUN_PLAYTEST_STATISTICS_FIXTURE=1`; the rest of the suite covers
- * the deterministic branches without paying the 100,000-resample cost.
- */
+Runtime-side invocation tests for the Playtesting statistical-analysis
+API. These tests assert the contract that:
+
+  1. `RuntimePlaytestStatAnalysis.runWorkedFixture()` produces
+     intervals at the exact §4 bounds (`[+0.05,+0.16]` and
+     `[-0.39,-0.21]`) when run against the locked environment.
+  2. `pairedBootstrapPercentileInterval` rejects non-finite,
+     empty, or shape-violating inputs as `PlaytestStatisticInputError`.
+  3. `runWorkedFixture` rejects a mutated fixture with the
+     `PlaytestStatisticLockDriftError` (the API is the only honest
+     failure path; silently swapping intervals is forbidden by §4).
+  4. Transport-level failures produce a categorised error rather than
+     an uncaught `Error`.
+
+The tests skip the long-running fixture unless the dev sets
+`RUN_PLAYTEST_STATISTICS_FIXTURE=1`; the rest of the suite covers
+the deterministic branches without paying the 100,000-resample cost.
+*/
 
 import assert from "node:assert/strict";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -239,7 +239,7 @@ test("RuntimePlaytestStatAnalysis rejects NaN bootstrap inputs as input errors",
   await assert.rejects(
     () =>
       analysis.pairedBootstrapPercentileInterval({
-        array: [Number.NaN, 0, 1]
+        array: [NaN, 0, 1]
       }),
     PlaytestStatisticInputError
   );
@@ -299,7 +299,7 @@ test("RuntimePlaytestStatAnalysis rejects confidenceLevel outside (0,1)", async 
     () =>
       analysis.pairedBootstrapPercentileInterval({
         array: [1, 0, 0],
-        confidenceLevel: Number.NaN
+        confidenceLevel: NaN
       }),
     PlaytestStatisticInputError
   );
@@ -321,7 +321,7 @@ test("RuntimePlaytestStatAnalysis rejects non-integer seeds", async () => {
     () =>
       analysis.pairedBootstrapPercentileInterval({
         array: [1, 0, 0],
-        seed: Number.POSITIVE_INFINITY
+        seed: Infinity
       }),
     PlaytestStatisticInputError
   );
@@ -475,10 +475,10 @@ test("transport failures reference a categorised error rather than a plain Error
 });
 
 test("Run-scoped environment resolution does not require a fixture", () => {
-  const env = resolvePlaytestStatEnvironment();
-  assert.match(env.contentHash, /^[a-f0-9]{64}$/u);
-  assert.ok(env.pyprojectPath.endsWith("pyproject.toml"));
-  assert.ok(env.uvLockPath.endsWith("uv.lock"));
+  const environment = resolvePlaytestStatEnvironment();
+  assert.match(environment.contentHash, /^[a-f0-9]{64}$/u);
+  assert.ok(environment.pyprojectPath.endsWith("pyproject.toml"));
+  assert.ok(environment.uvLockPath.endsWith("uv.lock"));
 });
 
 // Helper kept available for future sandboxed-environment experiments.

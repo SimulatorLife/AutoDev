@@ -1,4 +1,6 @@
-/** Validation and canonical content projection for immutable benchmarks. */
+/**
+Validation and canonical content projection for immutable benchmarks.
+*/
 
 import { isRecord } from "../shared/object-guards.ts";
 import { SHA256_PATTERN } from "../shared/sha256.ts";
@@ -300,10 +302,10 @@ function assertBenchmarkMetadata(value: Record<string, unknown>): void {
 }
 
 /**
- * Validate the immutable benchmark manifest before Runtime/Data accept it.
- * Scenario weights are an explicit probability distribution, and all
- * preregistered metrics must carry exactly one practical margin.
- */
+Validate the immutable benchmark manifest before Runtime/Data accept it.
+Scenario weights are an explicit probability distribution, and all
+preregistered metrics must carry exactly one practical margin.
+*/
 export function assertPlaytestBenchmark(
   value: unknown
 ): asserts value is PlaytestBenchmark {
@@ -356,7 +358,9 @@ export function assertPlaytestBenchmark(
   assertBenchmarkMetadata(value);
 }
 
-/** Stable JSON payload used by Runtime to compute the benchmark contentHash. */
+/**
+Stable JSON payload used by Runtime to compute the benchmark contentHash.
+*/
 export function playtestBenchmarkHashInput(
   benchmark: Omit<PlaytestBenchmark, "contentHash">
 ): string {

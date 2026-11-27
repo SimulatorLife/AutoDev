@@ -1,23 +1,23 @@
 /**
- * Local OneJev decision backend for visual playtest episodes.
- *
- * A visual episode asks one question: given the frame on screen and a finite
- * set of candidate actions, which one should happen next? This backend answers
- * it by asking a OneJev checkpoint that is served by the upstream `qev` server
- * over the TypeSafe System One HTTP API.
- *
- * The upstream runs on the operator's own machine. The frame never leaves the
- * loopback interface, and the endpoint that would receive it is validated as a
- * loopback HTTP origin before a single byte is sent. A decision backend that
- * can be pointed at an arbitrary remote host is a data-exfiltration hazard, so
- * that validation is the enforcement point rather than a convention.
- *
- * The backend reports exactly what it can report. OneJev answers with a
- * calibrated choice and its confidence; it does not name an intention, does not
- * predict a visible effect, and does not reason about its own choice. Those
- * capabilities are reported as unsupported rather than quietly absent, and a
- * failed call is thrown rather than dressed up as a decision.
- */
+Local OneJev decision backend for visual playtest episodes.
+
+A visual episode asks one question: given the frame on screen and a finite
+set of candidate actions, which one should happen next? This backend answers
+it by asking a OneJev checkpoint that is served by the upstream `qev` server
+over the TypeSafe System One HTTP API.
+
+The upstream runs on the operator's own machine. The frame never leaves the
+loopback interface, and the endpoint that would receive it is validated as a
+loopback HTTP origin before a single byte is sent. A decision backend that
+can be pointed at an arbitrary remote host is a data-exfiltration hazard, so
+that validation is the enforcement point rather than a convention.
+
+The backend reports exactly what it can report. OneJev answers with a
+calibrated choice and its confidence; it does not name an intention, does not
+predict a visible effect, and does not reason about its own choice. Those
+capabilities are reported as unsupported rather than quietly absent, and a
+failed call is thrown rather than dressed up as a decision.
+*/
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -43,119 +43,127 @@ import {
   type WorkspaceVisualPlaytestTargetApproval
 } from "@simulatorlife/autodev-core";
 
-/** The upstream `qev` server's System One endpoint, relative to the base. */
+/**
+The upstream `qev` server's System One endpoint, relative to the base.
+*/
 const SYSTEMONE_PATH = "/v1/systemone";
 /**
- * The model the upstream serves.
- *
- * The upstream's request contract names one model literally -- the served
- * checkpoint's id -- and it is a `Literal`: a request that asks for anything
- * else is refused before the frame is read. A portable alias is not resolved
- * for it, so the alias the Runtime used to send was refused by the very
- * server it was written for.
- */
+The model the upstream serves.
+
+The upstream's request contract names one model literally -- the served
+checkpoint's id -- and it is a `Literal`: a request that asks for anything
+else is refused before the frame is read. A portable alias is not resolved
+for it, so the alias the Runtime used to send was refused by the very
+server it was written for.
+*/
 const UPSTREAM_MODEL_ID = "Qwen/Qwen3.5-2B";
 const DEFAULT_ENDPOINT = "http://127.0.0.1:8000";
 /**
- * The status the upstream's health endpoint reports once it is serving.
- *
- * The upstream answers `{"status":"ready","trained":true}`. A probe that
- * waited for a different word reported a server that was up as one that was
- * not, and the Console read that as an unavailable route.
- */
+The status the upstream's health endpoint reports once it is serving.
+
+The upstream answers `{"status":"ready","trained":true}`. A probe that
+waited for a different word reported a server that was up as one that was
+not, and the Console read that as an unavailable route.
+*/
 const UPSTREAM_HEALTH_STATUS = "ready";
-/** The question id the action choice is asked and answered under. */
+/**
+The question id the action choice is asked and answered under.
+*/
 const ACTION_QUESTION_ID = "action";
 /**
- * The upstream's own cap on the options one choice question may carry.
- *
- * A request with more options is refused by the upstream, so it is refused
- * here where the reason can be named and the episode can end honestly.
- */
+The upstream's own cap on the options one choice question may carry.
+
+A request with more options is refused by the upstream, so it is refused
+here where the reason can be named and the episode can end honestly.
+*/
 const MAX_CHOICE_OPTIONS = 16;
 /**
- * The upstream's own floor on a choice question's options.
- *
- * One option is not a choice, and the upstream refuses a question that
- * carries one. The Runtime therefore does not ask in that case: the single
- * option on offer is the only action there is, and it is taken without
- * pretending the model chose it.
- */
+The upstream's own floor on a choice question's options.
+
+One option is not a choice, and the upstream refuses a question that
+carries one. The Runtime therefore does not ask in that case: the single
+option on offer is the only action there is, and it is taken without
+pretending the model chose it.
+*/
 const MIN_CHOICE_OPTIONS = 2;
 /**
- * The upstream's bound on the evidence text one request may carry.
- *
- * The upstream packs the text as the data half of its prompt, so a request
- * that carries more is refused. The Runtime's own bound is the smaller of
- * the two: a screen's state is a summary, not a transcript.
- */
+The upstream's bound on the evidence text one request may carry.
+
+The upstream packs the text as the data half of its prompt, so a request
+that carries more is refused. The Runtime's own bound is the smaller of
+the two: a screen's state is a summary, not a transcript.
+*/
 const MAX_STATE_TEXT_LENGTH = 100_000;
 const MAX_DECISION_TIMEOUT_MS = 120_000;
 const MAX_RESPONSE_BYTES = 256 * 1024;
 /**
- * The upstream's own bound on a request body.
- *
- * The server refuses a body larger than this before it reads it, so the
- * Runtime's bound is the server's: a request the server will refuse is a
- * request the Runtime has no reason to send.
- */
+The upstream's own bound on a request body.
+
+The server refuses a body larger than this before it reads it, so the
+Runtime's bound is the server's: a request the server will refuse is a
+request the Runtime has no reason to send.
+*/
 const MAX_REQUEST_BYTES = 1024 * 1024;
 const MAX_FRAME_BYTES = 8 * 1024 * 1024;
 const MAX_FOCUS_LENGTH = 2000;
 const MAX_CANDIDATE_ID_LENGTH = 128;
 const MAX_CANDIDATE_DESCRIPTION_LENGTH = 512;
 /**
- * How many past decisions the local server is told about.
- *
- * A small local model spends its context on what it is asked about, and the
- * decisions that bear on the next choice are the last few.
- */
+How many past decisions the local server is told about.
+
+A small local model spends its context on what it is asked about, and the
+decisions that bear on the next choice are the last few.
+*/
 const MAX_RECENT_ACTIONS = 4;
-/** The bound on one past decision's summary. */
+/**
+The bound on one past decision's summary.
+*/
 const MAX_RECENT_ACTION_LENGTH = 200;
 /**
- * One logical decision may be attempted twice. A retry is another attempt at
- * the same decision, so it is counted as a provider attempt and never as a
- * second logical request.
- */
+One logical decision may be attempted twice. A retry is another attempt at
+the same decision, so it is counted as a provider attempt and never as a
+second logical request.
+*/
 const MAX_PROVIDER_ATTEMPTS = 2;
 const LOCAL_ONEJEV_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 const RETRYABLE_STATUS_CODES = new Set([502, 503, 504]);
 const REASON_CODE_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/u;
 
 /**
- * The directory the upstream `qev serve --image-root` was started with.
- *
- * The upstream resolves the frame path it is given against this directory and
- * refuses a path that leaves it, so the Runtime has to write the frame where
- * the server will look for it. The operator names the same directory in both
- * places: the server's `--image-root` and this variable.
- */
+The directory the upstream `qev serve --image-root` was started with.
+
+The upstream resolves the frame path it is given against this directory and
+refuses a path that leaves it, so the Runtime has to write the frame where
+the server will look for it. The operator names the same directory in both
+places: the server's `--image-root` and this variable.
+*/
 const ONEJEV_IMAGE_ROOT_ENV = "AUTODEV_ONEJEV_IMAGE_ROOT";
 /**
- * The directory under the image root where the Runtime writes its frames.
- *
- * The Runtime's frames are its own working files, so they live in a
- * directory of their own rather than loose in the operator's image root.
- */
+The directory under the image root where the Runtime writes its frames.
+
+The Runtime's frames are its own working files, so they live in a
+directory of their own rather than loose in the operator's image root.
+*/
 const FRAME_DIRECTORY = "autodev";
 
 const CHOICE_REASON_CODE = "onejev-choice";
 const NO_CANDIDATES_REASON_CODE = "no-candidates";
 /**
- * The reason a decision carries when only one action was on offer.
- *
- * The upstream's choice question needs two options, so a lone option is not
- * asked about. The decision says so rather than reporting a model choice
- * that never happened.
- */
+The reason a decision carries when only one action was on offer.
+
+The upstream's choice question needs two options, so a lone option is not
+asked about. The decision says so rather than reporting a model choice
+that never happened.
+*/
 const SINGLE_OPTION_REASON_CODE = "onejev-single-option";
-/** The reason a decision carries when the model declined to commit. */
+/**
+The reason a decision carries when the model declined to commit.
+*/
 const ABSTAINED_REASON_CODE = "onejev-abstained";
 
 /** What a OneJev decision reports. A backend that reports no confidence is a
- * backend whose confidence is not-supported; it is never a confidence of zero.
- */
+backend whose confidence is not-supported; it is never a confidence of zero.
+*/
 function oneJevCapabilities(
   confidence: number | null
 ): PlaytestVisualDecisionCapabilities {
@@ -167,7 +175,9 @@ function oneJevCapabilities(
   };
 }
 
-/** A stable machine-readable reason for the choice. */
+/**
+A stable machine-readable reason for the choice.
+*/
 function stableReasonCode(value: string): string {
   if (!REASON_CODE_PATTERN.test(value)) {
     throw new TypeError("The OneJev reason code is outside its slug contract.");
@@ -204,39 +214,39 @@ export class OneJevLocalPolicyError extends Error {
 }
 
 /**
- * The recorded version of this backend's contract.
- *
- * The version names the contract the episode was run under. It is not a
- * model weight revision: the served model is named per decision, from the
- * answer the local server actually returned.
- *
- * Version 2 is the upstream's own request contract: the model is named by
- * its literal id, the frame is a file under the server's image root, the
- * state is the evidence text and that one frame, and the answer reports
- * whether the model abstained.
- */
+The recorded version of this backend's contract.
+
+The version names the contract the episode was run under. It is not a
+model weight revision: the served model is named per decision, from the
+answer the local server actually returned.
+
+Version 2 is the upstream's own request contract: the model is named by
+its literal id, the frame is a file under the server's image root, the
+state is the evidence text and that one frame, and the answer reports
+whether the model abstained.
+*/
 export const ONEJEV_LOCAL_POLICY_VERSION = "2" as const;
 
 export interface OneJevLocalPolicyOptions {
   /**
-   * Base URL of the local `qev` server. It must be a credential-free loopback
-   * HTTP origin; anything else is refused before a frame can leave the process.
-   */
+  Base URL of the local `qev` server. It must be a credential-free loopback
+  HTTP origin; anything else is refused before a frame can leave the process.
+  */
   readonly endpoint?: string;
   /**
-   * The directory the upstream `qev serve --image-root` was started with.
-   *
-   * The upstream resolves the frame path it is given against this directory
-   * and refuses a path that leaves it, so the Runtime writes the frame here
-   * and names it relative to this root. Defaults to the operator's
-   * `AUTODEV_ONEJEV_IMAGE_ROOT`.
-   */
+  The directory the upstream `qev serve --image-root` was started with.
+  
+  The upstream resolves the frame path it is given against this directory
+  and refuses a path that leaves it, so the Runtime writes the frame here
+  and names it relative to this root. Defaults to the operator's
+  `AUTODEV_ONEJEV_IMAGE_ROOT`.
+  */
   readonly imageRoot?: string;
   /**
-   * An optional tighter bound on a single decision. The operative bound is the
-   * caller's deadline -- the approved per-episode wall-time budget -- and this
-   * only lowers it.
-   */
+  An optional tighter bound on a single decision. The operative bound is the
+  caller's deadline -- the approved per-episode wall-time budget -- and this
+  only lowers it.
+  */
   readonly timeoutMs?: number;
   readonly maxResponseBytes?: number;
   readonly maxRequestBytes?: number;
@@ -246,13 +256,13 @@ export interface OneJevLocalPolicyOptions {
 }
 
 /**
- * The reachability probe for the local OneJev server.
- *
- * The upstream server answers `GET /health` with `{"status":"ok"}`. This is
- * a read of the operator's own machine, so it is loopback-only and it is
- * cached briefly: a capability read must not add a network request per
- * render, and the server is either up or it is not.
- */
+The reachability probe for the local OneJev server.
+
+The upstream server answers `GET /health` with `{"status":"ok"}`. This is
+a read of the operator's own machine, so it is loopback-only and it is
+cached briefly: a capability read must not add a network request per
+render, and the server is either up or it is not.
+*/
 export interface OneJevLocalAvailabilityProbeOptions {
   readonly endpoint?: string | undefined;
   readonly imageRoot?: string | undefined;
@@ -263,12 +273,12 @@ export interface OneJevLocalAvailabilityProbeOptions {
 }
 
 /**
- * The failure codes this policy raises more than once.
- *
- * A code is the machine-readable half of a failure, so the same failure must
- * always carry the same code; spelling it out at each throw is how two
- * failures drift apart.
- */
+The failure codes this policy raises more than once.
+
+A code is the machine-readable half of a failure, so the same failure must
+always carry the same code; spelling it out at each throw is how two
+failures drift apart.
+*/
 const ONEJEV_INVALID_REQUEST_CODE = "onejev-invalid-request";
 const ONEJEV_PROTOCOL_ERROR_CODE = "onejev-protocol-error";
 
@@ -276,12 +286,12 @@ const ONEJEV_AVAILABILITY_TIMEOUT_MS = 2000;
 const ONEJEV_AVAILABILITY_CACHE_MS = 5000;
 
 /**
- * The cached reachability answer, per endpoint.
- *
- * The cache is keyed by the endpoint it answers for, so a probe for one
- * server never reads another's answer, and a probe that overlaps another
- * probe writes its own entry rather than reassigning a shared binding.
- */
+The cached reachability answer, per endpoint.
+
+The cache is keyed by the endpoint it answers for, so a probe for one
+server never reads another's answer, and a probe that overlaps another
+probe writes its own entry rather than reassigning a shared binding.
+*/
 const oneJevAvailabilityCache = new Map<
   string,
   {
@@ -291,12 +301,12 @@ const oneJevAvailabilityCache = new Map<
 >();
 
 /**
- * Whether the local OneJev server can be reached right now.
- *
- * A false answer is the honest one when the operator has not started the
- * model server: the backend is simply not available, and the readiness
- * the Console shows says so.
- */
+Whether the local OneJev server can be reached right now.
+
+A false answer is the honest one when the operator has not started the
+model server: the backend is simply not available, and the readiness
+the Console shows says so.
+*/
 export async function isOneJevLocalVisualPolicyAvailable(
   options: OneJevLocalAvailabilityProbeOptions = {}
 ): Promise<boolean> {
@@ -328,7 +338,7 @@ export async function isOneJevLocalVisualPolicyAvailable(
   const timer = setTimeout(() => {
     controller.abort();
   }, timeoutMs);
-  let available = false;
+  let isAvailable = false;
   try {
     const response = await fetchImpl(`${endpoint}health`, {
       method: "GET",
@@ -336,42 +346,46 @@ export async function isOneJevLocalVisualPolicyAvailable(
     });
     if (response.ok) {
       const body: unknown = await response.json();
-      available =
+      isAvailable =
         typeof body === "object" &&
         body !== null &&
         !Array.isArray(body) &&
         (body as { status?: unknown }).status === UPSTREAM_HEALTH_STATUS;
     }
   } catch {
-    available = false;
+    isAvailable = false;
   } finally {
     clearTimeout(timer);
   }
   oneJevAvailabilityCache.set(endpoint, {
-    available,
+    available: isAvailable,
     expiresAt: current + (options.cacheMs ?? ONEJEV_AVAILABILITY_CACHE_MS)
   });
-  return available;
+  return isAvailable;
 }
 
-/** Test seam to isolate readiness probe cache lifetimes. */
+/**
+Test seam to isolate readiness probe cache lifetimes.
+*/
 export function resetOneJevLocalPolicyAvailabilityCache(): void {
   oneJevAvailabilityCache.clear();
 }
 
-/** The upstream answer, after it has been checked against what was asked. */
+/**
+The upstream answer, after it has been checked against what was asked.
+*/
 interface OneJevAnswer {
   readonly model: string;
   readonly candidate: PlaytestVisualCandidate;
   readonly confidence: number;
   /**
-   * Whether the upstream declined to commit to its own winner.
-   *
-   * The upstream reports it beside the choice it would have made: a model
-   * whose confidence falls below the abstention threshold it was calibrated
-   * with answers that it does not know. Acting on its winner anyway would
-   * dispatch an action the backend explicitly disowned.
-   */
+  Whether the upstream declined to commit to its own winner.
+  
+  The upstream reports it beside the choice it would have made: a model
+  whose confidence falls below the abstention threshold it was calibrated
+  with answers that it does not know. Acting on its winner anyway would
+  dispatch an action the backend explicitly disowned.
+  */
   readonly abstained: boolean;
 }
 
@@ -386,7 +400,9 @@ type DecisionPlan =
       readonly body: string;
       readonly timeoutMs: number;
       readonly candidates: readonly PlaytestVisualCandidate[];
-      /** The frame's path under the image root, as the upstream resolves it. */
+      /**
+      The frame's path under the image root, as the upstream resolves it.
+      */
       readonly framePath: string;
     };
 
@@ -408,9 +424,9 @@ function validPositiveInteger(value: number, maximum: number): boolean {
 }
 
 /**
- * The only host family that may ever receive a frame. The upstream `qev`
- * server runs on the operator's own machine, so anything else is refused.
- */
+The only host family that may ever receive a frame. The upstream `qev`
+server runs on the operator's own machine, so anything else is refused.
+*/
 function assertLocalOneJevEndpoint(value: string): void {
   const endpoint = new URL(value);
   if (
@@ -429,27 +445,27 @@ function assertLocalOneJevEndpoint(value: string): void {
 }
 
 /**
- * The image root the Runtime writes frames into, or null when none is named.
- *
- * The upstream resolves the frame path it is given against the directory it
- * was started with and refuses a path that leaves it, so the Runtime has to
- * know that directory to write into. When the operator has named none there
- * is nowhere to write, and the decision says so instead of sending a request
- * the server cannot serve.
- */
+The image root the Runtime writes frames into, or null when none is named.
+
+The upstream resolves the frame path it is given against the directory it
+was started with and refuses a path that leaves it, so the Runtime has to
+know that directory to write into. When the operator has named none there
+is nowhere to write, and the decision says so instead of sending a request
+the server cannot serve.
+*/
 function resolveImageRoot(value: string | undefined): string | null {
   const named = (value ?? "").trim();
   return named.length === 0 ? null : path.resolve(named);
 }
 
 /**
- * The Runtime's progress reading as the local server reads it.
- *
- * The upstream takes its state as a flat map of strings, so the reading is
- * written in the words the Runtime measured it in. A backend that is told the
- * game has not advanced can choose differently; a backend that is not told
- * cannot, and keeps proposing the action that does nothing.
- */
+The Runtime's progress reading as the local server reads it.
+
+The upstream takes its state as a flat map of strings, so the reading is
+written in the words the Runtime measured it in. A backend that is told the
+game has not advanced can choose differently; a backend that is not told
+cannot, and keeps proposing the action that does nothing.
+*/
 function progressState(progress: PlaytestVisualDecisionProgress): string {
   const limit =
     progress.policy === null
@@ -467,17 +483,17 @@ function progressState(progress: PlaytestVisualDecisionProgress): string {
 }
 
 /**
- * The choice question's options, named so that each one means something
- * different.
- *
- * The upstream refuses a choice question whose options share a description:
- * two options that read the same are one option to it, and the answer it
- * gives names one of them at random. A game can and does put two controls
- * with the same accessible name on one screen -- the RacingGame screen has
- * thirteen driver-row buttons over six drivers -- so the name that repeats
- * is qualified by the control it belongs to. That is what the control id is
- * for, and the model is told which control each option is.
- */
+The choice question's options, named so that each one means something
+different.
+
+The upstream refuses a choice question whose options share a description:
+two options that read the same are one option to it, and the answer it
+gives names one of them at random. A game can and does put two controls
+with the same accessible name on one screen -- the RacingGame screen has
+thirteen driver-row buttons over six drivers -- so the name that repeats
+is qualified by the control it belongs to. That is what the control id is
+for, and the model is told which control each option is.
+*/
 function distinctCriteria(
   candidates: readonly PlaytestVisualCandidate[]
 ): Record<string, string> {
@@ -495,25 +511,25 @@ function distinctCriteria(
 }
 
 /**
- * A frame file name the upstream's image root can hold.
- *
- * The name comes from the observation the frame belongs to, so two frames of
- * the same step never overwrite one another, and it is reduced to characters
- * that are safe in a path.
- */
+A frame file name the upstream's image root can hold.
+
+The name comes from the observation the frame belongs to, so two frames of
+the same step never overwrite one another, and it is reduced to characters
+that are safe in a path.
+*/
 function safeFrameFileName(value: string): string {
   const cleaned = value.replaceAll(/[^A-Za-z0-9._-]/gu, "_");
   return cleaned.length > 0 && cleaned.length <= 128 ? cleaned : "frame";
 }
 
 /**
- * The decisions the episode already took, as the local server reads them.
- *
- * The reading is only actionable when the backend can see what it already
- * did: told that the game did not advance and given nothing else, the model
- * picks the same control again. Each entry says what was attempted and what
- * became of it, not the whole action.
- */
+The decisions the episode already took, as the local server reads them.
+
+The reading is only actionable when the backend can see what it already
+did: told that the game did not advance and given nothing else, the model
+picks the same control again. Each entry says what was attempted and what
+became of it, not the whole action.
+*/
 function recentActionsState(
   history: readonly PlaytestVisualHistoryEntry[]
 ): string {
@@ -527,13 +543,13 @@ function recentActionsState(
 }
 
 /**
- * One past action, in the fewest words that still identify it.
- *
- * The action is stored as the JSON the Runtime dispatched, and that JSON is
- * mostly identifiers the model cannot use: truncated at the control id, it
- * names nothing. The kind and the control it acted on are what a model needs
- * in order not to repeat itself.
- */
+One past action, in the fewest words that still identify it.
+
+The action is stored as the JSON the Runtime dispatched, and that JSON is
+mostly identifiers the model cannot use: truncated at the control id, it
+names nothing. The kind and the control it acted on are what a model needs
+in order not to repeat itself.
+*/
 function describeAction(action: string): string {
   let parsed: unknown;
   try {
@@ -556,9 +572,9 @@ function describeAction(action: string): string {
 }
 
 /**
- * One summary, bounded so a long value cannot crowd out the rest of the
- * state.
- */
+One summary, bounded so a long value cannot crowd out the rest of the
+state.
+*/
 function boundedSummary(value: string): string {
   const trimmed = value.trim();
   return trimmed.length <= MAX_RECENT_ACTION_LENGTH
@@ -567,12 +583,12 @@ function boundedSummary(value: string): string {
 }
 
 /**
- * The instructions the action question is asked under.
- *
- * The reading's meaning lives here and its values live in the state, the same
- * split the Smart-directed route uses: the upstream passes both to the model,
- * and a number the model cannot interpret is a number it ignores.
- */
+The instructions the action question is asked under.
+
+The reading's meaning lives here and its values live in the state, the same
+split the Smart-directed route uses: the upstream passes both to the model,
+and a number the model cannot interpret is a number it ignores.
+*/
 function actionQuestionInstructions(): string {
   return [
     "Which action should the player take next?",
@@ -719,10 +735,10 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
   }
 
   /**
-   * Validate everything that can be validated before the frame leaves the
-   * process, so a request that cannot be served or cannot be afforded is
-   * refused without spending a provider attempt.
-   */
+  Validate everything that can be validated before the frame leaves the
+  process, so a request that cannot be served or cannot be afforded is
+  refused without spending a provider attempt.
+  */
   private async prepare(
     request: PlaytestVisualDecisionRequest
   ): Promise<DecisionPlan> {
@@ -865,12 +881,12 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
   }
 
   /**
-   * The frame's path under the image root, as the upstream resolves it.
-   *
-   * The upstream joins the path it is given to its own image root and
-   * refuses anything that leaves it, so the path is relative and names the
-   * file the Runtime is about to write.
-   */
+  The frame's path under the image root, as the upstream resolves it.
+  
+  The upstream joins the path it is given to its own image root and
+  refuses anything that leaves it, so the path is relative and names the
+  file the Runtime is about to write.
+  */
   private framePath(request: PlaytestVisualDecisionRequest): string {
     const name = `${safeFrameFileName(
       request.observation.episodeId
@@ -879,12 +895,12 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
   }
 
   /**
-   * Write the frame where the upstream will look for it.
-   *
-   * The upstream opens the frame itself -- it takes a path, not bytes -- so
-   * the Runtime's copy has to exist on disk under the image root the server
-   * was started with.
-   */
+  Write the frame where the upstream will look for it.
+  
+  The upstream opens the frame itself -- it takes a path, not bytes -- so
+  the Runtime's copy has to exist on disk under the image root the server
+  was started with.
+  */
   private async writeFrame(
     request: PlaytestVisualDecisionRequest,
     framePath: string
@@ -915,11 +931,11 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
   }
 
   /**
-   * Remove the Runtime's working copy of the frame.
-   *
-   * The upstream has read the frame by the time it answers, and the image
-   * root is the operator's directory: the Runtime's copies do not stay in it.
-   */
+  Remove the Runtime's working copy of the frame.
+  
+  The upstream has read the frame by the time it answers, and the image
+  root is the operator's directory: the Runtime's copies do not stay in it.
+  */
   private async removeFrame(framePath: string): Promise<void> {
     const root = this.imageRoot;
     if (root === null) return;
@@ -976,10 +992,10 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
   }
 
   /**
-   * Ask the local OneJev server, retrying a transient failure once. The retry
-   * is another attempt at the same logical decision, so it is counted as a
-   * provider attempt and never as a second logical request.
-   */
+  Ask the local OneJev server, retrying a transient failure once. The retry
+  is another attempt at the same logical decision, so it is counted as a
+  provider attempt and never as a second logical request.
+  */
   private async ask(
     request: PlaytestVisualDecisionRequest,
     plan: {
@@ -1050,7 +1066,7 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       return await this.fetchImpl(
-        new URL(SYSTEMONE_PATH, this.endpoint).toString(),
+        new URL(SYSTEMONE_PATH, this.endpoint).href,
         {
           method: "POST",
           headers: {
@@ -1113,10 +1129,10 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
   }
 
   /**
-   * Charge the response's reported tokens to the episode budget. A response
-   * that reports no usage leaves the count a floor rather than a total, which
-   * is recorded rather than assumed away.
-   */
+  Charge the response's reported tokens to the episode budget. A response
+  that reports no usage leaves the count a floor rather than a total, which
+  is recorded rather than assumed away.
+  */
   private accountUsage(body: unknown): void {
     if (!isRecord(body) || !isRecord(body.usage)) {
       this.tokenUsageComplete = false;
@@ -1215,22 +1231,22 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
   }
 
   /**
-   * Re-verify the chosen candidate against the observation. OneJev proposes an
-   * action; it does not grant permission to perform one, so an action that is
-   * not grounded in the frame is refused rather than dispatched.
-   */
+  Re-verify the chosen candidate against the observation. OneJev proposes an
+  action; it does not grant permission to perform one, so an action that is
+  not grounded in the frame is refused rather than dispatched.
+  */
   private groundAction(
     request: PlaytestVisualDecisionRequest,
     candidate: PlaytestVisualCandidate
   ): PlaytestVisualAction {
     const observation = request.observation;
     const action = candidate.action;
-    const grounded =
+    const isGrounded =
       action.workspaceId === observation.workspaceId &&
       action.targetId === observation.targetId &&
       action.episodeId === observation.episodeId &&
       action.observationId === observation.observationId;
-    if (!grounded) {
+    if (!isGrounded) {
       this.rejectGrounding(
         "OneJev selected an action that does not cite this observation."
       );
@@ -1298,12 +1314,12 @@ export class OneJevLocalVisualPolicy implements PlaytestVisualPolicy {
   }
 
   /**
-   * The decision that ends the episode.
-   *
-   * A stop is not a blank: when the upstream answered and then declined to
-   * commit, the model it named and the confidence it reported are part of
-   * what the episode ended on, and they are recorded.
-   */
+  The decision that ends the episode.
+  
+  A stop is not a blank: when the upstream answered and then declined to
+  commit, the model it named and the confidence it reported are part of
+  what the episode ended on, and they are recorded.
+  */
   private stopDecision(
     reasonCode: string,
     modelId: string | null = null,

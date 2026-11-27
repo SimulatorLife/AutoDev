@@ -30,7 +30,7 @@ function options(
   };
 }
 
-function deps(overrides: Partial<DependencyDeps> = {}): DependencyDeps {
+function dependencies(overrides: Partial<DependencyDeps> = {}): DependencyDeps {
   return {
     commandPath: () => null,
     capture: () => null,
@@ -42,12 +42,12 @@ function deps(overrides: Partial<DependencyDeps> = {}): DependencyDeps {
 }
 
 /**
- * An environment in which neither resolver finds anything.
- *
- * The checks resolve the tools the way the MCP launcher does -- through the
- * shared resolvers, which look in `~/.local/bin` as well as on PATH -- so a
- * check that meant to assert "missing" has to say where it is looking.
- */
+An environment in which neither resolver finds anything.
+
+The checks resolve the tools the way the MCP launcher does -- through the
+shared resolvers, which look in `~/.local/bin` as well as on PATH -- so a
+check that meant to assert "missing" has to say where it is looking.
+*/
 function emptyEnvironment(): NodeJS.ProcessEnv {
   return { PATH: "", HOME: "/nonexistent-home" };
 }
@@ -75,20 +75,20 @@ test("dependency options read the installer skip switches", () => {
 });
 
 test("CocoIndex installation uses typed pipx and Homebrew boundaries", () => {
-  let pipx = false;
+  let isPipx = false;
   const calls: string[][] = [];
   const result = installCocoIndex(
     options(),
-    deps({
+    dependencies({
       commandPath: (command) =>
         command === "brew"
           ? "/opt/homebrew/bin/brew"
-          : command === "pipx" && pipx
+          : command === "pipx" && isPipx
             ? "/opt/homebrew/bin/pipx"
             : null,
-      run: (command, args) => {
-        calls.push([command, ...args]);
-        if (command.endsWith("/brew") || command === "brew") pipx = true;
+      run: (command, arguments_) => {
+        calls.push([command, ...arguments_]);
+        if (command.endsWith("/brew") || command === "brew") isPipx = true;
         return 0;
       }
     })
@@ -103,13 +103,13 @@ test("CocoIndex installation uses typed pipx and Homebrew boundaries", () => {
 
 test("CodeGraphContext installation uses typed pipx and respects skip and bin override", () => {
   assert.equal(
-    installCodeGraphContext(options({ skipCodeGraphContext: true }), deps()),
+    installCodeGraphContext(options({ skipCodeGraphContext: true }), dependencies()),
     0
   );
   assert.equal(
     installCodeGraphContext(
       options({ codegraphcontextBin: "/opt/bin/codegraphcontext" }),
-      deps({ fileExists: (f) => f === "/opt/bin/codegraphcontext" })
+      dependencies({ fileExists: (f) => f === "/opt/bin/codegraphcontext" })
     ),
     0
   );
@@ -117,24 +117,24 @@ test("CodeGraphContext installation uses typed pipx and respects skip and bin ov
     () =>
       installCodeGraphContext(
         options({ codegraphcontextBin: "/missing/codegraphcontext" }),
-        deps({ fileExists: () => false })
+        dependencies({ fileExists: () => false })
       ),
     /missing or not executable at AUTODEV_CODEGRAPHCONTEXT_BIN/
   );
-  let pipx = false;
+  let isPipx = false;
   const calls: string[][] = [];
   const result = installCodeGraphContext(
     options(),
-    deps({
+    dependencies({
       commandPath: (command) =>
         command === "brew"
           ? "/opt/homebrew/bin/brew"
-          : command === "pipx" && pipx
+          : command === "pipx" && isPipx
             ? "/opt/homebrew/bin/pipx"
             : null,
-      run: (command, args) => {
-        calls.push([command, ...args]);
-        if (command.endsWith("/brew") || command === "brew") pipx = true;
+      run: (command, arguments_) => {
+        calls.push([command, ...arguments_]);
+        if (command.endsWith("/brew") || command === "brew") isPipx = true;
         return 0;
       }
     })
@@ -151,7 +151,7 @@ test("macOS native installs replace a non-Apple clang from PATH", () => {
   let installEnvironment: NodeJS.ProcessEnv | undefined;
   const result = installCodeGraphContext(
     options(),
-    deps({
+    dependencies({
       commandPath: (command) =>
         command === "pipx"
           ? "/opt/homebrew/bin/pipx"
@@ -162,8 +162,8 @@ test("macOS native installs replace a non-Apple clang from PATH", () => {
         command === "/opt/homebrew/opt/llvm/bin/clang"
           ? "Homebrew clang version 18"
           : null,
-      run: (_command, _args, env) => {
-        installEnvironment = env;
+      run: (_command, _arguments, environment) => {
+        installEnvironment = environment;
         return 0;
       },
       fileExists: (filePath) =>
@@ -177,20 +177,20 @@ test("macOS native installs replace a non-Apple clang from PATH", () => {
 });
 
 test("Python language-server installation falls back to python user installs when Homebrew is absent", () => {
-  let pipx = false;
+  let isPipx = false;
   const calls: string[][] = [];
   const result = installPythonLanguageServer(
     options(),
-    deps({
+    dependencies({
       commandPath: (command) =>
         command === "python3"
           ? "/usr/bin/python3"
-          : command === "pipx" && pipx
+          : command === "pipx" && isPipx
             ? "/home/test/.local/bin/pipx"
             : null,
-      run: (command, args) => {
-        calls.push([command, ...args]);
-        if (args.join(" ") === "-m pip install --user pipx") pipx = true;
+      run: (command, arguments_) => {
+        calls.push([command, ...arguments_]);
+        if (arguments_.join(" ") === "-m pip install --user pipx") isPipx = true;
         return 0;
       }
     })
@@ -210,21 +210,21 @@ test("dependency checks honor explicit skips and fail closed when tools are miss
   );
   assert.equal(checkCocoIndex(options(), emptyEnvironment()), 1);
   assert.equal(
-    checkCodeGraphContext(options({ skipCodeGraphContext: true }), deps()),
+    checkCodeGraphContext(options({ skipCodeGraphContext: true }), dependencies()),
     0
   );
-  assert.equal(checkCodeGraphContext(options(), deps(), emptyEnvironment()), 1);
+  assert.equal(checkCodeGraphContext(options(), dependencies(), emptyEnvironment()), 1);
   assert.equal(
     checkCodeGraphContext(
       options({ codegraphcontextBin: "/custom/cgc" }),
-      deps({ fileExists: (f) => f === "/custom/cgc" })
+      dependencies({ fileExists: (f) => f === "/custom/cgc" })
     ),
     0
   );
   assert.equal(
     checkCodeGraphContext(
       options({ codegraphcontextBin: "/missing/cgc" }),
-      deps({ fileExists: () => false })
+      dependencies({ fileExists: () => false })
     ),
     1
   );
@@ -241,8 +241,8 @@ test("the dependency checks find the pipx installs the MCP launcher finds", () =
   for (const command of ["codegraphcontext", "ccc"]) {
     writeFileSync(join(bin, command), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   }
-  const env: NodeJS.ProcessEnv = { PATH: "", HOME: home };
-  assert.equal(checkCodeGraphContext(options(), deps(), env), 0);
-  assert.equal(checkCocoIndex(options(), env), 0);
+  const environment: NodeJS.ProcessEnv = { PATH: "", HOME: home };
+  assert.equal(checkCodeGraphContext(options(), dependencies(), environment), 0);
+  assert.equal(checkCocoIndex(options(), environment), 0);
   rmSync(home, { recursive: true, force: true });
 });

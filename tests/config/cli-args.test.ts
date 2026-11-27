@@ -14,11 +14,11 @@ test("parseArgs captures --key value pairs into values", () => {
 });
 
 /**
- * Where a valueless `--flag` appears. Both rows reach the same branch in
- * `parseArgs` -- the value is taken only when the next argument exists and
- * does not itself start with `--` -- so these are two positions of one rule
- * rather than two behaviours.
- */
+Where a valueless `--flag` appears. Both rows reach the same branch in
+`parseArgs` -- the value is taken only when the next argument exists and
+does not itself start with `--` -- so these are two positions of one rule
+rather than two behaviours.
+*/
 const BOOLEAN_FLAG_POSITIONS = [
   {
     argv: ["--output", "out.json", "--verbose"],
@@ -41,7 +41,9 @@ test("parseArgs treats a --flag with no value as a boolean flag", () => {
   }
 });
 
-/** Where an unflagged argument appears. Both rows raise from the same check. */
+/**
+Where an unflagged argument appears. Both rows raise from the same check.
+*/
 const POSITIONAL_POSITIONS = [
   ["positional", "--output", "out.json"],
   ["--output", "out.json", "positional"]

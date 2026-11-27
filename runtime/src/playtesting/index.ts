@@ -1,4 +1,6 @@
-/** Runtime-owned playtesting execution, bounded evidence, policy and analysis APIs. */
+/**
+Runtime-owned playtesting execution, bounded evidence, policy and analysis APIs.
+*/
 export * from "./adapter-client.ts";
 export * from "./approved-configuration.ts";
 export * from "./artifact-store.ts";

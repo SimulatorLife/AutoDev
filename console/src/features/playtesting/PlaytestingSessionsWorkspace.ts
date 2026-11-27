@@ -47,14 +47,12 @@ function selectionFromLocation(): {
   readonly rejected: boolean;
   readonly layout: PlaytestingLayout;
 } {
-  const params = new URLSearchParams(globalThis.location.search);
+  const parameters = new URLSearchParams(globalThis.location.search);
   const scope = parsePlaytestingScope({
-    ...(params.has("view") ? { view: params.get("view") ?? "" } : {}),
-    ...(params.has("layout") ? { layout: params.get("layout") ?? "" } : {}),
-    ...(params.has("workspaceId")
-      ? { workspaceId: params.get("workspaceId") ?? "" }
-      : {}),
-    ...(params.has("sessions") ? { sessions: params.getAll("sessions") } : {})
+    ...(parameters.has("view") && { view: parameters.get("view") ?? "" }),
+    ...(parameters.has("layout") && { layout: parameters.get("layout") ?? "" }),
+    ...(parameters.has("workspaceId") && { workspaceId: parameters.get("workspaceId") ?? "" }),
+    ...(parameters.has("sessions") && { sessions: parameters.getAll("sessions") })
   });
   return {
     ids: scope.selectedEpisodeIds,
@@ -64,16 +62,16 @@ function selectionFromLocation(): {
 }
 
 /**
- * The session search, above the list it narrows.
- *
- * The search is a server-side filter -- the whole archive, not the page on
- * screen -- so it is a GET form that carries the rest of the scope, not a
- * control that filters what has already been loaded.
- *
- * It sits above the list rather than inside the Filters panel because that is
- * where a reader looks for it: a search hidden behind a disclosure is a
- * search most readers never find.
- */
+The session search, above the list it narrows.
+
+The search is a server-side filter -- the whole archive, not the page on
+screen -- so it is a GET form that carries the rest of the scope, not a
+control that filters what has already been loaded.
+
+It sits above the list rather than inside the Filters panel because that is
+where a reader looks for it: a search hidden behind a disclosure is a
+search most readers never find.
+*/
 function sessionSearchBar(scope: PlaytestingScope): React.JSX.Element {
   return React.createElement(FilterBar, {
     label: "Session search",
@@ -105,14 +103,16 @@ export function PlaytestingSessionsWorkspace({
   readonly total: number;
   readonly nextCursor: string | null;
   /**
-   * The workspace's analyst reviews, when they could be read.
-   *
-   * Null means they could not: the rows then carry no analysis line, because
-   * a row that said "no analyst review" when the review read failed would be
-   * claiming something nobody observed.
-   */
+  The workspace's analyst reviews, when they could be read.
+  
+  Null means they could not: the rows then carry no analysis line, because
+  a row that said "no analyst review" when the review read failed would be
+  claiming something nobody observed.
+  */
   readonly reviews?: readonly ControlApiPlaytestingReview[] | null | undefined;
-  /** How many reviews the workspace holds in all. */
+  /**
+  How many reviews the workspace holds in all.
+  */
   readonly reviewTotal?: number | null | undefined;
 }): React.JSX.Element {
   const [selectedEpisodeIds, setSelectedEpisodeIds] = useState(
@@ -124,11 +124,11 @@ export function PlaytestingSessionsWorkspace({
   const [layout, setLayout] = useState<PlaytestingLayout>(scope.layout);
 
   /**
-   * What the analyst recorded about each session.
-   *
-   * A session can carry more than one review -- a discovery review and a
-   * confirmatory one -- so the counts add up.
-   */
+  What the analyst recorded about each session.
+  
+  A session can carry more than one review -- a discovery review and a
+  confirmatory one -- so the counts add up.
+  */
   const analysisByEpisode = useMemo(() => {
     const byEpisode = new Map<string, SessionAnalysis>();
     if (reviews === null) return byEpisode;
@@ -153,13 +153,13 @@ export function PlaytestingSessionsWorkspace({
   }, [reviews]);
 
   /**
-   * Whether every review in the workspace was read.
-   *
-   * Only then can a session with no review say so. A workspace with more
-   * reviews than the read returned has reviews this page never saw, and
-   * "no analyst review recorded" would be a claim about a gap in the read.
-   */
-  const everyReviewRead =
+  Whether every review in the workspace was read.
+  
+  Only then can a session with no review say so. A workspace with more
+  reviews than the read returned has reviews this page never saw, and
+  "no analyst review recorded" would be a claim about a gap in the read.
+  */
+  const isEveryReviewRead =
     reviews !== null && (reviewTotal === null || reviewTotal <= reviews.length);
 
   const changeSelection = useCallback((nextIds: readonly string[]) => {
@@ -264,9 +264,7 @@ export function PlaytestingSessionsWorkspace({
                 React.createElement(
                   "span",
                   { className: "inline-flex items-center gap-1.5" },
-                  option === "list"
-                    ? React.createElement(Icon, { name: "list", size: 14 })
-                    : React.createElement(Icon, { name: "grid", size: 14 }),
+                  React.createElement(Icon, ({ name: option === "list" ? "list" : "grid", size: 14 })),
                   option === "list" ? "List" : "Grid"
                 )
               )
@@ -286,16 +284,16 @@ export function PlaytestingSessionsWorkspace({
       // The read is a window. A workspace with more reviews than the read
       // returned has reviews this page never saw, so the list says which
       // window it is showing rather than implying it is showing all of them.
-      reviews !== null && !everyReviewRead
-        ? React.createElement(
+      reviews === null || isEveryReviewRead
+        ? null
+        : React.createElement(
             "p",
             {
               className: `mt-3 ${MUTED_BODY_CLASS}`,
               "data-session-analysis-note": "true"
             },
             `Analysis counts are shown for the ${String(reviews.length)} most recent of ${String(reviewTotal ?? reviews.length)} analyst reviews.`
-          )
-        : null,
+          ),
       rows.length === 0
         ? React.createElement(EmptyState, {
             variant: "inline",
@@ -312,7 +310,7 @@ export function PlaytestingSessionsWorkspace({
             },
             ...rows.map((episode) => {
               const checked = selectedEpisodeIds.includes(episode.episodeId);
-              const atLimit =
+              const isAtLimit =
                 !checked &&
                 selectedEpisodeIds.length >= PLAYTESTS_MAX_ANALYSIS_SESSIONS;
               return React.createElement(
@@ -328,7 +326,7 @@ export function PlaytestingSessionsWorkspace({
                 React.createElement("input", {
                   type: "checkbox",
                   checked,
-                  disabled: atLimit,
+                  disabled: isAtLimit,
                   onChange: () => toggle(episode.episodeId),
                   className: CHECKBOX_CONTROL_CLASS,
                   "aria-label": `Include session ${episode.episodeId} in analyst review`,
@@ -380,7 +378,7 @@ export function PlaytestingSessionsWorkspace({
                     },
                     sessionAnalysisLine(
                       analysisByEpisode.get(episode.episodeId) ?? null
-                    ) ?? (everyReviewRead ? NO_ANALYSIS_LABEL : "")
+                    ) ?? (isEveryReviewRead ? NO_ANALYSIS_LABEL : "")
                   ),
                   React.createElement(
                     "p",

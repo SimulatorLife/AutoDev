@@ -99,7 +99,7 @@ export interface ListRecentPullsOptions {
   github: {
     rest: {
       pulls: {
-        list: (params: {
+        list: (parameters: {
           owner: string;
           repo: string;
           state: string;
@@ -120,14 +120,14 @@ export interface CollectMetricsOptions {
   github: {
     paginate: <T>(
       method: unknown,
-      params: Record<string, unknown>
+      parameters: Record<string, unknown>
     ) => Promise<T[]>;
     rest: {
       actions: {
         listWorkflowRuns: unknown;
       };
       pulls: {
-        list: (params: {
+        list: (parameters: {
           owner: string;
           repo: string;
           state: string;
@@ -162,7 +162,7 @@ export function agentFromPull(pull: PullLike): string {
     .map((item) => normalizeAgent(item.name))
     .find(Boolean);
   if (label) return label;
-  const branchMatch = String(pull.head?.ref ?? "").match(AGENT_BRANCH);
+  const branchMatch = AGENT_BRANCH.exec(String(pull.head?.ref ?? ""));
   if (branchMatch?.[1]) return normalizeAgent(branchMatch[1]);
   if (AGENT_TITLE_PREFIX_PATTERN.test(pull.title ?? "")) return "unknown";
   return "";
@@ -194,10 +194,10 @@ export function listRecentPulls({
 
 async function fetchRecentPullPages(
   options: ListRecentPullsOptions,
-  acc: PullSummary[],
+  accumulator: PullSummary[],
   page: number
 ): Promise<PullSummary[]> {
-  if (page > 50) return acc;
+  if (page > 50) return accumulator;
   const { data } = await options.github.rest.pulls.list({
     owner: options.owner,
     repo: options.repo,
@@ -207,7 +207,7 @@ async function fetchRecentPullPages(
     sort: "created",
     direction: "desc"
   });
-  const next = [...acc, ...data];
+  const next = [...accumulator, ...data];
   const last = data.at(-1);
   if (
     data.length < 100 ||
@@ -298,7 +298,7 @@ function applyPullsToTotals(
   pulls: PullSummary[]
 ): void {
   for (const summary of pulls) {
-    const createdRecently = new Date(summary.created_at) >= sinceDate;
+    const isCreatedRecently = new Date(summary.created_at) >= sinceDate;
     const closedRecently =
       summary.state === "closed" &&
       summary.closed_at &&
@@ -309,18 +309,18 @@ function applyPullsToTotals(
         (label) => label.name === "autodev-stale-closed"
       )
     ) {
-      const repoEntry = context.perRepository[fullName];
-      if (repoEntry) repoEntry.staleEmptyPrsClosed += 1;
+      const repositoryEntry_ = context.perRepository[fullName];
+      if (repositoryEntry_) repositoryEntry_.staleEmptyPrsClosed += 1;
       context.mutateTotals.bumpStale();
     }
     const agent = agentFromPull(summary);
-    if (!agent || !createdRecently) continue;
+    if (!agent || !isCreatedRecently) continue;
     context.mutateTotals.bumpRaised();
-    const repoEntry = context.perRepository[fullName];
-    if (repoEntry) repoEntry.agentPrsRaised += 1;
+    const repositoryEntry = context.perRepository[fullName];
+    if (repositoryEntry) repositoryEntry.agentPrsRaised += 1;
     if (summary.merged_at) {
       context.mutateTotals.bumpMerged();
-      if (repoEntry) repoEntry.agentPrsMerged += 1;
+      if (repositoryEntry) repositoryEntry.agentPrsMerged += 1;
     }
     context.recentPrs.push({
       repository: fullName,
@@ -342,14 +342,14 @@ async function collectRepositoryPulls(
     context.repositories,
     MAX_CONCURRENT_GITHUB_METRIC_READS,
     async (fullName) => {
-      const [owner, repo] = fullName.split("/");
-      if (!owner || !repo) return { fullName, pulls: [] as PullSummary[] };
+      const [owner, repository] = fullName.split("/", 2);
+      if (!owner || !repository) return { fullName, pulls: [] as PullSummary[] };
       return {
         fullName,
         pulls: await listRecentPulls({
           github: context.github,
           owner,
-          repo,
+          repo: repository,
           sinceDate: context.sinceDate
         })
       };

@@ -4,10 +4,10 @@ const CODEX_HOME =
   process.env.CODEX_HOME ?? `${process.env.HOME ?? process.cwd()}/.codex`;
 
 /**
- * The Codex auth file the codex route authenticates with. It is resolved per
- * call so a deployment -- or a test -- can point the router at a specific
- * file without restarting the process.
- */
+The Codex auth file the codex route authenticates with. It is resolved per
+call so a deployment -- or a test -- can point the router at a specific
+file without restarting the process.
+*/
 function codexAuthFile(): string {
   return process.env.CODEX_ROUTER_AUTH_FILE ?? `${CODEX_HOME}/auth.json`;
 }

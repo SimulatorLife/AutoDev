@@ -1,13 +1,13 @@
 "use client";
 
 /**
- * Workspace-scoped live batch monitoring over the single typed run owner.
- *
- * The read is authoritative. A failed or unreachable read is reported as
- * `unavailable` and never as the last successful frame; polling backs off,
- * stops once every batch is terminal, and never advances batch state itself —
- * every rendered status came from a server response.
- */
+Workspace-scoped live batch monitoring over the single typed run owner.
+
+The read is authoritative. A failed or unreachable read is reported as
+`unavailable` and never as the last successful frame; polling backs off,
+stops once every batch is terminal, and never advances batch state itself —
+every rendered status came from a server response.
+*/
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { responseMessage } from "../playtesting-run-messages.ts";
@@ -36,14 +36,18 @@ export interface PlaytestingActiveRunsState {
 
 interface UsePlaytestingActiveRunsOptions {
   readonly workspaceId: string | null;
-  /** Pause polling while the operator is elsewhere; resume on return. */
+  /**
+  Pause polling while the operator is elsewhere; resume on return.
+  */
   readonly paused?: boolean;
 }
 
 export interface UsePlaytestingActiveRunsResult {
   readonly state: PlaytestingActiveRunsState;
   readonly refresh: () => void;
-  /** Tracks the exact start acknowledgement before the first active-list read. */
+  /**
+  Tracks the exact start acknowledgement before the first active-list read.
+  */
   readonly trackRun: (run: ActiveRuns[number]) => void;
   readonly watching: boolean;
 }
@@ -58,21 +62,21 @@ export function usePlaytestingActiveRuns({
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
   const [nonce, setNonce] = useState(0);
   const failures = useRef(0);
-  const runsRef = useRef<ActiveRuns>(runs);
-  runsRef.current = runs;
+  const runsReference = useRef<ActiveRuns>(runs);
+  runsReference.current = runs;
 
   const watching = isWatching(runs);
   // The poll loop outlives any single render, so it asks this through a ref
   // rather than closing over one render's value.
-  const pausedRef = useRef(paused);
-  pausedRef.current = paused;
+  const pausedReference = useRef(paused);
+  pausedReference.current = paused;
   const refresh = useCallback(() => {
     setNonce((value) => value + 1);
   }, []);
 
   const trackRun = useCallback((run: ActiveRuns[number]) => {
-    const next = trackStartedRun(runsRef.current, run);
-    runsRef.current = next;
+    const next = trackStartedRun(runsReference.current, run);
+    runsReference.current = next;
     setRuns(next);
     setLastUpdatedAt(Date.now());
     setLastFailure(null);
@@ -84,7 +88,7 @@ export function usePlaytestingActiveRuns({
 
   useEffect(() => {
     failures.current = 0;
-    runsRef.current = [];
+    runsReference.current = [];
     setRuns([]);
     setLastFailure(null);
     setLastUpdatedAt(null);
@@ -94,11 +98,11 @@ export function usePlaytestingActiveRuns({
   useEffect(() => {
     if (!workspaceId) return () => undefined;
     const targetWorkspaceId = workspaceId;
-    let cancelled = false;
+    let isCancelled = false;
     const controller = new AbortController();
 
     async function poll(): Promise<void> {
-      if (cancelled) return;
+      if (isCancelled) return;
       try {
         const query = new URLSearchParams({ workspaceId: targetWorkspaceId });
         const response = await fetch(`/api/playtesting/runs?${query}`, {
@@ -106,7 +110,7 @@ export function usePlaytestingActiveRuns({
           signal: controller.signal
         });
         const payload: unknown = await response.json();
-        if (cancelled) return;
+        if (isCancelled) return;
         if (!response.ok) throw new Error(responseMessage(payload));
         const next = readActiveRuns(payload, targetWorkspaceId);
         if (!next) {
@@ -117,7 +121,7 @@ export function usePlaytestingActiveRuns({
         // A watched batch absent from the active list has finished; read its
         // terminal status so the view shows how it ended.
         const resolved = await Promise.all(
-          departedRuns(runsRef.current, next).map(async (run) => {
+          departedRuns(runsReference.current, next).map(async (run) => {
             const statusResponse = await fetch(
               `/api/playtesting/runs/${encodeURIComponent(run.batchId)}?${query}`,
               {
@@ -142,16 +146,16 @@ export function usePlaytestingActiveRuns({
             return { ...run, record };
           })
         );
-        if (cancelled) return;
-        const merged = mergeRunsRead(runsRef.current, next, resolved);
+        if (isCancelled) return;
+        const merged = mergeRunsRead(runsReference.current, next, resolved);
         failures.current = 0;
-        runsRef.current = merged;
+        runsReference.current = merged;
         setRuns(merged);
         setLastUpdatedAt(Date.now());
         setLastFailure(null);
         setFreshness(freshnessForSuccess(merged));
       } catch (error) {
-        if (cancelled || controller.signal.aborted) return;
+        if (isCancelled || controller.signal.aborted) return;
         failures.current += 1;
         // Previously read frames stay on screen but are never claimed current.
         setLastFailure(
@@ -174,12 +178,12 @@ export function usePlaytestingActiveRuns({
       // the poll that changed it, so the rendered state is still the
       // previous one at that moment. The merged runs are the answer the
       // poll itself produced, and they are current the moment they exist.
-      shouldContinue: () => !pausedRef.current && isWatching(runsRef.current),
+      shouldContinue: () => !pausedReference.current && isWatching(runsReference.current),
       delayFor: () => nextPollDelayMs(failures.current)
     });
     loop.start();
     return () => {
-      cancelled = true;
+      isCancelled = true;
       loop.stop();
       controller.abort();
     };

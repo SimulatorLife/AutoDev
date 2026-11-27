@@ -1,55 +1,55 @@
 /**
- * Stable `PlaytestFinding` identity/fingerprint contract
- * (measurement-contract §11's missed-known-issue/duplicate-flood gate;
- * normative design in docs/playtesting-target-state.md, "Finding identity
- * and ownership").
- *
- * The identity is the dedup/correlation key that lets Root recognize a new
- * report as the *same* previously known issue across builds and policies
- * (the missed-known-issue gate) and refuses to let many superficially
- * distinct reports of one underlying defect masquerade as many unrelated
- * findings (the duplicate-flood gate). Per the target-state design, the
- * identity is built only from:
- *
- * - the target workspace/game (`workspaceId`);
- * - the game-owned invariant or design-mechanic key (`mechanicKey`);
- * - a normalized failure signature (observed events, the triggering
- *   action if any, and a reproducible witness key); and
- * - the reproducible scope the failure was observed in (scenario family,
- *   phase, modality, each "as applicable").
- *
- * Seed, batch, episode/run ID, build SHA, policy ID, model ID, timestamps
- * and incidental free-form prose are explicitly *provenance*, not identity
- * (target-state: "omit incidental seed, batch, model, run ID and source
- * build SHA from the stable dedup key while preserving them as
- * evidence/provenance"). This module enforces that boundary structurally:
- * `PlaytestFindingIdentityInput` has no field slot for any excluded
- * value, and every normalizer below rejects unknown fields outright rather
- * than silently ignoring them, so an excluded field can never enter the
- * contract -- not even by accident.
- *
- * Normalization is deliberately narrow. Every identity field is a stable,
- * workspace/game-owned identifier (mechanic keys, event labels, scenario
- * families, phase/modality names), never free prose, so this module:
- *
- * - Unicode-NFKC-normalizes and trims the raw string (compatibility-width or presentation
- *   variant forms such as fullwidth Latin letters, and composed vs.
- *   decomposed input must not change identity), then case-folds to
- *   lowercase (case is not semantic for these identifiers, matching the
- *   lowercase-kebab convention used by every other identifier in this
- *   package, e.g. scenario/metric ids in `benchmark.ts`);
- * - then requires the result to fully match a closed identifier charset
- *   (lowercase ASCII letters/digits separated by `-`, `_`, `.`, `:`
- *   or `/`). Embedded whitespace, punctuation, sentences or non-ASCII
- *   glyphs are rejected rather than silently collapsed -- a value that
- *   needs lossy rewriting to look like an identifier is not actually a
- *   stable identifier.
- *
- * This module only builds and canonically serializes the identity payload.
- * Runtime, not Core, computes the actual SHA-256 fingerprint over the
- * canonical JSON this module returns, exactly as `benchmark.ts` leaves
- * `contentHash` computation to its caller.
- */
+Stable `PlaytestFinding` identity/fingerprint contract
+(measurement-contract §11's missed-known-issue/duplicate-flood gate;
+normative design in docs/playtesting-target-state.md, "Finding identity
+and ownership").
+
+The identity is the dedup/correlation key that lets Root recognize a new
+report as the *same* previously known issue across builds and policies
+(the missed-known-issue gate) and refuses to let many superficially
+distinct reports of one underlying defect masquerade as many unrelated
+findings (the duplicate-flood gate). Per the target-state design, the
+identity is built only from:
+
+- the target workspace/game (`workspaceId`);
+- the game-owned invariant or design-mechanic key (`mechanicKey`);
+- a normalized failure signature (observed events, the triggering
+  action if any, and a reproducible witness key); and
+- the reproducible scope the failure was observed in (scenario family,
+  phase, modality, each "as applicable").
+
+Seed, batch, episode/run ID, build SHA, policy ID, model ID, timestamps
+and incidental free-form prose are explicitly *provenance*, not identity
+(target-state: "omit incidental seed, batch, model, run ID and source
+build SHA from the stable dedup key while preserving them as
+evidence/provenance"). This module enforces that boundary structurally:
+`PlaytestFindingIdentityInput` has no field slot for any excluded
+value, and every normalizer below rejects unknown fields outright rather
+than silently ignoring them, so an excluded field can never enter the
+contract -- not even by accident.
+
+Normalization is deliberately narrow. Every identity field is a stable,
+workspace/game-owned identifier (mechanic keys, event labels, scenario
+families, phase/modality names), never free prose, so this module:
+
+- Unicode-NFKC-normalizes and trims the raw string (compatibility-width or presentation
+  variant forms such as fullwidth Latin letters, and composed vs.
+  decomposed input must not change identity), then case-folds to
+  lowercase (case is not semantic for these identifiers, matching the
+  lowercase-kebab convention used by every other identifier in this
+  package, e.g. scenario/metric ids in `benchmark.ts`);
+- then requires the result to fully match a closed identifier charset
+  (lowercase ASCII letters/digits separated by `-`, `_`, `.`, `:`
+  or `/`). Embedded whitespace, punctuation, sentences or non-ASCII
+  glyphs are rejected rather than silently collapsed -- a value that
+  needs lossy rewriting to look like an identifier is not actually a
+  stable identifier.
+
+This module only builds and canonically serializes the identity payload.
+Runtime, not Core, computes the actual SHA-256 fingerprint over the
+canonical JSON this module returns, exactly as `benchmark.ts` leaves
+`contentHash` computation to its caller.
+*/
 
 import { isRecord } from "../shared/object-guards.ts";
 import { canonicalPlaytestJson } from "./canonical-json.ts";
@@ -58,15 +58,21 @@ import {
   PLAYTESTS_COVERAGE_MODALITIES
 } from "./types.ts";
 
-/** Bumping this constant deliberately invalidates every prior fingerprint; it is part of the hashed payload, not a free-standing version field callers can set. */
+/**
+Bumping this constant deliberately invalidates every prior fingerprint; it is part of the hashed payload, not a free-standing version field callers can set.
+*/
 export const PLAYTESTS_FINDING_IDENTITY_SCHEMA =
   "autodev-playtest-finding-identity-v1" as const;
 
-/** Canonical public ID namespace for a SHA-256 finding fingerprint. */
+/**
+Canonical public ID namespace for a SHA-256 finding fingerprint.
+*/
 export const PLAYTESTS_FINDING_ID_PREFIX = "finding-" as const;
 const FINDING_FINGERPRINT_PATTERN = /^[a-f\d]{64}$/u;
 
-/** Build the only supported persisted finding ID from a canonical digest. */
+/**
+Build the only supported persisted finding ID from a canonical digest.
+*/
 export function playtestFindingIdFromFingerprint(fingerprint: string): string {
   if (!FINDING_FINGERPRINT_PATTERN.test(fingerprint)) {
     throw new TypeError(
@@ -76,7 +82,9 @@ export function playtestFindingIdFromFingerprint(fingerprint: string): string {
   return PLAYTESTS_FINDING_ID_PREFIX + fingerprint;
 }
 
-/** Whether a value is a canonical full-hash finding ID. */
+/**
+Whether a value is a canonical full-hash finding ID.
+*/
 export function isPlaytestFindingId(value: unknown): value is string {
   return (
     typeof value === "string" &&
@@ -87,7 +95,9 @@ export function isPlaytestFindingId(value: unknown): value is string {
   );
 }
 
-/** Closed identifier charset: lowercase ASCII letters/digits with single-character separators. No whitespace, sentence punctuation or non-ASCII glyphs. */
+/**
+Closed identifier charset: lowercase ASCII letters/digits with single-character separators. No whitespace, sentence punctuation or non-ASCII glyphs.
+*/
 const IDENTIFIER_SEPARATORS = new Set(["-", "_", ".", ":", "/"]);
 const MAX_IDENTIFIER_LENGTH = 200;
 
@@ -96,32 +106,32 @@ function isAsciiLowerLetterOrDigit(code: number): boolean {
 }
 
 function hasValidIdentifierSeparators(value: string): boolean {
-  let separatorPending = false;
+  let isSeparatorPending = false;
   for (let index = 0; index < value.length; index += 1) {
     const character = value[index]!;
     if (isAsciiLowerLetterOrDigit(value.charCodeAt(index))) {
-      separatorPending = false;
+      isSeparatorPending = false;
       continue;
     }
     if (
-      separatorPending ||
+      isSeparatorPending ||
       index === 0 ||
       index === value.length - 1 ||
       !IDENTIFIER_SEPARATORS.has(character)
     ) {
       return false;
     }
-    separatorPending = true;
+    isSeparatorPending = true;
   }
-  return !separatorPending;
+  return !isSeparatorPending;
 }
 
 /**
- * Named provenance fields the measurement contract explicitly bars from
- * the identity payload. Present for documentation and test enumeration
- * only -- `PlaytestFindingIdentityInput` has no field slot for any of
- * these, so listing them here does not grant them one.
- */
+Named provenance fields the measurement contract explicitly bars from
+the identity payload. Present for documentation and test enumeration
+only -- `PlaytestFindingIdentityInput` has no field slot for any of
+these, so listing them here does not grant them one.
+*/
 export const PLAYTESTS_FINDING_IDENTITY_EXCLUDED_FIELDS = [
   "seed",
   "batchId",
@@ -136,21 +146,27 @@ export const PLAYTESTS_FINDING_IDENTITY_EXCLUDED_FIELDS = [
   "description"
 ] as const;
 
-/** Normalized failure signature: events/action/witness, never free prose. */
+/**
+Normalized failure signature: events/action/witness, never free prose.
+*/
 export interface PlaytestFindingFailureSignature {
   readonly events: readonly string[];
   readonly action: string | null;
   readonly witness: string;
 }
 
-/** Reproducible scope the failure was observed in; each field "as applicable". */
+/**
+Reproducible scope the failure was observed in; each field "as applicable".
+*/
 export interface PlaytestFindingScope {
   readonly scenarioFamily: string;
   readonly phase: string | null;
   readonly modality: PlaytestCoverageModality | null;
 }
 
-/** The frozen, canonically-serializable identity Runtime hashes with SHA-256. */
+/**
+The frozen, canonically-serializable identity Runtime hashes with SHA-256.
+*/
 export interface PlaytestFindingIdentity {
   readonly identitySchema: typeof PLAYTESTS_FINDING_IDENTITY_SCHEMA;
   readonly workspaceId: string;
@@ -159,7 +175,9 @@ export interface PlaytestFindingIdentity {
   readonly scope: PlaytestFindingScope;
 }
 
-/** Strict, unknown-field-rejecting input shape for `buildPlaytestFindingIdentity`. */
+/**
+Strict, unknown-field-rejecting input shape for `buildPlaytestFindingIdentity`.
+*/
 export interface PlaytestFindingIdentityInput {
   readonly workspaceId: string;
   readonly mechanicKey: string;
@@ -192,7 +210,9 @@ function assertOnlyKeys(
   }
 }
 
-/** Unicode-NFKC-normalize, trim, case-fold, then require a closed identifier charset. */
+/**
+Unicode-NFKC-normalize, trim, case-fold, then require a closed identifier charset.
+*/
 function normalizeIdentifier(value: unknown, label: string): string {
   if (typeof value !== "string") {
     throw new TypeError(label + " must be a string.");
@@ -265,12 +285,12 @@ const FAILURE_SIGNATURE_KEYS = ["events", "action", "witness"] as const;
 const SCOPE_KEYS = ["scenarioFamily", "phase", "modality"] as const;
 
 /**
- * Build the frozen, normalized identity payload from a strict input. Any
- * field outside the declared shape -- including every name in
- * `PLAYTESTS_FINDING_IDENTITY_EXCLUDED_FIELDS` -- throws rather than being
- * silently dropped, so excluded provenance cannot enter the contract even
- * when a caller mixes it into the same object by mistake.
- */
+Build the frozen, normalized identity payload from a strict input. Any
+field outside the declared shape -- including every name in
+`PLAYTESTS_FINDING_IDENTITY_EXCLUDED_FIELDS` -- throws rather than being
+silently dropped, so excluded provenance cannot enter the contract even
+when a caller mixes it into the same object by mistake.
+*/
 export function buildPlaytestFindingIdentity(
   input: PlaytestFindingIdentityInput
 ): PlaytestFindingIdentity {
@@ -334,11 +354,11 @@ export function buildPlaytestFindingIdentity(
 }
 
 /**
- * Canonical, key-order-independent JSON for an already-built identity.
- * Runtime hashes this string with SHA-256 to produce the actual finding
- * fingerprint; Core never computes the digest itself (same division of
- * responsibility as `playtestBenchmarkHashInput` in `benchmark.ts`).
- */
+Canonical, key-order-independent JSON for an already-built identity.
+Runtime hashes this string with SHA-256 to produce the actual finding
+fingerprint; Core never computes the digest itself (same division of
+responsibility as `playtestBenchmarkHashInput` in `benchmark.ts`).
+*/
 export function playtestFindingIdentityHashInput(
   identity: PlaytestFindingIdentity
 ): string {

@@ -6,7 +6,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { filesystemMcpServer } from "../src/mcp/filesystem-server.ts";
-import { filesystemDirectoryArgs } from "../src/mcp/launcher.ts";
+import { filesystemDirectoryArgs as filesystemDirectoryArguments } from "../src/mcp/launcher.ts";
 
 const LAUNCHER = fileURLToPath(
   new URL("../src/mcp/launcher.ts", import.meta.url)
@@ -49,15 +49,15 @@ test("skill roots outside the workspace are read-only directories; ones inside i
     mkdirSync(path.join(home, ".agents", "skills"), { recursive: true });
     mkdirSync(path.join(workspace, ".agents", "skills"), { recursive: true });
     process.env.HOME = home;
-    const args = filesystemDirectoryArgs(workspace, workspace);
-    assert.equal(args[0], "--confine-roots");
-    assert.deepEqual(args.slice(-2), ["--", workspace]);
-    const readOnly = args.flatMap((arg, index) =>
-      args[index - 1] === "--read-only-dir" ? [arg] : []
+    const arguments_ = filesystemDirectoryArguments(workspace, workspace);
+    assert.equal(arguments_[0], "--confine-roots");
+    assert.deepEqual(arguments_.slice(-2), ["--", workspace]);
+    const readOnly = arguments_.flatMap((argument, index) =>
+      arguments_[index - 1] === "--read-only-dir" ? [argument] : []
     );
     assert.ok(readOnly.includes(path.join(home, ".agents", "skills")));
     assert.ok(
-      !readOnly.some((dir) => dir.startsWith(workspace)),
+      readOnly.every((dir) => !dir.startsWith(workspace)),
       "the workspace's own skills stay writable"
     );
   } finally {

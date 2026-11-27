@@ -26,16 +26,16 @@ function options(
   };
 }
 
-function deps(overrides: Partial<ConsoleEnsureDeps> = {}): ConsoleEnsureDeps {
-  let loaded = false;
+function dependencies(overrides: Partial<ConsoleEnsureDeps> = {}): ConsoleEnsureDeps {
+  let isLoaded = false;
   return {
     launchd: {
-      isLoaded: () => loaded,
+      isLoaded: () => isLoaded,
       kickstart: () => {
-        loaded = true;
+        isLoaded = true;
       },
       bootstrap: () => {
-        loaded = true;
+        isLoaded = true;
       }
     },
     launchdAvailable: () => true,
@@ -70,18 +70,18 @@ test("resolver derives the Console LaunchAgent and runtime paths", () => {
 });
 
 test("a healthy Console is left untouched", async () => {
-  let started = false;
+  let isStarted = false;
   const status = await ensureConsole(
     options(),
-    deps({
+    dependencies({
       probe: async () => true,
       startFallback: () => {
-        started = true;
+        isStarted = true;
       }
     })
   );
   assert.equal(status, 0);
-  assert.equal(started, false);
+  assert.equal(isStarted, false);
 });
 
 test("the fallback launcher is awaited through the shared readiness wait", async () => {
@@ -92,7 +92,7 @@ test("the fallback launcher is awaited through the shared readiness wait", async
   const calls: string[] = [];
   const status = await ensureConsole(
     options({ readyTimeoutMs: 1000 }),
-    deps({
+    dependencies({
       launchdAvailable: () => false,
       probe: (() => {
         let count = 0;
@@ -111,7 +111,7 @@ test("a Console that never becomes ready fails only after its timeout", async ()
   const started = Date.now();
   const status = await ensureConsole(
     options({ readyTimeoutMs: 40 }),
-    deps({ launchdAvailable: () => false, probe: async () => false })
+    dependencies({ launchdAvailable: () => false, probe: async () => false })
   );
   assert.equal(status, 1);
   assert.ok(

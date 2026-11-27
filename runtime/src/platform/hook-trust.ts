@@ -1,29 +1,31 @@
 import { createHash } from "node:crypto";
 
 /**
- * The trust hashes Codex requires for the hooks it is asked to run.
- *
- * Codex hashes each hook *definition* -- the event, the matcher and the
- * handler -- into a normalized identity and refuses to run a hook whose stored
- * hash is not that hash. A hook with no stored hash is untrusted, and a hook
- * whose stored hash no longer matches its definition is "modified"; both are
- * skipped silently, so an installer that keeps its own table of hashes turns
- * a declaration change into hooks that quietly stop running.
- *
- * The hash is therefore computed here from the same definition Codex reads,
- * the way Codex computes it: the identity is serialized as canonical JSON --
- * object keys sorted, no whitespace -- and hashed with SHA-256. This mirrors
- * Codex's `hook_hash`/`version_for_toml` pair, so the installer writes the
- * hash Codex will compare against instead of a copy of one that has drifted.
- *
- * The identity is the declaration's, so this module owns no configuration of
- * its own: the hooks file Codex is given is the input.
- *
- * Codex hashes the command of the platform it runs on, and AutoDev installs on
- * macOS and Linux, where that is the declared `command`.
- */
+The trust hashes Codex requires for the hooks it is asked to run.
 
-/** Codex's key label for every event it can discover. */
+Codex hashes each hook *definition* -- the event, the matcher and the
+handler -- into a normalized identity and refuses to run a hook whose stored
+hash is not that hash. A hook with no stored hash is untrusted, and a hook
+whose stored hash no longer matches its definition is "modified"; both are
+skipped silently, so an installer that keeps its own table of hashes turns
+a declaration change into hooks that quietly stop running.
+
+The hash is therefore computed here from the same definition Codex reads,
+the way Codex computes it: the identity is serialized as canonical JSON --
+object keys sorted, no whitespace -- and hashed with SHA-256. This mirrors
+Codex's `hook_hash`/`version_for_toml` pair, so the installer writes the
+hash Codex will compare against instead of a copy of one that has drifted.
+
+The identity is the declaration's, so this module owns no configuration of
+its own: the hooks file Codex is given is the input.
+
+Codex hashes the command of the platform it runs on, and AutoDev installs on
+macOS and Linux, where that is the declared `command`.
+*/
+
+/**
+Codex's key label for every event it can discover.
+*/
 const EVENT_LABELS: Readonly<Record<string, string>> = {
   PreToolUse: "pre_tool_use",
   PermissionRequest: "permission_request",
@@ -42,11 +44,11 @@ const EVENT_LABELS: Readonly<Record<string, string>> = {
 };
 
 /**
- * The events whose matcher never reaches the identity.
- *
- * A prompt event matches on the prompt, not on a tool name, so Codex drops
- * the matcher before it hashes the hook.
- */
+The events whose matcher never reaches the identity.
+
+A prompt event matches on the prompt, not on a tool name, so Codex drops
+the matcher before it hashes the hook.
+*/
 const MATCHERLESS_EVENTS: ReadonlySet<string> = new Set([
   "PreModelRequest",
   "PostModelRequest",
@@ -55,20 +57,30 @@ const MATCHERLESS_EVENTS: ReadonlySet<string> = new Set([
   "Interrupt"
 ]);
 
-/** The timeout Codex gives a hook that declares none. */
+/**
+The timeout Codex gives a hook that declares none.
+*/
 const DEFAULT_TIMEOUT_SEC = 600;
-/** The timeout Codex gives a SessionEnd or Interrupt hook that declares none. */
+/**
+The timeout Codex gives a SessionEnd or Interrupt hook that declares none.
+*/
 const SESSION_END_DEFAULT_TIMEOUT_SEC = 1;
-/** The longest timeout Codex keeps for a SessionEnd or Interrupt hook. */
+/**
+The longest timeout Codex keeps for a SessionEnd or Interrupt hook.
+*/
 const SESSION_END_MAX_TIMEOUT_SEC = 3;
-/** The spill threshold Codex drops from the identity because it is the default. */
+/**
+The spill threshold Codex drops from the identity because it is the default.
+*/
 const DEFAULT_HOOK_OUTPUT_TOKEN_LIMIT = 2500;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** The timeout Codex normalizes a declared timeout to. */
+/**
+The timeout Codex normalizes a declared timeout to.
+*/
 function normalizedTimeoutSec(
   event: string,
   declared: number | undefined
@@ -81,12 +93,12 @@ function normalizedTimeoutSec(
 }
 
 /**
- * The identity Codex hashes for one command hook.
- *
- * A field Codex does not carry into the identity is absent rather than null:
- * the identity passes through TOML, which has no null, so an absent field and
- * a null field are the same document.
- */
+The identity Codex hashes for one command hook.
+
+A field Codex does not carry into the identity is absent rather than null:
+the identity passes through TOML, which has no null, so an absent field and
+a null field are the same document.
+*/
 function hookIdentity(
   event: string,
   matcher: string | undefined,
@@ -121,7 +133,9 @@ function hookIdentity(
   return identity;
 }
 
-/** The object with every key sorted, which is how Codex serializes it. */
+/**
+The object with every key sorted, which is how Codex serializes it.
+*/
 function sortedValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortedValue);
   if (isRecord(value)) {
@@ -133,32 +147,40 @@ function sortedValue(value: unknown): unknown {
   return value;
 }
 
-/** The ordering Codex's canonical JSON uses: by code unit, not by locale. */
+/**
+The ordering Codex's canonical JSON uses: by code unit, not by locale.
+*/
 function compareByCodeUnit(left: string, right: string): number {
   if (left === right) return 0;
   return left < right ? -1 : 1;
 }
 
-/** The hash Codex computes for one hook identity. */
+/**
+The hash Codex computes for one hook identity.
+*/
 export function codexHookTrustHash(identity: unknown): string {
   const canonical = JSON.stringify(sortedValue(identity));
   return `sha256:${createHash("sha256").update(canonical).digest("hex")}`;
 }
 
-/** One hook's trust entry: the key Codex files it under, and its hash. */
+/**
+One hook's trust entry: the key Codex files it under, and its hash.
+*/
 export interface CodexHookTrustEntry {
-  /** The trust key suffix: `<event>:<group index>:<handler index>`. */
+  /**
+  The trust key suffix: `<event>:<group index>:<handler index>`.
+  */
   readonly key: string;
   readonly hash: string;
 }
 
 /**
- * The trust entries for the hooks in a Codex hooks file.
- *
- * The file is the projection Codex is given, so the entries are exactly the
- * hooks it will discover. A handler this module cannot hash is an error
- * rather than a silently untrusted hook.
- */
+The trust entries for the hooks in a Codex hooks file.
+
+The file is the projection Codex is given, so the entries are exactly the
+hooks it will discover. A handler this module cannot hash is an error
+rather than a silently untrusted hook.
+*/
 export function codexHookTrustEntries(
   hooksJson: unknown
 ): CodexHookTrustEntry[] {
@@ -188,11 +210,11 @@ export function codexHookTrustEntries(
 }
 
 /**
- * The matcher the identity carries.
- *
- * A prompt event matches on the prompt, not on a tool name, so Codex drops
- * the matcher before it hashes the hook.
- */
+The matcher the identity carries.
+
+A prompt event matches on the prompt, not on a tool name, so Codex drops
+the matcher before it hashes the hook.
+*/
 function matcherForEvent(
   event: string,
   group: Record<string, unknown>

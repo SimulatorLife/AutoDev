@@ -3,30 +3,30 @@ import { expect, test } from "@playwright/test";
 import { SWEEP_ROUTES, waitForPageContent } from "./acceptance-helpers.ts";
 
 /**
- * A status badge names the state it shows.
- *
- * The Console's status badge is a word. It is the one place the Console says
- * what it observed, and the word is the whole of what it says: the dot beside
- * it is a mark, not a meaning, and a reader who cannot read the word is left
- * with a shape.
- *
- * The badge used to render *no* word for a status it did not have a variant
- * for. The Agents table's STATUS column showed a bare grey pill -- the label
- * span was empty, the title was `undefined`, and there was no accessible name
- * at all, so a screen reader was told nothing either. The cause was the shape
- * of the lookup rather than the data: the badge read the status out of a table
- * keyed by the states the Console knows, and a status outside that table had
- * no entry, so the word was `undefined` and React rendered nothing for it.
- *
- * Nothing in the type system said so. The status came off the wire as a
- * string, and the console's own model declared it as one of five states, so
- * the compiler was satisfied and the page was blank.
- *
- * This is a rendering claim, so it is measured where it happens: in the
- * browser, on every route, over every element that carries a status. A mark
- * (`role="img"`) is named by its accessible name and is allowed to have no
- * text; anything else that carries a status has to show a word.
- */
+A status badge names the state it shows.
+
+The Console's status badge is a word. It is the one place the Console says
+what it observed, and the word is the whole of what it says: the dot beside
+it is a mark, not a meaning, and a reader who cannot read the word is left
+with a shape.
+
+The badge used to render *no* word for a status it did not have a variant
+for. The Agents table's STATUS column showed a bare grey pill -- the label
+span was empty, the title was `undefined`, and there was no accessible name
+at all, so a screen reader was told nothing either. The cause was the shape
+of the lookup rather than the data: the badge read the status out of a table
+keyed by the states the Console knows, and a status outside that table had
+no entry, so the word was `undefined` and React rendered nothing for it.
+
+Nothing in the type system said so. The status came off the wire as a
+string, and the console's own model declared it as one of five states, so
+the compiler was satisfied and the page was blank.
+
+This is a rendering claim, so it is measured where it happens: in the
+browser, on every route, over every element that carries a status. A mark
+(`role="img"`) is named by its accessible name and is allowed to have no
+text; anything else that carries a status has to show a word.
+*/
 test("every status the Console shows is named", async ({ page }) => {
   const unnamed: string[] = [];
   let seen = 0;
@@ -42,8 +42,7 @@ test("every status the Console shows is named", async ({ page }) => {
         document.querySelectorAll<HTMLElement>("[data-status]")
       )) {
         const style = getComputedStyle(element);
-        if (style.display === "none" || style.visibility === "hidden") continue;
-        if (element.closest("[hidden]")) continue;
+        if (style.display === "none" || style.visibility === "hidden" || element.closest("[hidden]")) continue;
         counted += 1;
         // A dot is a mark: it is named by its accessible name, and the word
         // lives in the control beside it.
@@ -76,19 +75,19 @@ test("every status the Console shows is named", async ({ page }) => {
 });
 
 /**
- * A status badge speaks the Console's word, not the code the service sent.
- *
- * Naming the state is not enough. A badge that says "none-recommended" has
- * named the state and said nothing else: the code is the persisted contract,
- * hyphenated and lower case, and it leaks the storage shape into the one
- * place the operator reads a state at a glance. The four sections of an
- * analyst review's completeness account each carried one -- "provided",
- * "none-recommended", "not-recorded" -- on a page no sweep walked.
- *
- * The Console's words are sentence-cased English, so an entirely lower-case
- * badge word is a code that was passed through instead of a word that was
- * chosen. That is what this measures, over every route and every badge.
- */
+A status badge speaks the Console's word, not the code the service sent.
+
+Naming the state is not enough. A badge that says "none-recommended" has
+named the state and said nothing else: the code is the persisted contract,
+hyphenated and lower case, and it leaks the storage shape into the one
+place the operator reads a state at a glance. The four sections of an
+analyst review's completeness account each carried one -- "provided",
+"none-recommended", "not-recorded" -- on a page no sweep walked.
+
+The Console's words are sentence-cased English, so an entirely lower-case
+badge word is a code that was passed through instead of a word that was
+chosen. That is what this measures, over every route and every badge.
+*/
 test("no status shows the code it was given", async ({ page }) => {
   const codes: string[] = [];
   let seen = 0;
@@ -104,8 +103,7 @@ test("no status shows the code it was given", async ({ page }) => {
         document.querySelectorAll<HTMLElement>("[data-status]")
       )) {
         const style = getComputedStyle(element);
-        if (style.display === "none" || style.visibility === "hidden") continue;
-        if (element.closest("[hidden]")) continue;
+        if (style.display === "none" || style.visibility === "hidden" || element.closest("[hidden]")) continue;
         counted += 1;
         if (element.getAttribute("role") === "img") continue;
         const shown = (element.textContent ?? "").trim();
@@ -136,17 +134,17 @@ test("no status shows the code it was given", async ({ page }) => {
 });
 
 /**
- * The analyst review's completeness sections name what each section says.
- *
- * The four sections of a review's completeness account each carry a status
- * from the review contract, and each of them was reaching the screen as the
- * code the contract stores -- "provided", "none-recommended", "not-recorded".
- * The contract is the persisted shape and must not change; the word on the
- * badge is the Console's to choose.
- *
- * This reads the words themselves rather than only checking that they are
- * not codes, so the page cannot drift into a different code and still pass.
- */
+The analyst review's completeness sections name what each section says.
+
+The four sections of a review's completeness account each carry a status
+from the review contract, and each of them was reaching the screen as the
+code the contract stores -- "provided", "none-recommended", "not-recorded".
+The contract is the persisted shape and must not change; the word on the
+badge is the Console's to choose.
+
+This reads the words themselves rather than only checking that they are
+not codes, so the page cannot drift into a different code and still pass.
+*/
 test("the analyst review's completeness sections speak the Console's words", async ({
   page
 }) => {

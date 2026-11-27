@@ -1,6 +1,8 @@
 import type { ControlApiLiveSessionIdentity } from "../control-api/types.ts";
 
-/** Canonical, bounded filter axes shared by Console and Data adapters. */
+/**
+Canonical, bounded filter axes shared by Console and Data adapters.
+*/
 export const USAGE_VARIABLE_IDS = [
   "workspace",
   "provider",
@@ -66,61 +68,69 @@ export type UsageWidgetId =
   | "skill-events-by-event"
   | "estimated-cost";
 
-/** One bounded time bucket from an observed Usage time-series widget. */
+/**
+One bounded time bucket from an observed Usage time-series widget.
+*/
 export interface UsageTimeBucketCount {
   readonly bucket: string;
   readonly count: number;
 }
 
-/** One bounded category row from an observed Usage breakdown widget. */
+/**
+One bounded category row from an observed Usage breakdown widget.
+*/
 export interface UsageBreakdownCount {
   readonly name: string;
   readonly count: number;
 }
 
 /**
- * One workspace bucket of the logical-request breakdown.
- *
- * `workspace` is the workspace the requests were attributed to, or `null` when
- * the request carried no workspace attribution at all. The two are different
- * facts: an unattributed request belongs to no workspace, so a consumer must
- * not fold it into the nearest workspace it can see.
- */
+One workspace bucket of the logical-request breakdown.
+
+`workspace` is the workspace the requests were attributed to, or `null` when
+the request carried no workspace attribution at all. The two are different
+facts: an unattributed request belongs to no workspace, so a consumer must
+not fold it into the nearest workspace it can see.
+*/
 export interface UsageWorkspaceRequestCount {
   readonly workspace: string | null;
   readonly count: number;
 }
 
 /**
- * The logical routed requests grouped by workspace.
- *
- * `partial` is true when the source's own row limit truncated the breakdown.
- * It decides what an *absent* workspace means: a workspace missing from a
- * complete breakdown made no requests, while a workspace missing from a
- * truncated one is simply not reported, and rendering the second as the first
- * would report a measured zero the source never measured.
- */
+The logical routed requests grouped by workspace.
+
+`partial` is true when the source's own row limit truncated the breakdown.
+It decides what an *absent* workspace means: a workspace missing from a
+complete breakdown made no requests, while a workspace missing from a
+truncated one is simply not reported, and rendering the second as the first
+would report a measured zero the source never measured.
+*/
 export interface UsageWorkspaceRequestBreakdown {
   readonly rows: readonly UsageWorkspaceRequestCount[];
   readonly partial: boolean;
 }
 
-/** Axes that do not have source-confirmed semantics for logical compaction spans. */
+/**
+Axes that do not have source-confirmed semantics for logical compaction spans.
+*/
 export type UsageCompactionUnsupportedFilter = "provider" | "skill";
 
-/** Filters the source does not record on a commit itself. */
+/**
+Filters the source does not record on a commit itself.
+*/
 export type UsageGitChangeUnsupportedFilter = "model" | "skill";
 
 /**
- * Filters the source does not record on a provider hop.
- *
- * A hop is a change of the provider serving an agent/role, and it is recorded
- * on the logical request that observed it. The workspace and the role are
- * recorded there, so a selection on them describes hops. The provider is not:
- * the logical request span never carries one provider for a route that may
- * touch several, so the hop names its own two providers instead. The requested
- * model and the skill are not recorded on a hop at all.
- */
+Filters the source does not record on a provider hop.
+
+A hop is a change of the provider serving an agent/role, and it is recorded
+on the logical request that observed it. The workspace and the role are
+recorded there, so a selection on them describes hops. The provider is not:
+the logical request span never carries one provider for a route that may
+touch several, so the hop names its own two providers instead. The requested
+model and the skill are not recorded on a hop at all.
+*/
 export type UsageProviderHopUnsupportedFilter = "provider" | "model" | "skill";
 
 export type UsageGitChangeStatus =
@@ -129,22 +139,28 @@ export type UsageGitChangeStatus =
 export type UsageGitChangeNotApplicableReason =
   "active-sessions" | "unsupported-filter";
 
-/** Bounded Git output measurements from commit-owned Runtime metric counters. */
+/**
+Bounded Git output measurements from commit-owned Runtime metric counters.
+*/
 export interface UsageGitChangeMetrics {
   readonly status: UsageGitChangeStatus;
   readonly notApplicableReason: UsageGitChangeNotApplicableReason | null;
   readonly unsupportedFilters: readonly UsageGitChangeUnsupportedFilter[];
-  /** Whether the window contains partial diff measurements; null if unknown. */
+  /**
+  Whether the window contains partial diff measurements; null if unknown.
+  */
   readonly partial: boolean | null;
-  /** True when one or more bounded category queries may be truncated. */
+  /**
+  True when one or more bounded category queries may be truncated.
+  */
   readonly breakdownsPartial: boolean;
   readonly commits: number | null;
   readonly filesChanged: number | null;
   readonly filesAdded: number | null;
   readonly filesDeleted: number | null;
   /**
-   * Exact range totals; unavailable when any observed commit has a partial diff.
-   */
+  Exact range totals; unavailable when any observed commit has a partial diff.
+  */
   readonly linesAdded: number | null;
   readonly linesRemoved: number | null;
   readonly partialCommits: number | null;
@@ -164,55 +180,73 @@ export interface UsageWidgetConfig {
 }
 
 /**
- * The Usage scope selector's value.
- *
- * `ACTIVE_SESSIONS` is deliberately a member of this union even though it is not
- * a time range: the selector presents historical ranges and the live-session
- * scope in one control, and modelling the live scope outside the union would
- * force every consumer to carry a second "or is this live?" flag beside a
- * `range` it cannot honour. What the member means is not "another range" — see
- * `UsageActiveSessions` below for the evidence it actually carries, and note
- * that it must never be turned into a derived window.
- */
+The Usage scope selector's value.
+
+`ACTIVE_SESSIONS` is deliberately a member of this union even though it is not
+a time range: the selector presents historical ranges and the live-session
+scope in one control, and modelling the live scope outside the union would
+force every consumer to carry a second "or is this live?" flag beside a
+`range` it cannot honour. What the member means is not "another range" — see
+`UsageActiveSessions` below for the evidence it actually carries, and note
+that it must never be turned into a derived window.
+*/
 export type UsageTimeRange =
   "24H" | "7D" | "1M" | "3M" | "CUSTOM" | "ACTIVE_SESSIONS";
 
-/** Ranges that map to a bounded historical Usage telemetry query. */
+/**
+Ranges that map to a bounded historical Usage telemetry query.
+*/
 export type UsageHistoricalTimeRange = Exclude<
   UsageTimeRange,
   "ACTIVE_SESSIONS"
 >;
 
 /**
- * Live runtime state for the `ACTIVE_SESSIONS` scope.
- *
- * Every counter is `number | null` where `null` means the Runtime did not
- * report it — not zero. Collapsing that distinction here would make an
- * unreachable counter indistinguishable from an idle Runtime, which is the one
- * reading the Console must never synthesize.
- */
+Live runtime state for the `ACTIVE_SESSIONS` scope.
+
+Every counter is `number | null` where `null` means the Runtime did not
+report it — not zero. Collapsing that distinction here would make an
+unreachable counter indistinguishable from an idle Runtime, which is the one
+reading the Console must never synthesize.
+*/
 export interface UsageActiveSessions {
   readonly schema: "autodev-usage-active-sessions-v3";
   readonly lifecycle: "ready" | "draining" | null;
   readonly lifecycleChangedAt: string | null;
-  /** The Runtime concurrency active-session scalar; `null` when not observed. */
+  /**
+  The Runtime concurrency active-session scalar; `null` when not observed.
+  */
   readonly activeSessions: number | null;
-  /** Exact number of distinct source-confirmed IDs, even if the row list truncates. */
+  /**
+  Exact number of distinct source-confirmed IDs, even if the row list truncates.
+  */
   readonly identifiedSessionCount: number | null;
-  /** Runtime-reported live subagent thread count; `null` when not observed. */
+  /**
+  Runtime-reported live subagent thread count; `null` when not observed.
+  */
   readonly activeSubagentThreads: number | null;
-  /** Runtime-reported in-flight provider requests; `null` when not observed. */
+  /**
+  Runtime-reported in-flight provider requests; `null` when not observed.
+  */
   readonly inFlightRequests: number | null;
-  /** `null` means no Runtime identity source; `[]` is an observed empty list. */
+  /**
+  `null` means no Runtime identity source; `[]` is an observed empty list.
+  */
   readonly sessionIdentities: readonly ControlApiLiveSessionIdentity[] | null;
-  /** True only when the Runtime capped the returned identity list. */
+  /**
+  True only when the Runtime capped the returned identity list.
+  */
   readonly sessionIdentitiesPartial: boolean | null;
-  /** Live activity records without a validated session ID; not a session count. */
+  /**
+  Live activity records without a validated session ID; not a session count.
+  */
   readonly unattributedLiveActivityCount: number | null;
 }
 
 export interface UsageCustomRange {
-  /** ISO calendar dates (YYYY-MM-DD), interpreted as full UTC days. */
+  /**
+  ISO calendar dates (YYYY-MM-DD), interpreted as full UTC days.
+  */
   readonly startDate: string;
   readonly endDate: string;
 }
@@ -229,10 +263,10 @@ export type UsageFilterSelection =
     }
   | {
       /**
-       * The live-session scope carries no custom bounds: there is no interval
-       * for them to bound, so they are absent rather than defaulted to a
-       * window that would silently mean nothing.
-       */
+      The live-session scope carries no custom bounds: there is no interval
+      for them to bound, so they are absent rather than defaulted to a
+      window that would silently mean nothing.
+      */
       readonly range:
         Exclude<UsageHistoricalTimeRange, "CUSTOM"> | "ACTIVE_SESSIONS";
       readonly values: UsageFilterValues;
@@ -240,9 +274,9 @@ export type UsageFilterSelection =
     };
 
 /**
- * The historical range for one explicitly supplied session identity.
- * Session identity is a view scope, never a Usage filter variable.
- */
+The historical range for one explicitly supplied session identity.
+Session identity is a view scope, never a Usage filter variable.
+*/
 export type UsageSessionQuerySelection =
   | { readonly range: "CUSTOM"; readonly customRange: UsageCustomRange }
   | {
@@ -255,14 +289,14 @@ export type UsageFilterOptions = Readonly<
 >;
 
 /**
- * Whether a selection queries the historical Usage telemetry store.
- *
- * The Usage page needs this as a *function of the selection* rather than as a
- * second field carried beside it: `ACTIVE_SESSIONS` has no interval, so passing
- * it to the OpenLIT client would ask for a window that does not exist, and the
- * endpoint would either error or apply a default window and render the result
- * as though it were the live scope. Callers route on this before they query.
- */
+Whether a selection queries the historical Usage telemetry store.
+
+The Usage page needs this as a *function of the selection* rather than as a
+second field carried beside it: `ACTIVE_SESSIONS` has no interval, so passing
+it to the OpenLIT client would ask for a window that does not exist, and the
+endpoint would either error or apply a default window and render the result
+as though it were the live scope. Callers route on this before they query.
+*/
 export function isHistoricalUsageSelection(
   selection: Pick<UsageFilterSelection, "range">
 ): selection is Extract<
@@ -272,7 +306,9 @@ export function isHistoricalUsageSelection(
   return selection.range !== "ACTIVE_SESSIONS";
 }
 
-/** Historical request, pricing, reliability, skill, and MCP Usage evidence. */
+/**
+Historical request, pricing, reliability, skill, and MCP Usage evidence.
+*/
 export interface UsageMetricsData {
   readonly logicalRequests: number | null;
   readonly totalInputTokens: number | null;
@@ -280,13 +316,17 @@ export interface UsageMetricsData {
   readonly cacheReadRate: number | null;
   readonly p95LatencyMs: number | null;
   /**
-   * P95 time an attempt waited for its provider to take it (a web-chat
-   * bridge's wait for a free tab), over the attempts that report it.
-   */
+  P95 time an attempt waited for its provider to take it (a web-chat
+  bridge's wait for a free tab), over the attempts that report it.
+  */
   readonly p95ProviderQueueMs: number | null;
-  /** P95 time the provider spent on an attempt once it had it. */
+  /**
+  P95 time the provider spent on an attempt once it had it.
+  */
   readonly p95ProviderSiteMs: number | null;
-  /** OpenLIT's pricing-catalog estimate; not a provider billing statement. */
+  /**
+  OpenLIT's pricing-catalog estimate; not a provider billing statement.
+  */
   readonly estimatedCostUsd: number | null;
   readonly physicalAttempts: number | null;
   readonly mcpCalls: number | null;
@@ -296,70 +336,98 @@ export interface UsageMetricsData {
   readonly attemptErrorsByProvider:
     readonly { readonly provider: string; readonly count: number }[] | null;
   readonly contextCompactions: number | null;
-  /** Source-confirmed compactions per logical routed request, as a percent. */
+  /**
+  Source-confirmed compactions per logical routed request, as a percent.
+  */
   readonly contextCompactionRatePercent: number | null;
   readonly contextCompactionsOverTime: readonly UsageTimeBucketCount[] | null;
   readonly contextCompactionsByWorkspace: readonly UsageBreakdownCount[] | null;
   readonly contextCompactionsByModel: readonly UsageBreakdownCount[] | null;
   readonly contextCompactionsByAgent: readonly UsageBreakdownCount[] | null;
   /**
-   * Compactions grouped by the provider that served them.
-   *
-   * A compaction is served by exactly one provider, and the router publishes
-   * that provider on the compaction's own span. A compaction served before
-   * that provider was published is grouped under an empty name, which means
-   * "not observed" rather than "no provider served it".
-   */
+  Compactions grouped by the provider that served them.
+  
+  A compaction is served by exactly one provider, and the router publishes
+  that provider on the compaction's own span. A compaction served before
+  that provider was published is grouped under an empty name, which means
+  "not observed" rather than "no provider served it".
+  */
   readonly contextCompactionsByProvider: readonly UsageBreakdownCount[] | null;
-  /** Provider/skill scopes are unsupported for this logical-request signal. */
+  /**
+  Provider/skill scopes are unsupported for this logical-request signal.
+  */
   readonly contextCompactionsUnsupportedFilters: readonly UsageCompactionUnsupportedFilter[];
-  /** True when one or more bounded compaction breakdowns may be truncated. */
+  /**
+  True when one or more bounded compaction breakdowns may be truncated.
+  */
   readonly contextCompactionsBreakdownsPartial: boolean;
   readonly gitChanges: UsageGitChangeMetrics;
   /**
-   * Provider hops: changes of the provider serving an agent/role.
-   *
-   * A hop is counted once per change and carries both providers and the reason
-   * for the change, so the count answers "how often" and the breakdowns answer
-   * "which way" and "why". Every value is null when the source did not observe
-   * it: an empty aggregate is not a measured zero.
-   */
+  Provider hops: changes of the provider serving an agent/role.
+  
+  A hop is counted once per change and carries both providers and the reason
+  for the change, so the count answers "how often" and the breakdowns answer
+  "which way" and "why". Every value is null when the source did not observe
+  it: an empty aggregate is not a measured zero.
+  */
   readonly providerHops: number | null;
-  /** Source-confirmed provider hops per logical routed request, as a percent. */
+  /**
+  Source-confirmed provider hops per logical routed request, as a percent.
+  */
   readonly providerHopRatePercent: number | null;
-  /** Provider hops per time bucket. */
+  /**
+  Provider hops per time bucket.
+  */
   readonly providerHopsOverTime: readonly UsageTimeBucketCount[] | null;
-  /** Provider hops grouped by the provider pair the agent moved between. */
+  /**
+  Provider hops grouped by the provider pair the agent moved between.
+  */
   readonly providerHopsByRoute: readonly UsageBreakdownCount[] | null;
-  /** Provider hops grouped by the provider that now serves the agent. */
+  /**
+  Provider hops grouped by the provider that now serves the agent.
+  */
   readonly providerHopsByProvider: readonly UsageBreakdownCount[] | null;
-  /** Provider hops grouped by the agent role that changed provider. */
+  /**
+  Provider hops grouped by the agent role that changed provider.
+  */
   readonly providerHopsByRole: readonly UsageBreakdownCount[] | null;
-  /** Provider hops grouped by workspace. */
+  /**
+  Provider hops grouped by workspace.
+  */
   readonly providerHopsByWorkspace: readonly UsageBreakdownCount[] | null;
-  /** Provider hops grouped by why the provider changed. */
+  /**
+  Provider hops grouped by why the provider changed.
+  */
   readonly providerHopsByReason: readonly UsageBreakdownCount[] | null;
-  /** Filters the source does not record on a provider hop. */
+  /**
+  Filters the source does not record on a provider hop.
+  */
   readonly providerHopsUnsupportedFilters: readonly UsageProviderHopUnsupportedFilter[];
-  /** True when one or more bounded provider-hop breakdowns may be truncated. */
+  /**
+  True when one or more bounded provider-hop breakdowns may be truncated.
+  */
   readonly providerHopsBreakdownsPartial: boolean;
   readonly skillEventsByEvent:
     readonly { readonly event: string; readonly count: number }[] | null;
   readonly requestsByRole:
     readonly { readonly role: string; readonly count: number }[] | null;
-  /** Logical routed requests grouped by requested model (`autodev.requested_model`). */
+  /**
+  Logical routed requests grouped by requested model (`autodev.requested_model`).
+  */
   readonly requestsByModel:
     readonly { readonly model: string; readonly count: number }[] | null;
-  /** Logical routed requests grouped by workspace; null when not observed. */
+  /**
+  Logical routed requests grouped by workspace; null when not observed.
+  */
   readonly requestsByWorkspace: UsageWorkspaceRequestBreakdown | null;
   readonly attemptsByProvider:
     readonly { readonly provider: string; readonly count: number }[] | null;
   /**
-   * Physical provider attempts grouped by served model (`gen_ai.response.model`).
-   *
-   * Only attempts whose provider reported a served model are counted; absent
-   * `gen_ai.response.model` never falls back to `gen_ai.request.model`.
-   */
+  Physical provider attempts grouped by served model (`gen_ai.response.model`).
+  
+  Only attempts whose provider reported a served model are counted; absent
+  `gen_ai.response.model` never falls back to `gen_ai.request.model`.
+  */
   readonly attemptsByModel:
     readonly { readonly model: string; readonly count: number }[] | null;
   readonly callsByTool:
@@ -375,7 +443,9 @@ const TRACE_ID_PATTERN = /^[0-9a-f]{32}$/iu;
 const SPAN_ID_PATTERN = /^[0-9a-f]{16}$/iu;
 const ZERO_ID_PATTERN = /^0+$/u;
 
-/** Validate a W3C/OpenTelemetry trace id before it becomes a trace lookup. */
+/**
+Validate a W3C/OpenTelemetry trace id before it becomes a trace lookup.
+*/
 export function isOpenTelemetryTraceId(value: unknown): value is string {
   return (
     typeof value === "string" &&
@@ -384,7 +454,9 @@ export function isOpenTelemetryTraceId(value: unknown): value is string {
   );
 }
 
-/** Validate a W3C/OpenTelemetry span id before it becomes a trace lookup. */
+/**
+Validate a W3C/OpenTelemetry span id before it becomes a trace lookup.
+*/
 export function isOpenTelemetrySpanId(value: unknown): value is string {
   return (
     typeof value === "string" &&
@@ -395,7 +467,9 @@ export function isOpenTelemetrySpanId(value: unknown): value is string {
 
 export type UsageTraceStatus = "OK" | "ERROR" | "UNSET" | "UNKNOWN";
 
-/** Whitelisted event-level facts for one exact, explicitly selected session. */
+/**
+Whitelisted event-level facts for one exact, explicitly selected session.
+*/
 export interface UsageSessionSpanSummary {
   readonly spanId: string;
   readonly traceId: string;
@@ -405,7 +479,9 @@ export interface UsageSessionSpanSummary {
   readonly durationNs: number;
   readonly statusCode: UsageTraceStatus;
   readonly provider: string | null;
-  /** Source-confirmed GenAI conversation/thread identity; absent evidence is null. */
+  /**
+  Source-confirmed GenAI conversation/thread identity; absent evidence is null.
+  */
   readonly conversationId: string | null;
   readonly requestedModel: string | null;
   readonly role: string | null;
@@ -422,36 +498,46 @@ export interface UsageSessionSpanSummary {
   readonly hopReason: string | null;
 }
 
-/** The order a session's spans are returned in. */
+/**
+The order a session's spans are returned in.
+*/
 export type UsageSessionSpanSortDirection = "desc" | "asc";
 
 /**
- * Which page of one session's spans to read.
- *
- * The page is a window onto the session's full span list, not the list
- * itself: `total` is the exact number of spans the session has, and `hasMore`
- * says whether anything follows this page.
- */
+Which page of one session's spans to read.
+
+The page is a window onto the session's full span list, not the list
+itself: `total` is the exact number of spans the session has, and `hasMore`
+says whether anything follows this page.
+*/
 export interface UsageSessionSpanPagination {
   readonly limit: number;
   readonly offset: number;
   readonly sortDirection?: UsageSessionSpanSortDirection;
 }
 
-/** A bounded, privacy-filtered trace view for one exact session, not a metric series. */
+/**
+A bounded, privacy-filtered trace view for one exact session, not a metric series.
+*/
 export interface UsageSessionEvidence {
-  /** The exact number of spans the session has, or null when the source did not report one. */
+  /**
+  The exact number of spans the session has, or null when the source did not report one.
+  */
   readonly total: number | null;
   readonly limit: number;
   readonly offset: number;
   readonly hasMore: boolean;
   readonly partial: boolean;
-  /** The full-session cost estimate, over every span rather than this page. */
+  /**
+  The full-session cost estimate, over every span rather than this page.
+  */
   readonly estimatedCostUsd: number | null;
   readonly spans: readonly UsageSessionSpanSummary[];
 }
 
-/** Safe, bounded trace activity for the Usage history table. */
+/**
+Safe, bounded trace activity for the Usage history table.
+*/
 export interface UsageTraceAttempt {
   readonly spanId: string;
   readonly timestamp: string;
@@ -474,7 +560,9 @@ export type UsageTraceList =
       readonly partial: boolean;
     };
 
-/** Privacy-filtered span metadata returned by the fixed Usage trace reader. */
+/**
+Privacy-filtered span metadata returned by the fixed Usage trace reader.
+*/
 export interface UsageTraceSpan {
   readonly spanId: string;
   readonly parentSpanId: string | null;
@@ -485,7 +573,9 @@ export interface UsageTraceSpan {
   readonly statusCode: UsageTraceStatus;
 }
 
-/** Bounded in-Console trace context for one explicitly selected span. */
+/**
+Bounded in-Console trace context for one explicitly selected span.
+*/
 export interface UsageTraceDetail {
   readonly schema: "autodev-openlit-trace-detail-v1";
   readonly traceId: string;

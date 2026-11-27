@@ -13,17 +13,19 @@ const WORKSPACE_ID = "fixture/game";
 const CONFLICT_OUTCOME = "conflict";
 
 /**
- * The configuration control of one workspace.
- *
- * The control is the same one on the list row and on the workspace's own page,
- * so it is addressed by the workspace it acts on rather than by where it is
- * rendered.
- */
-function configurationControl(page: Page): Locator {
+The configuration control of one workspace.
+
+The control is the same one on the list row and on the workspace's own page,
+so it is addressed by the workspace it acts on rather than by where it is
+rendered.
+*/
+function configControl(page: Page): Locator {
   return page.locator(`[data-workspace-configuration="${WORKSPACE_ID}"]`);
 }
 
-/** The enablement the control writes. */
+/**
+The enablement the control writes.
+*/
 function enablementControl(page: Page): Locator {
   return page.locator(
     `[data-workspace-configuration-enabled="${WORKSPACE_ID}"]`
@@ -31,14 +33,14 @@ function enablementControl(page: Page): Locator {
 }
 
 /**
- * Put the fixture's workspace configuration back where a test that writes
- * starts.
- *
- * The write is real, so the fixture keeps the configuration the last write
- * left behind. This puts it back without touching the rest of the fixture's
- * state, which another session's specs also use.
- */
-async function resetWorkspaceConfiguration(
+Put the fixture's workspace configuration back where a test that writes
+starts.
+
+The write is real, so the fixture keeps the configuration the last write
+left behind. This puts it back without touching the rest of the fixture's
+state, which another session's specs also use.
+*/
+async function resetWorkspaceConfig(
   request: APIRequestContext
 ): Promise<void> {
   const response = await request.post(
@@ -48,9 +50,9 @@ async function resetWorkspaceConfiguration(
 }
 
 /**
- * The configuration the Runtime currently holds for the fixture's workspace.
- */
-async function readWorkspaceConfiguration(request: APIRequestContext): Promise<{
+The configuration the Runtime currently holds for the fixture's workspace.
+*/
+async function readWorkspaceConfig(request: APIRequestContext): Promise<{
   enabled: boolean;
   baseBranch: string;
   agentRoles: string[] | null;
@@ -78,14 +80,14 @@ async function readWorkspaceConfiguration(request: APIRequestContext): Promise<{
 }
 
 /**
- * Leave the fixture the way the rest of the suite finds it.
- *
- * The workspace configuration is shared state: a spec that reads the
- * Workspaces list expects the workspace to be enabled, and this one leaves it
- * disabled because that is the write it is making.
- */
+Leave the fixture the way the rest of the suite finds it.
+
+The workspace configuration is shared state: a spec that reads the
+Workspaces list expects the workspace to be enabled, and this one leaves it
+disabled because that is the write it is making.
+*/
 test.afterEach(async ({ request }) => {
-  await resetWorkspaceConfiguration(request);
+  await resetWorkspaceConfig(request);
 });
 
 test("the workspace row names the fields it cannot label", async ({ page }) => {
@@ -108,7 +110,7 @@ test("the workspace row writes its configuration against the revision it loaded"
   page,
   request
 }) => {
-  await resetWorkspaceConfiguration(request);
+  await resetWorkspaceConfig(request);
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto(WORKSPACES_URL);
 
@@ -122,9 +124,9 @@ test("the workspace row writes its configuration against the revision it loaded"
   // The write is the Runtime's, and it lands after the browser has already
   // changed the select, so the state is polled rather than read once.
   await expect
-    .poll(async () => (await readWorkspaceConfiguration(request)).enabled)
+    .poll(async () => (await readWorkspaceConfig(request)).enabled)
     .toBe(false);
-  const held = await readWorkspaceConfiguration(request);
+  const held = await readWorkspaceConfig(request);
   // The revision moved with the configuration, so the next write has to carry
   // the new one.
   expect(held.revision).not.toBe("e".repeat(64));
@@ -142,11 +144,11 @@ test("a stale configuration write is refused rather than overwriting somebody el
   page,
   request
 }) => {
-  await resetWorkspaceConfiguration(request);
+  await resetWorkspaceConfig(request);
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto(WORKSPACES_URL);
 
-  const before = await readWorkspaceConfiguration(request);
+  const before = await readWorkspaceConfig(request);
 
   // Somebody else writes while this page is open, so the page holds a
   // revision the Runtime has already moved past.
@@ -166,7 +168,7 @@ test("a stale configuration write is refused rather than overwriting somebody el
   await expect(notice).toContainText("changed after the control was filled");
 
   // And nothing was written: the configuration is the one the Runtime held.
-  const after = await readWorkspaceConfiguration(request);
+  const after = await readWorkspaceConfig(request);
   expect(after.enabled).toBe(before.enabled);
   expect(after.revision).not.toBe(before.revision);
 });
@@ -175,11 +177,11 @@ test("the workspace detail writes through the same control as the row", async ({
   page,
   request
 }) => {
-  await resetWorkspaceConfiguration(request);
+  await resetWorkspaceConfig(request);
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto(WORKSPACE_DETAIL_URL);
 
-  const control = configurationControl(page);
+  const control = configControl(page);
   await expect(control).toHaveCount(1);
   const enablement = enablementControl(page);
   await expect(enablement).toHaveValue("true");
@@ -187,6 +189,6 @@ test("the workspace detail writes through the same control as the row", async ({
   await enablement.selectOption("false");
 
   await expect
-    .poll(async () => (await readWorkspaceConfiguration(request)).enabled)
+    .poll(async () => (await readWorkspaceConfig(request)).enabled)
     .toBe(false);
 });

@@ -1,16 +1,16 @@
 "use client";
 
 /**
- * Workspace-scoped live batch monitoring.
- *
- * Every rendered status came from a read of the typed run owner. An unreadable
- * read is shown as an explicit unavailable state with the last known frames
- * still visible but clearly marked as not current — never as a live reading.
- * Progress is announced politely and never steals focus.
- *
- * Written with `React.createElement` in a `.ts` module so the render suite can
- * exercise it directly, matching the other Playtesting views.
- */
+Workspace-scoped live batch monitoring.
+
+Every rendered status came from a read of the typed run owner. An unreadable
+read is shown as an explicit unavailable state with the last known frames
+still visible but clearly marked as not current — never as a live reading.
+Progress is announced politely and never steals focus.
+
+Written with `React.createElement` in a `.ts` module so the render suite can
+exercise it directly, matching the other Playtesting views.
+*/
 import React from "react";
 
 import { Button } from "../../../components/forms/Button.ts";
@@ -61,12 +61,12 @@ const FRESHNESS_NOTICE: Readonly<
 };
 
 /**
- * Reads one owner count by its contract key.
- *
- * The key type is the owner's, so a tile cannot be pointed at a field the
- * Runtime never writes — the four this panel originally read did exactly that
- * and every one of them rendered "not observed" for the life of the feature.
- */
+Reads one owner count by its contract key.
+
+The key type is the owner's, so a tile cannot be pointed at a field the
+Runtime never writes — the four this panel originally read did exactly that
+and every one of them rendered "not observed" for the life of the feature.
+*/
 function formatElapsed(durationMs: number): string {
   const totalSeconds = Math.floor(durationMs / 1000);
   const hours = Math.floor(totalSeconds / 3600);
@@ -175,8 +175,9 @@ function runProgress(
           )
         )
       : null,
-    outcomes !== null || !isTerminal(run.record)
-      ? React.createElement(
+    outcomes === null && isTerminal(run.record)
+      ? null
+      : React.createElement(
           "details",
           {
             open: !isTerminal(run.record),
@@ -197,7 +198,6 @@ function runProgress(
             live: !isTerminal(run.record)
           })
         )
-      : null
   );
 }
 
@@ -213,10 +213,10 @@ function runRow(
   busyBatchId: string | null
 ): React.JSX.Element {
   const terminal = isTerminal(run.record);
-  const focused = focusedBatchId === run.batchId;
+  const isFocused = focusedBatchId === run.batchId;
   // While the read is failing, a row must not badge its last-known state as if
   // it were current. It is labelled as last known and carries a stale flag.
-  const stale = freshness === "unavailable";
+  const isStale = freshness === "unavailable";
   const buttons: React.JSX.Element[] = [
     React.createElement(
       Button,
@@ -224,10 +224,10 @@ function runRow(
         key: "focus",
         variant: "secondary",
         size: "compact",
-        ariaExpanded: focused,
-        onClick: () => onFocusBatch(focused ? null : run.batchId)
+        ariaExpanded: isFocused,
+        onClick: () => onFocusBatch(isFocused ? null : run.batchId)
       },
-      focused ? "Hide progress" : "Show progress"
+      isFocused ? "Hide progress" : "Show progress"
     )
   ];
   if (onCancel && !terminal) {
@@ -254,8 +254,8 @@ function runRow(
       "data-batch-id": run.batchId,
       "data-status": run.record.status,
       "data-terminal": terminal ? "true" : "false",
-      "data-stale": stale ? "true" : "false",
-      "data-focused": focused ? "true" : "false"
+      "data-stale": isStale ? "true" : "false",
+      "data-focused": isFocused ? "true" : "false"
     },
     React.createElement(
       "div",
@@ -263,7 +263,7 @@ function runRow(
       React.createElement(
         "div",
         { className: "flex items-center gap-2" },
-        stale
+        isStale
           ? React.createElement(
               "span",
               {
@@ -306,7 +306,7 @@ function runRow(
           `Runtime reported: ${run.record.error.message}`
         )
       : null,
-    focused
+    isFocused
       ? React.createElement(
           "div",
           { className: "mt-3" },
@@ -316,14 +316,16 @@ function runRow(
   );
 }
 
-interface PlaytestingActiveRunsPanelProps {
+interface PlaytestingActiveRunsPanelProperties {
   readonly scope: PlaytestingScope;
   readonly runs: readonly PlaytestingActiveRun[];
   readonly freshness: PlaytestingActiveRunsFreshness;
   readonly lastFailure: string | null;
   readonly watching: boolean;
   readonly onRefresh: () => void;
-  /** Focused batch, shared through the URL so refresh and Back survive. */
+  /**
+  Focused batch, shared through the URL so refresh and Back survive.
+  */
   readonly focusedBatchId: string | null;
   readonly wallTimeMs?: number | null | undefined;
   readonly showEmptyState?: boolean | undefined;
@@ -347,7 +349,7 @@ export function PlaytestingActiveRunsPanel({
   onCancel,
   cancelUnavailableReason = null,
   busyBatchId
-}: PlaytestingActiveRunsPanelProps): React.JSX.Element {
+}: PlaytestingActiveRunsPanelProperties): React.JSX.Element {
   const workspaceId = scope.workspaceId;
   const notice = FRESHNESS_NOTICE[freshness];
   const nonterminal = runs.filter((run) => !isTerminal(run.record));

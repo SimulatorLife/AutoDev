@@ -13,22 +13,22 @@ import {
 } from "../src/components/ui/text-classes.ts";
 
 /**
- * WCAG 2.5.8 Target Size (Minimum), AA.
- *
- * These pin the two halves of the fix rather than the class name alone.
- *
- * The floor is 24x24, and `min-h-6` is 1.5rem, which is 24px at Tailwind's
- * default -- but `min-height` does not apply to a non-replaced inline box, so
- * a link that merely carried `min-h-6` while staying `display: inline` would
- * measure the same 22px as before and look fixed in the source. The `block`
- * assertion is what stops that.
- *
- * The other half is that only targets get the floor. `MONO_ID_CLASS` is also the
- * row subject on `/permissions` and `/workspaces`, where it is not a link, and
- * `Chip` without an href is a span. Putting the minimum on either would add two
- * pixels to every non-interactive element of that kind on every page to fix
- * nothing, so those two are asserted to stay clean.
- */
+WCAG 2.5.8 Target Size (Minimum), AA.
+
+These pin the two halves of the fix rather than the class name alone.
+
+The floor is 24x24, and `min-h-6` is 1.5rem, which is 24px at Tailwind's
+default -- but `min-height` does not apply to a non-replaced inline box, so
+a link that merely carried `min-h-6` while staying `display: inline` would
+measure the same 22px as before and look fixed in the source. The `block`
+assertion is what stops that.
+
+The other half is that only targets get the floor. `MONO_ID_CLASS` is also the
+row subject on `/permissions` and `/workspaces`, where it is not a link, and
+`Chip` without an href is a span. Putting the minimum on either would add two
+pixels to every non-interactive element of that kind on every page to fix
+nothing, so those two are asserted to stay clean.
+*/
 
 test("a link chip is a block box with a 24px minimum", () => {
   const markup = renderToStaticMarkup(
@@ -94,17 +94,17 @@ test("the minimum resolves to the 24px the criterion asks for", () => {
 });
 
 /**
- * The state pill is a button, and the floor applies to it.
- *
- * The link chips and the shared name-link class were brought up to 24px, and the
- * state-coloured button was left where it was: `text-xs` on a 16px line, plus
- * `py-0.5` and the border, is 22px. That is the control that enables and
- * disables an agent role, and it is the smallest target on the Agents page.
- *
- * It is the third case the criterion names, and it is not the inline one: a
- * button is an inline-block box, so `min-height` applies to it and the floor is
- * real rather than decorative.
- */
+The state pill is a button, and the floor applies to it.
+
+The link chips and the shared name-link class were brought up to 24px, and the
+state-coloured button was left where it was: `text-xs` on a 16px line, plus
+`py-0.5` and the border, is 22px. That is the control that enables and
+disables an agent role, and it is the smallest target on the Agents page.
+
+It is the third case the criterion names, and it is not the inline one: a
+button is an inline-block box, so `min-height` applies to it and the floor is
+real rather than decorative.
+*/
 test("the state-coloured button meets the 24px floor", () => {
   assert.match(
     STATE_PILL_BUTTON_CLASS,

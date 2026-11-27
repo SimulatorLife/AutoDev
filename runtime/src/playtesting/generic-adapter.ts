@@ -1,19 +1,19 @@
 /**
- * Generic adapter runtime.
- *
- * Binds the game-adapter protocol to a game from its declared bindings, so the
- * game supplies its own functions instead of implementing thirteen protocol
- * methods. Three things this owns that a hand-written adapter got wrong or
- * repeated:
- *
- * - The capability advertisement's schema digests are computed from the game's
- *   own declared schemas rather than written into the file. A hand-maintained
- *   digest silently mismatches when a schema is edited.
- * - An unbound protocol method is refused by name. Answering from a default
- *   would hand the analyst an observation no game produced.
- * - Method dispatch is normalized in one place, so the revision and event
- *   bookkeeping the protocol expects is applied identically for every method.
- */
+Generic adapter runtime.
+
+Binds the game-adapter protocol to a game from its declared bindings, so the
+game supplies its own functions instead of implementing thirteen protocol
+methods. Three things this owns that a hand-written adapter got wrong or
+repeated:
+
+- The capability advertisement's schema digests are computed from the game's
+  own declared schemas rather than written into the file. A hand-maintained
+  digest silently mismatches when a schema is edited.
+- An unbound protocol method is refused by name. Answering from a default
+  would hand the analyst an observation no game produced.
+- Method dispatch is normalized in one place, so the revision and event
+  bookkeeping the protocol expects is applied identically for every method.
+*/
 import {
   type PlaytestAdapterBinding,
   type PlaytestBindableMethod,
@@ -44,15 +44,15 @@ export class GenericAdapterError extends Error {
 }
 
 /**
- * The game object the entry factory produced. Its shape is the game's; this
- * runtime only reaches it through declared references.
- */
+The game object the entry factory produced. Its shape is the game's; this
+runtime only reaches it through declared references.
+*/
 type BoundGame = Readonly<Record<string, unknown>>;
 
 /**
- * Injected so the binding resolves inside the integration directory and a test
- * can supply a game without a filesystem.
- */
+Injected so the binding resolves inside the integration directory and a test
+can supply a game without a filesystem.
+*/
 type AdapterEntryLoader = (input: {
   readonly entry: string;
   readonly factory: string;
@@ -64,14 +64,18 @@ export interface GenericAdapterOptions {
   readonly engineBuild: string;
   readonly modes: readonly string[];
   readonly scenarioIds: readonly string[];
-  /** The game's own declared schemas, not AutoDev's. */
+  /**
+  The game's own declared schemas, not AutoDev's.
+  */
   readonly observationSchema: PlaytestJsonSchema;
   readonly actionSchema: PlaytestJsonSchema;
   readonly eventSchema: PlaytestJsonSchema;
   readonly quotas?: PlaytestCapabilityAdvertisement["quotas"];
 }
 
-/** Protocol method name for a declared binding, e.g. `legalActions` -> `game.legalActions`. */
+/**
+Protocol method name for a declared binding, e.g. `legalActions` -> `game.legalActions`.
+*/
 export function protocolMethodFor(method: PlaytestBindableMethod): string {
   return `game.${method}`;
 }
@@ -99,9 +103,9 @@ function entryClose(game: BoundGame): () => Promise<void> {
 }
 
 /**
- * The capability advertisement, with every digest derived from the game's own
- * schemas. A game declares schemas; it does not declare their hashes.
- */
+The capability advertisement, with every digest derived from the game's own
+schemas. A game declares schemas; it does not declare their hashes.
+*/
 function buildCapabilityAdvertisement(
   options: GenericAdapterOptions,
   bound: PlaytestAdapterBinding
@@ -162,22 +166,26 @@ function buildCapabilityAdvertisement(
 export interface GenericAdapter {
   readonly binding: PlaytestAdapterBinding;
   readonly capabilities: PlaytestCapabilityAdvertisement;
-  /** Dispatch one protocol method to the game's bound function. */
+  /**
+  Dispatch one protocol method to the game's bound function.
+  */
   invoke(
     method: PlaytestBindableMethod,
-    params: Readonly<Record<string, unknown>>
+    parameters: Readonly<Record<string, unknown>>
   ): Promise<unknown>;
-  /** Release engine resources opened by the game's entry factory. */
+  /**
+  Release engine resources opened by the game's entry factory.
+  */
   close(): Promise<void>;
 }
 
 /**
- * Build a bound adapter from its declarations.
- *
- * Refuses an unusable binding before loading anything, so a game with a broken
- * declaration is told which method is missing rather than seeing a transport
- * error from a module that never ran.
- */
+Build a bound adapter from its declarations.
+
+Refuses an unusable binding before loading anything, so a game with a broken
+declaration is told which method is missing rather than seeing a transport
+error from a module that never ran.
+*/
 export async function createGenericAdapter(
   options: GenericAdapterOptions
 ): Promise<GenericAdapter> {
@@ -207,7 +215,7 @@ export async function createGenericAdapter(
 
   const resolve = (
     method: PlaytestBindableMethod
-  ): ((params: Readonly<Record<string, unknown>>) => unknown) | null => {
+  ): ((parameters: Readonly<Record<string, unknown>>) => unknown) | null => {
     const reference = binding.bindings[method];
     if (reference === undefined) return null;
     let current: unknown = game;
@@ -216,7 +224,7 @@ export async function createGenericAdapter(
       current = (current as Record<string, unknown>)[segment];
     }
     return typeof current === "function"
-      ? (current as (params: Readonly<Record<string, unknown>>) => unknown)
+      ? (current as (parameters: Readonly<Record<string, unknown>>) => unknown)
       : null;
   };
 
@@ -236,7 +244,7 @@ export async function createGenericAdapter(
       binding,
       capabilities: buildCapabilityAdvertisement(options, binding),
       close: closeGame,
-      invoke: async (method, params) => {
+      invoke: async (method, parameters) => {
         const target = resolve(method);
         if (target === null) {
           throw new GenericAdapterError(
@@ -245,7 +253,7 @@ export async function createGenericAdapter(
           );
         }
         try {
-          return await target(params);
+          return await target(parameters);
         } catch (error) {
           if (error instanceof GenericAdapterError) throw error;
           throw new GenericAdapterError(

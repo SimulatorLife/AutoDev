@@ -1,11 +1,11 @@
 /**
- * Reconcile Runtime-owned packet artifacts with durable Data batch receipts.
- *
- * The filesystem and ClickHouse do not share a transaction. Packet references
- * remain pending until the terminal batch revision commits; this reconciler
- * finalizes committed markers or removes old, unreferenced packets. A live
- * batch or an unavailable/corrupt Data read always preserves the artifact.
- */
+Reconcile Runtime-owned packet artifacts with durable Data batch receipts.
+
+The filesystem and ClickHouse do not share a transaction. Packet references
+remain pending until the terminal batch revision commits; this reconciler
+finalizes committed markers or removes old, unreferenced packets. A live
+batch or an unavailable/corrupt Data read always preserves the artifact.
+*/
 import {
   type PlaytestArtifactReference,
   PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE
@@ -15,7 +15,9 @@ import type { PlaytestBatchArtifactState } from "@simulatorlife/autodev-data/pla
 import { mapConcurrentOrdered } from "../shared/map-concurrent-ordered.ts";
 import type { PlaytestArtifactStore } from "./artifact-store.ts";
 
-/** Approved playtest runs are capped at one hour; grace covers final persistence. */
+/**
+Approved playtest runs are capped at one hour; grace covers final persistence.
+*/
 export const PLAYTEST_PACKET_PENDING_GRACE_MS = 2 * 60 * 60 * 1000;
 const PLAYTEST_PACKET_PENDING_SCAN_LIMIT = 10_000;
 const PLAYTEST_PACKET_PENDING_BATCH_LIMIT = 64;
@@ -111,7 +113,7 @@ function reconcileBatchPackets(input: {
       retained: input.packets.length
     };
   }
-  const active =
+  const isActive =
     input.state.latestStatus === "queued" ||
     input.state.latestStatus === "running";
   let committed = 0;
@@ -134,7 +136,7 @@ function reconcileBatchPackets(input: {
       }
       continue;
     }
-    if (active) {
+    if (isActive) {
       retained += 1;
       continue;
     }
@@ -149,10 +151,10 @@ function reconcileBatchPackets(input: {
 }
 
 /**
- * Finalize pending packet markers and reclaim stale packet artifacts that have
- * no durable receipt. The operation is idempotent and safe to repeat at MCP
- * startup after a process or storage failure.
- */
+Finalize pending packet markers and reclaim stale packet artifacts that have
+no durable receipt. The operation is idempotent and safe to repeat at MCP
+startup after a process or storage failure.
+*/
 export async function reconcilePendingPlaytestPackets(input: {
   readonly workspaceId: string;
   readonly artifacts: PlaytestArtifactStore;

@@ -61,7 +61,7 @@ test("a query ignores case, because a command is typed in lower case", () => {
 
 test("an empty query is the whole catalog", () => {
   assert.equal(filterPrompts(CATALOG, "").length, CATALOG.length);
-  assert.equal(filterPrompts(CATALOG, "   ").length, CATALOG.length);
+  assert.equal(filterPrompts(CATALOG, ' '.repeat(3)).length, CATALOG.length);
 });
 
 test("the list reads its query back from the address", () => {

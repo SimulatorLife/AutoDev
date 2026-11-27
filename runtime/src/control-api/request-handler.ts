@@ -5,11 +5,11 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 import { SpanStatusCode } from "@opentelemetry/api";
-import { execa } from "execa";
 import {
   buildReconciliationView,
   CHATGPT_TUNNEL_CONTROL_PATH,
   CONTROL_API_CONTRACT,
+  CONTROL_API_PROVIDER_MODEL_DISCOVERY_SCHEMA_ID,
   CONTROL_API_REVISION_PATTERN,
   type ControlApiAgentDetailResponse,
   type ControlApiAgentEnablementPatchResponse,
@@ -24,11 +24,11 @@ import {
   type ControlApiLiveSessions,
   type ControlApiMcpAppliedServer,
   type ControlApiMcpDeclaredServer,
+  type ControlApiMcpGateway,
   type ControlApiMcpRuntimeHealth,
   type ControlApiMcpRuntimeHealthCounts,
   type ControlApiMcpRuntimeServer,
   type ControlApiMcpServerPatchResponse,
-  type ControlApiMcpGateway,
   type ControlApiMcpsResponse,
   type ControlApiModelPatchResponse,
   type ControlApiModelsResponse,
@@ -44,7 +44,6 @@ import {
   type ControlApiProviderHealth,
   type ControlApiProviderLimitsPatchResponse,
   type ControlApiProviderModelDiscovery,
-  CONTROL_API_PROVIDER_MODEL_DISCOVERY_SCHEMA_ID,
   type ControlApiProviderModelsResponse,
   type ControlApiProviderRecord,
   type ControlApiProviderRoleAssignment,
@@ -124,8 +123,8 @@ import {
   installedSkillMatches,
   materializeCurrentMcpConfiguration,
   MCP_GATEWAY_LABEL,
-  type McpGatewayState,
   mcpGatewayRoleSurfaceUrl,
+  type McpGatewayState,
   mcpGatewaySurfaceStatus,
   publishedCommandCatalogueApproval,
   readMcpGatewayState,
@@ -148,6 +147,7 @@ import {
   WEB_FETCH_TOOL,
   WEB_SEARCH_TOOL
 } from "@simulatorlife/autodev-runtime/shared/tool-names";
+import { execa } from "execa";
 import type { QuotaAxiResponse } from "quota-axi";
 
 import type { PlaytestRunControl } from "../playtesting/run-control.ts";
@@ -179,13 +179,13 @@ import { handleWorkspaceVisualPlaytestTargetRequest } from "./workspace-visual-p
 export type { GithubWorkflowsViewOptions } from "./github.ts";
 
 /**
- * The session-diagnostics routes, as the dispatcher calls them.
- *
- * The diagnostics family owns its own routes; the dispatcher owns the routing
- * table. The registration is how a family joins that table without the
- * dispatcher importing every family -- the dispatcher's own dependency
- * ceiling is what forces the arrangement.
- */
+The session-diagnostics routes, as the dispatcher calls them.
+
+The diagnostics family owns its own routes; the dispatcher owns the routing
+table. The registration is how a family joins that table without the
+dispatcher importing every family -- the dispatcher's own dependency
+ceiling is what forces the arrangement.
+*/
 export type ControlApiDiagnosticsHandler = (
   request: IncomingMessage,
   response: ServerResponse,
@@ -196,14 +196,18 @@ export type ControlApiDiagnosticsHandler = (
 
 let diagnosticsHandler: ControlApiDiagnosticsHandler | null = null;
 
-/** Register the Control API's session-diagnostics routes. */
+/**
+Register the Control API's session-diagnostics routes.
+*/
 export function setControlApiDiagnosticsHandler(
   handler: ControlApiDiagnosticsHandler | null
 ): void {
   diagnosticsHandler = handler;
 }
 
-/** Answer a diagnostics request, when the family is registered. */
+/**
+Answer a diagnostics request, when the family is registered.
+*/
 function respondDiagnosticsRoute(
   request: IncomingMessage,
   response: ServerResponse,
@@ -292,16 +296,18 @@ interface CachedModelCatalog {
 const MODEL_CATALOG_CACHE = new Map<string, CachedModelCatalog>();
 
 /**
- * The reasoning level a catalog entry defaults to, or `null` when it declares
- * none. A catalog is untrusted JSON, so every field is read as `unknown`.
- */
+The reasoning level a catalog entry defaults to, or `null` when it declares
+none. A catalog is untrusted JSON, so every field is read as `unknown`.
+*/
 function catalogDefaultReasoningLevel(entry: object): string | null {
   const raw = (entry as { default_reasoning_level?: unknown })
     .default_reasoning_level;
   return typeof raw === "string" ? raw : null;
 }
 
-/** The reasoning levels a catalog entry supports, in the order it lists them. */
+/**
+The reasoning levels a catalog entry supports, in the order it lists them.
+*/
 function catalogSupportedReasoningLevels(entry: object): readonly string[] {
   const raw = (entry as { supported_reasoning_levels?: unknown })
     .supported_reasoning_levels;
@@ -319,7 +325,9 @@ function catalogSupportedReasoningLevels(entry: object): readonly string[] {
   return levels;
 }
 
-/** The display name a catalog entry declares, or `null` when it declares none. */
+/**
+The display name a catalog entry declares, or `null` when it declares none.
+*/
 function catalogDisplayName(entry: object): string | null {
   const raw = (entry as { display_name?: unknown }).display_name;
   return typeof raw === "string" ? raw : null;
@@ -363,10 +371,10 @@ function loadModelCatalogData(catalogPath: string): CachedModelCatalog {
 }
 
 /**
- * The reasoning levels one catalog declares, or an empty map when the catalog
- * is absent or unreadable. An absent catalog leaves the levels unobserved,
- * which is not the same statement as "this model supports no effort".
- */
+The reasoning levels one catalog declares, or an empty map when the catalog
+is absent or unreadable. An absent catalog leaves the levels unobserved,
+which is not the same statement as "this model supports no effort".
+*/
 function catalogReasoningLevels(
   catalogPath: string
 ): Map<string, ModelCatalogReasoningInfo> {
@@ -379,20 +387,20 @@ function catalogReasoningLevels(
 }
 
 /**
- * The reasoning levels a provider's models declare, read from the catalogs that
- * own them.
- *
- * A provider's own catalog (`config/catalogs/<provider>-model-catalog.json`) is
- * the authority for that provider's models, and the generated Codex catalog
- * carries the models the Codex profile routes. The provider's catalog is read
- * last, so it wins for the models it declares even when the generated catalog
- * is stale.
- *
- * A model no catalog declares is absent from the map. That is the difference
- * this distinction buys: an absent model has *unobserved* levels, so the
- * Runtime cannot say it supports no effort, only that no catalog states which
- * efforts it supports.
- */
+The reasoning levels a provider's models declare, read from the catalogs that
+own them.
+
+A provider's own catalog (`config/catalogs/<provider>-model-catalog.json`) is
+the authority for that provider's models, and the generated Codex catalog
+carries the models the Codex profile routes. The provider's catalog is read
+last, so it wins for the models it declares even when the generated catalog
+is stale.
+
+A model no catalog declares is absent from the map. That is the difference
+this distinction buys: an absent model has *unobserved* levels, so the
+Runtime cannot say it supports no effort, only that no catalog states which
+efforts it supports.
+*/
 function providerReasoningLevels(
   provider: string,
   repositoryRoot: string = DEFAULT_REPO_ROOT
@@ -411,10 +419,10 @@ function providerReasoningLevels(
 }
 
 /**
- * Whether a submitted agent limit is usable. `null` is Unlimited; any other
- * value must be an integer of at least one, so a zero, a fraction, a string or
- * a non-finite number cannot become an active limit.
- */
+Whether a submitted agent limit is usable. `null` is Unlimited; any other
+value must be an integer of at least one, so a zero, a fraction, a string or
+a non-finite number cannot become an active limit.
+*/
 function isAgentLimitBody(value: unknown): boolean {
   return (
     value === null ||
@@ -430,25 +438,25 @@ const PROMPT_DETAIL_PATH = /^\/control\/prompts\/([a-zA-Z0-9._-]+)$/u;
 const MCP_SERVER_PATH =
   /^\/control\/mcps\/([A-Za-z0-9][A-Za-z0-9._-]{0,127})$/u;
 /**
- * One workspace's own configuration route.
- *
- * The owner and the repository are separate segments, because a workspace is
- * an `owner/repository` pair and the route has to name it the way the Console
- * names it. A percent-encoded slash inside one segment would be a different
- * key from the pair the catalog is indexed by.
- */
+One workspace's own configuration route.
+
+The owner and the repository are separate segments, because a workspace is
+an `owner/repository` pair and the route has to name it the way the Console
+names it. A percent-encoded slash inside one segment would be a different
+key from the pair the catalog is indexed by.
+*/
 const WORKSPACE_DETAIL_PATH = /^\/control\/workspaces\/([^/\s]+)\/([^/\s]+)$/u;
 const SKILL_CONTENT_PATH = /^\/control\/skills\/([a-z0-9-]{1,64})\/content$/u;
 const routerStateMutationTails = new Map<string, Promise<void>>();
 
 /**
- * Shared serialization key for every Control API mutation that persists the
- * Runtime's shared router state (provider role, provider enabled, provider
- * limits, model enabled, agent enablement, runtime concurrency, and the
- * providers reset). A single key rather than one per resource, because reset
- * spans multiple provider settings and must not interleave with a mutation
- * whose failure rollback could otherwise overwrite part of that state.
- */
+Shared serialization key for every Control API mutation that persists the
+Runtime's shared router state (provider role, provider enabled, provider
+limits, model enabled, agent enablement, runtime concurrency, and the
+providers reset). A single key rather than one per resource, because reset
+spans multiple provider settings and must not interleave with a mutation
+whose failure rollback could otherwise overwrite part of that state.
+*/
 const ROUTER_STATE_MUTATION_KEY = "router-state";
 
 async function serializeRouterStateMutation<T>(
@@ -473,12 +481,12 @@ async function serializeRouterStateMutation<T>(
 }
 
 /**
- * The contract's digest, read without throwing.
- *
- * A contract that cannot be read is reported as `null` rather than as a
- * revision: the assignment view must still render, and it has to be able to say
- * that the revision is unavailable instead of refusing to draw.
- */
+The contract's digest, read without throwing.
+
+A contract that cannot be read is reported as `null` rather than as a
+revision: the assignment view must still render, and it has to be able to say
+that the revision is unavailable instead of refusing to draw.
+*/
 function readContract(file: string): string {
   try {
     return readFileSync(file, "utf8");
@@ -494,45 +502,51 @@ const EXECUTION_CONTRACT_SOURCE = "execution-contract" as const;
 const MD_EXTENSION_PATTERN = /\.md$/u;
 const CONTROL_VARY_HEADER = "Authorization, X-AutoDev-Actor";
 /**
- * The audit reason for a request whose method the route does not accept.
- *
- * Named because it is one reason and it is written in one place: a reason
- * spelled out at every call site is a reason the audit log can spell two
- * ways.
- */
+The audit reason for a request whose method the route does not accept.
+
+Named because it is one reason and it is written in one place: a reason
+spelled out at every call site is a reason the audit log can spell two
+ways.
+*/
 const AUDIT_REASON_METHOD_NOT_ALLOWED = "method_not_allowed";
 /**
- * The methods a route that is read and written allows.
- *
- * Named because it is one answer -- what a route allows -- and it is written
- * in four places.
- */
+The methods a route that is read and written allows.
+
+Named because it is one answer -- what a route allows -- and it is written
+in four places.
+*/
 const ALLOWED_METHODS_READ_AND_PATCH = "GET, PATCH";
 /**
- * Where the MCP runtime observations come from.
- *
- * Named so the reader can tell an observation apart from a declaration: the
- * MCP catalog's source is `.rulesync/mcp.jsonc`, and this is the Runtime's own
- * telemetry of the servers it has seen.
- */
+Where the MCP runtime observations come from.
+
+Named so the reader can tell an observation apart from a declaration: the
+MCP catalog's source is `.rulesync/mcp.jsonc`, and this is the Runtime's own
+telemetry of the servers it has seen.
+*/
 const MCP_RUNTIME_EVIDENCE_SOURCE = "runtime.telemetry";
 
 export type ControlApiRole = "viewer" | "operator";
 
-/** Trusted host options for isolated Control API integration tests. */
+/**
+Trusted host options for isolated Control API integration tests.
+*/
 export interface ControlApiRequestOptions {
   readonly repositoryRoot?: string;
   readonly codexHome?: string;
   /**
-   * The user's home directory, which is where the runtime's skills are
-   * installed. The host owns it; a request never chooses it.
-   */
+  The user's home directory, which is where the runtime's skills are
+  installed. The host owns it; a request never chooses it.
+  */
   readonly home?: string;
-  /** Test seams for Data-owned readers; never supplied by a request. */
+  /**
+  Test seams for Data-owned readers; never supplied by a request.
+  */
   readonly playtestingRepository?: PlaytestingControlRepository;
   readonly playtestingHumanStudyRepository?: PlaytestingHumanStudyRepository;
   readonly restrictedHumanResponseRepository?: RestrictedHumanResponseRepository;
-  /** Must be the same Runtime run-control instance exposed by the MCP facade. */
+  /**
+  Must be the same Runtime run-control instance exposed by the MCP facade.
+  */
   readonly playtestingRunControl?: PlaytestRunControl;
   readonly workspacePlaytestApprovalRepository?: WorkspacePlaytestApprovalRepository;
   readonly workspaceVisualPlaytestTargetRepository?: WorkspaceVisualPlaytestTargetRepository;
@@ -541,7 +555,9 @@ export interface ControlApiRequestOptions {
 export interface ControlApiActor {
   actor: string;
   role: ControlApiRole;
-  /** Private Playtesting credential; its route and bound role are enforced. */
+  /**
+  Private Playtesting credential; its route and bound role are enforced.
+  */
   readonly playtestingService?: true;
   readonly playtestingServiceRole?:
     "playtester" | "validator" | "root" | "operator";
@@ -573,11 +589,11 @@ function actorSet(value: string | undefined): Set<string> {
 }
 
 export function getControlApiAvailability(
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): ControlApiAvailability {
-  const serviceToken = env.AUTODEV_CONTROL_API_TOKEN?.trim() ?? "";
-  const viewers = actorSet(env.AUTODEV_CONTROL_VIEWERS);
-  const operators = actorSet(env.AUTODEV_CONTROL_OPERATORS);
+  const serviceToken = environment.AUTODEV_CONTROL_API_TOKEN?.trim() ?? "";
+  const viewers = actorSet(environment.AUTODEV_CONTROL_VIEWERS);
+  const operators = actorSet(environment.AUTODEV_CONTROL_OPERATORS);
   if (!serviceToken) {
     return {
       enabled: false,
@@ -703,7 +719,7 @@ function auditMutation(record: {
   observedGeneration?: string | null;
   restartRequired?: boolean;
 }): void {
-  const restartRequired = record.restartRequired === true;
+  const isRestartRequired = record.restartRequired === true;
   const event: Record<string, unknown> = {
     schema: "autodev-control-api-audit-v1",
     timestamp: new Date().toISOString(),
@@ -717,7 +733,7 @@ function auditMutation(record: {
     changes: record.changes,
     desiredGeneration: record.desiredGeneration ?? null,
     observedGeneration: record.observedGeneration ?? null,
-    restartRequired
+    restartRequired: isRestartRequired
   };
   if (record.reason) event.reason = record.reason;
   writeErrorLine(JSON.stringify(event));
@@ -726,11 +742,11 @@ function auditMutation(record: {
 }
 
 /**
- * Bounded, in-memory ring of recent audit envelopes. The Runtime keeps the
- * most recent 32 entries so the Control API GET responses can surface a
- * bounded operation history on the Console without touching the stderr
- * audit sink or duplicating the audit storage. Newest entries come first.
- */
+Bounded, in-memory ring of recent audit envelopes. The Runtime keeps the
+most recent 32 entries so the Control API GET responses can surface a
+bounded operation history on the Console without touching the stderr
+audit sink or duplicating the audit storage. Newest entries come first.
+*/
 const OPERATION_HISTORY_BUFFER = 32;
 const auditHistory: Record<string, unknown>[] = [];
 
@@ -742,11 +758,11 @@ function recordAuditEnvelope(event: Record<string, unknown>): void {
 }
 
 /**
- * Returns the bounded operation history filtered by the supplied resource
- * prefix. Callers pass the canonical resource path (`/control/...` or the
- * resource id) and the runtime returns only envelopes whose `resource`
- * field matches.
- */
+Returns the bounded operation history filtered by the supplied resource
+prefix. Callers pass the canonical resource path (`/control/...` or the
+resource id) and the runtime returns only envelopes whose `resource`
+field matches.
+*/
 export function getOperationHistory(
   resourceFilter?: string | null
 ): readonly Record<string, unknown>[] {
@@ -759,7 +775,9 @@ export function getOperationHistory(
   );
 }
 
-/** Test-only escape hatch: clears the in-memory audit ring. */
+/**
+Test-only escape hatch: clears the in-memory audit ring.
+*/
 export function resetOperationHistoryForTests(): void {
   auditHistory.length = 0;
 }
@@ -781,36 +799,42 @@ function sendControlError(
   );
 }
 
-/** Live router evidence keyed by provider id. */
+/**
+Live router evidence keyed by provider id.
+*/
 export type ControlApiProviderHealthSource = (
   now: number
 ) => Readonly<Record<string, ControlApiProviderHealth>>;
 
 /**
- * Runs an operator-requested check of one provider and answers with what it
- * found. The router registers it; without one there is nothing to check with.
- */
+Runs an operator-requested check of one provider and answers with what it
+found. The router registers it; without one there is nothing to check with.
+*/
 export type ControlApiProviderCheckSource = (
   provider: string
 ) => Promise<ControlApiProviderCheckResponse>;
 
-/** Canonical Runtime activity source for the read-only live-count projection. */
+/**
+Canonical Runtime activity source for the read-only live-count projection.
+*/
 export type ControlApiLiveAgentCountsSource = (
   now: number
 ) => ControlApiLiveAgentCounts;
 
-/** Canonical session identities derived from the same live activity source. */
+/**
+Canonical session identities derived from the same live activity source.
+*/
 export type ControlApiLiveSessionsSource = (
   now: number
 ) => ControlApiLiveSessions;
 
 /**
- * The Runtime's observation of the MCP servers it has seen.
- *
- * Registered by the router, like the live agent counts: a Control API that
- * runs without a router has no live evidence to publish, and it says so
- * rather than reporting an empty observation as a fact.
- */
+The Runtime's observation of the MCP servers it has seen.
+
+Registered by the router, like the live agent counts: a Control API that
+runs without a router has no live evidence to publish, and it says so
+rather than reporting an empty observation as a fact.
+*/
 export type ControlApiMcpObservationsSource =
   () => readonly ControlApiMcpRuntimeServer[];
 
@@ -818,7 +842,9 @@ let providerHealthSource: ControlApiProviderHealthSource | null = null;
 let providerCheckSource: ControlApiProviderCheckSource | null = null;
 let providerQuotaAxiSource: (() => QuotaAxiResponse | null) | null = null;
 
-/** The router registers its provider check here; a standalone Control API has none. */
+/**
+The router registers its provider check here; a standalone Control API has none.
+*/
 export function setControlApiProviderCheckSource(
   source: ControlApiProviderCheckSource | null
 ): void {
@@ -831,17 +857,19 @@ let providerModelDiscoverySource:
   (() => ControlApiProviderModelsResponse) | null = null;
 
 /**
- * The router registers its live per-provider evidence here. Without a
- * registered source (for example a standalone Control API in tests) provider
- * health is reported as unobserved rather than healthy.
- */
+The router registers its live per-provider evidence here. Without a
+registered source (for example a standalone Control API in tests) provider
+health is reported as unobserved rather than healthy.
+*/
 export function setControlApiProviderHealthSource(
   source: ControlApiProviderHealthSource | null
 ): void {
   providerHealthSource = source;
 }
 
-/** Publish quota-axi's report without reshaping its provider-owned fields. */
+/**
+Publish quota-axi's report without reshaping its provider-owned fields.
+*/
 export function setControlApiProviderQuotaAxiSource(
   source: (() => QuotaAxiResponse | null) | null
 ): void {
@@ -849,16 +877,18 @@ export function setControlApiProviderQuotaAxiSource(
 }
 
 /**
- * The router registers its live activity projection here. A standalone Control
- * API has no live evidence and reports `null` rather than an observed zero.
- */
+The router registers its live activity projection here. A standalone Control
+API has no live evidence and reports `null` rather than an observed zero.
+*/
 export function setControlApiLiveAgentCountsSource(
   source: ControlApiLiveAgentCountsSource | null
 ): void {
   liveAgentCountsSource = source;
 }
 
-/** Register the source-confirmed, bounded live-session projection. */
+/**
+Register the source-confirmed, bounded live-session projection.
+*/
 export function setControlApiLiveSessionsSource(
   source: ControlApiLiveSessionsSource | null
 ): void {
@@ -866,17 +896,19 @@ export function setControlApiLiveSessionsSource(
 }
 
 /**
- * The router registers its observation of the MCP servers it has seen here.
- * Without a registered source the MCP runtime read reports the evidence as
- * unavailable rather than reporting an empty observation.
- */
+The router registers its observation of the MCP servers it has seen here.
+Without a registered source the MCP runtime read reports the evidence as
+unavailable rather than reporting an empty observation.
+*/
 export function setControlApiMcpObservationsSource(
   source: ControlApiMcpObservationsSource | null
 ): void {
   mcpObservationsSource = source;
 }
 
-/** Register the Runtime-owned provider model discovery snapshot. */
+/**
+Register the Runtime-owned provider model discovery snapshot.
+*/
 export function setControlApiProviderModelDiscoverySource(
   source: (() => ControlApiProviderModelsResponse) | null
 ): void {
@@ -887,12 +919,12 @@ let providerCliVersionSource:
   (() => ControlApiProviderVersionsResponse) | null = null;
 
 /**
- * Register the Runtime-owned provider CLI version snapshot.
- *
- * A Control API that runs without a router has no versions to publish, and
- * it says so for every provider rather than reporting a version it did not
- * read.
- */
+Register the Runtime-owned provider CLI version snapshot.
+
+A Control API that runs without a router has no versions to publish, and
+it says so for every provider rather than reporting a version it did not
+read.
+*/
 export function setControlApiProviderCliVersionSource(
   source: (() => ControlApiProviderVersionsResponse) | null
 ): void {
@@ -916,9 +948,9 @@ function providerRoleConvergence(
 ): ReconciliationStatus {
   const resource = `${CONTROL_API_PATHS.providers}/${provider}/roles/${role}`;
   const latest = findLatestAuditFor(resource);
-  const observed =
+  const isObserved =
     ROUTING_POLICY.isProviderEnabledForRole(provider, role) === true;
-  const desiredGeneration = `${role}:enabled=${observed ? "true" : "false"}`;
+  const desiredGeneration = `${role}:enabled=${isObserved ? "true" : "false"}`;
   const observedGeneration = desiredGeneration;
   return buildReconciliationView({
     evidence: {
@@ -934,14 +966,14 @@ function providerRoleConvergence(
 }
 
 /**
- * The provider's own audit resources: the provider path itself (its global
- * enablement), its agent limits, and its role assignments.
- *
- * `getOperationHistory` matches by prefix, so the provider path `claude` would
- * also match the history of a provider named `claude-code`. A provider's
- * resources are therefore matched exactly here: the provider path itself, or
- * anything under it.
- */
+The provider's own audit resources: the provider path itself (its global
+enablement), its agent limits, and its role assignments.
+
+`getOperationHistory` matches by prefix, so the provider path `claude` would
+also match the history of a provider named `claude-code`. A provider's
+resources are therefore matched exactly here: the provider path itself, or
+anything under it.
+*/
 function isProviderResource(provider: string, resource: string): boolean {
   const base = `${CONTROL_API_PATHS.providers}/${provider}`.toLowerCase();
   const candidate = resource.toLowerCase();
@@ -949,11 +981,11 @@ function isProviderResource(provider: string, resource: string): boolean {
 }
 
 /**
- * The audit envelopes recorded for one provider's own resources.
- *
- * The provider path is recorded with the id as it was typed, so the comparison
- * ignores case.
- */
+The audit envelopes recorded for one provider's own resources.
+
+The provider path is recorded with the id as it was typed, so the comparison
+ignores case.
+*/
 function providerAuditEnvelopes(
   provider: string
 ): readonly Record<string, unknown>[] {
@@ -971,21 +1003,21 @@ function historyForProvider(
 }
 
 /**
- * The identity of one provider's configured routing state.
- *
- * The state covered here is the part of the routing policy the operator can
- * change through the Control API: whether the provider is disabled, its agent
- * limits, and its assignment in each provider role. The digest is taken over a
- * canonical serialization of that state, so it changes exactly when the
- * provider's configuration changes and is the same for two providers in the
- * same state.
- *
- * The role assignments are recorded as the operator set them. An assignment
- * that was never made reads as `unset` rather than as the default priority,
- * because "the operator chose this" and "nobody has touched this" are
- * different histories for the same served configuration.
- */
-function providerConfigurationGeneration(provider: string): string {
+The identity of one provider's configured routing state.
+
+The state covered here is the part of the routing policy the operator can
+change through the Control API: whether the provider is disabled, its agent
+limits, and its assignment in each provider role. The digest is taken over a
+canonical serialization of that state, so it changes exactly when the
+provider's configuration changes and is the same for two providers in the
+same state.
+
+The role assignments are recorded as the operator set them. An assignment
+that was never made reads as `unset` rather than as the default priority,
+because "the operator chose this" and "nobody has touched this" are
+different histories for the same served configuration.
+*/
+function providerConfigGeneration(provider: string): string {
   const limits = ROUTING_POLICY.limitsFor(provider);
   const roles = PROVIDER_ROLES.map((role) => {
     const assignment = ROUTING_POLICY.assignmentFor(provider, role);
@@ -1009,54 +1041,54 @@ function providerConfigurationGeneration(provider: string): string {
 }
 
 /**
- * The reconciliation view for one provider.
- *
- * A provider's routing configuration is Runtime-owned: the router consults the
- * live routing policy for every request, so there is no separate projection to
- * refresh and nothing to restart between an apply and its effect. The desired
- * generation is therefore the provider's configured routing state, and the
- * observed generation is that same state read back from the policy the router
- * serves.
- *
- * The two cannot drift apart on their own, so what the view really reports is
- * *whether an apply has been observed*: a provider nobody has written through
- * the Control API stays `not-observed`, and a provider whose last write failed
- * reports that error. Both generations are still reported, because "what the
- * operator asked for" and "what the runtime has observed" are two separate
- * statements and the panel shows both.
- */
+The reconciliation view for one provider.
+
+A provider's routing configuration is Runtime-owned: the router consults the
+live routing policy for every request, so there is no separate projection to
+refresh and nothing to restart between an apply and its effect. The desired
+generation is therefore the provider's configured routing state, and the
+observed generation is that same state read back from the policy the router
+serves.
+
+The two cannot drift apart on their own, so what the view really reports is
+*whether an apply has been observed*: a provider nobody has written through
+the Control API stays `not-observed`, and a provider whose last write failed
+reports that error. Both generations are still reported, because "what the
+operator asked for" and "what the runtime has observed" are two separate
+statements and the panel shows both.
+*/
 function providerReconciliationView(provider: string): ReconciliationView {
-  const desiredGeneration = providerConfigurationGeneration(provider);
+  const desiredGeneration = providerConfigGeneration(provider);
   const latest = latestAuditEvidence(providerAuditEnvelopes(provider));
-  const observed = latest !== null;
+  const isObserved = latest !== null;
   return buildReconciliationView({
     evidence: {
       desiredGeneration,
-      observedGeneration: observed ? desiredGeneration : null,
+      observedGeneration: isObserved ? desiredGeneration : null,
       lastApplyAt: latest?.timestamp ?? null,
       lastObservationAt: latest?.timestamp ?? null,
       lastError: boundReconciliationError(latest?.reason ?? null)
     },
     history: historyForProvider(provider),
-    hasObservation: observed
+    hasObservation: isObserved
   });
 }
 
 /**
- * Desired-vs-actual verdict for one model's enablement.
- *
- * Model enablement is the same kind of mutable resource as a provider role: the
- * live routing policy *is* the applied state, so the two generations cannot drift
- * apart on their own. What is genuinely unknown is whether anything has been
- * applied yet, so convergence stays `not-observed` until a write is recorded for
- * this model. Deriving the verdict here rather than from the toggle's on/off
- * keeps "the model is enabled" and "we have observed that enablement converge"
- * as two separate, separately-evidenced statements.
- */
+Desired-vs-actual verdict for one model's enablement.
+
+Model enablement is the same kind of mutable resource as a provider role: the
+live routing policy *is* the applied state, so the two generations cannot drift
+apart on their own. What is genuinely unknown is whether anything has been
+applied yet, so convergence stays `not-observed` until a write is recorded for
+this model. Deriving the verdict here rather than from the toggle's on/off
+keeps "the model is enabled" and "we have observed that enablement converge"
+as two separate, separately-evidenced statements.
+*/
 function modelConvergence(model: string): ReconciliationStatus {
   const latest = findLatestAuditFor(model);
-  const live = ROUTING_POLICY.isModelEnabled(model) === true;
-  const desiredGeneration = `enabled=${live ? "true" : "false"}`;
+  const isLive = ROUTING_POLICY.isModelEnabled(model) === true;
+  const desiredGeneration = `enabled=${isLive ? "true" : "false"}`;
   const observedGeneration = desiredGeneration;
   return buildReconciliationView({
     evidence: {
@@ -1072,15 +1104,15 @@ function modelConvergence(model: string): ReconciliationStatus {
 }
 
 /**
- * One entry per provider role, keyed by role.
- *
- * `Object.fromEntries` over `PROVIDER_ROLES` produces exactly this at runtime,
- * but its result type is an index signature, so the compiler saw a record that
- * might be missing every role and rejected it against `Record<ProviderRole, …>`.
- * The cast is confined here, and it is safe precisely because the loop runs over
- * the same `PROVIDER_ROLES` the record type enumerates -- adding a role to Core
- * adds it to the loop, so the two cannot fall out of step.
- */
+One entry per provider role, keyed by role.
+
+`Object.fromEntries` over `PROVIDER_ROLES` produces exactly this at runtime,
+but its result type is an index signature, so the compiler saw a record that
+might be missing every role and rejected it against `Record<ProviderRole, …>`.
+The cast is confined here, and it is safe precisely because the loop runs over
+the same `PROVIDER_ROLES` the record type enumerates -- adding a role to Core
+adds it to the loop, so the two cannot fall out of step.
+*/
 function rolesForEveryProviderRole(
   build: (role: ProviderRole) => ControlApiProviderRoleAssignment
 ): Record<ProviderRole, ControlApiProviderRoleAssignment> {
@@ -1089,7 +1121,9 @@ function rolesForEveryProviderRole(
   return assigned;
 }
 
-/** Every agent role whose tier this provider serves, with its model choice. */
+/**
+Every agent role whose tier this provider serves, with its model choice.
+*/
 function agentModelsView(
   provider: string
 ): ControlApiProviderRecord["agentModels"] {
@@ -1112,7 +1146,7 @@ function providersView(now: number): Record<string, unknown> {
   const health = providerHealthSource?.(now) ?? null;
   const providers = names.map((provider) => {
     const route = ROUTES.find((entry) => entry.provider === provider) ?? null;
-    const disabled = !ROUTING_POLICY.isProviderEnabled(provider);
+    const isDisabled = !ROUTING_POLICY.isProviderEnabled(provider);
     const agentLimits = ROUTING_POLICY.limitsFor(provider) ?? null;
     // The catalog that owns this provider's models decides which reasoning
     // levels its assigned models declare.
@@ -1141,7 +1175,7 @@ function providersView(now: number): Record<string, unknown> {
         envKey: route?.envKey ?? null,
         configured: ROUTING_POLICY.routeCredentialAvailable(route)
       },
-      disabled,
+      disabled: isDisabled,
       // Derived from PROVIDER_ROLES so a role added to Core cannot be missing
       // from this response.
       roles: rolesForEveryProviderRole((role) => {
@@ -1162,7 +1196,7 @@ function providersView(now: number): Record<string, unknown> {
         const effectiveReasoningEffort = isAgyFixed
           ? modelEffort(assignedModel ?? "")
           : (configuredEffort ?? modelInfo?.defaultLevel ?? null);
-        const reasoningEffortInForce =
+        const isReasoningEffortInForce =
           !isAgyFixed ||
           configuredEffort === null ||
           configuredEffort === effectiveReasoningEffort;
@@ -1171,15 +1205,15 @@ function providersView(now: number): Record<string, unknown> {
           // An unobserved assignment is reported as enabled rather than as
           // a disabled role: a provider nobody has touched must keep routing,
           // and "disabled" is a decision the operator makes.
-          priority: disabled ? "disabled" : (assignment?.priority ?? 1),
+          priority: isDisabled ? "disabled" : (assignment?.priority ?? 1),
           model: assignedModel,
           reasoningEffort: configuredEffort,
           effectiveReasoningEffort,
-          reasoningEffortInForce,
+          reasoningEffortInForce: isReasoningEffortInForce,
           supportedReasoningLevels,
           // A globally disabled provider's roles cannot be edited until it
           // is enabled again, but their values are preserved.
-          mutable: !disabled,
+          mutable: !isDisabled,
           // The provider's capability for this role, which the priority alone
           // does not show: a provider with no delegation path is enabled and
           // ranked for the orchestrator and still cannot serve it. Reporting
@@ -1243,13 +1277,13 @@ function configuredRoleExposure(
 }
 
 /**
- * Roles the execution contract defines, and therefore the only roles an
- * assignment can name.
- *
- * Enumerated from the contract rather than from `/control/agents`: the write
- * edits the contract, so a role absent from it would be refused. Offering one
- * anyway turns a correct answer into a failed submission.
- */
+Roles the execution contract defines, and therefore the only roles an
+assignment can name.
+
+Enumerated from the contract rather than from `/control/agents`: the write
+edits the contract, so a role absent from it would be refused. Offering one
+anyway turns a correct answer into a failed submission.
+*/
 function assignableRoles(): string[] {
   const roles = getDefaultExecutionContract().roles ?? {};
   return Object.keys(roles).sort((left, right) =>
@@ -1258,19 +1292,19 @@ function assignableRoles(): string[] {
 }
 
 /**
- * The Runtime's observation of the MCP servers it has seen.
- *
- * This is published on its own path rather than folded into the MCP catalog.
- * The catalog answers "what is declared"; this answers "what has the Runtime
- * actually reached". A page composes the two, and the contract keeps them
- * apart so that a server's presence in the catalog never reads as evidence
- * that the server was reached.
- *
- * The observations arrive through a registered source rather than through a
- * direct call into the router's telemetry, for the same reason the live agent
- * counts do: a Control API with no router attached has no live evidence, and
- * it says so rather than reporting an empty observation as a fact.
- */
+The Runtime's observation of the MCP servers it has seen.
+
+This is published on its own path rather than folded into the MCP catalog.
+The catalog answers "what is declared"; this answers "what has the Runtime
+actually reached". A page composes the two, and the contract keeps them
+apart so that a server's presence in the catalog never reads as evidence
+that the server was reached.
+
+The observations arrive through a registered source rather than through a
+direct call into the router's telemetry, for the same reason the live agent
+counts do: a Control API with no router attached has no live evidence, and
+it says so rather than reporting an empty observation as a fact.
+*/
 function mcpRuntimeView(): Record<string, unknown> {
   // `null` means no observation source is attached: the Runtime could not be
   // asked, which is a different fact from having observed no server at all.
@@ -1309,18 +1343,18 @@ function mcpRuntimeView(): Record<string, unknown> {
 }
 
 /**
- * The target whose MCP configuration the applied catalogue holds.
- *
- * The bridge catalogue is rendered from the Codex target's projection, so it
- * carries that target's launch configuration rather than a merge of every
- * target's.
- */
+The target whose MCP configuration the applied catalogue holds.
+
+The bridge catalogue is rendered from the Codex target's projection, so it
+carries that target's launch configuration rather than a merge of every
+target's.
+*/
 const MCP_APPLIED_TARGET = "codexcli";
 
 /**
- * The applied MCP configuration the Runtime published, in the shape the
- * contract publishes.
- */
+The applied MCP configuration the Runtime published, in the shape the
+contract publishes.
+*/
 interface McpLaunchEntry {
   readonly name: string;
   readonly command: string | null;
@@ -1332,13 +1366,13 @@ interface McpLaunchEntry {
 }
 
 /**
- * The digest of one side of the MCP configuration.
- *
- * Both sides are serialized through this one function, so the two digests are
- * comparable: the desired side is the canonical declaration's launch
- * configuration and the observed side is the applied projection's, and a
- * difference in any launch key changes the digest.
- */
+The digest of one side of the MCP configuration.
+
+Both sides are serialized through this one function, so the two digests are
+comparable: the desired side is the canonical declaration's launch
+configuration and the observed side is the applied projection's, and a
+difference in any launch key changes the digest.
+*/
 function mcpLaunchGeneration(entries: readonly McpLaunchEntry[]): string {
   const serialized = JSON.stringify(
     entries.map((entry) => ({
@@ -1359,61 +1393,61 @@ function mcpLaunchGeneration(entries: readonly McpLaunchEntry[]): string {
 }
 
 /**
- * The message a read failure carries when it has no better one.
- *
- * One spelling of it, so a failure that cannot say more reads the same way
- * wherever it happened.
- */
+The message a read failure carries when it has no better one.
+
+One spelling of it, so a failure that cannot say more reads the same way
+wherever it happened.
+*/
 const UNKNOWN_READ_ERROR = "unknown error";
 
 /**
- * Whether a value is a plain object rather than an array or null.
- *
- * The applied catalogue is untrusted input: it is a file on disk that
- * anything can write, and every field the reconciliation reads comes out of
- * it.
- */
+Whether a value is a plain object rather than an array or null.
+
+The applied catalogue is untrusted input: it is a file on disk that
+anything can write, and every field the reconciliation reads comes out of
+it.
+*/
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**
- * A launch key's value, or `null` when the key is absent or is not a string.
- *
- * The applied catalogue is untrusted input, so a key that is present but is
- * not the type the configuration uses is treated as absent rather than
- * guessed at.
- */
+A launch key's value, or `null` when the key is absent or is not a string.
+
+The applied catalogue is untrusted input, so a key that is present but is
+not the type the configuration uses is treated as absent rather than
+guessed at.
+*/
 function launchString(candidate: unknown): string | null {
   return typeof candidate === "string" ? candidate : null;
 }
 
 /**
- * The launch configuration of one applied catalogue entry.
- *
- * A catalogue entry that is not an object, or whose launch keys are not the
- * types the configuration uses, is refused rather than guessed at: a half-read
- * entry would compare as a difference the operator cannot act on.
- */
+The launch configuration of one applied catalogue entry.
+
+A catalogue entry that is not an object, or whose launch keys are not the
+types the configuration uses, is refused rather than guessed at: a half-read
+entry would compare as a difference the operator cannot act on.
+*/
 function mcpAppliedEntry(name: string, value: unknown): McpLaunchEntry | null {
   if (!isPlainRecord(value)) return null;
-  const args = value.args;
+  const arguments_ = value.args;
   if (
-    args !== undefined &&
-    (!Array.isArray(args) || !args.every((arg) => typeof arg === "string"))
+    arguments_ !== undefined &&
+    (!Array.isArray(arguments_) || arguments_.some((argument) => typeof argument !== "string"))
   )
     return null;
   const headers = value.http_headers;
   if (
     headers !== undefined &&
     (!isPlainRecord(headers) ||
-      !Object.values(headers).every((entry) => typeof entry === "string"))
+      Object.values(headers).some((entry) => typeof entry !== "string"))
   )
     return null;
   return {
     name,
     command: launchString(value.command),
-    args: (args as string[] | undefined) ?? [],
+    args: (arguments_ as string[] | undefined) ?? [],
     cwd: launchString(value.cwd),
     url: launchString(value.url),
     bearerTokenEnvVar: launchString(value.bearer_token_env_var),
@@ -1422,13 +1456,13 @@ function mcpAppliedEntry(name: string, value: unknown): McpLaunchEntry | null {
 }
 
 /**
- * The MCP launch configuration the Runtime published.
- *
- * Read from the bridge catalogue the installer renders from the canonical
- * declaration's projection. A catalogue that is not there means the Runtime
- * has published no MCP configuration, which is a finding and not a failure;
- * a catalogue that cannot be read is a failure and is reported as one.
- */
+The MCP launch configuration the Runtime published.
+
+Read from the bridge catalogue the installer renders from the canonical
+declaration's projection. A catalogue that is not there means the Runtime
+has published no MCP configuration, which is a finding and not a failure;
+a catalogue that cannot be read is a failure and is reported as one.
+*/
 function readAppliedMcpCatalogue(codexHome: string): {
   readonly available: boolean;
   readonly servers: readonly McpLaunchEntry[];
@@ -1503,15 +1537,15 @@ function readAppliedMcpCatalogue(codexHome: string): {
 }
 
 /**
- * The MCP configuration the Runtime applied, against the canonical
- * declaration.
- *
- * The two sides are compared through the shared reconciliation contract: the
- * desired generation is the declaration's launch configuration and the
- * observed generation is the applied projection's. A Control API with no
- * applied catalogue has not observed anything, and says so rather than
- * reporting a converged empty configuration.
- */
+The MCP configuration the Runtime applied, against the canonical
+declaration.
+
+The two sides are compared through the shared reconciliation contract: the
+desired generation is the declaration's launch configuration and the
+observed generation is the applied projection's. A Control API with no
+applied catalogue has not observed anything, and says so rather than
+reporting a converged empty configuration.
+*/
 function mcpAppliedState(
   repositoryRoot: string = DEFAULT_REPO_ROOT,
   codexHome: string | undefined = defaultCodexHomeForReconciliation()
@@ -1570,9 +1604,9 @@ function mcpAppliedState(
 }
 
 /**
- * The public shape of one launch configuration: the header names, never the
- * values, which are credentials the browser must not see.
- */
+The public shape of one launch configuration: the header names, never the
+values, which are credentials the browser must not see.
+*/
 function publicMcpLaunch(
   entry: McpLaunchEntry
 ): ControlApiMcpDeclaredServer & ControlApiMcpAppliedServer {
@@ -1621,16 +1655,16 @@ function commandCatalogueApprovals(
 }
 
 /**
- * The shared MCP gateway as the installer projected it and the Runtime
- * observes it.
- *
- * Every fact is read through the gateway service's own accessors: the
- * installed state, the published role surfaces with their reviewed and
- * effective grants, and the service check that proves the LaunchAgent owns a
- * listener that answers `/readyz`. An unreadable state is reported with a
- * fixed reason rather than as an absent gateway, because "not installed" and
- * "installed but unreadable" call for different operator actions.
- */
+The shared MCP gateway as the installer projected it and the Runtime
+observes it.
+
+Every fact is read through the gateway service's own accessors: the
+installed state, the published role surfaces with their reviewed and
+effective grants, and the service check that proves the LaunchAgent owns a
+listener that answers `/readyz`. An unreadable state is reported with a
+fixed reason rather than as an absent gateway, because "not installed" and
+"installed but unreadable" call for different operator actions.
+*/
 async function mcpGatewayView(
   repositoryRoot: string,
   codexHome: string
@@ -1719,7 +1753,7 @@ async function mcpsView(
     ...server,
     declared: true,
     roles: rolesByServer.get(server.name) ?? [],
-    ...(server.name === MCP_SERVER_COMMANDS ? { approvedCatalogues } : {})
+    ...((server.name === MCP_SERVER_COMMANDS) && { approvedCatalogues })
   }));
   // Typed rather than left to inference: `transport: "unknown"` in an inferred
   // array widens to `string`, which quietly stopped satisfying the declared
@@ -1781,7 +1815,7 @@ function addToolToCatalog(
   }
 ): void {
   if (!input.name.trim()) return;
-  const key = `${input.source}\u0000${input.server ?? ""}\u0000${input.name}`;
+  const key = `${input.source}\0${input.server ?? ""}\0${input.name}`;
   let item = catalog.get(key);
   if (!item) {
     item = {
@@ -1789,7 +1823,7 @@ function addToolToCatalog(
       source: input.source,
       sourceAuthority: input.sourceAuthority,
       availability: input.availability,
-      ...(input.server ? { server: input.server } : {}),
+      ...(input.server && { server: input.server }),
       exposedRoles: new Set<string>()
     };
     catalog.set(key, item);
@@ -1876,13 +1910,13 @@ function mergeRuleSyncDeclaredTools(
   // surface.
   for (const tool of rulesyncTools) {
     if (tool.exposedRoles.length > 0) continue;
-    const key = `${tool.source}\u0000${tool.server ?? ""}\u0000${tool.name}`;
+    const key = `${tool.source}\0${tool.server ?? ""}\0${tool.name}`;
     if (catalog.has(key)) continue;
     catalog.set(key, {
       name: tool.name,
       source: tool.source,
       sourceAuthority: tool.sourceAuthority,
-      ...(tool.server ? { server: tool.server } : {}),
+      ...(tool.server && { server: tool.server }),
       availability: tool.availability,
       exposedRoles: new Set<string>()
     });
@@ -1915,10 +1949,10 @@ function toolCatalogItems(
         name: item.name,
         source: item.source,
         sourceAuthority: item.sourceAuthority,
-        ...(item.server ? { server: item.server } : {}),
+        ...(item.server && { server: item.server }),
         exposedRoles,
         availability: item.availability,
-        ...(canonicalEditSurface ? { canonicalEditSurface } : {})
+        ...(canonicalEditSurface && { canonicalEditSurface })
       };
     })
     .sort((left, right) =>
@@ -2017,14 +2051,14 @@ function toolsView(): ToolCatalogView {
 }
 
 /**
- * The workspace ids this installation serves.
- *
- * A repository's remote names a project, but a remote is not a workspace: the
- * catalogue is what says which projects are workspaces here. When the
- * catalogue cannot be read, no ids are declared and the repository's own
- * remote decides alone -- a skill in a repository nobody configured still
- * belongs to the project that repository is.
- */
+The workspace ids this installation serves.
+
+A repository's remote names a project, but a remote is not a workspace: the
+catalogue is what says which projects are workspaces here. When the
+catalogue cannot be read, no ids are declared and the repository's own
+remote decides alone -- a skill in a repository nobody configured still
+belongs to the project that repository is.
+*/
 function configuredWorkspaceIds(
   repositoryRoot: string
 ): readonly string[] | undefined {
@@ -2035,13 +2069,13 @@ function configuredWorkspaceIds(
 }
 
 /**
- * Where a skill is installed, read live from the machine.
- *
- * The catalogue says a skill exists; the scope says whether any agent can
- * reach it and which workspace it belongs to. Both are read at the moment the
- * Console asks, so a skill that has just been installed or removed shows what
- * is true now rather than what was true when the page was written.
- */
+Where a skill is installed, read live from the machine.
+
+The catalogue says a skill exists; the scope says whether any agent can
+reach it and which workspace it belongs to. Both are read at the moment the
+Console asks, so a skill that has just been installed or removed shows what
+is true now rather than what was true when the page was written.
+*/
 function liveSkillScopes(
   names: readonly string[],
   repositoryRoot: string
@@ -2058,13 +2092,13 @@ function liveSkillScopes(
 }
 
 /**
- * The roles a skill is assigned to, in the place that skill belongs to.
- *
- * A repo-scoped skill belongs to one workspace, so its roles are that
- * workspace's roles; every other skill's roles are the global ones. A
- * repo-scoped skill whose repository is not a configured workspace has no
- * roles at all, because there is nowhere to assign it.
- */
+The roles a skill is assigned to, in the place that skill belongs to.
+
+A repo-scoped skill belongs to one workspace, so its roles are that
+workspace's roles; every other skill's roles are the global ones. A
+repo-scoped skill whose repository is not a configured workspace has no
+roles at all, because there is nowhere to assign it.
+*/
 function assignedSkillRoles(skill: string, workspace: string | null): string[] {
   const contract = getDefaultExecutionContract() as unknown as Record<
     string,
@@ -2081,17 +2115,17 @@ function assignedSkillRoles(skill: string, workspace: string | null): string[] {
 }
 
 /**
- * The skill exposure and use the Runtime has observed.
- *
- * The Runtime's usage telemetry already counts both: an injected skill is an
- * exposure, and a skill that was used is a use. The telemetry keeps the counts
- * per workspace, because that is the dimension it attributes by, and the
- * Console asks for a total across the workspaces it is showing.
- *
- * A skill the Runtime has never seen is absent from the map, which is not the
- * same as a skill it saw and never injected: `null` means "not observed", and
- * a number means "observed, and this is how often".
- */
+The skill exposure and use the Runtime has observed.
+
+The Runtime's usage telemetry already counts both: an injected skill is an
+exposure, and a skill that was used is a use. The telemetry keeps the counts
+per workspace, because that is the dimension it attributes by, and the
+Console asks for a total across the workspaces it is showing.
+
+A skill the Runtime has never seen is absent from the map, which is not the
+same as a skill it saw and never injected: `null` means "not observed", and
+a number means "observed, and this is how often".
+*/
 function observedSkillUsage(): {
   readonly observed: boolean;
   readonly bySkill: ReadonlyMap<
@@ -2231,13 +2265,13 @@ function runtimeView(now: number): Record<string, unknown> {
 }
 
 /**
- * One workspace's live-agent availability, as the runtime reports it.
- *
- * The live projection is the only authority on whether the runtime is
- * currently serving a workspace, and it may be absent: a standalone Control
- * API has no live evidence and says so rather than reporting a zero that
- * would read as an idle workspace.
- */
+One workspace's live-agent availability, as the runtime reports it.
+
+The live projection is the only authority on whether the runtime is
+currently serving a workspace, and it may be absent: a standalone Control
+API has no live evidence and says so rather than reporting a zero that
+would read as an idle workspace.
+*/
 function workspaceRuntimeAvailability(
   workspaceId: string,
   liveAgents: ControlApiLiveAgentCounts | null
@@ -2250,42 +2284,42 @@ function workspaceRuntimeAvailability(
 }
 
 /**
- * The role names the execution contract defines.
- *
- * A workspace's role scope is a list of these, and a scope that names
- * something else excludes every agent that could work in the workspace.
- */
+The role names the execution contract defines.
+
+A workspace's role scope is a list of these, and a scope that names
+something else excludes every agent that could work in the workspace.
+*/
 function configuredAgentRoleNames(): readonly string[] {
   return Object.keys(getDefaultExecutionContract().roles ?? {});
 }
 
 /**
- * The canonical catalog's desired-vs-actual view.
- *
- * The catalog is the desired state, and the Runtime reads that same file on
- * every request rather than a copy of it, so the observation is a live fact:
- * the catalog the Runtime reads is the catalog that was written, or it is not.
- *
- * The observed generation is therefore a second read of the canonical source
- * and never a copy of the generation a write produced. A catalog that moved
- * again between the write and the observation is reported as pending, and a
- * catalog that cannot be read at all is reported as not observed -- neither is
- * dressed up as convergence, because the operator would be reading a verdict
- * the Runtime never reached.
- */
-function workspaceCatalogReconciliation(args: {
+The canonical catalog's desired-vs-actual view.
+
+The catalog is the desired state, and the Runtime reads that same file on
+every request rather than a copy of it, so the observation is a live fact:
+the catalog the Runtime reads is the catalog that was written, or it is not.
+
+The observed generation is therefore a second read of the canonical source
+and never a copy of the generation a write produced. A catalog that moved
+again between the write and the observation is reported as pending, and a
+catalog that cannot be read at all is reported as not observed -- neither is
+dressed up as convergence, because the operator would be reading a verdict
+the Runtime never reached.
+*/
+function workspaceCatalogReconciliation(arguments_: {
   readonly repositoryRoot: string;
   readonly desiredGeneration: string | null;
 }): ReconciliationView {
   const resource = CONTROL_API_PATHS.workspaces;
   const latest = findLatestAuditFor(resource);
   const observed = new ConfigRepository(
-    args.repositoryRoot
+    arguments_.repositoryRoot
   ).readWorkspaceCatalog();
   const observedGeneration =
     observed.status === "valid" ? (observed.revision ?? null) : null;
   const evidence: ReconciliationEvidence = {
-    desiredGeneration: args.desiredGeneration,
+    desiredGeneration: arguments_.desiredGeneration,
     observedGeneration,
     lastApplyAt: latest?.timestamp ?? null,
     // The observation is the read, so the time of the observation is the time
@@ -2303,23 +2337,23 @@ function workspaceCatalogReconciliation(args: {
 }
 
 /**
- * What a workspace configuration write changed, in the catalog's vocabulary.
- *
- * The fields are the catalog's own names, so the summary says "base branch"
- * rather than a second word for it, and the identifier is the generation the
- * write produced.
- */
-function workspaceConfigurationDiff(args: {
+What a workspace configuration write changed, in the catalog's vocabulary.
+
+The fields are the catalog's own names, so the summary says "base branch"
+rather than a second word for it, and the identifier is the generation the
+write produced.
+*/
+function workspaceConfigDiff(arguments_: {
   readonly changedFields: readonly WorkspaceCatalogField[];
   readonly revision: string;
 }): ReconciliationDiff {
-  if (args.changedFields.length === 0) {
+  if (arguments_.changedFields.length === 0) {
     return reconcileDiffSummary({
       summary:
         "Canonical workspace configuration unchanged; the catalog already held these values."
     });
   }
-  const labels = args.changedFields.map((field) =>
+  const labels = arguments_.changedFields.map((field) =>
     field === "enabled"
       ? "enablement"
       : field === "baseBranch"
@@ -2328,7 +2362,7 @@ function workspaceConfigurationDiff(args: {
   );
   return reconcileDiffWithIdentifier({
     summary: `Canonical workspace configuration changed: ${labels.join(", ")}.`,
-    identifier: args.revision
+    identifier: arguments_.revision
   });
 }
 
@@ -2361,7 +2395,9 @@ function workspacesView(repositoryRoot?: string): Record<string, unknown> {
   } satisfies ControlApiWorkspacesResponse;
 }
 
-/** The fields a workspace update may carry, and nothing else. */
+/**
+The fields a workspace update may carry, and nothing else.
+*/
 const WORKSPACE_UPDATE_KEYS: ReadonlySet<string> = new Set([
   "expectedRevision",
   "enabled",
@@ -2370,13 +2406,13 @@ const WORKSPACE_UPDATE_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The change a workspace write asks for, or null when the body cannot be one.
- *
- * The body has to name the revision the write was decided on and at least one
- * field to change, and it may not carry anything else: `id` in particular is
- * not a field a write may set, because a workspace's identity is what the
- * catalog is indexed by.
- */
+The change a workspace write asks for, or null when the body cannot be one.
+
+The body has to name the revision the write was decided on and at least one
+field to change, and it may not carry anything else: `id` in particular is
+not a field a write may set, because a workspace's identity is what the
+catalog is indexed by.
+*/
 function workspaceUpdateFromBody(body: Record<string, unknown>): {
   readonly expectedRevision: string;
   readonly change: {
@@ -2433,30 +2469,30 @@ function workspaceUpdateFromBody(body: Record<string, unknown>): {
 }
 
 /**
- * The refusal a write to the canonical catalog answers with.
- *
- * A conflict, an unknown workspace and a write that could not be expressed are
- * three different facts, and the caller is told which one happened.
- */
+The refusal a write to the canonical catalog answers with.
+
+A conflict, an unknown workspace and a write that could not be expressed are
+three different facts, and the caller is told which one happened.
+*/
 function sendWorkspaceWriteFailure(
   response: ServerResponse,
   actor: ControlApiActor,
   resource: string,
   error: unknown
 ): void {
-  const conflict = error instanceof WorkspaceCatalogConflictError;
-  const unknownWorkspace =
+  const isConflict = error instanceof WorkspaceCatalogConflictError;
+  const isUnknownWorkspace =
     error instanceof WorkspaceCatalogUnknownWorkspaceError;
-  const validation = error instanceof WorkspaceCatalogValidationError;
-  if (!conflict && !unknownWorkspace && !validation) throw error;
+  const isValidation = error instanceof WorkspaceCatalogValidationError;
+  if (!isConflict && !isUnknownWorkspace && !isValidation) throw error;
   let status = 400;
   let code = "autodev_control_workspace_invalid_update";
   let reason = "invalid_update";
-  if (conflict) {
+  if (isConflict) {
     status = 409;
     code = "autodev_control_workspace_revision_conflict";
     reason = "revision_conflict";
-  } else if (unknownWorkspace) {
+  } else if (isUnknownWorkspace) {
     status = 404;
     code = "autodev_control_workspace_unknown";
     reason = "unknown_workspace";
@@ -2479,12 +2515,12 @@ function sendWorkspaceWriteFailure(
 }
 
 /**
- * Write one workspace's configuration to the canonical catalog.
- *
- * The catalog's rules and its write live in the module that owns them, so this
- * route decides only what a Control API request is: who may write, what the
- * body has to say, and which refusal the caller is told about.
- */
+Write one workspace's configuration to the canonical catalog.
+
+The catalog's rules and its write live in the module that owns them, so this
+route decides only what a Control API request is: who may write, what the
+body has to say, and which refusal the caller is told about.
+*/
 async function patchWorkspace(
   request: IncomingMessage,
   response: ServerResponse,
@@ -2597,7 +2633,7 @@ async function patchWorkspace(
         repositoryRoot,
         desiredGeneration: written.revision
       }),
-      diff: workspaceConfigurationDiff({
+      diff: workspaceConfigDiff({
         changedFields: written.changedFields,
         revision: written.revision
       })
@@ -2761,7 +2797,7 @@ function agentsView(
           : isOrchestrator
             ? "orchestrator"
             : "leaf";
-      const readOnly = raw?.readOnly === true;
+      const isReadOnly = raw?.readOnly === true;
       const mcps = Array.isArray(raw?.mcp) ? raw.mcp : [];
       const skills = Array.isArray(raw?.skills) ? raw.skills : [];
       const roleType = isOrchestrator ? "orchestrator" : "subagent";
@@ -2783,7 +2819,7 @@ function agentsView(
         id: role,
         role,
         kind,
-        readOnly,
+        readOnly: isReadOnly,
         configured: true,
         valid,
         status,
@@ -2815,21 +2851,27 @@ function agentsView(
 }
 
 /**
- * One role prompt, read.
- *
- * Three outcomes, and the third is not the second: the prompt was read, the
- * role has no prompt file, or the prompt is there and could not be read. Only
- * the second is an empty prompt. The third is no observation at all, and an
- * empty string there would claim the prompt was read and held nothing -- and
- * it would hand the reconciliation a digest of nothing to compare against,
- * which is an identity that names no prompt.
- */
+One role prompt, read.
+
+Three outcomes, and the third is not the second: the prompt was read, the
+role has no prompt file, or the prompt is there and could not be read. Only
+the second is an empty prompt. The third is no observation at all, and an
+empty string there would claim the prompt was read and held nothing -- and
+it would hand the reconciliation a digest of nothing to compare against,
+which is an identity that names no prompt.
+*/
 interface RolePromptRead {
-  /** Whether a prompt file is there at all. */
+  /**
+  Whether a prompt file is there at all.
+  */
   readonly present: boolean;
-  /** The prompt's content, or null when it could not be read. */
+  /**
+  The prompt's content, or null when it could not be read.
+  */
   readonly content: string | null;
-  /** The prompt's canonical revision, or null when it could not be read. */
+  /**
+  The prompt's canonical revision, or null when it could not be read.
+  */
   readonly revision: string | null;
 }
 
@@ -2842,13 +2884,13 @@ function readRolePrompt(promptPath: string): RolePromptRead {
   // prompt. The canonical command catalogue refuses a non-regular entry the
   // same way, and the reason is the same: the path exists, the prompt does
   // not.
-  let regularFile = false;
+  let isRegularFile = false;
   try {
-    regularFile = statSync(promptPath).isFile();
+    isRegularFile = statSync(promptPath).isFile();
   } catch {
     // The path could not be inspected, so it cannot be a readable prompt.
   }
-  if (!regularFile) {
+  if (!isRegularFile) {
     return { present: true, content: null, revision: null };
   }
   try {
@@ -2898,7 +2940,7 @@ function agentDetailView(
       : isOrchestrator
         ? "orchestrator"
         : "leaf";
-  const readOnly = raw?.readOnly === true;
+  const isReadOnly = raw?.readOnly === true;
   const mcps = Array.isArray(raw?.mcp) ? raw.mcp : [];
   const skills = Array.isArray(raw?.skills) ? raw.skills : [];
   const promptPath = path.join(
@@ -2929,7 +2971,7 @@ function agentDetailView(
       id: role,
       role,
       kind,
-      readOnly,
+      readOnly: isReadOnly,
       configured: true,
       valid,
       status,
@@ -3042,7 +3084,9 @@ function modelHasDiscoveryRecord(model: string): boolean {
   );
 }
 
-/** Display names from the Codex model catalog; absent names stay null. */
+/**
+Display names from the Codex model catalog; absent names stay null.
+*/
 function modelCatalogDisplayNames(repositoryRoot: string): Map<string, string> {
   const catalogPath = path.join(
     repositoryRoot,
@@ -3130,22 +3174,22 @@ function modelsView(
 }
 
 /**
- * The target whose hook declaration the Runtime applies.
- *
- * The AutoDev runtime installs one hook projection, the Codex one, so the
- * declaration it manages is the Codex target's effective declaration. The
- * other targets RuleSync can project to are not the Runtime's to install.
- */
+The target whose hook declaration the Runtime applies.
+
+The AutoDev runtime installs one hook projection, the Codex one, so the
+declaration it manages is the Codex target's effective declaration. The
+other targets RuleSync can project to are not the Runtime's to install.
+*/
 const HOOK_APPLIED_TARGET = "codexcli";
 
 /**
- * The canonical hook events, under the names Codex gives them.
- *
- * RuleSync projects the canonical event names into the target's own names, so
- * the applied projection is read in Codex's names. This is the map between
- * them, and it is what lets the applied read answer in the canonical
- * vocabulary the declaration and the Console both use.
- */
+The canonical hook events, under the names Codex gives them.
+
+RuleSync projects the canonical event names into the target's own names, so
+the applied projection is read in Codex's names. This is the map between
+them, and it is what lets the applied read answer in the canonical
+vocabulary the declaration and the Console both use.
+*/
 const CODEX_HOOK_EVENT_NAMES: Readonly<Record<HookEvent, string>> = {
   sessionStart: "SessionStart",
   sessionEnd: "SessionEnd",
@@ -3169,13 +3213,13 @@ const CODEX_HOOK_EVENT_BY_NAME: ReadonlyMap<string, HookEvent> = new Map(
 );
 
 /**
- * The canonical hook declaration, as the target the Runtime applies receives
- * it.
- *
- * The events are the target's effective declaration: the shared declaration
- * with the target's own merged over it, one event at a time, which is how
- * RuleSync merges them. The revision identifies the canonical declaration.
- */
+The canonical hook declaration, as the target the Runtime applies receives
+it.
+
+The events are the target's effective declaration: the shared declaration
+with the target's own merged over it, one event at a time, which is how
+RuleSync merges them. The revision identifies the canonical declaration.
+*/
 function hooksView(
   repositoryRoot: string = DEFAULT_REPO_ROOT
 ): Record<string, unknown> {
@@ -3198,20 +3242,17 @@ function hooksView(
 }
 
 /**
- * The action one projected hook runs.
- *
- * The projection groups the actions by matcher, so an action's matcher is the
- * group's matcher rather than its own. A group without a matcher gives its
- * actions none.
- */
+The action one projected hook runs.
+
+The projection groups the actions by matcher, so an action's matcher is the
+group's matcher rather than its own. A group without a matcher gives its
+actions none.
+*/
 function appliedHookAction(
   value: unknown,
   matcher: unknown
 ): HookAction | null {
-  if (!isPlainRecord(value)) return null;
-  if (value.type !== "command") return null;
-  if (typeof value.command !== "string") return null;
-  if (value.command.trim().length === 0) return null;
+  if (!isPlainRecord(value) || (value.type !== "command") || (typeof value.command !== "string") || (value.command.trim().length === 0)) return null;
   const actionMatcher =
     typeof matcher === "string"
       ? matcher
@@ -3223,17 +3264,17 @@ function appliedHookAction(
   return {
     type: "command",
     command: value.command,
-    ...(actionMatcher === undefined ? {} : { matcher: actionMatcher }),
-    ...(statusMessage === undefined ? {} : { statusMessage })
+    ...(actionMatcher !== undefined && { matcher: actionMatcher }),
+    ...(statusMessage !== undefined && { statusMessage })
   };
 }
 
 /**
- * The events one applied hook projection holds.
- *
- * `null` means the projection could not be read as a hook configuration, which
- * is a different fact from a projection that holds no events.
- */
+The events one applied hook projection holds.
+
+`null` means the projection could not be read as a hook configuration, which
+is a different fact from a projection that holds no events.
+*/
 function appliedHookEvents(
   parsed: unknown
 ): readonly ControlApiHookEvent[] | null {
@@ -3256,12 +3297,12 @@ function appliedHookEvents(
 }
 
 /**
- * The actions one projected hook event runs.
- *
- * The projection groups the actions by matcher, so an event's actions are the
- * groups' actions flattened. `null` means the groups could not be read as
- * groups, which is a different fact from a group that holds no actions.
- */
+The actions one projected hook event runs.
+
+The projection groups the actions by matcher, so an event's actions are the
+groups' actions flattened. `null` means the groups could not be read as
+groups, which is a different fact from a group that holds no actions.
+*/
 function appliedHookActions(groups: readonly unknown[]): HookAction[] | null {
   const actions: HookAction[] = [];
   for (const group of groups) {
@@ -3278,12 +3319,12 @@ function appliedHookActions(groups: readonly unknown[]): HookAction[] | null {
 }
 
 /**
- * The hook projection the Runtime published.
- *
- * The projection is a file in the Codex home, so it is read the way any file
- * on disk is read: it may be absent, unreadable, or not a hook configuration,
- * and those are three different facts from a projection that holds no hooks.
- */
+The hook projection the Runtime published.
+
+The projection is a file in the Codex home, so it is read the way any file
+on disk is read: it may be absent, unreadable, or not a hook configuration,
+and those are three different facts from a projection that holds no hooks.
+*/
 function readAppliedHookProjection(codexHome: string): {
   readonly available: boolean;
   readonly events: readonly ControlApiHookEvent[];
@@ -3339,14 +3380,14 @@ function readAppliedHookProjection(codexHome: string): {
 }
 
 /**
- * The generation one side of the hook comparison holds.
- *
- * The actions are compared as a set rather than as a list: the projection
- * groups the actions by matcher, so two actions that share a matcher are
- * emitted together and the order across matchers follows the grouping rather
- * than the declaration. Comparing the lists in order would report drift
- * where there is none.
- */
+The generation one side of the hook comparison holds.
+
+The actions are compared as a set rather than as a list: the projection
+groups the actions by matcher, so two actions that share a matcher are
+emitted together and the order across matchers follows the grouping rather
+than the declaration. Comparing the lists in order would report drift
+where there is none.
+*/
 function hookGeneration(events: readonly ControlApiHookEvent[]): string {
   const serialized = JSON.stringify(
     events
@@ -3366,8 +3407,8 @@ function hookGeneration(events: readonly ControlApiHookEvent[]): string {
         event: event.event,
         actions: event.actions.sort((left, right) =>
           CONTROL_API_COLLATOR.compare(
-            `${left.matcher ?? ""}\u0000${left.command}\u0000${left.statusMessage ?? ""}`,
-            `${right.matcher ?? ""}\u0000${right.command}\u0000${right.statusMessage ?? ""}`
+            `${left.matcher ?? ""}\0${left.command}\0${left.statusMessage ?? ""}`,
+            `${right.matcher ?? ""}\0${right.command}\0${right.statusMessage ?? ""}`
           )
         )
       }))
@@ -3376,15 +3417,15 @@ function hookGeneration(events: readonly ControlApiHookEvent[]): string {
 }
 
 /**
- * The hook configuration the Runtime applied, against the canonical
- * declaration.
- *
- * The two sides are compared through the shared reconciliation contract: the
- * desired generation is the declaration's effective events and the observed
- * generation is the projection's. A Codex home with no applied projection has
- * not observed anything, and says so rather than reporting a converged empty
- * configuration.
- */
+The hook configuration the Runtime applied, against the canonical
+declaration.
+
+The two sides are compared through the shared reconciliation contract: the
+desired generation is the declaration's effective events and the observed
+generation is the projection's. A Codex home with no applied projection has
+not observed anything, and says so rather than reporting a converged empty
+configuration.
+*/
 function hooksAppliedState(
   repositoryRoot: string = DEFAULT_REPO_ROOT,
   codexHome: string = defaultCodexHomeForReconciliation()
@@ -3457,14 +3498,14 @@ function hooksAppliedView(
 }
 
 /**
- * The per-server tool grants of one role, narrowed to what can be projected.
- *
- * A server whose value is not an array of strings is dropped rather than
- * reported as an empty list. An empty list would say "this role may call no
- * tools on this server", which is a permission claim; dropping it says the
- * grant could not be read, which is what actually happened. Same distinction the
- * servers column makes, where an absent entry is not "all servers".
- */
+The per-server tool grants of one role, narrowed to what can be projected.
+
+A server whose value is not an array of strings is dropped rather than
+reported as an empty list. An empty list would say "this role may call no
+tools on this server", which is a permission claim; dropping it says the
+grant could not be read, which is what actually happened. Same distinction the
+servers column makes, where an absent entry is not "all servers".
+*/
 function contractMcpTools(value: unknown): Record<string, readonly string[]> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return {};
@@ -3482,24 +3523,24 @@ function contractMcpTools(value: unknown): Record<string, readonly string[]> {
 }
 
 /**
- * Where the Runtime applies the permission policy.
- *
- * The portable source is composed into the user configuration Codex reads, so
- * the applied policy is read from the composed file rather than from the
- * source: a source that was written but never composed is a policy the product
- * is not running.
- */
+Where the Runtime applies the permission policy.
+
+The portable source is composed into the user configuration Codex reads, so
+the applied policy is read from the composed file rather than from the
+source: a source that was written but never composed is a policy the product
+is not running.
+*/
 const CODEX_USER_CONFIG_FILE = "config.toml";
 
 /**
- * The permission policy, as the canonical source states it and as the Runtime
- * applied it.
- *
- * The two are separate facts. The canonical source is what the operator
- * declared; the composed configuration is what Codex reads. A policy that was
- * written and never applied is a pending change, not a failure and not a
- * converged one.
- */
+The permission policy, as the canonical source states it and as the Runtime
+applied it.
+
+The two are separate facts. The canonical source is what the operator
+declared; the composed configuration is what Codex reads. A policy that was
+written and never applied is a pending change, not a failure and not a
+converged one.
+*/
 function permissionPolicyState(
   repositoryRoot: string,
   codexHome: string
@@ -3540,16 +3581,16 @@ function permissionPolicyState(
 }
 
 /**
- * The effective capability matrix, with each role's real sandbox.
- *
- * The matrix used to name every role's sandbox by way of a boolean the
- * execution contract keeps: a role declared `danger-full-access` came back as
- * `workspace-write`, so the Console named the orchestrator, the smart agent
- * and the worker as sandboxed roles when they are the product's three
- * unsandboxed ones. The mode is read from the role's own declaration now, and
- * a role whose declaration cannot be read is reported as not observed rather
- * than as the nearest mode the product knows.
- */
+The effective capability matrix, with each role's real sandbox.
+
+The matrix used to name every role's sandbox by way of a boolean the
+execution contract keeps: a role declared `danger-full-access` came back as
+`workspace-write`, so the Console named the orchestrator, the smart agent
+and the worker as sandboxed roles when they are the product's three
+unsandboxed ones. The mode is read from the role's own declaration now, and
+a role whose declaration cannot be read is reported as not observed rather
+than as the nearest mode the product knows.
+*/
 function permissionsView(
   repositoryRoot: string = DEFAULT_REPO_ROOT,
   codexHome: string = defaultCodexHomeForReconciliation()
@@ -3601,14 +3642,14 @@ function permissionsView(
 }
 
 /**
- * Read the canonical role prompts, or report that they were not observed.
- *
- * The directory's absence is an observation: no role prompt is configured
- * there, and that is a measured zero. A read that failed for any other reason
- * is not an observation, and the list of role prompts is then not known -- an
- * empty list there would claim the repository holds none, which is a claim
- * about the read rather than about the repository.
- */
+Read the canonical role prompts, or report that they were not observed.
+
+The directory's absence is an observation: no role prompt is configured
+there, and that is a measured zero. A read that failed for any other reason
+is not an observation, and the list of role prompts is then not known -- an
+empty list there would claim the repository holds none, which is a claim
+about the read rather than about the repository.
+*/
 function readRolePrompts(
   rolePromptsDir: string
 ): Array<{ role: string; path: string }> | null {
@@ -3634,9 +3675,7 @@ function promptsView(
       ? commandState.commands.map((command) => ({
           name: command.name,
           path: command.path,
-          ...(command.description === undefined
-            ? {}
-            : { description: command.description })
+          ...(command.description !== undefined && { description: command.description })
         }))
       : [];
   const rolePromptsDir = path.join(
@@ -3662,12 +3701,12 @@ function promptsView(
 }
 
 /**
- * Observe the projected Codex prompt file for a RuleSync command and return
- * the sha256 content hash of its bytes. Returns `null` when the file is
- * missing, unreadable, or the canonical command is not a RuleSync command;
- * either way the observation is "not observed" rather than a synthetic
- * success.
- */
+Observe the projected Codex prompt file for a RuleSync command and return
+the sha256 content hash of its bytes. Returns `null` when the file is
+missing, unreadable, or the canonical command is not a RuleSync command;
+either way the observation is "not observed" rather than a synthetic
+success.
+*/
 function observePromptProjection(
   name: string,
   codexHome: string
@@ -3688,11 +3727,11 @@ function hashString(value: string | null | undefined): string | null {
 }
 
 /**
- * Look up the most recent audit envelope for a resource identifier and
- * extract its bounded fields. Returns `null` when no audit entry exists
- * yet, so callers can render `not-observed` rather than fabricating a
- * last-apply timestamp.
- */
+Look up the most recent audit envelope for a resource identifier and
+extract its bounded fields. Returns `null` when no audit entry exists
+yet, so callers can render `not-observed` rather than fabricating a
+last-apply timestamp.
+*/
 function findLatestAuditFor(resourceFilter: string): {
   readonly timestamp: string;
   readonly desiredGeneration: string | null;
@@ -3704,15 +3743,15 @@ function findLatestAuditFor(resourceFilter: string): {
 }
 
 /**
- * The most recent non-denied apply recorded in a list of audit envelopes.
- *
- * A `denied` envelope is skipped. A refusal is not an apply: nothing was
- * attempted and nothing changed, so treating it as the latest evidence would
- * stamp the resource with a last-apply time and a `lastError` describing a
- * request that was correctly rejected — reporting a failed apply for a resource
- * that is still perfectly converged. Validation and persistence failures are
- * `error`, not `denied`, and remain evidence.
- */
+The most recent non-denied apply recorded in a list of audit envelopes.
+
+A `denied` envelope is skipped. A refusal is not an apply: nothing was
+attempted and nothing changed, so treating it as the latest evidence would
+stamp the resource with a last-apply time and a `lastError` describing a
+request that was correctly rejected — reporting a failed apply for a resource
+that is still perfectly converged. Validation and persistence failures are
+`error`, not `denied`, and remain evidence.
+*/
 function latestAuditEvidence(envelopes: readonly Record<string, unknown>[]): {
   readonly timestamp: string;
   readonly desiredGeneration: string | null;
@@ -3751,21 +3790,21 @@ function historyForResource(
 }
 
 /**
- * Generation identity for one canonical prompt.
- *
- * Both sides of the comparison must be expressed in the same domain or they
- * can never be equal. The canonical revision is the only stable identity the
- * Runtime holds, so the desired generation is the current canonical revision
- * and the observed generation is the canonical revision that the projection
- * on disk was generated from (recorded by the apply that wrote it). Hashing
- * the projected file bytes here instead would compare a revision against a
- * rendering of it, which can never converge.
- */
+Generation identity for one canonical prompt.
+
+Both sides of the comparison must be expressed in the same domain or they
+can never be equal. The canonical revision is the only stable identity the
+Runtime holds, so the desired generation is the current canonical revision
+and the observed generation is the canonical revision that the projection
+on disk was generated from (recorded by the apply that wrote it). Hashing
+the projected file bytes here instead would compare a revision against a
+rendering of it, which can never converge.
+*/
 function promptGeneration(revision: string | null | undefined): string | null {
   return typeof revision === "string" && revision.length > 0 ? revision : null;
 }
 
-function promptReconciliationView(args: {
+function promptReconciliationView(arguments_: {
   readonly name: string;
   readonly codexHome: string;
   readonly expectedRevision: string | null;
@@ -3773,20 +3812,20 @@ function promptReconciliationView(args: {
   readonly status: ReconciliationStatus;
   readonly history: readonly OperationHistoryEntry[];
 } {
-  const resource = `${CONTROL_API_PATHS.prompts}/${args.name}`;
-  const desiredGeneration = promptGeneration(args.expectedRevision);
+  const resource = `${CONTROL_API_PATHS.prompts}/${arguments_.name}`;
+  const desiredGeneration = promptGeneration(arguments_.expectedRevision);
   const latest = findLatestAuditFor(resource);
   // The projection counts as observed only when the last successful apply
   // projected the *current* canonical revision and that projection still
   // exists on disk. A stale projection, or one generated from an older
   // revision, stays pending instead of being reported as converged.
-  const projectionPresent =
-    observePromptProjection(args.name, args.codexHome) !== null;
+  const isProjectionPresent =
+    observePromptProjection(arguments_.name, arguments_.codexHome) !== null;
   const observedGeneration =
     latest !== null &&
     latest.observedGeneration !== null &&
     latest.observedGeneration === desiredGeneration &&
-    projectionPresent
+    isProjectionPresent
       ? latest.observedGeneration
       : null;
   const evidence: ReconciliationEvidence = {
@@ -3800,28 +3839,28 @@ function promptReconciliationView(args: {
   return buildReconciliationView({
     evidence,
     history: historyForResource(resource),
-    hasObservation: projectionPresent,
+    hasObservation: isProjectionPresent,
     restartRequired: false
   });
 }
 
 /**
- * The reconciliation view for one canonical RuleSync skill.
- *
- * A skill reaches the runtime differently from a command: the installer links
- * the canonical source into the user's skills directory, so the runtime reads
- * the canonical source itself rather than a copy of it. The observation is
- * therefore a live fact -- the runtime's installed skill is this source, or it
- * is not -- and not an apply that has to be refreshed.
- *
- * So the observed generation is the canonical revision whenever the installed
- * link holds this source, and `null` when it does not. A skill that was never
- * written through the Console is still observed, because the runtime reads the
- * same file the operator is editing; a skill whose link is missing or points
- * somewhere else is not observed at all, and the Console says so rather than
- * claiming the two agree.
- */
-function skillReconciliationView(args: {
+The reconciliation view for one canonical RuleSync skill.
+
+A skill reaches the runtime differently from a command: the installer links
+the canonical source into the user's skills directory, so the runtime reads
+the canonical source itself rather than a copy of it. The observation is
+therefore a live fact -- the runtime's installed skill is this source, or it
+is not -- and not an apply that has to be refreshed.
+
+So the observed generation is the canonical revision whenever the installed
+link holds this source, and `null` when it does not. A skill that was never
+written through the Console is still observed, because the runtime reads the
+same file the operator is editing; a skill whose link is missing or points
+somewhere else is not observed at all, and the Console says so rather than
+claiming the two agree.
+*/
+function skillReconciliationView(arguments_: {
   readonly name: string;
   readonly repositoryRoot: string;
   readonly home: string;
@@ -3830,13 +3869,13 @@ function skillReconciliationView(args: {
   readonly status: ReconciliationStatus;
   readonly history: readonly OperationHistoryEntry[];
 } {
-  const resource = `${CONTROL_API_PATHS.skills}/${args.name}/content`;
-  const desiredGeneration = promptGeneration(args.desiredRevision);
+  const resource = `${CONTROL_API_PATHS.skills}/${arguments_.name}/content`;
+  const desiredGeneration = promptGeneration(arguments_.desiredRevision);
   const latest = findLatestAuditFor(resource);
   const installed = installedSkillMatches({
-    repositoryRoot: args.repositoryRoot,
-    home: args.home,
-    name: args.name
+    repositoryRoot: arguments_.repositoryRoot,
+    home: arguments_.home,
+    name: arguments_.name
   });
   const observedGeneration = installed ? desiredGeneration : null;
   const evidence: ReconciliationEvidence = {
@@ -3868,21 +3907,21 @@ function defaultCodexHomeForReconciliation(): string {
 }
 
 /**
- * The prompt's own read.
- *
- * A prompt has two canonical sources -- the RuleSync command catalogue and the
- * role-prompt directory -- and the detail is served from whichever holds it.
- * Each read says which of the three things happened: the prompt was read, the
- * prompt is not there, or the source could not be read. The third is not the
- * second: "this prompt does not exist" and "the file that holds this prompt
- * could not be parsed" are different claims, and only the first is a 404.
- */
+The prompt's own read.
+
+A prompt has two canonical sources -- the RuleSync command catalogue and the
+role-prompt directory -- and the detail is served from whichever holds it.
+Each read says which of the three things happened: the prompt was read, the
+prompt is not there, or the source could not be read. The third is not the
+second: "this prompt does not exist" and "the file that holds this prompt
+could not be parsed" are different claims, and only the first is a 404.
+*/
 function promptDetailView(
   name: string,
   repositoryRoot: string = DEFAULT_REPO_ROOT
 ): ReadOnlyDetailResult {
-  const repo = new RuleSyncRepository(repositoryRoot);
-  const command = repo.loadCommand(name);
+  const repository = new RuleSyncRepository(repositoryRoot);
+  const command = repository.loadCommand(name);
   if (command.status === "unreadable") {
     return {
       status: "unreadable",
@@ -4043,24 +4082,26 @@ async function persistRoutingPolicy(): Promise<void> {
 }
 
 /**
- * Reconciliation fields an enablement result can carry back into the audit
- * envelope, so the operation history records the same generations the
- * response reports.
- */
+Reconciliation fields an enablement result can carry back into the audit
+envelope, so the operation history records the same generations the
+response reports.
+*/
 interface EnablementReconciliation {
   /**
-   * The generation the operator asked for, or `null` when it is unknown.
-   *
-   * `null` is not the same as a missing generation: a write whose desired
-   * state cannot be stated -- a reset to a config file nobody could read --
-   * has a desired state, and it is that nobody knows what it is.
-   */
+  The generation the operator asked for, or `null` when it is unknown.
+  
+  `null` is not the same as a missing generation: a write whose desired
+  state cannot be stated -- a reset to a config file nobody could read --
+  has a desired state, and it is that nobody knows what it is.
+  */
   readonly desiredGeneration: string | null;
   readonly observedGeneration: string | null;
   readonly restartRequired: boolean;
 }
 
-/** Spread helper so a `null` reconciliation contributes no audit fields. */
+/**
+Spread helper so a `null` reconciliation contributes no audit fields.
+*/
 function auditReconciliationFields(
   reconciliation: EnablementReconciliation | null
 ): Partial<{
@@ -4072,26 +4113,26 @@ function auditReconciliationFields(
 }
 
 /**
- * The generation of a session concurrency limit.
- *
- * The limit is a number or "unlimited", and both are facts about the
- * deployment rather than about a read: `null` is how this Runtime says
- * "unlimited", and the status CLI prints it the same way. The generation
- * carries both, so a change from `limit:8` to `limit:unlimited` is a change
- * of generation rather than a change of type.
- */
+The generation of a session concurrency limit.
+
+The limit is a number or "unlimited", and both are facts about the
+deployment rather than about a read: `null` is how this Runtime says
+"unlimited", and the status CLI prints it the same way. The generation
+carries both, so a change from `limit:8` to `limit:unlimited` is a change
+of generation rather than a change of type.
+*/
 function concurrencyLimitGeneration(limit: number | null): string {
   return limit === null ? "limit:unlimited" : `limit:${String(limit)}`;
 }
 
 /**
- * The generation a concurrency write asked for.
- *
- * A write names its own limit, or asks for the config file's limit on a
- * reset. A config file nobody could read declares no known limit, so a reset
- * then has no generation to ask for -- and the write says so rather than
- * claiming the limit in force is the one that was configured.
- */
+The generation a concurrency write asked for.
+
+A write names its own limit, or asks for the config file's limit on a
+reset. A config file nobody could read declares no known limit, so a reset
+then has no generation to ask for -- and the write says so rather than
+claiming the limit in force is the one that was configured.
+*/
 function concurrencyDesiredGeneration(
   nextLimit: number | null | undefined,
   configuredLimit: number | null | undefined
@@ -4104,11 +4145,11 @@ function concurrencyDesiredGeneration(
 }
 
 /**
- * Read the reconciliation evidence out of a mutation response body. Returns
- * `null` for a mutation that publishes no reconciliation, which leaves the audit
- * generations null rather than inventing them. Every enablement mutation
- * (provider role and model alike) publishes it.
- */
+Read the reconciliation evidence out of a mutation response body. Returns
+`null` for a mutation that publishes no reconciliation, which leaves the audit
+generations null rather than inventing them. Every enablement mutation
+(provider role and model alike) publishes it.
+*/
 function reconciliationOf(body: unknown): EnablementReconciliation | null {
   if (!body || typeof body !== "object" || Array.isArray(body)) return null;
   const reconciliation = (body as Record<string, unknown>).reconciliation;
@@ -4129,10 +4170,10 @@ function reconciliationOf(body: unknown): EnablementReconciliation | null {
 }
 
 /**
- * One operator-only `{ "enabled": boolean }` toggle over Runtime routing
- * policy state. Provider-role and model enablement share this flow so every
- * toggle validates, persists, rolls back, and audits identically.
- */
+One operator-only `{ "enabled": boolean }` toggle over Runtime routing
+policy state. Provider-role and model enablement share this flow so every
+toggle validates, persists, rolls back, and audits identically.
+*/
 type EnablementPatchResult =
   | Omit<ControlApiModelPatchResponse, "actor">
   | Omit<ControlApiAgentEnablementPatchResponse, "actor">;
@@ -4152,10 +4193,10 @@ interface EnablementMutation {
   readonly serializeKey?: string;
   readonly apply: (enabled: boolean) => void;
   /**
-   * The body minus `actor`, which `patchEnablement` stamps from the verified
-   * caller. Modelled as an explicit response union rather than a bare record so
-   * each resource mutation still satisfies its own wire contract.
-   */
+  The body minus `actor`, which `patchEnablement` stamps from the verified
+  caller. Modelled as an explicit response union rather than a bare record so
+  each resource mutation still satisfies its own wire contract.
+  */
   readonly result: (
     enabled: boolean,
     previous: boolean
@@ -4182,7 +4223,7 @@ async function patchEnablement(
       resource: mutation.resource,
       outcome,
       changes,
-      ...(reason ? { reason } : {}),
+      ...(reason && { reason }),
       ...auditReconciliationFields(reconciliation)
     });
 
@@ -4209,11 +4250,11 @@ async function patchEnablement(
     return;
   }
   const body = parsedBody.body;
-  const revisionAware = mutation.currentRevision !== undefined;
+  const isRevisionAware = mutation.currentRevision !== undefined;
   if (
-    Object.keys(body).length !== (revisionAware ? 2 : 1) ||
+    Object.keys(body).length !== (isRevisionAware ? 2 : 1) ||
     typeof body.enabled !== "boolean" ||
-    (revisionAware &&
+    (isRevisionAware &&
       (typeof body.expectedRevision !== "string" ||
         !CONTROL_API_REVISION_PATTERN.test(body.expectedRevision)))
   ) {
@@ -4222,7 +4263,7 @@ async function patchEnablement(
       response,
       400,
       "autodev_control_api_bad_body",
-      revisionAware
+      isRevisionAware
         ? `${mutation.subject.charAt(0).toUpperCase()}${mutation.subject.slice(1)} body must contain only boolean enabled and a valid expectedRevision.`
         : `${mutation.subject.charAt(0).toUpperCase()}${mutation.subject.slice(1)} body must contain only a boolean enabled field.`
     );
@@ -4326,7 +4367,7 @@ async function patchProviderRole(
       resource,
       outcome,
       changes,
-      ...(reason ? { reason } : {}),
+      ...(reason && { reason }),
       ...auditReconciliationFields(reconciliation)
     });
 
@@ -4369,7 +4410,7 @@ async function patchProviderRole(
     : undefined;
   const supportedReasoningLevels = modelInfo?.supportedLevels ?? [];
 
-  const priorityIsValid =
+  const isPriorityIsValid =
     priority === 1 ||
     priority === 2 ||
     priority === 3 ||
@@ -4377,7 +4418,7 @@ async function patchProviderRole(
   // Model routeability depends on mutable assignments and discovery state. It
   // is checked inside the serialized mutation turn below, not against a value
   // that may be cleared or disabled while this request waits in the queue.
-  const modelTypeIsValid = model === null || typeof model === "string";
+  const isModelTypeIsValid = model === null || typeof model === "string";
   // The effort is checked against the levels the assigned model's catalog entry
   // declares. A model no catalog declares has *unobserved* levels: the Runtime
   // cannot show that such a model refuses the effort, only that no catalog
@@ -4397,8 +4438,8 @@ async function patchProviderRole(
       (key) =>
         key !== "priority" && key !== "model" && key !== "reasoningEffort"
     ) ||
-    !priorityIsValid ||
-    !modelTypeIsValid ||
+    !isPriorityIsValid ||
+    !isModelTypeIsValid ||
     !reasoningEffortIsValid
   ) {
     audit("error", null, "invalid_body");
@@ -4416,7 +4457,7 @@ async function patchProviderRole(
       {
         priority,
         model,
-        ...(body.reasoningEffort === undefined ? {} : { reasoningEffort })
+        ...(body.reasoningEffort !== undefined && { reasoningEffort })
       },
       "unknown_provider"
     );
@@ -4435,7 +4476,7 @@ async function patchProviderRole(
   const effectiveReasoningEffort = isAgyFixed
     ? modelEffort(assignedModel ?? "")
     : (reasoningEffort ?? modelInfo?.defaultLevel ?? null);
-  const reasoningEffortInForce =
+  const isReasoningEffortInForce =
     !isAgyFixed ||
     reasoningEffort === null ||
     reasoningEffort === effectiveReasoningEffort;
@@ -4451,7 +4492,7 @@ async function patchProviderRole(
         {
           priority,
           model,
-          ...(body.reasoningEffort === undefined ? {} : { reasoningEffort })
+          ...(body.reasoningEffort !== undefined && { reasoningEffort })
         },
         "provider_disabled"
       );
@@ -4479,7 +4520,7 @@ async function patchProviderRole(
         {
           priority,
           model,
-          ...(body.reasoningEffort === undefined ? {} : { reasoningEffort })
+          ...(body.reasoningEffort !== undefined && { reasoningEffort })
         },
         "provider_cannot_delegate"
       );
@@ -4493,11 +4534,11 @@ async function patchProviderRole(
     }
 
     const previous = ROUTING_POLICY.assignmentFor(provider, role) ?? null;
-    const modelIsValid =
+    const isModelIsValid =
       model === null ||
       (typeof model === "string" &&
         isProviderModelChoice(provider, model, previous?.model ?? null));
-    if (!modelIsValid) {
+    if (!isModelIsValid) {
       audit("error", null, "invalid_body");
       sendControlError(
         response,
@@ -4519,7 +4560,7 @@ async function patchProviderRole(
     const auditChanges: Record<string, unknown> = {
       priority,
       model,
-      ...(body.reasoningEffort === undefined ? {} : { reasoningEffort })
+      ...(body.reasoningEffort !== undefined && { reasoningEffort })
     };
     try {
       ROUTING_POLICY.setProviderAssignment(provider, role, next);
@@ -4586,7 +4627,7 @@ async function patchProviderRole(
         model,
         reasoningEffort,
         effectiveReasoningEffort,
-        reasoningEffortInForce,
+        reasoningEffortInForce: isReasoningEffortInForce,
         supportedReasoningLevels,
         previous,
         actor: actor.actor,
@@ -4597,10 +4638,10 @@ async function patchProviderRole(
   });
 }
 /**
- * Whether an operator may choose `model` for a provider: the model it already
- * has, or one currently observed as routeable for that provider. Provider-role
- * and agent-role assignments both choose a model this way.
- */
+Whether an operator may choose `model` for a provider: the model it already
+has, or one currently observed as routeable for that provider. Provider-role
+and agent-role assignments both choose a model this way.
+*/
 function isProviderModelChoice(
   provider: string,
   model: string,
@@ -4614,9 +4655,9 @@ function isProviderModelChoice(
 }
 
 /**
- * `PATCH /control/providers/:provider/agents/:role` -- set (`{model}`) or
- * clear (`{model: null}`) one agent role's model preference on a provider.
- */
+`PATCH /control/providers/:provider/agents/:role` -- set (`{model}`) or
+clear (`{model: null}`) one agent role's model preference on a provider.
+*/
 async function patchProviderAgentModel(
   request: IncomingMessage,
   response: ServerResponse,
@@ -4640,7 +4681,7 @@ async function patchProviderAgentModel(
       resource,
       outcome,
       changes,
-      ...(reason ? { reason } : {}),
+      ...(reason && { reason }),
       ...auditReconciliationFields(reconciliation)
     });
 
@@ -4754,9 +4795,9 @@ async function patchProviderAgentModel(
 }
 
 /**
- * Whether the runtime currently serves this provider at all. Used by both
- * provider-wide mutations to decide whether an applied change really landed.
- */
+Whether the runtime currently serves this provider at all. Used by both
+provider-wide mutations to decide whether an applied change really landed.
+*/
 function providerIsKnown(provider: string): boolean {
   return (
     Object.hasOwn(ROUTING_POLICY.config.providers ?? {}, provider) ||
@@ -4765,10 +4806,10 @@ function providerIsKnown(provider: string): boolean {
 }
 
 /**
- * Build the reconciliation block and audit/response envelope shared by the
- * provider-wide mutations. The audit record and the response body are derived
- * from the same two generations so they cannot drift apart.
- */
+Build the reconciliation block and audit/response envelope shared by the
+provider-wide mutations. The audit record and the response body are derived
+from the same two generations so they cannot drift apart.
+*/
 function providerMutationReconciliation(
   resource: string,
   desiredGeneration: string,
@@ -4799,21 +4840,21 @@ function providerMutationReconciliation(
 }
 
 /**
- * `POST /control/providers/reset` -- the Providers page header's
- * confirmation-bound "Reset to defaults" operation.
- *
- * Clears only provider Runtime overrides -- role assignments, provider
- * disables, model disables, and provider agent limits -- returning routing to
- * the static `config/model-routing.json` defaults. Agent enablement,
- * provider discovery snapshots, cooldown/health state, and concurrency
- * limits are untouched: none of them are provider routing overrides.
- *
- * Runs inside `ROUTER_STATE_MUTATION_KEY`'s serialized queue alongside
- * every other mutation that persists the shared router state, so the
- * snapshot taken for rollback and the reset itself can never interleave with
- * a concurrent provider/model/agent/concurrency mutation. The body must be
- * exactly `{ confirm: true }`: there is no implicit or partial reset.
- */
+`POST /control/providers/reset` -- the Providers page header's
+confirmation-bound "Reset to defaults" operation.
+
+Clears only provider Runtime overrides -- role assignments, provider
+disables, model disables, and provider agent limits -- returning routing to
+the static `config/model-routing.json` defaults. Agent enablement,
+provider discovery snapshots, cooldown/health state, and concurrency
+limits are untouched: none of them are provider routing overrides.
+
+Runs inside `ROUTER_STATE_MUTATION_KEY`'s serialized queue alongside
+every other mutation that persists the shared router state, so the
+snapshot taken for rollback and the reset itself can never interleave with
+a concurrent provider/model/agent/concurrency mutation. The body must be
+exactly `{ confirm: true }`: there is no implicit or partial reset.
+*/
 function isProvidersResetRequest(
   value: Record<string, unknown>
 ): value is Record<string, unknown> & ControlApiProvidersResetRequest {
@@ -4841,7 +4882,7 @@ async function resetProviders(
       resource,
       outcome,
       changes,
-      ...(reason ? { reason } : {}),
+      ...(reason && { reason }),
       ...auditReconciliationFields(reconciliation)
     });
 
@@ -4915,19 +4956,19 @@ async function resetProviders(
 }
 
 /**
- * `PATCH /control/providers/:provider` -- enable or disable a provider globally.
- *
- * Disabling preserves every role assignment and agent limit, so re-enabling
- * restores the configuration the operator had rather than requiring it to be
- * re-entered. `disabled` is the only accepted key.
- */
+`PATCH /control/providers/:provider` -- enable or disable a provider globally.
+
+Disabling preserves every role assignment and agent limit, so re-enabling
+restores the configuration the operator had rather than requiring it to be
+re-entered. `disabled` is the only accepted key.
+*/
 /**
- * Re-check one provider now: its live probe and model listing.
- *
- * Operator-only and audited like every other provider write, because it can
- * change routing state -- a passing probe clears a probe-failure cooldown, a
- * failing one starts one. It takes no body.
- */
+Re-check one provider now: its live probe and model listing.
+
+Operator-only and audited like every other provider write, because it can
+change routing state -- a passing probe clears a probe-failure cooldown, a
+failing one starts one. It takes no body.
+*/
 async function postProviderCheck(
   response: ServerResponse,
   actor: ControlApiActor,
@@ -4948,7 +4989,7 @@ async function postProviderCheck(
       resource,
       outcome,
       changes,
-      ...(reason ? { reason } : {})
+      ...(reason && { reason })
     });
   if (actor.role !== "operator") {
     audit("denied", null, "viewer_cannot_mutate");
@@ -5021,7 +5062,7 @@ async function patchProviderEnabled(
       resource,
       outcome,
       changes,
-      ...(reason ? { reason } : {}),
+      ...(reason && { reason }),
       ...auditReconciliationFields(reconciliation)
     });
 
@@ -5086,11 +5127,11 @@ async function patchProviderEnabled(
       return;
     }
 
-    const observed = ROUTING_POLICY.isProviderDisabled(provider) === disabled;
+    const isObserved = ROUTING_POLICY.isProviderDisabled(provider) === disabled;
     const reconciliation = providerMutationReconciliation(
       resource,
       `disabled=${disabled ? "true" : "false"}`,
-      observed
+      isObserved
     );
     audit("ok", { disabled, previous }, undefined, reconciliation.audit);
     sendJson(
@@ -5110,11 +5151,11 @@ async function patchProviderEnabled(
 }
 
 /**
- * `PATCH /control/providers/:provider/limits` -- the provider-wide concurrent
- * agent limits. `null` means Unlimited. Values are normalised rather than
- * trusted: a non-integer, negative or non-finite number becomes Unlimited, so
- * an unrecognised value can never become an active limit.
- */
+`PATCH /control/providers/:provider/limits` -- the provider-wide concurrent
+agent limits. `null` means Unlimited. Values are normalised rather than
+trusted: a non-integer, negative or non-finite number becomes Unlimited, so
+an unrecognised value can never become an active limit.
+*/
 async function patchProviderLimits(
   request: IncomingMessage,
   response: ServerResponse,
@@ -5137,7 +5178,7 @@ async function patchProviderLimits(
       resource,
       outcome,
       changes,
-      ...(reason ? { reason } : {}),
+      ...(reason && { reason }),
       ...auditReconciliationFields(reconciliation)
     });
 
@@ -5214,13 +5255,13 @@ async function patchProviderLimits(
     }
 
     const applied = ROUTING_POLICY.limitsFor(provider) ?? null;
-    const observed =
+    const isObserved =
       applied?.perSession === next.perSession &&
       applied?.acrossSessions === next.acrossSessions;
     const reconciliation = providerMutationReconciliation(
       resource,
       `limits=${JSON.stringify(next)}`,
-      observed
+      isObserved
     );
     audit("ok", { ...next, previous }, undefined, reconciliation.audit);
     sendJson(
@@ -5245,10 +5286,10 @@ async function patchProviderLimits(
 }
 
 /**
- * `PATCH /control/runtime/concurrency` -- mutate orchestrator child-concurrency limit.
- * Supports explicit Unlimited (`null`), integers 0-999, and resetToConfigFile: true.
- * Revision checked and persisted across restart.
- */
+`PATCH /control/runtime/concurrency` -- mutate orchestrator child-concurrency limit.
+Supports explicit Unlimited (`null`), integers 0-999, and resetToConfigFile: true.
+Revision checked and persisted across restart.
+*/
 async function patchConcurrencyLimit(
   request: IncomingMessage,
   response: ServerResponse,
@@ -5269,7 +5310,7 @@ async function patchConcurrencyLimit(
       resource,
       outcome,
       changes,
-      ...(reason ? { reason } : {}),
+      ...(reason && { reason }),
       ...auditReconciliationFields(reconciliation)
     });
 
@@ -5438,26 +5479,26 @@ function patchAgentEnablement(
 ): Promise<void> {
   const role = inputRole.trim().toLowerCase();
   const roles = getDefaultExecutionContract().roles ?? {};
-  const contractRoleKnown = Object.hasOwn(roles, role);
+  const isContractRoleKnown = Object.hasOwn(roles, role);
   const alias = ROUTING_POLICY.agentModelAlias(role);
   const enabled = ROUTING_POLICY.isAgentEnabled(role);
-  const known = contractRoleKnown && alias !== null && enabled !== null;
-  const unavailableAlias = contractRoleKnown && alias === null;
+  const isKnown = isContractRoleKnown && alias !== null && enabled !== null;
+  const isUnavailableAlias = isContractRoleKnown && alias === null;
   const resource = `${CONTROL_API_PATHS.agents}/${role}`;
 
   return patchEnablement(request, response, actor, {
     action: "patch_agent_enablement",
     resource,
     subject: "Agent",
-    known,
-    unknownStatus: unavailableAlias ? 409 : 404,
-    unknownReason: unavailableAlias
+    known: isKnown,
+    unknownStatus: isUnavailableAlias ? 409 : 404,
+    unknownReason: isUnavailableAlias
       ? "agent_alias_unavailable"
       : "unknown_agent",
-    unknownCode: unavailableAlias
+    unknownCode: isUnavailableAlias
       ? "autodev_control_api_agent_alias_unavailable"
       : "autodev_control_api_unknown_agent",
-    unknownMessage: unavailableAlias
+    unknownMessage: isUnavailableAlias
       ? "This Agent has no configured AutoDev routing alias, so Runtime cannot enforce enablement."
       : "Unknown agent role.",
     current: () => ROUTING_POLICY.isAgentEnabled(role) === true,
@@ -5516,14 +5557,14 @@ function patchModel(
   actor: ControlApiActor,
   model: string
 ): Promise<void> {
-  const currentlyRouteable = modelHasCurrentDiscovery(model);
+  const isCurrentlyRouteable = modelHasCurrentDiscovery(model);
   const knownToRuntime =
     ROUTING_POLICY.isKnownModel(model) || modelHasDiscoveryRecord(model);
   return patchEnablement(request, response, actor, {
     action: "patch_model",
     resource: model,
     subject: "model",
-    known: currentlyRouteable,
+    known: isCurrentlyRouteable,
     unknownStatus: knownToRuntime ? 409 : 404,
     unknownReason: knownToRuntime
       ? "model_not_currently_routeable"
@@ -5608,15 +5649,15 @@ function authorizeRequest(
 }
 
 /**
- * One read-only collection.
- *
- * The renderer is handed the configured repository root, not just the actor,
- * because the detail routes already read `options.repositoryRoot` while these
- * fell back to the default. A caller that pointed the Control API at another
- * repository therefore got a collection from one root and a detail from
- * another -- and the test that reads a collection to check a write against that
- * same root was quietly reading the wrong repository.
- */
+One read-only collection.
+
+The renderer is handed the configured repository root, not just the actor,
+because the detail routes already read `options.repositoryRoot` while these
+fell back to the default. A caller that pointed the Control API at another
+repository therefore got a collection from one root and a detail from
+another -- and the test that reads a collection to check a write against that
+same root was quietly reading the wrong repository.
+*/
 type ReadOnlyCollectionRenderer = (
   actor: ControlApiActor,
   repositoryRoot: string | undefined,
@@ -5784,13 +5825,13 @@ async function modelRoute(
 }
 
 /**
- * The outcome of reading one detail.
- *
- * The read owns its own failure. A detail that cannot be produced because its
- * source was never read is not an unknown resource -- nobody looked -- and only
- * the read knows which of the two happened and why, so the reason travels with
- * the answer instead of in a second probe of the same source.
- */
+The outcome of reading one detail.
+
+The read owns its own failure. A detail that cannot be produced because its
+source was never read is not an unknown resource -- nobody looked -- and only
+the read knows which of the two happened and why, so the reason travels with
+the answer instead of in a second probe of the same source.
+*/
 type ReadOnlyDetailResult =
   | {
       readonly status: "found";
@@ -5881,20 +5922,20 @@ const PROMPT_DETAIL_ROUTE: ReadOnlyDetailRoute = {
 };
 
 /**
- * The launch configuration one request sets.
- *
- * A key the request does not mention is left as the declaration has it; a key
- * it sets to `null` is removed. The request owns the launch keys and nothing
- * else: the target's enablement, approval mode and tool allowlist are not
- * part of it.
- */
+The launch configuration one request sets.
+
+A key the request does not mention is left as the declaration has it; a key
+it sets to `null` is removed. The request owns the launch keys and nothing
+else: the target's enablement, approval mode and tool allowlist are not
+part of it.
+*/
 /**
- * One launch key's value in a request.
- *
- * `absent` is a key the request does not mention, `remove` is a key the
- * request takes away, and `invalid` is a value the request does not carry in
- * a shape this route accepts.
- */
+One launch key's value in a request.
+
+`absent` is a key the request does not mention, `remove` is a key the
+request takes away, and `invalid` is a value the request does not carry in
+a shape this route accepts.
+*/
 type McpLaunchBodyValue =
   | { readonly kind: "absent" }
   | { readonly kind: "remove" }
@@ -5908,7 +5949,7 @@ function mcpBodyTextValue(raw: unknown): McpLaunchBodyValue {
   return { kind: "set", value: raw };
 }
 
-function mcpBodyArgsValue(
+function mcpBodyArgumentsValue(
   raw: unknown
 ):
   | { readonly kind: "absent" }
@@ -5917,7 +5958,7 @@ function mcpBodyArgsValue(
   | { readonly kind: "invalid" } {
   if (raw === undefined) return { kind: "absent" };
   if (raw === null) return { kind: "remove" };
-  if (!Array.isArray(raw) || !raw.every((arg) => typeof arg === "string"))
+  if (!Array.isArray(raw) || raw.some((argument) => typeof argument !== "string"))
     return { kind: "invalid" };
   return { kind: "set", value: raw as string[] };
 }
@@ -5972,10 +6013,10 @@ function mcpLaunchUpdateFromBody(value: unknown): {
     if (text.kind === "absent") continue;
     update[key] = text.kind === "remove" ? null : text.value;
   }
-  const args = mcpBodyArgsValue(value.args);
-  if (args.kind === "invalid") return null;
-  if (args.kind !== "absent") {
-    update.args = args.kind === "remove" ? null : args.value;
+  const arguments_ = mcpBodyArgumentsValue(value.args);
+  if (arguments_.kind === "invalid") return null;
+  if (arguments_.kind !== "absent") {
+    update.args = arguments_.kind === "remove" ? null : arguments_.value;
   }
   const headers = mcpBodyHeadersValue(value.httpHeaders);
   if (headers.kind === "invalid") return null;
@@ -5986,23 +6027,23 @@ function mcpLaunchUpdateFromBody(value: unknown): {
 }
 
 /**
- * The refusal of a canonical MCP declaration write.
- *
- * A conflict and a refused declaration are different facts: the first says
- * the declaration moved under the write, the second says the write could not
- * be expressed. They get different codes, and the reason is the Runtime's.
- */
+The refusal of a canonical MCP declaration write.
+
+A conflict and a refused declaration are different facts: the first says
+the declaration moved under the write, the second says the write could not
+be expressed. They get different codes, and the reason is the Runtime's.
+*/
 function sendMcpWriteFailure(
   response: ServerResponse,
   actor: ControlApiActor,
   resource: string,
   error: unknown
 ): void {
-  const conflict = error instanceof RuleSyncMcpConflictError;
-  const validation = error instanceof RuleSyncMcpValidationError;
-  if (!conflict && !validation) throw error;
-  const status = conflict ? 409 : 400;
-  const code = conflict
+  const isConflict = error instanceof RuleSyncMcpConflictError;
+  const isValidation = error instanceof RuleSyncMcpValidationError;
+  if (!isConflict && !isValidation) throw error;
+  const status = isConflict ? 409 : 400;
+  const code = isConflict
     ? "autodev_control_mcp_revision_conflict"
     : "autodev_control_mcp_invalid_declaration";
   const message =
@@ -6017,20 +6058,20 @@ function sendMcpWriteFailure(
     resource,
     outcome: "error",
     changes: null,
-    reason: conflict ? "revision_conflict" : "invalid_declaration"
+    reason: isConflict ? "revision_conflict" : "invalid_declaration"
   });
   sendControlError(response, status, code, message);
 }
 
 /**
- * Write one MCP server's launch configuration to the canonical declaration.
- *
- * The write is a compare-and-swap on the declaration's revision, so a write
- * decided on an older declaration is refused rather than applied over a newer
- * one. The projection is applied afterwards and the applied state is read
- * again, so the response says what the Runtime published rather than what the
- * write asked for.
- */
+Write one MCP server's launch configuration to the canonical declaration.
+
+The write is a compare-and-swap on the declaration's revision, so a write
+decided on an older declaration is refused rather than applied over a newer
+one. The projection is applied afterwards and the applied state is read
+again, so the response says what the Runtime published rather than what the
+write asked for.
+*/
 async function patchMcpServer(
   request: IncomingMessage,
   response: ServerResponse,
@@ -6200,17 +6241,19 @@ function promptVersionsPath(
     : null;
 }
 
-/** A whole number, with no sign and no fraction. */
+/**
+A whole number, with no sign and no fraction.
+*/
 const WHOLE_NUMBER_PATTERN = /^\d+$/u;
 
 /**
- * The page of a command's committed history a request asks for.
- *
- * The page is a transport-level window onto one ordered history, so a request
- * that names a page the repository cannot answer is refused rather than
- * clamped: a clamped page would answer a different question than the one that
- * was asked, and the caller would not know it.
- */
+The page of a command's committed history a request asks for.
+
+The page is a transport-level window onto one ordered history, so a request
+that names a page the repository cannot answer is refused rather than
+clamped: a clamped page would answer a different question than the one that
+was asked, and the caller would not know it.
+*/
 function promptHistoryPageFromQuery(
   request: IncomingMessage,
   pathname: string
@@ -6235,7 +6278,9 @@ function promptHistoryPageFromQuery(
   return { offset, limit };
 }
 
-/** A whole number from a query parameter, or the default when it is absent. */
+/**
+A whole number from a query parameter, or the default when it is absent.
+*/
 function promptHistoryPageNumber(
   raw: string | null,
   fallback: number
@@ -6315,13 +6360,13 @@ function promptVersionsRoute(
 }
 
 /**
- * The one answer to a canonical skill source that could not be read.
- *
- * A skill the catalogue does not hold is a wrong answer, not an empty one:
- * the caller would render a panel for a skill that does not exist. A catalogue
- * that was read and found broken is a different claim, and it answers with the
- * catalogue's own reason.
- */
+The one answer to a canonical skill source that could not be read.
+
+A skill the catalogue does not hold is a wrong answer, not an empty one:
+the caller would render a panel for a skill that does not exist. A catalogue
+that was read and found broken is a different claim, and it answers with the
+catalogue's own reason.
+*/
 interface SkillContentError {
   readonly status: number;
   readonly code: string;
@@ -6414,11 +6459,11 @@ function rejectSkillContentMethod(
 }
 
 /** Read one canonical RuleSync `SKILL.md`.
- *
- * The canonical source is repository-owned, so this route reads it and nothing
- * else: a skill is changed in its repository source and reconciled by the
- * standard workflow.
- */
+
+The canonical source is repository-owned, so this route reads it and nothing
+else: a skill is changed in its repository source and reconciled by the
+standard workflow.
+*/
 async function skillContentRoute(
   request: IncomingMessage,
   response: ServerResponse,
@@ -6447,7 +6492,7 @@ async function skillControlApiRoute(
   pathname: string,
   options: ControlApiRequestOptions
 ): Promise<boolean> {
-  const contentMatch = pathname.match(SKILL_CONTENT_PATH);
+  const contentMatch = SKILL_CONTENT_PATH.exec(pathname);
   if (contentMatch) {
     await skillContentRoute(
       request,
@@ -6564,12 +6609,8 @@ function workspacePlaytestingApprovalRoute(
     pathname,
     actor,
     {
-      ...(options.repositoryRoot === undefined
-        ? {}
-        : { repositoryRoot: options.repositoryRoot }),
-      ...(options.workspacePlaytestApprovalRepository === undefined
-        ? {}
-        : { repository: options.workspacePlaytestApprovalRepository }),
+      ...(options.repositoryRoot !== undefined && { repositoryRoot: options.repositoryRoot }),
+      ...(options.workspacePlaytestApprovalRepository !== undefined && { repository: options.workspacePlaytestApprovalRepository }),
       audit: (event) =>
         auditMutation({
           actor: actor.actor,
@@ -6579,7 +6620,7 @@ function workspacePlaytestingApprovalRoute(
           resource: `/control/workspaces/${event.workspaceId}/playtesting-approval`,
           outcome: event.outcome,
           changes: event.changes,
-          ...(event.reason ? { reason: event.reason } : {})
+          ...(event.reason && { reason: event.reason })
         })
     }
   );
@@ -6598,12 +6639,8 @@ function workspaceVisualPlaytestTargetsRoute(
     pathname,
     actor,
     {
-      ...(options.repositoryRoot === undefined
-        ? {}
-        : { repositoryRoot: options.repositoryRoot }),
-      ...(options.workspaceVisualPlaytestTargetRepository === undefined
-        ? {}
-        : { repository: options.workspaceVisualPlaytestTargetRepository }),
+      ...(options.repositoryRoot !== undefined && { repositoryRoot: options.repositoryRoot }),
+      ...(options.workspaceVisualPlaytestTargetRepository !== undefined && { repository: options.workspaceVisualPlaytestTargetRepository }),
       audit: (event) =>
         auditMutation({
           actor: actor.actor,
@@ -6613,7 +6650,7 @@ function workspaceVisualPlaytestTargetsRoute(
           resource: `/control/workspaces/${event.workspaceId}/playtesting-visual-targets${event.targetId === null ? "" : `/${event.targetId}`}`,
           outcome: event.outcome,
           changes: event.changes,
-          ...(event.reason ? { reason: event.reason } : {})
+          ...(event.reason && { reason: event.reason })
         })
     }
   );
@@ -6654,7 +6691,7 @@ function playtestingHumanStudyRoute(
           resource: `/control/playtesting/human-studies/${event.workspaceId}`,
           outcome: event.outcome,
           changes: event.changes,
-          ...(event.reason ? { reason: event.reason } : {})
+          ...(event.reason && { reason: event.reason })
         })
     }
   );
@@ -6674,23 +6711,17 @@ function playtestingRunControlRoute(
     pathname,
     actor,
     {
-      ...(options.repositoryRoot === undefined
-        ? {}
-        : { repositoryRoot: options.repositoryRoot }),
+      ...(options.repositoryRoot !== undefined && { repositoryRoot: options.repositoryRoot }),
       runControl:
         options.playtestingRunControl ?? getDefaultPlaytestRunControl(),
-      ...(options.workspaceVisualPlaytestTargetRepository === undefined
-        ? {}
-        : {
+      ...(options.workspaceVisualPlaytestTargetRepository !== undefined && {
             visualTargetRepository:
               options.workspaceVisualPlaytestTargetRepository
           }),
       requireSessionHeader: actor.playtestingService === true,
-      ...(actor.playtestingService
-        ? {
+      ...(actor.playtestingService && {
             trustedSessionRole: actor.playtestingServiceRole ?? ""
-          }
-        : {}),
+          }),
       audit: (event) =>
         auditMutation({
           actor: actor.actor,
@@ -6700,7 +6731,7 @@ function playtestingRunControlRoute(
           resource: `/control/playtesting/runs/${event.workspaceId}`,
           outcome: event.outcome,
           changes: event.changes,
-          ...(event.reason ? { reason: event.reason } : {})
+          ...(event.reason && { reason: event.reason })
         })
     }
   );
@@ -6715,12 +6746,8 @@ async function playtestingRoute(
 ): Promise<boolean> {
   if (!pathname.startsWith(CONTROL_API_PATHS.playtesting + "/")) return false;
   await handlePlaytestingControlApiRequest(request, response, pathname, actor, {
-    ...(options.repositoryRoot === undefined
-      ? {}
-      : { repositoryRoot: options.repositoryRoot }),
-    ...(options.playtestingRepository === undefined
-      ? {}
-      : { repository: options.playtestingRepository })
+    ...(options.repositoryRoot !== undefined && { repositoryRoot: options.repositoryRoot }),
+    ...(options.playtestingRepository !== undefined && { repository: options.playtestingRepository })
   });
   return true;
 }
@@ -6842,15 +6869,15 @@ async function agentDetailRoute(
 }
 
 /**
- * The one answer to a request that used the wrong verb for a mutation route.
- *
- * Each mutation-only route repeated the same guard, and the copies had drifted:
- * two of them only audited the rejection without answering it, so a GET
- * against the provider limits or the provider enablement route left the caller
- * with no response at all and no way to learn why. One rejection, so every
- * mutation-only route audits the attempt, advertises the verb it accepts, and
- * answers 405.
- */
+The one answer to a request that used the wrong verb for a mutation route.
+
+Each mutation-only route repeated the same guard, and the copies had drifted:
+two of them only audited the rejection without answering it, so a GET
+against the provider limits or the provider enablement route left the caller
+with no response at all and no way to learn why. One rejection, so every
+mutation-only route audits the attempt, advertises the verb it accepts, and
+answers 405.
+*/
 function rejectUnsupportedMethod(
   request: IncomingMessage,
   response: ServerResponse,
@@ -6877,11 +6904,11 @@ function rejectUnsupportedMethod(
 }
 
 /**
- * The routes that only ever mutate.
- *
- * They live together so the verb guard is written once, and so a request that
- * used the wrong verb is answered the same way whichever route it called.
- */
+The routes that only ever mutate.
+
+They live together so the verb guard is written once, and so a request that
+used the wrong verb is answered the same way whichever route it called.
+*/
 async function handleMutationOnlyRoute(
   request: IncomingMessage,
   response: ServerResponse,
@@ -6905,7 +6932,7 @@ async function handleMutationOnlyRoute(
     await patchConcurrencyLimit(request, response, actor);
     return true;
   }
-  const agentModelMatch = pathname.match(PROVIDER_AGENT_MODEL_PATH);
+  const agentModelMatch = PROVIDER_AGENT_MODEL_PATH.exec(pathname);
   if (agentModelMatch) {
     if (method !== "PATCH") {
       rejectUnsupportedMethod(
@@ -6928,7 +6955,7 @@ async function handleMutationOnlyRoute(
     );
     return true;
   }
-  const providerLimitsMatch = pathname.match(PROVIDER_LIMITS_PATH);
+  const providerLimitsMatch = PROVIDER_LIMITS_PATH.exec(pathname);
   if (providerLimitsMatch) {
     if (method !== "PATCH") {
       rejectUnsupportedMethod(
@@ -6966,7 +6993,7 @@ async function handleMutationOnlyRoute(
     await resetProviders(request, response, actor);
     return true;
   }
-  const providerCheckMatch = pathname.match(PROVIDER_CHECK_PATH);
+  const providerCheckMatch = PROVIDER_CHECK_PATH.exec(pathname);
   if (providerCheckMatch) {
     if (method !== "POST") {
       rejectUnsupportedMethod(
@@ -6983,7 +7010,7 @@ async function handleMutationOnlyRoute(
     await postProviderCheck(response, actor, providerCheckMatch[1]!);
     return true;
   }
-  const providerOnlyMatch = pathname.match(PROVIDER_PATH);
+  const providerOnlyMatch = PROVIDER_PATH.exec(pathname);
   if (providerOnlyMatch) {
     if (method !== "PATCH") {
       rejectUnsupportedMethod(
@@ -7004,12 +7031,12 @@ async function handleMutationOnlyRoute(
 }
 
 /**
- * One workspace's own configuration route.
- *
- * The catalog is read through the collection route and written through this
- * one, so a write names the workspace it changes rather than a collection the
- * caller would have to search.
- */
+One workspace's own configuration route.
+
+The catalog is read through the collection route and written through this
+one, so a write names the workspace it changes rather than a collection the
+caller would have to search.
+*/
 async function workspaceRoute(
   request: IncomingMessage,
   response: ServerResponse,
@@ -7048,7 +7075,9 @@ async function workspaceRoute(
   return true;
 }
 
-/** Only authenticated operators can change the local external MCP service. */
+/**
+Only authenticated operators can change the local external MCP service.
+*/
 async function chatgptTunnelRoute(
   request: IncomingMessage,
   response: ServerResponse,
@@ -7073,7 +7102,7 @@ async function chatgptTunnelRoute(
       resource: CHATGPT_TUNNEL_CONTROL_PATH,
       outcome,
       changes: null,
-      ...(reason ? { reason } : {})
+      ...(reason && { reason })
     });
   if (method === "GET") {
     try {
@@ -7178,8 +7207,7 @@ export async function handleControlApiRequest(
   if (!actor) return true;
   if (pathname === CHATGPT_TUNNEL_CONTROL_PATH)
     return chatgptTunnelRoute(request, response, actor, method, options);
-  if (
-    (await workspaceVisualPlaytestTargetsRoute(
+  if ((await workspaceVisualPlaytestTargetsRoute(
       request,
       response,
       pathname,
@@ -7192,33 +7220,19 @@ export async function handleControlApiRequest(
       pathname,
       actor,
       options
-    ))
-  ) {
-    return true;
-  }
-  if (
-    await playtestingHumanStudyRoute(
+    )) || (await playtestingHumanStudyRoute(
       request,
       response,
       pathname,
       actor,
       options
-    )
-  ) {
-    return true;
-  }
-  if (
-    await playtestingRunControlRoute(
+    )) || (await playtestingRunControlRoute(
       request,
       response,
       pathname,
       actor,
       options
-    )
-  ) {
-    return true;
-  }
-  if (await playtestingRoute(request, response, pathname, actor, options))
+    )) || (await playtestingRoute(request, response, pathname, actor, options)))
     return true;
   const providerMatch = pathname.match(PROVIDER_ROLE_PATH);
   if (providerMatch) {
@@ -7237,7 +7251,7 @@ export async function handleControlApiRequest(
   ) {
     return true;
   }
-  const modelMatch = pathname.match(MODEL_PATH);
+  const modelMatch = MODEL_PATH.exec(pathname);
   if (modelMatch)
     return modelRoute(
       request,
@@ -7247,7 +7261,7 @@ export async function handleControlApiRequest(
       pathname,
       modelMatch[1]!
     );
-  const agentMatch = pathname.match(AGENT_DETAIL_PATH);
+  const agentMatch = AGENT_DETAIL_PATH.exec(pathname);
   if (agentMatch)
     return agentDetailRoute(
       request,
@@ -7282,7 +7296,7 @@ export async function handleControlApiRequest(
   ) {
     return true;
   }
-  const promptMatch = pathname.match(PROMPT_DETAIL_PATH);
+  const promptMatch = PROMPT_DETAIL_PATH.exec(pathname);
   if (promptMatch)
     return promptDetailRoute(
       request,
@@ -7293,7 +7307,7 @@ export async function handleControlApiRequest(
       promptMatch[1]!,
       options
     );
-  const mcpServerMatch = pathname.match(MCP_SERVER_PATH);
+  const mcpServerMatch = MCP_SERVER_PATH.exec(pathname);
   if (mcpServerMatch)
     return mcpServerRoute(
       request,
@@ -7304,7 +7318,7 @@ export async function handleControlApiRequest(
       mcpServerMatch[1]!,
       options
     );
-  const workspaceMatch = pathname.match(WORKSPACE_DETAIL_PATH);
+  const workspaceMatch = WORKSPACE_DETAIL_PATH.exec(pathname);
   if (workspaceMatch)
     return workspaceRoute(
       request,
@@ -7316,10 +7330,7 @@ export async function handleControlApiRequest(
       workspaceMatch[2]!,
       options
     );
-  if (await respondDiagnosticsRoute(request, response, pathname, options)) {
-    return true;
-  }
-  if (await readOnlyCollection(pathname, method, response, actor, options))
+  if ((await respondDiagnosticsRoute(request, response, pathname, options)) || (await readOnlyCollection(pathname, method, response, actor, options)))
     return true;
   auditRejectedRequest(
     request,

@@ -1,4 +1,6 @@
-/** Runtime-owned Playtest run control: approved run lifecycle, evidence and analyst dispatch behind the MCP gateway and Control API. */
+/**
+Runtime-owned Playtest run control: approved run lifecycle, evidence and analyst dispatch behind the MCP gateway and Control API.
+*/
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 
@@ -231,22 +233,30 @@ export class PlaytestMcpUnavailableError extends Error {
   }
 }
 
-/** Trusted Runtime identity accepted by the reusable playtesting run owner. */
+/**
+Trusted Runtime identity accepted by the reusable playtesting run owner.
+*/
 export interface PlaytestRunControlActor {
   readonly workspaceId: string;
   readonly role: string;
   readonly actor: string;
   readonly taskId?: string;
   readonly runId?: string;
-  /** Trusted Runtime analysis task id; present only in an analyst process. */
+  /**
+  Trusted Runtime analysis task id; present only in an analyst process.
+  */
   readonly analysisId?: string;
 }
 
 export interface PlaytestMcpSession extends PlaytestRunControlActor {
   readonly repositoryRoot?: string | null;
-  /** Runtime-bound packet selection for a dispatched analyst task. */
+  /**
+  Runtime-bound packet selection for a dispatched analyst task.
+  */
   readonly selectedEpisodeIds?: readonly string[];
-  /** Runtime-computed immutable metric context for this exact analyst task. */
+  /**
+  Runtime-computed immutable metric context for this exact analyst task.
+  */
   readonly analysisKind?: "confirmatory" | "discovery";
   readonly metricAggregation?: PlaytestCrossSessionMetricAggregation;
 }
@@ -257,10 +267,10 @@ export interface PlaytestActiveRunSummary {
   readonly createdAt: string;
   readonly sessions: readonly PlaytestSessionReference[];
   /**
-   * The same owner-read status the single-batch status route returns, so one
-   * workspace-scoped list renders every nonterminal batch without a second
-   * status authority or one request per batch.
-   */
+  The same owner-read status the single-batch status route returns, so one
+  workspace-scoped list renders every nonterminal batch without a second
+  status authority or one request per batch.
+  */
   readonly status: PlaytestRunStatus;
 }
 
@@ -328,12 +338,12 @@ export interface PlaytestAnalystReviewRun {
   readonly workspaceId: string;
   readonly analysisKind?: "confirmatory" | "discovery";
   /**
-   * Whether the request asked the analyst to file findings.
-   *
-   * The record says which job the run was given, because a run that filed a
-   * defect and a run that only described one are not the same result, and a
-   * reader of the register has to be able to tell them apart.
-   */
+  Whether the request asked the analyst to file findings.
+  
+  The record says which job the run was given, because a run that filed a
+  defect and a run that only described one are not the same result, and a
+  reader of the register has to be able to tell them apart.
+  */
   readonly requireFindings?: boolean;
   readonly status: "running" | "completed" | "partial" | "failed";
   readonly createdAt: string;
@@ -379,13 +389,15 @@ export interface PlaytestAnalystProcessLauncher {
 }
 
 /**
- * Shared Runtime-owned run/cancellation surface. The Control API hosts the
- * process singleton; the stdio MCP facade calls it through the scoped,
- * loopback-only Control API client instead of creating a second run registry.
- */
+Shared Runtime-owned run/cancellation surface. The Control API hosts the
+process singleton; the stdio MCP facade calls it through the scoped,
+loopback-only Control API client instead of creating a second run registry.
+*/
 export interface PlaytestRunCapabilities {
   readonly workspaceId: string;
-  /** Revision returned by authenticated Control API preflight when present. */
+  /**
+  Revision returned by authenticated Control API preflight when present.
+  */
   readonly capabilityRevision?: string | undefined;
   readonly workspaceEnabled: boolean;
   readonly workspaceCatalog: WorkspaceCatalogRead["status"];
@@ -410,10 +422,10 @@ export interface PlaytestRunCapabilities {
     readonly maxStepsPerEpisode: number;
   }[];
   /**
-   * Seeds the latest build's frozen benchmark admits, in inventory order.
-   * `null` when that build freezes no benchmark, so any bounded printable
-   * seed is admissible. A run request outside this list is refused.
-   */
+  Seeds the latest build's frozen benchmark admits, in inventory order.
+  `null` when that build freezes no benchmark, so any bounded printable
+  seed is admissible. A run request outside this list is refused.
+  */
   readonly admissibleSeeds:
     | readonly {
         readonly seed: string;
@@ -432,12 +444,12 @@ export interface PlaytestRunCapabilities {
   readonly revokedAt: string | null;
   readonly runPreflight: "required-at-start";
   /**
-   * The game's checked-in `reporting.githubIssues`. Carried here because the
-   * operator's `issueReporting` grant above means nothing without it: before
-   * this existed the config value was validated and read by no code path, so a
-   * game that asked for review and an operator who granted it were
-   * indistinguishable from a game that asked for nothing.
-   */
+  The game's checked-in `reporting.githubIssues`. Carried here because the
+  operator's `issueReporting` grant above means nothing without it: before
+  this existed the config value was validated and read by no code path, so a
+  game that asked for review and an operator who granted it were
+  indistinguishable from a game that asked for nothing.
+  */
   readonly configuredIssueReporting: "disabled" | "review";
 }
 
@@ -481,11 +493,11 @@ export interface PlaytestRunControl {
     waitMs: number
   ): Promise<PlaytestRunStatus>;
   /**
-   * Prepare evidence packets over an explicit, bounded selection. The owner,
-   * not any caller, decides eligibility, the per-batch critique cap, and which
-   * selected sessions yielded packet-unavailable receipts, so the Console and
-   * MCP tool cannot reach different answers about the same selection.
-   */
+  Prepare evidence packets over an explicit, bounded selection. The owner,
+  not any caller, decides eligibility, the per-batch critique cap, and which
+  selected sessions yielded packet-unavailable receipts, so the Console and
+  MCP tool cannot reach different answers about the same selection.
+  */
   prepareCrossSessionReview(
     session: PlaytestRunControlActor,
     workspaceId: string,
@@ -497,7 +509,9 @@ export interface PlaytestRunControl {
   }>;
 }
 
-/** Process owner lifecycle used by Runtime shutdown; MCP clients do not implement it. */
+/**
+Process owner lifecycle used by Runtime shutdown; MCP clients do not implement it.
+*/
 export interface PlaytestRunOwner
   extends PlaytestRunControl, PlaytestAnalystReviewDispatch {
   shutdown(): Promise<void>;
@@ -513,7 +527,9 @@ export interface PlaytestingRepositoryOps extends PlaytestingReadRepository {
     workspaceId: string,
     findingId: string
   ): Promise<PlaytestFinding | null>;
-  /** Latest revision of the finding with this workspace+identity fingerprint, or null. */
+  /**
+  Latest revision of the finding with this workspace+identity fingerprint, or null.
+  */
   getLatestFindingByFingerprint(
     workspaceId: string,
     fingerprint: string
@@ -555,7 +571,9 @@ export interface PlaytestRunControlOptions {
     workspaceId: string
   ) => PlaytestArtifactStore;
   readonly playtestRepository?: PlaytestingRepositoryOps | undefined;
-  /** Durable Data owner; required at launch, omitted only for read-only test owners. */
+  /**
+  Durable Data owner; required at launch, omitted only for read-only test owners.
+  */
   readonly launchIntentRepository?: PlaytestLaunchIntentRepository | undefined;
   readonly approvalRepository?: WorkspacePlaytestApprovalRepository | undefined;
   readonly visualTargetRepository?:
@@ -567,34 +585,48 @@ export interface PlaytestRunControlOptions {
     prepared: PreparedPlaytestSandbox,
     options?: PlaytestSandboxLaunchOptions
   ) => Promise<PlaytestSandboxHandle>;
-  /** Resolves the approval's latest committed build and loads that commit's target files. */
+  /**
+  Resolves the approval's latest committed build and loads that commit's target files.
+  */
   readonly prepareSandboxHandler?: (
     approval: WorkspacePlaytestApproval
   ) => PreparedPlaytestSandbox;
-  /** Overridable for tests; defaults to the real canonical workspace catalog. */
+  /**
+  Overridable for tests; defaults to the real canonical workspace catalog.
+  */
   readonly readWorkspaceCatalog?: () => WorkspaceCatalogRead;
   readonly launchAnalystProcess?: PlaytestAnalystProcessLauncher;
-  /** Opens the browser for one visual episode; overridable so the episode loop is testable. */
+  /**
+  Opens the browser for one visual episode; overridable so the episode loop is testable.
+  */
   readonly openVisualDriver?: PlaytestVisualDriverOpener;
   /**
-   * Builds the policy one visual episode asks for its next action;
-   * overridable so the episode loop is testable without a live router.
-   */
+  Builds the policy one visual episode asks for its next action;
+  overridable so the episode loop is testable without a live router.
+  */
   readonly createVisualPolicy?: PlaytestVisualPolicyFactory;
 }
 
-/** The visual policy surface the episode loop depends on. */
+/**
+The visual policy surface the episode loop depends on.
+*/
 export type PlaytestVisualPolicy = CorePlaytestVisualPolicy;
 
-/** Builds the policy for one approved visual episode. */
+/**
+Builds the policy for one approved visual episode.
+*/
 export type PlaytestVisualPolicyFactory = (input: {
   readonly target: WorkspaceVisualPlaytestTargetApproval;
   readonly workspacePath: string;
-  /** The decision backend the launch asked for. */
+  /**
+  The decision backend the launch asked for.
+  */
   readonly policyId: PlaytestVisualPolicyId;
 }) => PlaytestVisualPolicy;
 
-/** Explicit supported policy baselines. No generic scored/heuristic fallback. */
+/**
+Explicit supported policy baselines. No generic scored/heuristic fallback.
+*/
 const RUNNER_ROLES = new Set(["playtester", "root", "orchestrator"]);
 export const REVIEWER_ROLE = "playtest-analyst" as const;
 export const PLAYTEST_ADAPTER_MODE = "adapter-accelerated" as const;
@@ -642,12 +674,12 @@ const PLAYTEST_VISUAL_ACTION_REFUSED_KIND = "action-refused" as const;
 const PLAYTEST_VISUAL_STEP_LIMIT_KIND = "step-limit" as const;
 const PLAYTEST_VISUAL_LOOP_GUARD_KIND = "loop-guard" as const;
 /**
- * The Runtime's own measurement says the game has not advanced.
- *
- * This is not the decision backend reporting that it is stuck; it is the
- * Runtime comparing what the player sees now with what they saw before, and
- * finding the game where it was, for as long as the operator allowed.
- */
+The Runtime's own measurement says the game has not advanced.
+
+This is not the decision backend reporting that it is stuck; it is the
+Runtime comparing what the player sees now with what they saw before, and
+finding the game where it was, for as long as the operator allowed.
+*/
 const PLAYTEST_VISUAL_NO_PROGRESS_KIND = "no-progress" as const;
 const PLAYTEST_VISUAL_WALL_TIME_LIMIT_KIND = "wall-time-limit" as const;
 const MAX_REVIEW_PACKET_BYTES = 64 * 1024;
@@ -706,13 +738,13 @@ function analystReviewRunStatus(input: {
   readonly synthesisId: string | null;
   readonly synthesisReadFailed: boolean;
 }): PlaytestAnalystReviewRun["status"] {
-  const synthesisRequired =
+  const isSynthesisRequired =
     input.run.analysisKind !== "discovery" && input.run.packets.length >= 2;
   if (
     !input.reviewReadFailed &&
     !input.synthesisReadFailed &&
     input.reviews.length === input.run.packets.length &&
-    (!synthesisRequired || input.synthesisId !== null) &&
+    (!isSynthesisRequired || input.synthesisId !== null) &&
     input.result.exitCode === 0 &&
     !input.result.launchFailed &&
     !input.result.timedOut
@@ -722,7 +754,9 @@ function analystReviewRunStatus(input: {
   return input.reviews.length > 0 ? "partial" : "failed";
 }
 
-/** The analyst's own words, bounded, so a failure report can name the cause. */
+/**
+The analyst's own words, bounded, so a failure report can name the cause.
+*/
 function boundedAnalystDiagnostic(diagnostic: string): string {
   const collapsed = diagnostic.replaceAll(/\s+/gu, " ").trim();
   return collapsed.length > 600 ? `${collapsed.slice(0, 600)}…` : collapsed;
@@ -778,7 +812,9 @@ interface ActivePlaytestRun {
   readonly controller: AbortController;
   phase: "running" | "persisting";
   reason: PlaytestBatchCancellationReason | null;
-  /** Every in-flight assignment sandbox; cancellation reaches all of them. */
+  /**
+  Every in-flight assignment sandbox; cancellation reaches all of them.
+  */
   readonly sandboxes: Set<PlaytestSandboxHandle>;
   readonly completion: Promise<PlaytestRunStatus>;
   readonly resolveCompletion: (status: PlaytestRunStatus) => void;
@@ -844,7 +880,9 @@ export function authorizeWorkspace(
   return session.workspaceId;
 }
 
-/** Confirm the workspace is a real, operator-enabled entry in the canonical catalog. */
+/**
+Confirm the workspace is a real, operator-enabled entry in the canonical catalog.
+*/
 function assertCanonicalWorkspaceEnabled(
   workspaceId: string,
   readWorkspaceCatalog: () => WorkspaceCatalogRead
@@ -937,9 +975,9 @@ function approvalIsStillExact(
     const catalog = readWorkspaceCatalog();
     if (
       catalog.status !== "valid" ||
-      !catalog.workspaces.some(
+      catalog.workspaces.every(
         (workspace) =>
-          workspace.id === expected.workspaceId && workspace.enabled
+          workspace.id !== expected.workspaceId || !workspace.enabled
       )
     ) {
       return "workspace-disabled";
@@ -982,7 +1020,9 @@ function playtestEnvironmentHash(
     .digest("hex");
 }
 
-/** Frozen assignment inventory plus everything one batch execution needs. */
+/**
+Frozen assignment inventory plus everything one batch execution needs.
+*/
 interface BranchExecutionPlan {
   readonly manifest: PlaytestAssignmentBranch;
   readonly parentEpisode: PlaytestEpisode;
@@ -1035,7 +1075,9 @@ function coverageManifestForBatch(input: {
   });
 }
 
-/** Confirmatory batch coverage consumes adapter identity only. */
+/**
+Confirmatory batch coverage consumes adapter identity only.
+*/
 function coverageEpisodeProjection(
   episode: PlaytestEpisode
 ): PlaytestCoverageEpisode {
@@ -1152,7 +1194,9 @@ function batchRecordFor(input: {
   };
 }
 
-/** Batch counts while assignments are still in flight: assigned only. */
+/**
+Batch counts while assignments are still in flight: assigned only.
+*/
 function runningBatchCounts(assignmentCount: number): PlaytestCompletionCounts {
   return {
     assigned: assignmentCount,
@@ -1198,7 +1242,7 @@ function persistedAssignedEpisodes(
   ): Promise<PersistedAssignmentSummary> => {
     const page = await repository.listBatches(
       { workspaceId, buildSha },
-      { limit: 500, ...(cursor ? { cursor } : {}) }
+      { limit: 500, ...(cursor && { cursor }) }
     );
     const total =
       assigned +
@@ -1223,7 +1267,7 @@ function persistedEpisodesForBatch(
   ): Promise<readonly PlaytestEpisode[]> => {
     const page = await repository.listEpisodes(
       { workspaceId: batch.workspaceId, batchId: batch.batchId },
-      { limit: 500, ...(cursor ? { cursor } : {}) }
+      { limit: 500, ...(cursor && { cursor }) }
     );
     const nextCursor = page.nextCursor ?? undefined;
     if (!nextCursor) return [...episodes, ...page.rows];
@@ -1600,7 +1644,7 @@ async function recoverInterruptedVisualBatch(input: {
   readonly episodes: readonly PlaytestEpisode[];
 }): Promise<PlaytestRunStatus> {
   const { repository, batch } = input;
-  const cancellationRequested = batch.cancellationReason !== null;
+  const isCancellationRequested = batch.cancellationReason !== null;
   const episodeByAssignment = new Map(
     input.episodes
       .filter((episode) => episode.assignmentId !== null)
@@ -1623,15 +1667,15 @@ async function recoverInterruptedVisualBatch(input: {
       const recoveredEpisode: PlaytestEpisode = {
         ...episode,
         revision: episode.revision + 1,
-        status: cancellationRequested
+        status: isCancellationRequested
           ? "cancelled"
           : PLAYTEST_INFRASTRUCTURE_FAILURE_STATE,
         termination: {
-          reason: cancellationRequested ? "cancelled" : "runtime-failure",
+          reason: isCancellationRequested ? "cancelled" : "runtime-failure",
           step: episode.stepCount === 0 ? null : episode.stepCount - 1
         },
         completionCounts: visualCompletionCounts(
-          cancellationRequested
+          isCancellationRequested
             ? "cancelled"
             : PLAYTEST_INFRASTRUCTURE_FAILURE_STATE,
           episode.startedAt !== null
@@ -1641,7 +1685,7 @@ async function recoverInterruptedVisualBatch(input: {
         missingReasons: [
           ...new Set<PlaytestMissingReason>([
             ...episode.missingReasons,
-            cancellationRequested
+            isCancellationRequested
               ? "cancelled"
               : PLAYTEST_INFRASTRUCTURE_FAILURE_STATE
           ])
@@ -1668,7 +1712,7 @@ async function recoverInterruptedVisualBatch(input: {
       recoveredVisualAssignmentOutcome(
         assignment,
         episodeByAssignment.get(assignment.assignmentId) ?? null,
-        cancellationRequested
+        isCancellationRequested
       )
   );
   const counts = playtestBatchCountsFromAssignments({
@@ -1682,8 +1726,8 @@ async function recoverInterruptedVisualBatch(input: {
     status: playtestBatchTerminalState({
       assignmentCount: batch.budget.assignedEpisodes,
       outcomes,
-      cancelled: cancellationRequested,
-      aborted: !cancellationRequested
+      cancelled: isCancellationRequested,
+      aborted: !isCancellationRequested
     }),
     counts,
     reviewSelection: {
@@ -1691,13 +1735,13 @@ async function recoverInterruptedVisualBatch(input: {
       reason: "visual-discovery-session-level"
     },
     unobservedAssignments: unobservedAssignmentOutcomes(outcomes),
-    failureReason: cancellationRequested ? null : "nonterminal-batch-recovered",
+    failureReason: isCancellationRequested ? null : "nonterminal-batch-recovered",
     completedAt
   };
   await repository.insertBatch(recovered);
   return {
     batchId: recovered.batchId,
-    status: cancellationRequested ? "cancelled" : "failed",
+    status: isCancellationRequested ? "cancelled" : "failed",
     cancellationReason: recovered.cancellationReason,
     result: batchRunResult(
       recovered,
@@ -1706,7 +1750,7 @@ async function recoverInterruptedVisualBatch(input: {
       recovered.reviewSelection,
       recovered.cancellationReason
     ),
-    error: cancellationRequested
+    error: isCancellationRequested
       ? null
       : {
           code: "playtest_run_interrupted",
@@ -1841,11 +1885,11 @@ async function recoverPersistedRunStatus(
   }
   const episodes = await persistedEpisodesForBatch(repository, batch);
   const outcomes = assignmentOutcomesFromPersistedBatch(batch, episodes);
-  const interrupted = batch.status === "running" || batch.status === "queued";
+  const isInterrupted = batch.status === "running" || batch.status === "queued";
   const coverageManifest = coverageFromStoredBatch(
     batch,
     episodes,
-    interrupted
+    isInterrupted
   );
   const counts = playtestBatchCountsFromAssignments({
     assignmentCount: batch.budget.assignedEpisodes,
@@ -1854,7 +1898,7 @@ async function recoverPersistedRunStatus(
       batch.reviewReceipts.map((receipt) => receipt.assignmentId)
     ).size
   });
-  if (interrupted) {
+  if (isInterrupted) {
     return recoverInterruptedBatch({
       repository,
       batch,
@@ -1950,10 +1994,10 @@ function activeRunProgress(run: ActivePlaytestRun): {
 }
 
 /**
- * The single owner read of one live run. Both the workspace-scoped active-run
- * list and the single-batch status route project through this, so a Console
- * watching many batches and one watching one batch cannot disagree.
- */
+The single owner read of one live run. Both the workspace-scoped active-run
+list and the single-batch status route project through this, so a Console
+watching many batches and one watching one batch cannot disagree.
+*/
 function activeRunStatus(run: ActivePlaytestRun): PlaytestRunStatus {
   return {
     batchId: run.batchId,
@@ -2067,13 +2111,13 @@ async function startReceiptForPersistedBatch(input: {
 }
 
 /**
- * The receipt a repeated launch request already has.
- *
- * A launch intent records the immutable payload a requestId was bound to, so
- * a repeat of that requestId either resumes the run it started or reports the
- * conflict that stopped it. A requestId with no intent yet has no receipt,
- * and the caller starts the run the request asked for.
- */
+The receipt a repeated launch request already has.
+
+A launch intent records the immutable payload a requestId was bound to, so
+a repeat of that requestId either resumes the run it started or reports the
+conflict that stopped it. A requestId with no intent yet has no receipt,
+and the caller starts the run the request asked for.
+*/
 async function priorLaunchReceiptForRequest(input: {
   readonly repository: PlaytestingRepositoryOps;
   readonly intentRepository: PlaytestLaunchIntentRepository;
@@ -2345,10 +2389,10 @@ async function resolveBranchExecutionPlan(input: {
 }
 
 /**
- * Validate the whole batch against the exact approval, checked-in config,
- * quota-derived worker limits and allowed policy versions, then freeze the
- * complete, content-hashed assignment inventory. Nothing launches unvalidated.
- */
+Validate the whole batch against the exact approval, checked-in config,
+quota-derived worker limits and allowed policy versions, then freeze the
+complete, content-hashed assignment inventory. Nothing launches unvalidated.
+*/
 function prepareApprovedBatch(input: {
   readonly workspaceId: string;
   readonly approval: WorkspacePlaytestApproval;
@@ -2372,11 +2416,11 @@ function prepareApprovedBatch(input: {
       "The prepared sandbox does not match this exact approved batch."
     );
   }
-  const configuration = prepared.configuration;
+  const config = prepared.configuration;
   assertBatchReviewBudget(prepared, approval);
   const maximumSteps = Math.min(
     approval.limits.maxStepsPerEpisode,
-    configuration.budget.maxStepsPerEpisode,
+    config.budget.maxStepsPerEpisode,
     MAX_PLAYTEST_EPISODE_TRACE_STEPS
   );
   const resolved: PlaytestBatchAssignment[] = [];
@@ -2385,7 +2429,7 @@ function prepareApprovedBatch(input: {
   assignments.forEach((request, index) => {
     const assignmentId = "a-" + String(index + 1).padStart(4, "0");
     if (
-      !configuration.scenarios.includes(request.scenario) ||
+      !config.scenarios.includes(request.scenario) ||
       !approval.allowedScenarios.includes(request.scenario)
     ) {
       throw new PlaytestMcpValidationError(
@@ -2395,7 +2439,7 @@ function prepareApprovedBatch(input: {
       );
     }
     if (
-      !configuration.policies.includes(request.policy) ||
+      !config.policies.includes(request.policy) ||
       !approval.allowedPolicies.includes(request.policy)
     ) {
       throw new PlaytestMcpValidationError(
@@ -2436,7 +2480,7 @@ function prepareApprovedBatch(input: {
       cohort: policies.get(request.policy)!.cohort,
       seed: request.seed,
       maxSteps: totalReservedSteps,
-      ...(branch === undefined ? {} : { branch })
+      ...(branch !== undefined && { branch })
     });
   });
   try {
@@ -2494,9 +2538,9 @@ function prepareApprovedBatch(input: {
 }
 
 /**
- * Reserve the whole frozen inventory atomically before any launch, so an
- * over-budget, duplicate or unapproved plan never reaches a sandbox.
- */
+Reserve the whole frozen inventory atomically before any launch, so an
+over-budget, duplicate or unapproved plan never reaches a sandbox.
+*/
 async function reserveBatchBudget(input: {
   readonly repository: PlaytestingRepositoryOps;
   readonly activeRuns: Map<string, ActivePlaytestRun>;
@@ -2568,7 +2612,9 @@ function attachSandboxToRun(
   return true;
 }
 
-/** Terminal state for one assignment; game and infrastructure stay apart. */
+/**
+Terminal state for one assignment; game and infrastructure stay apart.
+*/
 function assignmentOutcomeFor(input: {
   readonly assignment: PlaytestBatchAssignment;
   readonly episode: PlaytestEpisode | null;
@@ -2597,7 +2643,9 @@ function assignmentOutcomeFor(input: {
   };
 }
 
-/** Keep the live response projection out of the durable batch schema. */
+/**
+Keep the live response projection out of the durable batch schema.
+*/
 function unobservedAssignmentOutcomes(
   outcomes: readonly PlaytestRunAssignmentOutcome[]
 ): readonly PlaytestAssignmentOutcome[] {
@@ -2734,7 +2782,9 @@ interface ExecuteBatchInput {
   readonly createdAt: string;
   readonly assignments: readonly PlaytestLaunchAssignment[];
   readonly branchPlan: BranchExecutionPlan | null;
-  /** The latest committed build, resolved and snapshotted once for this batch. */
+  /**
+  The latest committed build, resolved and snapshotted once for this batch.
+  */
   readonly prepared: PreparedPlaytestSandbox;
   readonly artifacts: PlaytestArtifactStore;
   readonly repository: PlaytestingRepositoryOps;
@@ -2759,7 +2809,9 @@ interface ExecuteBatchInput {
 
 interface RegisteredBatchContext extends ApprovedBatchContext {
   readonly activeRun: ActivePlaytestRun;
-  /** Observed episodes per assignment, used for the frozen review selection. */
+  /**
+  Observed episodes per assignment, used for the frozen review selection.
+  */
   readonly observedEpisodes: Map<string, PlaytestEpisode>;
 }
 
@@ -2795,9 +2847,7 @@ function runAssignmentInApprovedSandbox(
     rubricHash: context.prepared.rubricHash,
     maxSteps:
       context.maxSteps.get(assignment.assignmentId) ?? assignment.maxSteps,
-    ...(context.branchPlan === null
-      ? {}
-      : {
+    ...(context.branchPlan !== null && {
           branch: {
             manifest: context.branchPlan.manifest,
             parentEpisode: context.branchPlan.parentEpisode
@@ -3011,10 +3061,10 @@ async function registerApprovedBatch(
 }
 
 /**
- * Freeze the per-batch critique selection from the terminal inventory.
- * Surveillance runs first inside policy x scenario x outcome strata; discovery
- * ranks only the remaining sessions by the named, versioned evaluator signal.
- */
+Freeze the per-batch critique selection from the terminal inventory.
+Surveillance runs first inside policy x scenario x outcome strata; discovery
+ranks only the remaining sessions by the named, versioned evaluator signal.
+*/
 function selectionForBatch(input: {
   readonly context: RegisteredBatchContext;
   readonly approval: WorkspacePlaytestApproval;
@@ -3172,7 +3222,7 @@ function frameEvidenceForPacket(input: {
   readonly omittedArtifacts: readonly PlaytestEvidenceOmittedArtifact[];
 } {
   const frameHashes: Record<string, string> = {};
-  const frameRefsByStep = new Map<number, PlaytestEvidenceLocator[]>();
+  const frameReferencesByStep = new Map<number, PlaytestEvidenceLocator[]>();
   const omittedArtifacts: PlaytestEvidenceOmittedArtifact[] = [];
   for (const frame of input.episode.frames) {
     if (frame.kind !== "frame") continue;
@@ -3208,11 +3258,11 @@ function frameEvidenceForPacket(input: {
       continue;
     }
     frameHashes[frame.id] = reference.sha256;
-    const refs = frameRefsByStep.get(step) ?? [];
-    refs.push(frame);
-    frameRefsByStep.set(step, refs);
+    const references = frameReferencesByStep.get(step) ?? [];
+    references.push(frame);
+    frameReferencesByStep.set(step, references);
   }
-  return { frameHashes, frameRefsByStep, omittedArtifacts };
+  return { frameHashes, frameRefsByStep: frameReferencesByStep, omittedArtifacts };
 }
 
 function projectTraceEvents(
@@ -3590,7 +3640,7 @@ async function executeApprovedBatch(input: ExecuteBatchInput) {
   const outcomes: PlaytestRunAssignmentOutcome[] = [];
   let capabilities: PlaytestCapabilityAdvertisement | null = null;
   let approvalMonitor: NodeJS.Timeout | undefined;
-  let terminalWriteOutcomeUnknown = false;
+  let isTerminalWriteOutcomeUnknown = false;
   try {
     approvalMonitor = setInterval(() => {
       const reason = approvalIsStillExact(
@@ -3766,7 +3816,7 @@ async function executeApprovedBatch(input: ExecuteBatchInput) {
     try {
       await input.repository.insertBatch(terminalBatch);
     } catch (error) {
-      terminalWriteOutcomeUnknown = true;
+      isTerminalWriteOutcomeUnknown = true;
       let persisted: PlaytestBatch | null;
       try {
         persisted = await input.repository.getBatch(
@@ -3830,7 +3880,7 @@ async function executeApprovedBatch(input: ExecuteBatchInput) {
       episodes: incompleteEpisodes,
       generatedAt: completedAt
     });
-    if (!terminalWriteOutcomeUnknown) {
+    if (!isTerminalWriteOutcomeUnknown) {
       try {
         await input.repository.insertBatch(
           batchRecordFor({
@@ -3873,11 +3923,11 @@ async function executeApprovedBatch(input: ExecuteBatchInput) {
 }
 
 /**
- * Refuse (never clamp) a visual launch that requests any limit above the
- * approved target's own ceiling. Admission must fail closed: a caller that
- * wants a smaller run can just ask for one, but nothing here silently
- * substitutes the approved limit for a larger requested one.
- */
+Refuse (never clamp) a visual launch that requests any limit above the
+approved target's own ceiling. Admission must fail closed: a caller that
+wants a smaller run can just ask for one, but nothing here silently
+substitutes the approved limit for a larger requested one.
+*/
 export function assertVisualLaunchLimitsWithinApprovedTarget(
   requested: WorkspaceVisualPlaytestLimits,
   approved: WorkspaceVisualPlaytestLimits
@@ -3933,14 +3983,16 @@ interface ExecuteVisualBatchInput {
 }
 
 /**
- * The approved per-episode usage budget of the decision policy ran out before
- * the step cap. The episode is budget-truncated, but it did not reach the step
- * limit, and recording it as one tells the operator and the analyst that a cap
- * they chose was reached when it was not.
- */
+The approved per-episode usage budget of the decision policy ran out before
+the step cap. The episode is budget-truncated, but it did not reach the step
+limit, and recording it as one tells the operator and the analyst that a cap
+they chose was reached when it was not.
+*/
 const USAGE_BUDGET = "usage-budget" as const;
 
-/** Visual-session loop exit signal; mapped to a Core termination/status pair. */
+/**
+Visual-session loop exit signal; mapped to a Core termination/status pair.
+*/
 type VisualEpisodeExit =
   | { readonly kind: "cancelled"; readonly step: number | null }
   | {
@@ -3992,12 +4044,12 @@ function playerEvidenceReferenceForStep(
 }
 
 /**
- * The recorded version of a visual decision backend.
- *
- * The version is part of the frozen manifest, so it names the contract
- * the episode was run under — not a model's weight revision, which the
- * backend reports per decision.
- */
+The recorded version of a visual decision backend.
+
+The version is part of the frozen manifest, so it names the contract
+the episode was run under — not a model's weight revision, which the
+backend reports per decision.
+*/
 function visualPolicyVersion(policyId: PlaytestVisualPolicyId): string {
   return policyId === "onejev-local"
     ? ONEJEV_LOCAL_POLICY_VERSION
@@ -4090,16 +4142,16 @@ function completePlayerDebrief(input: {
   }
   const evidence = input.decision.selfReport.evidenceSteps.map((step) => {
     const recordedStep = input.traceSteps.find((entry) => entry.step === step);
-    const frameRef = recordedStep?.frameRefs.find(
+    const frameReference = recordedStep?.frameRefs.find(
       (reference) => reference.kind === "frame"
     );
     const frameIndex = input.capturedFrames.findIndex(
-      (frame) => frame.artifactId === frameRef?.id
+      (frame) => frame.artifactId === frameReference?.id
     );
-    if (frameRef === undefined || frameIndex === -1) return null;
+    if (frameReference === undefined || frameIndex === -1) return null;
     return {
       kind: "frame" as const,
-      id: frameRef.id,
+      id: frameReference.id,
       step,
       frameIndex
     };
@@ -4170,7 +4222,9 @@ function playerDebriefAfterExit(
   };
 }
 
-/** Driver-observed budgets that exhaust like a step cap, not a safety stop. */
+/**
+Driver-observed budgets that exhaust like a step cap, not a safety stop.
+*/
 const VISUAL_BUDGET_BLOCK_REASONS =
   new Set<PlaytestVisualObservationBlockReason>([
     "capture-budget-exhausted",
@@ -4179,12 +4233,12 @@ const VISUAL_BUDGET_BLOCK_REASONS =
   ]);
 
 /**
- * Map an actual visual-session exit to the Core-owned termination reason and
- * execution state. Every branch names a value from
- * PLAYTESTS_EPISODE_TERMINATION_REASONS; nothing here fabricates a
- * game-verified outcome the driver never observed, so \"game-terminal\" is
- * never produced by a URL-only visual session.
- */
+Map an actual visual-session exit to the Core-owned termination reason and
+execution state. Every branch names a value from
+PLAYTESTS_EPISODE_TERMINATION_REASONS; nothing here fabricates a
+game-verified outcome the driver never observed, so \"game-terminal\" is
+never produced by a URL-only visual session.
+*/
 function visualEpisodeDisposition(exit: VisualEpisodeExit): {
   readonly status: PlaytestAssignmentTerminalState;
   readonly termination: PlaytestEpisode["termination"];
@@ -4289,29 +4343,31 @@ function visualEpisodeDisposition(exit: VisualEpisodeExit): {
   }
 }
 
-/** Typed, non-secret failure tag; never includes a raw error message. */
-function visualRuntimeFailureCode(err: unknown): string {
-  if (err instanceof SmartDirectPolicyError) {
-    return "smart-direct:" + err.code;
+/**
+Typed, non-secret failure tag; never includes a raw error message.
+*/
+function visualRuntimeFailureCode(error: unknown): string {
+  if (error instanceof SmartDirectPolicyError) {
+    return "smart-direct:" + error.code;
   }
-  if (err instanceof PlaytestVisualBrowserDriverError) {
-    return "visual-driver:" + err.code;
+  if (error instanceof PlaytestVisualBrowserDriverError) {
+    return "visual-driver:" + error.code;
   }
-  if (err instanceof Error) return "error:" + err.constructor.name;
+  if (error instanceof Error) return "error:" + error.constructor.name;
   return "unknown-runtime-failure";
 }
 
 /**
- * Report a visual episode that could not start.
- *
- * The episode failed before it produced any evidence, so the episode record
- * only says "infrastructure-failed" and the batch says it was recovered. The
- * reason a playtest could not run is invisible without this line: the same
- * episode looks the same whether the browser could not start, the game could
- * not be reached, or the Runtime was too busy to answer. The failure code is
- * the same typed tag the episode uses for runtime failures, and the message
- * is bounded.
- */
+Report a visual episode that could not start.
+
+The episode failed before it produced any evidence, so the episode record
+only says "infrastructure-failed" and the batch says it was recovered. The
+reason a playtest could not run is invisible without this line: the same
+episode looks the same whether the browser could not start, the game could
+not be reached, or the Runtime was too busy to answer. The failure code is
+the same typed tag the episode uses for runtime failures, and the message
+is bounded.
+*/
 function reportVisualDriverOpenFailure(input: {
   readonly batchId: string;
   readonly episodeId: string;
@@ -4339,39 +4395,41 @@ function reportVisualDriverOpenFailure(input: {
 }
 
 /**
- * Whether a Smart-direct failure is the decision deadline running out.
- *
- * The deadline encodes the approved per-episode wall-time budget, so this
- * separates "the approved budget was spent" from "the provider could not
- * answer in time" — the first truncates the episode, the second is a runtime
- * failure.
- */
-function isDecisionDeadlineFailure(err: unknown): boolean {
+Whether a Smart-direct failure is the decision deadline running out.
+
+The deadline encodes the approved per-episode wall-time budget, so this
+separates "the approved budget was spent" from "the provider could not
+answer in time" — the first truncates the episode, the second is a runtime
+failure.
+*/
+function isDecisionDeadlineFailure(error: unknown): boolean {
   return (
-    err instanceof SmartDirectPolicyError &&
-    err.code === "decision-deadline-exceeded"
+    error instanceof SmartDirectPolicyError &&
+    error.code === "decision-deadline-exceeded"
   );
 }
 
 /**
- * Whether a Smart-direct failure is an approved budget running out.
- *
- * The request count, the token budget and the per-response usage are approved
- * ceilings, and an episode that reaches one of them was cut short by its
- * approval rather than lost to a runtime failure. The two must not be
- * reported the same way: the first is a truncation the operator can read in
- * the episode, the second is infrastructure loss.
- */
-function isSmartDirectBudgetExhaustion(err: unknown): boolean {
+Whether a Smart-direct failure is an approved budget running out.
+
+The request count, the token budget and the per-response usage are approved
+ceilings, and an episode that reaches one of them was cut short by its
+approval rather than lost to a runtime failure. The two must not be
+reported the same way: the first is a truncation the operator can read in
+the episode, the second is infrastructure loss.
+*/
+function isSmartDirectBudgetExhaustion(error: unknown): boolean {
   return (
-    err instanceof SmartDirectPolicyError &&
-    (err.code === "request-budget-exhausted" ||
-      err.code === "token-budget-exhausted" ||
-      err.code === "response-usage-exceeds-budget")
+    error instanceof SmartDirectPolicyError &&
+    (error.code === "request-budget-exhausted" ||
+      error.code === "token-budget-exhausted" ||
+      error.code === "response-usage-exceeds-budget")
   );
 }
 
-/** Nine-field completion counters for exactly one visual-session episode. */
+/**
+Nine-field completion counters for exactly one visual-session episode.
+*/
 function visualCompletionCounts(
   status: PlaytestEpisodeState,
   started: boolean
@@ -4395,24 +4453,28 @@ function visualCompletionCounts(
 }
 
 /**
- * The episode view one persisted revision records.
- *
- * The step loop and the writer that persists each revision describe the same
- * episode, so the writer takes the view it records rather than reading a
- * shared copy that could drift from it.
- */
+The episode view one persisted revision records.
+
+The step loop and the writer that persists each revision describe the same
+episode, so the writer takes the view it records rather than reading a
+shared copy that could drift from it.
+*/
 interface VisualEpisodeView {
   readonly playerDebrief: PlaytestPlayerDebriefV1;
   readonly stepCount: number;
 }
 
-/** What one visual episode's step loop leaves behind for the episode writer. */
+/**
+What one visual episode's step loop leaves behind for the episode writer.
+*/
 interface VisualEpisodeStepOutcome {
   readonly exit: VisualEpisodeExit;
   readonly playerDebrief: PlaytestPlayerDebriefV1;
 }
 
-/** The episode fields one persisted revision overrides. */
+/**
+The episode fields one persisted revision overrides.
+*/
 interface VisualEpisodeRevisionOverrides {
   readonly status: PlaytestEpisodeState;
   readonly termination: PlaytestEpisode["termination"];
@@ -4425,7 +4487,9 @@ interface VisualEpisodeRevisionOverrides {
   readonly simulationWallMs: number | null;
 }
 
-/** The player-visible observation one visual trace step records. */
+/**
+The player-visible observation one visual trace step records.
+*/
 function visualVisibleObservation(
   observation: PlaytestVisualObservation
 ): PlaytestJsonValue {
@@ -4446,7 +4510,9 @@ function visualVisibleObservation(
   } as unknown as PlaytestJsonValue;
 }
 
-/** The control ids the observation offers as legal actions. */
+/**
+The control ids the observation offers as legal actions.
+*/
 function visualLegalActionIds(
   observation: PlaytestVisualObservation
 ): readonly string[] {
@@ -4455,12 +4521,16 @@ function visualLegalActionIds(
     .map((control) => control.controlId);
 }
 
-/** The control a dispatched action names, or null for the other action kinds. */
+/**
+The control a dispatched action names, or null for the other action kinds.
+*/
 function visualSelectedActionId(action: PlaytestVisualAction): string | null {
   return action.kind === "activate-control" ? action.controlId : null;
 }
 
-/** The action detail one dispatched action records for the analyst. */
+/**
+The action detail one dispatched action records for the analyst.
+*/
 function visualActionDetail(action: PlaytestVisualAction): PlaytestJsonValue {
   if (action.kind === "activate-control") {
     return { controlId: action.controlId };
@@ -4479,15 +4549,15 @@ function visualActionDetail(action: PlaytestVisualAction): PlaytestJsonValue {
 }
 
 /**
- * The exit a failed decision produces.
- *
- * A decision that failed because the approved wall-time budget ran out
- * truncates the episode; a decision that failed because an approved request,
- * token or usage budget ran out truncates it too; every other failure is
- * infrastructure loss. The budget is read only once the failure is known to
- * be a deadline, so the driver is not asked for its remaining time on a
- * failure that has nothing to do with time.
- */
+The exit a failed decision produces.
+
+A decision that failed because the approved wall-time budget ran out
+truncates the episode; a decision that failed because an approved request,
+token or usage budget ran out truncates it too; every other failure is
+infrastructure loss. The budget is read only once the failure is known to
+be a deadline, so the driver is not asked for its remaining time on a
+failure that has nothing to do with time.
+*/
 function visualDecisionFailureExit(input: {
   readonly error: unknown;
   readonly code: string;
@@ -4513,7 +4583,9 @@ function visualDecisionFailureExit(input: {
   };
 }
 
-/** The exit a policy stop produces, classified by why the policy stopped. */
+/**
+The exit a policy stop produces, classified by why the policy stopped.
+*/
 function visualStopExit(
   decision: PlaytestVisualDecision,
   step: number
@@ -4524,28 +4596,28 @@ function visualStopExit(
 }
 
 /**
- * What the episode did with one action.
- *
- * "dispatched" is the action that reached the game, "page-moved" is the
- * refusal that says the page no longer offers what the observation promised,
- * and "refused" is the refusal that is final.
- */
+What the episode did with one action.
+
+"dispatched" is the action that reached the game, "page-moved" is the
+refusal that says the page no longer offers what the observation promised,
+and "refused" is the refusal that is final.
+*/
 type VisualActOutcome =
   | { readonly status: "dispatched" }
   | { readonly status: "page-moved" }
   | { readonly status: "refused"; readonly exit: VisualEpisodeExit };
 
 /**
- * Dispatches one action and records what it did.
- *
- * The refusal is the interesting part. A refusal that says the page moved is
- * not the end of the episode: the player looks again and chooses with the
- * refusal in its history. Every other refusal is final, and the episode ends
- * with the reason it was refused. What bounds the retries is the budgets the
- * operator approved -- the per-episode step cap, the request and token
- * budgets, and the wall-time budget -- and not a retry count of the
- * Runtime's own.
- */
+Dispatches one action and records what it did.
+
+The refusal is the interesting part. A refusal that says the page moved is
+not the end of the episode: the player looks again and chooses with the
+refusal in its history. Every other refusal is final, and the episode ends
+with the reason it was refused. What bounds the retries is the budgets the
+operator approved -- the per-episode step cap, the request and token
+budgets, and the wall-time budget -- and not a retry count of the
+Runtime's own.
+*/
 async function actVisualStep(input: {
   readonly step: number;
   readonly decision: PlaytestVisualDecision;
@@ -4560,9 +4632,13 @@ async function actVisualStep(input: {
   readonly history: PlaytestVisualHistoryEntry[];
   readonly traceSteps: PlaytestEvidenceTraceStep[];
   readonly capturedFrames: readonly PlaytestArtifactReference[];
-  /** What the Runtime measured about the game before this action. */
+  /**
+  What the Runtime measured about the game before this action.
+  */
   readonly progress: PlaytestVisualDecisionProgress;
-  /** How much of the screen the decision backend was asked about. */
+  /**
+  How much of the screen the decision backend was asked about.
+  */
   readonly offer: PlaytestJsonValue;
   readonly persistRevision: (
     overrides: VisualEpisodeRevisionOverrides,
@@ -4671,12 +4747,12 @@ async function actVisualStep(input: {
 }
 
 /**
- * The progress reading as the trace carries it.
- *
- * The trace's outcome is free-form JSON, so the reading is spelled out here
- * rather than handed over as an object with a contract of its own: a reader
- * of the trace sees the numbers the episode was stopped by.
- */
+The progress reading as the trace carries it.
+
+The trace's outcome is free-form JSON, so the reading is spelled out here
+rather than handed over as an object with a contract of its own: a reader
+of the trace sees the numbers the episode was stopped by.
+*/
 function visualProgressJson(
   progress: PlaytestVisualDecisionProgress
 ): PlaytestJsonValue {
@@ -4698,21 +4774,21 @@ function visualProgressJson(
 }
 
 /**
- * How much of the episode the player could see.
- *
- * A visual episode has no text the player reads, so every trace step says
- * what it saw rather than what it inferred.
- */
+How much of the episode the player could see.
+
+A visual episode has no text the player reads, so every trace step says
+what it saw rather than what it inferred.
+*/
 const VISUAL_OBSERVATION_VISIBILITY = "visual-only";
 
 /**
- * The Runtime's measurement of one step.
- *
- * What the game did since the previous observation, and the counters the
- * operator's thresholds are measured against. A page that is still loading
- * moves neither the count nor the clock: the game has not had the chance to
- * advance, and a game that is still starting up must not be cut short.
- */
+The Runtime's measurement of one step.
+
+What the game did since the previous observation, and the counters the
+operator's thresholds are measured against. A page that is still loading
+moves neither the count nor the clock: the game has not had the chance to
+advance, and a game that is still starting up must not be cut short.
+*/
 function measureVisualProgress(input: {
   readonly observation: PlaytestVisualObservation;
   readonly previous: PlaytestVisualProgressState | null;
@@ -4756,13 +4832,13 @@ function measureVisualProgress(input: {
 }
 
 /**
- * Run one visual episode's step loop.
- *
- * The steps are deliberately sequential. Each step observes the game as the
- * previous step's dispatched action left it, so the observation, the decision
- * taken from it and the action dispatched from that decision all depend on
- * the frame before them and cannot be reordered or run together.
- */
+Run one visual episode's step loop.
+
+The steps are deliberately sequential. Each step observes the game as the
+previous step's dispatched action left it, so the observation, the decision
+taken from it and the action dispatched from that decision all depend on
+the frame before them and cannot be reordered or run together.
+*/
 async function runVisualEpisodeSteps(input: {
   readonly assignment: PlaytestVisualBatchAssignment;
   readonly driver: PlaytestVisualEpisodeDriver;
@@ -5024,7 +5100,6 @@ async function runVisualEpisodeSteps(input: {
       // control the game no longer offers as the observation promised. The
       // episode is not over -- the player looks again and chooses with the
       // refusal in its history.
-      continue;
     }
   }
   return { exit, playerDebrief };
@@ -5509,12 +5584,12 @@ async function executeApprovedVisualBatch(input: ExecuteVisualBatchInput) {
   }
 }
 /**
- * Resolve an explicitly supported policy baseline; never fabricate a heuristic.
- *
- * Exported so the resolution seam itself is testable: a policy can be correct
- * in `policies.ts` and still unreachable if nothing here constructs it, which
- * is exactly how a scored policy sat unused behind a single-entry gate.
- */
+Resolve an explicitly supported policy baseline; never fabricate a heuristic.
+
+Exported so the resolution seam itself is testable: a policy can be correct
+in `policies.ts` and still unreachable if nothing here constructs it, which
+is exactly how a scored policy sat unused behind a single-entry gate.
+*/
 export function resolvePolicy(
   policyId: string,
   benchmark?: PlaytestBenchmark | null
@@ -5579,15 +5654,15 @@ function activeRunApproval(
 }
 
 /**
- * The issue-reporting mode the game declared in its checked-in config, read
- * from the approved checkout.
- *
- * Fail-closed on purpose. An absent approval, a revoked one, or a config that
- * cannot be loaded reports no declared authority: a capability probe must not
- * throw because a game has not onboarded yet, and an unreadable config is not
- * evidence of authority. A config that is invalid but readable still says
- * exactly what it declared — only failing to read it collapses to "disabled".
- */
+The issue-reporting mode the game declared in its checked-in config, read
+from the approved checkout.
+
+Fail-closed on purpose. An absent approval, a revoked one, or a config that
+cannot be loaded reports no declared authority: a capability probe must not
+throw because a game has not onboarded yet, and an unreadable config is not
+evidence of authority. A config that is invalid but readable still says
+exactly what it declared — only failing to read it collapses to "disabled".
+*/
 function configuredIssueReporting(
   prepared: PreparedPlaytestSandbox | null
 ): "disabled" | "review" {
@@ -5595,9 +5670,9 @@ function configuredIssueReporting(
 }
 
 /**
- * Resolve and load the active approval's latest committed build once per
- * capability read. An unreadable or incompatible target yields null.
- */
+Resolve and load the active approval's latest committed build once per
+capability read. An unreadable or incompatible target yields null.
+*/
 function tryPrepareLatestBuild(
   approval: WorkspacePlaytestApproval | null,
   prepareSandbox: (
@@ -5842,9 +5917,7 @@ export function createPlaytestRunControl(
     createVisualPolicy = ({ target, workspacePath, policyId }) =>
       policyId === "onejev-local"
         ? new OneJevLocalVisualPolicy(target, {
-            ...(process.env.AUTODEV_ONEJEV_ENDPOINT === undefined
-              ? {}
-              : { endpoint: process.env.AUTODEV_ONEJEV_ENDPOINT })
+            ...(process.env.AUTODEV_ONEJEV_ENDPOINT !== undefined && { endpoint: process.env.AUTODEV_ONEJEV_ENDPOINT })
           })
         : new SmartDirectVisualPolicy(target, { workspacePath })
   } = options;
@@ -5896,13 +5969,13 @@ export function createPlaytestRunControl(
 
     const repository = requiredRunRepository(playtestRepository);
     let reviews: readonly PlaytestAnalystReviewReceipt[] = [];
-    let reviewReadFailed = false;
+    let isReviewReadFailed = false;
     let synthesis: PlaytestCrossSessionSynthesis | null = null;
-    let synthesisReadFailed = false;
+    let isSynthesisReadFailed = false;
     try {
       reviews = await readPersistedAnalystReviews(repository, current);
     } catch {
-      reviewReadFailed = true;
+      isReviewReadFailed = true;
     }
     if (current.analysisKind !== "discovery") {
       try {
@@ -5911,16 +5984,16 @@ export function createPlaytestRunControl(
           current.analysisId
         );
       } catch {
-        synthesisReadFailed = true;
+        isSynthesisReadFailed = true;
       }
     }
     const status = analystReviewRunStatus({
       run: current,
       result,
       reviews,
-      reviewReadFailed,
+      reviewReadFailed: isReviewReadFailed,
       synthesisId: synthesis?.synthesisId ?? null,
-      synthesisReadFailed
+      synthesisReadFailed: isSynthesisReadFailed
     });
     analystReviewRuns.set(analysisId, {
       ...current,
@@ -5933,9 +6006,9 @@ export function createPlaytestRunControl(
         run: current,
         result,
         reviews,
-        reviewReadFailed,
+        reviewReadFailed: isReviewReadFailed,
         synthesisId: synthesis?.synthesisId ?? null,
-        synthesisReadFailed
+        synthesisReadFailed: isSynthesisReadFailed
       })
     });
     pruneAnalystReviewHistory();
@@ -6135,7 +6208,7 @@ export function createPlaytestRunControl(
         );
       }
       const approval = approvalRepository.read(authorizedWorkspaceId);
-      const activeApproval = approval !== null && approval.revokedAt === null;
+      const isActiveApproval = approval !== null && approval.revokedAt === null;
       const approvedPolicies = approval?.allowedPolicies ?? [];
       const latestBuild = tryPrepareLatestBuild(
         approval,
@@ -6156,7 +6229,7 @@ export function createPlaytestRunControl(
         workspaceId: authorizedWorkspaceId,
         workspaceEnabled: workspace.enabled,
         workspaceCatalog: catalog.status,
-        approved: activeApproval,
+        approved: isActiveApproval,
         approvalRevision: approval?.revision ?? null,
         buildSha: latestBuild?.build.buildSha ?? null,
         gameBuild: latestBuild?.build.gameBuild ?? null,
@@ -6625,7 +6698,7 @@ export function createPlaytestRunControl(
         ): Promise<void> => {
           const page = await playtestRepository.listBatches(
             { workspaceId: authorizedWorkspaceId, status: "running" },
-            { limit: 500, ...(cursor ? { cursor } : {}) }
+            { limit: 500, ...(cursor && { cursor }) }
           );
           const interrupted = page.rows.filter(
             (batch) => !activeRuns.has(batch.batchId)
@@ -6790,7 +6863,7 @@ export function createPlaytestRunControl(
       const uniqueEpisodeIds = [...new Set(episodeIds)];
       // A request that asks for findings is a different job from a hypothesis
       // review, and the analyst has to be told which one it is running.
-      const requireFindings = request?.requireFindings === true;
+      const isRequireFindings = request?.requireFindings === true;
       if (
         uniqueEpisodeIds.length === 0 ||
         uniqueEpisodeIds.length > PLAYTESTS_MAX_ANALYSIS_SESSIONS ||
@@ -6834,7 +6907,7 @@ export function createPlaytestRunControl(
             // showed a defect. Refusing here keeps "the review asked for
             // findings" and "the review filed findings" from being two
             // different claims about the same run.
-            if (requireFindings) {
+            if (isRequireFindings) {
               throw new PlaytestMcpValidationError(
                 "Findings require a confirmatory review of a completed, selected batch; visual discovery sessions cannot file findings."
               );
@@ -7010,7 +7083,7 @@ export function createPlaytestRunControl(
             analysisId,
             workspaceId: authorizedWorkspaceId,
             analysisKind: "confirmatory",
-            requireFindings: requireFindings,
+            requireFindings: isRequireFindings,
             status: "running",
             createdAt,
             finishedAt: null,
@@ -7043,7 +7116,7 @@ export function createPlaytestRunControl(
             episodeIds: packets.map((packet) => packet.episodeId),
             analysisKind: "confirmatory",
             metricAggregation,
-            requireFindings,
+            requireFindings: isRequireFindings,
             failureMessage: "The analyst process could not be started."
           });
           analystReviewRuns.set(analysisId, record);
@@ -7131,12 +7204,14 @@ export function createPlaytestRunControl(
 }
 
 /**
- * A selection is explicit and bounded: the operator names the sessions, and a
- * session that cannot contribute evidence comes back as a named receipt rather
- * than being dropped from the result.
- */
+A selection is explicit and bounded: the operator names the sessions, and a
+session that cannot contribute evidence comes back as a named receipt rather
+than being dropped from the result.
+*/
 
-/** Why a selected session could not contribute an analyst packet. */
+/**
+Why a selected session could not contribute an analyst packet.
+*/
 type CrossSessionReceiptReason =
   | "unknown-session"
   | "excluded-ineligible-session"
@@ -7152,7 +7227,9 @@ export interface PlaytestCrossSessionReceipt {
   readonly episodeId: string;
   readonly batchId: string | null;
   readonly reason: CrossSessionReceiptReason;
-  /** Named, not a fabricated packet: why this session contributed nothing. */
+  /**
+  Named, not a fabricated packet: why this session contributed nothing.
+  */
   readonly detail: string;
 }
 
@@ -7163,7 +7240,9 @@ export interface PlaytestCrossSessionPacket {
   readonly artifact: PlaytestArtifactReference;
 }
 
-/** Per-batch critique headroom, so a selection cannot quietly overspend. */
+/**
+Per-batch critique headroom, so a selection cannot quietly overspend.
+*/
 export interface PlaytestCrossSessionBudget {
   readonly batchId: string;
   readonly reviewCap: number;
@@ -7174,10 +7253,10 @@ export interface PlaytestCrossSessionBudget {
 }
 
 /**
- * Sessions that cannot support an analyst claim: partial, cancelled, crashed,
- * infrastructure-failed or truncated. Excluded here and reported, so an
- * analyst never reasons over a session whose evidence is incomplete.
- */
+Sessions that cannot support an analyst claim: partial, cancelled, crashed,
+infrastructure-failed or truncated. Excluded here and reported, so an
+analyst never reasons over a session whose evidence is incomplete.
+*/
 function crossSessionIneligibility(
   episode: PlaytestEpisode,
   batch: PlaytestBatch | null
@@ -7216,9 +7295,9 @@ function crossSessionIneligibility(
 }
 
 /**
- * A store that cannot be opened still has a bounded, typed shape, so callers
- * report a packet that could not be read instead of failing opaquely.
- */
+A store that cannot be opened still has a bounded, typed shape, so callers
+report a packet that could not be read instead of failing opaquely.
+*/
 function safeArtifactStoreForWorkspace(
   workspaceId: string,
   open: (workspaceId: string) => PlaytestArtifactStore
@@ -7239,7 +7318,9 @@ function safeArtifactStoreForWorkspace(
   }
 }
 
-/** What one visual discovery dispatch reports back to the caller. */
+/**
+What one visual discovery dispatch reports back to the caller.
+*/
 interface VisualDiscoveryReviewDispatch {
   readonly run: PlaytestAnalystReviewRun | null;
   readonly packets: readonly PlaytestCrossSessionPacket[];
@@ -7248,12 +7329,12 @@ interface VisualDiscoveryReviewDispatch {
 }
 
 /**
- * Start one analyst process, reporting a launch failure as unavailable.
- *
- * The launcher throws when the analyst process cannot start at all. The
- * caller reports that as an unavailable dispatch rather than as a review
- * that ran and failed.
- */
+Start one analyst process, reporting a launch failure as unavailable.
+
+The launcher throws when the analyst process cannot start at all. The
+caller reports that as an unavailable dispatch rather than as a review
+that ran and failed.
+*/
 function startAnalystProcess(input: {
   readonly launchAnalystProcess: PlaytestAnalystProcessLauncher;
   readonly analysisId: string;
@@ -7283,13 +7364,13 @@ function startAnalystProcess(input: {
 }
 
 /**
- * Dispatch one visual discovery review.
- *
- * A visual discovery batch reviews one episode at a time against its frozen
- * assignment inventory, and the frozen inventory is the review cap: one
- * review per assignment. The dispatch reports the episode it refused rather
- * than starting a review it cannot complete.
- */
+Dispatch one visual discovery review.
+
+A visual discovery batch reviews one episode at a time against its frozen
+assignment inventory, and the frozen inventory is the review cap: one
+review per assignment. The dispatch reports the episode it refused rather
+than starting a review it cannot complete.
+*/
 async function dispatchVisualDiscoveryReview(input: {
   readonly workspaceId: string;
   readonly actor: string;
@@ -7653,11 +7734,11 @@ export async function readPreparedReviewPacket(input: {
     typed.rubricHash !== batch.rubricHash ||
     typed.coverageManifestHash !== batch.coverageManifest.contentHash ||
     !traceReference ||
-    !typed.suppliedArtifacts.some(
+    typed.suppliedArtifacts.every(
       (artifact) =>
-        artifact.kind === "trace" &&
-        artifact.artifactId === traceReference.artifactId &&
-        artifact.sha256.toLowerCase() === traceReference.sha256.toLowerCase()
+        artifact.kind !== "trace" ||
+        artifact.artifactId !== traceReference.artifactId ||
+        artifact.sha256.toLowerCase() !== traceReference.sha256.toLowerCase()
     )
   ) {
     throw new PlaytestMcpUnavailableError(
@@ -7668,14 +7749,14 @@ export async function readPreparedReviewPacket(input: {
 }
 
 /**
- * Prepare packets for analysis over an explicit, bounded selection.
- *
- * Runtime owns the whole decision: eligibility, the per-batch critique cap,
- * and which selected sessions yielded packet-unavailable receipts. Every
- * excluded or unreadable session is reported by name; nothing is dropped
- * silently, because a silently dropped session would make the analyst's
- * cross-session claims look grounded in evidence that was never read.
- */
+Prepare packets for analysis over an explicit, bounded selection.
+
+Runtime owns the whole decision: eligibility, the per-batch critique cap,
+and which selected sessions yielded packet-unavailable receipts. Every
+excluded or unreadable session is reported by name; nothing is dropped
+silently, because a silently dropped session would make the analyst's
+cross-session claims look grounded in evidence that was never read.
+*/
 interface EligibleCrossSessionSelection {
   readonly episodeId: string;
   readonly episode: PlaytestEpisode;
@@ -7750,10 +7831,10 @@ async function resolveCrossSessionEpisode(
   // ineligible selection rather than surfacing as an authorization failure.
   if (
     episode.assignmentId !== null &&
-    !batch.reviewSelection.selected.some(
+    batch.reviewSelection.selected.every(
       (entry) =>
-        entry.assignmentId === episode.assignmentId &&
-        entry.episodeId === episode.episodeId
+        entry.assignmentId !== episode.assignmentId ||
+        entry.episodeId !== episode.episodeId
     )
   ) {
     return {
@@ -8005,7 +8086,7 @@ export function playtestMcpErrorDetails(error: unknown): {
     };
   }
   if (error instanceof PlaytestSandboxExecutionError) {
-    const retryable = [
+    const isRetryable = [
       "docker-unavailable",
       "image-unavailable",
       "timeout"
@@ -8013,7 +8094,7 @@ export function playtestMcpErrorDetails(error: unknown): {
     return {
       code: "playtest_sandbox_" + error.category,
       category: "sandbox-execution",
-      retryable,
+      retryable: isRetryable,
       message: "The playtesting sandbox execution failed."
     };
   }

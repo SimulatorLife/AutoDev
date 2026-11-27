@@ -77,7 +77,7 @@ import {
 import {
   assertPlaytestStdioSessionBinding,
   playtestMcpSessionProvider,
-  playtestStdioConfiguration,
+  playtestStdioConfiguration as playtestStdioConfig,
   playtestWorkspaceCatalogRoot
 } from "../src/playtesting/mcp-main.ts";
 import { createSeededRandomPlaytestPolicy } from "../src/playtesting/policies.ts";
@@ -163,17 +163,17 @@ type AdapterEpisodeForTest = PlaytestEpisode & {
 };
 
 function adapterExecutionProvenance(repository: string, buildSha: string) {
-  const revisionVerified = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu.test(buildSha);
+  const isRevisionVerified = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu.test(buildSha);
   return {
     mode: "adapter-accelerated" as const,
     source: {
       kind: "repo-checkout" as const,
       repository,
-      revision: revisionVerified ? buildSha : null,
-      revisionConfidence: revisionVerified
+      revision: isRevisionVerified ? buildSha : null,
+      revisionConfidence: isRevisionVerified
         ? ("verified" as const)
         : ("unknown" as const),
-      checkoutState: revisionVerified
+      checkoutState: isRevisionVerified
         ? ("clean" as const)
         : ("unknown" as const),
       artifactFingerprint: null,
@@ -234,7 +234,7 @@ function singleAssignmentRequest(
         scenario,
         policy,
         seed,
-        ...(maxSteps === undefined ? {} : { maxSteps })
+        ...(maxSteps !== undefined && { maxSteps })
       }
     ]
   });
@@ -292,7 +292,9 @@ function createTestPlaytestMcpServer(
     : (server as TestPlaytestMcpServerWithControl);
 }
 
-/** The committed build the fixture sandbox resolves for every batch. */
+/**
+The committed build the fixture sandbox resolves for every batch.
+*/
 const FIXTURE_BUILD = {
   buildSha: "a".repeat(40),
   gameBuild: "fixture-build-1",
@@ -527,9 +529,7 @@ function episodeForRun(
     strategy: options.policy.strategy,
     status,
     termination:
-      status === "completed"
-        ? { reason: "game-terminal", step: null }
-        : { reason: "cancelled", step: null },
+      ({ reason: status === "completed" ? "game-terminal" : "cancelled", step: null }),
     outcome: status === "completed" ? "win" : "unknown",
     outcomeMetrics: {},
     completionCounts: {
@@ -638,10 +638,10 @@ async function triggerCancellation(
 }
 
 test("playtest stdio requires explicit trusted session context", async () => {
-  assert.throws(() => playtestStdioConfiguration({}), /session context/);
+  assert.throws(() => playtestStdioConfig({}), /session context/);
   assert.throws(
     () =>
-      playtestStdioConfiguration({
+      playtestStdioConfig({
         AUTODEV_PLAYTEST_WORKSPACE_ID: WORKSPACE_ID,
         AUTODEV_PLAYTEST_ROLE: "playtester",
         AUTODEV_PLAYTEST_ACTOR_ID: "actor-1",
@@ -649,15 +649,15 @@ test("playtest stdio requires explicit trusted session context", async () => {
       }),
     /session context/
   );
-  const validEnv = {
+  const validEnvironment = {
     AUTODEV_PLAYTEST_WORKSPACE_ID: WORKSPACE_ID,
     AUTODEV_PLAYTEST_ROLE: "playtester",
     AUTODEV_PLAYTEST_ACTOR_ID: "actor-1",
     AUTODEV_PLAYTEST_TASK_ID: "task-1",
     AUTODEV_PLAYTEST_RUN_ID: "run-1"
   };
-  const analystEnv = {
-    ...validEnv,
+  const analystEnvironment = {
+    ...validEnvironment,
     AUTODEV_PLAYTEST_ROLE: "playtest-analyst",
     AUTODEV_PLAYTEST_ANALYSIS_ID: "analysis-1",
     AUTODEV_PLAYTEST_ANALYSIS_KIND: "confirmatory",
@@ -668,13 +668,13 @@ test("playtest stdio requires explicit trusted session context", async () => {
   };
   assert.throws(
     () =>
-      playtestStdioConfiguration({
-        ...analystEnv,
+      playtestStdioConfig({
+        ...analystEnvironment,
         AUTODEV_PLAYTEST_ANALYSIS_ID: undefined
       }),
     /session context/
   );
-  const analystConfig = playtestStdioConfiguration(analystEnv);
+  const analystConfig = playtestStdioConfig(analystEnvironment);
   assert.deepEqual(analystConfig.selectedEpisodeIds, ["episode-1"]);
   assert.equal(analystConfig.analysisId, "analysis-1");
   assert.equal(analystConfig.analysisKind, "confirmatory");
@@ -694,22 +694,22 @@ test("playtest stdio requires explicit trusted session context", async () => {
   );
   assert.throws(
     () =>
-      playtestStdioConfiguration({
-        ...analystEnv,
+      playtestStdioConfig({
+        ...analystEnvironment,
         AUTODEV_PLAYTEST_SELECTED_EPISODE_IDS: undefined
       }),
     /analyst session selection/
   );
   assert.throws(
     () =>
-      playtestStdioConfiguration({
-        ...analystEnv,
+      playtestStdioConfig({
+        ...analystEnvironment,
         AUTODEV_PLAYTEST_ANALYSIS_METRIC_AGGREGATION: undefined
       }),
     /analyst session selection/
   );
-  const discoveryConfig = playtestStdioConfiguration({
-    ...analystEnv,
+  const discoveryConfig = playtestStdioConfig({
+    ...analystEnvironment,
     AUTODEV_PLAYTEST_ANALYSIS_KIND: "discovery",
     AUTODEV_PLAYTEST_ANALYSIS_METRIC_AGGREGATION: undefined
   });
@@ -731,8 +731,8 @@ test("playtest stdio requires explicit trusted session context", async () => {
   ]) {
     assert.throws(
       () =>
-        playtestStdioConfiguration({
-          ...analystEnv,
+        playtestStdioConfig({
+          ...analystEnvironment,
           AUTODEV_PLAYTEST_SELECTED_EPISODE_IDS: selectedEpisodeIds
         }),
       /analyst session selection/
@@ -743,8 +743,8 @@ test("playtest stdio requires explicit trusted session context", async () => {
     return `${prefix}${"x".repeat(256 - prefix.length)}`;
   });
   assert.deepEqual(
-    playtestStdioConfiguration({
-      ...analystEnv,
+    playtestStdioConfig({
+      ...analystEnvironment,
       AUTODEV_PLAYTEST_SELECTED_EPISODE_IDS: JSON.stringify(maximumSelection),
       AUTODEV_PLAYTEST_ANALYSIS_METRIC_AGGREGATION: JSON.stringify(
         analystMetricAggregation(maximumSelection)
@@ -771,7 +771,7 @@ test("playtest stdio requires explicit trusted session context", async () => {
       ),
     /analyst session selection/
   );
-  const config = playtestStdioConfiguration(validEnv);
+  const config = playtestStdioConfig(validEnvironment);
   assert.deepEqual(config, {
     workspaceId: WORKSPACE_ID,
     role: "playtester",
@@ -790,24 +790,24 @@ test("playtest stdio requires explicit trusted session context", async () => {
   });
   assert.throws(
     () =>
-      playtestStdioConfiguration({
-        ...validEnv,
+      playtestStdioConfig({
+        ...validEnvironment,
         AUTODEV_PLAYTEST_WORKSPACE_ID: "owner"
       }),
     /session context/
   );
   assert.throws(
     () =>
-      playtestStdioConfiguration({
-        ...validEnv,
+      playtestStdioConfig({
+        ...validEnvironment,
         AUTODEV_PLAYTEST_ACTOR_ID: "bad actor"
       }),
     /session context/
   );
   assert.throws(
     () =>
-      playtestStdioConfiguration({
-        ...validEnv,
+      playtestStdioConfig({
+        ...validEnvironment,
         AUTODEV_PLAYTEST_ROLE: "not a role"
       }),
     /session context/
@@ -914,20 +914,20 @@ test("Playtest MCP loads its canonical workspace catalog from AutoDev, not the g
 });
 
 test("playtest MCP server: capabilities reports active or absent workspace approval without leaking host checkout paths", async () => {
-  const tmpRoot = realpathSync(
+  const temporaryRoot = realpathSync(
     mkdtempSync(path.join(tmpdir(), "playtest-mcp-test-"))
   );
-  const artifactsDir = path.join(tmpRoot, "artifacts");
-  const approvalsDir = path.join(tmpRoot, "approvals");
+  const artifactsDir = path.join(temporaryRoot, "artifacts");
+  const approvalsDir = path.join(temporaryRoot, "approvals");
   mkdirSync(artifactsDir, { recursive: true });
   const artifacts = new PlaytestArtifactStore({
     workspaceId: WORKSPACE_ID,
     rootDirectory: artifactsDir
   });
-  const approvalRepo = new WorkspacePlaytestApprovalRepository(approvalsDir);
+  const approvalRepository = new WorkspacePlaytestApprovalRepository(approvalsDir);
 
   try {
-    let workspaceEnabled = true;
+    let isWorkspaceEnabled = true;
     const currentSession: PlaytestMcpSession = {
       workspaceId: WORKSPACE_ID,
       role: "playtester",
@@ -949,7 +949,7 @@ test("playtest MCP server: capabilities reports active or absent workspace appro
     const server = createTestPlaytestMcpServer({
       sessionProvider: { current: () => currentSession },
       artifactStoreForWorkspace: () => artifacts,
-      approvalRepository: approvalRepo,
+      approvalRepository: approvalRepository,
       prepareSandboxHandler: prepareSandboxWithinTargetBudget,
       readWorkspaceCatalog: () => ({
         status: "valid",
@@ -957,7 +957,7 @@ test("playtest MCP server: capabilities reports active or absent workspace appro
           {
             id: WORKSPACE_ID,
             baseBranch: "main",
-            enabled: workspaceEnabled,
+            enabled: isWorkspaceEnabled,
             agentRoles: null
           }
         ]
@@ -974,7 +974,7 @@ test("playtest MCP server: capabilities reports active or absent workspace appro
 
     // 2. Save active approval
     const approval = createApproval();
-    approvalRepo.approve(approval, null);
+    approvalRepository.approve(approval, null);
 
     const approvedResult = await (server as any)._registeredTools[
       "playtest.capabilities"
@@ -1002,7 +1002,7 @@ test("playtest MCP server: capabilities reports active or absent workspace appro
     assert.equal(approvedText.includes(approval.checkoutRoot), false);
 
     // 3. Revoked approval
-    approvalRepo.revoke(
+    approvalRepository.revoke(
       WORKSPACE_ID,
       "approval-fixture-1",
       1,
@@ -1010,7 +1010,7 @@ test("playtest MCP server: capabilities reports active or absent workspace appro
       "operator@example.com",
       "build defect"
     );
-    workspaceEnabled = false;
+    isWorkspaceEnabled = false;
 
     const revokedResult = await (server as any)._registeredTools[
       "playtest.capabilities"
@@ -1022,21 +1022,21 @@ test("playtest MCP server: capabilities reports active or absent workspace appro
     assert.equal(revoked.maxBatchAssignments, 0);
     assert.deepEqual(revoked.runnablePolicies, []);
   } finally {
-    rmSync(tmpRoot, { recursive: true, force: true });
+    rmSync(temporaryRoot, { recursive: true, force: true });
   }
 });
 
 test("playtest MCP server: cross-workspace access is denied for non-root caller", async () => {
-  const tmpRoot = realpathSync(
+  const temporaryRoot = realpathSync(
     mkdtempSync(path.join(tmpdir(), "playtest-mcp-test-"))
   );
-  mkdirSync(path.join(tmpRoot, "artifacts"), { recursive: true });
+  mkdirSync(path.join(temporaryRoot, "artifacts"), { recursive: true });
   const artifacts = new PlaytestArtifactStore({
     workspaceId: WORKSPACE_ID,
-    rootDirectory: path.join(tmpRoot, "artifacts")
+    rootDirectory: path.join(temporaryRoot, "artifacts")
   });
-  const approvalRepo = new WorkspacePlaytestApprovalRepository(
-    path.join(tmpRoot, "approvals")
+  const approvalRepository = new WorkspacePlaytestApprovalRepository(
+    path.join(temporaryRoot, "approvals")
   );
 
   try {
@@ -1049,7 +1049,7 @@ test("playtest MCP server: cross-workspace access is denied for non-root caller"
     const server = createTestPlaytestMcpServer({
       sessionProvider: { current: () => session },
       artifactStoreForWorkspace: () => artifacts,
-      approvalRepository: approvalRepo
+      approvalRepository: approvalRepository
     });
 
     const result = await (server as any)._registeredTools[
@@ -1058,23 +1058,23 @@ test("playtest MCP server: cross-workspace access is denied for non-root caller"
 
     assert.equal(parsedMcpError(result).code, "playtest_forbidden");
   } finally {
-    rmSync(tmpRoot, { recursive: true, force: true });
+    rmSync(temporaryRoot, { recursive: true, force: true });
   }
 });
 
 test("playtest MCP server: playtest.run rejects an unenabled canonical workspace even with an active approval", async () => {
-  const tmpRoot = realpathSync(
+  const temporaryRoot = realpathSync(
     mkdtempSync(path.join(tmpdir(), "playtest-mcp-test-"))
   );
-  mkdirSync(path.join(tmpRoot, "artifacts"), { recursive: true });
+  mkdirSync(path.join(temporaryRoot, "artifacts"), { recursive: true });
   const artifacts = new PlaytestArtifactStore({
     workspaceId: WORKSPACE_ID,
-    rootDirectory: path.join(tmpRoot, "artifacts")
+    rootDirectory: path.join(temporaryRoot, "artifacts")
   });
-  const approvalRepo = new WorkspacePlaytestApprovalRepository(
-    path.join(tmpRoot, "approvals")
+  const approvalRepository = new WorkspacePlaytestApprovalRepository(
+    path.join(temporaryRoot, "approvals")
   );
-  approvalRepo.approve(createApproval(), null);
+  approvalRepository.approve(createApproval(), null);
 
   try {
     const server = createTestPlaytestMcpServer({
@@ -1086,7 +1086,7 @@ test("playtest MCP server: playtest.run rejects an unenabled canonical workspace
         })
       },
       artifactStoreForWorkspace: () => artifacts,
-      approvalRepository: approvalRepo,
+      approvalRepository: approvalRepository,
       readWorkspaceCatalog: () => ({ status: "valid", workspaces: [] })
     });
 
@@ -1097,30 +1097,30 @@ test("playtest MCP server: playtest.run rejects an unenabled canonical workspace
     });
     assert.equal(parsedMcpError(result).code, "playtest_forbidden");
   } finally {
-    rmSync(tmpRoot, { recursive: true, force: true });
+    rmSync(temporaryRoot, { recursive: true, force: true });
   }
 });
 
 test("playtest MCP server: playtest.run enforces role permissions, approval boundaries, explicit seed and real adapter observation contract", async () => {
-  const tmpRoot = realpathSync(
+  const temporaryRoot = realpathSync(
     mkdtempSync(path.join(tmpdir(), "playtest-mcp-test-"))
   );
-  mkdirSync(path.join(tmpRoot, "artifacts"), { recursive: true });
+  mkdirSync(path.join(temporaryRoot, "artifacts"), { recursive: true });
   const artifacts = new PlaytestArtifactStore({
     workspaceId: WORKSPACE_ID,
-    rootDirectory: path.join(tmpRoot, "artifacts")
+    rootDirectory: path.join(temporaryRoot, "artifacts")
   });
-  const approvalRepo = new WorkspacePlaytestApprovalRepository(
-    path.join(tmpRoot, "approvals")
+  const approvalRepository = new WorkspacePlaytestApprovalRepository(
+    path.join(temporaryRoot, "approvals")
   );
 
   try {
     let currentRole = "playtest-analyst";
     let selectedEpisodeIds: readonly string[] = [];
-    let mismatchNegotiatedSchemaHash = false;
-    let malformedTraceEventStep = false;
-    let malformedFrameStep = false;
-    let unverifiedObservationStep = false;
+    let isMismatchNegotiatedSchemaHash = false;
+    let isMalformedTraceEventStep = false;
+    let isMalformedFrameStep = false;
+    let isUnverifiedObservationStep = false;
     const insertedEpisodes: PlaytestEpisode[] = [];
     const insertedBatches: any[] = [];
     let capturedObservationContract: unknown = null;
@@ -1138,7 +1138,7 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
     const latestReviews = new Map<string, PlaytestSessionReview>();
     const launchIntentRepository = inMemoryPlaytestLaunchIntentRepository();
 
-    const mockRepo: PlaytestingRepositoryOps = {
+    const mockRepository: PlaytestingRepositoryOps = {
       getBatch: async (_workspaceId, batchId) =>
         [...insertedBatches]
           .reverse()
@@ -1202,8 +1202,8 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
         })
       },
       artifactStoreForWorkspace: () => artifacts,
-      approvalRepository: approvalRepo,
-      playtestRepository: mockRepo,
+      approvalRepository: approvalRepository,
+      playtestRepository: mockRepository,
       launchIntentRepository,
       readWorkspaceCatalog: enabledWorkspaceCatalog(),
       launchAnalystProcess: (input) => {
@@ -1229,7 +1229,7 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
           ...prepared,
           observationContract: {
             ...prepared.observationContract,
-            uiEquivalence: unverifiedObservationStep
+            uiEquivalence: isUnverifiedObservationStep
               ? "unverified"
               : prepared.observationContract.uiEquivalence
           },
@@ -1246,13 +1246,13 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
           }
         };
       },
-      runEpisodeHandler: async (opts) => {
-        capturedObservationContract = opts.observationContract;
-        capturedScenarioFamily = opts.scenarioFamily;
-        capturedSeed = opts.seed;
-        capturedMeasurementVersion = opts.measurementVersion;
-        capturedEnvironmentHash = opts.environmentHash;
-        capturedRuntimeVersion = opts.runtimeVersion;
+      runEpisodeHandler: async (options) => {
+        capturedObservationContract = options.observationContract;
+        capturedScenarioFamily = options.scenarioFamily;
+        capturedSeed = options.seed;
+        capturedMeasurementVersion = options.measurementVersion;
+        capturedEnvironmentHash = options.environmentHash;
+        capturedRuntimeVersion = options.runtimeVersion;
         const traceReference = artifacts.writeWindow({
           entries: Array.from({ length: 15 }, (_, step) => ({
             step,
@@ -1260,7 +1260,7 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
             revisionBefore: step,
             revisionAfter: step + 1,
             observationVisibility:
-              unverifiedObservationStep && step === 7
+              isUnverifiedObservationStep && step === 7
                 ? "unverified"
                 : "structured",
             visibleObservation: { step },
@@ -1276,7 +1276,7 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
                       type: "tutorial-step",
                       phaseId: "tutorial",
                       step:
-                        malformedTraceEventStep && step === 7 ? step - 1 : step,
+                        isMalformedTraceEventStep && step === 7 ? step - 1 : step,
                       revision: step + 1
                     }
                   ]
@@ -1285,18 +1285,18 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
           }))
         }).reference;
         return {
-          capabilities: capabilitiesForRun(opts),
+          capabilities: capabilitiesForRun(options),
           episode: {
             schema: PLAYTESTS_EPISODE_SCHEMA,
             episodeId:
-              opts.seed === "seed-exact-1" ? "ep-run-1" : `ep-run-${opts.seed}`,
+              options.seed === "seed-exact-1" ? "ep-run-1" : `ep-run-${options.seed}`,
             revision: 1,
-            batchId: opts.batchId,
-            assignmentId: opts.assignmentId,
+            batchId: options.batchId,
+            assignmentId: options.assignmentId,
             branchLineage: null,
             executionProvenance: adapterExecutionProvenance(
-              opts.repository,
-              opts.build.buildSha
+              options.repository,
+              options.build.buildSha
             ),
             playerDebrief: {
               schema: "autodev-playtest-player-debrief-v1",
@@ -1304,32 +1304,32 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
               reason: "non-reflective-policy"
             },
             identity: {
-              workspaceId: opts.repository,
-              repository: opts.repository,
-              buildSha: opts.build.buildSha,
-              gameBuild: opts.build.gameBuild,
-              scenarioId: opts.scenarioId,
-              configHash: opts.build.configHash,
-              seed: opts.seed,
+              workspaceId: options.repository,
+              repository: options.repository,
+              buildSha: options.build.buildSha,
+              gameBuild: options.build.gameBuild,
+              scenarioId: options.scenarioId,
+              configHash: options.build.configHash,
+              seed: options.seed,
               rngInitialStateHash: null,
               rngAlgorithm: null,
               rngVersion: null,
-              policyId: opts.policy.id,
-              policyVersion: opts.policy.version,
+              policyId: options.policy.id,
+              policyVersion: options.policy.version,
               modelId: null,
               modelRevision: null,
-              observationSchemaHash: opts.observationContract.schemaHash,
-              actionSchemaHash: mismatchNegotiatedSchemaHash
+              observationSchemaHash: options.observationContract.schemaHash,
+              actionSchemaHash: isMismatchNegotiatedSchemaHash
                 ? "f".repeat(64)
                 : "a".repeat(64),
               eventSchemaHash: "c".repeat(64),
               protocolVersion: 1,
-              runtimeVersion: opts.runtimeVersion,
-              environmentHash: opts.environmentHash
+              runtimeVersion: options.runtimeVersion,
+              environmentHash: options.environmentHash
             },
-            scenarioFamily: opts.scenarioFamily,
-            policyCohort: opts.policy.cohort,
-            strategy: opts.policy.strategy,
+            scenarioFamily: options.scenarioFamily,
+            policyCohort: options.policy.cohort,
+            strategy: options.policy.strategy,
             status: "completed",
             termination: { reason: "game-terminal", step: 8 },
             outcome: "win",
@@ -1353,11 +1353,11 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
             frames: [
               {
                 kind: "frame",
-                id: malformedFrameStep
+                id: isMalformedFrameStep
                   ? "out-of-range-frame"
                   : "missing-frame-7",
                 frameIndex: 0,
-                step: malformedFrameStep ? 15 : 7
+                step: isMalformedFrameStep ? 15 : 7
               }
             ],
             stepCount: 15,
@@ -1437,8 +1437,8 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
     );
 
     // Save active approval
-    const boundedApproval = createApproval({ checkoutRoot: tmpRoot });
-    approvalRepo.approve(
+    const boundedApproval = createApproval({ checkoutRoot: temporaryRoot });
+    approvalRepository.approve(
       {
         ...boundedApproval,
         limits: { ...boundedApproval.limits, episodeCount: 6 }
@@ -1634,8 +1634,8 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
         })
       },
       artifactStoreForWorkspace: () => artifacts,
-      approvalRepository: approvalRepo,
-      playtestRepository: mockRepo,
+      approvalRepository: approvalRepository,
+      playtestRepository: mockRepository,
       launchIntentRepository,
       readWorkspaceCatalog: enabledWorkspaceCatalog(),
       prepareSandboxHandler: fixturePreparedSandbox,
@@ -1901,7 +1901,7 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
 
     // Runner output must bind exactly to the adapter's negotiated schema hashes,
     // not merely provide syntactically valid SHA-256 strings.
-    mismatchNegotiatedSchemaHash = true;
+    isMismatchNegotiatedSchemaHash = true;
     const mismatchedRun = await (server as any)._registeredTools[
       "playtest.run"
     ].handler({
@@ -1922,9 +1922,9 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
     assert.equal(insertedBatches.length, 4);
     assert.equal(insertedBatches[3]!.revision, 2);
     assert.equal(insertedBatches[3]!.status, "failed");
-    mismatchNegotiatedSchemaHash = false;
+    isMismatchNegotiatedSchemaHash = false;
 
-    malformedTraceEventStep = true;
+    isMalformedTraceEventStep = true;
     const malformedTraceRun = await (server as any)._registeredTools[
       "playtest.run"
     ].handler({
@@ -1958,9 +1958,9 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
       "playtest_unavailable"
     );
     currentRole = "playtester";
-    malformedTraceEventStep = false;
+    isMalformedTraceEventStep = false;
 
-    malformedFrameStep = true;
+    isMalformedFrameStep = true;
     const malformedFrameRun = await (server as any)._registeredTools[
       "playtest.run"
     ].handler({
@@ -1984,13 +1984,13 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
       malformedFrameBatch.reviewPackets[0].failureReason,
       "trace-malformed"
     );
-    malformedFrameStep = false;
+    isMalformedFrameStep = false;
 
     // A complete episode whose trace records an unverified observation/UI
     // equivalence step must receive a typed, read-only "unavailable" packet
     // receipt instead of the generic validation-failure collapse, and no
     // analyst process may start for it.
-    unverifiedObservationStep = true;
+    isUnverifiedObservationStep = true;
     const unverifiedObservationEpisodeId = "ep-run-seed-unverified-observation";
     const analystDispatchSnapshotBeforeUnverified = analystDispatch.input;
     const unverifiedObservationRun = await (server as any)._registeredTools[
@@ -2081,7 +2081,7 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
       analystDispatch.input,
       analystDispatchSnapshotBeforeUnverified
     );
-    unverifiedObservationStep = false;
+    isUnverifiedObservationStep = false;
 
     const exhaustedBudgetRun = await (server as any)._registeredTools[
       "playtest.run"
@@ -2098,31 +2098,31 @@ test("playtest MCP server: playtest.run enforces role permissions, approval boun
     );
     assert.equal(insertedEpisodes.length, 5);
   } finally {
-    rmSync(tmpRoot, { recursive: true, force: true });
+    rmSync(temporaryRoot, { recursive: true, force: true });
   }
 });
 
 test("playtest MCP server: playtest.run surfaces a persistence failure instead of claiming success", async () => {
-  const tmpRoot = realpathSync(
+  const temporaryRoot = realpathSync(
     mkdtempSync(path.join(tmpdir(), "playtest-mcp-test-"))
   );
-  mkdirSync(path.join(tmpRoot, "artifacts"), { recursive: true });
+  mkdirSync(path.join(temporaryRoot, "artifacts"), { recursive: true });
   const artifacts = new PlaytestArtifactStore({
     workspaceId: WORKSPACE_ID,
-    rootDirectory: path.join(tmpRoot, "artifacts")
+    rootDirectory: path.join(temporaryRoot, "artifacts")
   });
-  const approvalRepo = new WorkspacePlaytestApprovalRepository(
-    path.join(tmpRoot, "approvals")
+  const approvalRepository = new WorkspacePlaytestApprovalRepository(
+    path.join(temporaryRoot, "approvals")
   );
-  approvalRepo.approve(createApproval(), null);
+  approvalRepository.approve(createApproval(), null);
 
   try {
     const insertedBatches: PlaytestBatch[] = [];
     const insertedEpisodes: PlaytestEpisode[] = [];
-    let failEpisodeInsert = true;
-    let failTerminalBatchInsert = false;
-    let commitTerminalThenThrow = false;
-    const mockRepo: PlaytestingRepositoryOps = {
+    let isFailEpisodeInsert = true;
+    let isFailTerminalBatchInsert = false;
+    let isCommitTerminalThenThrow = false;
+    const mockRepository: PlaytestingRepositoryOps = {
       getBatch: async (_workspaceId, batchId) =>
         [...insertedBatches]
           .reverse()
@@ -2156,14 +2156,14 @@ test("playtest MCP server: playtest.run surfaces a persistence failure instead o
       getLatestComparison: async () => null,
       insertComparison: async () => {},
       insertBatch: async (batch) => {
-        if (failTerminalBatchInsert && batch.revision === 2) {
-          if (commitTerminalThenThrow) insertedBatches.push(batch);
+        if (isFailTerminalBatchInsert && batch.revision === 2) {
+          if (isCommitTerminalThenThrow) insertedBatches.push(batch);
           throw new Error("ClickHouse batch revision is unreachable");
         }
         insertedBatches.push(batch);
       },
       insertEpisode: async (episode) => {
-        if (failEpisodeInsert) throw new Error("ClickHouse is unreachable");
+        if (isFailEpisodeInsert) throw new Error("ClickHouse is unreachable");
         insertedEpisodes.push(episode);
       },
       insertCrossSessionSynthesis: async () => {},
@@ -2186,22 +2186,22 @@ test("playtest MCP server: playtest.run surfaces a persistence failure instead o
         })
       },
       artifactStoreForWorkspace: () => artifacts,
-      approvalRepository: approvalRepo,
-      playtestRepository: mockRepo,
+      approvalRepository: approvalRepository,
+      playtestRepository: mockRepository,
       readWorkspaceCatalog: enabledWorkspaceCatalog(),
       prepareSandboxHandler: fixturePreparedSandbox,
-      runEpisodeHandler: async (opts) => ({
-        capabilities: capabilitiesForRun(opts),
+      runEpisodeHandler: async (options) => ({
+        capabilities: capabilitiesForRun(options),
         episode: {
           schema: PLAYTESTS_EPISODE_SCHEMA,
           episodeId: "ep-fail-1",
           revision: 1,
-          batchId: opts.batchId,
-          assignmentId: opts.assignmentId,
+          batchId: options.batchId,
+          assignmentId: options.assignmentId,
           branchLineage: null,
           executionProvenance: adapterExecutionProvenance(
-            opts.repository,
-            opts.build.buildSha
+            options.repository,
+            options.build.buildSha
           ),
           playerDebrief: {
             schema: "autodev-playtest-player-debrief-v1",
@@ -2209,30 +2209,30 @@ test("playtest MCP server: playtest.run surfaces a persistence failure instead o
             reason: "non-reflective-policy"
           },
           identity: {
-            workspaceId: opts.repository,
-            repository: opts.repository,
-            buildSha: opts.build.buildSha,
-            gameBuild: opts.build.gameBuild,
-            scenarioId: opts.scenarioId,
-            configHash: opts.build.configHash,
-            seed: opts.seed,
+            workspaceId: options.repository,
+            repository: options.repository,
+            buildSha: options.build.buildSha,
+            gameBuild: options.build.gameBuild,
+            scenarioId: options.scenarioId,
+            configHash: options.build.configHash,
+            seed: options.seed,
             rngInitialStateHash: null,
             rngAlgorithm: null,
             rngVersion: null,
-            policyId: opts.policy.id,
-            policyVersion: opts.policy.version,
+            policyId: options.policy.id,
+            policyVersion: options.policy.version,
             modelId: null,
             modelRevision: null,
-            observationSchemaHash: opts.observationContract.schemaHash,
+            observationSchemaHash: options.observationContract.schemaHash,
             actionSchemaHash: "a".repeat(64),
             eventSchemaHash: "c".repeat(64),
             protocolVersion: 1,
-            runtimeVersion: opts.runtimeVersion,
-            environmentHash: opts.environmentHash
+            runtimeVersion: options.runtimeVersion,
+            environmentHash: options.environmentHash
           },
-          scenarioFamily: opts.scenarioFamily,
-          policyCohort: opts.policy.cohort,
-          strategy: opts.policy.strategy,
+          scenarioFamily: options.scenarioFamily,
+          policyCohort: options.policy.cohort,
+          strategy: options.policy.strategy,
           status: "completed",
           termination: { reason: "game-terminal", step: null },
           outcome: "win",
@@ -2341,8 +2341,8 @@ test("playtest MCP server: playtest.run surfaces a persistence failure instead o
 
     // If episode persistence succeeds but the terminal batch revision fails,
     // do not write a contradictory failed batch over the durable episode.
-    failEpisodeInsert = false;
-    failTerminalBatchInsert = true;
+    isFailEpisodeInsert = false;
+    isFailTerminalBatchInsert = true;
     const secondStart = await (server as any)._registeredTools[
       "playtest.run"
     ].handler({
@@ -2371,7 +2371,7 @@ test("playtest MCP server: playtest.run surfaces a persistence failure instead o
 
     // A lost acknowledgement after a durable terminal insert must preserve its
     // successful revision rather than append a contradictory failed revision.
-    commitTerminalThenThrow = true;
+    isCommitTerminalThenThrow = true;
     const thirdStart = await (server as any)._registeredTools[
       "playtest.run"
     ].handler({
@@ -2393,29 +2393,29 @@ test("playtest MCP server: playtest.run surfaces a persistence failure instead o
       ]
     );
   } finally {
-    rmSync(tmpRoot, { recursive: true, force: true });
+    rmSync(temporaryRoot, { recursive: true, force: true });
   }
 });
 
 test("playtest MCP: Docker preflight and adapter reset failures are never completed or given invented batch hashes", async () => {
   for (const failureStage of ["docker", "reset"] as const) {
-    const tmpRoot = realpathSync(
+    const temporaryRoot = realpathSync(
       mkdtempSync(path.join(tmpdir(), "playtest-mcp-preflight-test-"))
     );
-    mkdirSync(path.join(tmpRoot, "artifacts"), { recursive: true });
+    mkdirSync(path.join(temporaryRoot, "artifacts"), { recursive: true });
     const artifacts = new PlaytestArtifactStore({
       workspaceId: WORKSPACE_ID,
-      rootDirectory: path.join(tmpRoot, "artifacts")
+      rootDirectory: path.join(temporaryRoot, "artifacts")
     });
-    const approvalRepo = new WorkspacePlaytestApprovalRepository(
-      path.join(tmpRoot, "approvals")
+    const approvalRepository = new WorkspacePlaytestApprovalRepository(
+      path.join(temporaryRoot, "approvals")
     );
-    approvalRepo.approve(createApproval(), null);
+    approvalRepository.approve(createApproval(), null);
 
     try {
       const insertedBatches: unknown[] = [];
       const insertedEpisodes: PlaytestEpisode[] = [];
-      const mockRepo: PlaytestingRepositoryOps = {
+      const mockRepository: PlaytestingRepositoryOps = {
         getBatch: async () => null,
         listBatches: async () => ({ rows: [], total: 0, nextCursor: null }),
         listEpisodes: async () => ({ rows: [], total: 0, nextCursor: null }),
@@ -2462,8 +2462,8 @@ test("playtest MCP: Docker preflight and adapter reset failures are never comple
           })
         },
         artifactStoreForWorkspace: () => artifacts,
-        approvalRepository: approvalRepo,
-        playtestRepository: mockRepo,
+        approvalRepository: approvalRepository,
+        playtestRepository: mockRepository,
         readWorkspaceCatalog: enabledWorkspaceCatalog(),
         prepareSandboxHandler: fixturePreparedSandbox,
         launchSandboxHandler: async () => {
@@ -2535,19 +2535,19 @@ test("playtest MCP: Docker preflight and adapter reset failures are never comple
       assert.equal(terminal.observationSchemaHash, null);
       assert.equal(terminal.eventSchemaHash, null);
     } finally {
-      rmSync(tmpRoot, { recursive: true, force: true });
+      rmSync(temporaryRoot, { recursive: true, force: true });
     }
   }
 });
 
 test("workspace agent-role allowlists govern status, wait, and cancellation on the shared run owner", async () => {
-  const tmpRoot = realpathSync(
+  const temporaryRoot = realpathSync(
     mkdtempSync(path.join(tmpdir(), "playtest-mcp-run-role-scope-"))
   );
-  mkdirSync(path.join(tmpRoot, "artifacts"), { recursive: true });
+  mkdirSync(path.join(temporaryRoot, "artifacts"), { recursive: true });
   const artifacts = new PlaytestArtifactStore({
     workspaceId: WORKSPACE_ID,
-    rootDirectory: path.join(tmpRoot, "artifacts")
+    rootDirectory: path.join(temporaryRoot, "artifacts")
   });
   let allowedRoles: readonly string[] = ["playtester"];
   try {
@@ -2625,23 +2625,23 @@ test("workspace agent-role allowlists govern status, wait, and cancellation on t
       denied
     );
   } finally {
-    rmSync(tmpRoot, { recursive: true, force: true });
+    rmSync(temporaryRoot, { recursive: true, force: true });
   }
 });
 
 test("playtest MCP serializes concurrent assignment reservations before checking worker and episode budgets", async () => {
-  const tmpRoot = realpathSync(
+  const temporaryRoot = realpathSync(
     mkdtempSync(path.join(tmpdir(), "playtest-mcp-assignment-lock-test-"))
   );
-  mkdirSync(path.join(tmpRoot, "artifacts"), { recursive: true });
+  mkdirSync(path.join(temporaryRoot, "artifacts"), { recursive: true });
   const artifacts = new PlaytestArtifactStore({
     workspaceId: WORKSPACE_ID,
-    rootDirectory: path.join(tmpRoot, "artifacts")
+    rootDirectory: path.join(temporaryRoot, "artifacts")
   });
-  const approvalRepo = new WorkspacePlaytestApprovalRepository(
-    path.join(tmpRoot, "approvals")
+  const approvalRepository = new WorkspacePlaytestApprovalRepository(
+    path.join(temporaryRoot, "approvals")
   );
-  approvalRepo.approve(
+  approvalRepository.approve(
     {
       ...createApproval(),
       limits: {
@@ -2712,7 +2712,7 @@ test("playtest MCP serializes concurrent assignment reservations before checking
         })
       },
       artifactStoreForWorkspace: () => artifacts,
-      approvalRepository: approvalRepo,
+      approvalRepository: approvalRepository,
       playtestRepository: repository,
       readWorkspaceCatalog: enabledWorkspaceCatalog(),
       prepareSandboxHandler: fixturePreparedSandbox,
@@ -2787,23 +2787,23 @@ test("playtest MCP serializes concurrent assignment reservations before checking
     assert.equal(batchRows.length, 2);
     assert.equal(batchRows[1]!.revision, 2);
   } finally {
-    rmSync(tmpRoot, { recursive: true, force: true });
+    rmSync(temporaryRoot, { recursive: true, force: true });
   }
 });
 
 test("playtest batch remains cancellable while a completed assignment persists and peers are still running", async () => {
-  const tmpRoot = realpathSync(
+  const temporaryRoot = realpathSync(
     mkdtempSync(path.join(tmpdir(), "playtest-mcp-incremental-batch-test-"))
   );
-  mkdirSync(path.join(tmpRoot, "artifacts"), { recursive: true });
+  mkdirSync(path.join(temporaryRoot, "artifacts"), { recursive: true });
   const artifacts = new PlaytestArtifactStore({
     workspaceId: WORKSPACE_ID,
-    rootDirectory: path.join(tmpRoot, "artifacts")
+    rootDirectory: path.join(temporaryRoot, "artifacts")
   });
-  const approvalRepo = new WorkspacePlaytestApprovalRepository(
-    path.join(tmpRoot, "approvals")
+  const approvalRepository = new WorkspacePlaytestApprovalRepository(
+    path.join(temporaryRoot, "approvals")
   );
-  approvalRepo.approve(createApproval(), null);
+  approvalRepository.approve(createApproval(), null);
 
   try {
     const insertedEpisodes: PlaytestEpisode[] = [];
@@ -2868,7 +2868,7 @@ test("playtest batch remains cancellable while a completed assignment persists a
         })
       },
       artifactStoreForWorkspace: () => artifacts,
-      approvalRepository: approvalRepo,
+      approvalRepository: approvalRepository,
       playtestRepository: repository,
       readWorkspaceCatalog: enabledWorkspaceCatalog(),
       prepareSandboxHandler: fixturePreparedSandbox,
@@ -2988,26 +2988,26 @@ test("playtest batch remains cancellable while a completed assignment persists a
       { completed: 1, cancelled: 1, assigned: 2 }
     );
   } finally {
-    rmSync(tmpRoot, { recursive: true, force: true });
+    rmSync(temporaryRoot, { recursive: true, force: true });
   }
 });
 
 test("review sampling selects complete sessions only and preserves truncated assignment denominators", async () => {
-  const tmpRoot = realpathSync(
+  const temporaryRoot = realpathSync(
     mkdtempSync(path.join(tmpdir(), "playtest-mcp-reviewable-session-test-"))
   );
-  mkdirSync(path.join(tmpRoot, "artifacts"), { recursive: true });
+  mkdirSync(path.join(temporaryRoot, "artifacts"), { recursive: true });
   const artifacts = new PlaytestArtifactStore({
     workspaceId: WORKSPACE_ID,
-    rootDirectory: path.join(tmpRoot, "artifacts")
+    rootDirectory: path.join(temporaryRoot, "artifacts")
   });
-  const approvalRepo = new WorkspacePlaytestApprovalRepository(
-    path.join(tmpRoot, "approvals")
+  const approvalRepository = new WorkspacePlaytestApprovalRepository(
+    path.join(temporaryRoot, "approvals")
   );
   const approval = createApproval({
     limits: { ...createApproval().limits, critiqueCount: 1 }
   });
-  approvalRepo.approve(approval, null);
+  approvalRepository.approve(approval, null);
 
   try {
     const insertedEpisodes: PlaytestEpisode[] = [];
@@ -3063,7 +3063,7 @@ test("review sampling selects complete sessions only and preserves truncated ass
         })
       },
       artifactStoreForWorkspace: () => artifacts,
-      approvalRepository: approvalRepo,
+      approvalRepository: approvalRepository,
       playtestRepository: repository,
       readWorkspaceCatalog: enabledWorkspaceCatalog(),
       prepareSandboxHandler: (workspaceApproval) => {
@@ -3086,11 +3086,11 @@ test("review sampling selects complete sessions only and preserves truncated ass
       },
       launchSandboxHandler: async () => fixtureSandbox("complete-session-test"),
       runEpisodeHandler: async (options) => {
-        const truncated = options.assignmentId === "a-0002";
+        const isTruncated = options.assignmentId === "a-0002";
         const episode = episodeForRun(options, "completed");
         return {
           capabilities: capabilitiesForRun(options),
-          episode: truncated
+          episode: isTruncated
             ? {
                 ...episode,
                 episodeId: "ep-truncated-assignment",
@@ -3155,35 +3155,35 @@ test("review sampling selects complete sessions only and preserves truncated ass
     );
     assert.equal(insertedBatches.at(-1)?.status, "truncated");
   } finally {
-    rmSync(tmpRoot, { recursive: true, force: true });
+    rmSync(temporaryRoot, { recursive: true, force: true });
   }
 });
 
 test("playtest MCP: per-run cancellation and approval/workspace revocation abort the active sandbox", async () => {
   for (const trigger of ["cancel", "revoke", "disable"] as const) {
-    const tmpRoot = realpathSync(
+    const temporaryRoot = realpathSync(
       mkdtempSync(path.join(tmpdir(), "playtest-mcp-cancel-test-"))
     );
-    mkdirSync(path.join(tmpRoot, "artifacts"), { recursive: true });
+    mkdirSync(path.join(temporaryRoot, "artifacts"), { recursive: true });
     const artifacts = new PlaytestArtifactStore({
       workspaceId: WORKSPACE_ID,
-      rootDirectory: path.join(tmpRoot, "artifacts")
+      rootDirectory: path.join(temporaryRoot, "artifacts")
     });
-    const approvalRepo = new WorkspacePlaytestApprovalRepository(
-      path.join(tmpRoot, "approvals")
+    const approvalRepository = new WorkspacePlaytestApprovalRepository(
+      path.join(temporaryRoot, "approvals")
     );
     const approval = createApproval();
-    approvalRepo.approve(
+    approvalRepository.approve(
       { ...approval, limits: { ...approval.limits, workerCount: 1 } },
       null
     );
 
     try {
-      let workspaceEnabled = true;
+      let isWorkspaceEnabled = true;
       const insertedEpisodes: PlaytestEpisode[] = [];
       const insertedBatches: any[] = [];
       let cancelCalls = 0;
-      const mockRepo: PlaytestingRepositoryOps = {
+      const mockRepository: PlaytestingRepositoryOps = {
         getBatch: async () => null,
         listBatches: async () => ({
           rows: insertedBatches,
@@ -3240,15 +3240,15 @@ test("playtest MCP: per-run cancellation and approval/workspace revocation abort
           })
         },
         artifactStoreForWorkspace: () => artifacts,
-        approvalRepository: approvalRepo,
-        playtestRepository: mockRepo,
+        approvalRepository: approvalRepository,
+        playtestRepository: mockRepository,
         readWorkspaceCatalog: () => ({
           status: "valid",
           workspaces: [
             {
               id: WORKSPACE_ID,
               baseBranch: "main",
-              enabled: workspaceEnabled,
+              enabled: isWorkspaceEnabled,
               agentRoles: null
             }
           ]
@@ -3346,9 +3346,9 @@ test("playtest MCP: per-run cancellation and approval/workspace revocation abort
       await triggerCancellation(
         trigger,
         server,
-        approvalRepo,
+        approvalRepository,
         () => {
-          workspaceEnabled = false;
+          isWorkspaceEnabled = false;
         },
         active.batchId
       );
@@ -3381,19 +3381,19 @@ test("playtest MCP: per-run cancellation and approval/workspace revocation abort
         trigger !== "cancel"
       );
     } finally {
-      rmSync(tmpRoot, { recursive: true, force: true });
+      rmSync(temporaryRoot, { recursive: true, force: true });
     }
   }
 });
 
 test("run status restores interrupted batch progress from Data and durably closes unknown assignments", async () => {
-  const tmpRoot = realpathSync(
+  const temporaryRoot = realpathSync(
     mkdtempSync(path.join(tmpdir(), "playtest-mcp-recovery-test-"))
   );
-  mkdirSync(path.join(tmpRoot, "artifacts"), { recursive: true });
+  mkdirSync(path.join(temporaryRoot, "artifacts"), { recursive: true });
   const artifacts = new PlaytestArtifactStore({
     workspaceId: WORKSPACE_ID,
-    rootDirectory: path.join(tmpRoot, "artifacts")
+    rootDirectory: path.join(temporaryRoot, "artifacts")
   });
   const approval = createApproval();
   const prepared = fixturePreparedSandbox(approval);
@@ -3700,24 +3700,24 @@ test("run status restores interrupted batch progress from Data and durably close
     assert.equal(listBatch.failureReason, "nonterminal-batch-recovered");
     assert.equal(batchWrites.length, 2);
   } finally {
-    rmSync(tmpRoot, { recursive: true, force: true });
+    rmSync(temporaryRoot, { recursive: true, force: true });
   }
 });
 
 test("playtest MCP: batch-only contract rejects unapproved cells and over-budget inventories before any sandbox launches", async () => {
-  const tmpRoot = realpathSync(
+  const temporaryRoot = realpathSync(
     mkdtempSync(path.join(tmpdir(), "playtest-mcp-batch-adversarial-"))
   );
-  mkdirSync(path.join(tmpRoot, "artifacts"), { recursive: true });
+  mkdirSync(path.join(temporaryRoot, "artifacts"), { recursive: true });
   const artifacts = new PlaytestArtifactStore({
     workspaceId: WORKSPACE_ID,
-    rootDirectory: path.join(tmpRoot, "artifacts")
+    rootDirectory: path.join(temporaryRoot, "artifacts")
   });
-  const approvalRepo = new WorkspacePlaytestApprovalRepository(
-    path.join(tmpRoot, "approvals")
+  const approvalRepository = new WorkspacePlaytestApprovalRepository(
+    path.join(temporaryRoot, "approvals")
   );
   // Two assignment cells: 1 worker, 1 episode fits the approval at one cell.
-  approvalRepo.approve(
+  approvalRepository.approve(
     {
       ...createApproval(),
       limits: {
@@ -3733,7 +3733,7 @@ test("playtest MCP: batch-only contract rejects unapproved cells and over-budget
   try {
     const insertedBatches: any[] = [];
     let launchAttempts = 0;
-    const mockRepo: PlaytestingRepositoryOps = {
+    const mockRepository: PlaytestingRepositoryOps = {
       getBatch: async () => null,
       listBatches: async () => ({
         rows: insertedBatches,
@@ -3778,8 +3778,8 @@ test("playtest MCP: batch-only contract rejects unapproved cells and over-budget
         })
       },
       artifactStoreForWorkspace: () => artifacts,
-      approvalRepository: approvalRepo,
-      playtestRepository: mockRepo,
+      approvalRepository: approvalRepository,
+      playtestRepository: mockRepository,
       readWorkspaceCatalog: enabledWorkspaceCatalog(),
       prepareSandboxHandler: fixturePreparedSandbox,
       launchSandboxHandler: async () => {
@@ -3855,24 +3855,24 @@ test("playtest MCP: batch-only contract rejects unapproved cells and over-budget
     assert.equal(launchAttempts, 0);
     assert.equal(insertedBatches.length, 0);
   } finally {
-    rmSync(tmpRoot, { recursive: true, force: true });
+    rmSync(temporaryRoot, { recursive: true, force: true });
   }
 });
 
 test("playtest.branch reuses approved batch ownership, budgets replay steps, mounts verified trace and persists lineage", async () => {
-  const tmpRoot = realpathSync(
+  const temporaryRoot = realpathSync(
     mkdtempSync(path.join(tmpdir(), "playtest-mcp-branch-test-"))
   );
-  mkdirSync(path.join(tmpRoot, "artifacts"), { recursive: true });
+  mkdirSync(path.join(temporaryRoot, "artifacts"), { recursive: true });
   const artifacts = new PlaytestArtifactStore({
     workspaceId: WORKSPACE_ID,
-    rootDirectory: path.join(tmpRoot, "artifacts")
+    rootDirectory: path.join(temporaryRoot, "artifacts")
   });
   const approval = createApproval();
-  const approvalRepo = new WorkspacePlaytestApprovalRepository(
-    path.join(tmpRoot, "approvals")
+  const approvalRepository = new WorkspacePlaytestApprovalRepository(
+    path.join(temporaryRoot, "approvals")
   );
-  approvalRepo.approve(approval, null);
+  approvalRepository.approve(approval, null);
 
   try {
     let currentRole = "playtest-analyst";
@@ -3942,8 +3942,8 @@ test("playtest.branch reuses approved batch ownership, budgets replay steps, mou
       bytes: Uint8Array;
     } | null = null;
     let capturedBranchOptions: PlaytestEpisodeRunOptions["branch"];
-    let stallNextBranch = false;
-    const mockRepo: PlaytestingRepositoryOps = {
+    let isStallNextBranch = false;
+    const mockRepository: PlaytestingRepositoryOps = {
       getBatch: async () => null,
       listBatches: async (filter) => {
         const latest = new Map<string, PlaytestBatch>();
@@ -4014,8 +4014,8 @@ test("playtest.branch reuses approved batch ownership, budgets replay steps, mou
         })
       },
       artifactStoreForWorkspace: () => artifacts,
-      approvalRepository: approvalRepo,
-      playtestRepository: mockRepo,
+      approvalRepository: approvalRepository,
+      playtestRepository: mockRepository,
       readWorkspaceCatalog: enabledWorkspaceCatalog(),
       prepareSandboxHandler: fixturePreparedSandbox,
       launchSandboxHandler: async (_prepared, launchOptions) => {
@@ -4025,8 +4025,8 @@ test("playtest.branch reuses approved batch ownership, budgets replay steps, mou
       runEpisodeHandler: async (options) => {
         capturedBranchOptions = options.branch;
         assert.ok(options.branch);
-        if (stallNextBranch) {
-          stallNextBranch = false;
+        if (isStallNextBranch) {
+          isStallNextBranch = false;
           await new Promise<void>((resolve) => {
             if (options.signal?.aborted) {
               resolve();
@@ -4193,7 +4193,7 @@ test("playtest.branch reuses approved batch ownership, budgets replay steps, mou
     assert.equal(parsedMcpError(overBudget).code, "playtest_invalid_request");
     assert.equal(insertedBatches.length, 2);
 
-    stallNextBranch = true;
+    isStallNextBranch = true;
     const cancelStart = await server.playtestRunControl.startRun(
       {
         workspaceId: WORKSPACE_ID,
@@ -4236,7 +4236,7 @@ test("playtest.branch reuses approved batch ownership, budgets replay steps, mou
       "cancelled"
     );
 
-    stallNextBranch = true;
+    isStallNextBranch = true;
     const revokeStart = await branchTool({
       launchRequest: branchLaunch(request)
     });
@@ -4244,8 +4244,8 @@ test("playtest.branch reuses approved batch ownership, budgets replay steps, mou
       .batchId as string;
     const revokeActive = await waitForActiveRun(server);
     assert.equal(revokeActive.batchId, revokeBatchId);
-    const activeApproval = approvalRepo.read(WORKSPACE_ID)!;
-    approvalRepo.revoke(
+    const activeApproval = approvalRepository.read(WORKSPACE_ID)!;
+    approvalRepository.revoke(
       WORKSPACE_ID,
       activeApproval.approvalId,
       activeApproval.revision,
@@ -4263,7 +4263,7 @@ test("playtest.branch reuses approved batch ownership, budgets replay steps, mou
     assert.equal(revokedRun.status, "cancelled");
     assert.equal(revokedRun.cancellationReason, "approval-revoked");
   } finally {
-    rmSync(tmpRoot, { recursive: true, force: true });
+    rmSync(temporaryRoot, { recursive: true, force: true });
   }
 });
 
@@ -4349,17 +4349,17 @@ test("analyst status can restore persisted cross-session syntheses without task 
 });
 
 test("playtest MCP server: submitReview validates evidence against the real stored index and enforces analyst role", async () => {
-  const tmpRoot = realpathSync(
+  const temporaryRoot = realpathSync(
     mkdtempSync(path.join(tmpdir(), "playtest-mcp-test-"))
   );
-  const artifactsDir = path.join(tmpRoot, "artifacts");
+  const artifactsDir = path.join(temporaryRoot, "artifacts");
   mkdirSync(artifactsDir, { recursive: true });
   const artifacts = new PlaytestArtifactStore({
     workspaceId: WORKSPACE_ID,
     rootDirectory: artifactsDir
   });
-  const approvalRepo = new WorkspacePlaytestApprovalRepository(
-    path.join(tmpRoot, "approvals")
+  const approvalRepository = new WorkspacePlaytestApprovalRepository(
+    path.join(temporaryRoot, "approvals")
   );
 
   try {
@@ -4370,9 +4370,9 @@ test("playtest MCP server: submitReview validates evidence against the real stor
     const insertedReviews: PlaytestSessionReview[] = [];
     const insertedFindings: PlaytestFinding[] = [];
     const existingFindingOverrides = new Map<string, PlaytestFinding>();
-    let failReceiptWrite = false;
+    let isFailReceiptWrite = false;
     let failFindingTitle: string | null = null;
-    let peerFindingPersisted = false;
+    let isPeerFindingPersisted = false;
     let releaseFindingFailure: (() => void) | null = null;
 
     // Write a real trace artifact for the episode so the known-evidence
@@ -4815,7 +4815,7 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       spanIds: []
     };
 
-    const mockRepo: PlaytestingRepositoryOps = {
+    const mockRepository: PlaytestingRepositoryOps = {
       getBatch: async (_workspaceId, batchId) =>
         batchId === storedBatch.batchId ? storedBatch : null,
       listBatches: async () => ({ rows: [], total: 0, nextCursor: null }),
@@ -4859,11 +4859,11 @@ test("playtest MCP server: submitReview validates evidence against the real stor
             )
           : undefined;
         if (
-          failReceiptWrite &&
+          isFailReceiptWrite &&
           latestReceipt?.status === "persisted" &&
           existingReceipt?.status !== "persisted"
         ) {
-          failReceiptWrite = false;
+          isFailReceiptWrite = false;
           throw new Error("Simulated batch receipt persistence failure.");
         }
         if (batch.executionMode !== "adapter-accelerated") {
@@ -4890,7 +4890,7 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       insertFinding: async (_ws, finding) => {
         if (finding.title === failFindingTitle) {
           failFindingTitle = null;
-          if (!peerFindingPersisted) {
+          if (!isPeerFindingPersisted) {
             await new Promise<void>((resolve) => {
               releaseFindingFailure = resolve;
             });
@@ -4898,7 +4898,7 @@ test("playtest MCP server: submitReview validates evidence against the real stor
           throw new Error("Simulated finding persistence failure.");
         }
         insertedFindings.push(finding);
-        peerFindingPersisted = true;
+        isPeerFindingPersisted = true;
         const release = releaseFindingFailure;
         releaseFindingFailure = null;
         release?.();
@@ -4912,13 +4912,13 @@ test("playtest MCP server: submitReview validates evidence against the real stor
           role: currentRole,
           actor: "analyst-1",
           selectedEpisodeIds,
-          ...(analysisId === undefined ? {} : { analysisId }),
-          ...(metricAggregation === undefined ? {} : { metricAggregation })
+          ...(analysisId !== undefined && { analysisId }),
+          ...(metricAggregation !== undefined && { metricAggregation })
         })
       },
       artifactStoreForWorkspace: () => artifacts,
-      approvalRepository: approvalRepo,
-      playtestRepository: mockRepo,
+      approvalRepository: approvalRepository,
+      playtestRepository: mockRepository,
       playtestRunControl: null
     });
 
@@ -5047,7 +5047,7 @@ test("playtest MCP server: submitReview validates evidence against the real stor
     assert.equal(insertedSyntheses.length, 1);
     assert.equal(insertedSyntheses[0]?.analysisId, "analysis-cross-session-1");
     selectedEpisodeIds = [episodeOne.episodeId, "ep-does-not-exist"];
-    const packetArgs = {
+    const packetArguments = {
       packetId: packet.packetId,
       packetArtifactId: packetArtifact.artifactId,
       packetSha256: packetArtifact.sha256
@@ -5056,7 +5056,7 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       "playtest.submitReview"
     ].inputSchema;
     const locatorSchemaResult = await submitReviewInputSchema.safeParseAsync({
-      ...packetArgs,
+      ...packetArguments,
       episodeId: episodeOne.episodeId,
       chronologicalSummary: "Exact source step locator.",
       status: "hypothesis",
@@ -5096,7 +5096,7 @@ test("playtest MCP server: submitReview validates evidence against the real stor
     });
     assert.equal(locatorSchemaResult.success, true);
     const incompleteReportInput = {
-      ...packetArgs,
+      ...packetArguments,
       episodeId: episodeOne.episodeId,
       chronologicalSummary:
         "Missing report completeness is not a complete review.",
@@ -5124,7 +5124,7 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       false
     );
     const obsoleteLocatorFields = await submitReviewInputSchema.safeParseAsync({
-      ...packetArgs,
+      ...packetArguments,
       episodeId: episodeOne.episodeId,
       chronologicalSummary: "Obsolete locator spelling.",
       status: "hypothesis",
@@ -5157,7 +5157,7 @@ test("playtest MCP server: submitReview validates evidence against the real stor
     assert.equal(obsoleteLocatorFields.success, false);
     const submitReview = (input: Record<string, unknown>) =>
       (server as any)._registeredTools["playtest.submitReview"].handler({
-        ...packetArgs,
+        ...packetArguments,
         observations: [
           {
             text: "In the tutorial, jump emitted a collision in fixture-phase while wait was legal.",
@@ -5440,7 +5440,7 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       ]
     };
     failFindingTitle = "Retry second collision finding";
-    peerFindingPersisted = false;
+    isPeerFindingPersisted = false;
     const partialWrite = await submitReview(retryableFindings);
     assert.equal(parsedMcpError(partialWrite).code, "playtest_internal_error");
     assert.deepEqual(
@@ -5888,7 +5888,7 @@ test("playtest MCP server: submitReview validates evidence against the real stor
 
     const validReviewSchemaResult = await (server as any)._registeredTools[
       "playtest.submitReview"
-    ].inputSchema.safeParseAsync({ ...packetArgs, ...validReviewInput });
+    ].inputSchema.safeParseAsync({ ...packetArguments, ...validReviewInput });
     assert.equal(validReviewSchemaResult.success, true);
 
     const contentFreeReview = await submitReview({
@@ -5955,7 +5955,7 @@ test("playtest MCP server: submitReview validates evidence against the real stor
     assert.equal(storedBatch.reviewReceipts.length, 0);
     assert.equal(storedBatch.budget.actualCritiques, 0);
 
-    failReceiptWrite = true;
+    isFailReceiptWrite = true;
     const missingReceipt = await submitReview(validReviewInput);
     assert.equal(
       parsedMcpError(missingReceipt).code,
@@ -6146,7 +6146,7 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       evidenceRefs: [{ kind: "episode", id: episodeOne.episodeId }],
       rubricHash: "f".repeat(64)
     };
-    failReceiptWrite = true;
+    isFailReceiptWrite = true;
     const unfinalizedReview = await submitReview(reservedReviewInput);
     assert.equal(
       parsedMcpError(unfinalizedReview).code,
@@ -6206,24 +6206,24 @@ test("playtest MCP server: submitReview validates evidence against the real stor
       "playtest_invalid_request"
     );
   } finally {
-    rmSync(tmpRoot, { recursive: true, force: true });
+    rmSync(temporaryRoot, { recursive: true, force: true });
   }
 });
 
 test("playtest MCP server: listEpisodes, readEpisode, readWindow with bounded step filtering, metrics without zero-imputed missing data, compare from stored records, findings", async () => {
-  const tmpRoot = realpathSync(
+  const temporaryRoot = realpathSync(
     mkdtempSync(path.join(tmpdir(), "playtest-mcp-test-"))
   );
-  const artifactsDir = path.join(tmpRoot, "artifacts");
+  const artifactsDir = path.join(temporaryRoot, "artifacts");
   mkdirSync(artifactsDir, { recursive: true });
   const artifacts = new PlaytestArtifactStore({
     workspaceId: WORKSPACE_ID,
     rootDirectory: artifactsDir
   });
-  const approvalRepo = new WorkspacePlaytestApprovalRepository(
-    path.join(tmpRoot, "approvals")
+  const approvalRepository = new WorkspacePlaytestApprovalRepository(
+    path.join(temporaryRoot, "approvals")
   );
-  approvalRepo.approve(createApproval(), null);
+  approvalRepository.approve(createApproval(), null);
 
   try {
     let currentRole = "playtester";
@@ -6417,14 +6417,14 @@ test("playtest MCP server: listEpisodes, readEpisode, readWindow with bounded st
       },
       notes: ""
     };
-    let loseOwnerDecisionAcknowledgement = false;
+    let isLoseOwnerDecisionAcknowledgement = false;
 
     let requestedBatchMetricPage: {
       readonly batchId?: string;
       readonly limit: number | undefined;
       readonly cursor: string | undefined;
     } | null = null;
-    const mockRepo: PlaytestingRepositoryOps = {
+    const mockRepository: PlaytestingRepositoryOps = {
       getBatch: async () => null,
       listBatches: async () => ({ rows: [], total: 0, nextCursor: null }),
       listEpisodes: async (filter, pageOptions) => {
@@ -6476,10 +6476,12 @@ test("playtest MCP server: listEpisodes, readEpisode, readWindow with bounded st
           : null,
       insertComparison: async (comparison) => {
         storedComparison = comparison;
-        if (loseOwnerDecisionAcknowledgement) {
-          loseOwnerDecisionAcknowledgement = false;
-          throw new Error("Simulated lost comparison write acknowledgement.");
+        if (!isLoseOwnerDecisionAcknowledgement) {
+          return;
         }
+
+        isLoseOwnerDecisionAcknowledgement = false;
+        throw new Error("Simulated lost comparison write acknowledgement.");
       },
       insertBatch: async () => {},
       insertEpisode: async () => {},
@@ -6503,8 +6505,8 @@ test("playtest MCP server: listEpisodes, readEpisode, readWindow with bounded st
         })
       },
       artifactStoreForWorkspace: () => artifacts,
-      approvalRepository: approvalRepo,
-      playtestRepository: mockRepo
+      approvalRepository: approvalRepository,
+      playtestRepository: mockRepository
     });
 
     // 1. listEpisodes
@@ -6676,7 +6678,7 @@ test("playtest MCP server: listEpisodes, readEpisode, readWindow with bounded st
     );
     assert.equal(storedComparison.version, 1);
 
-    loseOwnerDecisionAcknowledgement = true;
+    isLoseOwnerDecisionAcknowledgement = true;
     const decisionRes = await (server as any)._registeredTools[
       "playtest.decideComparison"
     ].handler({
@@ -6695,7 +6697,7 @@ test("playtest MCP server: listEpisodes, readEpisode, readWindow with bounded st
       "Hold pending a fresh confirmation cohort."
     );
     assert.equal(storedComparison.version, 2);
-    assert.equal(approvalRepo.read(WORKSPACE_ID)?.revision, 1);
+    assert.equal(approvalRepository.read(WORKSPACE_ID)?.revision, 1);
 
     const idempotentDecisionRes = await (server as any)._registeredTools[
       "playtest.decideComparison"
@@ -6729,7 +6731,7 @@ test("playtest MCP server: listEpisodes, readEpisode, readWindow with bounded st
     assert.equal(findingsParsed.total, 1);
     assert.equal(findingsParsed.rows[0].findingId, dummyFinding.findingId);
   } finally {
-    rmSync(tmpRoot, { recursive: true, force: true });
+    rmSync(temporaryRoot, { recursive: true, force: true });
   }
 });
 
@@ -6802,7 +6804,7 @@ test("playtest MCP: autonomous-visual launch refuses any requested limit above t
       workspaceId: WORKSPACE_ID,
       rootDirectory: artifactRoot
     });
-    let repositoryTouched = false;
+    let isRepositoryTouched = false;
     const repository: PlaytestingRepositoryOps = {
       getBatch: async () => null,
       listBatches: async () => ({ rows: [], total: 0, nextCursor: null }),
@@ -6821,16 +6823,16 @@ test("playtest MCP: autonomous-visual launch refuses any requested limit above t
       getLatestReview: async () => null,
       getLatestComparison: async () => null,
       insertComparison: async () => {
-        repositoryTouched = true;
+        isRepositoryTouched = true;
       },
       insertBatch: async () => {
-        repositoryTouched = true;
+        isRepositoryTouched = true;
       },
       insertEpisode: async () => {
-        repositoryTouched = true;
+        isRepositoryTouched = true;
       },
       insertCrossSessionSynthesis: async () => {
-        repositoryTouched = true;
+        isRepositoryTouched = true;
       },
       getCrossSessionSynthesisForAnalysis: async () => null,
       listCrossSessionSyntheses: async () => ({
@@ -6839,10 +6841,10 @@ test("playtest MCP: autonomous-visual launch refuses any requested limit above t
         nextCursor: null
       }),
       insertReview: async () => {
-        repositoryTouched = true;
+        isRepositoryTouched = true;
       },
       insertFinding: async () => {
-        repositoryTouched = true;
+        isRepositoryTouched = true;
       }
     };
 
@@ -6885,7 +6887,7 @@ test("playtest MCP: autonomous-visual launch refuses any requested limit above t
     const body = parsedMcpError(result);
     assert.equal(body.code, "playtest_invalid_request");
     assert.equal(
-      repositoryTouched,
+      isRepositoryTouched,
       false,
       "an over-approval request must be refused before any Data write, never clamped to the approved ceiling"
     );

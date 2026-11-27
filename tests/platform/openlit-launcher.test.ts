@@ -96,8 +96,8 @@ test("model router launcher preserves explicit MINIMAX_API_KEY over .env and fal
       { mode: 0o700 }
     );
     chmodSync(fakeNode, 0o700);
-    const runLauncher = (extraEnv: NodeJS.ProcessEnv = {}) => {
-      const env: NodeJS.ProcessEnv = {
+    const runLauncher = (extraEnvironment: NodeJS.ProcessEnv = {}) => {
+      const environment: NodeJS.ProcessEnv = {
         ...process.env,
         HOME: directory,
         CODEX_HOME: codexHome,
@@ -105,13 +105,13 @@ test("model router launcher preserves explicit MINIMAX_API_KEY over .env and fal
         AUTODEV_NODE_BIN: fakeNode,
         AUTODEV_SKIP_LAUNCHCTL: "1",
         AUTODEV_DISABLE_KEYCHAIN: "1",
-        ...extraEnv
+        ...extraEnvironment
       };
-      if (!("MINIMAX_API_KEY" in extraEnv)) delete env.MINIMAX_API_KEY;
+      if (!("MINIMAX_API_KEY" in extraEnvironment)) delete environment.MINIMAX_API_KEY;
       return spawnSync(
         "bash",
         [join(repositoryRoot, "scripts/run-autodev-model-router.sh")],
-        { encoding: "utf8", env }
+        { encoding: "utf8", env: environment }
       );
     };
 

@@ -9,19 +9,19 @@ import { ToolDetailView } from "../src/features/tools/index.ts";
 import { toolUsageView } from "../src/features/tools/tool-usage-view.ts";
 
 /**
- * Every other detail view marks its panels with `data-section` --
- * `mcp-configuration`, `provider-models`, `agent-providers`,
- * `model-enablement`, `prompt-reconciliation`. The tools detail view had four
- * headed sections and no hook on any of them, so nothing could address one: a
- * test could not assert that the role-exposure panel rendered, and a browser
- * audit asking "did any section come out empty?" reported zero empty sections
- * because it had found zero sections to ask about. A check that cannot fail is
- * not a check.
- *
- * These assert the hooks exist *and* that each one carries content, so adding
- * a heading without a hook, or a hook on a section that renders nothing, both
- * fail.
- */
+Every other detail view marks its panels with `data-section` --
+`mcp-configuration`, `provider-models`, `agent-providers`,
+`model-enablement`, `prompt-reconciliation`. The tools detail view had four
+headed sections and no hook on any of them, so nothing could address one: a
+test could not assert that the role-exposure panel rendered, and a browser
+audit asking "did any section come out empty?" reported zero empty sections
+because it had found zero sections to ask about. A check that cannot fail is
+not a check.
+
+These assert the hooks exist *and* that each one carries content, so adding
+a heading without a hook, or a hook on a section that renders nothing, both
+fail.
+*/
 
 const TOOL: ToolCatalogItem = {
   name: "mcp__example__do_thing",

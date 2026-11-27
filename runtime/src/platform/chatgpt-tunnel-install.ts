@@ -42,10 +42,10 @@ import {
   failureDetail,
   generationPath,
   installedServiceRunner,
-  type McpGatewayDependencies,
-  type McpGatewayState,
   mcpGatewayAuthPaths,
+  type McpGatewayDependencies,
   mcpGatewayRoleSurfaceUrl,
+  type McpGatewayState,
   mcpGatewaySurfaceStatus,
   privateRead,
   privateWrite,
@@ -54,10 +54,10 @@ import {
   readMcpGatewayState,
   readMcpGatewayStateRaw,
   serviceLaunchAgentPath,
+  type ServicePaths,
   servicePort,
   serviceSearchPath,
   serviceTemplatePath,
-  type ServicePaths,
   superviseChild,
   waitForMcpGateway,
   withInstallLock
@@ -77,7 +77,7 @@ export type ChatgptTunnelMode = "reconcile" | "enable" | "disable";
 const installedStateSchema = z.object({
   // The private directory holding the generated tunnel-client profile.
   generation: z.string().regex(/^generation-[a-zA-Z0-9_-]+$/u),
-  port: z.number().int().min(1024).max(65535),
+  port: z.number().int().min(1024).max(65_535),
   organizationId: z.string().min(1),
   workspaceId: z.string().min(1),
   tunnelId: z.string().regex(/^tunnel_[a-zA-Z0-9_-]+$/u),
@@ -139,7 +139,7 @@ function tunnelStateFile(codexHome: string): string {
 export function validateRuntimeKey(key: string, administrator?: string): void {
   if (
     !key ||
-    /[\s\x00-\x1f\x7f]/u.test(key) ||
+    /[\s\u{0}-\u{1F}\u{7F}]/u.test(key) ||
     key === administrator ||
     key.startsWith("sk-admin")
   )
@@ -170,9 +170,9 @@ export function tunnelClientSupported(version: string): boolean {
   return major > 0 || minor > 0 || patch >= 21;
 }
 
-function tunnelBinary(env: NodeJS.ProcessEnv): string {
+function tunnelBinary(environment: NodeJS.ProcessEnv): string {
   const searchPath = [
-    env.PATH,
+    environment.PATH,
     process.env.PATH,
     "/opt/homebrew/bin",
     "/usr/local/bin"
@@ -184,7 +184,7 @@ function tunnelBinary(env: NodeJS.ProcessEnv): string {
     try {
       return tunnelClientSupported(
         execFileSync(candidate, ["--version"], {
-          env,
+          env: environment,
           encoding: "utf8",
           stdio: ["ignore", "pipe", "pipe"],
           timeout: 5000
@@ -202,13 +202,13 @@ function tunnelBinary(env: NodeJS.ProcessEnv): string {
     );
   if (!binary) {
     const tap = homebrewInvocation(brew, ["tap", "openai/tools"]);
-    execFileSync(tap.command, tap.args, { env, stdio: "inherit" });
+    execFileSync(tap.command, tap.args, { env: environment, stdio: "inherit" });
   }
   const invocation = homebrewInvocation(brew, [
     binary ? "upgrade" : "install",
     "openai/tools/tunnel-client"
   ]);
-  execFileSync(invocation.command, invocation.args, { env, stdio: "inherit" });
+  execFileSync(invocation.command, invocation.args, { env: environment, stdio: "inherit" });
   binary = resolveCommandOnPath("tunnel-client", searchPath);
   if (!binary || !supported(binary))
     throw new Error("OpenAI tunnel-client >= 0.0.21 is required");
@@ -232,22 +232,22 @@ const tunnelMetadataSchema = z.object({
 
 export function tunnelMetadata(
   binary: string,
-  args: string[],
-  env: NodeJS.ProcessEnv
+  arguments_: string[],
+  environment: NodeJS.ProcessEnv
 ): z.infer<typeof tunnelMetadataSchema> {
-  const childEnv = { ...env };
+  const childEnvironment = { ...environment };
   // OpenAI's tunnel-client 0.0.21 `admin tunnels get` only reads
   // CONTROL_PLANE_API_KEY / OPENAI_API_KEY / OPENAI_ADMIN_KEY; adapt at this
   // external subprocess boundary without exposing CONTROL_PLANE_API_KEY elsewhere.
-  if (args[0] === "get" && childEnv[CHATGPT_TUNNEL_API_KEY_ENV]) {
-    childEnv.CONTROL_PLANE_API_KEY = childEnv[CHATGPT_TUNNEL_API_KEY_ENV];
-    delete childEnv[CHATGPT_TUNNEL_API_KEY_ENV];
+  if (arguments_[0] === "get" && childEnvironment[CHATGPT_TUNNEL_API_KEY_ENV]) {
+    childEnvironment.CONTROL_PLANE_API_KEY = childEnvironment[CHATGPT_TUNNEL_API_KEY_ENV];
+    delete childEnvironment[CHATGPT_TUNNEL_API_KEY_ENV];
   }
   try {
     return tunnelMetadataSchema.parse(
       JSON.parse(
-        execFileSync(binary, ["admin", "--json", "tunnels", ...args], {
-          env: childEnv,
+        execFileSync(binary, ["admin", "--json", "tunnels", ...arguments_], {
+          env: childEnvironment,
           encoding: "utf8",
           stdio: ["ignore", "pipe", "pipe"],
           timeout: 10_000
@@ -258,7 +258,7 @@ export function tunnelMetadata(
     // Inspect only the category; never expose the original output or argv.
     const stderr = String((error as { stderr?: unknown }).stderr ?? "");
     const status =
-      /(?:HTTP|status(?: code)?)\s*[:=]?\s*(401|403|404|429|5\d\d)\b/iu.exec(
+      /(?:HTTP|status(?: code)?)\s*(?:[:=]\s*)?(401|403|404|429|5\d\d)\b/iu.exec(
         stderr
       )?.[1];
     const reason =
@@ -270,7 +270,7 @@ export function tunnelMetadata(
             ? "rate limited"
             : "invalid response or transport failure";
     throw new TunnelMetadataError(
-      `OpenAI tunnel ${args[0]} failed (${reason}); verify account authorization and tunnel scope in Platform`,
+      `OpenAI tunnel ${arguments_[0]} failed (${reason}); verify account authorization and tunnel scope in Platform`,
       status === "404"
     );
   }
@@ -296,11 +296,11 @@ export function assertTunnelScope(
 
 export function createTunnel(
   binary: string,
-  env: NodeJS.ProcessEnv,
+  environment: NodeJS.ProcessEnv,
   org: string,
   workspace: string
 ): string {
-  if (!env.OPENAI_ADMIN_KEY)
+  if (!environment.OPENAI_ADMIN_KEY)
     throw new Error(
       "Supply an existing CONTROL_PLANE_TUNNEL_ID or an OPENAI_ADMIN_KEY to create a tunnel"
     );
@@ -317,7 +317,7 @@ export function createTunnel(
       "--workspace-id",
       workspace
     ],
-    env
+    environment
   );
   const id = result.id ?? result.tunnel_id;
   if (!id)
@@ -329,7 +329,7 @@ export function createTunnel(
 
 // The tunnel channel name that carries one published role's surface.
 export function chatgptRoleChannel(role: string): string {
-  return role.replace(/[^a-zA-Z0-9_-]/gu, "-");
+  return role.replaceAll(/[^a-zA-Z0-9_-]/gu, "-");
 }
 
 /*
@@ -388,23 +388,22 @@ export function renderTunnelProfileChannels(
 }
 
 /**
- * Rewrite the generated tunnel profile so it publishes one channel per role.
- *
- * `tunnel-client init` writes a single channel; the profile is the tunnel's
- * own routing table, so each role's surface is addressed by its own channel.
- */
+Rewrite the generated tunnel profile so it publishes one channel per role.
+
+`tunnel-client init` writes a single channel; the profile is the tunnel's
+own routing table, so each role's surface is addressed by its own channel.
+*/
 export function withTunnelProfileChannels(
   profileText: string,
   channels: ReadonlyArray<{ readonly channel: string; readonly url: string }>
 ): string {
   const lines = profileText.split("\n");
-  const start = lines.findIndex((line) => /^mcp:$/.test(line));
-  if (start < 0) throw new Error("Tunnel profile has no mcp section");
+  const start = lines.indexOf("mcp:");
+  if (start === -1) throw new Error("Tunnel profile has no mcp section");
   let end = start + 1;
   while (end < lines.length) {
     const line = lines[end]!;
-    if (line.trim() === "") break;
-    if (!/^\s/u.test(line)) break;
+    if ((line.trim() === "") || !/^\s/u.test(line)) break;
     end += 1;
   }
   const block = renderTunnelProfileChannels(channels);
@@ -455,12 +454,12 @@ function controlRevision(paths: ServicePaths, reviewed: unknown): string {
 type TunnelLaunchd = ReturnType<McpGatewayDependencies["launchd"]>;
 
 export interface ChatgptTunnelDependencies extends McpGatewayDependencies {
-  tunnelBinary(env: NodeJS.ProcessEnv): string;
+  tunnelBinary(environment: NodeJS.ProcessEnv): string;
   metadata: typeof tunnelMetadata;
   create: typeof createTunnel;
-  readKey(env: NodeJS.ProcessEnv): string | null;
-  writeKey(key: string, env: NodeJS.ProcessEnv): void;
-  deleteKey(env: NodeJS.ProcessEnv): boolean;
+  readKey(environment: NodeJS.ProcessEnv): string | null;
+  writeKey(key: string, environment: NodeJS.ProcessEnv): void;
+  deleteKey(environment: NodeJS.ProcessEnv): boolean;
 }
 
 function defaultTunnelDependencies(): ChatgptTunnelDependencies {
@@ -469,10 +468,10 @@ function defaultTunnelDependencies(): ChatgptTunnelDependencies {
     tunnelBinary,
     metadata: tunnelMetadata,
     create: createTunnel,
-    readKey: (env) => readKeychainSecret(CHATGPT_TUNNEL_API_KEY_ENV, env),
-    writeKey: (key, env) =>
-      writeKeychainSecret(CHATGPT_TUNNEL_API_KEY_ENV, key, env),
-    deleteKey: (env) => deleteKeychainSecret(CHATGPT_TUNNEL_API_KEY_ENV, env)
+    readKey: (environment) => readKeychainSecret(CHATGPT_TUNNEL_API_KEY_ENV, environment),
+    writeKey: (key, environment) =>
+      writeKeychainSecret(CHATGPT_TUNNEL_API_KEY_ENV, key, environment),
+    deleteKey: (environment) => deleteKeychainSecret(CHATGPT_TUNNEL_API_KEY_ENV, environment)
   };
 }
 
@@ -498,14 +497,14 @@ function tunnelLaunchValues(
 
 export async function checkChatgptTunnel(
   paths: ServicePaths,
-  deps: ChatgptTunnelDependencies = defaultTunnelDependencies()
+  dependencies: ChatgptTunnelDependencies = defaultTunnelDependencies()
 ): Promise<boolean> {
   try {
     const directory = tunnelDirectory(paths.codexHome);
     const plist = serviceLaunchAgentPath(paths, label);
     const state = stateAt(tunnelStateFile(paths.codexHome));
     if (!state) return !existsSync(plist);
-    const launchd = deps.launchd();
+    const launchd = dependencies.launchd();
     if (state.enabled === false)
       return !launchd.isLoaded(label) && !existsSync(plist);
     const gateway = readMcpGatewayState(paths.codexHome);
@@ -516,7 +515,7 @@ export async function checkChatgptTunnel(
     );
     const key =
       process.env[CHATGPT_TUNNEL_API_KEY_ENV]?.trim() ||
-      deps.readKey(process.env);
+      dependencies.readKey(process.env);
     // The profile is the tunnel's routing table: a surface published under the
     // wrong channel is a surface no connector can reach.
     const expectedRouting = renderTunnelProfileChannels(
@@ -531,9 +530,9 @@ export async function checkChatgptTunnel(
       launchAgentMatches(
         serviceTemplatePath(paths, label),
         plist,
-        tunnelLaunchValues(paths, state, deps.launchValues(paths))
+        tunnelLaunchValues(paths, state, dependencies.launchValues(paths))
       ) &&
-      (await deps.ready(launchd, label, state.port))
+      (await dependencies.ready(launchd, label, state.port))
     );
   } catch {
     return false;
@@ -542,7 +541,7 @@ export async function checkChatgptTunnel(
 
 export async function chatgptTunnelStatus(
   paths: ServicePaths,
-  deps: ChatgptTunnelDependencies = defaultTunnelDependencies()
+  dependencies: ChatgptTunnelDependencies = defaultTunnelDependencies()
 ): Promise<ChatgptTunnelStatus> {
   const state = stateAt(tunnelStateFile(paths.codexHome));
   const prior = installedState(state);
@@ -558,7 +557,7 @@ export async function chatgptTunnelStatus(
     revision: controlRevision(paths, surfaces.reviewed),
     configured: prior !== undefined,
     enabled: state?.enabled === true,
-    ready: state?.enabled === true && (await checkChatgptTunnel(paths, deps)),
+    ready: state?.enabled === true && (await checkChatgptTunnel(paths, dependencies)),
     roles: surfaces.roles,
     tunnelId: prior?.tunnelId ?? null
   };
@@ -574,9 +573,9 @@ the installer's private policy file), so no tunnel mutation reconfigures them.
 export async function ensureChatgptTunnel(
   paths: ServicePaths,
   mode: ChatgptTunnelMode,
-  env = process.env,
+  environment = process.env,
   mutation?: TunnelMutation,
-  deps: ChatgptTunnelDependencies = defaultTunnelDependencies()
+  dependencies: ChatgptTunnelDependencies = defaultTunnelDependencies()
 ): Promise<void> {
   const directory = tunnelDirectory(paths.codexHome);
   const stateFile = tunnelStateFile(paths.codexHome);
@@ -593,13 +592,13 @@ export async function ensureChatgptTunnel(
       throw new Error("Complete initial tunnel installation first");
   }
   if (mode === "reconcile" && !existsSync(stateFile)) return;
-  if (deps.platform !== "darwin")
+  if (dependencies.platform !== "darwin")
     throw new Error(
       "AutoDev ChatGPT tunnel installation currently requires macOS"
     );
   ensurePrivateDirectory(directory);
   await withInstallLock(directory, () =>
-    reconcile(paths, directory, stateFile, mode, env, mutation, deps)
+    reconcile(paths, directory, stateFile, mode, environment, mutation, dependencies)
   );
 }
 
@@ -608,10 +607,10 @@ function disable(
   stateFile: string,
   prior: InstalledState | undefined,
   forget: boolean,
-  env: NodeJS.ProcessEnv,
-  deps: ChatgptTunnelDependencies
+  environment: NodeJS.ProcessEnv,
+  dependencies: ChatgptTunnelDependencies
 ): void {
-  const launchd = deps.launchd();
+  const launchd = dependencies.launchd();
   privateWrite(
     stateFile,
     JSON.stringify({ version: 1, enabled: false, prior }, null, 2) + "\n"
@@ -620,7 +619,7 @@ function disable(
   launchd.bootout(label);
   rmSync(serviceLaunchAgentPath(paths, label), { force: true });
   // Only local credentials are forgotten. Remote revocation belongs to Platform.
-  if (forget && prior) deps.deleteKey(env);
+  if (forget && prior) dependencies.deleteKey(environment);
   writeLine(
     "AutoDev ChatGPT tunnel disabled; normal installs will not re-enable it. The MCP gateway keeps serving local clients."
   );
@@ -631,9 +630,9 @@ async function reconcile(
   directory: string,
   stateFile: string,
   mode: ChatgptTunnelMode,
-  env: NodeJS.ProcessEnv,
+  environment: NodeJS.ProcessEnv,
   mutation: TunnelMutation | undefined,
-  deps: ChatgptTunnelDependencies
+  dependencies: ChatgptTunnelDependencies
 ): Promise<void> {
   const state = stateAt(stateFile);
   const prior = installedState(state);
@@ -641,7 +640,7 @@ async function reconcile(
     mode === "disable" ||
     (mode === "reconcile" && state?.enabled === false)
   ) {
-    disable(paths, stateFile, prior, mutation?.action === "forget", env, deps);
+    disable(paths, stateFile, prior, mutation?.action === "forget", environment, dependencies);
     return;
   }
   const gateway = readMcpGatewayState(paths.codexHome);
@@ -649,27 +648,27 @@ async function reconcile(
     throw new Error(
       "The AutoDev MCP gateway is not installed; run pnpm run install:autodev first"
     );
-  const launchd = deps.launchd();
+  const launchd = dependencies.launchd();
   const org =
-    env.AUTODEV_CHATGPT_ORGANIZATION_ID?.trim() || prior?.organizationId;
+    environment.AUTODEV_CHATGPT_ORGANIZATION_ID?.trim() || prior?.organizationId;
   const workspaceId =
-    env.AUTODEV_CHATGPT_WORKSPACE_ID?.trim() || prior?.workspaceId;
+    environment.AUTODEV_CHATGPT_WORKSPACE_ID?.trim() || prior?.workspaceId;
   if (!org || !workspaceId)
     throw new Error(
       "Set AUTODEV_CHATGPT_ORGANIZATION_ID and AUTODEV_CHATGPT_WORKSPACE_ID to verify tunnel scope"
     );
-  const adminKey = env.OPENAI_ADMIN_KEY?.trim() || undefined;
+  const adminKey = environment.OPENAI_ADMIN_KEY?.trim() || undefined;
   const rawKey =
     (mutation?.action === "rotate" ? mutation.runtimeKey : undefined) ||
-    env[CHATGPT_TUNNEL_API_KEY_ENV]?.trim() ||
-    deps.readKey(env) ||
+    environment[CHATGPT_TUNNEL_API_KEY_ENV]?.trim() ||
+    dependencies.readKey(environment) ||
     "";
   validateRuntimeKey(rawKey, adminKey);
 
-  const binary = deps.tunnelBinary(dependencyEnvironment(env));
-  const node = deps.node(paths.home);
+  const binary = dependencies.tunnelBinary(dependencyEnvironment(environment));
+  const node = dependencies.node(paths.home);
   const port = servicePort(
-    env[CHATGPT_TUNNEL_PORT_ENV]?.trim() || prior?.port,
+    environment[CHATGPT_TUNNEL_PORT_ENV]?.trim() || prior?.port,
     defaultPort,
     CHATGPT_TUNNEL_PORT_ENV
   );
@@ -678,18 +677,18 @@ async function reconcile(
       `${CHATGPT_TUNNEL_PORT_ENV} must differ from the MCP gateway port`
     );
   const servicePath = serviceSearchPath(paths.home, [node, binary]);
-  const cleanEnv = { HOME: paths.home, PATH: servicePath };
-  const runtimeEnv = { ...cleanEnv, [CHATGPT_TUNNEL_API_KEY_ENV]: rawKey };
+  const cleanEnvironment = { HOME: paths.home, PATH: servicePath };
+  const runtimeEnvironment = { ...cleanEnvironment, [CHATGPT_TUNNEL_API_KEY_ENV]: rawKey };
   const idFile = path.join(directory, "tunnel-id");
   const existingId =
-    env.CONTROL_PLANE_TUNNEL_ID?.trim() ||
+    environment.CONTROL_PLANE_TUNNEL_ID?.trim() ||
     prior?.tunnelId ||
     privateRead(idFile);
   const id =
     existingId ||
-    deps.create(
+    dependencies.create(
       binary,
-      { ...cleanEnv, ...(adminKey ? { OPENAI_ADMIN_KEY: adminKey } : {}) },
+      { ...cleanEnvironment, ...(adminKey && { OPENAI_ADMIN_KEY: adminKey }) },
       org,
       workspaceId
     );
@@ -702,15 +701,15 @@ async function reconcile(
   // only explicit transient not-found responses, not permission failures.
   const observation: { metadata?: ReturnType<typeof tunnelMetadata> } = {};
   if (
-    !(await deps.wait(
+    !(await dependencies.wait(
       {
         sleep,
         probe: async () => {
           try {
-            observation.metadata = deps.metadata(
+            observation.metadata = dependencies.metadata(
               binary,
               ["get", id],
-              runtimeEnv
+              runtimeEnvironment
             );
             return true;
           } catch (error) {
@@ -741,8 +740,8 @@ async function reconcile(
     prior.binary === binary &&
     prior.node === node &&
     prior.servicePath === servicePath &&
-    deps.readKey(env) === rawKey &&
-    (await checkChatgptTunnel(paths, deps))
+    dependencies.readKey(environment) === rawKey &&
+    (await checkChatgptTunnel(paths, dependencies))
   ) {
     writeLine("AutoDev ChatGPT tunnel already ready: " + id);
     return;
@@ -758,7 +757,7 @@ async function reconcile(
     ? readFileSync(plistFile, "utf8")
     : "";
   const wasRunning = launchd.isLoaded(label);
-  const previousKey = deps.readKey(env);
+  const previousKey = dependencies.readKey(environment);
   const nextState = installedStateSchema.parse({
     generation: path.basename(generation),
     port,
@@ -769,13 +768,13 @@ async function reconcile(
     node,
     servicePath
   });
-  let keyUpdated = false;
-  let stopped = false;
-  let committed = false;
-  let rollbackFailed = false;
+  let isKeyUpdated = false;
+  let isStopped = false;
+  let isCommitted = false;
+  let isRollbackFailed = false;
   let stage = "tunnel-client init";
   try {
-    deps.run(
+    dependencies.run(
       binary,
       [
         "init",
@@ -794,7 +793,7 @@ async function reconcile(
         "--health-listen-addr",
         `127.0.0.1:${port}`
       ],
-      { env: cleanEnv, timeout: 30_000 }
+      { env: cleanEnvironment, timeout: 30_000 }
     );
     privateWrite(
       profile,
@@ -804,7 +803,7 @@ async function reconcile(
     // The gateway is a separate, already-reconciled service: doctor checks
     // the candidate profile against the live gateway the tunnel will reach.
     stage = "tunnel-client doctor";
-    deps.run(
+    dependencies.run(
       binary,
       [
         "doctor",
@@ -820,33 +819,33 @@ async function reconcile(
         "--explain"
       ],
       {
-        env: { ...runtimeEnv, ...tunnelClientMcpEnv(headerFile) },
+        env: { ...runtimeEnvironment, ...tunnelClientMcpEnv(headerFile) },
         timeout: 60_000
       }
     );
 
     stage = "keychain store";
     if (!previousKey || mutation?.action === "rotate") {
-      deps.writeKey(rawKey, env);
-      if (deps.readKey(env) !== rawKey)
+      dependencies.writeKey(rawKey, environment);
+      if (dependencies.readKey(environment) !== rawKey)
         throw new Error(
           "Keychain verification failed for ChatGPT tunnel credential"
         );
-      keyUpdated = true;
+      isKeyUpdated = true;
     }
 
     const candidatePlist = path.join(generation, label + ".plist");
     renderLaunchAgent(
       serviceTemplatePath(paths, label),
       candidatePlist,
-      tunnelLaunchValues(paths, nextState, deps.launchValues(paths))
+      tunnelLaunchValues(paths, nextState, dependencies.launchValues(paths))
     );
 
     stage = "launchd stop";
     launchd.bootout(label);
-    stopped = true;
+    isStopped = true;
     stage = "readiness port check";
-    if (!deps.portFree(port))
+    if (!dependencies.portFree(port))
       throw new Error(
         "Tunnel readiness port is already in use or could not be checked"
       );
@@ -857,8 +856,8 @@ async function reconcile(
     launchd.bootstrap(plistFile);
     stage = "tunnel readiness";
     if (
-      !(await deps.wait(
-        { probe: () => deps.ready(launchd, label, port), sleep },
+      !(await dependencies.wait(
+        { probe: () => dependencies.ready(launchd, label, port), sleep },
         60_000
       ))
     )
@@ -868,21 +867,23 @@ async function reconcile(
       JSON.stringify({ version: 1, enabled: true, ...nextState }, null, 2) +
         "\n"
     );
-    committed = true;
+    isCommitted = true;
     writeLine("AutoDev ChatGPT tunnel ready: " + id);
     writeLine(
       "ChatGPT Plugins > Add custom MCP server > Tunnel > AutoDev ChatGPT"
     );
   } catch (error) {
-    if (keyUpdated) {
+    if (isKeyUpdated) {
       try {
-        if (previousKey) deps.writeKey(previousKey, env);
-        else deps.deleteKey(env);
+        if (previousKey) dependencies.writeKey(previousKey, environment);
+        else dependencies.deleteKey(environment);
       } catch {
-        /* best effort rollback */
+        /*
+        best effort rollback
+        */
       }
     }
-    if (stopped) {
+    if (isStopped) {
       try {
         launchd.bootout(label);
         if (previousPlist) {
@@ -896,7 +897,7 @@ async function reconcile(
           launchd.disable(label);
         }
       } catch {
-        rollbackFailed = true;
+        isRollbackFailed = true;
         throw new Error(
           `ChatGPT tunnel setup (${stage}) and rollback failed; candidate generation retained for recovery`
         );
@@ -908,7 +909,7 @@ async function reconcile(
     );
   } finally {
     rmSync(stagedFile, { force: true });
-    if (!committed && !rollbackFailed)
+    if (!isCommitted && !isRollbackFailed)
       rmSync(generation, { recursive: true, force: true });
   }
   // A previous generation is not needed after the new one is ready.
@@ -924,8 +925,8 @@ Run `tunnel-client` against the live gateway with the Keychain credential.
 */
 export async function runChatgptTunnelDaemon(
   paths: ServicePaths,
-  env: NodeJS.ProcessEnv = process.env,
-  deps: {
+  environment: NodeJS.ProcessEnv = process.env,
+  dependencies: {
     readKey?: (environment: NodeJS.ProcessEnv) => string | null;
     spawnProcess?: typeof spawn;
     waitForGateway?: (mcpPort: number) => Promise<boolean>;
@@ -958,23 +959,23 @@ export async function runChatgptTunnelDaemon(
     return 1;
   }
   const runtimeKey =
-    env[CHATGPT_TUNNEL_API_KEY_ENV]?.trim() ||
+    environment[CHATGPT_TUNNEL_API_KEY_ENV]?.trim() ||
     (
-      deps.readKey ??
+      dependencies.readKey ??
       ((environment: NodeJS.ProcessEnv) =>
         readKeychainSecret(CHATGPT_TUNNEL_API_KEY_ENV, environment))
-    )(env);
+    )(environment);
   if (!runtimeKey) {
     process.stderr.write(
       "AutoDev ChatGPT tunnel runtime key is unavailable in macOS Keychain; rerun scripts/install.sh --enable-chatgpt-tunnel\n"
     );
     return 1;
   }
-  if (!(await (deps.waitForGateway ?? waitForMcpGateway)(gateway.mcpPort))) {
+  if (!(await (dependencies.waitForGateway ?? waitForMcpGateway)(gateway.mcpPort))) {
     process.stderr.write("AutoDev MCP gateway is not ready\n");
     return 1;
   }
-  const tunnel = (deps.spawnProcess ?? spawn)(
+  const tunnel = (dependencies.spawnProcess ?? spawn)(
     state.binary,
     ["run", "--profile-file", profile],
     {
@@ -1026,13 +1027,13 @@ if (isEntryPoint(import.meta.url)) {
       await ensureChatgptTunnel(paths, mode);
     } catch (error) {
       // Only locally constructed errors are printed; subprocess failures may contain sensitive output.
-      const safe =
+      const isSafe =
         error instanceof Error &&
         !("stdout" in error) &&
         !("stderr" in error) &&
         !(error instanceof z.ZodError);
       process.stderr.write(
-        (safe
+        (isSafe
           ? error.message
           : "ChatGPT tunnel setup failed; inspect local configuration") + "\n"
       );

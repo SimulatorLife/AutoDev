@@ -1,6 +1,8 @@
 export interface RouterProviderRuntimeStatus {
   orchestratorEnabled?: boolean;
-  /** Whether the provider can serve the orchestrator tier at all. */
+  /**
+  Whether the provider can serve the orchestrator tier at all.
+  */
   orchestratorCapable?: boolean;
   subagentEnabled?: boolean;
   status?: string;
@@ -18,7 +20,9 @@ export interface RouterProviderRuntimeStatus {
   cooldownFailureClass?: string | null;
   cooldownUntil?: string | null;
   lastResortEligible?: boolean;
-  /** The models of this provider that are cooling down on their own. */
+  /**
+  The models of this provider that are cooling down on their own.
+  */
   modelCooldowns?: Record<string, unknown>;
   limits?: Record<string, unknown>;
   effectiveLimits?: unknown;
@@ -42,7 +46,9 @@ export interface RouterRuntimeStatus {
     enabledSubagentProviders?: string[];
     disabledOrchestratorProviders?: string[];
     disabledSubagentProviders?: string[];
-    /** Enabled for the orchestrator but unable to serve it. */
+    /**
+    Enabled for the orchestrator but unable to serve it.
+    */
     incapableOrchestratorProviders?: string[];
     disabledModels?: string[];
     providerGroups?: Record<string, unknown[]>;
@@ -182,10 +188,10 @@ function selectProviders(
 }
 
 /**
- * Select the operational router contract used by CLI consumers.
- * Historical usage, telemetry, and event data stays in the incumbent dashboard
- * response until that dashboard is retired; it is never part of this contract.
- */
+Select the operational router contract used by CLI consumers.
+Historical usage, telemetry, and event data stays in the incumbent dashboard
+response until that dashboard is retired; it is never part of this contract.
+*/
 export function parseRouterRuntimeStatus(value: unknown): RouterRuntimeStatus {
   const source = asRecord(value);
   if (!source) {

@@ -1,46 +1,52 @@
 /**
- * What a read-only role is allowed to do with a tool.
- *
- * Codex cannot narrow the sandbox of a spawned child: the child thread is
- * created from the parent's configuration, and the role layer Codex applies on
- * top carries the model, the instructions, the skills and the features, but no
- * sandbox. A role that declares `read-only` therefore inherits the parent
- * session's sandbox, and a read-only role under a workspace-write session can
- * write to the workspace.
- *
- * AutoDev owns the tool boundary, so AutoDev enforces the tier itself: this
- * module is the policy that decides whether one tool call may run in a
- * read-only role.
- *
- * The policy is an allowlist. A command is permitted when every command in it
- * is a command that cannot write, and the shell's write-capable constructs --
- * redirection, command substitution, environment overrides -- are refused
- * outright. A denylist would have to know every command that can write, and
- * the next interpreter, build tool or script runner would be a hole in it;
- * an allowlist fails closed, and the cost of failing closed is that a
- * read-only role asks for something it may not have.
- *
- * The tier this policy enforces is the filesystem one, plus the remote writes
- * the ordinary read-only tools can make (`curl` posting, `gh` creating an
- * issue). The network dimension stays where the session's own sandbox puts
- * it, and the MCP servers a role may reach are the role's own contract.
- */
+What a read-only role is allowed to do with a tool.
 
-/** What the policy decided about one tool call. */
+Codex cannot narrow the sandbox of a spawned child: the child thread is
+created from the parent's configuration, and the role layer Codex applies on
+top carries the model, the instructions, the skills and the features, but no
+sandbox. A role that declares `read-only` therefore inherits the parent
+session's sandbox, and a read-only role under a workspace-write session can
+write to the workspace.
+
+AutoDev owns the tool boundary, so AutoDev enforces the tier itself: this
+module is the policy that decides whether one tool call may run in a
+read-only role.
+
+The policy is an allowlist. A command is permitted when every command in it
+is a command that cannot write, and the shell's write-capable constructs --
+redirection, command substitution, environment overrides -- are refused
+outright. A denylist would have to know every command that can write, and
+the next interpreter, build tool or script runner would be a hole in it;
+an allowlist fails closed, and the cost of failing closed is that a
+read-only role asks for something it may not have.
+
+The tier this policy enforces is the filesystem one, plus the remote writes
+the ordinary read-only tools can make (`curl` posting, `gh` creating an
+issue). The network dimension stays where the session's own sandbox puts
+it, and the MCP servers a role may reach are the role's own contract.
+*/
+
+/**
+What the policy decided about one tool call.
+*/
 export interface ReadOnlyDecision {
-  /** Whether the call may run. */
+  /**
+  Whether the call may run.
+  */
   readonly allowed: boolean;
-  /** Why the call was refused, and what to do instead. */
+  /**
+  Why the call was refused, and what to do instead.
+  */
   readonly reason: string | null;
 }
 
 const ALLOWED: ReadOnlyDecision = { allowed: true, reason: null };
 
 /**
- * Mutating filesystem MCP tools that remain blocked in read-only roles even
- * when a provider launches a shared global `filesystem` MCP server without
- * per-role `AUTODEV_MCP_READ_ONLY=1` isolation.
- */
+Mutating filesystem MCP tools that remain blocked in read-only roles even
+when a provider launches a shared global `filesystem` MCP server without
+per-role `AUTODEV_MCP_READ_ONLY=1` isolation.
+*/
 const READ_ONLY_FILESYSTEM_MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
   "mcp__filesystem__write_file",
   "mcp__filesystem__edit_file",
@@ -49,13 +55,13 @@ const READ_ONLY_FILESYSTEM_MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The tools that write.
- *
- * A patch tool is the one the model reaches for to change a file, and the
- * write tools the MCP servers expose are named by their own convention. The
- * names are matched after normalizing separators and case, so `apply_patch`,
- * `applyPatch` and `apply-patch` are one tool.
- */
+The tools that write.
+
+A patch tool is the one the model reaches for to change a file, and the
+write tools the MCP servers expose are named by their own convention. The
+names are matched after normalizing separators and case, so `apply_patch`,
+`applyPatch` and `apply-patch` are one tool.
+*/
 const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set([
   "apply_patch",
   "applypatch",
@@ -86,13 +92,13 @@ const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The names a tool that writes carries.
- *
- * A native tool whose name says it writes is refused even when the product
- * does not know the tool: a tool the policy has never heard of is not a tool
- * it may let through. The names are matched as tokens, so `write_report` and
- * `fileWrite` are one shape.
- */
+The names a tool that writes carries.
+
+A native tool whose name says it writes is refused even when the product
+does not know the tool: a tool the policy has never heard of is not a tool
+it may let through. The names are matched as tokens, so `write_report` and
+`fileWrite` are one shape.
+*/
 const WRITE_TOOL_TOKENS: ReadonlySet<string> = new Set([
   "write",
   "edit",
@@ -112,12 +118,12 @@ const WRITE_TOOL_TOKENS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The tools that run a shell command.
- *
- * The names are the ones Codex and the provider CLIs use for a shell call.
- * Codex's own shell tool is `exec_command`; `shell` is the plain-shell form
- * and `unified_exec` the session-scoped one.
- */
+The tools that run a shell command.
+
+The names are the ones Codex and the provider CLIs use for a shell call.
+Codex's own shell tool is `exec_command`; `shell` is the plain-shell form
+and `unified_exec` the session-scoped one.
+*/
 const SHELL_TOOL_NAMES: ReadonlySet<string> = new Set([
   "exec_command",
   "execcommand",
@@ -135,13 +141,13 @@ const SHELL_TOOL_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The commands that cannot write.
- *
- * Every entry reads files, lists directories, or inspects state. A command
- * that is not here is refused: the list is the set of commands whose read-only
- * behaviour is a property of the command rather than of the arguments it was
- * given.
- */
+The commands that cannot write.
+
+Every entry reads files, lists directories, or inspects state. A command
+that is not here is refused: the list is the set of commands whose read-only
+behaviour is a property of the command rather than of the arguments it was
+given.
+*/
 const READ_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   "apropos",
   "basename",
@@ -228,12 +234,12 @@ const READ_ONLY_COMMANDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The commands that read, but have a form that writes.
- *
- * The command is allowed only when none of the listed flags is present. Each
- * flag names the write the command can perform, so the list is the reason the
- * command is not simply read-only.
- */
+The commands that read, but have a form that writes.
+
+The command is allowed only when none of the listed flags is present. Each
+flag names the write the command can perform, so the list is the reason the
+command is not simply read-only.
+*/
 const FLAGGED_COMMANDS: Readonly<
   Record<string, { readonly flags: readonly string[]; readonly why: string }>
 > = {
@@ -275,12 +281,12 @@ const FLAGGED_COMMANDS: Readonly<
 };
 
 /**
- * The `git` subcommands that only read.
- *
- * A `git` subcommand outside this set writes to the repository or to the
- * remote: `git commit` writes the object store, `git push` writes the remote,
- * and `git config` writes the configuration that other `git` commands read.
- */
+The `git` subcommands that only read.
+
+A `git` subcommand outside this set writes to the repository or to the
+remote: `git commit` writes the object store, `git push` writes the remote,
+and `git config` writes the configuration that other `git` commands read.
+*/
 const READ_ONLY_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
   "annotate",
   "blame",
@@ -314,31 +320,41 @@ const READ_ONLY_GIT_SUBCOMMANDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * How a `git` subcommand reads, when its bare form reads and a verb does.
- *
- * `git branch` lists branches and creates them, `git tag` lists tags and
- * creates them, `git stash` lists stashes and writes them, and `git config`
- * reads and writes configuration. Each is allowed only in the form that lists.
- *
- * `bareAllowed` says whether the subcommand with no argument at all reads.
- * `git stash` does not: with no argument it stashes the working tree, which
- * writes.
- *
- * `verbsAreArguments` says whether the first positional argument is an
- * argument rather than a verb. `git config <key>` reads a key, so its
- * positional argument is an argument; `git remote show <name>` reads, so its
- * positional argument is a verb.
- */
+How a `git` subcommand reads, when its bare form reads and a verb does.
+
+`git branch` lists branches and creates them, `git tag` lists tags and
+creates them, `git stash` lists stashes and writes them, and `git config`
+reads and writes configuration. Each is allowed only in the form that lists.
+
+`bareAllowed` says whether the subcommand with no argument at all reads.
+`git stash` does not: with no argument it stashes the working tree, which
+writes.
+
+`verbsAreArguments` says whether the first positional argument is an
+argument rather than a verb. `git config <key>` reads a key, so its
+positional argument is an argument; `git remote show <name>` reads, so its
+positional argument is a verb.
+*/
 interface GitSubcommandRule {
-  /** The verbs that make the subcommand read. */
+  /**
+  The verbs that make the subcommand read.
+  */
   readonly allowedVerbs: readonly string[];
-  /** How many positional arguments may follow the verb. */
+  /**
+  How many positional arguments may follow the verb.
+  */
   readonly maxArguments: number;
-  /** Whether the subcommand with no argument at all reads. */
+  /**
+  Whether the subcommand with no argument at all reads.
+  */
   readonly bareAllowed: boolean;
-  /** Whether the first positional argument is an argument rather than a verb. */
+  /**
+  Whether the first positional argument is an argument rather than a verb.
+  */
   readonly verbsAreArguments: boolean;
-  /** Why the subcommand is not simply read-only. */
+  /**
+  Why the subcommand is not simply read-only.
+  */
   readonly why: string;
 }
 
@@ -416,13 +432,13 @@ const LIST_ONLY_GIT_SUBCOMMANDS: Readonly<Record<string, GitSubcommandRule>> = {
 };
 
 /**
- * The `git` options that change what git runs.
- *
- * `-c` and `--config-env` set configuration for the invocation, and the
- * configuration can name a program to run (`core.pager`, `diff.external`).
- * `--exec-path` says where git looks for its subcommands, which is a
- * directory the agent can write to. All three are refused.
- */
+The `git` options that change what git runs.
+
+`-c` and `--config-env` set configuration for the invocation, and the
+configuration can name a program to run (`core.pager`, `diff.external`).
+`--exec-path` says where git looks for its subcommands, which is a
+directory the agent can write to. All three are refused.
+*/
 const GIT_UNSAFE_OPTIONS: ReadonlySet<string> = new Set([
   "-c",
   "--config-env",
@@ -430,11 +446,11 @@ const GIT_UNSAFE_OPTIONS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The `git` options that take a value.
- *
- * The value is the option's argument, so it is not a positional argument of
- * the subcommand.
- */
+The `git` options that take a value.
+
+The value is the option's argument, so it is not a positional argument of
+the subcommand.
+*/
 const GIT_VALUE_OPTIONS: ReadonlySet<string> = new Set([
   "-C",
   "-c",
@@ -447,39 +463,49 @@ const GIT_VALUE_OPTIONS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The `git` options that run another program.
- *
- * `--ext-diff` runs the configured diff driver and `--textconv` runs the
- * configured filter; both execute a program the agent may control.
- */
+The `git` options that run another program.
+
+`--ext-diff` runs the configured diff driver and `--textconv` runs the
+configured filter; both execute a program the agent may control.
+*/
 const GIT_EXECUTING_OPTIONS: ReadonlySet<string> = new Set([
   "--ext-diff",
   "--textconv"
 ]);
 
 /**
- * The `git` options that write the diff or the log to a file.
- */
+The `git` options that write the diff or the log to a file.
+*/
 const GIT_OUTPUT_OPTIONS: ReadonlySet<string> = new Set(["--output", "-o"]);
 
 /**
- * How a `gh` subcommand reads.
- *
- * `gh` writes to GitHub from most of its subcommands, so each is allowed
- * only in the verbs that read: `gh pr list` reads and `gh pr create` writes,
- * `gh repo clone` writes files into the workspace, and `gh run download`
- * writes an artifact to disk.
- */
+How a `gh` subcommand reads.
+
+`gh` writes to GitHub from most of its subcommands, so each is allowed
+only in the verbs that read: `gh pr list` reads and `gh pr create` writes,
+`gh repo clone` writes files into the workspace, and `gh run download`
+writes an artifact to disk.
+*/
 interface GhSubcommandRule {
-  /** The verbs that make the subcommand read. */
+  /**
+  The verbs that make the subcommand read.
+  */
   readonly allowedVerbs: readonly string[];
-  /** How many positional arguments may follow the verb. */
+  /**
+  How many positional arguments may follow the verb.
+  */
   readonly maxArguments: number;
-  /** Whether the subcommand with no argument at all reads. */
+  /**
+  Whether the subcommand with no argument at all reads.
+  */
   readonly bareAllowed: boolean;
-  /** Whether the first positional argument is an argument rather than a verb. */
+  /**
+  Whether the first positional argument is an argument rather than a verb.
+  */
   readonly verbsAreArguments: boolean;
-  /** Why the subcommand is not simply read-only. */
+  /**
+  Why the subcommand is not simply read-only.
+  */
   readonly why: string;
 }
 
@@ -564,11 +590,11 @@ const GH_SUBCOMMANDS: Readonly<Record<string, GhSubcommandRule>> = {
 };
 
 /**
- * The `gh` flags that write.
- *
- * `-X`/`--method` choose the HTTP method and `-f`/`-F`/`--input` send a body,
- * so `gh api` with any of them writes to the API.
- */
+The `gh` flags that write.
+
+`-X`/`--method` choose the HTTP method and `-f`/`-F`/`--input` send a body,
+so `gh api` with any of them writes to the API.
+*/
 const GH_WRITE_FLAGS: readonly string[] = [
   "-X",
   "--method",
@@ -580,8 +606,8 @@ const GH_WRITE_FLAGS: readonly string[] = [
 ];
 
 /**
- * The `curl` flags that write the response to a file.
- */
+The `curl` flags that write the response to a file.
+*/
 const CURL_OUTPUT_FLAGS: readonly string[] = [
   "-o",
   "--output",
@@ -604,11 +630,11 @@ const CURL_OUTPUT_FLAGS: readonly string[] = [
 ];
 
 /**
- * The `curl` flags that send a body or choose a method that writes.
- *
- * `curl` writes to the remote when it is told to post, and a body flag
- * implies a POST. The read-only tier refuses both.
- */
+The `curl` flags that send a body or choose a method that writes.
+
+`curl` writes to the remote when it is told to post, and a body flag
+implies a POST. The read-only tier refuses both.
+*/
 const CURL_WRITE_FLAGS: readonly string[] = [
   "--data",
   "--data-raw",
@@ -623,8 +649,8 @@ const CURL_WRITE_FLAGS: readonly string[] = [
 ];
 
 /**
- * The HTTP methods that do not write.
- */
+The HTTP methods that do not write.
+*/
 const READ_ONLY_HTTP_METHODS: ReadonlySet<string> = new Set([
   "GET",
   "HEAD",
@@ -632,13 +658,13 @@ const READ_ONLY_HTTP_METHODS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The paths a command may be run from.
- *
- * A command that is not a bare name has to live in a system directory the
- * agent cannot write to. The agent can write to the workspace and to the
- * temporary directory, so a script it drops there and runs by path would be
- * its own code running with the agent's authority.
- */
+The paths a command may be run from.
+
+A command that is not a bare name has to live in a system directory the
+agent cannot write to. The agent can write to the workspace and to the
+temporary directory, so a script it drops there and runs by path would be
+its own code running with the agent's authority.
+*/
 const TRUSTED_COMMAND_PREFIXES: readonly string[] = [
   "/bin/",
   "/sbin/",
@@ -653,37 +679,37 @@ const TRUSTED_COMMAND_PREFIXES: readonly string[] = [
 ];
 
 /**
- * The shape of an environment assignment at the start of a command.
- */
+The shape of an environment assignment at the start of a command.
+*/
 const ENVIRONMENT_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/u;
 
 /**
- * The shape of the flag that gives a shell its script.
- */
+The shape of the flag that gives a shell its script.
+*/
 const SHELL_COMMAND_FLAG = /^-[a-z]*c$/u;
 
 /**
- * The shape of the whitespace that separates a shell's words.
- */
+The shape of the whitespace that separates a shell's words.
+*/
 const WHITESPACE = /\s/u;
 
 /**
- * The boundary between two words of a camel-cased tool name.
- */
+The boundary between two words of a camel-cased tool name.
+*/
 const CAMEL_CASE_BOUNDARY = /([a-z0-9])([A-Z])/gu;
 
 /**
- * The boundary between the words of a tool name.
- */
+The boundary between the words of a tool name.
+*/
 const NON_WORD_BOUNDARY = /[^a-z0-9]+/iu;
 
 /**
- * The shells whose `-c` argument is a script of its own.
- *
- * Codex runs a command through `/bin/zsh -lc <script>`, and a model that
- * reaches for a shell directly does the same with `bash -c`. The script is
- * what runs, so the script is what is judged.
- */
+The shells whose `-c` argument is a script of its own.
+
+Codex runs a command through `/bin/zsh -lc <script>`, and a model that
+reaches for a shell directly does the same with `bash -c`. The script is
+what runs, so the script is what is judged.
+*/
 const SHELL_INTERPRETERS: ReadonlySet<string> = new Set([
   "sh",
   "bash",
@@ -694,12 +720,12 @@ const SHELL_INTERPRETERS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Split a shell command into the segments it runs.
- *
- * The separators are the ones that chain commands. A pipeline of read-only
- * commands is read-only, so each segment is judged on its own. The splitting
- * respects quotes, so a separator inside a quoted argument does not split.
- */
+Split a shell command into the segments it runs.
+
+The separators are the ones that chain commands. A pipeline of read-only
+commands is read-only, so each segment is judged on its own. The splitting
+respects quotes, so a separator inside a quoted argument does not split.
+*/
 export function splitSegments(command: string): string[] {
   const segments: string[] = [];
   let current = "";
@@ -751,20 +777,19 @@ function consumeEscapedTokenChar(
   index: number,
   quote: '"' | "'" | null
 ): { char: string; nextIndex: number } | null {
-  if (segment[index] !== "\\" || index + 1 >= segment.length) return null;
-  if (quote === "'") return null;
+  if (segment[index] !== "\\" || index + 1 >= segment.length || (quote === "'")) return null;
   const next = segment[index + 1]!;
   if (quote === '"' && !DOUBLE_QUOTED_ESCAPE_CHARS.has(next)) return null;
   return { char: next, nextIndex: index + 1 };
 }
 
 /**
- * Split one segment into its command and arguments.
- *
- * Quoting is honoured so that a quoted argument is one argument: a command
- * whose name is quoted is still the command it names. Backslash escapes
- * inside double quotes (`\"`, `\\`) or outside quotes preserve quoting.
- */
+Split one segment into its command and arguments.
+
+Quoting is honoured so that a quoted argument is one argument: a command
+whose name is quoted is still the command it names. Backslash escapes
+inside double quotes (`\"`, `\\`) or outside quotes preserve quoting.
+*/
 export function tokenize(segment: string): string[] {
   const tokens: string[] = [];
   let current = "";
@@ -799,7 +824,9 @@ export function tokenize(segment: string): string[] {
   return tokens;
 }
 
-/** The tool name, normalized so that the spellings of one tool are one tool. */
+/**
+The tool name, normalized so that the spellings of one tool are one tool.
+*/
 export function normalizeToolName(name: string): string {
   return name
     .trim()
@@ -807,38 +834,40 @@ export function normalizeToolName(name: string): string {
     .replaceAll(/[\s-]+/gu, "_");
 }
 
-/** Whether a tool, by its normalized name, runs a shell command. */
+/**
+Whether a tool, by its normalized name, runs a shell command.
+*/
 export function isShellToolName(normalizedName: string): boolean {
   return SHELL_TOOL_NAMES.has(normalizedName);
 }
 
 /**
- * The script a shell interpreter segment runs, when the segment is one:
- * `bash -c "git log"` runs `git log`. Null for any other command.
- */
+The script a shell interpreter segment runs, when the segment is one:
+`bash -c "git log"` runs `git log`. Null for any other command.
+*/
 export function shellInterpreterScript(
   name: string,
-  args: readonly string[]
+  arguments_: readonly string[]
 ): string | null {
   if (!SHELL_INTERPRETERS.has(name)) return null;
-  const flagIndex = args.findIndex((argument) =>
+  const flagIndex = arguments_.findIndex((argument) =>
     SHELL_COMMAND_FLAG.test(argument)
   );
-  return flagIndex === -1 ? null : (args[flagIndex + 1] ?? null);
+  return flagIndex === -1 ? null : (arguments_[flagIndex + 1] ?? null);
 }
 
 /**
- * The command text a shell tool call carries.
- *
- * The tool input is the tool's own shape: `exec_command` takes `cmd`, and the
- * session-scoped `write_stdin` takes the text to send to the running shell.
- * A tool call whose command cannot be found is refused rather than assumed to
- * be harmless.
- *
- * A command given as an argument vector is the shape Codex's plain `shell`
- * tool uses, and its first element may be the shell itself: `["/bin/zsh",
- * "-lc", "ls"]` runs `ls`, so the script is what is judged.
- */
+The command text a shell tool call carries.
+
+The tool input is the tool's own shape: `exec_command` takes `cmd`, and the
+session-scoped `write_stdin` takes the text to send to the running shell.
+A tool call whose command cannot be found is refused rather than assumed to
+be harmless.
+
+A command given as an argument vector is the shape Codex's plain `shell`
+tool uses, and its first element may be the shell itself: `["/bin/zsh",
+"-lc", "ls"]` runs `ls`, so the script is what is judged.
+*/
 export function shellCommandFromToolInput(toolInput: unknown): string | null {
   if (typeof toolInput === "string") return toolInput;
   if (toolInput === null || typeof toolInput !== "object") return null;
@@ -857,11 +886,11 @@ export function shellCommandFromToolInput(toolInput: unknown): string | null {
 }
 
 /**
- * The script an argument vector runs.
- *
- * A vector that names a shell and a `-c` flag runs the script that follows
- * it; any other vector is the command itself, joined back into one line.
- */
+The script an argument vector runs.
+
+A vector that names a shell and a `-c` flag runs the script that follows
+it; any other vector is the command itself, joined back into one line.
+*/
 function shellScriptFromArgumentVector(vector: readonly string[]): string {
   const [command, ...rest] = vector;
   if (command !== undefined) {
@@ -880,39 +909,39 @@ function shellScriptFromArgumentVector(vector: readonly string[]): string {
 }
 
 /**
- * Whether the command may be run by a path.
- *
- * A bare name is resolved through `PATH`, which the agent cannot change for
- * its own shell -- an environment override is refused separately -- and a path
- * has to be in a system directory the agent cannot write to.
- */
+Whether the command may be run by a path.
+
+A bare name is resolved through `PATH`, which the agent cannot change for
+its own shell -- an environment override is refused separately -- and a path
+has to be in a system directory the agent cannot write to.
+*/
 function commandPathIsTrusted(command: string): boolean {
   if (!command.includes("/")) return true;
   return TRUSTED_COMMAND_PREFIXES.some((prefix) => command.startsWith(prefix));
 }
 
 /**
- * Whether any of the command's arguments is one of the listed flags.
- *
- * A flag may carry its value attached (`--output=file`), so the flag name is
- * matched as a prefix of the argument up to the `=`.
- */
+Whether any of the command's arguments is one of the listed flags.
+
+A flag may carry its value attached (`--output=file`), so the flag name is
+matched as a prefix of the argument up to the `=`.
+*/
 function hasFlag(
-  args: readonly string[],
+  arguments_: readonly string[],
   flags: readonly string[] | ReadonlySet<string>
 ): boolean {
   const names = Array.isArray(flags) ? flags : [...flags];
-  return args.some(
-    (arg) =>
-      names.includes(arg) || names.some((flag) => arg.startsWith(`${flag}=`))
+  return arguments_.some(
+    (argument) =>
+      names.includes(argument) || names.some((flag) => argument.startsWith(`${flag}=`))
   );
 }
 
 /**
- * Whether a positional argument list matches a subcommand's reading rule.
- *
- * The list is the arguments after the subcommand, with the flags removed.
- */
+Whether a positional argument list matches a subcommand's reading rule.
+
+The list is the arguments after the subcommand, with the flags removed.
+*/
 function positionalArgumentsMatch(
   positionals: readonly string[],
   rule: GitSubcommandRule | GhSubcommandRule
@@ -930,12 +959,12 @@ function positionalArgumentsMatch(
 }
 
 /**
- * The flags that take a value, per subcommand.
- *
- * The value of such a flag is not a positional argument: `git branch --sort
- * refname` lists branches, and `refname` is the sort order rather than a
- * branch to create.
- */
+The flags that take a value, per subcommand.
+
+The value of such a flag is not a positional argument: `git branch --sort
+refname` lists branches, and `refname` is the sort order rather than a
+branch to create.
+*/
 const GIT_SUBCOMMAND_VALUE_FLAGS: Readonly<Record<string, readonly string[]>> =
   {
     branch: [
@@ -967,12 +996,12 @@ const GIT_SUBCOMMAND_VALUE_FLAGS: Readonly<Record<string, readonly string[]>> =
   };
 
 /**
- * The `gh` flags that take a value.
- *
- * The value is not a positional argument: `gh pr list -R owner/repo` lists
- * the pull requests of one repository, and `owner/repo` names the repository
- * rather than the pull request.
- */
+The `gh` flags that take a value.
+
+The value is not a positional argument: `gh pr list -R owner/repo` lists
+the pull requests of one repository, and `owner/repo` names the repository
+rather than the pull request.
+*/
 const GH_VALUE_FLAGS: readonly string[] = [
   "-R",
   "--repo",
@@ -1005,18 +1034,18 @@ const GH_VALUE_FLAGS: readonly string[] = [
 ];
 
 /**
- * The positional arguments of a command, with the flags removed.
- *
- * A flag that takes a value consumes the next argument, so the value is not
- * a positional one.
- */
+The positional arguments of a command, with the flags removed.
+
+A flag that takes a value consumes the next argument, so the value is not
+a positional one.
+*/
 function positionalArguments(
-  args: readonly string[],
+  arguments_: readonly string[],
   valueFlags: readonly string[] = []
 ): string[] {
   const positionals: string[] = [];
-  for (let index = 0; index < args.length; index += 1) {
-    const argument = args[index];
+  for (let index = 0; index < arguments_.length; index += 1) {
+    const argument = arguments_[index];
     if (argument === undefined) continue;
     if (argument.startsWith("-")) {
       if (valueFlags.includes(argument)) index += 1;
@@ -1028,48 +1057,48 @@ function positionalArguments(
 }
 
 /**
- * The `git` options that precede the subcommand, and the arguments after it.
- *
- * `git -C /path log` is a global option with a value, and the subcommand is
- * `log`. A global option is separated from the subcommand because a global
- * option can change what git runs, which is a different question from what
- * the subcommand reads.
- */
-function splitGitGlobalOptions(args: readonly string[]): {
+The `git` options that precede the subcommand, and the arguments after it.
+
+`git -C /path log` is a global option with a value, and the subcommand is
+`log`. A global option is separated from the subcommand because a global
+option can change what git runs, which is a different question from what
+the subcommand reads.
+*/
+function splitGitGlobalOptions(arguments_: readonly string[]): {
   readonly globals: readonly string[];
   readonly rest: readonly string[];
 } {
   const globals: string[] = [];
   let index = 0;
-  while (index < args.length) {
-    const argument = args[index];
+  while (index < arguments_.length) {
+    const argument = arguments_[index];
     if (argument === undefined || !argument.startsWith("-")) break;
     globals.push(argument);
     const separator = argument.indexOf("=");
     const name = separator === -1 ? argument : argument.slice(0, separator);
-    const takesValue = GIT_VALUE_OPTIONS.has(name) && !argument.includes("=");
-    index += takesValue ? 2 : 1;
+    const isTakesValue = GIT_VALUE_OPTIONS.has(name) && !argument.includes("=");
+    index += isTakesValue ? 2 : 1;
   }
-  return { globals, rest: args.slice(index) };
+  return { globals, rest: arguments_.slice(index) };
 }
 
 /**
- * Whether a `git` invocation only reads.
- *
- * The subcommand is the first argument that is not a flag. A subcommand that
- * only reads is allowed; one that reads only in its list form is allowed when
- * the invocation is that form.
- */
+Whether a `git` invocation only reads.
+
+The subcommand is the first argument that is not a flag. A subcommand that
+only reads is allowed; one that reads only in its list form is allowed when
+the invocation is that form.
+*/
 /**
- * The subcommand a `git` invocation runs: the first argument after the global
- * options that is not a flag. Undefined for a bare `git`.
- */
-export function gitSubcommand(args: readonly string[]): string | undefined {
-  return positionalArguments(splitGitGlobalOptions(args).rest)[0];
+The subcommand a `git` invocation runs: the first argument after the global
+options that is not a flag. Undefined for a bare `git`.
+*/
+export function gitSubcommand(arguments_: readonly string[]): string | undefined {
+  return positionalArguments(splitGitGlobalOptions(arguments_).rest)[0];
 }
 
-export function gitCommandIsReadOnly(args: readonly string[]): boolean {
-  const { globals, rest } = splitGitGlobalOptions(args);
+export function gitCommandIsReadOnly(arguments_: readonly string[]): boolean {
+  const { globals, rest } = splitGitGlobalOptions(arguments_);
   for (const option of globals) {
     // An option may carry its value attached (`--exec-path=/tmp`), so the
     // option name is what is judged.
@@ -1079,8 +1108,7 @@ export function gitCommandIsReadOnly(args: readonly string[]): boolean {
     // `-cname=value` sets configuration with the value attached.
     if (name.startsWith("-c") && name.length > 2) return false;
   }
-  if (hasFlag(args, GIT_EXECUTING_OPTIONS)) return false;
-  if (hasFlag(args, GIT_OUTPUT_OPTIONS)) return false;
+  if (hasFlag(arguments_, GIT_EXECUTING_OPTIONS) || hasFlag(arguments_, GIT_OUTPUT_OPTIONS)) return false;
   const positionals = positionalArguments(rest);
   const subcommand = positionals[0];
   if (subcommand === undefined) return false;
@@ -1096,11 +1124,11 @@ export function gitCommandIsReadOnly(args: readonly string[]): boolean {
 }
 
 /**
- * Whether a `gh` invocation only reads.
- */
-export function ghCommandIsReadOnly(args: readonly string[]): boolean {
-  if (hasFlag(args, GH_WRITE_FLAGS)) return false;
-  const positionals = positionalArguments(args, GH_VALUE_FLAGS);
+Whether a `gh` invocation only reads.
+*/
+export function ghCommandIsReadOnly(arguments_: readonly string[]): boolean {
+  if (hasFlag(arguments_, GH_WRITE_FLAGS)) return false;
+  const positionals = positionalArguments(arguments_, GH_VALUE_FLAGS);
   const subcommand = positionals[0];
   if (subcommand === undefined) return false;
   const rule = GH_SUBCOMMANDS[subcommand];
@@ -1109,20 +1137,18 @@ export function ghCommandIsReadOnly(args: readonly string[]): boolean {
 }
 
 /**
- * Whether a `curl` invocation only reads.
- *
- * The request method decides whether it writes: a GET or a HEAD reads, and
- * anything else writes to the remote. A body flag implies a POST.
- */
-export function curlCommandIsReadOnly(args: readonly string[]): boolean {
-  if (hasFlag(args, CURL_OUTPUT_FLAGS)) return false;
-  if (hasFlag(args, CURL_WRITE_FLAGS)) return false;
-  for (let index = 0; index < args.length; index += 1) {
-    const argument = args[index];
+Whether a `curl` invocation only reads.
+
+The request method decides whether it writes: a GET or a HEAD reads, and
+anything else writes to the remote. A body flag implies a POST.
+*/
+export function curlCommandIsReadOnly(arguments_: readonly string[]): boolean {
+  if (hasFlag(arguments_, CURL_OUTPUT_FLAGS) || hasFlag(arguments_, CURL_WRITE_FLAGS)) return false;
+  for (let index = 0; index < arguments_.length; index += 1) {
+    const argument = arguments_[index];
     if (argument === "-X" || argument === "--method") {
-      const method = args[index + 1];
-      if (method === undefined) return false;
-      if (!READ_ONLY_HTTP_METHODS.has(method.toUpperCase())) return false;
+      const method = arguments_[index + 1];
+      if ((method === undefined) || !READ_ONLY_HTTP_METHODS.has(method.toUpperCase())) return false;
       index += 1;
     }
   }
@@ -1168,24 +1194,24 @@ const SAFE_NPM_FLAGS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Whether an `npm` invocation strictly inspects package metadata or dependency
- * trees without writing files or overriding config/prefix paths.
- */
-export function npmCommandIsReadOnly(args: readonly string[]): boolean {
-  const subcommand = args[0];
+Whether an `npm` invocation strictly inspects package metadata or dependency
+trees without writing files or overriding config/prefix paths.
+*/
+export function npmCommandIsReadOnly(arguments_: readonly string[]): boolean {
+  const subcommand = arguments_[0];
   if (subcommand === undefined || !READ_ONLY_NPM_SUBCOMMANDS.has(subcommand))
     return false;
   let hasTarget = subcommand === "list" || subcommand === "ls";
-  for (let index = 1; index < args.length; index += 1) {
-    const arg = args[index]!;
-    if (arg === "--depth") {
-      if (args[index + 1] === undefined) return false;
+  for (let index = 1; index < arguments_.length; index += 1) {
+    const argument = arguments_[index]!;
+    if (argument === "--depth") {
+      if (arguments_[index + 1] === undefined) return false;
       index += 1;
       continue;
     }
-    if (arg.startsWith("--depth=")) continue;
-    if (arg.startsWith("-")) {
-      if (!SAFE_NPM_FLAGS.has(arg)) return false;
+    if (argument.startsWith("--depth=")) continue;
+    if (argument.startsWith("-")) {
+      if (!SAFE_NPM_FLAGS.has(argument)) return false;
       continue;
     }
     hasTarget = true;
@@ -1207,48 +1233,50 @@ function isSafeSedScript(script: string): boolean {
 }
 
 function consumeSedExpressionFlag(
-  args: readonly string[],
+  arguments_: readonly string[],
   index: number
 ): { expr: string; nextIndex: number } | null {
-  const arg = args[index]!;
-  if (arg === "-e" || arg === "--expression") {
-    const expr = args[index + 1];
-    return expr === undefined ? null : { expr, nextIndex: index + 1 };
+  const argument = arguments_[index]!;
+  if (argument === "-e" || argument === "--expression") {
+    const expression = arguments_[index + 1];
+    return expression === undefined ? null : { expr: expression, nextIndex: index + 1 };
   }
-  if (arg.startsWith("--expression=")) {
-    return { expr: arg.slice("--expression=".length), nextIndex: index };
+  if (argument.startsWith("--expression=")) {
+    return { expr: argument.slice("--expression=".length), nextIndex: index };
   }
   return null;
 }
 
 /**
- * Whether a `sed` invocation is strictly a line-range print inspection.
- *
- * Rejects `-i`/`--in-place`, `-f`/`--file`, unknown flags, and any script that
- * goes beyond printing (`p`), quitting (`q`), or printing line numbers (`=`).
- */
-export function sedCommandIsReadOnly(args: readonly string[]): boolean {
+Whether a `sed` invocation is strictly a line-range print inspection.
+
+Rejects `-i`/`--in-place`, `-f`/`--file`, unknown flags, and any script that
+goes beyond printing (`p`), quitting (`q`), or printing line numbers (`=`).
+*/
+export function sedCommandIsReadOnly(arguments_: readonly string[]): boolean {
   let script: string | null = null;
-  let endOfFlags = false;
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index]!;
-    if (!endOfFlags && arg === "--") {
-      endOfFlags = true;
+  let isEndOfFlags = false;
+  for (let index = 0; index < arguments_.length; index += 1) {
+    const argument = arguments_[index]!;
+    if (!isEndOfFlags && argument === "--") {
+      isEndOfFlags = true;
       continue;
     }
-    if (!endOfFlags && arg.startsWith("-") && arg.length > 1) {
-      if (SAFE_SED_SIMPLE_FLAGS.has(arg) || SAFE_SED_SHORT_FLAGS.test(arg))
+    if (!isEndOfFlags && argument.startsWith("-") && argument.length > 1) {
+      if (SAFE_SED_SIMPLE_FLAGS.has(argument) || SAFE_SED_SHORT_FLAGS.test(argument))
         continue;
-      const exprFlag = consumeSedExpressionFlag(args, index);
-      if (!exprFlag || !isSafeSedScript(exprFlag.expr)) return false;
-      script = exprFlag.expr;
-      index = exprFlag.nextIndex;
+      const expressionFlag = consumeSedExpressionFlag(arguments_, index);
+      if (!expressionFlag || !isSafeSedScript(expressionFlag.expr)) return false;
+      script = expressionFlag.expr;
+      index = expressionFlag.nextIndex;
       continue;
     }
-    if (script === null) {
-      if (!isSafeSedScript(arg)) return false;
-      script = arg;
+    if (script !== null) {
+      continue;
     }
+
+    if (!isSafeSedScript(argument)) return false;
+    script = argument;
   }
   return script !== null;
 }
@@ -1318,33 +1346,33 @@ const XARGS_SAFE_TARGET_COMMANDS: ReadonlySet<string> = new Set([
   "xxd"
 ]);
 
-type CommandEvaluator = (args: readonly string[]) => {
+type CommandEvaluator = (arguments_: readonly string[]) => {
   ok: boolean;
   why: string;
 };
 
 function consumeXargsFlag(
-  args: readonly string[],
+  arguments_: readonly string[],
   index: number
 ): { nextIndex: number; error: string | null; done: boolean } {
-  const arg = args[index]!;
-  if (arg === "--") return { nextIndex: index + 1, error: null, done: true };
-  if (!arg.startsWith("-") || arg.length === 1) {
+  const argument = arguments_[index]!;
+  if (argument === "--") return { nextIndex: index + 1, error: null, done: true };
+  if (!argument.startsWith("-") || argument.length === 1) {
     return { nextIndex: index, error: null, done: true };
   }
-  if (XARGS_SAFE_BOOLEAN_FLAGS.has(arg)) {
+  if (XARGS_SAFE_BOOLEAN_FLAGS.has(argument)) {
     return { nextIndex: index + 1, error: null, done: false };
   }
-  const eqIdx = arg.indexOf("=");
-  const flagName = eqIdx === -1 ? arg : arg.slice(0, eqIdx);
+  const eqIndex = argument.indexOf("=");
+  const flagName = eqIndex === -1 ? argument : argument.slice(0, eqIndex);
   if (!XARGS_SAFE_VALUE_FLAGS.has(flagName)) {
     return {
       nextIndex: index,
-      error: `\`xargs\` option \`${arg}\` is not allowed in a read-only role`,
+      error: `\`xargs\` option \`${argument}\` is not allowed in a read-only role`,
       done: true
     };
   }
-  if (eqIdx === -1 && args[index + 1] === undefined) {
+  if (eqIndex === -1 && arguments_[index + 1] === undefined) {
     return {
       nextIndex: index,
       error: "`xargs` was given a flag without its value",
@@ -1352,7 +1380,7 @@ function consumeXargsFlag(
     };
   }
   return {
-    nextIndex: index + (eqIdx === -1 ? 2 : 1),
+    nextIndex: index + (eqIndex === -1 ? 2 : 1),
     error: null,
     done: false
   };
@@ -1382,40 +1410,40 @@ function xargsTargetIsReadOnly(target: string | undefined): {
   return { ok: true, why: "" };
 }
 
-function xargsCommandIsReadOnly(args: readonly string[]): {
+function xargsCommandIsReadOnly(arguments_: readonly string[]): {
   ok: boolean;
   why: string;
 } {
   let index = 0;
-  while (index < args.length) {
-    const step = consumeXargsFlag(args, index);
+  while (index < arguments_.length) {
+    const step = consumeXargsFlag(arguments_, index);
     if (step.error !== null) return { ok: false, why: step.error };
     index = step.nextIndex;
     if (step.done) break;
   }
-  return xargsTargetIsReadOnly(args[index]);
+  return xargsTargetIsReadOnly(arguments_[index]);
 }
 
 const SPECIALIZED_COMMAND_EVALUATORS: Readonly<
   Record<string, CommandEvaluator>
 > = {
-  git: (args) => ({ ok: gitCommandIsReadOnly(args), why: "git writes" }),
-  gh: (args) => ({ ok: ghCommandIsReadOnly(args), why: "gh writes" }),
-  curl: (args) => ({ ok: curlCommandIsReadOnly(args), why: "curl writes" }),
-  sed: (args) => ({
-    ok: sedCommandIsReadOnly(args),
+  git: (arguments_) => ({ ok: gitCommandIsReadOnly(arguments_), why: "git writes" }),
+  gh: (arguments_) => ({ ok: ghCommandIsReadOnly(arguments_), why: "gh writes" }),
+  curl: (arguments_) => ({ ok: curlCommandIsReadOnly(arguments_), why: "curl writes" }),
+  sed: (arguments_) => ({
+    ok: sedCommandIsReadOnly(arguments_),
     why: "sed can write or execute commands unless restricted to line-range printing"
   }),
-  npm: (args) => ({
-    ok: npmCommandIsReadOnly(args),
+  npm: (arguments_) => ({
+    ok: npmCommandIsReadOnly(arguments_),
     why: "npm writes or executes scripts unless restricted to read-only package inspection"
   }),
   xargs: xargsCommandIsReadOnly
 };
 
 /**
- * Whether one shell segment is read-only.
- */
+Whether one shell segment is read-only.
+*/
 function segmentIsReadOnly(
   segment: string,
   depth: number
@@ -1423,7 +1451,7 @@ function segmentIsReadOnly(
   const tokens = tokenize(segment);
   const command = tokens[0];
   if (command === undefined) return { ok: true, why: "" };
-  const args = tokens.slice(1);
+  const arguments_ = tokens.slice(1);
 
   // An environment override changes what the command resolves to or how it
   // runs -- `PATH` selects the binary, `GIT_PAGER` selects the program git
@@ -1445,7 +1473,7 @@ function segmentIsReadOnly(
 
   // A shell runs the script it is given, so the script is what runs.
   if (SHELL_INTERPRETERS.has(name)) {
-    const script = shellInterpreterScript(name, args);
+    const script = shellInterpreterScript(name, arguments_);
     if (script === null) {
       return {
         ok: false,
@@ -1462,18 +1490,18 @@ function segmentIsReadOnly(
   }
 
   const evaluator = SPECIALIZED_COMMAND_EVALUATORS[name];
-  if (evaluator) return evaluator(args);
+  if (evaluator) return evaluator(arguments_);
 
   const flagged = FLAGGED_COMMANDS[name];
   if (flagged) {
-    if (hasFlag(args, flagged.flags)) return { ok: false, why: flagged.why };
+    if (hasFlag(arguments_, flagged.flags)) return { ok: false, why: flagged.why };
     return { ok: true, why: "" };
   }
 
   if (READ_ONLY_COMMANDS.has(name)) {
     // `less` runs a command when it is given one: `less +'!rm file'` is a
     // shell escape, and the escape is an argument.
-    if (name === "less" && args.some((argument) => argument.startsWith("+")))
+    if (name === "less" && arguments_.some((argument) => argument.startsWith("+")))
       return { ok: false, why: "it runs a command the pager is given" };
     return { ok: true, why: "" };
   }
@@ -1499,15 +1527,15 @@ function consumeSafeRedirect(
 ): { cleaned: string; nextIndex: number } | null {
   const match = SAFE_NULL_REDIRECT.exec(command.slice(index));
   if (!match) return null;
-  const prev = cleaned.at(-1) ?? "";
-  const beforePrev = cleaned.at(-2) ?? "";
+  const previous = cleaned.at(-1) ?? "";
+  const beforePrevious = cleaned.at(-2) ?? "";
   const redirectsToNull = match[0].trimEnd().endsWith("/dev/null");
   const hasFdPrefix =
-    prev === "1" || prev === "2" || (prev === "&" && redirectsToNull);
-  const atBoundary =
-    cleaned.length === 1 || SAFE_REDIRECT_BOUNDARY.test(beforePrev);
+    previous === "1" || previous === "2" || (previous === "&" && redirectsToNull);
+  const isAtBoundary =
+    cleaned.length === 1 || SAFE_REDIRECT_BOUNDARY.test(beforePrevious);
   const nextCleaned =
-    hasFdPrefix && atBoundary ? `${cleaned.slice(0, -1)} ` : `${cleaned} `;
+    hasFdPrefix && isAtBoundary ? `${cleaned.slice(0, -1)} ` : `${cleaned} `;
   return { cleaned: nextCleaned, nextIndex: index + match[0].length - 1 };
 }
 
@@ -1576,11 +1604,11 @@ function advanceUnquotedRedirectChar(
 }
 
 /**
- * Scan unquoted/quoted shell syntax for write-capable redirections and command
- * substitutions, while stripping benign null/fd redirections (`2>/dev/null`,
- * `2> /dev/null`, `2>&1`, `&>/dev/null`, `&> /dev/null`) so downstream
- * `splitSegments` does not split on `&`.
- */
+Scan unquoted/quoted shell syntax for write-capable redirections and command
+substitutions, while stripping benign null/fd redirections (`2>/dev/null`,
+`2> /dev/null`, `2>&1`, `&>/dev/null`, `&> /dev/null`) so downstream
+`splitSegments` does not split on `&`.
+*/
 function inspectAndCleanRedirects(command: string): RedirectScanResult {
   const state: RedirectScanState = { quote: null, cleaned: "" };
   for (let index = 0; index < command.length; index += 1) {
@@ -1632,11 +1660,11 @@ function evaluateCommandSegments(
 }
 
 /**
- * Whether a shell command may run in a read-only role.
- *
- * The command is allowed when it contains no write-capable construct and every
- * command it runs is one that cannot write.
- */
+Whether a shell command may run in a read-only role.
+
+The command is allowed when it contains no write-capable construct and every
+command it runs is one that cannot write.
+*/
 export function evaluateReadOnlyCommand(command: string): ReadOnlyDecision {
   const trimmed = command.trim();
   if (trimmed.length === 0) return ALLOWED;
@@ -1655,11 +1683,11 @@ export function evaluateReadOnlyCommand(command: string): ReadOnlyDecision {
 }
 
 /**
- * The words a tool name is made of.
- *
- * A camel-cased name and a separated one are the same name, so the name is
- * split on both: `replaceInFile` and `replace_in_file` are one shape.
- */
+The words a tool name is made of.
+
+A camel-cased name and a separated one are the same name, so the name is
+split on both: `replaceInFile` and `replace_in_file` are one shape.
+*/
 function toolNameTokens(name: string): string[] {
   return name
     .replaceAll(CAMEL_CASE_BOUNDARY, "$1_$2")
@@ -1669,14 +1697,14 @@ function toolNameTokens(name: string): string[] {
 }
 
 /**
- * Whether a tool call may run in a read-only role.
- *
- * A tool that writes is refused by name. A tool that runs a shell is judged by
- * the command it carries. A tool that belongs to an MCP server is left to the
- * role's own contract, which is where the servers a role may reach are
- * decided. Every other tool -- reading a resource, searching the web, looking
- * at an image -- is left alone.
- */
+Whether a tool call may run in a read-only role.
+
+A tool that writes is refused by name. A tool that runs a shell is judged by
+the command it carries. A tool that belongs to an MCP server is left to the
+role's own contract, which is where the servers a role may reach are
+decided. Every other tool -- reading a resource, searching the web, looking
+at an image -- is left alone.
+*/
 export function evaluateReadOnlyToolCall(input: {
   readonly toolName: string;
   readonly toolInput: unknown;

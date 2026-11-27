@@ -24,7 +24,7 @@ test("mapConcurrentOrdered bounds in-flight work and preserves input order", asy
 
 test("mapConcurrentOrdered drains a failed batch before propagating its first error", async () => {
   const started: number[] = [];
-  let peerSettled = false;
+  let isPeerSettled = false;
 
   await assert.rejects(
     mapConcurrentOrdered([0, 1, 2, 3], 2, async (item) => {
@@ -35,7 +35,7 @@ test("mapConcurrentOrdered drains a failed batch before propagating its first er
       }
       if (item === 1) {
         await new Promise((resolve) => setTimeout(resolve, 10));
-        peerSettled = true;
+        isPeerSettled = true;
       }
       return item;
     }),
@@ -43,7 +43,7 @@ test("mapConcurrentOrdered drains a failed batch before propagating its first er
   );
 
   assert.deepEqual(started, [0, 1]);
-  assert.equal(peerSettled, true);
+  assert.equal(isPeerSettled, true);
 });
 
 test("mapConcurrentOrdered refuses a non-positive or fractional concurrency", async () => {

@@ -93,7 +93,7 @@ test("same-origin target form pins exact origins and grants no shell or reposito
     token: process.env.AUTODEV_CONTROL_API_TOKEN,
     baseUrl: process.env.AUTODEV_CONTROL_API_BASE_URL
   };
-  const originalFetch = globalThis.fetch;
+  const originalFetch = fetch;
   process.env.AUTODEV_CONTROL_API_TOKEN = "visual-target-route-test-token";
   process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4191";
   let outboundUrl = "";
@@ -180,7 +180,7 @@ test("visual target revocation accepts the body the Console manager sends", asyn
     token: process.env.AUTODEV_CONTROL_API_TOKEN,
     baseUrl: process.env.AUTODEV_CONTROL_API_BASE_URL
   };
-  const originalFetch = globalThis.fetch;
+  const originalFetch = fetch;
   process.env.AUTODEV_CONTROL_API_TOKEN = "visual-target-revoke-test-token";
   process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4191";
   let outboundUrl = "";
@@ -231,10 +231,10 @@ test("visual target revocation accepts the body the Console manager sends", asyn
 });
 
 test("visual target revocation refuses a body that repeats the routed target id", async () => {
-  const originalFetch = globalThis.fetch;
-  let called = false;
+  const originalFetch = fetch;
+  let isCalled = false;
   globalThis.fetch = async () => {
-    called = true;
+    isCalled = true;
     return Response.json(targetResponse());
   };
   try {
@@ -249,17 +249,17 @@ test("visual target revocation refuses a body that repeats the routed target id"
       }
     );
     assert.equal(response.status, 400);
-    assert.equal(called, false);
+    assert.equal(isCalled, false);
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
 test("visual target form refuses cross-origin mutation before calling Runtime", async () => {
-  const originalFetch = globalThis.fetch;
-  let called = false;
+  const originalFetch = fetch;
+  let isCalled = false;
   globalThis.fetch = async () => {
-    called = true;
+    isCalled = true;
     return Response.json(targetResponse());
   };
   try {
@@ -282,7 +282,7 @@ test("visual target form refuses cross-origin mutation before calling Runtime", 
       })
     });
     assert.equal(response.status, 403);
-    assert.equal(called, false);
+    assert.equal(isCalled, false);
   } finally {
     globalThis.fetch = originalFetch;
   }

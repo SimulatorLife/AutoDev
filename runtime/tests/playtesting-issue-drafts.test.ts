@@ -1,18 +1,18 @@
 /**
- * `playtest.issueDrafts`, driven through the real MCP server.
- *
- * This deliberately crosses every boundary between a game's declaration and the
- * operator's decision: the checked-in `playtest.config.json` on disk, its
- * SHA-256 against the approval, the approval repository, the capabilities view
- * that resolves both gates, and the registered tool handler itself. A unit test
- * that injected the gates would prove the Core builder -- already covered in
- * `core/tests/playtesting-issue-drafts.test.ts` -- and would pass even if the
- * config value were still read by nothing, which is the defect this exists to
- * close.
- *
- * Only the findings repository and the sandbox are substituted. Docker is
- * genuinely unavailable here; a file on disk is not.
- */
+`playtest.issueDrafts`, driven through the real MCP server.
+
+This deliberately crosses every boundary between a game's declaration and the
+operator's decision: the checked-in `playtest.config.json` on disk, its
+SHA-256 against the approval, the approval repository, the capabilities view
+that resolves both gates, and the registered tool handler itself. A unit test
+that injected the gates would prove the Core builder -- already covered in
+`core/tests/playtesting-issue-drafts.test.ts` -- and would pass even if the
+config value were still read by nothing, which is the defect this exists to
+close.
+
+Only the findings repository and the sandbox are substituted. Docker is
+genuinely unavailable here; a file on disk is not.
+*/
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
@@ -56,11 +56,11 @@ const SAMPLE_FIXTURE_ROOT = fileURLToPath(
 );
 
 /**
- * A real checkout whose `.autodev/playtest.config.json` declares
- * `reporting.githubIssues`. The config is rewritten and committed rather than
- * substituted, so the Runtime reads the declared authority from the exact
- * committed build it would run, which is what makes this a boundary test.
- */
+A real checkout whose `.autodev/playtest.config.json` declares
+`reporting.githubIssues`. The config is rewritten and committed rather than
+substituted, so the Runtime reads the declared authority from the exact
+committed build it would run, which is what makes this a boundary test.
+*/
 function setupCheckout(githubIssues: "disabled" | "review"): {
   readonly root: string;
   readonly configBytes: Buffer;
@@ -88,13 +88,13 @@ function setupCheckout(githubIssues: "disabled" | "review"): {
     string,
     unknown
   >;
-  const configuration = { ...config, reporting: { githubIssues } };
-  writeFileSync(configPath, JSON.stringify(configuration) + "\n");
+  const config_ = { ...config, reporting: { githubIssues } };
+  writeFileSync(configPath, JSON.stringify(config_) + "\n");
   commitFixtureCheckout(root);
   return {
     root,
     configBytes: readFileSync(configPath),
-    configuration: configuration as unknown as PlaytestGameConfiguration,
+    configuration: config_ as unknown as PlaytestGameConfiguration,
     cleanup: () => rmSync(root, { recursive: true, force: true })
   };
 }
@@ -181,7 +181,9 @@ function finding(
   };
 }
 
-/** Only the storage seam is substituted; the gate logic under test is not. */
+/**
+Only the storage seam is substituted; the gate logic under test is not.
+*/
 function findingsRepository(
   rows: readonly PlaytestFinding[]
 ): PlaytestingRepositoryOps {
@@ -202,24 +204,24 @@ async function harness(
   approved: WorkspacePlaytestApproval,
   rows: readonly PlaytestFinding[]
 ): Promise<Harness> {
-  const tmpRoot = realpathSync(
+  const temporaryRoot = realpathSync(
     mkdtempSync(path.join(tmpdir(), "playtest-issue-drafts-run-"))
   );
-  const artifactsDir = path.join(tmpRoot, "artifacts");
+  const artifactsDir = path.join(temporaryRoot, "artifacts");
   mkdirSync(artifactsDir, { recursive: true });
   const artifacts = new PlaytestArtifactStore({
     workspaceId: WORKSPACE_ID,
     rootDirectory: artifactsDir
   });
-  const approvalRepo = new WorkspacePlaytestApprovalRepository(
-    path.join(tmpRoot, "approvals")
+  const approvalRepository = new WorkspacePlaytestApprovalRepository(
+    path.join(temporaryRoot, "approvals")
   );
   const preparer = isolatedPlaytestPreparer();
   const playtestRunControl = createPlaytestRunControl({
     prepareSandboxHandler: preparer.prepare,
     artifactStoreForWorkspace: () => artifacts,
     playtestRepository: findingsRepository(rows),
-    approvalRepository: approvalRepo,
+    approvalRepository: approvalRepository,
     readWorkspaceCatalog: () => ({
       status: "valid",
       workspaces: [
@@ -243,9 +245,9 @@ async function harness(
     playtestRepository: findingsRepository(rows),
     playtestRunControl
   });
-  approvalRepo.approve(approved, null);
+  approvalRepository.approve(approved, null);
 
-  const call = async (tool: string, args: unknown) => {
+  const call = async (tool: string, arguments_: unknown) => {
     const tools = (
       server as unknown as {
         _registeredTools: Record<
@@ -254,7 +256,7 @@ async function harness(
         >;
       }
     )._registeredTools;
-    const typed = (await tools[tool]!.handler(args)) as {
+    const typed = (await tools[tool]!.handler(arguments_)) as {
       isError?: boolean;
       content: { text: string }[];
     };
@@ -267,7 +269,7 @@ async function harness(
     callCapabilities: () => call("playtest.capabilities", {}),
     cleanup: () => {
       preparer.cleanup();
-      rmSync(tmpRoot, { recursive: true, force: true });
+      rmSync(temporaryRoot, { recursive: true, force: true });
     }
   };
 }

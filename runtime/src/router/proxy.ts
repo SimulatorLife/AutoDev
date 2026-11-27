@@ -1,7 +1,7 @@
 /**
- * Shared Router HTTP response helpers, probe logic, cooldown helpers, and
- * transport error classification.
- */
+Shared Router HTTP response helpers, probe logic, cooldown helpers, and
+transport error classification.
+*/
 
 import { randomUUID } from "node:crypto";
 import type { ServerResponse } from "node:http";
@@ -158,7 +158,7 @@ export function transportErrorInfo(error: unknown): {
   code: string | null;
   syscall: string | null;
 } {
-  const err =
+  const error_ =
     error && typeof error === "object"
       ? (error as {
           name?: string;
@@ -166,12 +166,12 @@ export function transportErrorInfo(error: unknown): {
           cause?: { code?: string; syscall?: string };
         })
       : null;
-  const cause = err?.cause ?? null;
+  const cause = error_?.cause ?? null;
   return {
-    name: err && typeof err.name === "string" ? err.name : "Error",
+    name: error_ && typeof error_.name === "string" ? error_.name : "Error",
     code:
-      err && typeof err.code === "string"
-        ? err.code
+      error_ && typeof error_.code === "string"
+        ? error_.code
         : cause && typeof cause.code === "string"
           ? cause.code
           : null,
@@ -252,13 +252,13 @@ const OPENAI_LIMIT_CODE_MAP: Record<
 };
 
 function bodyLimitResetAt(
-  errorObj: Record<string, unknown>,
+  errorObject: Record<string, unknown>,
   headers: unknown,
   now: number
 ): string | null {
-  const absolute = normalizeResetsAt(errorObj.resets_at);
+  const absolute = normalizeResetsAt(errorObject.resets_at);
   if (absolute) return absolute;
-  const resetsInSeconds = Number(errorObj.resets_in_seconds);
+  const resetsInSeconds = Number(errorObject.resets_in_seconds);
   if (Number.isFinite(resetsInSeconds) && resetsInSeconds > 0) {
     return new Date(now + Math.ceil(resetsInSeconds * 1000)).toISOString();
   }
@@ -281,11 +281,11 @@ export function declaredLimit(
   }
   try {
     const parsed = JSON.parse(String(body ?? "")) as Record<string, unknown>;
-    const err =
+    const error =
       (parsed?.error as Record<string, unknown> | undefined) ??
       (parsed?.detail as Record<string, unknown> | undefined) ??
       parsed;
-    const declared = err?.limit as Record<string, unknown> | undefined;
+    const declared = error?.limit as Record<string, unknown> | undefined;
     if (declared?.class) {
       return {
         limitClass: String(declared.class).toLowerCase(),
@@ -299,13 +299,13 @@ export function declaredLimit(
             : "inferred"
       };
     }
-    const code = String(err?.type ?? err?.code ?? "").toLowerCase();
+    const code = String(error?.type ?? error?.code ?? "").toLowerCase();
     const mapped = OPENAI_LIMIT_CODE_MAP[code];
     if (!mapped) return null;
     return {
       limitClass: mapped.limitClass,
       limitType: mapped.limitType,
-      resetsAt: bodyLimitResetAt(err, headers, now),
+      resetsAt: bodyLimitResetAt(error, headers, now),
       source: LIMIT_SOURCE_REPORTED
     };
   } catch {
@@ -345,8 +345,7 @@ export function fallbackable(status: number, body: unknown): boolean {
   if (status === 400 && INVALID_MODEL_PATTERN.test(String(body ?? ""))) {
     return true;
   }
-  if (providerRequestUnsupported(body)) return true;
-  if (providerToolChannelUnavailable(body)) return true;
+  if (providerRequestUnsupported(body) || providerToolChannelUnavailable(body)) return true;
   return FALLBACKABLE_BODY_REGEX.test(String(body ?? ""));
 }
 

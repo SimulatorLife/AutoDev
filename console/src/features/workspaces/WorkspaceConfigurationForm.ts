@@ -7,65 +7,71 @@ import { AutoSubmitSelectField } from "../../components/forms/AutoSubmitSelectFi
 import { TextField } from "../../components/forms/TextField.ts";
 import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
-import { workspaceConfigurationDisabledReason } from "./configuration.ts";
-import { workspaceConfigurationPath } from "./paths.ts";
+import { workspaceConfigurationDisabledReason as workspaceConfigDisabledReason } from "./configuration.ts";
+import { workspaceConfigurationPath as workspaceConfigPath } from "./paths.ts";
 import {
-  workspaceConfigurationBadgeLabel,
-  workspaceConfigurationBadgeVariant
+  workspaceConfigurationBadgeLabel as workspaceConfigBadgeLabel,
+  workspaceConfigurationBadgeVariant as workspaceConfigBadgeVariant
 } from "./workspace-health.ts";
 
 /**
- * The control that writes one workspace's canonical configuration.
- *
- * This is one control in two places -- the workspace's row on the list and the
- * workspace's own page -- and it is the same control in both: the same fields,
- * the same route, the same revision check, and the same disabled reason. The
- * only thing that differs is how much of it fits where it sits, so the layout
- * is a prop and the control is not written twice.
- *
- * The configuration is a grouped setting: enablement, base branch and role
- * scope are one workspace's configuration, and a write replaces the whole of
- * it. So the form carries the complete desired value and a change writes it,
- * rather than staging an edit that has to be saved somewhere else.
- */
+The control that writes one workspace's canonical configuration.
+
+This is one control in two places -- the workspace's row on the list and the
+workspace's own page -- and it is the same control in both: the same fields,
+the same route, the same revision check, and the same disabled reason. The
+only thing that differs is how much of it fits where it sits, so the layout
+is a prop and the control is not written twice.
+
+The configuration is a grouped setting: enablement, base branch and role
+scope are one workspace's configuration, and a write replaces the whole of
+it. So the form carries the complete desired value and a change writes it,
+rather than staging an edit that has to be saved somewhere else.
+*/
 export interface WorkspaceConfigurationFormProps {
   readonly workspace: ControlApiWorkspaceRecord;
   /**
-   * The revision the edit is based on.
-   *
-   * The write is a compare-and-swap on it, so the form carries the revision
-   * the operator's edit was written against rather than the revision the
-   * catalog may have moved to while the page was open. It is null when the
-   * catalog could not be read, which is also when the control cannot be used.
-   */
+  The revision the edit is based on.
+  
+  The write is a compare-and-swap on it, so the form carries the revision
+  the operator's edit was written against rather than the revision the
+  catalog may have moved to while the page was open. It is null when the
+  catalog could not be read, which is also when the control cannot be used.
+  */
   readonly revision: string | null;
-  /** The status of the canonical catalog this read came from. */
+  /**
+  The status of the canonical catalog this read came from.
+  */
   readonly catalogStatus: "valid" | "invalid" | "unavailable";
   /**
-   * Where the write answers to.
-   *
-   * The control is on the list and on the workspace's own page, and the write
-   * has to answer to whichever of the two it was made from: a write that
-   * answered somewhere else would leave the operator looking at a page that
-   * says nothing about the configuration they just changed. It is a bounded
-   * Workspaces path rather than a destination the browser chooses.
-   */
+  Where the write answers to.
+  
+  The control is on the list and on the workspace's own page, and the write
+  has to answer to whichever of the two it was made from: a write that
+  answered somewhere else would leave the operator looking at a page that
+  says nothing about the configuration they just changed. It is a bounded
+  Workspaces path rather than a destination the browser chooses.
+  */
   readonly returnTo: string;
-  /** The dense layout the list's row uses. */
+  /**
+  The dense layout the list's row uses.
+  */
   readonly compact?: boolean | undefined;
 }
 
-/** The names the route reads the form's fields by. */
+/**
+The names the route reads the form's fields by.
+*/
 const BASE_BRANCH_FIELD = "baseBranch";
 const ROLES_FIELD = "agentRoles";
 
 /**
- * The role scope as the control shows it.
- *
- * A scope that is not configured and a scope that names no role are different
- * facts -- the first admits every role, the second admits none -- so the
- * control keeps them apart rather than showing an empty list for both.
- */
+The role scope as the control shows it.
+
+A scope that is not configured and a scope that names no role are different
+facts -- the first admits every role, the second admits none -- so the
+control keeps them apart rather than showing an empty list for both.
+*/
 function roleScopeText(workspace: ControlApiWorkspaceRecord): string {
   return workspace.agentRoles === null ? "" : workspace.agentRoles.join(", ");
 }
@@ -77,18 +83,18 @@ export function WorkspaceConfigurationForm({
   returnTo,
   compact = false
 }: WorkspaceConfigurationFormProps): React.JSX.Element {
-  const formRef = useRef<HTMLFormElement | null>(null);
+  const formReference = useRef<HTMLFormElement | null>(null);
   // What the last submission carried. A text field that has not changed since
   // then has nothing to write, so leaving the control does not write it again.
   const submitted = useRef<Record<string, string>>({
     [BASE_BRANCH_FIELD]: workspace.baseBranch,
     [ROLES_FIELD]: roleScopeText(workspace)
   });
-  const disabledReason = workspaceConfigurationDisabledReason(
+  const disabledReason = workspaceConfigDisabledReason(
     revision,
     catalogStatus
   );
-  const disabled = disabledReason !== null;
+  const isDisabled = disabledReason !== null;
   // The field ids have to be unique per page: the list repeats this control on
   // every row, and two controls sharing an id leave every label ambiguous.
   const fieldPrefix = `workspace-${workspace.id.replaceAll(/[^A-Za-z0-9]+/gu, "-")}`;
@@ -127,21 +133,21 @@ export function WorkspaceConfigurationForm({
     // a committed text field that cannot be committed with the keyboard is not
     // reachable without a pointer.
     event.preventDefault();
-    formRef.current?.requestSubmit();
+    formReference.current?.requestSubmit();
   };
 
   return React.createElement(
     "form",
     {
       method: "POST",
-      action: workspaceConfigurationPath(workspace.id),
+      action: workspaceConfigPath(workspace.id),
       className: compact
         ? "flex min-w-0 flex-wrap items-end gap-2"
         : "grid min-w-0 gap-3 sm:grid-cols-2",
       "aria-label": `Edit the canonical configuration for ${workspace.id}`,
       "data-workspace-configuration": workspace.id,
       "data-submit-on-change": "true",
-      ref: formRef,
+      ref: formReference,
       onSubmit: handleSubmit,
       onBlur: handleBlur,
       onKeyDown: handleKeyDown
@@ -169,8 +175,8 @@ export function WorkspaceConfigurationForm({
         { value: "false", label: "Disabled" }
       ],
       defaultValue: workspace.enabled ? "true" : "false",
-      disabled,
-      ...(disabledReason === null ? {} : { disabledReason }),
+      disabled: isDisabled,
+      ...(disabledReason !== null && { disabledReason }),
       dataAttributes: { "data-workspace-configuration-enabled": workspace.id }
     }),
     React.createElement(TextField, {
@@ -183,8 +189,8 @@ export function WorkspaceConfigurationForm({
       // four of them. A field with no visible name at all asks the operator
       // to recall what it is, and an empty one gives them nothing to go on,
       // so the placeholder says what the field holds.
-      ...(compact ? { placeholder: "main" } : {}),
-      disabled,
+      ...(compact && { placeholder: "main" }),
+      disabled: isDisabled,
       dataAttributes: {
         "data-workspace-configuration-base-branch": workspace.id
       }
@@ -214,8 +220,8 @@ export function WorkspaceConfigurationForm({
           { value: "scoped", label: "Only the roles listed below" }
         ],
         defaultValue: workspace.agentRoles === null ? "unscoped" : "scoped",
-        disabled,
-        ...(disabledReason === null ? {} : { disabledReason }),
+        disabled: isDisabled,
+        ...(disabledReason !== null && { disabledReason }),
         dataAttributes: {
           "data-workspace-configuration-role-scope": workspace.id
         }
@@ -226,8 +232,8 @@ export function WorkspaceConfigurationForm({
       // work here and say nothing about why.
       workspace.configuration.status === "invalid-role-scope"
         ? React.createElement(StatusBadge, {
-            status: workspaceConfigurationBadgeVariant(workspace.configuration),
-            label: workspaceConfigurationBadgeLabel(workspace.configuration)
+            status: workspaceConfigBadgeVariant(workspace.configuration),
+            label: workspaceConfigBadgeLabel(workspace.configuration)
           })
         : null
     ),
@@ -240,8 +246,8 @@ export function WorkspaceConfigurationForm({
       // The roles field is empty whenever the scope admits any role, which is
       // the common case -- so in the compact cell it is an unnamed empty box
       // most of the time. The placeholder names what it takes.
-      ...(compact ? { placeholder: "worker, orchestrator" } : {}),
-      disabled,
+      ...(compact && { placeholder: "worker, orchestrator" }),
+      disabled: isDisabled,
       dataAttributes: { "data-workspace-configuration-roles": workspace.id }
     }),
     disabledReason === null

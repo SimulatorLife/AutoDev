@@ -1,7 +1,7 @@
 /**
- * Run-owner wording shared by every Playtesting surface. Plain data only, so
- * both the JSX badges and the Node tests can import one owner.
- */
+Run-owner wording shared by every Playtesting surface. Plain data only, so
+both the JSX badges and the Node tests can import one owner.
+*/
 import type {
   ControlApiPlaytestingCancellationReason,
   ControlApiPlaytestingRunState
@@ -13,15 +13,15 @@ const UNREADABLE_RESPONSE_MESSAGE =
   "The Console could not validate the server response.";
 
 /**
- * A state the Console cannot interpret is absent evidence, not a value the
- * product invented. It uses the one spelling for that.
- */
+A state the Console cannot interpret is absent evidence, not a value the
+product invented. It uses the one spelling for that.
+*/
 const NOT_A_RUN_STATE_LABEL = NOT_OBSERVED_LABEL;
 
 /**
- * Prefer the server's own message; never invent one for a body the Console
- * could not read.
- */
+Prefer the server's own message; never invent one for a body the Console
+could not read.
+*/
 export function responseMessage(value: unknown): string {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return UNREADABLE_RESPONSE_MESSAGE;
@@ -45,9 +45,9 @@ export const CANCELLATION_REASON_LABELS: Readonly<
 };
 
 /**
- * Each run state keeps its own label. A truncated batch is not a failed one,
- * and a recovered nonterminal closure is not a result.
- */
+Each run state keeps its own label. A truncated batch is not a failed one,
+and a recovered nonterminal closure is not a result.
+*/
 const RUN_STATE_LABELS: Readonly<
   Record<ControlApiPlaytestingRunState, string>
 > = {
@@ -66,7 +66,9 @@ export function runStateLabel(status: string): string {
   );
 }
 
-/** Badge tone per run state; only a completed batch is a clean result. */
+/**
+Badge tone per run state; only a completed batch is a clean result.
+*/
 export function runStateBadgeTone(
   status: string
 ): "valid" | "pending" | "unavailable" {

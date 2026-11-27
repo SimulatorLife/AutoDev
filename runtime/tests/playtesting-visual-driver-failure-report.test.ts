@@ -1,13 +1,13 @@
 /**
- * A visual episode that could not start has to say why.
- *
- * The driver failed before the episode produced any evidence, so the episode
- * record only says "infrastructure-failed" and the batch says it was
- * recovered. Without a report of the failure, every playtest that could not
- * run looks the same: a browser that would not start, a game that could not
- * be reached and a Runtime that was too busy to answer are indistinguishable
- * from the outside.
- */
+A visual episode that could not start has to say why.
+
+The driver failed before the episode produced any evidence, so the episode
+record only says "infrastructure-failed" and the batch says it was
+recovered. Without a report of the failure, every playtest that could not
+run looks the same: a browser that would not start, a game that could not
+be reached and a Runtime that was too busy to answer are indistinguishable
+from the outside.
+*/
 import assert from "node:assert/strict";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

@@ -1,42 +1,42 @@
 #!/usr/bin/env node
 
 /**
- * The read-only tier of a role's sandbox, enforced where the tools run.
- *
- * Codex cannot narrow the sandbox of a spawned child. The child thread is
- * created from the parent's configuration -- the child inherits the parent's
- * sandbox, and the role layer Codex applies on top of it carries the model,
- * the instructions, the skills and the features, but no sandbox -- so a role
- * that declares `read-only` runs with the parent session's sandbox and can
- * write to the workspace.
- *
- * Codex does run a hook for every tool call, inside the thread that made it,
- * and the hook is told which role that thread is. That is the point where the
- * role's own declaration can be enforced: this hook refuses the calls a
- * read-only role may not make.
- *
- * The refusal is the tool call's own permission decision, so the model is
- * told why the call did not run and can report what it needed instead.
- *
- * The policy applies only to an AutoDev session (see `HookSessionOrigin`): a
- * Runtime-launched provider process or a turn served through the AutoDev
- * model router. The same projected hooks also run in unrelated native chats
- * (a Claude Code or Copilot chat in this repository), whose agent types are
- * the host's own subagent names, not AutoDev roles; those are never governed.
- *
- * An explicitly assigned orchestrator role (or the explicit AutoDev root
- * alias on a native Codex turn without a role) uses the orchestrator policy.
- * A concrete model or missing role does not identify an AutoDev orchestrator.
- * Within a Runtime-launched read-only session, a child thread reporting a
- * write-capable role cannot widen the session's read-only tier. Hook policy is
- * defense in depth, not an execution grant.
- *
- * The role's declaration is read from the installed execution contract, which
- * is the projection of the role files. A contract left behind by an older
- * install does not carry the declaration at all, and the tier would then be
- * absent rather than enforced; `bash scripts/install.sh --check` reports
- * that drift.
- */
+The read-only tier of a role's sandbox, enforced where the tools run.
+
+Codex cannot narrow the sandbox of a spawned child. The child thread is
+created from the parent's configuration -- the child inherits the parent's
+sandbox, and the role layer Codex applies on top of it carries the model,
+the instructions, the skills and the features, but no sandbox -- so a role
+that declares `read-only` runs with the parent session's sandbox and can
+write to the workspace.
+
+Codex does run a hook for every tool call, inside the thread that made it,
+and the hook is told which role that thread is. That is the point where the
+role's own declaration can be enforced: this hook refuses the calls a
+read-only role may not make.
+
+The refusal is the tool call's own permission decision, so the model is
+told why the call did not run and can report what it needed instead.
+
+The policy applies only to an AutoDev session (see `HookSessionOrigin`): a
+Runtime-launched provider process or a turn served through the AutoDev
+model router. The same projected hooks also run in unrelated native chats
+(a Claude Code or Copilot chat in this repository), whose agent types are
+the host's own subagent names, not AutoDev roles; those are never governed.
+
+An explicitly assigned orchestrator role (or the explicit AutoDev root
+alias on a native Codex turn without a role) uses the orchestrator policy.
+A concrete model or missing role does not identify an AutoDev orchestrator.
+Within a Runtime-launched read-only session, a child thread reporting a
+write-capable role cannot widen the session's read-only tier. Hook policy is
+defense in depth, not an execution grant.
+
+The role's declaration is read from the installed execution contract, which
+is the projection of the role files. A contract left behind by an older
+install does not carry the declaration at all, and the tier would then be
+absent rather than enforced; `bash scripts/install.sh --check` reports
+that drift.
+*/
 
 import { readFileSync } from "node:fs";
 

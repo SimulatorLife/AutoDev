@@ -1,23 +1,23 @@
 /**
- * Same-origin boundary for writing one MCP server's canonical declaration.
- *
- * The route receives the operator's edit, validates its same-origin browser
- * context, and forwards a typed PATCH to Runtime using the server-side Control
- * API credential. The browser never receives that credential and never
- * bypasses Runtime: the declaration is written by the Runtime, which applies
- * the projection and observes what it published.
- *
- * The route answers with a redirect rather than with a body. That is the
- * Console's own mutation boundary: the navigation owner reads the redirect,
- * moves the page to the destination, and the page renders the outcome from the
- * query. A route that answered with a body instead would leave the page
- * holding the state it had before the write, which is how a feature ends up
- * showing two truths about the same declaration.
- *
- * Only POST is exported. A refused write answers with the Runtime's reason --
- * a conflict, a refused declaration or a failed projection are different
- * facts, and the operator is told which one happened.
- */
+Same-origin boundary for writing one MCP server's canonical declaration.
+
+The route receives the operator's edit, validates its same-origin browser
+context, and forwards a typed PATCH to Runtime using the server-side Control
+API credential. The browser never receives that credential and never
+bypasses Runtime: the declaration is written by the Runtime, which applies
+the projection and observes what it published.
+
+The route answers with a redirect rather than with a body. That is the
+Console's own mutation boundary: the navigation owner reads the redirect,
+moves the page to the destination, and the page renders the outcome from the
+query. A route that answered with a body instead would leave the page
+holding the state it had before the write, which is how a feature ends up
+showing two truths about the same declaration.
+
+Only POST is exported. A refused write answers with the Runtime's reason --
+a conflict, a refused declaration or a failed projection are different
+facts, and the operator is told which one happened.
+*/
 
 import { CONTROL_API_REVISION_PATTERN } from "@simulatorlife/autodev-core";
 import type { NextRequest, NextResponse } from "next/server.js";
@@ -42,7 +42,9 @@ const MAX_FORM_BODY_BYTES = 16_384;
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-/** The launch keys the edit form carries. */
+/**
+The launch keys the edit form carries.
+*/
 const LAUNCH_FIELDS = [
   "command",
   "args",
@@ -52,12 +54,12 @@ const LAUNCH_FIELDS = [
 ] as const;
 
 /**
- * The redirect back to the server's Configuration tab.
- *
- * The tab is in the destination because the edit surface lives on it: a write
- * that answered with a redirect to the server's Overview would leave the
- * operator on a tab that says nothing about what they just changed.
- */
+The redirect back to the server's Configuration tab.
+
+The tab is in the destination because the edit surface lives on it: a write
+that answered with a redirect to the server's Overview would leave the
+operator on a tab that says nothing about what they just changed.
+*/
 function redirectToMcpServer(
   name: string,
   outcome?: CanonicalSourceSaveOutcome,
@@ -71,14 +73,14 @@ function redirectToMcpServer(
 }
 
 /**
- * The launch configuration the form carries.
- *
- * A field the operator cleared is `null`, which removes that key from the
- * declaration. The arguments are one per line, because a launcher is given a
- * list and a list is what an operator reads a list as. The headers are not in
- * the form, so they are not in the write either: a key the form does not carry
- * is a key the write leaves alone.
- */
+The launch configuration the form carries.
+
+A field the operator cleared is `null`, which removes that key from the
+declaration. The arguments are one per line, because a launcher is given a
+list and a list is what an operator reads a list as. The headers are not in
+the form, so they are not in the write either: a key the form does not carry
+is a key the write leaves alone.
+*/
 function readLaunch(form: URLSearchParams): {
   readonly command: string | null;
   readonly args: readonly string[] | null;
@@ -95,15 +97,15 @@ function readLaunch(form: URLSearchParams): {
     const trimmed = value.trim();
     return trimmed.length === 0 ? null : value;
   };
-  const rawArgs = form.get("args");
-  if (rawArgs === null) return null;
-  const args = rawArgs
+  const rawArguments = form.get("args");
+  if (rawArguments === null) return null;
+  const arguments_ = rawArguments
     .split("\n")
-    .map((arg) => arg.trim())
-    .filter((arg) => arg.length > 0);
+    .map((argument) => argument.trim())
+    .filter((argument) => argument.length > 0);
   return {
     command: text("command"),
-    args: args.length === 0 ? null : args,
+    args: arguments_.length === 0 ? null : arguments_,
     cwd: text("cwd"),
     url: text("url"),
     bearerTokenEnvVar: text("bearerTokenEnvVar")
@@ -111,12 +113,12 @@ function readLaunch(form: URLSearchParams): {
 }
 
 /**
- * The outcome a refusal is reported as.
- *
- * A conflict and a refused declaration are different facts: the first says
- * the declaration moved under the write, the second says the write could not
- * be expressed. They get different outcomes, and the reason is the Runtime's.
- */
+The outcome a refusal is reported as.
+
+A conflict and a refused declaration are different facts: the first says
+the declaration moved under the write, the second says the write could not
+be expressed. They get different outcomes, and the reason is the Runtime's.
+*/
 function saveOutcomeForFailure(
   result: Awaited<ReturnType<typeof patchMcpServer>>
 ): CanonicalSourceSaveOutcome {

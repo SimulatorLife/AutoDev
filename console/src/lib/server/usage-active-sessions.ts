@@ -1,4 +1,6 @@
-/** Server-only read of the live-session evidence behind the Usage scope. */
+/**
+Server-only read of the live-session evidence behind the Usage scope.
+*/
 
 import type {
   ControlApiRuntimeResponse,
@@ -25,13 +27,13 @@ export type UsageActiveSessionsResult =
   | { readonly kind: "ok"; readonly activeSessions: UsageActiveSessions };
 
 /**
- * Narrow a possibly-absent counter.
- *
- * The whole point of this module is that `undefined` and `0` stay different
- * facts, so nothing here may fall back to a default. `/control/runtime` declares
- * the concurrency counters optional precisely because a Runtime that has not
- * measured one is not reporting zero of them.
- */
+Narrow a possibly-absent counter.
+
+The whole point of this module is that `undefined` and `0` stay different
+facts, so nothing here may fall back to a default. `/control/runtime` declares
+the concurrency counters optional precisely because a Runtime that has not
+measured one is not reporting zero of them.
+*/
 function observedCount(value: number | undefined): number | null {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? value
@@ -39,13 +41,13 @@ function observedCount(value: number | undefined): number | null {
 }
 
 /**
- * Project the Runtime's read-only `/control/runtime` response into the Usage
- * live-session scope.
- *
- * Exported separately from the fetch so the projection is testable without a
- * transport, and so the Console never has to re-derive "unavailable means
- * unavailable" at the point of render.
- */
+Project the Runtime's read-only `/control/runtime` response into the Usage
+live-session scope.
+
+Exported separately from the fetch so the projection is testable without a
+transport, and so the Console never has to re-derive "unavailable means
+unavailable" at the point of render.
+*/
 export function activeSessionsFromRuntime(
   runtime: ControlApiRuntimeResponse
 ): UsageActiveSessions {
@@ -70,7 +72,9 @@ export function activeSessionsFromRuntime(
   };
 }
 
-/** Read live-session evidence, failing closed rather than defaulting to zero. */
+/**
+Read live-session evidence, failing closed rather than defaulting to zero.
+*/
 export async function loadUsageActiveSessions(
   config: ControlApiConfig | null
 ): Promise<UsageActiveSessionsResult> {

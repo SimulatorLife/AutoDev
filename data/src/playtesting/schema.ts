@@ -1,4 +1,6 @@
-/** Idempotent ClickHouse tables for Playtesting evidence and launch receipts. */
+/**
+Idempotent ClickHouse tables for Playtesting evidence and launch receipts.
+*/
 
 import { runParameterizedClickHouseStatement } from "../clickhouse/clickhouse-client.ts";
 import { PlaytestSourceUnavailableError } from "./errors.ts";
@@ -105,13 +107,13 @@ ORDER BY (workspace_id, fingerprint, finding_id, version)
 `;
 
 /**
- * Idempotent migration that adds the `fingerprint` column to an existing
- * `playtest_findings` table on clusters provisioned before the §11
- * duplicate-flood work landed. `ALTER ... ADD COLUMN IF NOT EXISTS` is a
- * no-op when the column already exists; the same call sequence against a
- * fresh table is a no-op because `CREATE TABLE IF NOT EXISTS` already
- * declared the column.
- */
+Idempotent migration that adds the `fingerprint` column to an existing
+`playtest_findings` table on clusters provisioned before the §11
+duplicate-flood work landed. `ALTER ... ADD COLUMN IF NOT EXISTS` is a
+no-op when the column already exists; the same call sequence against a
+fresh table is a no-op because `CREATE TABLE IF NOT EXISTS` already
+declared the column.
+*/
 const ALTER_PLAYTEST_FINDINGS_ADD_FINGERPRINT = `
 ALTER TABLE ${PLAYTEST_FINDINGS_TABLE}
 ADD COLUMN IF NOT EXISTS fingerprint String
@@ -243,37 +245,43 @@ export const PLAYTEST_SCHEMA_STATEMENTS: readonly string[] = [
 ];
 
 /**
- * Idempotent migration adding the batch-local assignment index to episode
- * tables provisioned before batch assignment manifests existed.
- */
+Idempotent migration adding the batch-local assignment index to episode
+tables provisioned before batch assignment manifests existed.
+*/
 const ALTER_PLAYTEST_EPISODES_ADD_ASSIGNMENT = `
 ALTER TABLE ${PLAYTEST_EPISODES_TABLE}
 ADD COLUMN IF NOT EXISTS assignment_id Nullable(String)
 `;
 
 /**
- * Idempotent follow-up migrations that bring pre-§11 `playtest_findings`
- * tables up to the canonical schema (fingerprint index and nullable unknown
- * prevalence). Safe to apply on already-migrated tables.
- */
+Idempotent follow-up migrations that bring pre-§11 `playtest_findings`
+tables up to the canonical schema (fingerprint index and nullable unknown
+prevalence). Safe to apply on already-migrated tables.
+*/
 export const PLAYTEST_FINDING_SCHEMA_MIGRATIONS: readonly string[] = [
   ALTER_PLAYTEST_FINDINGS_ADD_FINGERPRINT,
   ...ALTER_PLAYTEST_FINDINGS_NULLABLE_FREQUENCY
 ];
 
-/** Idempotent follow-up migrations for batch assignment pairing. */
+/**
+Idempotent follow-up migrations for batch assignment pairing.
+*/
 export const PLAYTEST_ASSIGNMENT_SCHEMA_MIGRATIONS: readonly string[] = [
   ALTER_PLAYTEST_EPISODES_ADD_ASSIGNMENT
 ];
 
-/** Keep immutable launch-request timestamps independent of server timezone. */
+/**
+Keep immutable launch-request timestamps independent of server timezone.
+*/
 export const PLAYTEST_LAUNCH_INTENT_SCHEMA_MIGRATIONS: readonly string[] = [
   `ALTER TABLE ${PLAYTEST_LAUNCH_INTENTS_TABLE} ` +
     `MODIFY COLUMN created_at DateTime64(3, 'UTC'), ` +
     `MODIFY COLUMN expires_at DateTime64(3, 'UTC')`
 ];
 
-/** Idempotent DDL initialization; errors fail closed as typed unavailability. */
+/**
+Idempotent DDL initialization; errors fail closed as typed unavailability.
+*/
 export async function ensurePlaytestSchema(
   endpoint: string,
   fetchImpl?: typeof fetch
@@ -286,7 +294,7 @@ export async function ensurePlaytestSchema(
           statement,
           {},
           {
-            ...(fetchImpl ? { fetchImpl } : {})
+            ...(fetchImpl && { fetchImpl })
           }
         );
       } catch (error) {
@@ -305,7 +313,7 @@ export async function ensurePlaytestSchema(
           statement,
           {},
           {
-            ...(fetchImpl ? { fetchImpl } : {})
+            ...(fetchImpl && { fetchImpl })
           }
         );
       } catch (error) {
@@ -324,7 +332,7 @@ export async function ensurePlaytestSchema(
           statement,
           {},
           {
-            ...(fetchImpl ? { fetchImpl } : {})
+            ...(fetchImpl && { fetchImpl })
           }
         );
       } catch (error) {
@@ -343,7 +351,7 @@ export async function ensurePlaytestSchema(
           statement,
           {},
           {
-            ...(fetchImpl ? { fetchImpl } : {})
+            ...(fetchImpl && { fetchImpl })
           }
         );
       } catch (error) {

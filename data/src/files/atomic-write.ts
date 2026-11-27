@@ -8,11 +8,13 @@ export type AtomicWriteContent = string | Uint8Array;
 
 export interface AtomicWriteOptions {
   /**
-   * The permission bits the written file must carry. Omitted, an existing file
-   * keeps its permissions and a new file takes the process default.
-   */
+  The permission bits the written file must carry. Omitted, an existing file
+  keeps its permissions and a new file takes the process default.
+  */
   readonly mode?: number;
-  /** Leave the file untouched when it already holds this content and mode. */
+  /**
+  Leave the file untouched when it already holds this content and mode.
+  */
   readonly skipUnchanged?: boolean;
 }
 
@@ -23,7 +25,9 @@ export class AtomicWriteDirectoryError extends Error {
   }
 }
 
-/** Whether the bytes on disk already are `content` at the requested mode. */
+/**
+Whether the bytes on disk already are `content` at the requested mode.
+*/
 function holdsContent(
   stat: Stats,
   existing: Buffer,
@@ -45,12 +49,12 @@ function missing(error: unknown): boolean {
 }
 
 /**
- * Replace `filePath` with `content` so a reader sees the old file or the new
- * one, never a partial write. The temporary file, fsync, rename and cleanup are
- * write-file-atomic's: its temporary names are unique per process, thread and
- * call, so concurrent writers never share one. Missing parent directories are
- * created; a directory at `filePath` is refused.
- */
+Replace `filePath` with `content` so a reader sees the old file or the new
+one, never a partial write. The temporary file, fsync, rename and cleanup are
+write-file-atomic's: its temporary names are unique per process, thread and
+call, so concurrent writers never share one. Missing parent directories are
+created; a directory at `filePath` is refused.
+*/
 export function atomicWriteSync(
   filePath: string,
   content: AtomicWriteContent,
@@ -70,11 +74,13 @@ export function atomicWriteSync(
   }
   mkdirSync(path.dirname(filePath), { recursive: true });
   writeFileAtomic.sync(filePath, content as string | Buffer, {
-    ...(options.mode === undefined ? {} : { mode: options.mode })
+    ...(options.mode !== undefined && { mode: options.mode })
   });
 }
 
-/** The asynchronous form of {@link atomicWriteSync}, with the same contract. */
+/**
+The asynchronous form of {@link atomicWriteSync}, with the same contract.
+*/
 export async function atomicWrite(
   filePath: string,
   content: AtomicWriteContent,
@@ -94,6 +100,6 @@ export async function atomicWrite(
   }
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFileAtomic(filePath, content as string | Buffer, {
-    ...(options.mode === undefined ? {} : { mode: options.mode })
+    ...(options.mode !== undefined && { mode: options.mode })
   });
 }

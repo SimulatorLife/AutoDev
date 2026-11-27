@@ -1,10 +1,10 @@
 /**
- * OpenCLI's site adapters: the models each site offers, and the parsing of
- * what it answers.
- *
- * The role turn itself is composed in `opencli-role.ts`. This module owns
- * only what both the turn and the model discovery share.
- */
+OpenCLI's site adapters: the models each site offers, and the parsing of
+what it answers.
+
+The role turn itself is composed in `opencli-role.ts`. This module owns
+only what both the turn and the model discovery share.
+*/
 import { isRecord } from "@simulatorlife/autodev-core";
 import {
   OPENCLI_SITES,
@@ -13,7 +13,7 @@ import {
 
 type JsonRecord = Record<string, unknown>;
 
-export type OpencliExec = (args: readonly string[]) => Promise<JsonRecord[]>;
+export type OpencliExec = (arguments_: readonly string[]) => Promise<JsonRecord[]>;
 
 export interface OpencliReply {
   readonly response: string;
@@ -62,37 +62,37 @@ export function answeredIn(
 }
 
 /**
- * Whether one opencli invocation needs the browser's foreground.
- *
- * OpenCLI refuses native input -- a real mouse or key event -- on a page the
- * browser does not consider visible, so an operation that changes something
- * chosen from the ChatGPT composer's own UI needs the browser's active tab.
- *
- * Three ChatGPT operations are chosen that way. Attaching an app and enabling
- * a site tool open the composer's menu and click an entry in it, with no
- * other way to reach them. Selecting a model opens the reasoning slider or the
- * model menu; the site can also be told its level through its own settings
- * API, but only for the models that API covers -- for the rest the visible
- * picker is the only path, and the command fails without one.
- *
- * Everything else runs without the foreground. The plain prompt is typed
- * through the page's own input with a scripted fallback when the page is not
- * visible, and Gemini's adapter never clicks natively at all. Serializing
- * every command behind the foreground would make the dedicated browser's tab
- * pool meaningless and would let a read-only discovery command block a live
- * turn, so the requirement is derived from the command itself.
- */
+Whether one opencli invocation needs the browser's foreground.
+
+OpenCLI refuses native input -- a real mouse or key event -- on a page the
+browser does not consider visible, so an operation that changes something
+chosen from the ChatGPT composer's own UI needs the browser's active tab.
+
+Three ChatGPT operations are chosen that way. Attaching an app and enabling
+a site tool open the composer's menu and click an entry in it, with no
+other way to reach them. Selecting a model opens the reasoning slider or the
+model menu; the site can also be told its level through its own settings
+API, but only for the models that API covers -- for the rest the visible
+picker is the only path, and the command fails without one.
+
+Everything else runs without the foreground. The plain prompt is typed
+through the page's own input with a scripted fallback when the page is not
+visible, and Gemini's adapter never clicks natively at all. Serializing
+every command behind the foreground would make the dedicated browser's tab
+pool meaningless and would let a read-only discovery command block a live
+turn, so the requirement is derived from the command itself.
+*/
 export function opencliCommandRequiresForeground(
-  args: readonly string[]
+  arguments_: readonly string[]
 ): boolean {
   // Only the ChatGPT adapter clicks natively, and only when it is asked to
   // change the conversation's model, its attached app or a site tool.
-  if (args[0] !== "chatgpt" || args[1] !== "ask") return false;
+  if (arguments_[0] !== "chatgpt" || arguments_[1] !== "ask") return false;
   return (
-    args.includes("--model") ||
-    args.includes("--app") ||
-    args.includes("--deep-research") ||
-    args.includes("--web-search")
+    arguments_.includes("--model") ||
+    arguments_.includes("--app") ||
+    arguments_.includes("--deep-research") ||
+    arguments_.includes("--web-search")
   );
 }
 

@@ -92,14 +92,14 @@ function targetsFromMutationResponse(
 }
 
 /**
- * The no-progress thresholds in force for a target, as the operator reads them.
- *
- * The numbers are the effective ones — the approval's own — so the reader
- * sees what the Runtime will measure against rather than what was typed into
- * a form. A target that carries no thresholds is never cut short for not
- * advancing, and the reader is told that rather than shown a number that
- * would never be reached.
- */
+The no-progress thresholds in force for a target, as the operator reads them.
+
+The numbers are the effective ones — the approval's own — so the reader
+sees what the Runtime will measure against rather than what was typed into
+a form. A target that carries no thresholds is never cut short for not
+advancing, and the reader is told that rather than shown a number that
+would never be reached.
+*/
 function noProgressLimitLabel(
   target: WorkspaceVisualPlaytestTargetApproval
 ): string {
@@ -163,14 +163,14 @@ function targetCard(
   ) => void,
   pendingTargetId: string | null
 ): React.JSX.Element {
-  const active = target.revokedAt === null;
+  const isActive = target.revokedAt === null;
   return React.createElement(
     "li",
     {
       key: target.targetId,
       className: NESTED_PANEL_CLASS,
       "data-visual-target": target.targetId,
-      "data-approval-state": active ? "active" : "revoked"
+      "data-approval-state": isActive ? "active" : "revoked"
     },
     React.createElement(
       "div",
@@ -191,8 +191,8 @@ function targetCard(
         )
       ),
       React.createElement(StatusBadge, {
-        status: active ? "ready" : "unavailable",
-        label: active ? "Approved" : "Revoked"
+        status: isActive ? "ready" : "unavailable",
+        label: isActive ? "Approved" : "Revoked"
       })
     ),
     React.createElement(
@@ -235,7 +235,7 @@ function targetCard(
         },
         `${target.approvedAt} by ${target.approvedBy}`
       ),
-      active
+      isActive
         ? React.createElement(
             "div",
             { className: "sm:col-span-2" },
@@ -352,7 +352,7 @@ export function WorkspaceVisualPlaytestTargetManager({
     }
     setPending(true);
     const body = new URLSearchParams();
-    for (const [key, value] of form.entries()) {
+    for (const [key, value] of form) {
       if (typeof value === "string") body.append(key, value);
     }
     try {

@@ -44,7 +44,7 @@ export function runRepoBootstrapSync(cwd = process.cwd()): number {
 
 export interface SessionStartRunner {
   runRouterEnsure(
-    deps: RouterEnsureDeps,
+    dependencies: RouterEnsureDeps,
     options: RouterEnsureOptions
   ): Promise<RouterEnsureResult>;
   runRepoBootstrap?(cwd: string): Promise<number>;
@@ -69,8 +69,8 @@ export function createSessionStart(
     input = readFileSync(0)
   ): Promise<number> {
     const options = resolveRouterEnsureOptions(process.env, process.pid);
-    const deps = createDefaultRouterEnsureDeps(options);
-    const result = await runner.runRouterEnsure(deps, options);
+    const dependencies = createDefaultRouterEnsureDeps(options);
+    const result = await runner.runRouterEnsure(dependencies, options);
     if (result.message && result.exitCode !== 0)
       process.stderr.write(`${result.message}\n`);
     if (result.logTail && result.logTail.length > 0) {

@@ -1,4 +1,6 @@
-/** Restricted, consented import for the separate paired A/B preference outcome. */
+/**
+Restricted, consented import for the separate paired A/B preference outcome.
+*/
 import type {
   HumanPlaytestStudy,
   PlaytestHumanPreferencePlan
@@ -10,7 +12,7 @@ import {
 } from "./human-study-import.ts";
 import type {
   PlaytestPreferenceAnswer,
-  PlaytestVersionedRef
+  PlaytestVersionedRef as PlaytestVersionedReference
 } from "./types.ts";
 
 const MAX_ROWS = 10_000;
@@ -39,7 +41,9 @@ export interface HumanStudyPreferenceExportManifest {
   readonly answerColumn: string;
 }
 
-/** Restricted data row; pseudonymous identity never appears in summaries. */
+/**
+Restricted data row; pseudonymous identity never appears in summaries.
+*/
 export interface HumanStudyPreferenceResponse {
   readonly studyId: string;
   readonly responseId: string;
@@ -50,8 +54,8 @@ export interface HumanStudyPreferenceResponse {
   readonly consentScope: string;
   readonly questionVersion: string;
   readonly questionHash: string;
-  readonly buildA: PlaytestVersionedRef;
-  readonly buildB: PlaytestVersionedRef;
+  readonly buildA: PlaytestVersionedReference;
+  readonly buildB: PlaytestVersionedReference;
   readonly episodeA: string;
   readonly exposureAStartedAt: string;
   readonly exposureAEndedAt: string;
@@ -89,7 +93,9 @@ export interface HumanStudyPreferenceImportValidators extends Pick<
     study: HumanPlaytestStudy,
     plan: PlaytestHumanPreferencePlan
   ) => boolean;
-  /** Must prove both episode links are completed exposures for this participant. */
+  /**
+  Must prove both episode links are completed exposures for this participant.
+  */
   readonly isPreferencePairComplete: (
     study: HumanPlaytestStudy,
     participantId: string,
@@ -275,10 +281,8 @@ function validateOrderAndExposure(
   ) {
     return "invalid-exposure";
   }
-  const ordered = row.order === "A-first" ? aEnd <= bStart : bEnd <= aStart;
-  if (!ordered) return "invalid-exposure";
-  if (
-    !validators.isExposureSufficient(
+  const isOrdered = row.order === "A-first" ? aEnd <= bStart : bEnd <= aStart;
+  if (!isOrdered || !validators.isExposureSufficient(
       study,
       row.exposureAStartedAt,
       row.exposureAEndedAt
@@ -287,8 +291,7 @@ function validateOrderAndExposure(
       study,
       row.exposureBStartedAt,
       row.exposureBEndedAt
-    )
-  ) {
+    )) {
     return "invalid-exposure";
   }
   const submittedAt = parseDate(row.submittedAt);
@@ -324,8 +327,7 @@ function matchesRow(
   validators: HumanStudyPreferenceImportValidators
 ): HumanStudyPreferenceImportRejectionReason | null {
   const plan = study.preferencePlan!;
-  if (
-    !fields.studyId ||
+  if (!fields.studyId ||
     !RESPONSE_ID_PATTERN.test(fields.responseId) ||
     !fields.participantId ||
     !fields.consentVersion ||
@@ -337,11 +339,7 @@ function matchesRow(
     !fields.exposureAEndedAt ||
     !fields.exposureBStartedAt ||
     !fields.exposureBEndedAt ||
-    !fields.submittedAt
-  ) {
-    return "malformed-row";
-  }
-  if (fields.studyId !== study.studyId) return "malformed-row";
+    !fields.submittedAt || (fields.studyId !== study.studyId)) return "malformed-row";
   if (
     fields.workspaceId !== study.workspaceId ||
     !validators.isWorkspaceAllowed(study, fields.workspaceId)
@@ -367,11 +365,8 @@ function matchesRow(
   ) {
     return "wrong-build";
   }
-  if (fields.episodeA === fields.episodeB) return "invalid-episode-link";
-  if (
-    !validators.isValidEpisodeLink(study, fields.episodeA, plan.buildA) ||
-    !validators.isValidEpisodeLink(study, fields.episodeB, plan.buildB)
-  ) {
+  if ((fields.episodeA === fields.episodeB) || !validators.isValidEpisodeLink(study, fields.episodeA, plan.buildA) ||
+    !validators.isValidEpisodeLink(study, fields.episodeB, plan.buildB)) {
     return "invalid-episode-link";
   }
   if (
@@ -460,9 +455,7 @@ function parseCandidate(
           rowIndex,
           {
             responseId: rawResponseId,
-            ...(typeof row[manifest.studyIdColumn] === "string"
-              ? { studyId: row[manifest.studyIdColumn]! }
-              : {})
+            ...((typeof row[manifest.studyIdColumn] === "string") && { studyId: row[manifest.studyIdColumn]! })
           },
           "response-id-conflict",
           "Preference response ID is duplicated in the import."
@@ -554,8 +547,8 @@ function isCurrentAmendment(
 }
 
 function sameVersionedBuild(
-  left: PlaytestVersionedRef,
-  right: PlaytestVersionedRef
+  left: PlaytestVersionedReference,
+  right: PlaytestVersionedReference
 ): boolean {
   return (
     left.id === right.id &&
@@ -664,10 +657,10 @@ function partitionParticipantCandidates(
 }
 
 /**
- * Imports preference responses separately from PXI/PXI item rows. The export
- * must cite both exact, completed exposures; no outcome is inferred from a
- * single-build response or an unobserved pair.
- */
+Imports preference responses separately from PXI/PXI item rows. The export
+must cite both exact, completed exposures; no outcome is inferred from a
+single-build response or an unobserved pair.
+*/
 export function importHumanStudyPreferenceResponses(
   study: HumanPlaytestStudy,
   rows: readonly HumanStudyRawRow[],

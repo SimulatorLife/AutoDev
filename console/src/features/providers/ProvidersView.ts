@@ -18,7 +18,7 @@ import { LiveCountRefresh } from "../../components/navigation/LiveCountRefresh.t
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import {
   ControlFailureNotice,
-  type ControlFailureNoticeProps
+  type ControlFailureNoticeProps as ControlFailureNoticeProperties
 } from "../../components/status/ControlFailureNotice.ts";
 import {
   countValue,
@@ -31,7 +31,7 @@ import {
 } from "../../components/status/StatusBadge.ts";
 import {
   DataTable,
-  type DataTableProps
+  type DataTableProps as DataTableProperties
 } from "../../components/tables/DataTable.ts";
 import {
   resolveActiveTabId,
@@ -88,7 +88,9 @@ export const PROVIDERS_VIEW_TABS: readonly TabDefinition[] = [
   { id: "models", label: "Models" }
 ];
 
-/** The Models data the view renders, or why it is missing. */
+/**
+The Models data the view renders, or why it is missing.
+*/
 export type ProvidersModelsState =
   | { readonly status: "available"; readonly data: ControlApiModelsResponse }
   | { readonly status: "unavailable"; readonly message: string };
@@ -98,18 +100,20 @@ export interface ProvidersViewProps {
   readonly models: ProvidersModelsState;
   readonly modelDiscovery: ProviderModelDiscoveryState;
   /**
-   * The versions of the CLIs the Runtime found on this machine.
-   *
-   * Optional because a caller without them is a caller that has not read
-   * them: the rows then say the version was not observed, which is the
-   * truth, rather than inventing a version for the provider.
-   */
+  The versions of the CLIs the Runtime found on this machine.
+  
+  Optional because a caller without them is a caller that has not read
+  them: the rows then say the version was not observed, which is the
+  truth, rather than inventing a version for the provider.
+  */
   readonly cliVersions?: ProviderCliVersionState | undefined;
   readonly runtime?: ControlApiRuntimeResponse | undefined;
-  /** Raw `?tab=` value; unknown values fall back to the Providers tab. */
+  /**
+  Raw `?tab=` value; unknown values fall back to the Providers tab.
+  */
   readonly activeTab?: string | undefined;
   readonly controlFailed?: boolean | undefined;
-  readonly controlRefusal?: ControlFailureNoticeProps["refusal"];
+  readonly controlRefusal?: ControlFailureNoticeProperties["refusal"];
 }
 
 function RoutingPriorityPanel({
@@ -280,7 +284,7 @@ function ProvidersTab({
         // information.
         "Configured Providers"
       ),
-      React.createElement<DataTableProps<ControlApiProviderRecord>>(DataTable, {
+      React.createElement<DataTableProperties<ControlApiProviderRecord>>(DataTable, {
         data: records,
         columns: providerColumns(
           providersPath("providers"),
@@ -408,7 +412,7 @@ function ModelsTab({
           ? `Provider-reported availability is shown separately from routing assignments (${models.data.source}). A disabled model is skipped for every tier it serves.`
           : "Provider-reported model availability is shown separately from Runtime routing state."
       ),
-      React.createElement<DataTableProps<ProviderModelRow>>(DataTable, {
+      React.createElement<DataTableProperties<ProviderModelRow>>(DataTable, {
         data: modelRows,
         columns: modelColumns(providersPath("models"), runtime?.liveAgents),
         keyExtractor: (model: ProviderModelRow) =>
@@ -429,7 +433,7 @@ function ModelsTab({
             { className: SECTION_HEADING_CLASS },
             "Discovered but not routeable"
           ),
-          React.createElement<DataTableProps<UnsupportedProviderModel>>(
+          React.createElement<DataTableProperties<UnsupportedProviderModel>>(
             DataTable,
             {
               data: unsupportedModels,

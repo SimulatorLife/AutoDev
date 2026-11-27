@@ -5,8 +5,6 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { ANTIGRAVITY_PROVIDERS } from "@simulatorlife/autodev-core";
-import { ROUTES } from "@simulatorlife/autodev-runtime/router/routing";
 import { parse } from "smol-toml";
 
 import { normalizedSource } from "./source-text.ts";
@@ -60,7 +58,9 @@ function trackedRuntimeTexts(): RuntimeTexts {
       const text = readFileSync(join(REPO_ROOT, path), "utf8");
       texts[path] = path.endsWith(".ts") ? normalizedSource(text) : text;
     } catch {
-      /* deleted or binary */
+      /*
+      deleted or binary
+      */
     }
   }
   return texts;

@@ -12,12 +12,12 @@ export interface WorkspaceCatalogRead {
   readonly status: "valid" | "invalid" | "unavailable";
   readonly workspaces: readonly WorkspaceEntry[];
   /**
-   * The revision of the catalog file: the sha256 of its exact bytes, or null
-   * when the file could not be read.
-   *
-   * Optional because a stand-in catalog -- a fixture that names the workspaces
-   * it admits -- has no file behind it and no revision to publish.
-   */
+  The revision of the catalog file: the sha256 of its exact bytes, or null
+  when the file could not be read.
+  
+  Optional because a stand-in catalog -- a fixture that names the workspaces
+  it admits -- has no file behind it and no revision to publish.
+  */
   readonly revision?: string | null;
 }
 
@@ -50,33 +50,33 @@ export class ConfigRepository {
   }
 
   /**
-   * Where the canonical workspace catalog lives under this repository root.
-   *
-   * The catalog's own rules live in the module that owns them; where the file
-   * sits is this repository's decision, and a writer that has to name the file
-   * asks here rather than building the path itself.
-   */
+  Where the canonical workspace catalog lives under this repository root.
+  
+  The catalog's own rules live in the module that owns them; where the file
+  sits is this repository's decision, and a writer that has to name the file
+  asks here rather than building the path itself.
+  */
   workspaceCatalogPath(): string {
     return path.join(this.repositoryRoot, "config", "workspaces.json");
   }
 
   /**
-   * Where the canonical permission policy lives under this repository root.
-   *
-   * The policy lives in `.rulesync/permissions.jsonc` (`codexcli` section)
-   * and is composed into `$CODEX_HOME/config.toml` via RuleSync.
-   */
+  Where the canonical permission policy lives under this repository root.
+  
+  The policy lives in `.rulesync/permissions.jsonc` (`codexcli` section)
+  and is composed into `$CODEX_HOME/config.toml` via RuleSync.
+  */
   permissionPolicyPath(): string {
     return path.join(this.repositoryRoot, ".rulesync", "permissions.jsonc");
   }
 
   /**
-   * Where the role declarations live under this repository root.
-   *
-   * A role's own sandbox mode is declared in its declaration and nowhere else,
-   * so the matrix is read from here rather than from the projection that keeps
-   * only a boolean of it.
-   */
+  Where the role declarations live under this repository root.
+  
+  A role's own sandbox mode is declared in its declaration and nowhere else,
+  so the matrix is read from here rather than from the projection that keeps
+  only a boolean of it.
+  */
   agentRolesPath(): string {
     return path.join(this.repositoryRoot, "agents", "roles");
   }

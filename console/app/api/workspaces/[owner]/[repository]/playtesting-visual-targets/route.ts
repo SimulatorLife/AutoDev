@@ -1,4 +1,6 @@
-/** Server-only mutation route for Workspaces' separate visual target approval. */
+/**
+Server-only mutation route for Workspaces' separate visual target approval.
+*/
 import {
   assertWorkspaceVisualPlaytestLimits,
   WORKSPACE_VISUAL_PLAYTEST_ENTRY_REQUIREMENTS,
@@ -150,12 +152,12 @@ function parseLimits(
 }
 
 /**
- * The no-progress thresholds the operator wrote, or why there are none.
- *
- * Both fields blank means the operator wants no thresholds, so the approval
- * carries no policy of its own. One field set and the other blank is a
- * half-written threshold, and the submission is refused rather than guessed.
- */
+The no-progress thresholds the operator wrote, or why there are none.
+
+Both fields blank means the operator wants no thresholds, so the approval
+carries no policy of its own. One field set and the other blank is a
+half-written threshold, and the submission is refused rather than guessed.
+*/
 type ProgressPolicyForm =
   | { readonly kind: "none" }
   | { readonly kind: "invalid" }
@@ -188,15 +190,10 @@ function parseSubmission(
   form: URLSearchParams,
   workspaceId: string
 ): TargetSubmission | null {
-  if (
-    [...form.keys()].some((key) => !FORM_KEYS.has(key)) ||
+  if ([...form.keys()].some((key) => !FORM_KEYS.has(key)) ||
     [...new Set(form.keys())].some(
       (key) => key !== "inputCapabilities" && form.getAll(key).length !== 1
-    )
-  ) {
-    return null;
-  }
-  if (form.get("workspaceId") !== workspaceId) return null;
+    ) || (form.get("workspaceId") !== workspaceId)) return null;
   const expectedRevision = parseExpectedRevision(form.get("expectedRevision"));
   const targetId = form.get("targetId")?.trim() ?? "";
   const name = form.get("name")?.trim() ?? "";
@@ -217,8 +214,8 @@ function parseSubmission(
     additionalOrigins === null ||
     inputCapabilities === null ||
     inputCapabilities.length === 0 ||
-    !inputCapabilities.every((value) =>
-      (WORKSPACE_VISUAL_PLAYTEST_INPUTS as readonly string[]).includes(value)
+    inputCapabilities.some((value) =>
+      !(WORKSPACE_VISUAL_PLAYTEST_INPUTS as readonly string[]).includes(value)
     ) ||
     !(WORKSPACE_VISUAL_PLAYTEST_TIMING_CLASSES as readonly string[]).includes(
       controlTimingClass
@@ -318,7 +315,7 @@ export async function POST(
     {
       kind: "refused",
       refusal,
-      ...(currentTargets === undefined ? {} : { currentTargets })
+      ...(currentTargets !== undefined && { currentTargets })
     },
     responseStatus(result)
   );

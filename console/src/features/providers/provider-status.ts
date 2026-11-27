@@ -16,18 +16,18 @@ import {
 import type { ProviderQuotaExhaustion } from "./ProviderQuota.ts";
 
 /**
- * One provider's overall usability, as a single verdict.
- *
- * The target state is explicit that Status "is a single verdict, not a summary
- * of parts": `Ready` only when the provider is healthy *and* fully configured,
- * and otherwise the specific blocking state rather than a generic warning. A
- * provider whose parts are individually fine but which cannot serve a request
- * must not read Ready.
- *
- * `resolveProviderStatus` is a pure function of the provider record and an
- * optional authoritative quota verdict, so the ordering is testable without
- * rendering and the column cannot drift into showing a summary by accident.
- */
+One provider's overall usability, as a single verdict.
+
+The target state is explicit that Status "is a single verdict, not a summary
+of parts": `Ready` only when the provider is healthy *and* fully configured,
+and otherwise the specific blocking state rather than a generic warning. A
+provider whose parts are individually fine but which cannot serve a request
+must not read Ready.
+
+`resolveProviderStatus` is a pure function of the provider record and an
+optional authoritative quota verdict, so the ordering is testable without
+rendering and the column cannot drift into showing a summary by accident.
+*/
 export type ProviderVerdict =
   | "disabled"
   | "unrouted"
@@ -40,7 +40,9 @@ export type ProviderVerdict =
   | "ready";
 
 export type ProviderStatus = {
-  /** The typed verdict; consumers classify on this, never on `label`. */
+  /**
+  The typed verdict; consumers classify on this, never on `label`.
+  */
   readonly verdict: ProviderVerdict;
   readonly tone: StatusBadgeVariant;
   readonly label: string;
@@ -48,24 +50,24 @@ export type ProviderStatus = {
 };
 
 /**
- * The blocking state that stops this provider serving a request, or null when it
- * can.
- *
- * The order matters and is the whole point: an operator who fixes
- * `Missing CODEX_ROUTE` must not then be told `Missing credential` while the
- * route is still absent, so configuration is checked before credentials, and
- * credentials before live health. The most fundamental blocker is reported, not
- * the most recently discovered one.
- *
- * Runtime health remains distinct from quota: an unavailable health verdict is
- * retained, while an explicit fresh exhausted quota scope replaces `Ready` or
- * missing health evidence with a yellow, scoped UI verdict. A configured route
- * with no successful observation and no such quota verdict is `Not observed`,
- * not `Ready`. A provider whose account must be signed in again -- a web-chat
- * site signed out in the browser it is driven through -- reads `Sign-in
- * required`: it is an action for the operator, not an outage that passes by
- * itself.
- */
+The blocking state that stops this provider serving a request, or null when it
+can.
+
+The order matters and is the whole point: an operator who fixes
+`Missing CODEX_ROUTE` must not then be told `Missing credential` while the
+route is still absent, so configuration is checked before credentials, and
+credentials before live health. The most fundamental blocker is reported, not
+the most recently discovered one.
+
+Runtime health remains distinct from quota: an unavailable health verdict is
+retained, while an explicit fresh exhausted quota scope replaces `Ready` or
+missing health evidence with a yellow, scoped UI verdict. A configured route
+with no successful observation and no such quota verdict is `Not observed`,
+not `Ready`. A provider whose account must be signed in again -- a web-chat
+site signed out in the browser it is driven through -- reads `Sign-in
+required`: it is an action for the operator, not an outage that passes by
+itself.
+*/
 export function resolveProviderStatus(
   provider: ControlApiProviderRecord,
   quotaExhaustion?: ProviderQuotaExhaustion
@@ -162,20 +164,20 @@ export function resolveProviderStatus(
 }
 
 /**
- * The re-check control inside a provider's verdict.
- *
- * Every verdict carries one, not only a failing one. Routing re-probes a
- * provider when a request is about to use it, so a verdict nobody has
- * re-checked is only as current as the moment it was observed -- and it can be
- * stale in either direction. An operator who wants to know whether a provider
- * is serving now should not have to wait for it to fail first, and a provider
- * that has recovered reads `Ready` only after somebody looked at it again.
- *
- * It submits the enclosing form (`ProviderStatusBadge`), and the Console's
- * form owner marks that form `aria-busy` while the check runs -- which is what
- * swaps the refresh symbol for a spinning circle, with no client state of its
- * own. The redirected page then carries the new verdict.
- */
+The re-check control inside a provider's verdict.
+
+Every verdict carries one, not only a failing one. Routing re-probes a
+provider when a request is about to use it, so a verdict nobody has
+re-checked is only as current as the moment it was observed -- and it can be
+stale in either direction. An operator who wants to know whether a provider
+is serving now should not have to wait for it to fail first, and a provider
+that has recovered reads `Ready` only after somebody looked at it again.
+
+It submits the enclosing form (`ProviderStatusBadge`), and the Console's
+form owner marks that form `aria-busy` while the check runs -- which is what
+swaps the refresh symbol for a spinning circle, with no client state of its
+own. The redirected page then carries the new verdict.
+*/
 function ProviderCheckButton({
   provider
 }: {
@@ -207,20 +209,20 @@ function ProviderCheckButton({
 }
 
 /**
- * The Status column: one verdict per provider, never a summary of parts.
- *
- * Every verdict carries the re-check control, because every verdict is
- * evidence that was observed at some moment and can go stale. The control
- * rides inside the badge so it reads as part of the verdict it acts on, and
- * the form wraps the badge -- a form cannot sit inside the badge's inline
- * box -- and it is the form's busy state that turns the control into a
- * spinner.
- *
- * `returnTo` is required rather than optional. The check is a redirect back to
- * the page it was started from, and the Console's check route refuses a
- * submission that does not carry one, so a badge without a return path could
- * only ever render a control that fails.
- */
+The Status column: one verdict per provider, never a summary of parts.
+
+Every verdict carries the re-check control, because every verdict is
+evidence that was observed at some moment and can go stale. The control
+rides inside the badge so it reads as part of the verdict it acts on, and
+the form wraps the badge -- a form cannot sit inside the badge's inline
+box -- and it is the form's busy state that turns the control into a
+spinner.
+
+`returnTo` is required rather than optional. The check is a redirect back to
+the page it was started from, and the Console's check route refuses a
+submission that does not carry one, so a badge without a return path could
+only ever render a control that fails.
+*/
 export function ProviderStatusBadge({
   provider,
   returnTo,
@@ -247,9 +249,7 @@ export function ProviderStatusBadge({
     // "The latest provider health evidence is a failure" -- leaves the part
     // that was cut unavailable, so the verdict is named in the title and the
     // explanation follows it.
-    ...(status.title === undefined
-      ? {}
-      : { title: `${status.label} — ${status.title}` })
+    ...(status.title !== undefined && { title: `${status.label} — ${status.title}` })
   });
   return React.createElement(
     "form",
@@ -274,13 +274,13 @@ export function ProviderStatusBadge({
 }
 
 /**
- * Credential presence on its own.
- *
- * This is a detail-page fact, not a Providers column: the four-column table
- * folds credential into the Status verdict, but a provider's detail page lists
- * what is configured as separate labelled facts, where naming the exact
- * environment variable is the point. Values never reach the Console.
- */
+Credential presence on its own.
+
+This is a detail-page fact, not a Providers column: the four-column table
+folds credential into the Status verdict, but a provider's detail page lists
+what is configured as separate labelled facts, where naming the exact
+environment variable is the point. Values never reach the Console.
+*/
 export function CredentialBadge({
   credential
 }: {

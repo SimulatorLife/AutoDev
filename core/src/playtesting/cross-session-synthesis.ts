@@ -1,7 +1,7 @@
 import { isRecord } from "../shared/object-guards.ts";
 import { SHA256_PATTERN } from "../shared/sha256.ts";
 import type {
-  PlaytestCrossSessionEvidenceRef,
+  PlaytestCrossSessionEvidenceRef as PlaytestCrossSessionEvidenceReference,
   PlaytestCrossSessionMetricAggregation,
   PlaytestCrossSessionSynthesis
 } from "./artifacts.ts";
@@ -70,7 +70,7 @@ function assertEvidenceReferences(
   value: unknown,
   contributors: ReadonlyMap<string, string>,
   citedEpisodes: Set<string>
-): asserts value is readonly PlaytestCrossSessionEvidenceRef[] {
+): asserts value is readonly PlaytestCrossSessionEvidenceReference[] {
   if (
     !Array.isArray(value) ||
     value.length === 0 ||
@@ -107,9 +107,9 @@ function assertEvidenceReferences(
 }
 
 /**
- * Validate the structural invariants of a durable batch synthesis. Runtime
- * additionally verifies every locator against the exact frozen packet bytes.
- */
+Validate the structural invariants of a durable batch synthesis. Runtime
+additionally verifies every locator against the exact frozen packet bytes.
+*/
 export function assertPlaytestCrossSessionSynthesis(
   value: unknown
 ): asserts value is PlaytestCrossSessionSynthesis {
@@ -175,7 +175,9 @@ function assertSynthesisMetricAggregationSources(
   }
 }
 
-/** One-way migration for persisted v1 synthesis rows; no metric is inferred. */
+/**
+One-way migration for persisted v1 synthesis rows; no metric is inferred.
+*/
 export function migratePlaytestCrossSessionSynthesisV1(
   value: unknown
 ): PlaytestCrossSessionSynthesis {

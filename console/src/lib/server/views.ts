@@ -1,8 +1,8 @@
 /**
- * Server-side helpers that adapt Control API responses to the typed shapes
- * the existing view components expect, and that explicitly omit synthetic
- * values when the upstream has no data.
- */
+Server-side helpers that adapt Control API responses to the typed shapes
+the existing view components expect, and that explicitly omit synthetic
+values when the upstream has no data.
+*/
 
 import type {
   AgentDefinition,
@@ -25,22 +25,22 @@ import type {
 const ROLE_COLLATOR = new Intl.Collator();
 
 /**
- * Display order for the capability matrix's rows.
- *
- * The matrix sorted roles alphabetically, so it showed `orchestrator` before
- * `smart` -- an order no other role surface used. The target state fixes the
- * sequence: "the four fixed roles -- Default, Smart, Orchestrator, Subagent"
- * are "the canonical roles". Alphabetical is neither that order nor any stated
- * one, so an operator had to re-learn the sequence per page.
- *
- * The order is declared here rather than read from Core's `PROVIDER_ROLES`,
- * which models the two routing roles a *provider* can be enabled for. These
- * rows are agent roles, and `AgentRole` is an open union: a Runtime may
- * legitimately report `worker` or `explorer`. Those rank after the canonical
- * four and are ordered among themselves by the collator -- they stay visible,
- * because dropping a role the API sent would hide evidence, and they stay
- * deterministic, because an arbitrary order would churn between reads.
- */
+Display order for the capability matrix's rows.
+
+The matrix sorted roles alphabetically, so it showed `orchestrator` before
+`smart` -- an order no other role surface used. The target state fixes the
+sequence: "the four fixed roles -- Default, Smart, Orchestrator, Subagent"
+are "the canonical roles". Alphabetical is neither that order nor any stated
+one, so an operator had to re-learn the sequence per page.
+
+The order is declared here rather than read from Core's `PROVIDER_ROLES`,
+which models the two routing roles a *provider* can be enabled for. These
+rows are agent roles, and `AgentRole` is an open union: a Runtime may
+legitimately report `worker` or `explorer`. Those rank after the canonical
+four and are ordered among themselves by the collator -- they stay visible,
+because dropping a role the API sent would hide evidence, and they stay
+deterministic, because an arbitrary order would churn between reads.
+*/
 const CANONICAL_ROLE_ORDER = ["default", "smart", "orchestrator", "subagent"];
 
 const ROLE_RANK = new Map<string, number>(
@@ -90,20 +90,18 @@ export function agentFromControlApi(
     // A prompt nobody could read is not an empty prompt: the field is left off
     // rather than set to "", and the detail page says the prompt is
     // unavailable instead of showing an empty one.
-    ...(agent.systemPrompt === undefined || agent.systemPrompt === null
-      ? {}
-      : { systemPrompt: agent.systemPrompt })
+    ...(agent.systemPrompt !== undefined && agent.systemPrompt !== null && { systemPrompt: agent.systemPrompt })
   };
 }
 
 /**
- * The catalogue, with where each skill is installed.
- *
- * The scope facts travel with the skill because they are part of what the
- * skill is: a skill that is in the catalogue and installed nowhere cannot be
- * invoked by anybody, and a Console that shows it as though it were live is
- * showing a skill no role can reach.
- */
+The catalogue, with where each skill is installed.
+
+The scope facts travel with the skill because they are part of what the
+skill is: a skill that is in the catalogue and installed nowhere cannot be
+invoked by anybody, and a Console that shows it as though it were live is
+showing a skill no role can reach.
+*/
 export function skillsFromControlApi(
   response: ControlApiSkillsResponse
 ): readonly ScopedSkillDefinition[] {
@@ -120,11 +118,11 @@ export function skillsFromControlApi(
 }
 
 /**
- * The skill exposure, use and failure the Runtime has observed.
- *
- * `null` is kept apart from `0` on the way through: nothing observed for a
- * skill is not the same as observed and never used.
- */
+The skill exposure, use and failure the Runtime has observed.
+
+`null` is kept apart from `0` on the way through: nothing observed for a
+skill is not the same as observed and never used.
+*/
 export function skillTelemetryFromControlApi(
   response: ControlApiSkillsResponse
 ): {
@@ -175,13 +173,13 @@ export function unresolvedSkillAssignmentsFromControlApi(
 }
 
 /**
- * The hook events the declaration publishes.
- *
- * The Runtime publishes the target's effective declaration, so the events are
- * already the ones the target receives and each one already says where it is
- * declared. The mapping keeps the event's origin, because it decides who else
- * an edit reaches and the console has to be able to say so.
- */
+The hook events the declaration publishes.
+
+The Runtime publishes the target's effective declaration, so the events are
+already the ones the target receives and each one already says where it is
+declared. The mapping keeps the event's origin, because it decides who else
+an edit reaches and the console has to be able to say so.
+*/
 export function hooksFromControlApi(
   response: ControlApiHooksResponse
 ): readonly HookDefinition[] {
@@ -193,14 +191,14 @@ export function hooksFromControlApi(
 }
 
 /**
- * The permission policy and the effective capability matrix.
- *
- * The policy is what the canonical source states, and it may be absent: a
- * source that could not be read is a state the page renders, not a page the
- * whole Console refuses to draw. The applied policy is what the Runtime
- * applied, which is a separate fact -- a source that was written and never
- * composed is a pending change rather than a converged one.
- */
+The permission policy and the effective capability matrix.
+
+The policy is what the canonical source states, and it may be absent: a
+source that could not be read is a state the page renders, not a page the
+whole Console refuses to draw. The applied policy is what the Runtime
+applied, which is a separate fact -- a source that was written and never
+composed is a pending change rather than a converged one.
+*/
 export function permissionsFromControlApi(
   response: ControlApiPermissionsResponse
 ): {
@@ -209,19 +207,19 @@ export function permissionsFromControlApi(
   readonly policyReason: string | null;
   readonly revision: string | null;
   /**
-   * The canonical source's exact text, or null when it was not read.
-   */
+  The canonical source's exact text, or null when it was not read.
+  */
   readonly sourceText: string | null;
   readonly applied: PermissionPolicy | null;
   readonly appliedSource: string;
   readonly roleMatrices: readonly RoleCapabilityMatrix[];
   /**
-   * Whether the execution contract was read.
-   *
-   * The matrices are the contract's roles, and an unread contract falls back to
-   * an empty one, so an empty matrix set is not the same as a contract that
-   * declares no role.
-   */
+  Whether the execution contract was read.
+  
+  The matrices are the contract's roles, and an unread contract falls back to
+  an empty one, so an empty matrix set is not the same as a contract that
+  declares no role.
+  */
   readonly executionContractObserved: boolean;
 } {
   const roleMatrices: RoleCapabilityMatrix[] = Object.entries(
@@ -256,9 +254,7 @@ export function promptsFromControlApi(
       name: command.name,
       path: command.path,
       kind: "command" as const,
-      ...(command.description === undefined
-        ? {}
-        : { description: command.description })
+      ...(command.description !== undefined && { description: command.description })
     })),
     // The role prompts are a read of their own, and a read that did not happen
     // contributes no entries. The catalogue's size is not known in that case,

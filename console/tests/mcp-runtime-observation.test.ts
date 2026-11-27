@@ -6,19 +6,19 @@ import type { ControlApiMcpRuntimeResponse } from "@simulatorlife/autodev-core";
 import { fetchMcpRuntime } from "../src/lib/server/control-api.ts";
 
 /**
- * The MCP runtime observation, exactly as the Runtime publishes it.
- *
- * The Runtime does not observe the MCP client's own initialization, so it
- * publishes `null` for the two attempt counts rather than a zero: a zero
- * would claim the server was never brought up, which is a claim about a read
- * that never happens. The shared contract says so, and this fixture is typed
- * by that contract so the two cannot drift apart again.
- *
- * They had drifted. The Console's reader required a number for both fields,
- * so it rejected the Runtime's own payload, which failed the whole response,
- * and every MCP server on the page read "Not observed" while the Runtime held
- * an observation of six of them.
- */
+The MCP runtime observation, exactly as the Runtime publishes it.
+
+The Runtime does not observe the MCP client's own initialization, so it
+publishes `null` for the two attempt counts rather than a zero: a zero
+would claim the server was never brought up, which is a claim about a read
+that never happens. The shared contract says so, and this fixture is typed
+by that contract so the two cannot drift apart again.
+
+They had drifted. The Console's reader required a number for both fields,
+so it rejected the Runtime's own payload, which failed the whole response,
+and every MCP server on the page read "Not observed" while the Runtime held
+an observation of six of them.
+*/
 const RUNTIME_PUBLISHED: ControlApiMcpRuntimeResponse = {
   schema: "autodev-control-mcp-runtime-v1",
   source: "runtime.telemetry",

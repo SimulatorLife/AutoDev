@@ -13,6 +13,8 @@ import { isPathWithin } from "@simulatorlife/autodev-data/files";
 
 import type { RouterGenerationEndpoint, RouterIngress } from "./ingress.ts";
 
+const DEFAULT_WORKER_SHUTDOWN_TIMEOUT_MS = 60_000;
+
 const WORKER_ENTRY_PATTERN = /\.[cm]?[jt]s$/u;
 const GENERATION_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/u;
 const GENERATION_RETIREMENT_PATH_PATTERN =
@@ -24,9 +26,12 @@ export interface RouterIngressSupervisorOptions {
   controlToken: string;
   releasesDirectory: string;
   workerStartupTimeoutMs?: number;
+  workerShutdownTimeoutMs?: number;
 }
 
-/** Private management server; never shares the public TCP listener. */
+/**
+Private management server; never shares the public TCP listener.
+*/
 export class RouterIngressSupervisor {
   readonly controlServer: Server;
   private readonly ingress: RouterIngress;
@@ -34,7 +39,9 @@ export class RouterIngressSupervisor {
   private readonly controlToken: Buffer;
   private readonly releasesDirectory: string;
   private readonly startupTimeoutMs: number;
+  private readonly shutdownTimeoutMs: number;
   private readonly workers = new Map<string, ChildProcess>();
+  private readonly stoppingWorkers = new WeakMap<ChildProcess, Promise<void>>();
   private activationQueue: Promise<void> = Promise.resolve();
 
   constructor(options: RouterIngressSupervisorOptions) {
@@ -56,6 +63,15 @@ export class RouterIngressSupervisor {
     this.controlToken = Buffer.from(options.controlToken);
     this.releasesDirectory = options.releasesDirectory;
     this.startupTimeoutMs = options.workerStartupTimeoutMs ?? 10_000;
+    this.shutdownTimeoutMs =
+      options.workerShutdownTimeoutMs ?? DEFAULT_WORKER_SHUTDOWN_TIMEOUT_MS;
+    if (
+      !Number.isInteger(this.shutdownTimeoutMs) ||
+      this.shutdownTimeoutMs < 1 ||
+      this.shutdownTimeoutMs > 2_147_483_647
+    ) {
+      throw new Error("Invalid ingress worker shutdown timeout");
+    }
     this.controlServer = createServer((request, response) => {
       void this.handle(request, response).catch(() => {
         if (response.headersSent) {
@@ -86,31 +102,24 @@ export class RouterIngressSupervisor {
   }
 
   /**
-   * Explicit process teardown for tests and ingress shutdown. This is not
-   * called during generation cutover: retiring workers remain alive until
-   * their admitted HTTP/SSE requests have finished.
-   */
+  Explicit process teardown for tests and ingress shutdown. This is not
+  called during generation cutover: retiring workers retain their admitted
+  HTTP/SSE requests until completion or the ingress drain deadline.
+  */
   async close(): Promise<void> {
     const workers = [...this.workers.values()];
-    await Promise.all(
-      workers.map(async (child) => {
-        if (child.exitCode !== null || child.signalCode !== null) return;
-        const exited = new Promise<void>((resolve) => {
-          child.once("exit", () => resolve());
-        });
-        child.kill("SIGTERM");
-        await exited;
-      })
-    );
+    await Promise.all(workers.map((child) => this.stopWorker(child)));
     this.workers.clear();
-    if (this.controlServer.listening) {
-      this.controlServer.closeAllConnections();
-      await new Promise<void>((resolve, reject) => {
-        this.controlServer.close((error) =>
-          error ? reject(error) : resolve()
-        );
-      });
+    if (!this.controlServer.listening) {
+      return;
     }
+
+    this.controlServer.closeAllConnections();
+    await new Promise<void>((resolve, reject) => {
+      this.controlServer.close((error) =>
+        error ? reject(error) : resolve()
+      );
+    });
   }
 
   private authorized(request: IncomingMessage): boolean {
@@ -173,22 +182,22 @@ export class RouterIngressSupervisor {
     endpoint: RouterGenerationEndpoint;
   }> {
     return new Promise((resolve, reject) => {
-      const env: NodeJS.ProcessEnv = {
+      const environment: NodeJS.ProcessEnv = {
         ...process.env,
         CODEX_MODEL_ROUTER_HOST: "127.0.0.1",
         CODEX_MODEL_ROUTER_PORT: "0",
         AUTODEV_CONTROL_API_DISABLED: "1",
         AUTODEV_ROUTER_WORKER_GENERATION: id
       };
-      delete env.AUTODEV_ROUTER_INGRESS_CONTROL_TOKEN;
+      delete environment.AUTODEV_ROUTER_INGRESS_CONTROL_TOKEN;
       const child = spawn(process.execPath, [entry], {
-        env,
+        env: environment,
         stdio: ["ignore", "inherit", "inherit", "ipc"]
       });
-      let settled = false;
+      let isSettled = false;
       const finish = (error?: Error, port?: number) => {
-        if (settled) return;
-        settled = true;
+        if (isSettled) return;
+        isSettled = true;
         clearTimeout(timer);
         child.off("error", onError);
         child.off("exit", onExit);
@@ -227,7 +236,9 @@ export class RouterIngressSupervisor {
     });
   }
 
-  /** Spawn + readiness check + atomic cutover; old streams retain their worker. */
+  /**
+  Spawn + readiness check + atomic cutover; old streams retain their worker.
+  */
   activate(
     id: string,
     entry: string
@@ -264,11 +275,32 @@ export class RouterIngressSupervisor {
     return operation;
   }
 
+  private stopWorker(child: ChildProcess): Promise<void> {
+    const existing = this.stoppingWorkers.get(child);
+    if (existing) return existing;
+    if (child.exitCode !== null || child.signalCode !== null)
+      return Promise.resolve();
+
+    const stopped = new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        child.kill("SIGKILL");
+      }, this.shutdownTimeoutMs);
+      timer.unref();
+      child.once("exit", () => {
+        clearTimeout(timer);
+        resolve();
+      });
+      // Give the worker its normal graceful shutdown before escalation.
+      child.kill("SIGTERM");
+    });
+    this.stoppingWorkers.set(child, stopped);
+    return stopped;
+  }
+
   private async retire(id: string): Promise<void> {
     await this.ingress.waitForRetirement(id);
     const worker = this.workers.get(id);
-    // Retirement is safe only after the last HTTP/SSE response finishes.
-    if (worker && worker.exitCode === null) worker.kill("SIGTERM");
+    if (worker) await this.stopWorker(worker);
     this.workers.delete(id);
   }
 
@@ -293,7 +325,9 @@ export class RouterIngressSupervisor {
       if (generation) {
         this.json(
           response,
-          generation.state === "retired" ? 200 : 202,
+          generation.state === "retired" && !this.workers.has(generation.id)
+            ? 200
+            : 202,
           generation
         );
       } else {

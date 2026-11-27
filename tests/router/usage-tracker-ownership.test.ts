@@ -9,21 +9,21 @@ import {
 } from "@simulatorlife/autodev-runtime/router/usage";
 
 /**
- * `UsageTracker`'s attribution diagnostics belong to `UsageTracker`.
- *
- * The counters are a state machine: one observation increments `total`, then
- * exactly one of `attributed`/`unattributed`, and an observation that was not
- * attributed also increments exactly one `byReason` entry. Two router modules
- * were performing that transition by hand -- four levels down into
- * `usageTracker.attributionDiagnostics.total` and `.byReason.<key>` -- while
- * the tracker already exposed it as `recordAttributionDiagnostic`.
- *
- * The result was two sources of truth for one invariant, in the one place a
- * partial re-implementation is invisible until a counter disagrees: a caller
- * that forgot the `total += 1`, or added an id to `byReason` under `attributed`,
- * would produce a status the router never rejected. These tests pin the
- * ownership so the counters are only reachable through the owner.
- */
+`UsageTracker`'s attribution diagnostics belong to `UsageTracker`.
+
+The counters are a state machine: one observation increments `total`, then
+exactly one of `attributed`/`unattributed`, and an observation that was not
+attributed also increments exactly one `byReason` entry. Two router modules
+were performing that transition by hand -- four levels down into
+`usageTracker.attributionDiagnostics.total` and `.byReason.<key>` -- while
+the tracker already exposed it as `recordAttributionDiagnostic`.
+
+The result was two sources of truth for one invariant, in the one place a
+partial re-implementation is invisible until a counter disagrees: a caller
+that forgot the `total += 1`, or added an id to `byReason` under `attributed`,
+would produce a status the router never rejected. These tests pin the
+ownership so the counters are only reachable through the owner.
+*/
 
 const routerRoot = path.join(
   import.meta.dirname,
@@ -34,7 +34,9 @@ const routerRoot = path.join(
   "router"
 );
 
-/** Walk the router tree so a module added after this test is policed too. */
+/**
+Walk the router tree so a module added after this test is policed too.
+*/
 function routerModules(directory: string): string[] {
   const found: string[] = [];
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -153,7 +155,7 @@ test("the remembered-id ring stays bounded and drops the oldest first", () => {
   };
 
   unknownId("oldest");
-  for (let i = 0; i < MAX_UNKNOWN_WORKSPACE_IDS; i++) unknownId(`ws-${i}`);
+  for (let index = 0; index < MAX_UNKNOWN_WORKSPACE_IDS; index++) unknownId(`ws-${index}`);
 
   const ids = tracker.attributionDiagnosticsStatus().unknownWorkspaceIds;
   assert.equal(ids.length, MAX_UNKNOWN_WORKSPACE_IDS);

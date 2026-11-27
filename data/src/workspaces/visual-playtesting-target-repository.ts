@@ -1,4 +1,6 @@
-/** Workspaces-owned local persistence for separately approved visual targets. */
+/**
+Workspaces-owned local persistence for separately approved visual targets.
+*/
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -102,10 +104,10 @@ function ensureTargetDirectory(
 }
 
 /**
- * The repository stores one current approval per `(workspaceId, targetId)`.
- * Both path segments are SHA-256 keys, never operator-controlled names. Files
- * remain local to Workspaces and are not committed with a game repository.
- */
+The repository stores one current approval per `(workspaceId, targetId)`.
+Both path segments are SHA-256 keys, never operator-controlled names. Files
+remain local to Workspaces and are not committed with a game repository.
+*/
 export class WorkspaceVisualPlaytestTargetRepository {
   private readonly root: string;
 

@@ -10,7 +10,7 @@ async function withSearchRoute(
   readonly response: Response;
   readonly requests: readonly string[];
 }> {
-  const previousFetch = globalThis.fetch;
+  const previousFetch = fetch;
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   const previousBase = process.env.AUTODEV_CONTROL_API_BASE_URL;
   const previousHome = process.env.HOME;
@@ -84,13 +84,13 @@ test("console search API reports total source and configuration failure", async 
     "workspaces"
   ]);
 
-  const missingConfiguration = await withSearchRoute(null, () => {
+  const missingConfig = await withSearchRoute(null, () => {
     throw new Error("configuration must prevent a request");
   });
-  assert.equal(missingConfiguration.response.status, 503);
+  assert.equal(missingConfig.response.status, 503);
   assert.deepEqual(
-    (await missingConfiguration.response.json()).unavailableSources,
+    (await missingConfig.response.json()).unavailableSources,
     ["configuration", "providers", "models", "agentRoles", "workspaces"]
   );
-  assert.deepEqual(missingConfiguration.requests, []);
+  assert.deepEqual(missingConfig.requests, []);
 });

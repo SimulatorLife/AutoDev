@@ -9,6 +9,7 @@ import {
   type ServerResponse
 } from "node:http";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 
 import {
   type RouterGenerationEndpoint,
@@ -67,6 +68,9 @@ async function worker(
       response.write(JSON.stringify(request.headers));
       response.addTrailers({ "X-Worker-Trailer": "private" });
       response.end();
+      return;
+    }
+    if (request.url === "/stall") {
       return;
     }
     if (request.url === "/stream") {
@@ -199,6 +203,135 @@ test("cutover preserves established SSE and waits for safe retirement", async ()
       close(previous.server),
       close(successor.server)
     ]);
+  }
+});
+
+test("retirement deadline aborts only the predecessor's admitted requests", { timeout: 10_000 }, async () => {
+  const events: RouterIngressEvent[] = [];
+  const ingress = new RouterIngress({
+    retirementDrainTimeoutMs: 500,
+    onEvent: (event) => events.push(event)
+  });
+  const previous = await worker("previous");
+  const successor = await worker("successor");
+  try {
+    await ingress.listen(0, "127.0.0.1");
+    const address = ingress.server.address();
+    assert.ok(address && typeof address !== "string");
+    const base = "http://127.0.0.1:" + address.port;
+    await ingress.activateGeneration(previous.endpoint);
+
+    const stream = await fetch(base + "/stream");
+    const reader = stream.body!.getReader();
+    assert.match(
+      new TextDecoder().decode((await reader.read()).value),
+      /previous-first/
+    );
+    const streamAborted = assert.rejects(reader.read());
+    const stallAdmitted = new Promise<void>((resolve) => {
+      previous.server.once("request", () => resolve());
+    });
+    const stallAborted = assert.rejects(
+      fetch(base + "/stall", { method: "POST" })
+    );
+    await stallAdmitted;
+
+    await ingress.activateGeneration(successor.endpoint);
+    assert.deepEqual(ingress.getStatus().generations[0], {
+      id: "previous",
+      state: "retiring",
+      inFlight: 2
+    });
+    const next = await fetch(base + "/stream");
+    const nextReader = next.body!.getReader();
+    assert.match(
+      new TextDecoder().decode((await nextReader.read()).value),
+      /successor-first/
+    );
+
+    await ingress.waitForRetirement("previous");
+    await Promise.all([streamAborted, stallAborted]);
+    assert.deepEqual(ingress.getStatus().generations, [
+      { id: "previous", state: "retired", inFlight: 0 },
+      { id: "successor", state: "active", inFlight: 1 }
+    ]);
+    assert.deepEqual(
+      events.filter((event) => event.generationId === "previous"),
+      [
+        { phase: "generation_activated", generationId: "previous" },
+        {
+          phase: "generation_drain_deadline_expired",
+          generationId: "previous",
+          inFlight: 2
+        },
+        { phase: "generation_retired", generationId: "previous" }
+      ]
+    );
+    successor.finishStreams();
+    assert.match(
+      new TextDecoder().decode((await nextReader.read()).value),
+      /successor-done/
+    );
+    assert.equal((await nextReader.read()).done, true);
+    assert.equal(await (await fetch(base)).text(), "successor");
+  } finally {
+    await Promise.all([
+      close(ingress.server),
+      close(previous.server),
+      close(successor.server)
+    ]);
+  }
+});
+
+test("a drained generation clears its deadline and never aborts the successor", { timeout: 10_000 }, async () => {
+  const events: RouterIngressEvent[] = [];
+  const ingress = new RouterIngress({
+    retirementDrainTimeoutMs: 500,
+    onEvent: (event) => events.push(event)
+  });
+  const previous = await worker("previous");
+  const successor = await worker("successor");
+  try {
+    await ingress.listen(0, "127.0.0.1");
+    const address = ingress.server.address();
+    assert.ok(address && typeof address !== "string");
+    const base = "http://127.0.0.1:" + address.port;
+    await ingress.activateGeneration(previous.endpoint);
+    const stream = await fetch(base + "/stream");
+    const reader = stream.body!.getReader();
+    await reader.read();
+    await ingress.activateGeneration(successor.endpoint);
+    previous.finishStreams();
+    assert.match(
+      new TextDecoder().decode((await reader.read()).value),
+      /previous-done/
+    );
+    assert.equal((await reader.read()).done, true);
+    await ingress.waitForRetirement("previous");
+    await delay(550);
+    assert.equal(
+      events.filter((event) => event.phase === "generation_retired").length,
+      1
+    );
+    assert.ok(
+      events.every((event) => event.phase !== "generation_drain_deadline_expired")
+    );
+    assert.equal(await (await fetch(base)).text(), "successor");
+  } finally {
+    await Promise.all([
+      close(ingress.server),
+      close(previous.server),
+      close(successor.server)
+    ]);
+  }
+});
+
+test("ingress rejects invalid retirement deadlines", () => {
+  for (const retirementDrainTimeoutMs of [0, -1, 1.5, NaN, Infinity, 2_147_483_648]) {
+    assert.throws(
+      () => new RouterIngress({ retirementDrainTimeoutMs }),
+      /Invalid ingress retirement drain timeout/
+    );
   }
 });
 

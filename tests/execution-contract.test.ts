@@ -22,7 +22,7 @@ void test("isReadOnlyRole: reports read-only capability per contract role", () =
 });
 
 void test("unknown, empty, or null roles fail closed (read-only and no writable fallback)", () => {
-  for (const invalid of [null, undefined, "", "   ", "nonexistent-role"]) {
+  for (const invalid of [null, undefined, "", ' '.repeat(3), "nonexistent-role"]) {
     assert.equal(isReadOnlyRole(invalid), true);
     assert.equal(hasRoleContract(invalid), false);
     assert.equal(findRoleContract(invalid), null);

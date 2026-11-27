@@ -130,7 +130,7 @@ function report(
     workspaceId,
     outcome,
     changes,
-    ...(reason === undefined ? {} : { reason })
+    ...(reason !== undefined && { reason })
   });
 }
 
@@ -520,7 +520,9 @@ function stringArray(value: unknown, field: string): readonly string[] {
   return value.map((item) => (item as string).trim());
 }
 
-/** Handle the Workspaces-owned exact approval and revocation routes. */
+/**
+Handle the Workspaces-owned exact approval and revocation routes.
+*/
 export async function handleWorkspacePlaytestingApprovalRequest(
   request: IncomingMessage,
   response: ServerResponse,

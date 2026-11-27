@@ -1,12 +1,12 @@
 /**
- * Safe, game-neutral contracts for rendered-UI observations and discrete input.
- *
- * Visual evidence carries only a bounded still-frame reference and visible
- * semantic controls; it never carries page HTML, form values, or selectors.
- * Runtime must build each observation from a fresh browser read, redact before
- * persistence/model exposure, and resolve semantic control IDs again at the
- * input boundary.
- */
+Safe, game-neutral contracts for rendered-UI observations and discrete input.
+
+Visual evidence carries only a bounded still-frame reference and visible
+semantic controls; it never carries page HTML, form values, or selectors.
+Runtime must build each observation from a fresh browser read, redact before
+persistence/model exposure, and resolve semantic control IDs again at the
+input boundary.
+*/
 import { isRecord } from "../shared/object-guards.ts";
 import { SHA256_PATTERN } from "../shared/sha256.ts";
 import {
@@ -88,11 +88,15 @@ export interface PlaytestVisualBounds {
   readonly height: number;
 }
 
-/** A sanitized control currently visible to the player. */
+/**
+A sanitized control currently visible to the player.
+*/
 export interface PlaytestVisualControl {
   readonly controlId: string;
   readonly role: PlaytestVisualControlRole;
-  /** Accessible name after Runtime redaction; never a raw value or selector. */
+  /**
+  Accessible name after Runtime redaction; never a raw value or selector.
+  */
   readonly name: string;
   readonly enabled: boolean;
   readonly focused: boolean;
@@ -106,12 +110,16 @@ export interface PlaytestVisualObservation {
   readonly workspaceId: string;
   readonly targetId: string;
   readonly episodeId: string;
-  /** Origin only: paths, query values, and fragments are intentionally absent. */
+  /**
+  Origin only: paths, query values, and fragments are intentionally absent.
+  */
   readonly origin: string;
   readonly capturedAt: string;
   readonly viewport: PlaytestVisualViewport;
   readonly frame: PlaytestArtifactReference;
-  /** Runtime records whether any image/visible text was redacted before storage. */
+  /**
+  Runtime records whether any image/visible text was redacted before storage.
+  */
   readonly privacyState: "clear" | "redacted";
   readonly controls: readonly PlaytestVisualControl[];
   readonly visibleWarnings: readonly string[];
@@ -124,7 +132,9 @@ interface PlaytestVisualActionBase {
   readonly workspaceId: string;
   readonly targetId: string;
   readonly episodeId: string;
-  /** Every action is admitted against the exact fresh observation it cites. */
+  /**
+  Every action is admitted against the exact fresh observation it cites.
+  */
   readonly observationId: string;
 }
 
@@ -149,20 +159,20 @@ export type PlaytestVisualAction =
     });
 
 /**
- * The refusal that says the observation no longer describes the page.
- *
- * The observation aged out, or the page moved under it: the origin, the
- * viewport, the frame or the session is not the one the decision was taken
- * from.
- */
+The refusal that says the observation no longer describes the page.
+
+The observation aged out, or the page moved under it: the origin, the
+viewport, the frame or the session is not the one the decision was taken
+from.
+*/
 export const PLAYTESTS_STALE_OBSERVATION_REFUSAL = "stale-observation" as const;
 
 /**
- * The refusal that says the page no longer offers the control the
- * observation promised.
- *
- * The control is gone, disabled, or no longer the same control.
- */
+The refusal that says the page no longer offers the control the
+observation promised.
+
+The control is gone, disabled, or no longer the same control.
+*/
 export const PLAYTESTS_CONTROL_CHANGED_REFUSAL = "control-changed" as const;
 
 export type PlaytestVisualActionAdmissionReason =
@@ -188,15 +198,15 @@ export type PlaytestVisualActionAdmission =
     };
 
 /**
- * Why the Runtime refused to dispatch an action.
- *
- * The admission rules above answer for the action that was asked for, and the
- * browser driver answers for the game as it is now: the control is gone, the
- * page needs setup before it can be played, the screen holds something the
- * Runtime cannot redact, or the episode has spent a budget. Both owners share
- * one vocabulary, because the episode's next move depends on which of these
- * it is.
- */
+Why the Runtime refused to dispatch an action.
+
+The admission rules above answer for the action that was asked for, and the
+browser driver answers for the game as it is now: the control is gone, the
+page needs setup before it can be played, the screen holds something the
+Runtime cannot redact, or the episode has spent a budget. Both owners share
+one vocabulary, because the episode's next move depends on which of these
+it is.
+*/
 export type PlaytestVisualActionRefusalReason =
   | PlaytestVisualActionAdmissionReason
   | "auth-or-setup-required"
@@ -208,19 +218,19 @@ export type PlaytestVisualActionRefusalReason =
   | "event-budget-exhausted";
 
 /**
- * Whether a refusal says the page moved under the observation.
- *
- * Two owners answer with a refusal: the admission rules above, and the
- * browser driver, which refuses a control that the page no longer offers as
- * the observation promised. Both say the same thing about the episode -- the
- * thing the policy looked at is not what the page offers now -- and both are
- * answered by looking again: the control may still be there, somewhere else,
- * or in a different state.
- *
- * Every other refusal is terminal. A refusal that says the action was not
- * allowed, that the game needs setup, or that the episode is out of budget
- * does not change because the page was read again.
- */
+Whether a refusal says the page moved under the observation.
+
+Two owners answer with a refusal: the admission rules above, and the
+browser driver, which refuses a control that the page no longer offers as
+the observation promised. Both say the same thing about the episode -- the
+thing the policy looked at is not what the page offers now -- and both are
+answered by looking again: the control may still be there, somewhere else,
+or in a different state.
+
+Every other refusal is terminal. A refusal that says the action was not
+allowed, that the game needs setup, or that the episode is out of budget
+does not change because the page was read again.
+*/
 export function playtestActionRefusalMeansPageMoved(
   reason: PlaytestVisualActionRefusalReason
 ): boolean {
@@ -360,7 +370,9 @@ function assertVisualControl(
   }
 }
 
-/** Validate a player-visible observation before storage or model exposure. */
+/**
+Validate a player-visible observation before storage or model exposure.
+*/
 export function assertPlaytestVisualObservation(
   value: unknown,
   target: WorkspaceVisualPlaytestTargetApproval
@@ -408,7 +420,7 @@ export function assertPlaytestVisualObservation(
     value.controls.length > 256 ||
     !Array.isArray(value.visibleWarnings) ||
     value.visibleWarnings.length > 64 ||
-    !value.visibleWarnings.every((warning) => isText(warning, 256)) ||
+    value.visibleWarnings.some((warning) => !isText(warning, 256)) ||
     (value.phaseEvidence !== null && !isText(value.phaseEvidence, 512)) ||
     (value.progressEvidence !== null && !isText(value.progressEvidence, 512))
   ) {
@@ -432,7 +444,9 @@ export function assertPlaytestVisualObservation(
   }
 }
 
-/** Validate one bounded, non-text-entry visual action. */
+/**
+Validate one bounded, non-text-entry visual action.
+*/
 export function assertPlaytestVisualAction(
   value: unknown
 ): asserts value is PlaytestVisualAction {
@@ -537,13 +551,19 @@ export interface PlaytestVisualActionAdmissionInput {
   readonly target: WorkspaceVisualPlaytestTargetApproval;
   readonly observation: PlaytestVisualObservation;
   readonly action: PlaytestVisualAction;
-  /** Actual driver support; grants alone must never imply a tool is installed. */
+  /**
+  Actual driver support; grants alone must never imply a tool is installed.
+  */
   readonly runtimeSupportedInputs: readonly WorkspaceVisualPlaytestInput[];
-  /** The live page facts re-read immediately before dispatch. */
+  /**
+  The live page facts re-read immediately before dispatch.
+  */
   readonly currentOrigin: string;
   readonly currentViewport: PlaytestVisualViewport;
   readonly nowMs: number;
-  /** Set from a measured workload-specific freshness budget; no magic default. */
+  /**
+  Set from a measured workload-specific freshness budget; no magic default.
+  */
   readonly maxObservationAgeMs: number;
 }
 
@@ -572,7 +592,9 @@ function controlAt(
   );
 }
 
-/** Deterministic permission/freshness gate immediately before browser input. */
+/**
+Deterministic permission/freshness gate immediately before browser input.
+*/
 export function admitPlaytestVisualAction(
   input: PlaytestVisualActionAdmissionInput
 ): PlaytestVisualActionAdmission {
@@ -622,7 +644,9 @@ function assertValidRuntimeInputCapabilities(
   }
 }
 
-/** Target, session, origin, freshness and viewport gates, in admission order. */
+/**
+Target, session, origin, freshness and viewport gates, in admission order.
+*/
 function targetGateReason(
   input: PlaytestVisualActionAdmissionInput
 ): PlaytestVisualActionAdmissionReason | null {
@@ -663,7 +687,9 @@ function targetGateReason(
   return null;
 }
 
-/** Granted-input gates: the target grant first, then the live driver support. */
+/**
+Granted-input gates: the target grant first, then the live driver support.
+*/
 function inputCapabilityReason(
   input: PlaytestVisualActionAdmissionInput
 ): PlaytestVisualActionAdmissionReason | null {
@@ -677,7 +703,9 @@ function inputCapabilityReason(
   return null;
 }
 
-/** Action-kind gates; each kind owns its own control, frame and focus checks. */
+/**
+Action-kind gates; each kind owns its own control, frame and focus checks.
+*/
 function actionKindReason(
   action: PlaytestVisualAction,
   observation: PlaytestVisualObservation
@@ -750,7 +778,9 @@ function keyPressReason(
   return null;
 }
 
-/** The input device each action kind needs, so grants can name one. */
+/**
+The input device each action kind needs, so grants can name one.
+*/
 const ACTION_INPUT_BY_KIND: Readonly<
   Record<PlaytestVisualAction["kind"], "keyboard" | "pointer" | "gamepad">
 > = {

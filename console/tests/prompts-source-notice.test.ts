@@ -15,17 +15,17 @@ import {
 import { PromptsView } from "../src/features/prompts/PromptsView.ts";
 
 /**
- * The command-source notice on `/prompts` carried its class as the literal
- * string `` "`${CALLOUT_ERROR_CLASS} mb-3`" `` -- a template literal wrapped in
- * plain quotes -- and the two constants were never imported at all. The element
- * still rendered its text and its `role`, so the page looked functional; it just
- * carried `class="${CALLOUT_ERROR_CLASS} mb-3"` instead of a toned callout,
- * where every other failure state on the Console is one.
- *
- * Nothing caught it because the branch only runs when `commandSourceValidity`
- * is `false` or `null`, and the page is normally valid. These force both
- * degraded states, which is the only way the class can be observed at all.
- */
+The command-source notice on `/prompts` carried its class as the literal
+string `` "`${CALLOUT_ERROR_CLASS} mb-3`" `` -- a template literal wrapped in
+plain quotes -- and the two constants were never imported at all. The element
+still rendered its text and its `role`, so the page looked functional; it just
+carried `class="${CALLOUT_ERROR_CLASS} mb-3"` instead of a toned callout,
+where every other failure state on the Console is one.
+
+Nothing caught it because the branch only runs when `commandSourceValidity`
+is `false` or `null`, and the page is normally valid. These force both
+degraded states, which is the only way the class can be observed at all.
+*/
 
 const ISSUE: RuleSyncValidationIssue = {
   location: ".rulesync/commands/broken.md",

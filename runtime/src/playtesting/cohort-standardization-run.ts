@@ -1,45 +1,45 @@
 /**
- * Cohort mix-shift standardization over real runs (§10/§11).
- *
- * `standardizePlaytestCohortRates` is a complete Core policy with no executor:
- * the benchmark's frozen `cohortWeights` exist to drive a mix-shift gate, and
- * nothing in Runtime or Console ever fed the standardizer the per-cohort
- * observations that gate needs. This module is that path.
- *
- * Three rules decide the shape of the whole thing, and all three came from
- * reading the Core validator rather than assuming it.
- *
- * 1. It is a *comparison*. `assertPlaytestCohortStandardizationInput` rejects
- *    fewer than two builds -- "for a changing cohort-mix gate" -- because one
- *    build has no mix to have shifted. The measurement contract's own worked
- *    example (§10) tabulates builds A/B/C, and §11 names "three-build changing
- *    cohort mix" as a required fixture. So this module takes runs and keys the
- *    builds it produces by `batch.buildSha`.
- *
- * 2. Every build must declare *exactly* the benchmark's cohort keys. Core
- *    throws on a missing weighted cohort and on an undeclared extra. The
- *    tempting way to make a run fit is to fill absent cohorts with
- *    `{ numerator: 0, denominator: 0, missing: 0 }`.
- *
- * 3. That filling is a lie, and it is a lie the output would repeat. A zero
- *    denominator is the report "we looked and observed nothing", while an
- *    absent cohort is "we never looked". The vocabulary even names the
- *    difference -- `"unknown-no-observation"` sits in both state lists -- but
- *    no code path emits it, because the validator makes it unreachable. So
- *    this module refuses instead, naming the offending build and cohorts, and
- *    leaves the vocabulary defect recorded in the plan rather than papering
- *    over it with zeros.
- *
- * A refusal the caller can report is the product; a `TypeError` escaping from
- * a deep assertion is not. So every way Core would throw -- a cohort-set
- * mismatch in either direction, too few distinct builds -- is turned into a
- * named refusal here rather than propagated as an exception.
- *
- * Runs that share a `buildSha` are aggregated into one build rather than
- * rejected: `numerator`/`denominator`/`missing` are additive counts, and two
- * batches of the same build measured across separate runs is ordinary
- * operation, not a malformed input.
- */
+Cohort mix-shift standardization over real runs (§10/§11).
+
+`standardizePlaytestCohortRates` is a complete Core policy with no executor:
+the benchmark's frozen `cohortWeights` exist to drive a mix-shift gate, and
+nothing in Runtime or Console ever fed the standardizer the per-cohort
+observations that gate needs. This module is that path.
+
+Three rules decide the shape of the whole thing, and all three came from
+reading the Core validator rather than assuming it.
+
+1. It is a *comparison*. `assertPlaytestCohortStandardizationInput` rejects
+   fewer than two builds -- "for a changing cohort-mix gate" -- because one
+   build has no mix to have shifted. The measurement contract's own worked
+   example (§10) tabulates builds A/B/C, and §11 names "three-build changing
+   cohort mix" as a required fixture. So this module takes runs and keys the
+   builds it produces by `batch.buildSha`.
+
+2. Every build must declare *exactly* the benchmark's cohort keys. Core
+   throws on a missing weighted cohort and on an undeclared extra. The
+   tempting way to make a run fit is to fill absent cohorts with
+   `{ numerator: 0, denominator: 0, missing: 0 }`.
+
+3. That filling is a lie, and it is a lie the output would repeat. A zero
+   denominator is the report "we looked and observed nothing", while an
+   absent cohort is "we never looked". The vocabulary even names the
+   difference -- `"unknown-no-observation"` sits in both state lists -- but
+   no code path emits it, because the validator makes it unreachable. So
+   this module refuses instead, naming the offending build and cohorts, and
+   leaves the vocabulary defect recorded in the plan rather than papering
+   over it with zeros.
+
+A refusal the caller can report is the product; a `TypeError` escaping from
+a deep assertion is not. So every way Core would throw -- a cohort-set
+mismatch in either direction, too few distinct builds -- is turned into a
+named refusal here rather than propagated as an exception.
+
+Runs that share a `buildSha` are aggregated into one build rather than
+rejected: `numerator`/`denominator`/`missing` are additive counts, and two
+batches of the same build measured across separate runs is ordinary
+operation, not a malformed input.
+*/
 import {
   assertPlaytestAdapterEpisode,
   type PlaytestAdapterBatch,
@@ -54,17 +54,23 @@ import {
 interface DerivePlaytestCohortObservationsInput {
   readonly episodes: readonly PlaytestEpisode[];
   readonly metricId: string;
-  /** Metric version the rows must match, so a renamed metric cannot mix. */
+  /**
+  Metric version the rows must match, so a renamed metric cannot mix.
+  */
   readonly metricVersion?: number | string | undefined;
 }
 
 interface DerivePlaytestCohortObservationsResult {
-  /** Keyed by the episode's `policyCohort`; absent when never observed. */
+  /**
+  Keyed by the episode's `policyCohort`; absent when never observed.
+  */
   readonly cohortObservations: Readonly<
     Record<string, PlaytestCohortObservation>
   >;
   readonly contributingEpisodes: number;
-  /** Metric rows that were not part of this aggregation. */
+  /**
+  Metric rows that were not part of this aggregation.
+  */
   readonly skippedRows: number;
 }
 
@@ -75,14 +81,14 @@ interface Accumulator {
 }
 
 /**
- * Sum each episode's metric row into its cohort.
- *
- * `numerator`, `denominator` and `missing` come straight off
- * `PlaytestNumericResult`, so this aggregates recorded counts rather than
- * re-deriving a rate from estimates. No rate is computed here: a cohort with
- * no eligible opportunity stays a zero denominator, and the standardizer owns
- * the state that reports.
- */
+Sum each episode's metric row into its cohort.
+
+`numerator`, `denominator` and `missing` come straight off
+`PlaytestNumericResult`, so this aggregates recorded counts rather than
+re-deriving a rate from estimates. No rate is computed here: a cohort with
+no eligible opportunity stays a zero denominator, and the standardizer owns
+the state that reports.
+*/
 function derivePlaytestCohortObservations(
   input: DerivePlaytestCohortObservationsInput
 ): DerivePlaytestCohortObservationsResult {
@@ -136,10 +142,14 @@ function derivePlaytestCohortObservations(
   };
 }
 
-/** Pseudo-build id used when a refusal is about the run set, not one build. */
+/**
+Pseudo-build id used when a refusal is about the run set, not one build.
+*/
 export const RUN_SET_BUILD_ID = "__runs__";
 
-/** One measured run: the batch that scoped it and the episodes it recorded. */
+/**
+One measured run: the batch that scoped it and the episodes it recorded.
+*/
 interface PlaytestCohortRunInput {
   readonly batch: PlaytestAdapterBatch;
   readonly episodes: readonly PlaytestEpisode[];
@@ -147,58 +157,72 @@ interface PlaytestCohortRunInput {
 
 export interface StandardizePlaytestCohortsInput {
   readonly benchmark: PlaytestBenchmark;
-  /** At least two runs must resolve to distinct builds; see rule 1. */
+  /**
+  At least two runs must resolve to distinct builds; see rule 1.
+  */
   readonly runs: readonly PlaytestCohortRunInput[];
   readonly metricId: string;
   readonly metricVersion?: number | string | undefined;
 }
 
-/** Why a build could not enter the comparison. */
+/**
+Why a build could not enter the comparison.
+*/
 type PlaytestCohortRefusalReason =
   "cohort-set-mismatch" | "insufficient-builds";
 
 interface PlaytestCohortBuildRefusal {
   /**
-   * `buildSha` for a cohort-set mismatch; the literal `"__runs__"` for a gate
-   * that never had enough distinct builds to compare, where naming one build
-   * would imply the other runs were fine.
-   */
+  `buildSha` for a cohort-set mismatch; the literal `"__runs__"` for a gate
+  that never had enough distinct builds to compare, where naming one build
+  would imply the other runs were fine.
+  */
   readonly buildId: string;
   readonly reason: PlaytestCohortRefusalReason;
-  /** Cohorts the benchmark weights but this build never observed. */
+  /**
+  Cohorts the benchmark weights but this build never observed.
+  */
   readonly unobservedCohorts: readonly string[];
-  /** Cohorts this build observed that the benchmark does not weight. */
+  /**
+  Cohorts this build observed that the benchmark does not weight.
+  */
   readonly unweightedCohorts: readonly string[];
 }
 
 export interface PlaytestCohortsStandardizationOutcome {
-  /** Null whenever any refusal was recorded; see the module comment. */
+  /**
+  Null whenever any refusal was recorded; see the module comment.
+  */
   readonly result: PlaytestCohortStandardizationResult | null;
-  /** Per-build observations, so a refusal still shows what was measured. */
+  /**
+  Per-build observations, so a refusal still shows what was measured.
+  */
   readonly buildObservations: Readonly<
     Record<string, Readonly<Record<string, PlaytestCohortObservation>>>
   >;
-  /** Episodes that contributed a matching metric row, per build. */
+  /**
+  Episodes that contributed a matching metric row, per build.
+  */
   readonly contributingEpisodesByBuild: Readonly<Record<string, number>>;
   /**
-   * Metric rows that were present but not aggregated, per build -- other
-   * metrics, other metric versions. Surfaced so a reader can tell "the run
-   * recorded nothing for this metric" from "the run recorded rows and some did
-   * not apply", which are very different statements about coverage.
-   */
+  Metric rows that were present but not aggregated, per build -- other
+  metrics, other metric versions. Surfaced so a reader can tell "the run
+  recorded nothing for this metric" from "the run recorded rows and some did
+  not apply", which are very different statements about coverage.
+  */
   readonly skippedRowsByBuild: Readonly<Record<string, number>>;
   readonly refusals: readonly PlaytestCohortBuildRefusal[];
 }
 
 /**
- * Standardize a cohort mix across runs against the approved benchmark.
- *
- * Returns a refusal rather than a padded or partial result whenever the
- * observed cohorts and the benchmark's weighted cohorts disagree, or when
- * fewer than two distinct builds were supplied. Observations are returned
- * either way, so a caller can see exactly what the gate would have judged and
- * which build stopped it.
- */
+Standardize a cohort mix across runs against the approved benchmark.
+
+Returns a refusal rather than a padded or partial result whenever the
+observed cohorts and the benchmark's weighted cohorts disagree, or when
+fewer than two distinct builds were supplied. Observations are returned
+either way, so a caller can see exactly what the gate would have judged and
+which build stopped it.
+*/
 export function standardizePlaytestCohorts(
   input: StandardizePlaytestCohortsInput
 ): PlaytestCohortsStandardizationOutcome {
@@ -212,9 +236,7 @@ export function standardizePlaytestCohorts(
     const derivation = derivePlaytestCohortObservations({
       episodes: run.episodes,
       metricId: input.metricId,
-      ...(input.metricVersion === undefined
-        ? {}
-        : { metricVersion: input.metricVersion })
+      ...(input.metricVersion !== undefined && { metricVersion: input.metricVersion })
     });
     contributingEpisodesByBuild.set(
       buildId,
@@ -302,12 +324,12 @@ export function standardizePlaytestCohorts(
           }),
     buildObservations,
     contributingEpisodesByBuild: Object.fromEntries(
-      [...contributingEpisodesByBuild.entries()].sort(([a], [b]) =>
+      [...contributingEpisodesByBuild].sort(([a], [b]) =>
         a < b ? -1 : a > b ? 1 : 0
       )
     ),
     skippedRowsByBuild: Object.fromEntries(
-      [...skippedRowsByBuild.entries()].sort(([a], [b]) =>
+      [...skippedRowsByBuild].sort(([a], [b]) =>
         a < b ? -1 : a > b ? 1 : 0
       )
     ),

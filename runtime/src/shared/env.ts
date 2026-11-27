@@ -1,8 +1,8 @@
 /**
- * Parse an optional environment value using `Number.parseInt` semantics,
- * including numeric-prefix acceptance and fractional truncation. Missing,
- * non-finite, and negative values use the provided fallback.
- */
+Parse an optional environment value using `Number.parseInt` semantics,
+including numeric-prefix acceptance and fractional truncation. Missing,
+non-finite, and negative values use the provided fallback.
+*/
 export function parseNonNegativeInteger(
   value: string | undefined,
   fallback: number

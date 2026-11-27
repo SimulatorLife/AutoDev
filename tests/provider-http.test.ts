@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import type { ServerResponse } from "node:http";
 import path from "node:path";
 import test from "node:test";

@@ -43,10 +43,10 @@ function binding(
 }
 
 /**
- * Results conform to the protocol the Runtime client validates. A toy payload
- * would be rejected by the client before the host were exercised, which would
- * make this round trip prove nothing.
- */
+Results conform to the protocol the Runtime client validates. A toy payload
+would be rejected by the client before the host were exercised, which would
+make this round trip prove nothing.
+*/
 function game(): Record<string, unknown> {
   return {
     capabilities: () => ({ lie: true }),
@@ -95,18 +95,22 @@ const EPISODE = { episodeId: "episode-1", expectedRevision: 0 };
 interface Connected {
   readonly client: PlaytestAdapterClient;
   readonly host: Awaited<ReturnType<typeof startGenericAdapterHost>>;
-  /** Runtime writes here; the host reads it. */
+  /**
+  Runtime writes here; the host reads it.
+  */
   readonly clientToHost: PassThrough;
-  /** Host writes here; the Runtime client reads it. */
+  /**
+  Host writes here; the Runtime client reads it.
+  */
   readonly hostToClient: PassThrough;
 }
 
 /**
- * Connect the Runtime's real client to the generic host over a pipe pair.
- *
- * Using the production client is the point: a host that only satisfies its own
- * tests can be subtly incompatible with the state machine it must satisfy.
- */
+Connect the Runtime's real client to the generic host over a pipe pair.
+
+Using the production client is the point: a host that only satisfies its own
+tests can be subtly incompatible with the state machine it must satisfy.
+*/
 async function connect(
   overrides: Partial<PlaytestAdapterBinding> = {},
   target: Record<string, unknown> = game()

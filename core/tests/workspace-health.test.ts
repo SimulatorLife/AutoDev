@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  workspaceConfigurationHealth,
+  workspaceConfigurationHealth as workspaceConfigHealth,
   type WorkspaceEntry
 } from "../src/index.ts";
 
@@ -21,14 +21,14 @@ function workspace(overrides: Partial<WorkspaceEntry> = {}): WorkspaceEntry {
 test("a workspace with no role scope is configured", () => {
   // An unconfigured scope is a deliberate state -- it means every role may
   // work here -- so it is not a fault.
-  assert.deepEqual(workspaceConfigurationHealth(workspace(), KNOWN_ROLES), {
+  assert.deepEqual(workspaceConfigHealth(workspace(), KNOWN_ROLES), {
     status: "configured"
   });
 });
 
 test("a role scope that names only configured roles is configured", () => {
   assert.deepEqual(
-    workspaceConfigurationHealth(
+    workspaceConfigHealth(
       workspace({ agentRoles: ["orchestrator", "worker"] }),
       KNOWN_ROLES
     ),
@@ -41,7 +41,7 @@ test("a role scope naming a role nothing answers to is a configuration fault", (
   // unique strings. It is still unusable, because the scope excludes every
   // agent that could work in the workspace and nothing else says so.
   assert.deepEqual(
-    workspaceConfigurationHealth(
+    workspaceConfigHealth(
       workspace({ agentRoles: ["orchestrator", "not-a-role"] }),
       KNOWN_ROLES
     ),
@@ -53,7 +53,7 @@ test("every unknown role in a scope is named", () => {
   // The operator has to be able to fix the scope, so the fault names every
   // role the scope could not place rather than only the first one.
   assert.deepEqual(
-    workspaceConfigurationHealth(
+    workspaceConfigHealth(
       workspace({ agentRoles: ["ghost", "phantom"] }),
       KNOWN_ROLES
     ),

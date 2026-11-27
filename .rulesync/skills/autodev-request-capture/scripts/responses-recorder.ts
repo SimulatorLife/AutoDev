@@ -54,7 +54,9 @@ export function startRecorder({
       try {
         body = JSON.parse(raw) as unknown;
       } catch {
-        /* keep raw body */
+        /*
+        keep raw body
+        */
       }
       appendFileSync(
         record,
@@ -91,10 +93,10 @@ function argument(name: string): string | undefined {
 }
 
 /**
- * A turns file is `{ "turns": [ [event, ...], ... ] }`. Anything else is an
- * error: treating it as "no turns" silently switches to capture mode, and every
- * request then gets the capture error instead of the scripted reply.
- */
+A turns file is `{ "turns": [ [event, ...], ... ] }`. Anything else is an
+error: treating it as "no turns" silently switches to capture mode, and every
+request then gets the capture error instead of the scripted reply.
+*/
 export function parseTurnsFile(value: unknown): SseEvent[][] {
   const turns =
     value && typeof value === "object" && !Array.isArray(value)

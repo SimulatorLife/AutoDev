@@ -94,12 +94,10 @@ createInterface({ input: process.stdin }).on("line", (line) => {
             args: [script],
             cwd: temporary.path,
             tools: ["echo"],
-            ...(conversationScoped
-              ? {
+            ...(conversationScoped && {
                   conversationScopedEnv: "AUTODEV_XACPX_COORDINATOR_SESSION",
                   env: { AUTODEV_XACPX_COORDINATOR_SESSION: "fixture" }
-                }
-              : {})
+                })
           }
         }
       },
@@ -118,13 +116,13 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     const request = async (
       session: string | null,
       method: string,
-      params: unknown
+      parameters: unknown
     ) => {
       const response = await fetch(url, {
         method: "POST",
         headers: session ? { ...headers, "mcp-session-id": session } : headers,
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-        signal: AbortSignal.timeout(5_000)
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: parameters }),
+        signal: AbortSignal.timeout(5000)
       });
       assert.equal(response.status, 200);
       return {
@@ -179,8 +177,8 @@ test(
     const f = await fixture();
     try {
       const session = await f.open();
-      const call = (params: unknown) =>
-        f.request(session, "tools/call", params);
+      const call = (parameters: unknown) =>
+        f.request(session, "tools/call", parameters);
       const { body } = await call({
         name: "echo",
         arguments: {},
@@ -231,7 +229,7 @@ test(
           name: "echo",
           arguments: {},
           _meta: { "openai/session": conversation },
-          ...(task ? { task: { ttl: TTL_MS } } : {})
+          ...(task && { task: { ttl: TTL_MS } })
         });
       const { task } = CreateTaskResultSchema.parse(
         (await call("a", true)).body.result

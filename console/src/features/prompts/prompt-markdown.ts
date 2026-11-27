@@ -1,12 +1,12 @@
 /**
- * The renderer for a prompt author's own Markdown.
- *
- * It lives in its own module because two surfaces render it: the page shows
- * the saved body, and the preview island shows the body of the source the
- * operator has not saved yet. A renderer each of them carried would be two
- * renderers, and the unsaved preview would stop looking like the saved one
- * the moment one of them changed.
- */
+The renderer for a prompt author's own Markdown.
+
+It lives in its own module because two surfaces render it: the page shows
+the saved body, and the preview island shows the body of the source the
+operator has not saved yet. A renderer each of them carried would be two
+renderers, and the unsaved preview would stop looking like the saved one
+the moment one of them changed.
+*/
 
 import React from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
@@ -16,15 +16,15 @@ import { TAG_SHAPE } from "../../components/status/Tag.ts";
 import { MUTED_BODY_CLASS } from "../../components/ui/text-classes.ts";
 
 /**
- * Renderer for the prompt author's own Markdown, shown as a preview inside the
- * page.
- *
- * The prompt body is content *within* this page, not a page of its own, so its
- * headings are demoted three levels past the Console's own body sections. A
- * prompt that opens with an `# H1` used to inject a second page-level heading
- * halfway down the outline — below Console sections and above the shell's
- * `h1` — which is what a document outline is supposed to rule out.
- */
+Renderer for the prompt author's own Markdown, shown as a preview inside the
+page.
+
+The prompt body is content *within* this page, not a page of its own, so its
+headings are demoted three levels past the Console's own body sections. A
+prompt that opens with an `# H1` used to inject a second page-level heading
+halfway down the outline — below Console sections and above the shell's
+`h1` — which is what a document outline is supposed to rule out.
+*/
 const PROMPT_MARKDOWN_COMPONENTS: Components = {
   h1: ({ children }) =>
     React.createElement(
@@ -106,14 +106,14 @@ const PROMPT_MARKDOWN_COMPONENTS: Components = {
 };
 
 /**
- * A prompt body, rendered.
- *
- * The body is content *within* a page, not a page of its own, so its headings
- * are demoted three levels past the Console's own body sections. A prompt that
- * opens with an `# H1` used to inject a second page-level heading halfway down
- * the outline -- below Console sections and above the shell's `h1` -- which is
- * what a document outline is supposed to rule out.
- */
+A prompt body, rendered.
+
+The body is content *within* a page, not a page of its own, so its headings
+are demoted three levels past the Console's own body sections. A prompt that
+opens with an `# H1` used to inject a second page-level heading halfway down
+the outline -- below Console sections and above the shell's `h1` -- which is
+what a document outline is supposed to rule out.
+*/
 export function PromptMarkdown({
   body
 }: {

@@ -24,9 +24,9 @@ const REPOSITORIES = ["owner/repo-a", "owner/repo-b", "owner/repo-c"];
 const DEFAULT_ITERATIONS = 7;
 const DEFAULT_DELAY_MS = 25;
 
-function parseOptions(args: readonly string[]): BenchmarkOptions {
+function parseOptions(arguments_: readonly string[]): BenchmarkOptions {
   const values = new Map(
-    args.map((argument) => {
+    arguments_.map((argument) => {
       const separator = argument.indexOf("=");
       if (!argument.startsWith("--") || separator === -1) {
         throw new Error(
@@ -90,7 +90,7 @@ function createFakeGitHub(delayMs: number): {
     }
   };
   const github: CollectMetricsOptions["github"] = {
-    paginate: async <T>(_method: unknown, _params: Record<string, unknown>) =>
+    paginate: async <T>(_method: unknown, _parameters: Record<string, unknown>) =>
       (await withRead([
         {
           conclusion: "success",
@@ -101,8 +101,8 @@ function createFakeGitHub(delayMs: number): {
     rest: {
       actions: { listWorkflowRuns: {} },
       pulls: {
-        list: (params) => {
-          const fullName = `${params.owner}/${params.repo}`;
+        list: (parameters) => {
+          const fullName = `${parameters.owner}/${parameters.repo}`;
           const index = REPOSITORIES.indexOf(fullName);
           const createdAt = new Date(Date.now() - index * 1000).toISOString();
           const pull: PullSummary = {

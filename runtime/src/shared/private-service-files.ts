@@ -20,7 +20,9 @@ function privateFileStat(file: string) {
   }
 }
 
-/** The service owns its parent directory; refuse redirected file leaves. */
+/**
+The service owns its parent directory; refuse redirected file leaves.
+*/
 export function privateWrite(file: string, content: string): void {
   const stat = privateFileStat(file);
   if (
@@ -35,7 +37,9 @@ export function privateWrite(file: string, content: string): void {
   chmodSync(file, 0o600);
 }
 
-/** Validate and read the same opened inode, without following a leaf symlink. */
+/**
+Validate and read the same opened inode, without following a leaf symlink.
+*/
 export function privateRead(file: string): string {
   let descriptor: number;
   try {
@@ -80,7 +84,9 @@ export function assertPrivateDirectory(directory: string): void {
   }
 }
 
-/** Create (or verify) an owned service directory, tightening its mode. */
+/**
+Create (or verify) an owned service directory, tightening its mode.
+*/
 export function ensurePrivateDirectory(directory: string): void {
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const stat = lstatSync(directory);

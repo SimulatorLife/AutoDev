@@ -48,7 +48,7 @@ test("normalizes the shapes providers actually state a reset in", () => {
   // A wrong reset time is worse than none: the router stops routing to a
   // provider until whatever it is handed, so anything unparseable is dropped
   // rather than guessed.
-  for (const rubbish of ["garbage", "", null, undefined, {}, Number.NaN]) {
+  for (const rubbish of ["garbage", "", null, undefined, {}, NaN]) {
     assert.equal(normalizeResetsAt(rubbish), null);
   }
 });

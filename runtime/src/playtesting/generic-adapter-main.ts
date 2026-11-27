@@ -1,16 +1,16 @@
 /**
- * AutoDev's adapter entrypoint.
- *
- * This is the process AutoDev's pinned adapter image runs. It reads the game's
- * binding from the approved integration directory, resolves the game's entry
- * module, and serves the game-adapter protocol on stdio. The game supplies
- * declarations and an entry module; the protocol is AutoDev's.
- *
- * The integration directory is read from the command line rather than discovered
- * from the process working directory: the sandbox mounts the approved checkout
- * read-only at a known path, and resolving against that path is what keeps the
- * binding inside the approved tree.
- */
+AutoDev's adapter entrypoint.
+
+This is the process AutoDev's pinned adapter image runs. It reads the game's
+binding from the approved integration directory, resolves the game's entry
+module, and serves the game-adapter protocol on stdio. The game supplies
+declarations and an entry module; the protocol is AutoDev's.
+
+The integration directory is read from the command line rather than discovered
+from the process working directory: the sandbox mounts the approved checkout
+read-only at a known path, and resolving against that path is what keeps the
+binding inside the approved tree.
+*/
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -30,7 +30,9 @@ import {
   startGenericAdapterHost
 } from "./generic-adapter-host.ts";
 
-/** Bounded so a hostile or corrupt file cannot be read into memory whole. */
+/**
+Bounded so a hostile or corrupt file cannot be read into memory whole.
+*/
 const MAX_BINDING_BYTES = 256 * 1024;
 
 export interface EntryContext {
@@ -44,11 +46,11 @@ export interface EntryContext {
 }
 
 /**
- * Resolve everything the host needs from the integration directory.
- *
- * The schemas are read from the game alongside the binding: a game declares
- * them, and AutoDev derives their digests. They are not invented here.
- */
+Resolve everything the host needs from the integration directory.
+
+The schemas are read from the game alongside the binding: a game declares
+them, and AutoDev derives their digests. They are not invented here.
+*/
 export function readAdapterContext(integrationDir: string): EntryContext {
   const bindingPath = path.join(integrationDir, "playtest.binding.json");
   const raw = readFileSync(bindingPath, "utf8");
@@ -125,33 +127,33 @@ export function createEntryLoader(
 }
 
 /**
- * The container path the sandbox mounts the approved checkout at.
- *
- * The adapter resolves its integration directory against this, not against the
- * process working directory: the sandbox sets the working directory to the
- * *game's* approved directory, which is frequently not the checkout root, so a
- * cwd-relative resolve would miss a binding that is present.
- */
+The container path the sandbox mounts the approved checkout at.
+
+The adapter resolves its integration directory against this, not against the
+process working directory: the sandbox sets the working directory to the
+*game's* approved directory, which is frequently not the checkout root, so a
+cwd-relative resolve would miss a binding that is present.
+*/
 export const PLAYTESTS_ADAPTER_CHECKOUT_ROOT =
   PLAYTESTS_ADAPTER_CONTAINER_WORKSPACE;
 
 /**
- * Overrides the checkout root. The sandbox mounts the checkout at the fixed
- * container path above; this lets the same entrypoint run against a checkout
- * somewhere else, which is how the episode test drives it without Docker.
- */
+Overrides the checkout root. The sandbox mounts the checkout at the fixed
+container path above; this lets the same entrypoint run against a checkout
+somewhere else, which is how the episode test drives it without Docker.
+*/
 export const PLAYTESTS_ADAPTER_CHECKOUT_ROOT_ENV =
   "AUTODEV_ADAPTER_CHECKOUT_ROOT";
 
 /**
- * Parse `--integration-dir <dir>`, defaulting to `.autodev` in the checkout.
- *
- * Resolved against the checkout root, which the sandbox mounts read-only at a
- * fixed path. Resolving against the process working directory instead would
- * look for the binding under the *game's* working directory, so a game approved
- * with a subdirectory working directory would not find its own integration
- * directory — and would report a missing binding for a file that is present.
- */
+Parse `--integration-dir <dir>`, defaulting to `.autodev` in the checkout.
+
+Resolved against the checkout root, which the sandbox mounts read-only at a
+fixed path. Resolving against the process working directory instead would
+look for the binding under the *game's* working directory, so a game approved
+with a subdirectory working directory would not find its own integration
+directory — and would report a missing binding for a file that is present.
+*/
 export function integrationDirFrom(
   argv: readonly string[],
   checkoutRoot: string = PLAYTESTS_ADAPTER_CHECKOUT_ROOT
@@ -162,7 +164,9 @@ export function integrationDirFrom(
   return path.resolve(checkoutRoot, declared ?? PLAYTESTS_INTEGRATION_DIR);
 }
 
-/** Serve the protocol on stdio until the Runtime closes the stream. */
+/**
+Serve the protocol on stdio until the Runtime closes the stream.
+*/
 export async function main(argv: readonly string[]): Promise<void> {
   const checkoutRoot =
     process.env[PLAYTESTS_ADAPTER_CHECKOUT_ROOT_ENV] ??

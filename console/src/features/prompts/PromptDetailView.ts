@@ -37,10 +37,10 @@ import { PromptMarkdown } from "./prompt-markdown.ts";
 export interface PromptDetailViewProps {
   readonly prompt: PromptDocument;
   /**
-   * Desired-vs-actual state the Runtime derived for this resource. The detail
-   * payload always carries it (the v4 contract requires it); it is surfaced here
-   * to distinguish the current source from its observed projection.
-   */
+  Desired-vs-actual state the Runtime derived for this resource. The detail
+  payload always carries it (the v4 contract requires it); it is surfaced here
+  to distinguish the current source from its observed projection.
+  */
   readonly reconciliation: ControlApiPromptDetailResponse["reconciliation"];
   readonly history: PromptHistoryState;
   readonly selectedVersion?: ControlApiPromptVersionResponse | undefined;
@@ -48,14 +48,14 @@ export interface PromptDetailViewProps {
 }
 
 /**
- * The ends of the committed history, as links into the same page.
- *
- * The history is one ordered list of committed revisions, and a page of it is
- * a window: the operator who needs an older revision walks back a page at a
- * time instead of being told to go and read Git. The page it names is in the
- * URL, so the walk is addressable and a reload keeps the operator where they
- * were.
- */
+The ends of the committed history, as links into the same page.
+
+The history is one ordered list of committed revisions, and a page of it is
+a window: the operator who needs an older revision walks back a page at a
+time instead of being told to go and read Git. The page it names is in the
+URL, so the walk is addressable and a reload keeps the operator where they
+were.
+*/
 function renderPromptHistoryPages(
   promptUrl: string,
   history: Extract<PromptHistoryState, { readonly status: "available" }>
@@ -179,7 +179,7 @@ function renderPromptHistory(
               "aria-label": "Recent committed versions"
             },
             ...history.versions.map((version) => {
-              const selected =
+              const isSelected =
                 selectedVersion?.versionHash === version.versionHash;
               // The revision is opened together with the page it was found on,
               // so a reload shows the operator the list they chose it from.
@@ -203,7 +203,7 @@ function renderPromptHistory(
                   NavigationLink,
                   {
                     href: `${promptUrl}?${revisionQuery.toString()}`,
-                    ...(selected ? { "aria-current": "page" as const } : {}),
+                    ...(isSelected && { "aria-current": "page" as const }),
                     className:
                       "flex flex-wrap items-center gap-2 rounded border border-border px-3 py-2 text-xs hover:bg-hover ",
                     dataAttributes: {
@@ -215,7 +215,7 @@ function renderPromptHistory(
                     { className: `font-mono ${MUTED_TEXT_CLASS}` },
                     version.versionHash.slice(0, 12)
                   ),
-                  selected
+                  isSelected
                     ? React.createElement(
                         "span",
                         { className: "text-accent" },

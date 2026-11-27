@@ -1,19 +1,19 @@
 #!/usr/bin/env node
 
 /**
- * Verify the deployed AutoDev Usage response contract, and report the result
- * as a supervised service's exit status.
- *
- * The Data layer owns the contract -- the response schema, the query it
- * validates, and the class of every outcome. This module owns what each
- * class means for a service that launchd supervises: a Usage API that did
- * not answer is a temporary failure, because the service may well serve on
- * the next attempt, while a stale contract or a rejected credential is not.
- *
- * That distinction is the whole point of the exit status. A supervisor that
- * reads every non-zero status as "broken" declares a crash loop on a Console
- * that was about to serve.
- */
+Verify the deployed AutoDev Usage response contract, and report the result
+as a supervised service's exit status.
+
+The Data layer owns the contract -- the response schema, the query it
+validates, and the class of every outcome. This module owns what each
+class means for a service that launchd supervises: a Usage API that did
+not answer is a temporary failure, because the service may well serve on
+the next attempt, while a stale contract or a rejected credential is not.
+
+That distinction is the whole point of the exit status. A supervisor that
+reads every non-zero status as "broken" declares a crash loop on a Console
+that was about to serve.
+*/
 
 import { verifyUsageContract } from "@simulatorlife/autodev-data";
 import {

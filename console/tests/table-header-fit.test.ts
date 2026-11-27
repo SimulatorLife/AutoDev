@@ -12,18 +12,18 @@ import {
 } from "../src/components/tables/DataTable.ts";
 
 /**
- * A table header is a label, and a label has to fit its column.
- *
- * The Console's own contract says it twice: "A column's weight must be large
- * enough for its own header", and a header wraps rather than truncating. The
- * browser acceptance measures the consequence: at 390px a header that does not
- * fit its column is clipped content, and a clipped header is a failure.
- *
- * The two rules are the same rule seen from two sides. The weight is the fix;
- * the wrap is the floor under it. Both are needed, because the floor is what
- * keeps an unmeasured table from clipping, and the weight is what keeps the
- * header on one line.
- */
+A table header is a label, and a label has to fit its column.
+
+The Console's own contract says it twice: "A column's weight must be large
+enough for its own header", and a header wraps rather than truncating. The
+browser acceptance measures the consequence: at 390px a header that does not
+fit its column is clipped content, and a clipped header is a failure.
+
+The two rules are the same rule seen from two sides. The weight is the fix;
+the wrap is the floor under it. Both are needed, because the floor is what
+keeps an unmeasured table from clipping, and the weight is what keeps the
+header on one line.
+*/
 
 interface Row {
   readonly id: string;

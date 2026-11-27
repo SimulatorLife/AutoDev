@@ -1,4 +1,6 @@
-/** Canonical Console URLs for Workspaces identities (`owner/repository`). */
+/**
+Canonical Console URLs for Workspaces identities (`owner/repository`).
+*/
 export const WORKSPACES_PATH = "/workspaces";
 
 const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
@@ -15,7 +17,7 @@ function segmentsForWorkspaceId(
       "Workspace id must be a canonical owner/repository key."
     );
   }
-  const [owner, repository] = workspaceId.split("/");
+  const [owner, repository] = workspaceId.split("/", 2);
   if (owner === undefined || repository === undefined) {
     throw new TypeError(
       "Workspace id must be a canonical owner/repository key."
@@ -24,13 +26,17 @@ function segmentsForWorkspaceId(
   return [owner, repository];
 }
 
-/** Use two URL path segments; encoded slashes are not a reliable Next route key. */
+/**
+Use two URL path segments; encoded slashes are not a reliable Next route key.
+*/
 export function workspacePath(workspaceId: string): string {
   const [owner, repository] = segmentsForWorkspaceId(workspaceId);
   return `${WORKSPACES_PATH}/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}`;
 }
 
-/** Same-origin Console mutation URL for the corresponding Runtime approval route. */
+/**
+Same-origin Console mutation URL for the corresponding Runtime approval route.
+*/
 export function workspacePlaytestApprovalPath(
   workspaceId: string,
   revoke = false
@@ -40,7 +46,9 @@ export function workspacePlaytestApprovalPath(
   return revoke ? `${base}/revoke` : base;
 }
 
-/** Same-origin Console mutation URL for one workspace's canonical configuration. */
+/**
+Same-origin Console mutation URL for one workspace's canonical configuration.
+*/
 export function workspaceConfigurationPath(workspaceId: string): string {
   const [owner, repository] = segmentsForWorkspaceId(workspaceId);
   return `/api/workspaces/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}`;
@@ -60,7 +68,9 @@ export function workspaceVisualPlaytestTargetRevocationPath(
   return `${workspaceVisualPlaytestTargetsPath(workspaceId)}/${encodeURIComponent(targetId)}/revoke`;
 }
 
-/** Only the canonical workspace detail page (or list) may be a return target. */
+/**
+Only the canonical workspace detail page (or list) may be a return target.
+*/
 export function isWorkspacesReturnPath(value: string | null): value is string {
   if (value === null) return false;
   if (value === WORKSPACES_PATH) return true;

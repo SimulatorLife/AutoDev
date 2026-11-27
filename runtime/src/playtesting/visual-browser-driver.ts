@@ -1,4 +1,6 @@
-/** Restricted transient browser driver used by Runtime visual sessions. */
+/**
+Restricted transient browser driver used by Runtime visual sessions.
+*/
 import { createHash, randomUUID } from "node:crypto";
 import {
   chmodSync,
@@ -97,13 +99,13 @@ function resolveChromiumExecutablePath(
 let cachedChromiumAvailability: boolean | null = null;
 
 /**
- * Cached, no-launch check for whether a Playwright Chromium executable is
- * resolvable on this host. Readiness probes must call this instead of
- * opening a browser per request; the result is memoized for the process
- * lifetime since the installed browser binary does not change between
- * requests. Call {@link resetPlaytestVisualBrowserDriverAvailabilityCache}
- * in tests that need to force re-resolution.
- */
+Cached, no-launch check for whether a Playwright Chromium executable is
+resolvable on this host. Readiness probes must call this instead of
+opening a browser per request; the result is memoized for the process
+lifetime since the installed browser binary does not change between
+requests. Call {@link resetPlaytestVisualBrowserDriverAvailabilityCache}
+in tests that need to force re-resolution.
+*/
 export function isPlaytestVisualBrowserDriverAvailable(
   browserType: Pick<typeof chromium, "executablePath"> = chromium
 ): boolean {
@@ -114,7 +116,9 @@ export function isPlaytestVisualBrowserDriverAvailable(
   return cachedChromiumAvailability;
 }
 
-/** Test-only seam: forces the next availability check to re-resolve. */
+/**
+Test-only seam: forces the next availability check to re-resolve.
+*/
 export function resetPlaytestVisualBrowserDriverAvailabilityCache(): void {
   cachedChromiumAvailability = null;
 }
@@ -125,38 +129,48 @@ const MASK_SELECTOR =
   'input,textarea,[contenteditable="true"],[data-sensitive="true"],[autocomplete^="cc-"]';
 const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/giu;
 /**
- * The same address, read without the global flag.
- *
- * A detection asks whether the text holds an address at all, and a global
- * pattern would carry the position of its last match into the next read.
- */
+The same address, read without the global flag.
+
+A detection asks whether the text holds an address at all, and a global
+pattern would carry the position of its last match into the next read.
+*/
 const SENSITIVE_EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/iu;
-/** The fewest digits that read as one card number. */
+/**
+The fewest digits that read as one card number.
+*/
 const CARD_NUMBER_MIN_DIGITS = 13;
-/** The most digits that read as one card number. */
+/**
+The most digits that read as one card number.
+*/
 const CARD_NUMBER_MAX_DIGITS = 19;
-/** The whitespace the words of an attribute are separated by. */
+/**
+The whitespace the words of an attribute are separated by.
+*/
 const WHITESPACE_PATTERN = /\s+/u;
-/** The autocomplete values that mark a field as a password field. */
+/**
+The autocomplete values that mark a field as a password field.
+*/
 const PASSWORD_AUTOCOMPLETE_PATTERN = /(?:current|new)-password/iu;
 const SUPPORTED_INPUTS = ["keyboard", "pointer"] as const;
-/** How often the driver checks whether the game has painted. */
+/**
+How often the driver checks whether the game has painted.
+*/
 const RENDER_WAIT_POLL_MS = 250;
 /**
- * How long the driver waits for a game to paint before it captures anyway.
- *
- * It is a bound, not a delay: a game that paints in two seconds is captured
- * as soon as it has painted, and a game that never paints costs the episode
- * only this much.
- */
+How long the driver waits for a game to paint before it captures anyway.
+
+It is a bound, not a delay: a game that paints in two seconds is captured
+as soon as it has painted, and a game that never paints costs the episode
+only this much.
+*/
 const DEFAULT_RENDER_WAIT_MS = 10_000;
 /**
- * How long the driver waits for a browser it has to abandon to go away.
- *
- * A browser that cannot be closed must not hold the episode: the open has
- * already failed, and the episode still has to report that failure. The wait
- * is bounded so a wedged browser costs the episode this much and no more.
- */
+How long the driver waits for a browser it has to abandon to go away.
+
+A browser that cannot be closed must not hold the episode: the open has
+already failed, and the episode still has to report that failure. The wait
+is bounded so a wedged browser costs the episode this much and no more.
+*/
 const BROWSER_CLOSE_TIMEOUT_MS = 5000;
 const VISUAL_EVENT_SCHEMA = "autodev-playtest-visual-event-v1" as const;
 
@@ -167,7 +181,9 @@ interface RawControl {
   readonly enabled: boolean;
   readonly focused: boolean;
   readonly inputKind: "none" | "text-entry" | "password";
-  /** Private-only destination origin for link admission; never model-visible. */
+  /**
+  Private-only destination origin for link admission; never model-visible.
+  */
   readonly navigationOrigin: string | null;
   readonly bounds: {
     readonly x: number;
@@ -177,20 +193,30 @@ interface RawControl {
   };
 }
 
-/** What the page itself reports when the driver reads it. */
+/**
+What the page itself reports when the driver reads it.
+*/
 interface RawPageReport {
   readonly controls: readonly RawControl[];
   readonly passwordVisible: boolean;
   readonly truncatedControls: boolean;
-  /** The screen the page is showing, or null when it names none. */
+  /**
+  The screen the page is showing, or null when it names none.
+  */
   readonly phase: string | null;
-  /** The progress the page reports, or null when it reports none. */
+  /**
+  The progress the page reports, or null when it reports none.
+  */
   readonly progress: string | null;
-  /** Whether the page reports that it is still loading. */
+  /**
+  Whether the page reports that it is still loading.
+  */
   readonly loading: boolean;
 }
 
-/** What the driver reads from the page, with its own verdict on the text. */
+/**
+What the driver reads from the page, with its own verdict on the text.
+*/
 interface RawPageRead extends RawPageReport {
   readonly sensitiveTextVisible: boolean;
 }
@@ -203,15 +229,25 @@ export type PlaytestVisualObservationBlockReason =
   | "wall-time-limit"
   | "origin-escape";
 
-/** The game left the origin the operator approved. */
+/**
+The game left the origin the operator approved.
+*/
 const ORIGIN_ESCAPE = "origin-escape";
-/** The episode spent the wall time the operator approved. */
+/**
+The episode spent the wall time the operator approved.
+*/
 const WALL_TIME_LIMIT = "wall-time-limit";
-/** The episode spent the event window the operator approved. */
+/**
+The episode spent the event window the operator approved.
+*/
 const EVENT_BUDGET_EXHAUSTED = "event-budget-exhausted";
-/** The screen holds something the Runtime cannot redact. */
+/**
+The screen holds something the Runtime cannot redact.
+*/
 const SENSITIVE_VISUAL_UNREDACTABLE = "sensitive-visual-unredactable";
-/** The action would take the game outside the approved origin. */
+/**
+The action would take the game outside the approved origin.
+*/
 const ORIGIN_NOT_APPROVED = "origin-not-approved";
 
 export type PlaytestVisualObservationResult =
@@ -232,7 +268,9 @@ export type PlaytestVisualActionReceipt =
       readonly actionKind: PlaytestVisualAction["kind"];
       readonly dispatchedAt: string;
       readonly driverDurationMs: number;
-      /** Dispatch acknowledgement is not proof the game accepted the action. */
+      /**
+      Dispatch acknowledgement is not proof the game accepted the action.
+      */
       readonly gameAcknowledgement: "not-observed";
     }
   | {
@@ -246,10 +284,14 @@ export interface PlaytestVisualBrowserDriverOptions {
   readonly episodeId: string;
   readonly artifacts: PlaytestArtifactStore;
   readonly viewport: PlaytestVisualViewport;
-  /** Workload-selected; no implicit or magic action timeout. */
+  /**
+  Workload-selected; no implicit or magic action timeout.
+  */
   readonly actionTimeoutMs: number;
   readonly maxSteps: number;
-  /** Bound on how long the driver waits for the game to paint. */
+  /**
+  Bound on how long the driver waits for the game to paint.
+  */
   readonly renderWaitMs?: number;
   readonly now?: () => number;
   readonly id?: () => string;
@@ -257,22 +299,26 @@ export interface PlaytestVisualBrowserDriverOptions {
 }
 
 /**
- * The browser surface one visual episode needs.
- *
- * The real driver implements it. The episode loop talks to this interface
- * rather than to the concrete browser, so its budget accounting and its
- * failure classification — the parts that decide whether a slow model
- * truncates an episode or fails it — are exercisable without a browser.
- */
+The browser surface one visual episode needs.
+
+The real driver implements it. The episode loop talks to this interface
+rather than to the concrete browser, so its budget accounting and its
+failure classification — the parts that decide whether a slow model
+truncates an episode or fails it — are exercisable without a browser.
+*/
 export interface PlaytestVisualEpisodeDriver {
   observe(): Promise<PlaytestVisualObservationResult>;
   act(action: PlaytestVisualAction): Promise<PlaytestVisualActionReceipt>;
   close(): Promise<unknown>;
-  /** Milliseconds left in the approved per-episode wall-time budget. */
+  /**
+  Milliseconds left in the approved per-episode wall-time budget.
+  */
   remainingWallTimeMs(): number;
 }
 
-/** Opens the browser driver for one visual episode. Overridable for tests. */
+/**
+Opens the browser driver for one visual episode. Overridable for tests.
+*/
 export type PlaytestVisualDriverOpener = (
   options: PlaytestVisualBrowserDriverOptions
 ) => Promise<PlaytestVisualEpisodeDriver>;
@@ -318,11 +364,11 @@ export interface PlaytestVisualBrowserEvent {
 }
 
 /**
- * The refusal reasons the driver answers with are Core's vocabulary, because
- * the episode's next move depends on which refusal it is: a refusal that says
- * the page moved is answered by looking again, and every other refusal is
- * final.
- */
+The refusal reasons the driver answers with are Core's vocabulary, because
+the episode's next move depends on which refusal it is: a refusal that says
+the page moved is answered by looking again, and every other refusal is
+final.
+*/
 
 export class PlaytestVisualBrowserDriverError extends Error {
   readonly code:
@@ -342,13 +388,13 @@ export class PlaytestVisualBrowserDriverError extends Error {
 }
 
 /**
- * The failure a failed open reports.
- *
- * An open that ran out of time is not a missing game: the browser did not
- * answer inside the approved budget. Every other failure is reported as the
- * source being unavailable, which is what the driver can honestly say about
- * a page it could not open.
- */
+The failure a failed open reports.
+
+An open that ran out of time is not a missing game: the browser did not
+answer inside the approved budget. Every other failure is reported as the
+source being unavailable, which is what the driver can honestly say about
+a page it could not open.
+*/
 function openFailureCode(
   error: unknown
 ): PlaytestVisualBrowserDriverError["code"] {
@@ -362,12 +408,12 @@ function openFailureCode(
 }
 
 /**
- * Give a browser and its context back without waiting for them indefinitely.
- *
- * The failure path has to finish: an episode that cannot report its own
- * failure is worse than one that reports a failure late. Both closes share one
- * deadline, so a wedged browser costs the episode this much and no more.
- */
+Give a browser and its context back without waiting for them indefinitely.
+
+The failure path has to finish: an episode that cannot report its own
+failure is worse than one that reports a failure late. Both closes share one
+deadline, so a wedged browser costs the episode this much and no more.
+*/
 async function closeWithinDeadline(
   closeables: readonly ({ close(): Promise<unknown> } | null | undefined)[]
 ): Promise<void> {
@@ -392,14 +438,14 @@ async function closeWithinDeadline(
 }
 
 /**
- * Run one step of the open under the approved episode budget.
- *
- * The open touches a browser, a context and a page, and each of those steps
- * has its own timeout or none at all. Only the approved wall-time budget
- * covers the whole open, so every step runs under the same absolute deadline:
- * a browser that never answers costs the episode its budget and not one
- * millisecond more.
- */
+Run one step of the open under the approved episode budget.
+
+The open touches a browser, a context and a page, and each of those steps
+has its own timeout or none at all. Only the approved wall-time budget
+covers the whole open, so every step runs under the same absolute deadline:
+a browser that never answers costs the episode its budget and not one
+millisecond more.
+*/
 async function withinOpenBudget<T>(
   operation: Promise<T>,
   deadlineAt: number,
@@ -455,35 +501,41 @@ function websocketOrigin(value: string): string | null {
   }
 }
 
-/** A span of text, from its first character to the one after its last. */
+/**
+A span of text, from its first character to the one after its last.
+*/
 interface TextSpan {
   readonly start: number;
   readonly end: number;
 }
 
-/** Whether the code is an ASCII digit. */
+/**
+Whether the code is an ASCII digit.
+*/
 function isDigitCharacter(code: number): boolean {
   return code >= 0x30 && code <= 0x39;
 }
 
-/** Whether the code separates the digits of a card-like chain. */
+/**
+Whether the code separates the digits of a card-like chain.
+*/
 function isCardSeparator(code: number): boolean {
   return code === 0x20 || code === 0x2d;
 }
 
 /**
- * The card-like digit chains in a text.
- *
- * A chain is the run of digits a reader would read as one card number: the
- * digits themselves and the spaces and dashes between them. It holds at
- * least thirteen digits and at most nineteen, and the separator run after
- * its last digit belongs to whatever follows the chain rather than to the
- * chain itself.
- *
- * The scan walks the text once. A chain too short to be a card number ends
- * the walk over it instead of restarting it from every digit in it, so the
- * scan stays linear in the length of the text.
- */
+The card-like digit chains in a text.
+
+A chain is the run of digits a reader would read as one card number: the
+digits themselves and the spaces and dashes between them. It holds at
+least thirteen digits and at most nineteen, and the separator run after
+its last digit belongs to whatever follows the chain rather than to the
+chain itself.
+
+The scan walks the text once. A chain too short to be a card number ends
+the walk over it instead of restarting it from every digit in it, so the
+scan stays linear in the length of the text.
+*/
 function cardNumberSpans(text: string): readonly TextSpan[] {
   const spans: TextSpan[] = [];
   let index = 0;
@@ -513,11 +565,11 @@ function cardNumberSpans(text: string): readonly TextSpan[] {
 }
 
 /**
- * The text with its card-like digit chains redacted.
- *
- * The chain is replaced whole, so no part of a card number survives the
- * redaction.
- */
+The text with its card-like digit chains redacted.
+
+The chain is replaced whole, so no part of a card number survives the
+redaction.
+*/
 function redactCardNumbers(text: string): string {
   const spans = cardNumberSpans(text);
   if (spans.length === 0) return text;
@@ -531,11 +583,11 @@ function redactCardNumbers(text: string): string {
 }
 
 /**
- * Whether the text on the screen holds something the Runtime must not record.
- *
- * The page says what is on the screen and the Runtime says what it may
- * record, and both have to read an address and a card number the same way.
- */
+Whether the text on the screen holds something the Runtime must not record.
+
+The page says what is on the screen and the Runtime says what it may
+record, and both have to read an address and a card number the same way.
+*/
 function containsSensitiveText(text: string): boolean {
   return SENSITIVE_EMAIL_PATTERN.test(text) || cardNumberSpans(text).length > 0;
 }
@@ -553,25 +605,25 @@ function sha256(bytes: Uint8Array): string {
 }
 
 /**
- * Whether the page is showing the game yet.
- *
- * A game boots in stages, and the stage the driver used to capture is the
- * one where the document exists but nothing is on the screen: the canvas
- * element has not been created, or it is hidden, or it is still one flat
- * colour. A frame taken then shows a blank screen no matter what the player
- * is looking at, and the decision that follows is grounded in nothing.
- *
- * The page shows the game when the player can see it, and a page shows
- * itself in one of two ways:
- *
- * - a canvas that shows more than one colour is a painted scene. The canvas
- *   is sampled inside a frame callback, because a drawing buffer that is not
- *   preserved is emptied once the frame has been composited.
- * - a game that renders into the DOM has no canvas to read, and it shows
- *   itself as visible controls or visible text.
- *
- * This runs in the page, so it must not close over anything out here.
- */
+Whether the page is showing the game yet.
+
+A game boots in stages, and the stage the driver used to capture is the
+one where the document exists but nothing is on the screen: the canvas
+element has not been created, or it is hidden, or it is still one flat
+colour. A frame taken then shows a blank screen no matter what the player
+is looking at, and the decision that follows is grounded in nothing.
+
+The page shows the game when the player can see it, and a page shows
+itself in one of two ways:
+
+- a canvas that shows more than one colour is a painted scene. The canvas
+  is sampled inside a frame callback, because a drawing buffer that is not
+  preserved is emptied once the frame has been composited.
+- a game that renders into the DOM has no canvas to read, and it shows
+  itself as visible controls or visible text.
+
+This runs in the page, so it must not close over anything out here.
+*/
 function pageHasRenderedInBrowser(): Promise<boolean> {
   return new Promise((resolve) => {
     requestAnimationFrame(() => {
@@ -594,8 +646,7 @@ function pageHasRenderedInBrowser(): Promise<boolean> {
         );
       };
       for (const canvas of document.querySelectorAll("canvas")) {
-        if (!visible(canvas)) continue;
-        if (canvas.width === 0 || canvas.height === 0) continue;
+        if (!visible(canvas) || canvas.width === 0 || canvas.height === 0) continue;
         const probe = document.createElement("canvas");
         probe.width = 16;
         probe.height = 16;
@@ -648,15 +699,19 @@ function pageHasRenderedInBrowser(): Promise<boolean> {
 }
 
 /**
- * The patterns the page read needs, handed to the page itself.
- *
- * The page read runs inside the browser, where the Runtime's module scope
- * does not exist, so the patterns it needs travel with it.
- */
+The patterns the page read needs, handed to the page itself.
+
+The page read runs inside the browser, where the Runtime's module scope
+does not exist, so the patterns it needs travel with it.
+*/
 interface PageReadPatterns {
-  /** The whitespace the words of an attribute are separated by. */
+  /**
+  The whitespace the words of an attribute are separated by.
+  */
   readonly whitespace: RegExp;
-  /** The autocomplete values that mark a field as a password field. */
+  /**
+  The autocomplete values that mark a field as a password field.
+  */
   readonly passwordAutocomplete: RegExp;
 }
 
@@ -728,11 +783,11 @@ function pageReadInBrowser(patterns: PageReadPatterns): RawPageReport {
     return (element.textContent ?? "").trim().slice(0, 512);
   };
   /**
-   * The role an element claims, or the one its tag implies.
-   *
-   * The role the element states wins over the one its tag implies, and an
-   * element that claims nothing and implies nothing has no role.
-   */
+  The role an element claims, or the one its tag implies.
+  
+  The role the element states wins over the one its tag implies, and an
+  element that claims nothing and implies nothing has no role.
+  */
   const claimedRole = (element: Element): string | null => {
     const explicit = element.getAttribute("role");
     if (explicit) return explicit.split(patterns.whitespace)[0] ?? null;
@@ -751,11 +806,11 @@ function pageReadInBrowser(patterns: PageReadPatterns): RawPageReport {
     return null;
   };
   /**
-   * The role the Runtime offers for an element, or null when it offers none.
-   *
-   * A role the Runtime does not act on is no role at all: the observation
-   * only carries the roles the Runtime can dispatch to.
-   */
+  The role the Runtime offers for an element, or null when it offers none.
+  
+  A role the Runtime does not act on is no role at all: the observation
+  only carries the roles the Runtime can dispatch to.
+  */
   const roleFor = (element: Element): string | null => {
     const role = claimedRole(element);
     return role !== null && allowedRoles.has(role) ? role : null;
@@ -783,12 +838,12 @@ function pageReadInBrowser(patterns: PageReadPatterns): RawPageReport {
     return "none";
   };
   /**
-   * The screen the page is showing.
-   *
-   * A game's screen is named by its own heading, and the document title is
-   * the fallback for a page that has no heading. The text is bounded because
-   * a heading can carry a live counter, and a counter is not a phase.
-   */
+  The screen the page is showing.
+  
+  A game's screen is named by its own heading, and the document title is
+  the fallback for a page that has no heading. The text is bounded because
+  a heading can carry a live counter, and a counter is not a phase.
+  */
   const phaseText = (): string | null => {
     const heading = document.querySelector(
       'h1,[role="heading"][aria-level="1"]'
@@ -801,22 +856,22 @@ function pageReadInBrowser(patterns: PageReadPatterns): RawPageReport {
     return trimmed.length > 0 ? trimmed.slice(0, 128) : null;
   };
   /**
-   * The progress the page reports.
-   *
-   * A page that shows progress says so in the standard way: a progress bar
-   * with a value, or a progress element. A progress bar without a value is a
-   * loading indicator, not a measurement.
-   */
+  The progress the page reports.
+  
+  A page that shows progress says so in the standard way: a progress bar
+  with a value, or a progress element. A progress bar without a value is a
+  loading indicator, not a measurement.
+  */
   const progressReading = (): {
     readonly progress: string | null;
     readonly loading: boolean;
   } => {
     const element = document.querySelector('[role="progressbar"],progress');
-    const busy =
+    const isBusy =
       document.body?.getAttribute("aria-busy") === "true" ||
       document.documentElement?.getAttribute("aria-busy") === "true";
     if (element === null) {
-      return { progress: null, loading: busy };
+      return { progress: null, loading: isBusy };
     }
     // A native progress element that has no value yet is an indeterminate
     // element: it reports a value of zero rather than a measurement, and it
@@ -826,22 +881,18 @@ function pageReadInBrowser(patterns: PageReadPatterns): RawPageReport {
     const value =
       element.getAttribute("aria-valuetext") ??
       element.getAttribute("aria-valuenow") ??
-      (element instanceof HTMLProgressElement
-        ? element.hasAttribute("value")
-          ? String(element.value)
-          : null
-        : null);
+      ((element instanceof HTMLProgressElement) && element.hasAttribute("value") ? String(element.value) : null);
     if (value === null || value.trim().length === 0) {
       return {
         progress: null,
-        loading: busy || visible(element)
+        loading: isBusy || visible(element)
       };
     }
-    return { progress: value.trim().slice(0, 64), loading: busy };
+    return { progress: value.trim().slice(0, 64), loading: isBusy };
   };
   const candidates = Array.from(document.querySelectorAll(selector));
   const controls: RawControl[] = [];
-  let passwordVisible = false;
+  let isPasswordVisible = false;
   let visibleControlCount = 0;
   for (const [index, element] of candidates.entries()) {
     if (!visible(element)) continue;
@@ -850,9 +901,9 @@ function pageReadInBrowser(patterns: PageReadPatterns): RawPageReport {
     const role = roleFor(element);
     if (!role) continue;
     const inputKind = inputKindFor(element);
-    if (inputKind === "password") passwordVisible = true;
+    if (inputKind === "password") isPasswordVisible = true;
     const rect = element.getBoundingClientRect();
-    const disabled =
+    const isDisabled =
       ("disabled" in element &&
         Boolean((element as HTMLButtonElement).disabled)) ||
       element.getAttribute("aria-disabled") === "true";
@@ -860,7 +911,7 @@ function pageReadInBrowser(patterns: PageReadPatterns): RawPageReport {
       index,
       role: role as RawControl["role"],
       name: accessibleName(element),
-      enabled: !disabled,
+      enabled: !isDisabled,
       focused: document.activeElement === element,
       inputKind,
       navigationOrigin:
@@ -891,7 +942,7 @@ function pageReadInBrowser(patterns: PageReadPatterns): RawPageReport {
   const reading = progressReading();
   return {
     controls: controls.slice(0, 256),
-    passwordVisible,
+    passwordVisible: isPasswordVisible,
     truncatedControls: visibleControlCount > 256,
     phase: phaseText(),
     progress: reading.progress,
@@ -900,14 +951,14 @@ function pageReadInBrowser(patterns: PageReadPatterns): RawPageReport {
 }
 
 /**
- * What makes a control the same control.
- *
- * The identity is the control's own content, never its position: a game that
- * re-renders its layout moves a button without changing what the button is,
- * and an action promised against that button must still be dispatched to it.
- * The ordinal distinguishes controls that share a content, so two identical
- * buttons keep separate identities.
- */
+What makes a control the same control.
+
+The identity is the control's own content, never its position: a game that
+re-renders its layout moves a button without changing what the button is,
+and an action promised against that button must still be dispatched to it.
+The ordinal distinguishes controls that share a content, so two identical
+buttons keep separate identities.
+*/
 function controlIdentity(control: RawControl): string {
   return JSON.stringify([
     control.role,
@@ -966,7 +1017,9 @@ function keyForBrowser(key: string): string {
   }
 }
 
-/** Chromium must not inherit Runtime/router/service credentials or user HOME. */
+/**
+Chromium must not inherit Runtime/router/service credentials or user HOME.
+*/
 function browserProcessEnvironment(profileRoot: string): NodeJS.ProcessEnv {
   const systemPath =
     process.platform === "win32"
@@ -979,9 +1032,7 @@ function browserProcessEnvironment(profileRoot: string): NodeJS.ProcessEnv {
     TEMP: path.join(profileRoot, "tmp"),
     TMP: path.join(profileRoot, "tmp"),
     LANG: "en_US.UTF-8",
-    ...(process.platform === "win32" && process.env.SystemRoot
-      ? { SystemRoot: process.env.SystemRoot }
-      : {})
+    ...(process.platform === "win32" && process.env.SystemRoot && { SystemRoot: process.env.SystemRoot })
   };
 }
 
@@ -1020,7 +1071,9 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
   private originEscape = false;
   private entryLoaded = false;
   private captureIncomplete = false;
-  /** Whether the driver has already waited for the page to show the game. */
+  /**
+  Whether the driver has already waited for the page to show the game.
+  */
   private rendered = false;
   private terminalBlock: PlaytestVisualObservationBlockReason | null = null;
   private closeResult: {
@@ -1097,8 +1150,8 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
       );
     }
     if (
-      !options.target.inputCapabilities.some((capability) =>
-        SUPPORTED_INPUTS.includes(
+      options.target.inputCapabilities.every((capability) =>
+        !SUPPORTED_INPUTS.includes(
           capability as (typeof SUPPORTED_INPUTS)[number]
         )
       )
@@ -1219,8 +1272,7 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
         void popup.close().catch(() => undefined);
       });
       mainPage.on("framenavigated", (frame) => {
-        if (!driver?.entryLoaded) return;
-        if (frame !== mainPage.mainFrame()) return;
+        if (!driver?.entryLoaded || (frame !== mainPage.mainFrame())) return;
         const origin = safeOrigin(frame.url());
         if (!origin || !options.target.allowedOrigins.includes(origin)) {
           driver?.blockForOriginEscape();
@@ -1294,13 +1346,13 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
   }
 
   /**
-   * Milliseconds left in the approved per-episode wall-time budget.
-   *
-   * The driver owns that budget — it enforces the same ceiling before every
-   * observation and before every action — so a caller that must not outlive the
-   * episode reads the remainder here instead of starting a second, divergent
-   * clock against the same limit.
-   */
+  Milliseconds left in the approved per-episode wall-time budget.
+  
+  The driver owns that budget — it enforces the same ceiling before every
+  observation and before every action — so a caller that must not outlive the
+  episode reads the remainder here instead of starting a second, divergent
+  clock against the same limit.
+  */
   remainingWallTimeMs(): number {
     return Math.max(0, this.target.limits.wallTimeMs - this.elapsedMs());
   }
@@ -1341,15 +1393,15 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
   }
 
   /**
-   * The page as the driver reads it: what the page reports about itself,
-   * and the driver's own verdict on the text the player can see.
-   *
-   * The rendered text is read through the browser's own text of the body
-   * rather than through the page's markup: the markup also holds the text
-   * the player cannot see, and a hidden address is not a thing on the
-   * screen. A page without a body shows nothing, which is not a reason to
-   * fail the read.
-   */
+  The page as the driver reads it: what the page reports about itself,
+  and the driver's own verdict on the text the player can see.
+  
+  The rendered text is read through the browser's own text of the body
+  rather than through the page's markup: the markup also holds the text
+  the player cannot see, and a hidden address is not a thing on the
+  screen. A page without a body shows nothing, which is not a reason to
+  fail the read.
+  */
   private async readPage(): Promise<RawPageRead> {
     const [report, visibleText] = await Promise.all([
       this.page.evaluate(pageReadInBrowser, PAGE_READ_PATTERNS),
@@ -1366,32 +1418,32 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
   }
 
   /**
-   * Wait for the page to show the game before a frame is captured.
-   *
-   * A game boots in stages, and the driver used to capture the stage where
-   * the document exists but nothing is on the screen yet: the observation
-   * would report a blank screen no matter what the player sees, and the
-   * decision that follows is grounded in nothing.
-   *
-   * The wait is bounded and it happens once per page. A game that never
-   * shows itself is captured as it is rather than failing the episode, and
-   * every later observation reports the screen as it is: from then on the
-   * browser has shown the player a scene, so a blank frame is a real thing
-   * on the screen rather than a game that has not started.
-   */
+  Wait for the page to show the game before a frame is captured.
+  
+  A game boots in stages, and the driver used to capture the stage where
+  the document exists but nothing is on the screen yet: the observation
+  would report a blank screen no matter what the player sees, and the
+  decision that follows is grounded in nothing.
+  
+  The wait is bounded and it happens once per page. A game that never
+  shows itself is captured as it is rather than failing the episode, and
+  every later observation reports the screen as it is: from then on the
+  browser has shown the player a scene, so a blank frame is a real thing
+  on the screen rather than a game that has not started.
+  */
   private async waitForRenderedGame(): Promise<void> {
     if (this.rendered) return;
     try {
       const deadline = this.now() + this.renderWaitMs;
       for (;;) {
-        let rendered = true;
+        let isRendered = true;
         try {
           // eslint-disable-next-line no-await-in-loop -- the page is polled until it shows the game
-          rendered = await this.page.evaluate(pageHasRenderedInBrowser);
+          isRendered = await this.page.evaluate(pageHasRenderedInBrowser);
         } catch {
           break;
         }
-        if (rendered || this.now() >= deadline) break;
+        if (isRendered || this.now() >= deadline) break;
         // eslint-disable-next-line no-await-in-loop -- the page is polled until it shows the game
         await this.page
           .waitForTimeout(RENDER_WAIT_POLL_MS)
@@ -1644,13 +1696,13 @@ export class PlaytestVisualBrowserDriver implements PlaytestVisualEpisodeDriver 
   }
 
   /**
-   * Dispatch the input the action names, against the page as it is now.
-   *
-   * The observation promised a control; the page is read again before the
-   * input is dispatched, so the control may have moved, changed or become
-   * sensitive since. The refusal is returned when the page no longer offers
-   * what the observation promised, and null when the input was dispatched.
-   */
+  Dispatch the input the action names, against the page as it is now.
+  
+  The observation promised a control; the page is read again before the
+  input is dispatched, so the control may have moved, changed or become
+  sensitive since. The refusal is returned when the page no longer offers
+  what the observation promised, and null when the input was dispatched.
+  */
   private async dispatchInput(
     action: PlaytestVisualAction,
     step: number,

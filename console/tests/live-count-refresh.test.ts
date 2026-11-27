@@ -12,15 +12,15 @@ import {
 } from "./support/whole-page-answer.ts";
 
 /**
- * The live counts wait for a navigation that is still on its way.
- *
- * A refresh that lands while a navigation is in flight takes the navigation's
- * place in the router, and the navigation never applies its page: the address
- * bar does not move and the page the operator asked for does not arrive. The
- * refresh runs every five seconds, and the navigation to the densest page in
- * the Console takes longer than that to issue its request, so the two landed on
- * top of each other every time.
- */
+The live counts wait for a navigation that is still on its way.
+
+A refresh that lands while a navigation is in flight takes the navigation's
+place in the router, and the navigation never applies its page: the address
+bar does not move and the page the operator asked for does not arrive. The
+refresh runs every five seconds, and the navigation to the densest page in
+the Console takes longer than that to issue its request, so the two landed on
+top of each other every time.
+*/
 function createRouter(): {
   readonly prefetch: (href: string) => void;
   readonly push: (href: string) => void;

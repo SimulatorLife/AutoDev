@@ -4,14 +4,14 @@ import { Icon } from "../icons/Icon.ts";
 import { NavigationLink } from "./NavigationLink.ts";
 
 /**
- * Dismiss a selected detail panel and return to the list behind it.
- *
- * Both Memory selection panels used to render their own `✕ Close` link with an
- * identical class string and a raw glyph, so the affordance could drift and the
- * glyph did not share the product's stroke grid, sizing, or `currentColor`
- * behaviour. One component keeps the two panels identical and lets the icon set
- * own the mark.
- */
+Dismiss a selected detail panel and return to the list behind it.
+
+Both Memory selection panels used to render their own `✕ Close` link with an
+identical class string and a raw glyph, so the affordance could drift and the
+glyph did not share the product's stroke grid, sizing, or `currentColor`
+behaviour. One component keeps the two panels identical and lets the icon set
+own the mark.
+*/
 export function ClosePanelLink({
   href,
   label = "Close"

@@ -81,9 +81,7 @@ export default async function AgentsPage({
       // contract when the read fails -- so a badge with that empty list's
       // length would claim the contract declares no role, which is a claim
       // about the read rather than about the contract.
-      ...(agentsResult.data.executionContractObserved
-        ? { counts: { Agents: agents.length } }
-        : {})
+      ...(agentsResult.data.executionContractObserved && { counts: { Agents: agents.length } })
     },
     React.createElement(AgentsView, {
       agents,

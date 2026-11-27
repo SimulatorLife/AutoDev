@@ -17,19 +17,19 @@ export const SUBAGENT_SLOT_KIND = "subagent_slot";
 export interface ConcurrencyConfig {
   file: string;
   /**
-   * The limit the config file declares.
-   *
-   * Three states, and the third is the one that used to be missing. `null` is
-   * a file that was read and declares no limit -- the default deployment. A
-   * number is a file that was read and declares that limit. `undefined` is a
-   * file that was there and could not be read: nobody knows what it declares.
-   *
-   * `null` and `undefined` are different claims, and the deployment acts on
-   * the difference. A file that cannot be read leaves the router enforcing no
-   * limit at all, which is a cap the operator set silently disappearing -- so
-   * the state that says "nobody read it" has to survive all the way to the
-   * Console, which is where the operator would see it.
-   */
+  The limit the config file declares.
+  
+  Three states, and the third is the one that used to be missing. `null` is
+  a file that was read and declares no limit -- the default deployment. A
+  number is a file that was read and declares that limit. `undefined` is a
+  file that was there and could not be read: nobody knows what it declares.
+  
+  `null` and `undefined` are different claims, and the deployment acts on
+  the difference. A file that cannot be read leaves the router enforcing no
+  limit at all, which is a cap the operator set silently disappearing -- so
+  the state that says "nobody read it" has to survive all the way to the
+  Console, which is where the operator would see it.
+  */
   maxConcurrentThreadsPerSession: number | null | undefined;
 }
 
@@ -41,25 +41,25 @@ export interface ConcurrencyDenialRecord {
 }
 
 /**
- * Where the limit in force came from.
- *
- * The operator has to be able to tell three things apart: a limit a stored
- * override put in place, a limit the config file declares, and no limit
- * declared by anything the Runtime could read. The published word says which,
- * so the Console does not have to infer it.
- */
+Where the limit in force came from.
+
+The operator has to be able to tell three things apart: a limit a stored
+override put in place, a limit the config file declares, and no limit
+declared by anything the Runtime could read. The published word says which,
+so the Console does not have to infer it.
+*/
 export type ConcurrencyLimitSource =
   "stored_override" | "config_file" | "default";
 
 /**
- * Which config file the router read.
- *
- * A different fact from the limit's source: this one answers "which file did
- * the router consult", and the limit's source answers "what did that file say".
- * One word cannot carry both, and when it tried, the consumer read the file's
- * location as the limit's source and was wrong about every limit the operator
- * had configured.
- */
+Which config file the router read.
+
+A different fact from the limit's source: this one answers "which file did
+the router consult", and the limit's source answers "what did that file say".
+One word cannot carry both, and when it tried, the consumer read the file's
+location as the limit's source and was wrong about every limit the operator
+had configured.
+*/
 export type ConcurrencyConfigFileSource = "default_codex_home" | "env_override";
 
 export interface ConcurrencyTelemetry {
@@ -71,26 +71,28 @@ export interface ConcurrencyTelemetry {
 export interface ConcurrencyStatus {
   scope: string;
   /**
-   * Where the limit in force came from.
-   *
-   * `stored_override` is a stored override, `config_file` is the limit the
-   * config file declares, and `default` is nothing that could be read
-   * declaring a limit. The operator reads this word to know whether the cap in
-   * force is theirs, so it names the limit's source rather than the file's
-   * location.
-   */
+  Where the limit in force came from.
+  
+  `stored_override` is a stored override, `config_file` is the limit the
+  config file declares, and `default` is nothing that could be read
+  declaring a limit. The operator reads this word to know whether the cap in
+  force is theirs, so it names the limit's source rather than the file's
+  location.
+  */
   configSource: ConcurrencyLimitSource;
-  /** Which config file the router read. A different fact from the limit's source. */
+  /**
+  Which config file the router read. A different fact from the limit's source.
+  */
   configFileSource: ConcurrencyConfigFileSource;
   configFileExists: boolean;
   /**
-   * The limit the config file declares.
-   *
-   * `undefined` means the file was there and could not be read, so the limit
-   * in force (`effectivePerSessionLimit`) is not the one that was configured.
-   * It travels as an absent field rather than as `null`, because `null` is a
-   * file that declares no limit.
-   */
+  The limit the config file declares.
+  
+  `undefined` means the file was there and could not be read, so the limit
+  in force (`effectivePerSessionLimit`) is not the one that was configured.
+  It travels as an absent field rather than as `null`, because `null` is a
+  file that declares no limit.
+  */
   maxConcurrentThreadsPerSession?: number | null;
   effectivePerSessionLimit: number | null;
   activeSubagentThreads: number;
@@ -128,14 +130,14 @@ const CONCURRENCY_KEY = "max_concurrent_threads_per_session";
 class InvalidConcurrencySettingError extends Error {}
 
 /**
- * The limit a parsed TOML document declares, or null when it declares none.
- *
- * A document that parsed but declares something that is not a usable limit --
- * `agents` that is not a table, or a value that is not a non-negative safe
- * integer -- is not a confirmed absent cap, so it throws and is reported as unread.
- * Integers smol-toml cannot represent losslessly already fail the parse.
- * `max_threads` is a legacy alias and is not consulted.
- */
+The limit a parsed TOML document declares, or null when it declares none.
+
+A document that parsed but declares something that is not a usable limit --
+`agents` that is not a table, or a value that is not a non-negative safe
+integer -- is not a confirmed absent cap, so it throws and is reported as unread.
+Integers smol-toml cannot represent losslessly already fail the parse.
+`max_threads` is a legacy alias and is not consulted.
+*/
 function declaredLimit(document: Record<string, unknown>): number | null {
   const agents = document.agents;
   if (agents === undefined) return null;
@@ -155,11 +157,11 @@ function declaredLimit(document: Record<string, unknown>): number | null {
 const FS_ERROR_CODE = /^[A-Z0-9_]+$/;
 
 /**
- * A warning-safe reason for an unread config, safe by construction: only our
- * own setting errors, a generic TOML category, or a filesystem error code are
- * logged. Parser errors quote the offending document line and the config can
- * hold credentials, so no other thrown message is ever echoed.
- */
+A warning-safe reason for an unread config, safe by construction: only our
+own setting errors, a generic TOML category, or a filesystem error code are
+logged. Parser errors quote the offending document line and the config can
+hold credentials, so no other thrown message is ever echoed.
+*/
 function unreadReason(error: unknown): string {
   if (error instanceof InvalidConcurrencySettingError) return error.message;
   if (error instanceof TomlError) return "invalid TOML syntax";
@@ -395,13 +397,13 @@ export class ConcurrencyManager {
     if (!saved || typeof saved !== "object") return;
     this.restoreTelemetry(saved);
     if ("storedLimit" in saved) {
-      const val = saved.storedLimit;
+      const value = saved.storedLimit;
       if (
-        val === null ||
-        (typeof val === "number" && Number.isInteger(val) && val >= 0)
+        value === null ||
+        (typeof value === "number" && Number.isInteger(value) && value >= 0)
       ) {
-        this.storedLimit = val as number | null;
-      } else if (val === undefined) {
+        this.storedLimit = value as number | null;
+      } else if (value === undefined) {
         this.storedLimit = undefined;
       }
     }
@@ -439,9 +441,7 @@ export class ConcurrencyManager {
       // is a file that declares no limit -- and the difference is the
       // difference between "the operator configured no cap" and "nobody read
       // the cap the operator configured".
-      ...(configuredLimit === undefined
-        ? {}
-        : { maxConcurrentThreadsPerSession: configuredLimit }),
+      ...(configuredLimit !== undefined && { maxConcurrentThreadsPerSession: configuredLimit }),
       effectivePerSessionLimit: this.effectivePerSessionLimit(),
       activeSubagentThreads: this.agentActivity.countLive(
         { kind: SUBAGENT_SLOT_KIND },

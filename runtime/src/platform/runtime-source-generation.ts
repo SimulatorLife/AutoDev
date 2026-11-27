@@ -1,27 +1,27 @@
 /**
- * The installed Runtime source tree, published as immutable generations.
- *
- * Bridges run from `$CODEX_HOME/src` under launchd `KeepAlive`, so one can
- * (re)start at any moment of an install. Rewriting that tree file by file let
- * a starting process load an updated module beside an old one that lacked a
- * subpath or symbol the update imported (`ERR_PACKAGE_PATH_NOT_EXPORTED:
- * './shared/compaction'`), and `KeepAlive` crash-looped it until the install
- * finished. No ordering of per-file writes closes that window.
- *
- * So the tree a process can load is never written in place. Each install
- * builds a complete tree at `$CODEX_HOME/.src-<hash>`, named by its content,
- * and then repoints the `$CODEX_HOME/src` symlink at it with one `rename`.
- * Node resolves a module's realpath, and every later import -- a lazy
- * `import()` included -- relative to that, so a process stays on the
- * generation it started on for its whole life. Generations are siblings at the
- * top of `$CODEX_HOME`, so module-relative paths (`../..` is `$CODEX_HOME`,
- * `../../vendor`, the `node_modules` walk-up) resolve as they did when `src`
- * was a directory.
- *
- * A replaced generation is kept for {@link GENERATION_RETENTION_MS} after it
- * stops being current: long-lived Codex sessions and the MCP servers they
- * started still import from it.
- */
+The installed Runtime source tree, published as immutable generations.
+
+Bridges run from `$CODEX_HOME/src` under launchd `KeepAlive`, so one can
+(re)start at any moment of an install. Rewriting that tree file by file let
+a starting process load an updated module beside an old one that lacked a
+subpath or symbol the update imported (`ERR_PACKAGE_PATH_NOT_EXPORTED:
+'./shared/compaction'`), and `KeepAlive` crash-looped it until the install
+finished. No ordering of per-file writes closes that window.
+
+So the tree a process can load is never written in place. Each install
+builds a complete tree at `$CODEX_HOME/.src-<hash>`, named by its content,
+and then repoints the `$CODEX_HOME/src` symlink at it with one `rename`.
+Node resolves a module's realpath, and every later import -- a lazy
+`import()` included -- relative to that, so a process stays on the
+generation it started on for its whole life. Generations are siblings at the
+top of `$CODEX_HOME`, so module-relative paths (`../..` is `$CODEX_HOME`,
+`../../vendor`, the `node_modules` walk-up) resolve as they did when `src`
+was a directory.
+
+A replaced generation is kept for {@link GENERATION_RETENTION_MS} after it
+stops being current: long-lived Codex sessions and the MCP servers they
+started still import from it.
+*/
 import { createHash } from "node:crypto";
 import {
   lstatSync,
@@ -36,34 +36,56 @@ import {
 } from "node:fs";
 import path from "node:path";
 
-/** The `$CODEX_HOME` entry every launcher, hook and service imports through. */
+/**
+The `$CODEX_HOME` entry every launcher, hook and service imports through.
+*/
 export const RUNTIME_SOURCE_LINK = "src";
-/** Every generation's directory name starts with this. */
+/**
+Every generation's directory name starts with this.
+*/
 const GENERATION_PREFIX = ".src-";
-/** In-progress builds: `.src-<hash>.tmp-<pid>`. */
+/**
+In-progress builds: `.src-<hash>.tmp-<pid>`.
+*/
 const BUILD_MARKER = ".tmp-";
-/** In-progress swaps: `src.swap-<pid>`. */
+/**
+In-progress swaps: `src.swap-<pid>`.
+*/
 const SWAP_PREFIX = `${RUNTIME_SOURCE_LINK}.swap-`;
-/** How long a replaced generation outlives its replacement. */
+/**
+How long a replaced generation outlives its replacement.
+*/
 export const GENERATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface RuntimeSourceTree {
-  /** Tree-relative path (`router/server.ts`, `package.json`) to its content. */
+  /**
+  Tree-relative path (`router/server.ts`, `package.json`) to its content.
+  */
   readonly files: ReadonlyMap<string, string | Buffer>;
-  /** The `node_modules` directory the tree's own `node_modules` links to. */
+  /**
+  The `node_modules` directory the tree's own `node_modules` links to.
+  */
   readonly nodeModules: string;
 }
 
 export interface RuntimeSourceGenerationResult {
-  /** The current generation's directory name, `.src-<hash>`. */
+  /**
+  The current generation's directory name, `.src-<hash>`.
+  */
   readonly generation: string;
-  /** Whether `$CODEX_HOME/src` was repointed by this call. */
+  /**
+  Whether `$CODEX_HOME/src` was repointed by this call.
+  */
   readonly swapped: boolean;
-  /** Generations and abandoned build artifacts this call removed. */
+  /**
+  Generations and abandoned build artifacts this call removed.
+  */
   readonly collected: readonly string[];
 }
 
-/** The directory name a tree is published under: its content hash. */
+/**
+The directory name a tree is published under: its content hash.
+*/
 export function runtimeSourceGenerationName(tree: RuntimeSourceTree): string {
   const hash = createHash("sha256");
   for (const relativePath of [...tree.files.keys()].sort()) {
@@ -75,7 +97,9 @@ export function runtimeSourceGenerationName(tree: RuntimeSourceTree): string {
   return `${GENERATION_PREFIX}${hash.digest("hex").slice(0, 16)}`;
 }
 
-/** The generation `$CODEX_HOME/src` points at, or null when it is not a link. */
+/**
+The generation `$CODEX_HOME/src` points at, or null when it is not a link.
+*/
 export function currentRuntimeSourceGeneration(
   codexHome: string
 ): string | null {
@@ -89,10 +113,10 @@ export function currentRuntimeSourceGeneration(
 }
 
 /**
- * Publish `tree` as a generation, make it current, and collect generations
- * past their retention. Idempotent: an install whose tree is already current
- * changes nothing.
- */
+Publish `tree` as a generation, make it current, and collect generations
+past their retention. Idempotent: an install whose tree is already current
+changes nothing.
+*/
 export function materializeRuntimeSourceGeneration(
   codexHome: string,
   tree: RuntimeSourceTree,
@@ -100,23 +124,23 @@ export function materializeRuntimeSourceGeneration(
 ): RuntimeSourceGenerationResult {
   const generation = runtimeSourceGenerationName(tree);
   const previous = currentRuntimeSourceGeneration(codexHome);
-  let swapped = false;
+  let isSwapped = false;
   if (previous !== generation) {
     publishGeneration(codexHome, generation, tree);
     swapCurrentGeneration(codexHome, generation, now);
-    swapped = true;
+    isSwapped = true;
   }
   return {
     generation,
-    swapped,
+    swapped: isSwapped,
     collected: collectGenerations(codexHome, generation, now)
   };
 }
 
 /**
- * Build the tree beside its final name and rename it into place, so a
- * generation directory only ever exists complete.
- */
+Build the tree beside its final name and rename it into place, so a
+generation directory only ever exists complete.
+*/
 function publishGeneration(
   codexHome: string,
   generation: string,
@@ -143,13 +167,13 @@ function publishGeneration(
 }
 
 /**
- * Repoint `$CODEX_HOME/src` at `generation` with one `rename` over the link.
- *
- * The replaced generation's mtime records when it stopped being current, which
- * is what its retention counts from. A `src` that is still a plain directory
- * -- an installation from before generations -- is moved aside as a
- * generation first; it ages out like any other.
- */
+Repoint `$CODEX_HOME/src` at `generation` with one `rename` over the link.
+
+The replaced generation's mtime records when it stopped being current, which
+is what its retention counts from. A `src` that is still a plain directory
+-- an installation from before generations -- is moved aside as a
+generation first; it ages out like any other.
+*/
 function swapCurrentGeneration(
   codexHome: string,
   generation: string,
@@ -179,9 +203,9 @@ function markReplaced(directory: string, now: number): void {
 }
 
 /**
- * Remove generations replaced more than the retention ago, and the build
- * directories and swap links of installs that died before finishing.
- */
+Remove generations replaced more than the retention ago, and the build
+directories and swap links of installs that died before finishing.
+*/
 function collectGenerations(
   codexHome: string,
   current: string,

@@ -8,21 +8,21 @@ import {
 } from "./acceptance-helpers.ts";
 
 /**
- * The generic surfaces the target state rules out.
- *
- * The root route must lead to a canonical resource rather than to a generic
- * home page, so none of these may ever answer with a surface of its own.
- */
+The generic surfaces the target state rules out.
+
+The root route must lead to a canonical resource rather than to a generic
+home page, so none of these may ever answer with a surface of its own.
+*/
 const GENERIC_SURFACES: readonly string[] = ["/home", "/dashboard"];
 
 /**
- * The URL the root route must end on.
- */
+The URL the root route must end on.
+*/
 const AGENTS_URL = /\/agents$/u;
 
 /**
- * The sidebar's entry for one section.
- */
+The sidebar's entry for one section.
+*/
 function sectionEntry(page: Page, section: string): Locator {
   return page.locator(`[data-nav-item="${section}"]`).first();
 }
@@ -174,16 +174,16 @@ test("Overview is a static resource landing page linking to canonical destinatio
 });
 
 /**
- * A detail page's tab names the item it is about.
- *
- * The tab is what an operator reads when they have several of them open, so
- * a tab that names only the section leaves two sessions, two providers or two
- * tools indistinguishable. Every detail page names its item: "default ·
- * Agents", "claude · Providers", "lsp · MCPs".
- *
- * The Playtesting session page did not: it said "Playtesting session" for
- * every session, so two sessions open in two tabs read the same.
- */
+A detail page's tab names the item it is about.
+
+The tab is what an operator reads when they have several of them open, so
+a tab that names only the section leaves two sessions, two providers or two
+tools indistinguishable. Every detail page names its item: "default ·
+Agents", "claude · Providers", "lsp · MCPs".
+
+The Playtesting session page did not: it said "Playtesting session" for
+every session, so two sessions open in two tabs read the same.
+*/
 test("a detail page's tab names the item it is about", async ({ page }) => {
   const detailPaths: readonly string[] = [
     ...DETAIL_ROUTES.map((route) => route.path),

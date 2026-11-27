@@ -7,13 +7,13 @@ import test from "node:test";
 import { renderExecutionContract } from "../src/config/render-execution-contract.ts";
 
 /**
- * The execution contract's own tests.
- *
- * The contract is the projection of the role declarations, and the sandbox a
- * role declares is one of the things it projects. It used to project a
- * boolean, which could say only "read-only" or "not read-only" and so
- * reported every unrestricted role as a workspace-write one.
- */
+The execution contract's own tests.
+
+The contract is the projection of the role declarations, and the sandbox a
+role declares is one of the things it projects. It used to project a
+boolean, which could say only "read-only" or "not read-only" and so
+reported every unrestricted role as a workspace-write one.
+*/
 
 interface Fixture {
   readonly rolesDirectory: string;
@@ -22,12 +22,12 @@ interface Fixture {
 }
 
 /**
- * A contract template with the shape the renderer reads.
- *
- * The renderer reads the roles from the role files and the template for the
- * rest, so the template carries the per-role facts the role files do not:
- * the role-scoped MCP grants and the web-research declaration.
- */
+A contract template with the shape the renderer reads.
+
+The renderer reads the roles from the role files and the template for the
+rest, so the template carries the per-role facts the role files do not:
+the role-scoped MCP grants and the web-research declaration.
+*/
 const CONTRACT_TEMPLATE = {
   version: 1,
   roles: {
@@ -50,11 +50,11 @@ const CONTRACT_TEMPLATE = {
 };
 
 /**
- * The role files every contract needs.
- *
- * The renderer requires an orchestrator and the three research roles, and it
- * derives `readOnly` from `# role-access: read-only` or `AUTODEV_MCP_READ_ONLY`.
- */
+The role files every contract needs.
+
+The renderer requires an orchestrator and the three research roles, and it
+derives `readOnly` from `# role-access: read-only` or `AUTODEV_MCP_READ_ONLY`.
+*/
 function roleFiles(): Record<string, string> {
   return {
     orchestrator:

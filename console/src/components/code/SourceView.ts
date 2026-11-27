@@ -3,17 +3,17 @@
 import React, { useState } from "react";
 
 import { Button } from "../forms/Button.ts";
-import { CodeBlock } from "./CodeBlock.ts";
 import { MUTED_TEXT_CLASS } from "../ui/text-classes.ts";
+import { CodeBlock } from "./CodeBlock.ts";
 
 /**
- * Two views of one already loaded source revision; no fetch or mutation.
- *
- * `source` is null when the canonical source was not read. The rendered view
- * still answers the question the page asks -- the values the source states --
- * and the raw view says that there is no source to show rather than opening an
- * empty document, so "not observed" is never rendered as "empty".
- */
+Two views of one already loaded source revision; no fetch or mutation.
+
+`source` is null when the canonical source was not read. The rendered view
+still answers the question the page asks -- the values the source states --
+and the raw view says that there is no source to show rather than opening an
+empty document, so "not observed" is never rendered as "empty".
+*/
 export function SourceView({
   source,
   format,

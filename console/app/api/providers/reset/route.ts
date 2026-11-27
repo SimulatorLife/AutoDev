@@ -1,8 +1,8 @@
 /**
- * Same-origin, confirmation-bound entry point for resetting provider overrides.
- * The browser sends no Runtime credential or configuration body; this route
- * validates the form and invokes one typed Control API operation server-side.
- */
+Same-origin, confirmation-bound entry point for resetting provider overrides.
+The browser sends no Runtime credential or configuration body; this route
+validates the form and invokes one typed Control API operation server-side.
+*/
 
 import type { NextRequest, NextResponse } from "next/server.js";
 

@@ -4,7 +4,9 @@ import { NOT_OBSERVED_LABEL } from "../components/status/StatusBadge.ts";
 
 export type LiveAgentCountDimension = "byRole" | "byProvider" | "byModel";
 
-/** An absent live source is unknown; a missing key in an observed map is zero. */
+/**
+An absent live source is unknown; a missing key in an observed map is zero.
+*/
 export function liveAgentCount(
   liveAgents: ControlApiLiveAgentCounts | null | undefined,
   dimension: LiveAgentCountDimension,
@@ -29,11 +31,11 @@ function roleName(role: string): string {
 }
 
 /**
- * What a live count is made of, one role per line ("1 Orchestrator",
- * "1 Worker"), largest first. `undefined` when there is nothing to break
- * down -- an unobserved source or no live agents -- so the count itself
- * stays the hover text.
- */
+What a live count is made of, one role per line ("1 Orchestrator",
+"1 Worker"), largest first. `undefined` when there is nothing to break
+down -- an unobserved source or no live agents -- so the count itself
+stays the hover text.
+*/
 export function liveAgentRoleBreakdown(
   liveAgents: ControlApiLiveAgentCounts | null | undefined,
   dimension: LiveAgentRoleDimension,

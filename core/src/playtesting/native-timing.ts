@@ -1,8 +1,8 @@
 /**
- * Deterministic interpretation of native-capture state intervals.
- * Game/browser instrumentation supplies the intervals and versioned
- * precedence contract; Core only validates and resolves their overlap.
- */
+Deterministic interpretation of native-capture state intervals.
+Game/browser instrumentation supplies the intervals and versioned
+precedence contract; Core only validates and resolves their overlap.
+*/
 export const PLAYTEST_NATIVE_TIMING_STATES = [
   "active-interaction",
   "required-animation",
@@ -23,10 +23,14 @@ export interface PlaytestNativeTimingInterval {
 }
 
 export interface PlaytestNativeTimingInput {
-  /** Native capture duration only; never simulation or inference duration. */
+  /**
+  Native capture duration only; never simulation or inference duration.
+  */
   readonly durationMs: number;
   readonly precedenceVersion: string;
-  /** Highest priority first; `unknown` is always resolved last. */
+  /**
+  Highest priority first; `unknown` is always resolved last.
+  */
   readonly precedence: readonly ObservableTimingState[];
   readonly intervals: readonly PlaytestNativeTimingInterval[];
 }
@@ -181,10 +185,10 @@ function durationsByState(
 }
 
 /**
- * Resolves overlapping native UI-state observations using a game-versioned
- * precedence order. Uncovered time and explicit unknown observations remain
- * unknown. Invalid/out-of-range intervals fail rather than being clipped.
- */
+Resolves overlapping native UI-state observations using a game-versioned
+precedence order. Uncovered time and explicit unknown observations remain
+unknown. Invalid/out-of-range intervals fail rather than being clipped.
+*/
 export function summarizePlaytestNativeTiming(
   input: PlaytestNativeTimingInput
 ): PlaytestNativeTimingSummary {

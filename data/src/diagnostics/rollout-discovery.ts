@@ -1,16 +1,16 @@
 /**
- * Authoritative rollout discovery.
- *
- * A Codex session is not one file: it is a root rollout plus a rollout per
- * subagent, and the root file names the session the children belong to. The
- * Codex app also *moves* a finished session's rollout out of `sessions/` and
- * into `archived_sessions/`, so a search of `sessions/` alone reports "no
- * rollout found" for exactly the sessions someone has finished with.
- *
- * This module finds the files. It reads only the head of each rollout -- the
- * `session_meta` line -- because a rollout reaches tens of megabytes and the
- * head is all the join needs.
- */
+Authoritative rollout discovery.
+
+A Codex session is not one file: it is a root rollout plus a rollout per
+subagent, and the root file names the session the children belong to. The
+Codex app also *moves* a finished session's rollout out of `sessions/` and
+into `archived_sessions/`, so a search of `sessions/` alone reports "no
+rollout found" for exactly the sessions someone has finished with.
+
+This module finds the files. It reads only the head of each rollout -- the
+`session_meta` line -- because a rollout reaches tens of megabytes and the
+head is all the join needs.
+*/
 
 import { closeSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import path from "node:path";
@@ -26,7 +26,9 @@ import {
 import { readNativeSessionEvidence } from "./native-session-evidence.ts";
 import type { MutableRecentSession } from "./working-shapes.ts";
 
-/** The `session_meta` record, as it appears at the head of every rollout JSONL. */
+/**
+The `session_meta` record, as it appears at the head of every rollout JSONL.
+*/
 export interface SessionMetaPayload {
   id?: string;
   session_id?: string;
@@ -52,11 +54,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Read the `session_meta` payload of a rollout, keeping only the known fields.
- *
- * The rollout is untrusted JSON, so every field is read as `unknown` and
- * narrowed before it is kept.
- */
+Read the `session_meta` payload of a rollout, keeping only the known fields.
+
+The rollout is untrusted JSON, so every field is read as `unknown` and
+narrowed before it is kept.
+*/
 export function parseSessionMetaPayload(raw: unknown): SessionMetaPayload {
   if (!isRecord(raw)) return {};
   const meta: SessionMetaPayload = { ...raw };
@@ -79,11 +81,11 @@ export function parseSessionMetaPayload(raw: unknown): SessionMetaPayload {
 }
 
 /**
- * Where rollouts live.
- *
- * The Codex app archives a session by moving its rollout out of `sessions/` and
- * into `archived_sessions/`, so an archived session is still worth reading.
- */
+Where rollouts live.
+
+The Codex app archives a session by moving its rollout out of `sessions/` and
+into `archived_sessions/`, so an archived session is still worth reading.
+*/
 export function rolloutRoots(codexHome: string): string[] {
   return [
     path.join(codexHome, "sessions"),
@@ -91,7 +93,9 @@ export function rolloutRoots(codexHome: string): string[] {
   ];
 }
 
-/** Every rollout file under one root, sorted by path. */
+/**
+Every rollout file under one root, sorted by path.
+*/
 export function rolloutFiles(root: string): string[] {
   const files: string[] = [];
   const visit = (dir: string): void => {
@@ -115,11 +119,11 @@ export function rolloutFiles(root: string): string[] {
 }
 
 /**
- * The `session_meta` line, read without loading the whole rollout.
- *
- * Only the head is read, because the head is where the join key lives and a
- * rollout reaches tens of megabytes.
- */
+The `session_meta` line, read without loading the whole rollout.
+
+Only the head is read, because the head is where the join key lives and a
+rollout reaches tens of megabytes.
+*/
 export function readHeadMeta(file: string): SessionMetaPayload | null {
   let fd: number;
   try {
@@ -154,12 +158,12 @@ export function readHeadMeta(file: string): SessionMetaPayload | null {
 }
 
 /**
- * The rollouts belonging to one id.
- *
- * The id may name a session or a thread: either way every thread of that
- * session is returned. Newest files are checked first because a debugged
- * session is almost always recent.
- */
+The rollouts belonging to one id.
+
+The id may name a session or a thread: either way every thread of that
+session is returned. Newest files are checked first because a debugged
+session is almost always recent.
+*/
 export function findSessionRollouts(
   sessionsRoot: string | readonly string[],
   id: string
@@ -229,7 +233,9 @@ function addRecentSession(
   sessions.set(sessionId, entry);
 }
 
-/** The newest root sessions across one or more rollout roots. */
+/**
+The newest root sessions across one or more rollout roots.
+*/
 export function listRecentSessions(
   sessionsRoot: string | readonly string[],
   limit: number
@@ -251,7 +257,9 @@ export function listRecentSessions(
     .slice(0, limit);
 }
 
-/** Merge bounded native lifecycle evidence without inventing rollout metrics. */
+/**
+Merge bounded native lifecycle evidence without inventing rollout metrics.
+*/
 export function mergeNativeRecentSessions(
   rolloutSessions: readonly RecentSessionSummary[],
   limit: number,
@@ -276,7 +284,9 @@ export function mergeNativeRecentSessions(
     .slice(0, limit);
 }
 
-/** The recent-sessions listing, in the shape the Control API publishes. */
+/**
+The recent-sessions listing, in the shape the Control API publishes.
+*/
 export function listRecentSessionsResponse(
   sessionsRoot: string | readonly string[],
   limit: number,

@@ -15,18 +15,18 @@ export interface WorkspacePlaytestRevokeFormProps {
 }
 
 /**
- * The operator form that revokes an active playtesting approval.
- *
- * It carries the approval's own `approvalId` and `revision` as hidden
- * optimistic-concurrency fields rather than letting the Runtime infer which
- * approval is being revoked: if another operator revoked or re-approved this
- * workspace since the page was rendered, the revision the Runtime holds no
- * longer matches the one this form was built from, and the Runtime refuses
- * the revocation as a conflict rather than silently retiring a different
- * approval than the one the operator reviewed. Submission remains a native
- * keyboard-operable form but is intercepted for an in-place same-origin POST;
- * the Runtime remains the authority for whether revocation succeeded.
- */
+The operator form that revokes an active playtesting approval.
+
+It carries the approval's own `approvalId` and `revision` as hidden
+optimistic-concurrency fields rather than letting the Runtime infer which
+approval is being revoked: if another operator revoked or re-approved this
+workspace since the page was rendered, the revision the Runtime holds no
+longer matches the one this form was built from, and the Runtime refuses
+the revocation as a conflict rather than silently retiring a different
+approval than the one the operator reviewed. Submission remains a native
+keyboard-operable form but is intercepted for an in-place same-origin POST;
+the Runtime remains the authority for whether revocation succeeded.
+*/
 export function WorkspacePlaytestRevokeForm({
   workspaceId,
   approval,

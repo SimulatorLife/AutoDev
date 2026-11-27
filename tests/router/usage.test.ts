@@ -138,23 +138,23 @@ test("extractWorkspaceIdWithAmbiguity extracts workspace IDs and detects ambigui
 });
 
 test("readNamedAttribute, toolServerAttribute, and toolKey extract tool attributes", () => {
-  const attrs = {
+  const attributes = {
     tool_name: "read_file",
     source: "builtin",
     mcp_server: "filesystem"
   };
   assert.equal(
-    readNamedAttribute(attrs, "fallback", "nonexistent", "tool_name"),
+    readNamedAttribute(attributes, "fallback", "nonexistent", "tool_name"),
     "read_file"
   );
   assert.equal(
-    readNamedAttribute(attrs, "fallback", "nonexistent"),
+    readNamedAttribute(attributes, "fallback", "nonexistent"),
     "fallback"
   );
 
-  assert.equal(toolServerAttribute(attrs), "filesystem");
-  assert.equal(toolNameAttribute(attrs), "read_file");
-  assert.equal(toolKey(attrs), "read_file::builtin::filesystem");
+  assert.equal(toolServerAttribute(attributes), "filesystem");
+  assert.equal(toolNameAttribute(attributes), "read_file");
+  assert.equal(toolKey(attributes), "read_file::builtin::filesystem");
 });
 
 test("Workspace registry registers, handles duplicates, and fails on conflict", () => {
@@ -216,11 +216,11 @@ test("Attribution diagnostics tracks counts, reason breakdowns, and caps unknown
   assert.deepEqual(status.unknownWorkspaceIds, ["ws-bad"]);
 
   // Add 120 unique unknown workspace IDs to test eviction cap
-  for (let i = 0; i < 120; i++) {
+  for (let index = 0; index < 120; index++) {
     tracker.recordAttributionDiagnostic({
       attributed: false,
       reason: "unknown_workspace_id",
-      unknownWorkspaceId: `ws-unknown-${i}`
+      unknownWorkspaceId: `ws-unknown-${index}`
     });
   }
   const cappedStatus = tracker.attributionDiagnosticsStatus();

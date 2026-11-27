@@ -17,7 +17,7 @@ import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/
 
 import type { RecordRouterEventInput } from "./events.ts";
 import { safeMetricLabel } from "./metric-label.ts";
-import type { RecordUsageEventParams } from "./usage.ts";
+import type { RecordUsageEventParams as RecordUsageEventParameters } from "./usage.ts";
 
 // Normalise the persisted `settled` counter block. The router records it
 // as `{ success, failure }`; persistence may hand back an object whose
@@ -29,7 +29,7 @@ function normalizeSettledCounter(value: unknown): number {
       ? value
       : typeof value === "string"
         ? Number(value)
-        : Number.NaN;
+        : NaN;
   return Number.isFinite(count) && count >= 0 ? count : 0;
 }
 
@@ -72,11 +72,11 @@ export const AGENT_EVENTS_PATH = "/v1/agent-events";
 export const DEFAULT_AGENT_EVENTS_URL = `http://127.0.0.1:4100${AGENT_EVENTS_PATH}`;
 
 /**
- * Codex Desktop session id used by /v1/agent-events ingest as the secondary
- * correlation key when a bridge did not issue a router request id. The hook
- * `skill-read-telemetry` posts this so the router can attribute SKILL.md
- * reads from child threads that never travelled through `/v1/responses`.
- */
+Codex Desktop session id used by /v1/agent-events ingest as the secondary
+correlation key when a bridge did not issue a router request id. The hook
+`skill-read-telemetry` posts this so the router can attribute SKILL.md
+reads from child threads that never travelled through `/v1/responses`.
+*/
 
 export const ORCHESTRATOR_AGENT_ROLE = "orchestrator";
 export const FORWARDED_REQUEST_HEADERS = Object.freeze([
@@ -258,20 +258,20 @@ export interface RecordSubagentSpawnInput {
   workspace?: string | null | undefined;
   count?: number | undefined;
   /**
-   * The spawned agent's own thread. A thread is spawned once: every later
-   * request it makes is the same agent, not a new spawn.
-   */
+  The spawned agent's own thread. A thread is spawned once: every later
+  request it makes is the same agent, not a new spawn.
+  */
   thread?: string | null | undefined;
 }
 
 /**
- * Bridge subagents the registry was told about but could not attribute to a
- * provider or a model.
- *
- * A gap is a missing identity, never a guessed one: the target state requires
- * a provider/model attribution gap to stay visible as missing attribution
- * rather than being assigned to an entity the registry never saw.
- */
+Bridge subagents the registry was told about but could not attribute to a
+provider or a model.
+
+A gap is a missing identity, never a guessed one: the target state requires
+a provider/model attribution gap to stay visible as missing attribution
+rather than being assigned to an entity the registry never saw.
+*/
 export interface AgentIdentityGaps {
   missingProvider: number;
   missingModel: number;
@@ -321,19 +321,21 @@ export interface SpawnFailureStatus {
 
 export interface BridgeRequestContext {
   /**
-   * The activity subject the router tracks this request under -- the agent
-   * the request belongs to. A bridge's reports about the request apply here
-   * and nowhere else: the session key is shared by an orchestrator and every
-   * subagent it spawns, so keying reports by it let a child overwrite its
-   * orchestrator's record.
-   */
+  The activity subject the router tracks this request under -- the agent
+  the request belongs to. A bridge's reports about the request apply here
+  and nowhere else: the session key is shared by an orchestrator and every
+  subagent it spawns, so keying reports by it let a child overwrite its
+  orchestrator's record.
+  */
   activitySubject: string;
   provider?: string | null | undefined;
   model?: string | null | undefined;
   role?: string | null | undefined;
   workspace?: string | null | undefined;
   sessionKey?: string | null | undefined;
-  /** Explicit caller session identity; unlike sessionKey, never thread fallback. */
+  /**
+  Explicit caller session identity; unlike sessionKey, never thread fallback.
+  */
   sessionId?: string | null | undefined;
   finished?: { outcome: string; elapsedMs: number | null } | undefined;
   [key: string]: unknown;
@@ -347,7 +349,9 @@ export interface OrchestratorSessionEntry {
   updatedAt: number;
 }
 
-/** The provider that last served one subagent thread, for that agent's continuity. */
+/**
+The provider that last served one subagent thread, for that agent's continuity.
+*/
 export interface SubagentThreadEntry {
   provider: string;
   role: string;
@@ -376,7 +380,9 @@ export interface BridgeParentActivityEntry {
 export interface ProviderCapabilities {
   subagentSpawn: boolean;
   normalizeItemIds: boolean;
-  /** How this provider's transport reaches the role-scoped MCP surfaces. */
+  /**
+  How this provider's transport reaches the role-scoped MCP surfaces.
+  */
   mcpIngress: ProviderMcpIngress;
 }
 
@@ -391,14 +397,14 @@ export interface RoleCapabilityRequirements {
 }
 
 /**
- * The role's contract, projected for the workspace the work happens in.
- *
- * A workspace adds skills to a role and changes nothing else about it: the
- * MCP servers, the read-only flag, and the rest of the role stay global. A
- * caller that knows no workspace gets the global contract, because a guess
- * about which workspace a request is for would hand a role skills it must not
- * have.
- */
+The role's contract, projected for the workspace the work happens in.
+
+A workspace adds skills to a role and changes nothing else about it: the
+MCP servers, the read-only flag, and the rest of the role stay global. A
+caller that knows no workspace gets the global contract, because a guess
+about which workspace a request is for would hand a role skills it must not
+have.
+*/
 function roleContractForAgent(
   role: string | null | undefined,
   executionContract: ExecutionContract,
@@ -455,33 +461,33 @@ function emptyRoleCapabilityRequirements(): RoleCapabilityRequirements {
 let cachedExecutionContract: ExecutionContract | null = null;
 
 /**
- * Whether the last read of the execution contract observed a contract.
- *
- * The accessor falls back to an empty contract when the read fails, so an
- * empty contract and a contract that could not be read look the same to a
- * caller. They are not the same claim: the first says the contract declares no
- * roles, and the second says nobody read it. A count over the contract's roles
- * is over a scope that was only partly read when the read failed -- the
- * number is exactly right for the roles that were read and merely incomplete
- * for the ones that were not -- so a caller that counts them has to be able to
- * tell the two apart.
- */
-let executionContractWasObserved = false;
+Whether the last read of the execution contract observed a contract.
+
+The accessor falls back to an empty contract when the read fails, so an
+empty contract and a contract that could not be read look the same to a
+caller. They are not the same claim: the first says the contract declares no
+roles, and the second says nobody read it. A count over the contract's roles
+is over a scope that was only partly read when the read failed -- the
+number is exactly right for the roles that were read and merely incomplete
+for the ones that were not -- so a caller that counts them has to be able to
+tell the two apart.
+*/
+let isExecutionContractWasObserved = false;
 
 /**
- * Whether the execution contract was observed by the last read.
- *
- * True when a contract was read and parsed, and false when the read failed
- * and the accessor fell back to an empty contract. A contract set for a test
- * is observed: the caller was given the document, so nothing was left unread.
- */
+Whether the execution contract was observed by the last read.
+
+True when a contract was read and parsed, and false when the read failed
+and the accessor fell back to an empty contract. A contract set for a test
+is observed: the caller was given the document, so nothing was left unread.
+*/
 export function executionContractObserved(): boolean {
-  return executionContractWasObserved;
+  return isExecutionContractWasObserved;
 }
 
 export function getDefaultExecutionContract(): ExecutionContract {
   if (cachedExecutionContract) {
-    executionContractWasObserved = true;
+    isExecutionContractWasObserved = true;
     return cachedExecutionContract;
   }
   const codexHome =
@@ -504,13 +510,15 @@ export function getDefaultExecutionContract(): ExecutionContract {
       cachedExecutionContract = JSON.parse(
         readFileSync(candidates[0]!, "utf8")
       ) as ExecutionContract;
-      executionContractWasObserved = true;
+      isExecutionContractWasObserved = true;
       return cachedExecutionContract;
     } catch {
-      /* fallthrough to empty */
+      /*
+      fallthrough to empty
+      */
     }
   }
-  executionContractWasObserved = false;
+  isExecutionContractWasObserved = false;
   return { roles: {}, providers: {} };
 }
 
@@ -520,21 +528,21 @@ export function setExecutionContractForTests(
   cachedExecutionContract = contract;
   // A contract handed to the runtime was observed; a null contract drops the
   // cache so the next read goes to the file, which has not been read yet.
-  executionContractWasObserved = contract !== null;
+  isExecutionContractWasObserved = contract !== null;
 }
 
 /**
- * The execution-contract file the last read resolved to, or `null` when none
- * existed.
- *
- * Exposed because a mutation has to write the file it read. Reading the contract
- * through a cached accessor and writing through a separately-computed path is how
- * a change lands in one file while the process keeps serving another, and the
- * mutation would report success for an edit nothing reads.
- *
- * Resolution is repeated rather than remembered, so the path is the one this
- * call would use now -- including after a reload invalidated the document.
- */
+The execution-contract file the last read resolved to, or `null` when none
+existed.
+
+Exposed because a mutation has to write the file it read. Reading the contract
+through a cached accessor and writing through a separately-computed path is how
+a change lands in one file while the process keeps serving another, and the
+mutation would report success for an edit nothing reads.
+
+Resolution is repeated rather than remembered, so the path is the one this
+call would use now -- including after a reload invalidated the document.
+*/
 export function executionContractFile(): string | null {
   const codexHome =
     process.env.CODEX_HOME ?? `${process.env.HOME ?? process.cwd()}/.codex`;
@@ -558,15 +566,15 @@ export function executionContractFile(): string | null {
 }
 
 /**
- * Drop the cached contract so the next read comes from disk.
- *
- * Called after a successful write and nowhere else. A cache that outlives its
- * own mutation is the difference between an assignment that takes effect and one
- * that appears to have succeeded and then quietly does nothing.
- */
+Drop the cached contract so the next read comes from disk.
+
+Called after a successful write and nowhere else. A cache that outlives its
+own mutation is the difference between an assignment that takes effect and one
+that appears to have succeeded and then quietly does nothing.
+*/
 export function reloadExecutionContract(): void {
   cachedExecutionContract = null;
-  executionContractWasObserved = false;
+  isExecutionContractWasObserved = false;
 }
 
 export function providerCapabilities(
@@ -587,12 +595,12 @@ export function providerCapabilities(
 }
 
 /**
- * Whether a provider's transport can deliver a role's MCP surface.
- *
- * A `gateway` or `local` transport reaches every role's MCP surface. A
- * `site-native` transport reaches only the roles whose tools the site itself
- * provides. A transport with no ingress reaches no role that needs tools.
- */
+Whether a provider's transport can deliver a role's MCP surface.
+
+A `gateway` or `local` transport reaches every role's MCP surface. A
+`site-native` transport reaches only the roles whose tools the site itself
+provides. A transport with no ingress reaches no role that needs tools.
+*/
 export function providerDeliversRoleMcp(
   provider: string,
   roleMcpServers: readonly string[],
@@ -654,7 +662,7 @@ export interface SubagentRegistryOptions {
   maxTrackedRequests?: number | undefined;
   maxTrackedSubagents?: number | undefined;
   onRecordRouterEvent?: ((event: RecordRouterEventInput) => void) | undefined;
-  onRecordUsageEvent?: ((event: RecordUsageEventParams) => void) | undefined;
+  onRecordUsageEvent?: ((event: RecordUsageEventParameters) => void) | undefined;
   onSchedulePersist?: (() => void) | undefined;
   getSpawnCapableProviders?: (() => string[]) | undefined;
 }
@@ -669,7 +677,7 @@ export class SubagentRegistry {
   private readonly onRecordRouterEvent?:
     ((event: RecordRouterEventInput) => void) | undefined;
   private readonly onRecordUsageEvent?:
-    ((event: RecordUsageEventParams) => void) | undefined;
+    ((event: RecordUsageEventParameters) => void) | undefined;
   private readonly onSchedulePersist?: (() => void) | undefined;
   private readonly getSpawnCapableProviders?: (() => string[]) | undefined;
 
@@ -680,14 +688,16 @@ export class SubagentRegistry {
     OrchestratorSessionEntry
   >();
   /**
-   * Keyed by the agent's own thread. A subagent shares its root's session key
-   * with every sibling, so keying continuity by session made the first child's
-   * provider -- or, through the root's activity record, the orchestrator's --
-   * every later child's preferred provider: with a Codex orchestrator every
-   * subagent was pinned to Codex ahead of the providers ranked above it.
-   */
+  Keyed by the agent's own thread. A subagent shares its root's session key
+  with every sibling, so keying continuity by session made the first child's
+  provider -- or, through the root's activity record, the orchestrator's --
+  every later child's preferred provider: with a Codex orchestrator every
+  subagent was pinned to Codex ahead of the providers ranked above it.
+  */
   private readonly subagentThreads = new Map<string, SubagentThreadEntry>();
-  /** Threads whose spawn was already recorded: one agent is one spawn. */
+  /**
+  Threads whose spawn was already recorded: one agent is one spawn.
+  */
   private readonly spawnedThreads = new Set<string>();
   private readonly workspaceMetadataBySession = new Map<
     string,
@@ -752,18 +762,18 @@ export class SubagentRegistry {
   }
 
   /**
-   * Remember the workspace a session is working in, for the turns that follow.
-   *
-   * The client's own entry for that workspace is kept when there is one: it
-   * carries the workspace's git identity, and a remembered copy that dropped
-   * it would label the same workspace by its path basename on every later
-   * turn. Two labels for one workspace split the Usage per-workspace
-   * breakdown and leave the Console's Workspaces surface counting only the
-   * turns that happened to arrive with metadata.
-   *
-   * A session whose client sent no entry keeps the path-only one, which is
-   * all there is to remember.
-   */
+  Remember the workspace a session is working in, for the turns that follow.
+  
+  The client's own entry for that workspace is kept when there is one: it
+  carries the workspace's git identity, and a remembered copy that dropped
+  it would label the same workspace by its path basename on every later
+  turn. Two labels for one workspace split the Usage per-workspace
+  breakdown and leave the Console's Workspaces surface counting only the
+  turns that happened to arrive with metadata.
+  
+  A session whose client sent no entry keeps the path-only one, which is
+  all there is to remember.
+  */
   rememberWorkspaceMetadata(
     sessionKey: string | null | undefined,
     workspacePath: string | null | undefined,
@@ -796,16 +806,16 @@ export class SubagentRegistry {
   }
 
   /**
-   * The workspace directory a session is working in.
-   *
-   * The remembered turn metadata answers "which workspace is this session
-   * labelled with"; it is a JSON document, not a path, so it cannot be handed
-   * to anything that reads the filesystem. A consumer that needs to look at
-   * the workspace itself -- the Git commit observer reads the repository the
-   * agent committed into -- needs the directory, and it has to be the same
-   * directory the session's own metadata was resolved from, or the observer
-   * watches a different tree than the one the agent worked in.
-   */
+  The workspace directory a session is working in.
+  
+  The remembered turn metadata answers "which workspace is this session
+  labelled with"; it is a JSON document, not a path, so it cannot be handed
+  to anything that reads the filesystem. A consumer that needs to look at
+  the workspace itself -- the Git commit observer reads the repository the
+  agent committed into -- needs the directory, and it has to be the same
+  directory the session's own metadata was resolved from, or the observer
+  watches a different tree than the one the agent worked in.
+  */
   getWorkspacePath(sessionKey: string | null | undefined): string | null {
     if (!sessionKey || sessionKey === PROCESS_FALLBACK_SESSION_KEY) return null;
     return (
@@ -901,8 +911,8 @@ export class SubagentRegistry {
     if (!sessionKey || sessionKey === PROCESS_FALLBACK_SESSION_KEY)
       return false;
     for (const entry of this.bridgeSubagentUsage.values()) {
-      const ctx = this.bridgeRequestContext.get(entry.requestId);
-      if (ctx?.sessionKey === sessionKey) return true;
+      const context = this.bridgeRequestContext.get(entry.requestId);
+      if (context?.sessionKey === sessionKey) return true;
     }
     return false;
   }
@@ -1034,8 +1044,7 @@ export class SubagentRegistry {
   }): void {
     const { requestId, context, role, childId, model } = input;
     const key = bridgeSubagentKey(requestId, childId);
-    if (this.bridgeSubagentUsage.has(key)) return;
-    if (!this.recordSubagentIdentityGaps(context)) return;
+    if (this.bridgeSubagentUsage.has(key) || !this.recordSubagentIdentityGaps(context)) return;
 
     const settled = context.finished ?? null;
     const entry = this.recordSubagentUsageEntry(
@@ -1071,17 +1080,17 @@ export class SubagentRegistry {
   private recordSubagentIdentityGaps(
     context: BridgeRequestContext
   ): context is BridgeRequestContext & { provider: string; model: string } {
-    const missingProvider =
+    const isMissingProvider =
       typeof context.provider !== "string" || !context.provider.trim();
-    const missingModel =
+    const isMissingModel =
       typeof context.model !== "string" || !context.model.trim();
-    if (missingProvider) {
+    if (isMissingProvider) {
       this.subagentTelemetry.bridgeIdentityGaps.missingProvider += 1;
     }
-    if (missingModel) {
+    if (isMissingModel) {
       this.subagentTelemetry.bridgeIdentityGaps.missingModel += 1;
     }
-    return !missingProvider && !missingModel;
+    return !isMissingProvider && !isMissingModel;
   }
 
   // Build the usage entry the registry stores for a new bridge subagent,

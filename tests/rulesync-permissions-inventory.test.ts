@@ -11,8 +11,8 @@ import path, { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { updateAntigravityPermissions } from "@simulatorlife/autodev-runtime/platform/antigravity-settings";
 import { parseJsoncObject } from "@simulatorlife/autodev-data/files";
+import { updateAntigravityPermissions } from "@simulatorlife/autodev-runtime/platform/antigravity-settings";
 import { parse } from "smol-toml";
 
 import { normalizedSource } from "./source-text.ts";

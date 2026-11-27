@@ -1,4 +1,6 @@
-/** Load one committed build's target-owned playtest files under a Workspaces approval. */
+/**
+Load one committed build's target-owned playtest files under a Workspaces approval.
+*/
 import { createHash } from "node:crypto";
 import {
   closeSync,
@@ -35,14 +37,14 @@ import { isPathWithin } from "@simulatorlife/autodev-data/files";
 import { observationSchemaHash, playtestManifestHash } from "./hash-chain.ts";
 
 /**
- * The one integration file a target game checks in, resolved against the
- * approved checkout root.
- *
- * `.autodev/playtest.config.json` is the canonical location so a repository
- * advertises AutoDev Playtesting support through one recognizable directory.
- * Every other manifest it references resolves relative to this file's own
- * directory, so that directory is self-contained and relocatable.
- */
+The one integration file a target game checks in, resolved against the
+approved checkout root.
+
+`.autodev/playtest.config.json` is the canonical location so a repository
+advertises AutoDev Playtesting support through one recognizable directory.
+Every other manifest it references resolves relative to this file's own
+directory, so that directory is self-contained and relocatable.
+*/
 const CONFIG_PATH = `${PLAYTESTS_INTEGRATION_DIR}/playtest.config.json`;
 const CONFIG_LABEL = CONFIG_PATH;
 const CONFIG_UNAVAILABLE = "config-unavailable" as const;
@@ -177,12 +179,12 @@ function readOpenedWorkspaceFile(
 }
 
 /**
- * Read a small regular target file while refusing symlink traversal.
- *
- * `relativePath` is always interpreted against the approved checkout root, so
- * the symlink and containment checks keep walking from that root even when the
- * caller resolved the path against the config's own directory.
- */
+Read a small regular target file while refusing symlink traversal.
+
+`relativePath` is always interpreted against the approved checkout root, so
+the symlink and containment checks keep walking from that root even when the
+caller resolved the path against the config's own directory.
+*/
 function readApprovedWorkspaceFile(
   root: string,
   relativePath: string,
@@ -200,18 +202,18 @@ function readApprovedWorkspaceFile(
 }
 
 /**
- * Rewrites a config-declared manifest path into a checkout-root-relative one.
- *
- * Manifests are declared relative to the config file itself, which is what
- * makes `.autodev/` a self-contained, relocatable integration directory.
- *
- * Core's `assertRelativeConfigPath` already rejects `..`, absolute and
- * control-character paths, so a well-formed config cannot reach outside its
- * directory. This containment check is the Runtime's own independent boundary:
- * a containment rule enforced only by the validator that produced the value is
- * not a boundary. Failing closed here turns a misconfiguration into an
- * explicit refusal instead of a read from somewhere unexpected.
- */
+Rewrites a config-declared manifest path into a checkout-root-relative one.
+
+Manifests are declared relative to the config file itself, which is what
+makes `.autodev/` a self-contained, relocatable integration directory.
+
+Core's `assertRelativeConfigPath` already rejects `..`, absolute and
+control-character paths, so a well-formed config cannot reach outside its
+directory. This containment check is the Runtime's own independent boundary:
+a containment rule enforced only by the validator that produced the value is
+not a boundary. Failing closed here turns a misconfiguration into an
+explicit refusal instead of a read from somewhere unexpected.
+*/
 function readConfigRelativeManifest(
   root: string,
   configDirectory: string,
@@ -229,18 +231,18 @@ function readConfigRelativeManifest(
 }
 
 function assertMatchesApproval(
-  configuration: PlaytestGameConfiguration,
+  config: PlaytestGameConfiguration,
   approval: WorkspacePlaytestApproval
 ): void {
-  if (!usesGenericPlaytestAdapter(configuration.adapter.command)) {
+  if (!usesGenericPlaytestAdapter(config.adapter.command)) {
     fail(
       "command-mismatch",
       "Approved Playtesting requires AutoDev's generic adapter; game-written protocol adapters are not supported."
     );
   }
   if (
-    configuration.adapter.command.length !== approval.adapterCommand.length ||
-    configuration.adapter.command.some(
+    config.adapter.command.length !== approval.adapterCommand.length ||
+    config.adapter.command.some(
       (argument, index) => argument !== approval.adapterCommand[index]
     )
   ) {
@@ -251,7 +253,7 @@ function assertMatchesApproval(
   }
   if (
     approval.allowedScenarios.some(
-      (scenario) => !configuration.scenarios.includes(scenario)
+      (scenario) => !config.scenarios.includes(scenario)
     )
   ) {
     fail(
@@ -261,7 +263,7 @@ function assertMatchesApproval(
   }
   if (
     approval.allowedPolicies.some(
-      (policy) => !configuration.policies.includes(policy)
+      (policy) => !config.policies.includes(policy)
     )
   ) {
     fail(
@@ -270,13 +272,13 @@ function assertMatchesApproval(
     );
   }
   if (
-    approval.limits.episodeCount > configuration.budget.episodes ||
+    approval.limits.episodeCount > config.budget.episodes ||
     approval.limits.maxStepsPerEpisode >
-      configuration.budget.maxStepsPerEpisode ||
-    approval.limits.workerCount > configuration.budget.workers ||
+      config.budget.maxStepsPerEpisode ||
+    approval.limits.workerCount > config.budget.workers ||
     approval.limits.wallTimeMs >
-      configuration.budget.wallTimeMinutes * 60_000 ||
-    configuration.analysis.maxReviewedSessions > approval.limits.critiqueCount
+      config.budget.wallTimeMinutes * 60_000 ||
+    config.analysis.maxReviewedSessions > approval.limits.critiqueCount
   ) {
     fail(
       "budget-mismatch",
@@ -337,7 +339,7 @@ function assertBenchmarkMatchesTarget(input: {
     rubric,
     rubricHash
   } = input;
-  const configurationMetrics = new Set([
+  const configMetrics = new Set([
     ...rubric.metricDefinitions.map((metric) => metric.metricId),
     ...rubric.dimensionRubrics.map((dimension) => dimension.dimensionId)
   ]);
@@ -360,7 +362,7 @@ function assertBenchmarkMatchesTarget(input: {
       (policyId) => !configuration.policies.includes(policyId)
     ) ||
     [...benchmark.primaryMetricIds, ...benchmark.guardrailMetricIds].some(
-      (metricId) => !configurationMetrics.has(metricId)
+      (metricId) => !configMetrics.has(metricId)
     )
   ) {
     fail(
@@ -370,7 +372,9 @@ function assertBenchmarkMatchesTarget(input: {
   }
 }
 
-/** The committed-build snapshot must be a real, non-symlinked directory. */
+/**
+The committed-build snapshot must be a real, non-symlinked directory.
+*/
 function resolveSnapshotRoot(snapshotRoot: string): string {
   try {
     const root = path.resolve(snapshotRoot);
@@ -397,7 +401,7 @@ function resolveSnapshotRoot(snapshotRoot: string): string {
   }
 }
 
-function loadCommittedConfiguration(
+function loadCommittedConfig(
   root: string,
   approval: WorkspacePlaytestApproval
 ): {
@@ -413,22 +417,22 @@ function loadCommittedConfiguration(
   );
   const configHash = createHash("sha256").update(configBytes).digest("hex");
 
-  let configuration: PlaytestGameConfiguration;
+  let config: PlaytestGameConfiguration;
   try {
     const parsed: unknown = JSON.parse(
       new TextDecoder("utf-8", { fatal: true }).decode(configBytes)
     );
     assertPlaytestGameConfiguration(parsed);
-    configuration = parsed;
+    config = parsed;
   } catch {
     fail(
       "config-invalid",
       "Checked-in playtest.config.json is invalid or unsupported."
     );
   }
-  assertMatchesApproval(configuration, approval);
+  assertMatchesApproval(config, approval);
   return {
-    configuration,
+    configuration: config,
     configHash,
     configDirectory: path.dirname(path.resolve(root, CONFIG_PATH))
   };
@@ -437,20 +441,20 @@ function loadCommittedConfiguration(
 function loadApprovedObservationContract(
   root: string,
   configDirectory: string,
-  configuration: PlaytestGameConfiguration
+  config: PlaytestGameConfiguration
 ): PlaytestObservationContract {
   try {
     const observationBytes = readConfigRelativeManifest(
       root,
       configDirectory,
-      configuration.analysis.observationContract,
-      configuration.analysis.observationContract
+      config.analysis.observationContract,
+      config.analysis.observationContract
     );
     const parsed: unknown = JSON.parse(
       new TextDecoder("utf-8", { fatal: true }).decode(observationBytes)
     );
     assertPlaytestObservationContract(parsed);
-    if (!configuration.modes.includes(parsed.mode)) {
+    if (!config.modes.includes(parsed.mode)) {
       throw new TypeError(
         "Observation mode is not enabled by the target config."
       );
@@ -468,15 +472,15 @@ function loadApprovedObservationContract(
 function loadApprovedRubric(
   root: string,
   configDirectory: string,
-  configuration: PlaytestGameConfiguration,
+  config: PlaytestGameConfiguration,
   approval: WorkspacePlaytestApproval,
   binding: PlaytestAdapterBinding
 ): { rubric: PlaytestMetricRegistry; rubricHash: string } {
   const rubricBytes = readConfigRelativeManifest(
     root,
     configDirectory,
-    configuration.analysis.rubric,
-    configuration.analysis.rubric
+    config.analysis.rubric,
+    config.analysis.rubric
   );
   let rubric: PlaytestMetricRegistry;
   try {
@@ -507,22 +511,22 @@ function loadApprovedRubric(
 function loadApprovedBenchmark(
   root: string,
   configDirectory: string,
-  configuration: PlaytestGameConfiguration,
+  config: PlaytestGameConfiguration,
   approval: WorkspacePlaytestApproval,
   binding: PlaytestAdapterBinding,
   observationContract: PlaytestObservationContract,
   rubric: PlaytestMetricRegistry,
   rubricHash: string
 ): { benchmark: PlaytestBenchmark | null; benchmarkHash: string | null } {
-  if (configuration.analysis.benchmark === null) {
+  if (config.analysis.benchmark === null) {
     return { benchmark: null, benchmarkHash: null };
   }
   try {
     const benchmarkBytes = readConfigRelativeManifest(
       root,
       configDirectory,
-      configuration.analysis.benchmark,
-      configuration.analysis.benchmark
+      config.analysis.benchmark,
+      config.analysis.benchmark
     );
     const parsed: unknown = JSON.parse(
       new TextDecoder("utf-8", { fatal: true }).decode(benchmarkBytes)
@@ -537,7 +541,7 @@ function loadApprovedBenchmark(
     assertBenchmarkMatchesTarget({
       benchmark: parsed,
       approval,
-      configuration,
+      configuration: config,
       binding,
       observationContract,
       rubric,
@@ -555,10 +559,10 @@ function loadApprovedBenchmark(
 }
 
 /**
- * Read the target-owned files of one committed-build snapshot, validate their
- * schemas against the operator approval, and derive the config's raw-byte
- * SHA-256 for that build's provenance. This performs no execution.
- */
+Read the target-owned files of one committed-build snapshot, validate their
+schemas against the operator approval, and derive the config's raw-byte
+SHA-256 for that build's provenance. This performs no execution.
+*/
 export function loadApprovedPlaytestDefinition(
   approval: WorkspacePlaytestApproval,
   snapshotRoot: string
@@ -577,7 +581,7 @@ export function loadApprovedPlaytestDefinition(
 
   const root = resolveSnapshotRoot(snapshotRoot);
   const { configuration, configHash, configDirectory } =
-    loadCommittedConfiguration(root, approval);
+    loadCommittedConfig(root, approval);
   const binding = loadApprovedAdapterBinding(root);
   const observationContract = loadApprovedObservationContract(
     root,

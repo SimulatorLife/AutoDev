@@ -1,55 +1,57 @@
 /**
- * The one owner of how Data speaks to ClickHouse.
- *
- * A caller binds its values into the statement and hands it over; this module
- * builds the request -- the URL, the content type, the ceiling on how long the
- * request may wait, and the error raised when ClickHouse says no. Nobody
- * assembles a URL, picks a content type, or words an error of their own.
- *
- * The earlier shape of this module was a second owner as much as a first one.
- * The OpenLIT projection adapters each wanted to read a table, index or group
- * what came back, append rows, and delete the rows that fell out of the
- * catalog, so each one grew its own private copies of those four operations
- * -- and the two copies of the same read ended up reporting a failed read with
- * two different sentences. Those helpers are gone with the adapters that were
- * the last thing to use them.
- *
- * What remains is the statement runner, and the two things that both halves of
- * Data need to know: the default endpoint, and the ceiling. The provider and
- * model catalog projection is the one caller with a protocol of its own: it
- * reads `FORMAT JSONEachRow` and writes `application/x-ndjson` without a
- * trailing newline, because those are the tables' own shapes. It still comes
- * through here for the request itself, so there is exactly one place that
- * knows how a ClickHouse request is made.
- *
- * `ClickHouseTelemetryClient` stays here too: it builds trace queries against
- * the same server, and the default endpoint is knowledge both halves need.
- */
+The one owner of how Data speaks to ClickHouse.
+
+A caller binds its values into the statement and hands it over; this module
+builds the request -- the URL, the content type, the ceiling on how long the
+request may wait, and the error raised when ClickHouse says no. Nobody
+assembles a URL, picks a content type, or words an error of their own.
+
+The earlier shape of this module was a second owner as much as a first one.
+The OpenLIT projection adapters each wanted to read a table, index or group
+what came back, append rows, and delete the rows that fell out of the
+catalog, so each one grew its own private copies of those four operations
+-- and the two copies of the same read ended up reporting a failed read with
+two different sentences. Those helpers are gone with the adapters that were
+the last thing to use them.
+
+What remains is the statement runner, and the two things that both halves of
+Data need to know: the default endpoint, and the ceiling. The provider and
+model catalog projection is the one caller with a protocol of its own: it
+reads `FORMAT JSONEachRow` and writes `application/x-ndjson` without a
+trailing newline, because those are the tables' own shapes. It still comes
+through here for the request itself, so there is exactly one place that
+knows how a ClickHouse request is made.
+
+`ClickHouseTelemetryClient` stays here too: it builds trace queries against
+the same server, and the default endpoint is knowledge both halves need.
+*/
 
 import { withClickHouseConnectionRetry } from "./retry.ts";
 
-/** The ClickHouse endpoint used when nothing else names one. */
+/**
+The ClickHouse endpoint used when nothing else names one.
+*/
 export const DEFAULT_CLICKHOUSE_URL = "http://127.0.0.1:8123";
 
 /**
- * Ceiling for one ClickHouse request.
- *
- * ClickHouse answers on the loopback interface, so a request that has not
- * come back within this window is not a slow query: the server is wedged or
- * the host is too loaded to schedule it. Without a ceiling the request waits
- * forever, and the caller waits with it -- which is how a `pnpm run dev` that
- * has an unresponsive ClickHouse hangs on a catalog sync instead of failing
- * with the reason.
- */
+Ceiling for one ClickHouse request.
+
+ClickHouse answers on the loopback interface, so a request that has not
+come back within this window is not a slow query: the server is wedged or
+the host is too loaded to schedule it. Without a ceiling the request waits
+forever, and the caller waits with it -- which is how a `pnpm run dev` that
+has an unresponsive ClickHouse hangs on a catalog sync instead of failing
+with the reason.
+*/
 export const DEFAULT_CLICKHOUSE_REQUEST_TIMEOUT_MS = 30_000;
 
 /**
- * A request signal that aborts after `timeoutMs`.
- *
- * `null` rather than `undefined` because `exactOptionalPropertyTypes` treats
- * an explicit `undefined` as incompatible with `signal?: AbortSignal | null`,
- * and `null` is what `fetch` reads as "no signal".
- */
+A request signal that aborts after `timeoutMs`.
+
+`null` rather than `undefined` because `exactOptionalPropertyTypes` treats
+an explicit `undefined` as incompatible with `signal?: AbortSignal | null`,
+and `null` is what `fetch` reads as "no signal".
+*/
 export function requestSignal(timeoutMs: number): AbortSignal | null {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return null;
   return AbortSignal.timeout(timeoutMs);
@@ -74,7 +76,7 @@ export class ClickHouseTelemetryClient {
     limit?: number;
     filters?: Record<string, string>;
   }): ParameterizedQuery {
-    const params: Record<string, string | number | boolean> = {
+    const parameters: Record<string, string | number | boolean> = {
       service: options.serviceName,
       start: options.startTime,
       end: options.endTime,
@@ -89,37 +91,39 @@ export class ClickHouseTelemetryClient {
     if (options.filters) {
       let filterIndex = 0;
       for (const [key, value] of Object.entries(options.filters)) {
-        const paramKey = `f_${filterIndex}`;
-        params[paramKey] = value;
-        query += ` AND SpanAttributes['${key}'] = {${paramKey}:String}`;
+        const parameterKey = `f_${filterIndex}`;
+        parameters[parameterKey] = value;
+        query += ` AND SpanAttributes['${key}'] = {${parameterKey}:String}`;
         filterIndex += 1;
       }
     }
 
     query += " ORDER BY Timestamp DESC LIMIT {limit:UInt32}";
 
-    return { query, params };
+    return { query, params: parameters };
   }
 }
 
 /**
- * A single bound ClickHouse query parameter value.
- *
- * Every caller that needs a user-, filter- or cursor-derived value inside a
- * SQL statement binds it through `param_<name>` on the request and
- * `{<name>:<Type>}` inside the query text instead of splicing the value into
- * the query string. That is the one path "no user values in SQL text" can be
- * verified against; a second ad hoc interpolation site would reopen the gap
- * this helper exists to close.
- */
+A single bound ClickHouse query parameter value.
+
+Every caller that needs a user-, filter- or cursor-derived value inside a
+SQL statement binds it through `param_<name>` on the request and
+`{<name>:<Type>}` inside the query text instead of splicing the value into
+the query string. That is the one path "no user values in SQL text" can be
+verified against; a second ad hoc interpolation site would reopen the gap
+this helper exists to close.
+*/
 export type ClickHouseParamValue = string | number | boolean;
 
-function clickHouseParamLiteral(value: ClickHouseParamValue): string {
+function clickHouseParameterLiteral(value: ClickHouseParamValue): string {
   if (typeof value === "boolean") return value ? "1" : "0";
   return String(value);
 }
 
-/** Raised when a parameterized ClickHouse statement itself fails. */
+/**
+Raised when a parameterized ClickHouse statement itself fails.
+*/
 export class ClickHouseStatementError extends Error {
   readonly status: number;
 
@@ -131,30 +135,30 @@ export class ClickHouseStatementError extends Error {
 }
 
 /**
- * Run one parameterized ClickHouse statement (DDL, SELECT, INSERT or ALTER)
- * and return the raw response body.
- *
- * `query` must be a fixed string built only from this module's own table and
- * column identifiers; every value that varies by caller or request travels as
- * a named `params` entry bound through ClickHouse's native `{name:Type}`
- * placeholder syntax, never through string interpolation into `query`.
- *
- * `contentType` names the media type of `body`. It defaults to
- * `application/json` because that is what a JSON body is, but a caller whose
- * table expects newline-delimited JSON says `application/x-ndjson` instead --
- * the catalog projection writes the provider and model tables that way. The
- * content type belongs here rather than in the caller: it is part of how the
- * request is made, and a second place that decides it is a second way for the
- * request to be wrong.
- *
- * `timeoutMs` is the ceiling for the request in milliseconds. It defaults to
- * `DEFAULT_CLICKHOUSE_REQUEST_TIMEOUT_MS`; a non-positive value disables the
- * ceiling.
- */
+Run one parameterized ClickHouse statement (DDL, SELECT, INSERT or ALTER)
+and return the raw response body.
+
+`query` must be a fixed string built only from this module's own table and
+column identifiers; every value that varies by caller or request travels as
+a named `params` entry bound through ClickHouse's native `{name:Type}`
+placeholder syntax, never through string interpolation into `query`.
+
+`contentType` names the media type of `body`. It defaults to
+`application/json` because that is what a JSON body is, but a caller whose
+table expects newline-delimited JSON says `application/x-ndjson` instead --
+the catalog projection writes the provider and model tables that way. The
+content type belongs here rather than in the caller: it is part of how the
+request is made, and a second place that decides it is a second way for the
+request to be wrong.
+
+`timeoutMs` is the ceiling for the request in milliseconds. It defaults to
+`DEFAULT_CLICKHOUSE_REQUEST_TIMEOUT_MS`; a non-positive value disables the
+ceiling.
+*/
 export function runParameterizedClickHouseStatement(
   endpoint: string,
   query: string,
-  params: Readonly<Record<string, ClickHouseParamValue>> = {},
+  parameters: Readonly<Record<string, ClickHouseParamValue>> = {},
   options: {
     readonly fetchImpl?: typeof fetch;
     readonly body?: string;
@@ -165,17 +169,15 @@ export function runParameterizedClickHouseStatement(
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const url = new URL(endpoint);
   url.searchParams.set("query", query);
-  for (const [name, value] of Object.entries(params)) {
-    url.searchParams.set(`param_${name}`, clickHouseParamLiteral(value));
+  for (const [name, value] of Object.entries(parameters)) {
+    url.searchParams.set(`param_${name}`, clickHouseParameterLiteral(value));
   }
   const maxRetries = 2;
   return withClickHouseConnectionRetry(
     async () => {
       const res = await fetchImpl(url.toString(), {
         method: "POST",
-        ...(options.body === undefined
-          ? {}
-          : {
+        ...(options.body !== undefined && {
               headers: {
                 "Content-Type": options.contentType ?? "application/json"
               },

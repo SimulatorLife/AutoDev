@@ -1,13 +1,13 @@
 /**
- * The standalone path-literal guard for a locally checked-out OpenLIT client.
- *
- * The scanner itself lives in `openlit-path-literal-scan.ts` so that
- * `openlit-patches-apply.test.ts` can run it against the tree it just applied,
- * without needing this environment variable.
- *
- * Set `OPENLIT_CLIENT_DIR` to the client root (the directory holding `src/app`)
- * to enable these two assertions; they skip otherwise.
- */
+The standalone path-literal guard for a locally checked-out OpenLIT client.
+
+The scanner itself lives in `openlit-path-literal-scan.ts` so that
+`openlit-patches-apply.test.ts` can run it against the tree it just applied,
+without needing this environment variable.
+
+Set `OPENLIT_CLIENT_DIR` to the client root (the directory holding `src/app`)
+to enable these two assertions; they skip otherwise.
+*/
 import assert from "node:assert/strict";
 import test from "node:test";
 

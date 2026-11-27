@@ -11,16 +11,16 @@ import {
 } from "../src/features/tools/index.ts";
 
 /**
- * The Tools catalogue has one address, and one entrypoint.
- *
- * The list page and the detail page used to reach into the catalogue's
- * modules by path and between them re-derived the rule for what a tool's
- * address is: the detail page matched the URL against three spellings of an
- * entry's name while the list wrote one. A page that resolves an address by a
- * rule the catalogue does not own answers a question nobody asked, so the
- * lookup now lives next to the id it resolves and both pages ask the
- * catalogue for it.
- */
+The Tools catalogue has one address, and one entrypoint.
+
+The list page and the detail page used to reach into the catalogue's
+modules by path and between them re-derived the rule for what a tool's
+address is: the detail page matched the URL against three spellings of an
+entry's name while the list wrote one. A page that resolves an address by a
+rule the catalogue does not own answers a question nobody asked, so the
+lookup now lives next to the id it resolves and both pages ask the
+catalogue for it.
+*/
 
 const NATIVE_TOOL: ToolCatalogItem = {
   name: "read_file",

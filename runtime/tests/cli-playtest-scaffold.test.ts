@@ -1,12 +1,12 @@
 /**
- * `autodev playtest init --scaffold` for a game that cannot onboard
- * declaratively.
- *
- * The invariant under test is that a generated scaffold is *honest*: it claims
- * no capability it does not have. A stub returning a well-shaped empty result
- * would pass conformance and produce episodes that measure nothing the game
- * did, which is the failure the declarative tier exists to prevent.
- */
+`autodev playtest init --scaffold` for a game that cannot onboard
+declaratively.
+
+The invariant under test is that a generated scaffold is *honest*: it claims
+no capability it does not have. A stub returning a well-shaped empty result
+would pass conformance and produce episodes that measure nothing the game
+did, which is the failure the declarative tier exists to prevent.
+*/
 import assert from "node:assert/strict";
 import {
   existsSync,
@@ -225,7 +225,9 @@ test("the generated module and binding agree on the factory", () => {
   }
 });
 
-/** A game that has started implementing, whose work must not be replaced. */
+/**
+A game that has started implementing, whose work must not be replaced.
+*/
 function writeEditedWork(modulePath: string): void {
   writeFileSync(
     modulePath,

@@ -1,12 +1,12 @@
 /**
- * The Runtime's measurement of whether the game is advancing.
- *
- * The reading is the Runtime's own: it compares what the player sees now with
- * what they saw before, and it has to be right about the difference between a
- * game that changed and a game that did not. A measurement that fires on an
- * animation truncates a healthy run; one that never fires leaves a frozen
- * game running until the budget ends it.
- */
+The Runtime's measurement of whether the game is advancing.
+
+The reading is the Runtime's own: it compares what the player sees now with
+what they saw before, and it has to be right about the difference between a
+game that changed and a game that did not. A measurement that fires on an
+animation truncates a healthy run; one that never fires leaves a frozen
+game running until the budget ends it.
+*/
 import assert from "node:assert/strict";
 import test from "node:test";
 

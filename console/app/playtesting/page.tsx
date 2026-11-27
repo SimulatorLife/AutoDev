@@ -49,7 +49,7 @@ import {
 
 export const dynamic = "force-dynamic";
 
-interface PlaytestingPageProps {
+interface PlaytestingPageProperties {
   readonly searchParams?: Promise<
     Record<string, string | readonly string[] | undefined>
   >;
@@ -58,12 +58,12 @@ interface PlaytestingPageProps {
 const HUMAN_NOT_COLLECTED = "not-collected" as const;
 const IMMUTABLE_BUILD_SHA_PATTERN = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu;
 /**
- * How many analyst conclusions the overview shows.
- *
- * The overview answers "what did the analyst conclude", so it shows the
- * newest few rather than only their number; the rest of the list is one click
- * away in the Findings view.
- */
+How many analyst conclusions the overview shows.
+
+The overview answers "what did the analyst conclude", so it shows the
+newest few rather than only their number; the rest of the list is one click
+away in the Findings view.
+*/
 const OVERVIEW_REVIEW_LIMIT = 3;
 
 export const metadata: Metadata = {
@@ -120,7 +120,7 @@ function pageRequest(
   return {
     workspaceId: scope.workspaceId!,
     limit,
-    ...(scope.cursor === null ? {} : { cursor: scope.cursor }),
+    ...(scope.cursor !== null && { cursor: scope.cursor }),
     filters
   };
 }
@@ -437,7 +437,7 @@ function pageResult(
         scope,
         setup: loaded.runSetup
       }),
-      ...(sessionsWorkspace === undefined ? {} : { sessionsWorkspace })
+      ...(sessionsWorkspace !== undefined && { sessionsWorkspace })
     });
   }
   return React.createElement(ConsolePageShell, { section }, content);
@@ -445,9 +445,9 @@ function pageResult(
 
 export default async function PlaytestingPage({
   searchParams
-}: PlaytestingPageProps): Promise<React.JSX.Element> {
-  const params = searchParams ? await searchParams : {};
-  const scope = parsePlaytestingScope(params);
+}: PlaytestingPageProperties): Promise<React.JSX.Element> {
+  const parameters = searchParams ? await searchParams : {};
+  const scope = parsePlaytestingScope(parameters);
   const { section, config } = readNodeContext("/playtesting");
   if (config === null) {
     return React.createElement(
@@ -534,7 +534,7 @@ export default async function PlaytestingPage({
   }
 
   const workspaces = workspaceResult.data.workspaces;
-  if (!workspaces.some((workspace) => workspace.id === scope.workspaceId)) {
+  if (workspaces.every((workspace) => workspace.id !== scope.workspaceId)) {
     return React.createElement(
       ConsolePageShell,
       { section },

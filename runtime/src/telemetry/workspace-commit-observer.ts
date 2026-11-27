@@ -1,38 +1,38 @@
 /**
- * Bounded per-workspace Git commit observer.
- *
- * Section 10 of docs/autodev-console-target-state.md ("Git change metrics")
- * requires that one observation be emitted per commit an AutoDev-managed
- * agent actually creates, attributed to the commit's own committer rather
- * than to the observing Runtime. This module is the producer side of that
- * contract for the common case where the Runtime has the workspace at
- * hand: it watches one workspace (a checked-out repository rooted at a
- * specific path), records a baseline HEAD when the turn starts, and on
- * demand lists and measures whatever commits the agent added before the
- * turn ended.
- *
- * The observer is deliberately narrow:
- *
- * - one workspace, one repository root, one observer;
- * - the actor is read from the commit's own committer identity via
- *   `gitCommitActorFromEmail`; the observer never accepts a role or
- *   provider from the caller, because the caller is a Runtime that may
- *   share the workspace with subagents and therefore cannot know who
- *   made the commit;
- * - the observer reports exact commit objects; cross-producer metric
- *   deduplication is owned by `recordGitCommit`, which claims the SHA
- *   before emitting its counters;
- * - failures are reported, not absorbed: a commit git cannot read is
- *   listed in the observation's `unmeasured` field and the baseline does
- *   not advance past it, so the next observe() retries instead of
- *   silently dropping evidence.
- *
- * The observer never writes to the workspace, never edits git config, and
- * never mutates the operator's own commits: it only runs read-only git
- * commands via the shared telemetry helper. Process environment changes
- * for the agent's committer identity are not this module's concern --
- * those belong to the agent that actually executes `git commit`.
- */
+Bounded per-workspace Git commit observer.
+
+Section 10 of docs/autodev-console-target-state.md ("Git change metrics")
+requires that one observation be emitted per commit an AutoDev-managed
+agent actually creates, attributed to the commit's own committer rather
+than to the observing Runtime. This module is the producer side of that
+contract for the common case where the Runtime has the workspace at
+hand: it watches one workspace (a checked-out repository rooted at a
+specific path), records a baseline HEAD when the turn starts, and on
+demand lists and measures whatever commits the agent added before the
+turn ended.
+
+The observer is deliberately narrow:
+
+- one workspace, one repository root, one observer;
+- the actor is read from the commit's own committer identity via
+  `gitCommitActorFromEmail`; the observer never accepts a role or
+  provider from the caller, because the caller is a Runtime that may
+  share the workspace with subagents and therefore cannot know who
+  made the commit;
+- the observer reports exact commit objects; cross-producer metric
+  deduplication is owned by `recordGitCommit`, which claims the SHA
+  before emitting its counters;
+- failures are reported, not absorbed: a commit git cannot read is
+  listed in the observation's `unmeasured` field and the baseline does
+  not advance past it, so the next observe() retries instead of
+  silently dropping evidence.
+
+The observer never writes to the workspace, never edits git config, and
+never mutates the operator's own commits: it only runs read-only git
+commands via the shared telemetry helper. Process environment changes
+for the agent's committer identity are not this module's concern --
+those belong to the agent that actually executes `git commit`.
+*/
 
 import { execFile } from "node:child_process";
 import path from "node:path";
@@ -44,21 +44,29 @@ import {
   listCommitsInRange,
   measureGitCommitChanges
 } from "./git-change-metrics.ts";
-import { safeAutoDevWorkspaceKey } from "./resource-context/index.ts";
+import { safeAutoDevWorkspaceKey as safeAutoDevelopmentWorkspaceKey } from "./resource-context/index.ts";
 
 const execFileAsync = promisify(execFile);
 
-/** Timeout for each read-only git invocation (ms). */
+/**
+Timeout for each read-only git invocation (ms).
+*/
 const OBSERVE_GIT_TIMEOUT_MS = 10_000;
-/** Buffer cap for each read-only git invocation (bytes). */
+/**
+Buffer cap for each read-only git invocation (bytes).
+*/
 const OBSERVE_GIT_MAX_BUFFER_BYTES = 8 * 1024 * 1024;
-/** Git commit SHA pattern, copied from the shared git-change-metrics helper. */
+/**
+Git commit SHA pattern, copied from the shared git-change-metrics helper.
+*/
 const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/iu;
 
-/** A single read-only git invocation. Injected for tests. */
+/**
+A single read-only git invocation. Injected for tests.
+*/
 export type RunGit = (
   repositoryRoot: string,
-  args: readonly string[]
+  arguments_: readonly string[]
 ) => Promise<{
   readonly exitCode: number;
   readonly stdout: string;
@@ -67,50 +75,62 @@ export type RunGit = (
 
 export interface WorkspaceCommitObserverOptions {
   /**
-   * The opaque workspace key, source-confirmed.
-   *
-   * Validated through `safeAutoDevWorkspaceKey`: a path, URL, empty
-   * string, or reserved word is rejected at construction time. A key
-   * that fails the validator is a caller error rather than a runtime
-   * failure, and would produce a metric dimension the rest of the
-   * pipeline is required to drop.
-   */
+  The opaque workspace key, source-confirmed.
+  
+  Validated through `safeAutoDevWorkspaceKey`: a path, URL, empty
+  string, or reserved word is rejected at construction time. A key
+  that fails the validator is a caller error rather than a runtime
+  failure, and would produce a metric dimension the rest of the
+  pipeline is required to drop.
+  */
   readonly workspaceKey: string;
   /**
-   * Absolute path of the directory the agent works in.
-   *
-   * It does not have to be the root of the checkout: the observer resolves
-   * the repository that contains it, and measures every commit from that
-   * root.
-   */
+  Absolute path of the directory the agent works in.
+  
+  It does not have to be the root of the checkout: the observer resolves
+  the repository that contains it, and measures every commit from that
+  root.
+  */
   readonly repositoryRoot: string;
-  /** Injected clock for deterministic tests. */
+  /**
+  Injected clock for deterministic tests.
+  */
   readonly clock?: () => number;
-  /** Injected git runner for tests; defaults to a real read-only git call. */
+  /**
+  Injected git runner for tests; defaults to a real read-only git call.
+  */
   readonly runGit?: RunGit;
 }
 
 interface WorkspaceCommitBaseline {
   readonly workspaceKey: string;
   readonly repositoryRoot: string;
-  /** HEAD sha at baseline time, or null when the repo has no commits yet. */
+  /**
+  HEAD sha at baseline time, or null when the repo has no commits yet.
+  */
   readonly head: string | null;
   readonly observedAt: number;
 }
 
 export type WorkspaceCommitError =
-  /** The process-local registry reached its fixed observer bound. */
+  /**
+  The process-local registry reached its fixed observer bound.
+  */
   | { readonly kind: "observer_limit"; readonly reason: string }
-  /** The repository's HEAD could not be read. */
+  /**
+  The repository's HEAD could not be read.
+  */
   | { readonly kind: "head_unreadable"; readonly reason: string }
-  /** The `git rev-list` call that enumerates new commits returned nothing. */
+  /**
+  The `git rev-list` call that enumerates new commits returned nothing.
+  */
   | { readonly kind: "list_failed"; readonly reason: string }
   /**
-   * One or more commits were listed but git refused to summarize them.
-   * The baseline does not advance until a subsequent observe() can
-   * measure them; this preserves the "never silently advance past
-   * commits that were not measured" rule.
-   */
+  One or more commits were listed but git refused to summarize them.
+  The baseline does not advance until a subsequent observe() can
+  measure them; this preserves the "never silently advance past
+  commits that were not measured" rule.
+  */
   | {
       readonly kind: "unmeasured_commits";
       readonly commits: readonly {
@@ -122,43 +142,53 @@ export type WorkspaceCommitError =
 export interface WorkspaceCommitObservation {
   readonly workspaceKey: string;
   readonly repositoryRoot: string;
-  /** True on the first observation, when there is no prior baseline. */
+  /**
+  True on the first observation, when there is no prior baseline.
+  */
   readonly isBaseline: boolean;
-  /** Cursor HEAD when this observation began; null for an empty repo. */
+  /**
+  Cursor HEAD when this observation began; null for an empty repo.
+  */
   readonly baselineHead: string | null;
-  /** HEAD at the moment of this observe(); null for an empty repo. */
+  /**
+  HEAD at the moment of this observe(); null for an empty repo.
+  */
   readonly currentHead: string | null;
   readonly observedAt: number;
   /**
-   * Commits the observer measured AND that carry a source-confirmed
-   * AutoDev committer identity (the commit's email was recovered via
-   * `gitCommitActorFromEmail`). These are the only commits the
-   * observer will vouch for as AutoDev agent work. The parent should
-   * record each entry through `gitCommitObservationToRecordOptions`,
-   * which throws on a non-AutoDev commit so an operator commit cannot
-   * be blended onto a role.
-   */
+  Commits the observer measured AND that carry a source-confirmed
+  AutoDev committer identity (the commit's email was recovered via
+  `gitCommitActorFromEmail`). These are the only commits the
+  observer will vouch for as AutoDev agent work. The parent should
+  record each entry through `gitCommitObservationToRecordOptions`,
+  which throws on a non-AutoDev commit so an operator commit cannot
+  be blended onto a role.
+  */
   readonly recordableCommits: readonly GitCommitChange[];
   /**
-   * Commits the observer measured that do NOT carry an AutoDev
-   * committer identity. The observer has no positive evidence the
-   * commit is AutoDev work -- it could be the operator, a pre-AutoDev
-   * commit already on the branch, a tool that bypassed the AutoDev
-   * identity environment, or a subagent that committed without it.
-   *
-   * Exposed for diagnostics only. The parent must NOT record these as
-   * AutoDev agent output (`actorFromCommitIdentity: true`). The
-   * AutoDev `unattributed` dimension value is reserved for a producer
-   * that independently knows a commit is its work but cannot prove
-   * the actor; the Runtime observer is not that producer.
-   */
+  Commits the observer measured that do NOT carry an AutoDev
+  committer identity. The observer has no positive evidence the
+  commit is AutoDev work -- it could be the operator, a pre-AutoDev
+  commit already on the branch, a tool that bypassed the AutoDev
+  identity environment, or a subagent that committed without it.
+  
+  Exposed for diagnostics only. The parent must NOT record these as
+  AutoDev agent output (`actorFromCommitIdentity: true`). The
+  AutoDev `unattributed` dimension value is reserved for a producer
+  that independently knows a commit is its work but cannot prove
+  the actor; the Runtime observer is not that producer.
+  */
   readonly observedButNotRecordable: readonly GitCommitChange[];
-  /** Commits git listed but could not fully summarize. */
+  /**
+  Commits git listed but could not fully summarize.
+  */
   readonly unmeasured: readonly {
     readonly commit: string;
     readonly reason: string;
   }[];
-  /** First failure that prevents this observation from advancing, or null. */
+  /**
+  First failure that prevents this observation from advancing, or null.
+  */
   readonly error: WorkspaceCommitError | null;
 }
 
@@ -166,39 +196,43 @@ export interface WorkspaceCommitObserver {
   readonly workspaceKey: string;
   readonly repositoryRoot: string;
   isInitialized(): boolean;
-  /** Capture the current HEAD as the new baseline. */
+  /**
+  Capture the current HEAD as the new baseline.
+  */
   initialize(): Promise<WorkspaceCommitBaseline>;
   /**
-   * Measure and return the commits reachable from the baseline.
-   *
-   * If the observer has not been initialized, the first call records the
-   * baseline and reports empty `recordableCommits` and `observedButNotRecordable` arrays -- the first observation
-   * is always a baseline. Subsequent calls list commits since the
-   * baseline, and measure them through the existing Git helper. The
-   * cursor ensures this observer does not repeat its own range; the
-   * telemetry emitter owns cross-producer idempotency by commit SHA.
-   *
-   * Concurrent observe() calls on the same observer are serialized so a
-   * caller can fire one per provider attempt without racing its own
-   * state. Independent observers may report the same immutable commit;
-   * this is expected, since the telemetry emitter is the single owner
-   * of cross-producer deduplication.
-   */
+  Measure and return the commits reachable from the baseline.
+  
+  If the observer has not been initialized, the first call records the
+  baseline and reports empty `recordableCommits` and `observedButNotRecordable` arrays -- the first observation
+  is always a baseline. Subsequent calls list commits since the
+  baseline, and measure them through the existing Git helper. The
+  cursor ensures this observer does not repeat its own range; the
+  telemetry emitter owns cross-producer idempotency by commit SHA.
+  
+  Concurrent observe() calls on the same observer are serialized so a
+  caller can fire one per provider attempt without racing its own
+  state. Independent observers may report the same immutable commit;
+  this is expected, since the telemetry emitter is the single owner
+  of cross-producer deduplication.
+  */
   observe(): Promise<WorkspaceCommitObservation>;
-  /** Test seam: drop this observer's cursor. */
+  /**
+  Test seam: drop this observer's cursor.
+  */
   reset(): void;
 }
 
 async function defaultRunGit(
   repositoryRoot: string,
-  args: readonly string[]
+  arguments_: readonly string[]
 ): Promise<{
   readonly exitCode: number;
   readonly stdout: string;
   readonly stderr: string;
 }> {
   try {
-    const result = await execFileAsync("git", ["-C", repositoryRoot, ...args], {
+    const result = await execFileAsync("git", ["-C", repositoryRoot, ...arguments_], {
       timeout: OBSERVE_GIT_TIMEOUT_MS,
       maxBuffer: OBSERVE_GIT_MAX_BUFFER_BYTES
     });
@@ -221,12 +255,12 @@ async function defaultRunGit(
 }
 
 /**
- * The set of stderr fragments git emits when `git rev-parse --verify
- * HEAD` is called on an initialized repository with no commits yet
- * (the "unborn HEAD" state). Anything else is treated as a real
- * failure so corruption, "fatal: not a git repository", and similar
- * errors do not get reported as a fabricated empty baseline.
- */
+The set of stderr fragments git emits when `git rev-parse --verify
+HEAD` is called on an initialized repository with no commits yet
+(the "unborn HEAD" state). Anything else is treated as a real
+failure so corruption, "fatal: not a git repository", and similar
+errors do not get reported as a fabricated empty baseline.
+*/
 const UNBORN_HEAD_STDERR_PATTERNS: readonly string[] = [
   "ambiguous argument 'HEAD'",
   "Needed a single revision",
@@ -242,19 +276,19 @@ function isUnbornHeadStderr(stderr: string): boolean {
 }
 
 /**
- * Resolve the repository root that contains the given directory.
- *
- * A session's workspace is the directory the agent works in, which is not
- * always the root of the checkout it commits into. Measuring from a
- * subdirectory is not equivalent to measuring from the root: `diff.relative`
- * makes git report only the paths under the current directory, so a commit
- * that touched anything above it would be measured as smaller than it is.
- * Git knows the root, so git is asked for it.
- *
- * Returns null when the directory is not inside a repository, in which case
- * the caller keeps the directory it was given and lets the ordinary
- * repository checks report the failure.
- */
+Resolve the repository root that contains the given directory.
+
+A session's workspace is the directory the agent works in, which is not
+always the root of the checkout it commits into. Measuring from a
+subdirectory is not equivalent to measuring from the root: `diff.relative`
+makes git report only the paths under the current directory, so a commit
+that touched anything above it would be measured as smaller than it is.
+Git knows the root, so git is asked for it.
+
+Returns null when the directory is not inside a repository, in which case
+the caller keeps the directory it was given and lets the ordinary
+repository checks report the failure.
+*/
 async function readRepositoryTopLevel(
   directory: string,
   runGit: RunGit
@@ -273,10 +307,10 @@ async function readHead(
   // non-repo directory ("fatal: not a git repository") and a missing
   // git binary (no stderr) both fail here, and both must surface as
   // head-unreadable rather than be mistaken for an empty repo.
-  const repoCheck = await runGit(repositoryRoot, ["rev-parse", "--git-dir"]);
-  if (repoCheck.exitCode !== 0) {
+  const repositoryCheck = await runGit(repositoryRoot, ["rev-parse", "--git-dir"]);
+  if (repositoryCheck.exitCode !== 0) {
     const stderr =
-      typeof repoCheck.stderr === "string" ? repoCheck.stderr.trim() : "";
+      typeof repositoryCheck.stderr === "string" ? repositoryCheck.stderr.trim() : "";
     return {
       head: null,
       error:
@@ -320,26 +354,26 @@ async function readHead(
 }
 
 /**
- * Build safe `RecordGitCommitOptions` from one measured change in an
- * observation.
- *
- * This is the integration seam between the observer and the existing
- * `recordGitCommit` emitter. The observer does not call
- * `recordGitCommit` itself: no metric is emitted by this module.
- * The parent calls this helper once per
- * `observation.recordableCommits` entry and forwards the result to
- * `recordGitCommit`.
- *
- * The helper throws on a change whose `actor` is `null`, so an
- * operator commit (a human commit, a pre-AutoDev commit, a tool that
- * bypassed the AutoDev identity environment) cannot be recorded as
- * AutoDev agent output by accident. The AutoDev `unattributed`
- * dimension value is reserved for a producer that independently
- * knows a commit is its work but cannot prove the actor from the
- * commit; the observer is not that producer. `model` is always
- * `null` because the observer never accepts session or model
- * context.
- */
+Build safe `RecordGitCommitOptions` from one measured change in an
+observation.
+
+This is the integration seam between the observer and the existing
+`recordGitCommit` emitter. The observer does not call
+`recordGitCommit` itself: no metric is emitted by this module.
+The parent calls this helper once per
+`observation.recordableCommits` entry and forwards the result to
+`recordGitCommit`.
+
+The helper throws on a change whose `actor` is `null`, so an
+operator commit (a human commit, a pre-AutoDev commit, a tool that
+bypassed the AutoDev identity environment) cannot be recorded as
+AutoDev agent output by accident. The AutoDev `unattributed`
+dimension value is reserved for a producer that independently
+knows a commit is its work but cannot prove the actor from the
+commit; the observer is not that producer. `model` is always
+`null` because the observer never accepts session or model
+context.
+*/
 export function gitCommitObservationToRecordOptions(
   observation: WorkspaceCommitObservation,
   change: GitCommitChange
@@ -370,7 +404,7 @@ export function gitCommitObservationToRecordOptions(
 export function createWorkspaceCommitObserver(
   options: WorkspaceCommitObserverOptions
 ): WorkspaceCommitObserver {
-  const safeKey = safeAutoDevWorkspaceKey(options.workspaceKey);
+  const safeKey = safeAutoDevelopmentWorkspaceKey(options.workspaceKey);
   if (!safeKey) {
     throw new TypeError(
       `workspaceKey is not a bounded, source-confirmed metric value: ${JSON.stringify(
@@ -389,7 +423,7 @@ export function createWorkspaceCommitObserver(
   const runGit: RunGit = options.runGit ?? defaultRunGit;
   const clock = options.clock ?? Date.now;
 
-  let initialized = false;
+  let isInitialized = false;
   let baselineHead: string | null = null;
   // The directory the session works in is not necessarily the repository
   // root: an agent whose workspace is a subdirectory of the checkout commits
@@ -425,7 +459,7 @@ export function createWorkspaceCommitObserver(
       );
     }
     baselineHead = head;
-    initialized = true;
+    isInitialized = true;
     return {
       workspaceKey: safeKey,
       repositoryRoot: root,
@@ -436,7 +470,7 @@ export function createWorkspaceCommitObserver(
 
   const runObserve = async (): Promise<WorkspaceCommitObservation> => {
     const root = await resolveRepositoryRoot();
-    if (!initialized) {
+    if (!isInitialized) {
       // First observation is a baseline; capture HEAD now and report
       // zero new commits. The caller has not yet given us a turn-end
       // signal, so there is nothing to enumerate yet.
@@ -459,7 +493,7 @@ export function createWorkspaceCommitObserver(
       // reassign these fields while this read has yielded at the Git call.
       baselineHead = head;
       // eslint-disable-next-line require-atomic-updates -- chain serializes all observer state transitions.
-      initialized = true;
+      isInitialized = true;
       return {
         workspaceKey: safeKey,
         repositoryRoot: root,
@@ -615,7 +649,7 @@ export function createWorkspaceCommitObserver(
   return {
     workspaceKey: safeKey,
     repositoryRoot,
-    isInitialized: () => initialized,
+    isInitialized: () => isInitialized,
     initialize: () => {
       const next = chain.then(
         () => runInitialize(),
@@ -633,7 +667,7 @@ export function createWorkspaceCommitObserver(
       return next;
     },
     reset: () => {
-      initialized = false;
+      isInitialized = false;
       baselineHead = null;
       chain = Promise.resolve();
     }

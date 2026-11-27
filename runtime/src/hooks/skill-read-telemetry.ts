@@ -29,11 +29,11 @@ import {
 const DEFAULT_EVENTS_URL = "http://127.0.0.1:4100/v1/agent-events";
 
 /**
- * Stable event identity, bounded independently of host-supplied identifiers.
- * A turn identifies repeated reads of one skill; without a turn, use an
- * observed call ID. Do not collapse a long-lived session into a synthetic
- * "no-turn" bucket or invent a unique ID for every hook retry.
- */
+Stable event identity, bounded independently of host-supplied identifiers.
+A turn identifies repeated reads of one skill; without a turn, use an
+observed call ID. Do not collapse a long-lived session into a synthetic
+"no-turn" bucket or invent a unique ID for every hook retry.
+*/
 export function skillReadEventId(
   sessionId: string,
   turnId: string | null,
@@ -96,8 +96,7 @@ export async function reportSkillRead(raw: string): Promise<void> {
 
 if (isEntryPoint(import.meta.url)) {
   try {
-    const chunks: Buffer[] = [];
-    for await (const chunk of process.stdin) chunks.push(chunk);
+    const chunks: Buffer[] = await Array.fromAsync(process.stdin);
     await reportSkillRead(Buffer.concat(chunks).toString("utf8"));
   } catch {
     // Observability must not prevent the host from executing a turn.

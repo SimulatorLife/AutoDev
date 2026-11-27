@@ -1,25 +1,27 @@
 /**
- * `autodev playtest init --scaffold` — generated bodies for a game that cannot
- * onboard declaratively.
- *
- * The declarative tier asks a game for declarations only: six plain functions
- * on the object its entry factory returns. That is not always achievable — an
- * engine whose reset lives behind a wrapper, or whose legal actions come from
- * a generator, may need AutoDev to write the body that bridges them.
- *
- * The scaffold writes those bodies as throwing stubs, not plausible ones. A
- * generated method that returned a well-shaped empty observation would pass
- * `conformance`, produce episodes, and hand the analyst measurements no game
- * ever made — which is the exact failure the declarative tier exists to
- * prevent. Every stub throws with the game's own file and the binding name, so
- * the first run names what to write.
- *
- * The binding this writes declares tier `generated-scaffold`, so a reviewer can
- * see that AutoDev generated the bodies and the game filled them in, rather
- * than that the game declared them.
- */
+`autodev playtest init --scaffold` — generated bodies for a game that cannot
+onboard declaratively.
 
-/** Bodies AutoDev can bridge for a game, and what each one must return. */
+The declarative tier asks a game for declarations only: six plain functions
+on the object its entry factory returns. That is not always achievable — an
+engine whose reset lives behind a wrapper, or whose legal actions come from
+a generator, may need AutoDev to write the body that bridges them.
+
+The scaffold writes those bodies as throwing stubs, not plausible ones. A
+generated method that returned a well-shaped empty observation would pass
+`conformance`, produce episodes, and hand the analyst measurements no game
+ever made — which is the exact failure the declarative tier exists to
+prevent. Every stub throws with the game's own file and the binding name, so
+the first run names what to write.
+
+The binding this writes declares tier `generated-scaffold`, so a reviewer can
+see that AutoDev generated the bodies and the game filled them in, rather
+than that the game declared them.
+*/
+
+/**
+Bodies AutoDev can bridge for a game, and what each one must return.
+*/
 const SCAFFOLD_BODIES: readonly {
   readonly name: string;
   readonly contract: string;
@@ -52,12 +54,12 @@ const SCAFFOLD_BODIES: readonly {
 ];
 
 /**
- * The adapter module AutoDev generates.
- *
- * Every body throws. `conformance` runs this and fails at the first method it
- * reaches, naming the file to edit — which is the intended first experience of
- * a generated scaffold, and the reason this is not a set of empty returns.
- */
+The adapter module AutoDev generates.
+
+Every body throws. `conformance` runs this and fails at the first method it
+reaches, naming the file to edit — which is the intended first experience of
+a generated scaffold, and the reason this is not a set of empty returns.
+*/
 export function scaffoldAdapterModule(input: {
   readonly factory: string;
   readonly fileName: string;
@@ -94,10 +96,14 @@ ${bodies}
 `;
 }
 
-/** How many bodies a generated module contains; reported by `--scaffold`. */
+/**
+How many bodies a generated module contains; reported by `--scaffold`.
+*/
 export const PLAYTESTS_SCAFFOLD_BODY_COUNT = SCAFFOLD_BODIES.length;
 
-/** The binding that goes with a generated module. */
+/**
+The binding that goes with a generated module.
+*/
 export function scaffoldBinding(input: {
   readonly factory: string;
   readonly fileName: string;

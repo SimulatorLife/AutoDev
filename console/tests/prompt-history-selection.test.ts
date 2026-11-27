@@ -11,21 +11,21 @@ import {
 } from "../src/lib/server/prompt-history.ts";
 
 /**
- * The prompt's committed history: the page a URL names, and the revision a URL
- * asks to open.
- *
- * The history is one ordered list of committed revisions and a page of it is a
- * window, so the operator who needs an older revision asks for the next page
- * instead of being told to go and read Git. The page is named in the URL, so
- * the walk is addressable.
- *
- * Which revisions exist is the Control API's answer and not the page's: a
- * revision the operator reached by paging back is older than the page the
- * page happens to be showing, and a revision URL copied from another page has
- * to keep working. So the selection policy is pinned here, where it can be
- * exercised directly rather than through a route that cannot be imported
- * outside a Next.js runtime.
- */
+The prompt's committed history: the page a URL names, and the revision a URL
+asks to open.
+
+The history is one ordered list of committed revisions and a page of it is a
+window, so the operator who needs an older revision asks for the next page
+instead of being told to go and read Git. The page is named in the URL, so
+the walk is addressable.
+
+Which revisions exist is the Control API's answer and not the page's: a
+revision the operator reached by paging back is older than the page the
+page happens to be showing, and a revision URL copied from another page has
+to keep working. So the selection policy is pinned here, where it can be
+exercised directly rather than through a route that cannot be imported
+outside a Next.js runtime.
+*/
 
 const COMMAND = "dry";
 const NEWEST_HASH = "a".repeat(40);

@@ -14,7 +14,7 @@ import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point"
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
-import { computeRepoPathsFingerprint } from "./runtime-files.ts";
+import { computeRepoPathsFingerprint as computeRepositoryPathsFingerprint } from "./runtime-files.ts";
 
 export interface ConsoleBuildOptions {
   readonly repositoryRoot: string;
@@ -36,9 +36,9 @@ export interface ConsoleBuildDeps {
   readonly writeFile: (filePath: string, content: string) => void;
   readonly run: (
     executable: string,
-    args: readonly string[],
+    arguments_: readonly string[],
     cwd: string,
-    env: NodeJS.ProcessEnv
+    environment: NodeJS.ProcessEnv
   ) => void;
 }
 
@@ -65,7 +65,7 @@ function sleepSyncDefault(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-function defaultDeps(): ConsoleBuildDeps {
+function defaultDependencies(): ConsoleBuildDeps {
   return {
     fileExists: existsSync,
     mkdir: (dirPath) => mkdirSync(dirPath, { recursive: true }),
@@ -78,8 +78,8 @@ function defaultDeps(): ConsoleBuildDeps {
     rename: renameSync,
     readFile: (filePath) => readFileSync(filePath, "utf8"),
     writeFile: (filePath, content) => writeFileSync(filePath, content, "utf8"),
-    run: (executable, args, cwd, env) => {
-      execFileSync(executable, [...args], { cwd, env, stdio: "inherit" });
+    run: (executable, arguments_, cwd, environment) => {
+      execFileSync(executable, [...arguments_], { cwd, env: environment, stdio: "inherit" });
     }
   };
 }
@@ -104,7 +104,7 @@ const CONSOLE_BUILD_FINGERPRINT_PATHS = [
 ] as const;
 
 export function computeConsoleBuildFingerprint(repositoryRoot: string): string {
-  return computeRepoPathsFingerprint(
+  return computeRepositoryPathsFingerprint(
     repositoryRoot,
     CONSOLE_BUILD_FINGERPRINT_PATHS
   );
@@ -144,16 +144,16 @@ function parseStagingDirPid(entry: string): number | null {
 function normalizeGeneratedTypeReference(
   consoleRoot: string,
   stagingDistDir: string,
-  deps: ConsoleBuildDeps
+  dependencies: ConsoleBuildDeps
 ): void {
-  const nextEnvPath = path.join(consoleRoot, NEXT_ENV_FILE);
-  if (!deps.fileExists(nextEnvPath)) return;
-  const content = deps.readFile(nextEnvPath);
+  const nextEnvironmentPath = path.join(consoleRoot, NEXT_ENV_FILE);
+  if (!dependencies.fileExists(nextEnvironmentPath)) return;
+  const content = dependencies.readFile(nextEnvironmentPath);
   const normalized = content.replaceAll(
     `./${stagingDistDir}/`,
     `./${PRODUCTION_DIST_DIR}/`
   );
-  if (normalized !== content) deps.writeFile(nextEnvPath, normalized);
+  if (normalized !== content) dependencies.writeFile(nextEnvironmentPath, normalized);
 }
 
 function isGeneratedTypesInclude(entry: string): boolean {
@@ -163,7 +163,7 @@ function isGeneratedTypesInclude(entry: string): boolean {
   );
 }
 
-function isGeneratedDevTypesInclude(entry: string): boolean {
+function isGeneratedDevelopmentTypesInclude(entry: string): boolean {
   return (
     STAGED_DEV_TYPES_INCLUDE_PATTERN.test(entry) ||
     entry === PRODUCTION_DEV_TYPES_INCLUDE
@@ -173,7 +173,7 @@ function isGeneratedDevTypesInclude(entry: string): boolean {
 function filterTsconfigInclude(
   includeList: readonly unknown[],
   targetTypesInclude: string,
-  targetDevTypesInclude: string
+  targetDevelopmentTypesInclude: string
 ): unknown[] {
   const filtered: unknown[] = [];
   const seen = new Set<string>();
@@ -185,26 +185,28 @@ function filterTsconfigInclude(
     let normalized = entry;
     if (isGeneratedTypesInclude(entry)) {
       normalized = targetTypesInclude;
-    } else if (isGeneratedDevTypesInclude(entry)) {
-      normalized = targetDevTypesInclude;
+    } else if (isGeneratedDevelopmentTypesInclude(entry)) {
+      normalized = targetDevelopmentTypesInclude;
     }
-    if (!seen.has(normalized)) {
-      seen.add(normalized);
-      filtered.push(normalized);
+    if (seen.has(normalized)) {
+      continue;
     }
+
+    seen.add(normalized);
+    filtered.push(normalized);
   }
   return filtered;
 }
 
 function normalizeGeneratedTsconfig(
   consoleRoot: string,
-  deps: ConsoleBuildDeps,
+  dependencies: ConsoleBuildDeps,
   targetTypesInclude = PRODUCTION_TYPES_INCLUDE,
-  targetDevTypesInclude = PRODUCTION_DEV_TYPES_INCLUDE
+  targetDevelopmentTypesInclude = PRODUCTION_DEV_TYPES_INCLUDE
 ): string | null {
   const tsconfigPath = path.join(consoleRoot, TSCONFIG_FILE);
-  if (!deps.fileExists(tsconfigPath)) return null;
-  const content = deps.readFile(tsconfigPath);
+  if (!dependencies.fileExists(tsconfigPath)) return null;
+  const content = dependencies.readFile(tsconfigPath);
   let parsed: unknown;
   try {
     parsed = JSON.parse(content);
@@ -223,20 +225,20 @@ function normalizeGeneratedTsconfig(
   record.include = filterTsconfigInclude(
     record.include,
     targetTypesInclude,
-    targetDevTypesInclude
+    targetDevelopmentTypesInclude
   );
   const normalized = `${JSON.stringify(record, null, 2)}\n`;
-  if (normalized !== content) deps.writeFile(tsconfigPath, normalized);
+  if (normalized !== content) dependencies.writeFile(tsconfigPath, normalized);
   return normalized;
 }
 
-function cleanStaleStagingDirs(
+function cleanStaleStagingDirectories(
   consoleRoot: string,
   currentStagingDistDir: string,
-  deps: ConsoleBuildDeps
+  dependencies: ConsoleBuildDeps
 ): void {
-  const readDir = deps.readDir ?? ((dirPath: string) => readdirSync(dirPath));
-  const isAlive = deps.isProcessAlive ?? checkProcessAlive;
+  const readDir = dependencies.readDir ?? ((dirPath: string) => readdirSync(dirPath));
+  const isAlive = dependencies.isProcessAlive ?? checkProcessAlive;
   let entries: readonly string[];
   try {
     entries = readDir(consoleRoot);
@@ -247,7 +249,7 @@ function cleanStaleStagingDirs(
     if (entry === currentStagingDistDir) continue;
     const pid = parseStagingDirPid(entry);
     if (pid !== null && pid !== process.pid && !isAlive(pid)) {
-      deps.remove(path.join(consoleRoot, entry));
+      dependencies.remove(path.join(consoleRoot, entry));
     }
   }
 }
@@ -255,30 +257,30 @@ function cleanStaleStagingDirs(
 function seedStagingBuildCache(
   buildPath: string,
   stagingPath: string,
-  deps: ConsoleBuildDeps
+  dependencies: ConsoleBuildDeps
 ): readonly string[] {
   const buildCachePath = path.join(buildPath, CACHE_DIR);
-  if (!deps.fileExists(buildCachePath)) return [];
+  if (!dependencies.fileExists(buildCachePath)) return [];
   const stagingCachePath = path.join(stagingPath, CACHE_DIR);
   const ensureDir =
-    deps.mkdir ??
+    dependencies.mkdir ??
     ((dirPath: string) => mkdirSync(dirPath, { recursive: true }));
   const movedSubdirs = SEEDED_CACHE_ENTRIES.filter((subdir) =>
-    deps.fileExists(path.join(buildCachePath, subdir))
+    dependencies.fileExists(path.join(buildCachePath, subdir))
   );
   const rscInfoSource = path.join(buildCachePath, RSC_INFO_FILE);
-  const hasRscInfo = deps.fileExists(rscInfoSource);
+  const hasRscInfo = dependencies.fileExists(rscInfoSource);
   if (!hasRscInfo && movedSubdirs.length === 0) return [];
   ensureDir(stagingCachePath);
   if (hasRscInfo) {
-    deps.writeFile(
+    dependencies.writeFile(
       path.join(stagingCachePath, RSC_INFO_FILE),
-      deps.readFile(rscInfoSource)
+      dependencies.readFile(rscInfoSource)
     );
   }
   // The renames in this file move whole build directories, which write-file-atomic cannot.
   for (const subdir of movedSubdirs) {
-    deps.rename(
+    dependencies.rename(
       path.join(buildCachePath, subdir),
       path.join(stagingCachePath, subdir)
     );
@@ -290,21 +292,21 @@ function restoreBuildCacheOnFailure(
   buildPath: string,
   stagingPath: string,
   movedSubdirs: readonly string[],
-  deps: ConsoleBuildDeps
+  dependencies: ConsoleBuildDeps
 ): void {
-  if (movedSubdirs.length === 0 || !deps.fileExists(buildPath)) return;
+  if (movedSubdirs.length === 0 || !dependencies.fileExists(buildPath)) return;
   const buildCachePath = path.join(buildPath, CACHE_DIR);
   const stagingCachePath = path.join(stagingPath, CACHE_DIR);
   const ensureDir =
-    deps.mkdir ??
+    dependencies.mkdir ??
     ((dirPath: string) => mkdirSync(dirPath, { recursive: true }));
   ensureDir(buildCachePath);
   for (const subdir of movedSubdirs) {
     const stagedSubdir = path.join(stagingCachePath, subdir);
     const buildSubdir = path.join(buildCachePath, subdir);
-    if (deps.fileExists(stagedSubdir) && !deps.fileExists(buildSubdir)) {
+    if (dependencies.fileExists(stagedSubdir) && !dependencies.fileExists(buildSubdir)) {
       try {
-        deps.rename(stagedSubdir, buildSubdir);
+        dependencies.rename(stagedSubdir, buildSubdir);
       } catch {
         // Best-effort cache restoration on failed build.
       }
@@ -315,12 +317,12 @@ function restoreBuildCacheOnFailure(
 function restoreOptionalFile(
   filePath: string,
   previousContent: string | null,
-  deps: ConsoleBuildDeps
+  dependencies: ConsoleBuildDeps
 ): void {
   if (previousContent === null) {
-    if (deps.fileExists(filePath)) deps.remove(filePath);
+    if (dependencies.fileExists(filePath)) dependencies.remove(filePath);
   } else {
-    deps.writeFile(filePath, previousContent);
+    dependencies.writeFile(filePath, previousContent);
   }
 }
 
@@ -328,22 +330,22 @@ function publishStagedBuild(
   stagingPath: string,
   buildPath: string,
   previousPath: string,
-  deps: ConsoleBuildDeps
+  dependencies: ConsoleBuildDeps
 ): void {
-  if (deps.fileExists(previousPath)) deps.remove(previousPath);
-  const hadCurrentBuild = deps.fileExists(buildPath);
-  if (hadCurrentBuild) deps.rename(buildPath, previousPath);
+  if (dependencies.fileExists(previousPath)) dependencies.remove(previousPath);
+  const hadCurrentBuild = dependencies.fileExists(buildPath);
+  if (hadCurrentBuild) dependencies.rename(buildPath, previousPath);
   try {
-    deps.rename(stagingPath, buildPath);
+    dependencies.rename(stagingPath, buildPath);
   } catch (error) {
-    if (hadCurrentBuild && !deps.fileExists(buildPath)) {
-      deps.rename(previousPath, buildPath);
+    if (hadCurrentBuild && !dependencies.fileExists(buildPath)) {
+      dependencies.rename(previousPath, buildPath);
     }
     throw error;
   }
   if (hadCurrentBuild) {
     try {
-      deps.remove(previousPath);
+      dependencies.remove(previousPath);
     } catch {
       // A published build is usable; stale backup cleanup cannot invalidate it.
     }
@@ -352,12 +354,12 @@ function publishStagedBuild(
 
 function recoverPreviousBuild(
   consoleRoot: string,
-  deps: ConsoleBuildDeps
+  dependencies: ConsoleBuildDeps
 ): void {
   const current = path.join(consoleRoot, PRODUCTION_DIST_DIR);
   const previous = path.join(consoleRoot, PREVIOUS_DIST_DIR);
-  if (!deps.fileExists(current) && deps.fileExists(previous)) {
-    deps.rename(previous, current);
+  if (!dependencies.fileExists(current) && dependencies.fileExists(previous)) {
+    dependencies.rename(previous, current);
   }
 }
 
@@ -367,9 +369,9 @@ const BUILD_LOCK_POLL_MS = 100;
 const BUILD_LOCK_TIMEOUT_MS = 300_000;
 const BUILD_LOCK_EMPTY_GRACE_MS = 2000;
 
-function readLockPid(pidFile: string, deps: ConsoleBuildDeps): number | null {
-  if (!deps.fileExists(pidFile)) return null;
-  const raw = deps.readFile(pidFile).trim();
+function readLockPid(pidFile: string, dependencies: ConsoleBuildDeps): number | null {
+  if (!dependencies.fileExists(pidFile)) return null;
+  const raw = dependencies.readFile(pidFile).trim();
   if (!DIGITS_ONLY_PATTERN.test(raw)) return null;
   const pid = Number(raw);
   return Number.isInteger(pid) && pid > 0 ? pid : null;
@@ -378,19 +380,19 @@ function readLockPid(pidFile: string, deps: ConsoleBuildDeps): number | null {
 function isStaleLock(
   lockDir: string,
   pidFile: string,
-  deps: ConsoleBuildDeps,
+  dependencies: ConsoleBuildDeps,
   missingPidSince: number | null,
   nowMs: number
 ): { readonly stale: boolean; readonly missingPidSince: number | null } {
-  const pid = readLockPid(pidFile, deps);
+  const pid = readLockPid(pidFile, dependencies);
   if (pid !== null) {
-    const isAlive = deps.isProcessAlive ?? checkProcessAlive;
+    const isAlive = dependencies.isProcessAlive ?? checkProcessAlive;
     return {
       stale: pid !== process.pid && !isAlive(pid),
       missingPidSince: null
     };
   }
-  if (!deps.fileExists(lockDir)) {
+  if (!dependencies.fileExists(lockDir)) {
     return { stale: false, missingPidSince: null };
   }
   const since = missingPidSince ?? nowMs;
@@ -402,30 +404,30 @@ function isStaleLock(
 
 function acquireBuildLock(
   consoleRoot: string,
-  deps: ConsoleBuildDeps
+  dependencies: ConsoleBuildDeps
 ): () => void {
   const tryCreate =
-    deps.tryCreateDir ??
+    dependencies.tryCreateDir ??
     (existsSync(consoleRoot) ? tryCreateDirSync : undefined);
   if (!tryCreate) return () => {};
 
   const lockDir = path.join(consoleRoot, BUILD_LOCK_DIR);
   const pidFile = path.join(lockDir, BUILD_LOCK_PID_FILE);
-  const sleep = deps.sleepSync ?? sleepSyncDefault;
-  const now = deps.now ?? Date.now;
+  const sleep = dependencies.sleepSync ?? sleepSyncDefault;
+  const now = dependencies.now ?? Date.now;
   const start = now();
   let missingPidSince: number | null = null;
 
   for (;;) {
     if (tryCreate(lockDir)) {
       try {
-        deps.writeFile(pidFile, `${process.pid}\n`);
+        dependencies.writeFile(pidFile, `${process.pid}\n`);
       } catch (error) {
-        deps.remove(lockDir);
+        dependencies.remove(lockDir);
         throw error;
       }
       return () => {
-        deps.remove(lockDir);
+        dependencies.remove(lockDir);
       };
     }
 
@@ -433,19 +435,19 @@ function acquireBuildLock(
     const staleCheck = isStaleLock(
       lockDir,
       pidFile,
-      deps,
+      dependencies,
       missingPidSince,
       nowMs
     );
     missingPidSince = staleCheck.missingPidSince;
     if (staleCheck.stale) {
-      deps.remove(lockDir);
+      dependencies.remove(lockDir);
       missingPidSince = null;
       continue;
     }
 
     if (nowMs - start >= BUILD_LOCK_TIMEOUT_MS) {
-      const holder = readLockPid(pidFile, deps);
+      const holder = readLockPid(pidFile, dependencies);
       throw new Error(
         `Timed out waiting for Console build lock at ${lockDir}${holder === null ? "" : ` (held by pid ${holder})`}.`
       );
@@ -455,13 +457,13 @@ function acquireBuildLock(
 }
 
 /**
- * Build in an isolated Next output directory, preserve the serving build until
- * compilation succeeds, then publish the new build for the managed Console
- * restart. A failed build must not damage the currently served artifact.
- */
+Build in an isolated Next output directory, preserve the serving build until
+compilation succeeds, then publish the new build for the managed Console
+restart. A failed build must not damage the currently served artifact.
+*/
 export function buildConsole(
   options: ConsoleBuildOptions,
-  deps: ConsoleBuildDeps = defaultDeps()
+  dependencies: ConsoleBuildDeps = defaultDependencies()
 ): void {
   const consoleRoot = path.join(options.repositoryRoot, "console");
   const nextCli = path.join(
@@ -472,13 +474,13 @@ export function buildConsole(
     "bin",
     "next"
   );
-  if (!deps.fileExists(nextCli)) {
+  if (!dependencies.fileExists(nextCli)) {
     throw new Error(
       `Console dependencies are missing at ${nextCli}; run pnpm install --frozen-lockfile first.`
     );
   }
 
-  const releaseLock = acquireBuildLock(consoleRoot, deps);
+  const releaseLock = acquireBuildLock(consoleRoot, dependencies);
   try {
     const stagingDistDir = `.next-staging-${process.pid}`;
     const stagingPath = path.join(consoleRoot, stagingDistDir);
@@ -486,40 +488,40 @@ export function buildConsole(
     const previousPath = path.join(consoleRoot, PREVIOUS_DIST_DIR);
     const buildIdPath = path.join(stagingPath, "BUILD_ID");
     const stampPath = path.join(buildPath, CONSOLE_BUILD_STAMP_FILE);
-    const nextEnvPath = path.join(consoleRoot, NEXT_ENV_FILE);
+    const nextEnvironmentPath = path.join(consoleRoot, NEXT_ENV_FILE);
     const tsconfigPath = path.join(consoleRoot, TSCONFIG_FILE);
-    recoverPreviousBuild(consoleRoot, deps);
+    recoverPreviousBuild(consoleRoot, dependencies);
     if (
       !options.forceRebuild &&
       process.env.AUTODEV_FORCE_CONSOLE_BUILD !== "1" &&
-      deps.fileExists(path.join(buildPath, "BUILD_ID")) &&
-      deps.fileExists(stampPath) &&
-      deps.readFile(stampPath).trim() ===
+      dependencies.fileExists(path.join(buildPath, "BUILD_ID")) &&
+      dependencies.fileExists(stampPath) &&
+      dependencies.readFile(stampPath).trim() ===
         computeConsoleBuildFingerprint(options.repositoryRoot)
     ) {
-      cleanStaleStagingDirs(consoleRoot, stagingDistDir, deps);
+      cleanStaleStagingDirectories(consoleRoot, stagingDistDir, dependencies);
       return;
     }
-    cleanStaleStagingDirs(consoleRoot, stagingDistDir, deps);
-    deps.remove(stagingPath);
-    const previousNextEnv = deps.fileExists(nextEnvPath)
-      ? deps.readFile(nextEnvPath)
+    cleanStaleStagingDirectories(consoleRoot, stagingDistDir, dependencies);
+    dependencies.remove(stagingPath);
+    const previousNextEnvironment = dependencies.fileExists(nextEnvironmentPath)
+      ? dependencies.readFile(nextEnvironmentPath)
       : null;
-    const previousTsconfig = normalizeGeneratedTsconfig(consoleRoot, deps);
+    const previousTsconfig = normalizeGeneratedTsconfig(consoleRoot, dependencies);
     normalizeGeneratedTsconfig(
       consoleRoot,
-      deps,
+      dependencies,
       `${stagingDistDir}/types/**/*.ts`,
       `${stagingDistDir}/dev/types/**/*.ts`
     );
     const movedCacheSubdirs = seedStagingBuildCache(
       buildPath,
       stagingPath,
-      deps
+      dependencies
     );
 
     try {
-      deps.run(
+      dependencies.run(
         options.nodeBin ?? process.execPath,
         [nextCli, "build"],
         consoleRoot,
@@ -528,30 +530,30 @@ export function buildConsole(
           AUTODEV_CONSOLE_BUILD_DIST_DIR: stagingDistDir
         }
       );
-      if (!deps.fileExists(buildIdPath)) {
+      if (!dependencies.fileExists(buildIdPath)) {
         throw new Error(
           "Next.js completed without producing the staged Console BUILD_ID."
         );
       }
-      normalizeGeneratedTypeReference(consoleRoot, stagingDistDir, deps);
-      normalizeGeneratedTsconfig(consoleRoot, deps);
-      deps.writeFile(
+      normalizeGeneratedTypeReference(consoleRoot, stagingDistDir, dependencies);
+      normalizeGeneratedTsconfig(consoleRoot, dependencies);
+      dependencies.writeFile(
         path.join(stagingPath, CONSOLE_BUILD_STAMP_FILE),
         `${computeConsoleBuildFingerprint(options.repositoryRoot)}\n`
       );
-      publishStagedBuild(stagingPath, buildPath, previousPath, deps);
+      publishStagedBuild(stagingPath, buildPath, previousPath, dependencies);
     } catch (error) {
       restoreBuildCacheOnFailure(
         buildPath,
         stagingPath,
         movedCacheSubdirs,
-        deps
+        dependencies
       );
-      restoreOptionalFile(nextEnvPath, previousNextEnv, deps);
-      restoreOptionalFile(tsconfigPath, previousTsconfig, deps);
+      restoreOptionalFile(nextEnvironmentPath, previousNextEnvironment, dependencies);
+      restoreOptionalFile(tsconfigPath, previousTsconfig, dependencies);
       throw error;
     } finally {
-      deps.remove(stagingPath);
+      dependencies.remove(stagingPath);
     }
   } finally {
     releaseLock();
@@ -559,14 +561,14 @@ export function buildConsole(
 }
 
 export function runConsoleBuildCli(
-  args: readonly string[] = process.argv.slice(2),
-  env: NodeJS.ProcessEnv = process.env
+  arguments_: readonly string[] = process.argv.slice(2),
+  environment: NodeJS.ProcessEnv = process.env
 ): void {
   const repositoryRoot = path.resolve(
-    env.AUTODEV_REPO_ROOT?.trim() ||
+    environment.AUTODEV_REPO_ROOT?.trim() ||
       resolveRuntimeSourceRoot(import.meta.dirname)
   );
-  if (env.AUTODEV_CONSOLE_BUILD_DIST_DIR) {
+  if (environment.AUTODEV_CONSOLE_BUILD_DIST_DIR) {
     const consoleRoot = path.join(repositoryRoot, "console");
     const nextCli = path.join(
       consoleRoot,
@@ -576,16 +578,16 @@ export function runConsoleBuildCli(
       "bin",
       "next"
     );
-    execFileSync(process.execPath, [nextCli, "build", ...args], {
+    execFileSync(process.execPath, [nextCli, "build", ...arguments_], {
       cwd: consoleRoot,
-      env,
+      env: environment,
       stdio: "inherit"
     });
     return;
   }
   buildConsole({
     repositoryRoot,
-    forceRebuild: !args.includes("--if-needed")
+    forceRebuild: !arguments_.includes("--if-needed")
   });
 }
 

@@ -3,33 +3,33 @@ import { expect, test } from "@playwright/test";
 import { SWEEP_ROUTES, waitForPageContent } from "./acceptance-helpers.ts";
 
 /**
- * A control's accessible name contains what the control shows.
- *
- * The target state asks for both halves of a link's name: it says what the
- * link points at, and it still contains the text that is visible, so that a
- * voice-control user can say the word they can see and find the control that
- * says it.
- *
- * A stated name replaces the control's own content, so a name that leaves a
- * visible word out does not merely differ from the screen -- it removes it.
- * The Console had four families of that:
- *
- *   - the providers' "Docs ↗" link named itself "Open claude documentation in
- *     a new tab", which does not contain "Docs", while its sibling "Usage ↗"
- *     happened to work only because its name repeated the word;
- *   - the agents' role link showed "browser-tester (Leaf)" and named itself
- *     "Open agent browser-tester", so the kind was on the page and in nobody's
- *     announcement;
- *   - the workspaces' approval link showed the approval's state -- "Not
- *     approved" -- and named itself "Open playtesting approval for
- *     <workspace>", so the state was reachable by sight alone;
- *   - the evaluations' target link showed the role and named itself "Open
- *     detail for evaluation eval-0001", so a page of fifty rows over six
- *     roles said which run it was and not what it was about.
- *
- * This is a rendering claim about every route, so it is measured on every
- * route, in the browser, rather than read off the source of a few views.
- */
+A control's accessible name contains what the control shows.
+
+The target state asks for both halves of a link's name: it says what the
+link points at, and it still contains the text that is visible, so that a
+voice-control user can say the word they can see and find the control that
+says it.
+
+A stated name replaces the control's own content, so a name that leaves a
+visible word out does not merely differ from the screen -- it removes it.
+The Console had four families of that:
+
+  - the providers' "Docs ↗" link named itself "Open claude documentation in
+    a new tab", which does not contain "Docs", while its sibling "Usage ↗"
+    happened to work only because its name repeated the word;
+  - the agents' role link showed "browser-tester (Leaf)" and named itself
+    "Open agent browser-tester", so the kind was on the page and in nobody's
+    announcement;
+  - the workspaces' approval link showed the approval's state -- "Not
+    approved" -- and named itself "Open playtesting approval for
+    <workspace>", so the state was reachable by sight alone;
+  - the evaluations' target link showed the role and named itself "Open
+    detail for evaluation eval-0001", so a page of fifty rows over six
+    roles said which run it was and not what it was about.
+
+This is a rendering claim about every route, so it is measured on every
+route, in the browser, rather than read off the source of a few views.
+*/
 
 const ROUTES = SWEEP_ROUTES;
 
@@ -60,7 +60,7 @@ for (const path of ROUTES) {
         return labelledBy
           .split(/\s+/)
           .map(
-            (id) => document.querySelector(`[id="${id}"]`)?.textContent ?? ""
+            (id) => document.querySelector(`[id="${CSS.escape(id)}"]`)?.textContent ?? ""
           )
           .join(" ")
           .replaceAll(/\s+/g, " ")

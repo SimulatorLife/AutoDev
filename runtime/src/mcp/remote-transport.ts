@@ -13,10 +13,10 @@ import {
 } from "../shared/mcp-headers.ts";
 
 /**
- * The SDK owns the remote transport and its redirect/session behavior.
- * Resolve credentials only at connection creation; never publish a raw URL
- * parser exception, which may include the configured endpoint.
- */
+The SDK owns the remote transport and its redirect/session behavior.
+Resolve credentials only at connection creation; never publish a raw URL
+parser exception, which may include the configured endpoint.
+*/
 export function createRemoteMcpTransport(
   spec: RemoteBackendSpec,
   server: string,
@@ -42,9 +42,9 @@ export function createRemoteMcpTransport(
 }
 
 /**
- * SDK HTTP errors can contain the complete upstream response body.
- * Preserve a bounded HTTP status, never the body, URL, cause or stack.
- */
+SDK HTTP errors can contain the complete upstream response body.
+Preserve a bounded HTTP status, never the body, URL, cause or stack.
+*/
 export function remoteTransportErrorMessage(error: unknown): string {
   if (
     error instanceof StreamableHTTPError &&
@@ -59,10 +59,10 @@ export function remoteTransportErrorMessage(error: unknown): string {
 }
 
 /**
- * JSON-RPC error messages and data are also upstream-controlled diagnostics.
- * Keep the SDK's response identity and numeric code, not arbitrary text.
- * Successful responses (including tool-level isError results) are unchanged.
- */
+JSON-RPC error messages and data are also upstream-controlled diagnostics.
+Keep the SDK's response identity and numeric code, not arbitrary text.
+Successful responses (including tool-level isError results) are unchanged.
+*/
 export function publicRemoteMcpMessage(
   message: JSONRPCMessage
 ): JSONRPCMessage {

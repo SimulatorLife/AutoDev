@@ -12,18 +12,18 @@ import {
 import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
 
 /**
- * The MCP configuration the Runtime applied, and how it compares with the
- * canonical declaration.
- *
- * The declaration says what the operator asked for and the applied projection
- * says what the Runtime published; the two are different readings, and the
- * reconciliation between them is the Runtime's own verdict. The Console
- * renders it rather than deriving one.
- *
- * A configuration that was never applied is not a failure: the Runtime has
- * published nothing yet, and the page says so instead of showing an empty
- * configuration that reads like an applied one.
- */
+The MCP configuration the Runtime applied, and how it compares with the
+canonical declaration.
+
+The declaration says what the operator asked for and the applied projection
+says what the Runtime published; the two are different readings, and the
+reconciliation between them is the Runtime's own verdict. The Console
+renders it rather than deriving one.
+
+A configuration that was never applied is not a failure: the Runtime has
+published nothing yet, and the page says so instead of showing an empty
+configuration that reads like an applied one.
+*/
 export function McpAppliedConfiguration({
   applied,
   serverName

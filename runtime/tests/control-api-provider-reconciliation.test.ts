@@ -85,7 +85,7 @@ function harness(): {
     }
   } as unknown as RouterPersistence);
 
-  const restoreEnv = (name: string, previous: string | undefined): void => {
+  const restoreEnvironment = (name: string, previous: string | undefined): void => {
     if (previous === undefined) delete process.env[name];
     else process.env[name] = previous;
   };
@@ -93,9 +93,9 @@ function harness(): {
   return {
     restore: () => {
       setDefaultPersistenceManager(originalPersistence);
-      restoreEnv("AUTODEV_CONTROL_API_TOKEN", previousToken);
-      restoreEnv("AUTODEV_CONTROL_OPERATORS", previousOperators);
-      restoreEnv("AUTODEV_CONTROL_VIEWERS", previousViewers);
+      restoreEnvironment("AUTODEV_CONTROL_API_TOKEN", previousToken);
+      restoreEnvironment("AUTODEV_CONTROL_OPERATORS", previousOperators);
+      restoreEnvironment("AUTODEV_CONTROL_VIEWERS", previousViewers);
     },
     call: async (method, pathname, body, actor) => {
       const response = responseRecorder();

@@ -188,10 +188,10 @@ function projectNode(
 }
 
 /**
- * Project an adapter observation to only the fields in the game-authored
- * player-visible allowlist. An absent allowlisted field is a contract error;
- * hidden fields are never forwarded to policies, loop hashing or trace windows.
- */
+Project an adapter observation to only the fields in the game-authored
+player-visible allowlist. An absent allowlisted field is a contract error;
+hidden fields are never forwarded to policies, loop hashing or trace windows.
+*/
 export function projectPlaytestVisibleObservation(
   observation: unknown,
   contract: PlaytestObservationContract

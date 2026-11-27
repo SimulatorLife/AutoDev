@@ -6,7 +6,9 @@ import type {
 
 import type { QuotaExhaustionEvidence } from "../providers/ProviderQuota.ts";
 
-/** One source's outcome. Only `ok` carries data; the others carry why not. */
+/**
+One source's outcome. Only `ok` carries data; the others carry why not.
+*/
 export type OverviewRead<T> =
   | { readonly status: "ok"; readonly data: T }
   | {
@@ -17,21 +19,31 @@ export type OverviewRead<T> =
 
 export interface OverviewLiveActivity {
   readonly activeSessions: UsageActiveSessions;
-  /** `null`: the Runtime registered no agent-activity source. */
+  /**
+  `null`: the Runtime registered no agent-activity source.
+  */
   readonly liveAgents: ControlApiLiveAgentCounts | null;
 }
 
 export interface OverviewProviderVerdicts {
   readonly total: number;
   readonly ready: number;
-  /** `null` when the quota report has no usable fresh evidence: not observed, not zero. */
+  /**
+  `null` when the quota report has no usable fresh evidence: not observed, not zero.
+  */
   readonly quotaExhausted: number | null;
   readonly notObserved: number;
-  /** Failing health or cooldown, excluding quota exhaustion. */
+  /**
+  Failing health or cooldown, excluding quota exhaustion.
+  */
   readonly unavailable: number;
-  /** Disabled, unrouted, missing credential or signed out. */
+  /**
+  Disabled, unrouted, missing credential or signed out.
+  */
   readonly needsAttention: number;
-  /** Quality of the quota evidence behind `quotaExhausted`. */
+  /**
+  Quality of the quota evidence behind `quotaExhausted`.
+  */
   readonly quotaEvidence: QuotaExhaustionEvidence;
 }
 

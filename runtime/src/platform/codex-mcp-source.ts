@@ -6,17 +6,17 @@ import { ConfigError } from "@simulatorlife/autodev-runtime/config";
 import { runRulesyncGenerate } from "./runtime-files.ts";
 
 /**
- * The Codex MCP projection of the canonical declaration.
- *
- * `root` is the throwaway directory RuleSync generated into and `source` is
- * the generated Codex configuration inside it. The caller owns `root` and has
- * to remove it when it is done with the projection.
- *
- * This lives in its own module because two owners need it -- the installer and
- * the Control API's MCP mutation -- and the installer and the Control API
- * already depend on each other, so a shared projection cannot live in either
- * of them without a cycle.
- */
+The Codex MCP projection of the canonical declaration.
+
+`root` is the throwaway directory RuleSync generated into and `source` is
+the generated Codex configuration inside it. The caller owns `root` and has
+to remove it when it is done with the projection.
+
+This lives in its own module because two owners need it -- the installer and
+the Control API's MCP mutation -- and the installer and the Control API
+already depend on each other, so a shared projection cannot live in either
+of them without a cycle.
+*/
 export function createCodexMcpSource(repositoryRoot: string): {
   root: string;
   source: string;

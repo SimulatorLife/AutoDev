@@ -1,4 +1,6 @@
-/** Server-only OpenLIT Usage adapter configuration and URL filter parsing. */
+/**
+Server-only OpenLIT Usage adapter configuration and URL filter parsing.
+*/
 
 import path from "node:path";
 
@@ -46,25 +48,25 @@ export type OpenLITUsageEnvironment = Readonly<
 >;
 
 export type ConsoleUsageResult =
-  { readonly kind: "not-configured" } | OpenLITUsageResult;
+  OpenLITUsageResult | { readonly kind: "not-configured" };
 
 export type ConsoleTraceResult =
-  { readonly kind: "not-configured" } | OpenLITTraceResult;
+  OpenLITTraceResult | { readonly kind: "not-configured" };
 
 export type ConsoleSessionUsageResult =
-  { readonly kind: "not-configured" } | OpenLITSessionResult;
+  OpenLITSessionResult | { readonly kind: "not-configured" };
 
 export function readOpenLITUsageConfig(
-  env: OpenLITUsageEnvironment = process.env
+  environment: OpenLITUsageEnvironment = process.env
 ): OpenLITUsageConfig | null {
-  let serviceToken = env.AUTODEV_OPENLIT_USAGE_TOKEN?.trim() ?? "";
+  let serviceToken = environment.AUTODEV_OPENLIT_USAGE_TOKEN?.trim() ?? "";
   if (!serviceToken) {
-    const home = env.HOME?.trim();
+    const home = environment.HOME?.trim();
     const codexHome =
-      env.CODEX_HOME?.trim() || (home ? path.join(home, ".codex") : null);
+      environment.CODEX_HOME?.trim() || (home ? path.join(home, ".codex") : null);
     if (codexHome) {
       const secretFile =
-        env.AUTODEV_OPENLIT_SECRET_FILE?.trim() ||
+        environment.AUTODEV_OPENLIT_SECRET_FILE?.trim() ||
         path.join(codexHome, "openlit-secrets.env");
       serviceToken =
         readSecretFromFile(secretFile, "AUTODEV_OPENLIT_USAGE_TOKEN") ?? "";
@@ -72,15 +74,15 @@ export function readOpenLITUsageConfig(
   }
   if (!serviceToken) return null;
   const baseUrl =
-    env.AUTODEV_OPENLIT_USAGE_URL?.trim() || DEFAULT_OPENLIT_USAGE_BASE_URL;
+    environment.AUTODEV_OPENLIT_USAGE_URL?.trim() || DEFAULT_OPENLIT_USAGE_BASE_URL;
   return { baseUrl: baseUrl.replace(TRAILING_SLASHES, ""), serviceToken };
 }
 
 export function loadOpenLITUsage(
   selection: UsageFilterSelection,
-  env: OpenLITUsageEnvironment = process.env
+  environment: OpenLITUsageEnvironment = process.env
 ): Promise<ConsoleUsageResult> {
-  const config = readOpenLITUsageConfig(env);
+  const config = readOpenLITUsageConfig(environment);
   if (!config) return Promise.resolve({ kind: "not-configured" });
   return new OpenLITUsageClient(config).query(selection);
 }
@@ -89,9 +91,9 @@ export function loadOpenLITSessionUsage(
   sessionId: unknown,
   selection: UsageSessionQuerySelection,
   pagination: UsageSessionSpanPagination | undefined,
-  env: OpenLITUsageEnvironment = process.env
+  environment: OpenLITUsageEnvironment = process.env
 ): Promise<ConsoleSessionUsageResult> {
-  const config = readOpenLITUsageConfig(env);
+  const config = readOpenLITUsageConfig(environment);
   if (!config) return Promise.resolve({ kind: "not-configured" });
   return new OpenLITUsageClient(config).querySession(
     sessionId,
@@ -102,9 +104,9 @@ export function loadOpenLITSessionUsage(
 
 export function loadOpenLITTrace(
   spanId: string,
-  env: OpenLITUsageEnvironment = process.env
+  environment: OpenLITUsageEnvironment = process.env
 ): Promise<ConsoleTraceResult> {
-  const config = readOpenLITUsageConfig(env);
+  const config = readOpenLITUsageConfig(environment);
   if (!config) return Promise.resolve({ kind: "not-configured" });
   return new OpenLITUsageClient(config).queryTrace(spanId);
 }
@@ -114,16 +116,16 @@ export type UsageSearchParams = Readonly<
 >;
 
 export function usageSelectionFromSearchParams(
-  searchParams: UsageSearchParams,
+  searchParameters: UsageSearchParams,
   now = new Date()
 ): UsageFilterSelection {
-  const rawRange = first(searchParams.range);
+  const rawRange = first(searchParameters.range);
   const range: UsageTimeRange = VALID_RANGES.has(rawRange as UsageTimeRange)
     ? (rawRange as UsageTimeRange)
     : "24H";
   const values: Partial<Record<UsageVariableId, readonly string[]>> = {};
   for (const id of USAGE_VARIABLE_IDS) {
-    const raw = searchParams[id];
+    const raw = searchParameters[id];
     const entries = Array.isArray(raw) ? raw : raw === undefined ? [] : [raw];
     const normalized = [
       ...new Set(entries.map((value) => value.trim()).filter(Boolean))
@@ -133,8 +135,8 @@ export function usageSelectionFromSearchParams(
     if (normalized.length > 0) values[id] = normalized;
   }
   const customRange: UsageCustomRange = {
-    startDate: first(searchParams.startDate) || calendarDate(now, 14),
-    endDate: first(searchParams.endDate) || calendarDate(now, 0)
+    startDate: first(searchParameters.startDate) || calendarDate(now, 14),
+    endDate: first(searchParameters.endDate) || calendarDate(now, 0)
   };
   if (range === "CUSTOM") return { range, values, customRange };
   // The live-session scope carries no bounds. Defaulting `customRange` onto it
@@ -160,19 +162,29 @@ function first(value: string | readonly string[] | undefined): string {
   return (Array.isArray(value) ? value[0] : value) ?? "";
 }
 
-/** The unscoped Usage views: the fleet aggregate and the two fleet diagnostics. */
+/**
+The unscoped Usage views: the fleet aggregate and the two fleet diagnostics.
+*/
 type UsageFleetView = "overview" | "sessions" | "hooks";
 
-/** The session-scoped Usage tabs. */
+/**
+The session-scoped Usage tabs.
+*/
 type UsageSessionTab =
   "overview" | "threads" | "failures" | "requests" | "spans";
 
-/** Everything the Usage page reads out of its own URL. */
+/**
+Everything the Usage page reads out of its own URL.
+*/
 export interface UsageViewState {
   readonly selection: UsageFilterSelection;
-  /** The session id exactly as the operator typed it, before validation. */
+  /**
+  The session id exactly as the operator typed it, before validation.
+  */
   readonly rawSessionId: string;
-  /** The validated session id, or null when the typed one is not usable. */
+  /**
+  The validated session id, or null when the typed one is not usable.
+  */
   readonly sessionId: string | null;
   readonly view: UsageFleetView;
   readonly tab: UsageSessionTab;
@@ -219,25 +231,25 @@ function offsetValue(value: string): number {
 }
 
 /**
- * Read the Usage page's view state out of its URL.
- *
- * A session id is a *view scope*, not a Usage filter: it is validated with the
- * shared session-identity rule, it never becomes an OpenTelemetry metric
- * dimension, and it is carried separately from the filter selection so the
- * fleet-wide query can be skipped entirely when it is present.
- */
+Read the Usage page's view state out of its URL.
+
+A session id is a *view scope*, not a Usage filter: it is validated with the
+shared session-identity rule, it never becomes an OpenTelemetry metric
+dimension, and it is carried separately from the filter selection so the
+fleet-wide query can be skipped entirely when it is present.
+*/
 export function usageViewStateFromSearchParams(
-  searchParams: UsageSearchParams,
+  searchParameters: UsageSearchParams,
   now = new Date()
 ): UsageViewState {
-  const selection = usageSelectionFromSearchParams(searchParams, now);
-  const rawSessionId = first(searchParams.sessionId).trim();
-  const validatedThreadId = first(searchParams.threadId).trim();
+  const selection = usageSelectionFromSearchParams(searchParameters, now);
+  const rawSessionId = first(searchParameters.sessionId).trim();
+  const validatedThreadId = first(searchParameters.threadId).trim();
   const threadId = safeAutoDevSessionId(validatedThreadId) ?? undefined;
-  const rawFailureCategory = first(searchParams.failureCategory).trim();
-  const rawView = first(searchParams.view);
-  const rawTab = first(searchParams.tab);
-  const rawSpanSort = first(searchParams.spanSort);
+  const rawFailureCategory = first(searchParameters.failureCategory).trim();
+  const rawView = first(searchParameters.view);
+  const rawTab = first(searchParameters.tab);
+  const rawSpanSort = first(searchParameters.spanSort);
   return {
     selection,
     rawSessionId,
@@ -248,17 +260,17 @@ export function usageViewStateFromSearchParams(
     tab: SESSION_TABS.has(rawTab as UsageSessionTab)
       ? (rawTab as UsageSessionTab)
       : "overview",
-    spanOffset: offsetValue(first(searchParams.spanOffset)),
-    spanLimit: oneOf(first(searchParams.spanLimit), SPAN_LIMITS, 50),
+    spanOffset: offsetValue(first(searchParameters.spanOffset)),
+    spanLimit: oneOf(first(searchParameters.spanLimit), SPAN_LIMITS, 50),
     spanSort: rawSpanSort === "asc" ? "asc" : "desc",
-    eventsOffset: offsetValue(first(searchParams.eventsOffset)),
-    eventsLimit: oneOf(first(searchParams.eventsLimit), SMALL_PAGE_LIMITS, 50),
-    itemsOffset: offsetValue(first(searchParams.itemsOffset)),
-    itemsLimit: oneOf(first(searchParams.itemsLimit), SMALL_PAGE_LIMITS, 50),
+    eventsOffset: offsetValue(first(searchParameters.eventsOffset)),
+    eventsLimit: oneOf(first(searchParameters.eventsLimit), SMALL_PAGE_LIMITS, 50),
+    itemsOffset: offsetValue(first(searchParameters.itemsOffset)),
+    itemsLimit: oneOf(first(searchParameters.itemsLimit), SMALL_PAGE_LIMITS, 50),
     threadId,
     failureCategory: isToolFailureCategory(rawFailureCategory)
       ? rawFailureCategory
       : undefined,
-    hooksSinceDays: oneOf(first(searchParams.hooksSinceDays), HOOK_WINDOWS, 7)
+    hooksSinceDays: oneOf(first(searchParameters.hooksSinceDays), HOOK_WINDOWS, 7)
   };
 }

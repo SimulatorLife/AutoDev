@@ -155,7 +155,9 @@ export function providerModelAvailabilityLabel(
   }
 }
 
-/** Join routing state to provider-owned availability without guessing either. */
+/**
+Join routing state to provider-owned availability without guessing either.
+*/
 export function providerModelRows(
   models: readonly ControlApiModelRecord[] | null,
   discovery: ProviderModelDiscoveryState

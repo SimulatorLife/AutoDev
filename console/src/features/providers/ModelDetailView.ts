@@ -40,14 +40,18 @@ import { ProviderModelAvailabilityBadge } from "./ProviderModelAvailabilityBadge
 
 export interface ModelDetailViewProps {
   readonly model: ControlApiModelRecord;
-  /** The owning provider's record, or `null` when Providers is unavailable. */
+  /**
+  The owning provider's record, or `null` when Providers is unavailable.
+  */
   readonly provider: ControlApiProviderRecord | null;
   readonly modelDiscovery: ProviderModelDiscoveryState;
   readonly runtime?: ControlApiRuntimeResponse | undefined;
   readonly controlFailed?: boolean | undefined;
 }
 
-/** Read-only provider role state; the provider's own toggles live on its pages. */
+/**
+Read-only provider role state; the provider's own toggles live on its pages.
+*/
 function ProviderRoleState({
   provider
 }: {
@@ -63,11 +67,11 @@ function ProviderRoleState({
     { className: "flex flex-wrap gap-2" },
     ...PROVIDER_ROLES.map((role) => {
       const assignment = provider.roles[role];
-      const disabled = assignment.priority === "disabled";
+      const isDisabled = assignment.priority === "disabled";
       return React.createElement(StatusBadge, {
         key: role,
-        status: disabled ? "unavailable" : "valid",
-        label: `${role}: ${disabled ? "Disabled" : `P${assignment.priority}`}`
+        status: isDisabled ? "unavailable" : "valid",
+        label: `${role}: ${isDisabled ? "Disabled" : `P${assignment.priority}`}`
       });
     })
   );

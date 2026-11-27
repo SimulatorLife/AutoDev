@@ -8,14 +8,14 @@ import { WorkspaceDetailView } from "../src/features/workspaces/WorkspaceDetailV
 import { WorkspacesView } from "../src/features/workspaces/WorkspacesView.ts";
 
 /**
- * The one control that writes a workspace's canonical configuration.
- *
- * The control appears twice -- on the workspace's row on the list and on the
- * workspace's own page -- and these cases pin that it is one control: the
- * same fields, the same route, the same revision check and the same disabled
- * reason in both places. A second implementation would pass a test that only
- * looked at one of them, which is why both are rendered here.
- */
+The one control that writes a workspace's canonical configuration.
+
+The control appears twice -- on the workspace's row on the list and on the
+workspace's own page -- and these cases pin that it is one control: the
+same fields, the same route, the same revision check and the same disabled
+reason in both places. A second implementation would pass a test that only
+looked at one of them, which is why both are rendered here.
+*/
 
 const WORKSPACE_ID = "SimulatorLife/AutoDev";
 const REVISION = "a".repeat(64);
@@ -52,13 +52,15 @@ function detailMarkup(revision: string | null = REVISION): string {
   );
 }
 
-/** The fields one rendered control carries. */
+/**
+The fields one rendered control carries.
+*/
 function controlFields(markup: string): {
   readonly action: string | undefined;
   readonly fields: readonly string[];
 } {
-  const form = markup.match(
-    /<form[^>]*data-workspace-configuration="[^"]*"[^>]*>[\s\S]*?<\/form>/u
+  const form = /<form[^>]*data-workspace-configuration="[^"]*"[^>]*>[\s\S]*?<\/form>/u.exec(
+    markup
   );
   assert.ok(form, "the control renders a form");
   const action = form[0]?.match(/action="([^"]*)"/u)?.[1];

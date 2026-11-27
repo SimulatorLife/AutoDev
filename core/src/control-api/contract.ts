@@ -1,164 +1,164 @@
 /**
- * Control API compatibility handshake shared by the Runtime and Console.
- *
- * Increment `version` when the Console begins requiring a new Control API
- * capability or path, or when an existing payload/authorization contract
- * changes incompatibly. The Console checks this endpoint before serving pages;
- * per-resource schemas remain the validation boundary for each response.
- *
- * v7: the episode detail resource adds a strict `visualAssignment` field bound
- * to the exact frozen visual batch assignment manifest.
- * v8: run receipts and active-run reads expose frozen assignment-to-session
- * references so the Console can open an in-progress session without guessing.
- * v9: episode detail carries the persisted Core-owned player-debrief state and
- * evidence references under episode schema v8.
- * v10: the Providers page header exposes a confirmation-bound
- * \`POST /control/providers/reset\` operation that clears provider Runtime
- * overrides (role assignments, provider disables, model disables, and
- * provider agent limits) to their static-config defaults.
- * v11: the Providers response carries each provider's reconciliation view --
- * the desired generation of the provider's routing configuration, the
- * generation the runtime has observed, and the bounded operation history --
- * so the provider page can show convergence instead of leaving the operator to
- * assume that a saved configuration is a served one.
- * v12: the Runtime's MCP observations are published on their own read path
- * (`GET /control/mcp-runtime`) rather than folded into the MCP catalog. The
- * catalog stays a configuration read, and the MCP page composes the
- * observation onto the declaration rather than blurring the two.
- * v13: the MCP configuration the Runtime published is published on its own
- * read path (`GET /control/mcp-applied`) and reconciled against the canonical
- * declaration through the shared reconciliation contract, so the MCP page can
- * say whether what the operator declared is what the Runtime applied.
- * v14: the canonical MCP declaration carries a revision the Console compares
- * against before it writes, the applied read publishes the declared launch
- * configuration the comparison is made against, and the canonical declaration
- * is written through `PATCH /control/mcps/{name}`, which applies the projection
- * and reports the reconciliation.
- * v15: the canonical hook declaration publishes the effective declaration of
- * the target the Runtime applies -- the shared declaration merged with the
- * target's own, one event at a time -- with the revision a write compares
- * against and the origin of each event, and the canonical declaration is
- * written through `PATCH /control/hooks/{event}`, which applies the hook
- * projection and reports the reconciliation.
- * v16: the canonical workspace catalog publishes the revision a write is
- * compared against, and one workspace's canonical configuration is written
- * through `PATCH /control/workspaces/{owner}/{repository}`, which replaces that
- * entry's enablement, base branch and role scope under the same
- * compare-and-swap the other canonical sources use.
- * v17: the permission policy is published from the canonical source that
- * states it, with the revision a write is compared against, each role's real
- * sandbox mode, and the applied policy read from the composed configuration;
- * the policy is written through `PATCH /control/permissions`, which replaces
- * one setting under the same compare-and-swap the other canonical sources use
- * and reports the reconciliation against the applied configuration.
- * v18: the canonical workspace catalog publishes the shared desired-vs-actual
- * view like every other canonical source, and one workspace's configuration
- * write reports it together with the fields it changed -- so the Workspaces
- * surface says converged, pending or not observed instead of leaving the
- * operator to infer convergence from a write that reported success.
- * v19: the skills and prompts collections declare the canonical write paths
- * they have -- role assignment and source editing for skills, the command's
- * own source for prompts -- so the Console refuses a response that claims
- * those collections are read-only. Both collections published `readOnly: true`
- * from before their write paths existed.
- * v20: the GitHub page's recent runs are null when the Actions read did not
- * happen, beside the `stats` that already said so. An empty list there claimed
- * the workflows had never run, which is a claim about the repository rather
- * than about the read.
- * v21: the skills page's unresolved assignments are null when the catalogue was
- * not read, because the join between the contract's assignments and the
- * catalogue's names was not performed. An empty list there claimed every
- * assignment resolves.
- * v22: the tool catalogue publishes whether the execution contract was read.
- * The contract's accessor falls back to an empty contract when the read fails,
- * so an empty contract and a contract nobody read looked the same to every
- * caller -- and the catalogue's counts and the role exposure of every entry
- * depend on which one it was.
- * v23: the prompts catalogue publishes null for its role prompts when the
- * directory could not be read. The catalogue is two independent reads, and an
- * empty list for the one that failed claimed the repository holds no role
- * prompt.
- * v24: the agents and skills catalogues publish whether the execution
- * contract was read. Both draw role assignments from it, and the accessor
- * that reads it falls back to an empty contract when the read fails -- so an
- * empty contract and a contract nobody read looked the same to every caller.
- * v25: the agent detail publishes null for its system prompt when the role's
- * prompt file is there and could not be read. The detail used to publish an
- * empty string for it, which claimed the prompt was read and held nothing --
- * and gave the reconciliation a digest of nothing to compare against, an
- * identity that names no prompt.
- * v26: the permissions response publishes whether the execution contract was
- * read. The role matrices are the contract's roles, and an unread contract
- * falls back to an empty one -- so an empty matrix set, an empty tool-exposure
- * line and a navigation badge reading 0 were three ways of saying the
- * contract declares no role, which is not what happened.
- * v27: the concurrency limit write publishes the shared reconciliation view.
- * The limit is a mutable resource like every other one the Console writes,
- * and it was the last one whose write answered with the applied value alone
- * -- so "the write was accepted" and "the Runtime is enforcing this limit"
- * were the same claim, and only the second one says what the operator will
- * actually get.
- * v28: the concurrency status publishes where the limit in force came from.
- * The field the Console reads was carrying a different fact -- the config
- * file's location -- so the branch the Console branches on was unreachable
- * and every limit the operator had configured was labelled as a default. The
- * limit's source is now a closed union the Console can render, and the file's
- * location travels beside it under the name that says what it is.
- * v29: a provider can be re-checked on request through
- * `POST /control/providers/{provider}/check`, which runs its live probe and
- * model listing and answers with the check and the provider's health after
- * it; provider health publishes the latest check (`lastCheck`), and a passing
- * check newer than the last failure counts as recovery.
- * v30: the live agent counts split each provider's and each model's count by
- * role (`byProviderRole`, `byModelRole`), so a count can be read as the agents
- * it is made of rather than as a bare number.
- * v31: `GET /control/runtime` publishes bounded `liveSessions` identities
- * explicitly attributed by live AgentActivityTracker records, with list
- * truncation and unattributed activity reported separately from the legacy
- * concurrency `activeSessions` scalar.
- * v32: the opencli providers publish which browser they drive (`browser`),
- * and `PATCH /control/providers/{provider}/browser` switches them between the
- * operator's own Chrome (Browser Bridge extension, the default) and a
- * dedicated Chrome for Testing.
- * v33: the MCP applied read (v3) and MCP write response (v2) publish HTTP
- * header names only (httpHeaderNames); header values are credentials and
- * never leave the Runtime.
- * v34: `/control/providers` publishes the direct quota-axi report separately
- * from router health, with the provider package's identities and semantics.
- * v35: `/control/diagnostics` publishes the unified session diagnostics: one
- * session's report (`GET /control/diagnostics/sessions/{id}`), the recent
- * sessions (`GET /control/diagnostics/sessions/recent`), the cross-session
- * fleet scan (`GET /control/diagnostics/sessions/scan`), and the hook-denial
- * summary (`GET /control/diagnostics/hooks`). Every route is read-only, so
- * both the `viewer` and the `operator` role may read it, and each route
- * answers `format=json` (the default) or `format=text`.
- * v36: live-session identities publish source-observed provider, model, and
- * role attribution, with null retained when an activity record did not supply
- * that dimension. Each dimension selects its newest non-null observation;
- * equal timestamps resolve to the lexically smallest value.
- * v37: live-session identities publish the first observed client surface
- * (`clientSurface`) for each session, with null retained when no originator or
- * User-Agent surface was observed.
- * v38: opencli providers run exclusively in dedicated Chrome for Testing;
- * the obsolete shared-browser toggle (`browser` / `PATCH .../browser`) is removed.
- * v39: Permissions is repository-owned and GET-only; the canonical
- * collection advertises readOnly: true and rejects every mutation.
- * v40: Hooks is repository-owned and GET-only; the hook event write path
- * is removed and the collection requires readOnly: true.
- * v41: the Hooks and Permissions collections publish the canonical source's
- * exact text (`sourceText`) beside the values parsed from it, so the Console
- * can show the JSONC source with its comments and the rendered view from one
- * read. The revision names the bytes both views came from.
- * v42: the MCP catalog (`autodev-control-mcps-v3`) carries the shared MCP
- * gateway as a required `gateway` object: service label, installed and ready
- * verdicts, readiness URL, generation, workspace, published role surfaces and
- * the primary role's reviewed and effective grants. It is read-only. The
- * ChatGPT tunnel status (`autodev-chatgpt-tunnel-v2`) carries tunnel facts
- * only, and its mutations are lifecycle and credential operations
- * (enable, disable, rotate, forget): the `configure` mutation that rewrote
- * the gateway's published roles and grants is removed, because those are
- * repository-owned.
- */
+Control API compatibility handshake shared by the Runtime and Console.
+
+Increment `version` when the Console begins requiring a new Control API
+capability or path, or when an existing payload/authorization contract
+changes incompatibly. The Console checks this endpoint before serving pages;
+per-resource schemas remain the validation boundary for each response.
+
+v7: the episode detail resource adds a strict `visualAssignment` field bound
+to the exact frozen visual batch assignment manifest.
+v8: run receipts and active-run reads expose frozen assignment-to-session
+references so the Console can open an in-progress session without guessing.
+v9: episode detail carries the persisted Core-owned player-debrief state and
+evidence references under episode schema v8.
+v10: the Providers page header exposes a confirmation-bound
+\`POST /control/providers/reset\` operation that clears provider Runtime
+overrides (role assignments, provider disables, model disables, and
+provider agent limits) to their static-config defaults.
+v11: the Providers response carries each provider's reconciliation view --
+the desired generation of the provider's routing configuration, the
+generation the runtime has observed, and the bounded operation history --
+so the provider page can show convergence instead of leaving the operator to
+assume that a saved configuration is a served one.
+v12: the Runtime's MCP observations are published on their own read path
+(`GET /control/mcp-runtime`) rather than folded into the MCP catalog. The
+catalog stays a configuration read, and the MCP page composes the
+observation onto the declaration rather than blurring the two.
+v13: the MCP configuration the Runtime published is published on its own
+read path (`GET /control/mcp-applied`) and reconciled against the canonical
+declaration through the shared reconciliation contract, so the MCP page can
+say whether what the operator declared is what the Runtime applied.
+v14: the canonical MCP declaration carries a revision the Console compares
+against before it writes, the applied read publishes the declared launch
+configuration the comparison is made against, and the canonical declaration
+is written through `PATCH /control/mcps/{name}`, which applies the projection
+and reports the reconciliation.
+v15: the canonical hook declaration publishes the effective declaration of
+the target the Runtime applies -- the shared declaration merged with the
+target's own, one event at a time -- with the revision a write compares
+against and the origin of each event, and the canonical declaration is
+written through `PATCH /control/hooks/{event}`, which applies the hook
+projection and reports the reconciliation.
+v16: the canonical workspace catalog publishes the revision a write is
+compared against, and one workspace's canonical configuration is written
+through `PATCH /control/workspaces/{owner}/{repository}`, which replaces that
+entry's enablement, base branch and role scope under the same
+compare-and-swap the other canonical sources use.
+v17: the permission policy is published from the canonical source that
+states it, with the revision a write is compared against, each role's real
+sandbox mode, and the applied policy read from the composed configuration;
+the policy is written through `PATCH /control/permissions`, which replaces
+one setting under the same compare-and-swap the other canonical sources use
+and reports the reconciliation against the applied configuration.
+v18: the canonical workspace catalog publishes the shared desired-vs-actual
+view like every other canonical source, and one workspace's configuration
+write reports it together with the fields it changed -- so the Workspaces
+surface says converged, pending or not observed instead of leaving the
+operator to infer convergence from a write that reported success.
+v19: the skills and prompts collections declare the canonical write paths
+they have -- role assignment and source editing for skills, the command's
+own source for prompts -- so the Console refuses a response that claims
+those collections are read-only. Both collections published `readOnly: true`
+from before their write paths existed.
+v20: the GitHub page's recent runs are null when the Actions read did not
+happen, beside the `stats` that already said so. An empty list there claimed
+the workflows had never run, which is a claim about the repository rather
+than about the read.
+v21: the skills page's unresolved assignments are null when the catalogue was
+not read, because the join between the contract's assignments and the
+catalogue's names was not performed. An empty list there claimed every
+assignment resolves.
+v22: the tool catalogue publishes whether the execution contract was read.
+The contract's accessor falls back to an empty contract when the read fails,
+so an empty contract and a contract nobody read looked the same to every
+caller -- and the catalogue's counts and the role exposure of every entry
+depend on which one it was.
+v23: the prompts catalogue publishes null for its role prompts when the
+directory could not be read. The catalogue is two independent reads, and an
+empty list for the one that failed claimed the repository holds no role
+prompt.
+v24: the agents and skills catalogues publish whether the execution
+contract was read. Both draw role assignments from it, and the accessor
+that reads it falls back to an empty contract when the read fails -- so an
+empty contract and a contract nobody read looked the same to every caller.
+v25: the agent detail publishes null for its system prompt when the role's
+prompt file is there and could not be read. The detail used to publish an
+empty string for it, which claimed the prompt was read and held nothing --
+and gave the reconciliation a digest of nothing to compare against, an
+identity that names no prompt.
+v26: the permissions response publishes whether the execution contract was
+read. The role matrices are the contract's roles, and an unread contract
+falls back to an empty one -- so an empty matrix set, an empty tool-exposure
+line and a navigation badge reading 0 were three ways of saying the
+contract declares no role, which is not what happened.
+v27: the concurrency limit write publishes the shared reconciliation view.
+The limit is a mutable resource like every other one the Console writes,
+and it was the last one whose write answered with the applied value alone
+-- so "the write was accepted" and "the Runtime is enforcing this limit"
+were the same claim, and only the second one says what the operator will
+actually get.
+v28: the concurrency status publishes where the limit in force came from.
+The field the Console reads was carrying a different fact -- the config
+file's location -- so the branch the Console branches on was unreachable
+and every limit the operator had configured was labelled as a default. The
+limit's source is now a closed union the Console can render, and the file's
+location travels beside it under the name that says what it is.
+v29: a provider can be re-checked on request through
+`POST /control/providers/{provider}/check`, which runs its live probe and
+model listing and answers with the check and the provider's health after
+it; provider health publishes the latest check (`lastCheck`), and a passing
+check newer than the last failure counts as recovery.
+v30: the live agent counts split each provider's and each model's count by
+role (`byProviderRole`, `byModelRole`), so a count can be read as the agents
+it is made of rather than as a bare number.
+v31: `GET /control/runtime` publishes bounded `liveSessions` identities
+explicitly attributed by live AgentActivityTracker records, with list
+truncation and unattributed activity reported separately from the legacy
+concurrency `activeSessions` scalar.
+v32: the opencli providers publish which browser they drive (`browser`),
+and `PATCH /control/providers/{provider}/browser` switches them between the
+operator's own Chrome (Browser Bridge extension, the default) and a
+dedicated Chrome for Testing.
+v33: the MCP applied read (v3) and MCP write response (v2) publish HTTP
+header names only (httpHeaderNames); header values are credentials and
+never leave the Runtime.
+v34: `/control/providers` publishes the direct quota-axi report separately
+from router health, with the provider package's identities and semantics.
+v35: `/control/diagnostics` publishes the unified session diagnostics: one
+session's report (`GET /control/diagnostics/sessions/{id}`), the recent
+sessions (`GET /control/diagnostics/sessions/recent`), the cross-session
+fleet scan (`GET /control/diagnostics/sessions/scan`), and the hook-denial
+summary (`GET /control/diagnostics/hooks`). Every route is read-only, so
+both the `viewer` and the `operator` role may read it, and each route
+answers `format=json` (the default) or `format=text`.
+v36: live-session identities publish source-observed provider, model, and
+role attribution, with null retained when an activity record did not supply
+that dimension. Each dimension selects its newest non-null observation;
+equal timestamps resolve to the lexically smallest value.
+v37: live-session identities publish the first observed client surface
+(`clientSurface`) for each session, with null retained when no originator or
+User-Agent surface was observed.
+v38: opencli providers run exclusively in dedicated Chrome for Testing;
+the obsolete shared-browser toggle (`browser` / `PATCH .../browser`) is removed.
+v39: Permissions is repository-owned and GET-only; the canonical
+collection advertises readOnly: true and rejects every mutation.
+v40: Hooks is repository-owned and GET-only; the hook event write path
+is removed and the collection requires readOnly: true.
+v41: the Hooks and Permissions collections publish the canonical source's
+exact text (`sourceText`) beside the values parsed from it, so the Console
+can show the JSONC source with its comments and the rendered view from one
+read. The revision names the bytes both views came from.
+v42: the MCP catalog (`autodev-control-mcps-v3`) carries the shared MCP
+gateway as a required `gateway` object: service label, installed and ready
+verdicts, readiness URL, generation, workspace, published role surfaces and
+the primary role's reviewed and effective grants. It is read-only. The
+ChatGPT tunnel status (`autodev-chatgpt-tunnel-v2`) carries tunnel facts
+only, and its mutations are lifecycle and credential operations
+(enable, disable, rotate, forget): the `configure` mutation that rewrote
+the gateway's published roles and grants is removed, because those are
+repository-owned.
+*/
 export const CONTROL_API_CONTRACT = {
   path: "/control/contracts",
   schema: "autodev-control-api-contract-v1",

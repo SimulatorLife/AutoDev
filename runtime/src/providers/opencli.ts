@@ -1,8 +1,8 @@
 /**
- * `opencli` site process runner, dedicated Chrome for Testing lifecycle, and
- * health/model-discovery daemon used for site-backed role turns and model
- * discovery.
- */
+`opencli` site process runner, dedicated Chrome for Testing lifecycle, and
+health/model-discovery daemon used for site-backed role turns and model
+discovery.
+*/
 
 import {
   type ChildProcess,
@@ -45,16 +45,16 @@ import {
   providerContract
 } from "../shared/execution-contract.ts";
 import {
+  OpencliBrowser,
+  resolveOpencliBrowserExecutable
+} from "./opencli-browser.ts";
+import {
   executeOpencliRoleTurn,
   OPENCLI_DEFAULT_PORT,
   OPENCLI_ROLE_TURN_PATH,
   OPENCLI_ROUTER_AUTH_VARIABLE,
   opencliRoleTurnSchema
 } from "./opencli-role.ts";
-import {
-  OpencliBrowser,
-  resolveOpencliBrowserExecutable
-} from "./opencli-browser.ts";
 import {
   OPENCLI_SITE_SPECS,
   OpencliCommandError,
@@ -93,7 +93,7 @@ const SAFE_CHILD_ENV_KEYS = [
   "FORCE_COLOR"
 ] as const;
 
-function sanitizeOpencliChildEnv(
+function sanitizeOpencliChildEnvironment(
   source: NodeJS.ProcessEnv = process.env
 ): NodeJS.ProcessEnv {
   const clean: NodeJS.ProcessEnv = {};
@@ -154,10 +154,10 @@ export function processRunner(
   readonly browser: OpencliBrowser;
   close(): Promise<void>;
 } {
-  const childEnvironment = sanitizeOpencliChildEnv(process.env);
+  const childEnvironment = sanitizeOpencliChildEnvironment(process.env);
   const spawnOpencli = (
-    args: readonly string[],
-    env: NodeJS.ProcessEnv,
+    arguments_: readonly string[],
+    environment: NodeJS.ProcessEnv,
     signal: AbortSignal,
     onProgress: OpencliRunRequest["onProgress"]
   ): Promise<JsonRecord[]> =>
@@ -166,12 +166,12 @@ export function processRunner(
         reject(new OpencliCommandError("turn cancelled", "CANCELLED", null));
         return;
       }
-      const dedicatedEndpoint = env.OPENCLI_CDP_ENDPOINT || null;
+      const dedicatedEndpoint = environment.OPENCLI_CDP_ENDPOINT || null;
       const command = resolveCommand();
-      const child = spawnCommand(command.command, [...command.args, ...args], {
+      const child = spawnCommand(command.command, [...command.args, ...arguments_], {
         detached: process.platform !== "win32",
         stdio: ["ignore", "pipe", "pipe", "pipe"],
-        env: { ...env, OPENCLI_PROGRESS_FD: onProgress ? "3" : undefined }
+        env: { ...environment, OPENCLI_PROGRESS_FD: onProgress ? "3" : undefined }
       }) as ChildProcessByStdio<null, Readable, Readable>;
       live.add(child);
       let stdout = "";
@@ -199,8 +199,8 @@ export function processRunner(
           }
         });
       }
-      let closed = false;
-      let settled = false;
+      let isClosed = false;
+      let isSettled = false;
       let isQuarantined = false;
       let killTimer: ReturnType<typeof setTimeout> | null = null;
       let settleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -220,7 +220,7 @@ export function processRunner(
         }
       };
       const cleanup = (): void => {
-        closed = true;
+        isClosed = true;
         live.delete(child);
         signal.removeEventListener("abort", onAbort);
         if (killTimer) clearTimeout(killTimer);
@@ -230,18 +230,18 @@ export function processRunner(
         }
       };
       const onAbort = (): void => {
-        if (closed) return;
+        if (isClosed) return;
         signalChild("SIGTERM");
         killTimer = setTimeout(() => {
-          if (!closed) signalChild("SIGKILL");
+          if (!isClosed) signalChild("SIGKILL");
         }, KILL_GRACE_MS);
         settleTimer = setTimeout(() => {
-          if (closed || settled) return;
+          if (isClosed || isSettled) return;
           if (dedicatedEndpoint) {
             browser.quarantine(dedicatedEndpoint);
             isQuarantined = true;
           }
-          settled = true;
+          isSettled = true;
           reject(
             new OpencliCommandError(
               "turn cancelled: opencli did not exit after SIGKILL",
@@ -255,10 +255,10 @@ export function processRunner(
       };
       signal.addEventListener("abort", onAbort, { once: true });
       child.once("error", (error) => {
-        if (closed) return;
+        if (isClosed) return;
         cleanup();
-        if (!settled) {
-          settled = true;
+        if (!isSettled) {
+          isSettled = true;
           const reason =
             (error as NodeJS.ErrnoException).code ?? "unknown reason";
           reject(
@@ -271,10 +271,10 @@ export function processRunner(
         }
       });
       child.once("close", (code, terminationSignal) => {
-        if (closed) return;
+        if (isClosed) return;
         cleanup();
-        if (settled) return;
-        settled = true;
+        if (isSettled) return;
+        isSettled = true;
         if (signal.aborted) {
           reject(new OpencliCommandError("turn cancelled", "CANCELLED", code));
           return;
@@ -364,7 +364,9 @@ export function processRunner(
 
 export interface OpencliHealthServerOptions {
   readonly run: OpencliRunner;
-  /** Trusted Runtime-to-browser-service credential; absent disables turns. */
+  /**
+  Trusted Runtime-to-browser-service credential; absent disables turns.
+  */
   readonly roleTurnToken?: string;
   readonly browserHealth?: () => {
     readonly ready: boolean;
@@ -394,9 +396,9 @@ export function createOpencliHealthServer(
     const models = Array.isArray(specModels)
       ? specModels
       : typeof specModels === "function"
-        ? await specModels((args) =>
+        ? await specModels((arguments_) =>
             options.run({
-              args,
+              args: arguments_,
               signal: AbortSignal.timeout(MODEL_LIST_TIMEOUT_MS)
             })
           )
@@ -513,11 +515,11 @@ export function createOpencliHealthServer(
       return;
     }
     if (url.pathname === "/v1/models" && request.method === "GET") {
-      const providerParam = url.searchParams.get("provider");
+      const providerParameter = url.searchParams.get("provider");
       const providers =
-        providerParam &&
-        (OPENCLI_PROVIDERS as readonly string[]).includes(providerParam)
-          ? [providerParam as OpencliProvider]
+        providerParameter &&
+        (OPENCLI_PROVIDERS as readonly string[]).includes(providerParameter)
+          ? [providerParameter as OpencliProvider]
           : OPENCLI_PROVIDERS;
       const data: { id: string; object: "model"; owned_by: OpencliProvider }[] =
         [];
@@ -570,7 +572,7 @@ if (IS_MAIN) {
   const roleTurnToken = process.env[OPENCLI_ROUTER_AUTH_VARIABLE]?.trim();
   const healthServer = createOpencliHealthServer({
     run: runner,
-    ...(roleTurnToken ? { roleTurnToken } : {}),
+    ...(roleTurnToken && { roleTurnToken }),
     browserHealth: () => ({
       ready: browser.isReady,
       error: browser.unavailableReason
@@ -579,18 +581,18 @@ if (IS_MAIN) {
   const server = createServer((request, response) => {
     void healthServer.handle(request, response);
   });
-  let shuttingDown = false;
+  let isShuttingDown = false;
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
     process.once(signal, () => {
-      if (shuttingDown) return;
-      shuttingDown = true;
+      if (isShuttingDown) return;
+      isShuttingDown = true;
       for (const child of live) child.kill("SIGTERM");
       if (server.listening) server.close();
       void runner.close().finally(() => process.exit(0));
     });
   }
   void browser.initialize().finally(() => {
-    if (shuttingDown) return;
+    if (isShuttingDown) return;
     server.listen(port, host, () => {
       writeErrorLine(`opencli service listening at http://${host}:${port}`);
     });

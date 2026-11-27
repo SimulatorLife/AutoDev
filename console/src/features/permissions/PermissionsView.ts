@@ -19,7 +19,7 @@ import { CHIP_TONE_CLASS, chipList } from "../../components/tables/Chips.ts";
 import {
   DataTable,
   type DataTableFeatures,
-  type DataTableProps
+  type DataTableProps as DataTableProperties
 } from "../../components/tables/DataTable.ts";
 import {
   MONO_ID_CLASS,
@@ -29,45 +29,55 @@ import {
 
 export interface PermissionsViewProps {
   /**
-   * The policy the canonical source states.
-   *
-   * Null when the source could not be read. Do not invent defaults.
-   */
+  The policy the canonical source states.
+  
+  Null when the source could not be read. Do not invent defaults.
+  */
   readonly policy: PermissionPolicy | null;
-  /** Whether the canonical source could be read, and whether it parsed. */
+  /**
+  Whether the canonical source could be read, and whether it parsed.
+  */
   readonly policyStatus: "valid" | "invalid" | "unavailable";
-  /** Why the policy could not be read; null when it could. */
+  /**
+  Why the policy could not be read; null when it could.
+  */
   readonly policyReason: string | null;
-  /** The observed revision of the canonical source. */
+  /**
+  The observed revision of the canonical source.
+  */
   readonly revision: string | null;
   /**
-   * The canonical source's exact text, or null when it was not read.
-   *
-   * It is the source the policy above was parsed from, so the two views of the
-   * declaration are one read rather than two that can straddle a change.
-   */
+  The canonical source's exact text, or null when it was not read.
+  
+  It is the source the policy above was parsed from, so the two views of the
+  declaration are one read rather than two that can straddle a change.
+  */
   readonly sourceText: string | null;
-  /** The policy the Runtime applied, read from the composed configuration. */
+  /**
+  The policy the Runtime applied, read from the composed configuration.
+  */
   readonly applied: PermissionPolicy | null;
-  /** Where the applied policy was read from. */
+  /**
+  Where the applied policy was read from.
+  */
   readonly appliedSource: string;
   readonly roleMatrices: readonly RoleCapabilityMatrix[];
   /**
-   * Whether the execution contract was read.
-   *
-   * The role matrices are the contract's roles, and an unread contract falls
-   * back to an empty one. The page says which of the two it is showing: an
-   * empty matrix set is a different claim from a contract nobody read.
-   */
+  Whether the execution contract was read.
+  
+  The role matrices are the contract's roles, and an unread contract falls
+  back to an empty one. The page says which of the two it is showing: an
+  empty matrix set is a different claim from a contract nobody read.
+  */
   readonly executionContractObserved: boolean;
 }
 
 /**
- * What a fact that was not observed reads as.
- *
- * One label, because a page that writes it out differently in two places is a
- * page whose two places do not agree.
- */
+What a fact that was not observed reads as.
+
+One label, because a page that writes it out differently in two places is a
+page whose two places do not agree.
+*/
 const NOT_OBSERVED = "Not observed";
 
 function accessLabel(readOnly: RoleCapabilityMatrix["readOnly"]): string {
@@ -75,24 +85,24 @@ function accessLabel(readOnly: RoleCapabilityMatrix["readOnly"]): string {
 }
 
 /**
- * How the applied state reads.
- *
- * The canonical source and the composed configuration are two facts, and the
- * page says which of them it is showing. A policy that was written and never
- * composed is pending: the operator's change is recorded and the product is
- * not running it yet.
- */
+How the applied state reads.
+
+The canonical source and the composed configuration are two facts, and the
+page says which of them it is showing. A policy that was written and never
+composed is pending: the operator's change is recorded and the product is
+not running it yet.
+*/
 function appliedStateLabel(
   policy: PermissionPolicy | null,
   applied: PermissionPolicy | null
 ): string {
   if (policy === null) return NOT_OBSERVED;
   if (applied === null) return "Pending";
-  const same =
+  const isSame =
     applied.approvalPolicy === policy.approvalPolicy &&
     applied.approvalsReviewer === policy.approvalsReviewer &&
     applied.webSearch === policy.webSearch;
-  return same ? "Converged" : "Pending";
+  return isSame ? "Converged" : "Pending";
 }
 
 export function PermissionsView({
@@ -244,7 +254,7 @@ export function PermissionsView({
         },
         "Effective Role Capability Matrix"
       ),
-      React.createElement<DataTableProps<RoleCapabilityMatrix>>(DataTable, {
+      React.createElement<DataTableProperties<RoleCapabilityMatrix>>(DataTable, {
         data: roleMatrices,
         columns,
         keyExtractor: (r: RoleCapabilityMatrix) => r.role,
@@ -275,17 +285,17 @@ export function PermissionsView({
 }
 
 /**
- * Which tools each role may call on each server it can reach.
- *
- * The matrix above names the servers; this names the tools inside them.
- * Omitting the second half did not read as "not reported" -- it read as
- * unrestricted, because a role listed against `lsp` looked like a role that may
- * call all of it.
- *
- * A role with no grants gets an explicit line rather than a missing entry,
- * because "reaches no MCP tools" and "its grants were not reported" must not
- * look alike.
- */
+Which tools each role may call on each server it can reach.
+
+The matrix above names the servers; this names the tools inside them.
+Omitting the second half did not read as "not reported" -- it read as
+unrestricted, because a role listed against `lsp` looked like a role that may
+call all of it.
+
+A role with no grants gets an explicit line rather than a missing entry,
+because "reaches no MCP tools" and "its grants were not reported" must not
+look alike.
+*/
 function RoleToolExposure({
   roleMatrices,
   executionContractObserved

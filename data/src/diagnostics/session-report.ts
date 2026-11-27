@@ -1,11 +1,11 @@
 /**
- * The session report composer.
- *
- * This is where the pieces of one session's evidence are joined: the rollouts
- * of every thread, the router's events for those threads, the bridge logs, the
- * live runtime state, and the persisted router state. The result is the single
- * report the Console, the CLI and the skill wrapper all read.
- */
+The session report composer.
+
+This is where the pieces of one session's evidence are joined: the rollouts
+of every thread, the router's events for those threads, the bridge logs, the
+live runtime state, and the persisted router state. The result is the single
+report the Console, the CLI and the skill wrapper all read.
+*/
 
 import {
   classifyToolFailure,
@@ -105,7 +105,9 @@ type RouterTotals = Pick<
   | "byProvider"
 >;
 
-/** Add every count of `source` into `target`. */
+/**
+Add every count of `source` into `target`.
+*/
 function addCounts(
   target: Record<string, number>,
   source: Readonly<Record<string, number>>
@@ -114,19 +116,25 @@ function addCounts(
     target[key] = (target[key] ?? 0) + count;
 }
 
-/** The larger of two optional measurements; null only when both are absent. */
+/**
+The larger of two optional measurements; null only when both are absent.
+*/
 function maxOrNull(current: number | null, next: number | null): number | null {
   if (next === null) return current;
   return current === null ? next : Math.max(current, next);
 }
 
-/** The sum of two optional counts; null only when both are absent. */
+/**
+The sum of two optional counts; null only when both are absent.
+*/
 function sumOrNull(current: number | null, next: number | null): number | null {
   if (next === null) return current;
   return (current ?? 0) + next;
 }
 
-/** Turns, gaps, tool calls and tool failures across every thread. */
+/**
+Turns, gaps, tool calls and tool failures across every thread.
+*/
 function threadActivityTotals(
   threads: readonly SessionThreadTrace[]
 ): ThreadActivityTotals {
@@ -161,7 +169,9 @@ function threadActivityTotals(
   return { ...totals, turnsByOutcome, toolCallsByName, toolFailuresByCategory };
 }
 
-/** Token usage and compaction across every measured thread. */
+/**
+Token usage and compaction across every measured thread.
+*/
 function tokenAndCompactionTotals(
   efficiencies: readonly SessionThreadEfficiency[]
 ): TokenAndCompactionTotals {
@@ -210,7 +220,9 @@ function tokenAndCompactionTotals(
   return totals;
 }
 
-/** The skill read counts of a session, keyed in the same order as a thread's. */
+/**
+The skill read counts of a session, keyed in the same order as a thread's.
+*/
 function sortedCounts(
   counts: Readonly<Record<string, number>>
 ): Record<string, number> {
@@ -220,12 +232,12 @@ function sortedCounts(
 }
 
 /**
- * Prompt overhead across every measured thread.
- *
- * Sizes are maxima, because every thread carries its own copy of the prompt.
- * Skill reads are summed, because every read of a thread is a real read: the
- * session count of a skill is the number of times any thread read it.
- */
+Prompt overhead across every measured thread.
+
+Sizes are maxima, because every thread carries its own copy of the prompt.
+Skill reads are summed, because every read of a thread is a real read: the
+session count of a skill is the number of times any thread read it.
+*/
 function promptTotals(
   prompts: readonly SessionThreadPromptOverhead[]
 ): PromptTotals {
@@ -294,7 +306,9 @@ function addProviderStats(
   }
 }
 
-/** Router requests, failures, retries and provider hops across the session. */
+/**
+Router requests, failures, retries and provider hops across the session.
+*/
 function routerTotals(router: readonly SessionRouterSummary[]): RouterTotals {
   const totals: Mutable<RouterTotals> = {
     routerRequests: 0,
@@ -325,7 +339,9 @@ function routerTotals(router: readonly SessionRouterSummary[]): RouterTotals {
   return { ...totals, routerSkippedByReason, byProvider };
 }
 
-/** The session-wide rollups every surface shows first. */
+/**
+The session-wide rollups every surface shows first.
+*/
 export function computeAggregates(
   threads: readonly SessionThreadTrace[],
   router: readonly SessionRouterSummary[]
@@ -351,13 +367,19 @@ export function computeAggregates(
   };
 }
 
-/** How one session's diagnostics should be read. */
+/**
+How one session's diagnostics should be read.
+*/
 export interface SessionDiagnosticsOptions {
-  /** The session or thread id being inspected. */
+  /**
+  The session or thread id being inspected.
+  */
   readonly id: string;
   readonly codexHome: string;
   readonly routerLog: string;
-  /** Skip everything that reads live state. */
+  /**
+  Skip everything that reads live state.
+  */
   readonly offline: boolean;
   readonly includeEfficiency: boolean;
   readonly includeEvents: boolean;
@@ -366,14 +388,20 @@ export interface SessionDiagnosticsOptions {
   readonly includeItems: boolean;
   readonly itemsLimit: number;
   readonly itemsOffset: number;
-  /** Narrow the events and items to one thread of the session. */
+  /**
+  Narrow the events and items to one thread of the session.
+  */
   readonly threadId?: string | undefined;
   readonly repoRoot?: string | null | undefined;
-  /** The router's status, read in-process instead of over loopback. */
+  /**
+  The router's status, read in-process instead of over loopback.
+  */
   readonly routerStatus?: (() => unknown) | undefined;
 }
 
-/** Slice a bounded page out of a longer list. */
+/**
+Slice a bounded page out of a longer list.
+*/
 function paginate<T>(
   items: readonly T[],
   limit: number,
@@ -390,7 +418,9 @@ function paginate<T>(
   };
 }
 
-/** The router events of the whole session, de-duplicated and in order. */
+/**
+The router events of the whole session, de-duplicated and in order.
+*/
 function sessionRouterEvents(
   threads: readonly SessionThreadTrace[],
   rows: readonly SessionRouterEventRow[]
@@ -409,12 +439,12 @@ function sessionRouterEvents(
 }
 
 /**
- * Read one session's diagnostics.
- *
- * The report answers for a session that does not exist as well as for one that
- * does: `found` is false when no rollout matched, which is a fact about the
- * machine and not a failure of the read.
- */
+Read one session's diagnostics.
+
+The report answers for a session that does not exist as well as for one that
+does: `found` is false when no rollout matched, which is a fact about the
+machine and not a failure of the read.
+*/
 export async function buildSessionDiagnosticsReport(
   options: SessionDiagnosticsOptions
 ): Promise<SessionDiagnosticsReport> {
@@ -447,10 +477,8 @@ export async function buildSessionDiagnosticsReport(
   const liveResult = await collectLiveDiagnostics({
     codexHome: options.codexHome,
     offline: options.offline,
-    ...(options.repoRoot === undefined ? {} : { repoRoot: options.repoRoot }),
-    ...(options.routerStatus === undefined
-      ? {}
-      : { routerStatus: options.routerStatus })
+    ...(options.repoRoot !== undefined && { repoRoot: options.repoRoot }),
+    ...(options.routerStatus !== undefined && { routerStatus: options.routerStatus })
   });
   const efficiency = options.includeEfficiency
     ? buildEfficiencySummary(options.codexHome, liveResult.status)
@@ -469,7 +497,7 @@ export async function buildSessionDiagnosticsReport(
     threads[0]?.sessionId ??
     native?.id ??
     null;
-  const matchedByThreadId =
+  const isMatchedByThreadId =
     rootSessionId !== null && options.id !== rootSessionId;
   const clientSurface =
     rootThread?.clientSurface ?? native?.clientSurface ?? null;
@@ -490,7 +518,7 @@ export async function buildSessionDiagnosticsReport(
     found: threads.length > 0 || native !== undefined,
     requestedId: options.id,
     rootSessionId,
-    matchedByThreadId,
+    matchedByThreadId: isMatchedByThreadId,
     clientSurface,
     ...(native && {
       nativeSession: {

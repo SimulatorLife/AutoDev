@@ -35,11 +35,11 @@ test("isCccInvocation identifies direct and compound ccc CLI invocations", () =>
     "time ccc index"
   ];
 
-  for (const cmd of blocked) {
+  for (const command of blocked) {
     assert.equal(
-      isCccInvocation(cmd),
+      isCccInvocation(command),
       true,
-      `expected "${cmd}" to be identified as ccc invocation`
+      `expected "${command}" to be identified as ccc invocation`
     );
   }
 });
@@ -60,11 +60,11 @@ test("isCccInvocation ignores non-ccc commands and harmless substrings", () => {
     "grep ccc file.txt"
   ];
 
-  for (const cmd of allowed) {
+  for (const command of allowed) {
     assert.equal(
-      isCccInvocation(cmd),
+      isCccInvocation(command),
       false,
-      `expected "${cmd}" NOT to be identified as ccc invocation`
+      `expected "${command}" NOT to be identified as ccc invocation`
     );
   }
 });
@@ -81,11 +81,11 @@ test("isCccInvocation allows a search whose pattern mentions ccc", () => {
     'git commit -m "ccc is cool"'
   ];
 
-  for (const cmd of allowed) {
+  for (const command of allowed) {
     assert.equal(
-      isCccInvocation(cmd),
+      isCccInvocation(command),
       false,
-      `expected "${cmd}" NOT to be identified as ccc invocation`
+      `expected "${command}" NOT to be identified as ccc invocation`
     );
   }
 });

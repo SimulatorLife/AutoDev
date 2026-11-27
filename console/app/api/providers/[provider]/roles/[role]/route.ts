@@ -1,16 +1,16 @@
 /**
- * Server-only Console provider-role mutation route.
- *
- * Receives the bounded form submission from a provider-role control on a
- * Providers page, validates its same-origin browser context, and forwards a
- * typed PATCH to Runtime using the server-side Control API credential. The
- * browser never receives that credential and never bypasses Runtime.
- *
- * Only POST is exported. The response redirects back to the Providers page
- * the control was rendered on; any missing/invalid evidence or failed request
- * adds a could-not-be-confirmed notice instead of a success claim, because the
- * refreshed role value is authoritative.
- */
+Server-only Console provider-role mutation route.
+
+Receives the bounded form submission from a provider-role control on a
+Providers page, validates its same-origin browser context, and forwards a
+typed PATCH to Runtime using the server-side Control API credential. The
+browser never receives that credential and never bypasses Runtime.
+
+Only POST is exported. The response redirects back to the Providers page
+the control was rendered on; any missing/invalid evidence or failed request
+adds a could-not-be-confirmed notice instead of a success claim, because the
+refreshed role value is authoritative.
+*/
 
 import {
   PROVIDER_ROLES,
@@ -56,10 +56,10 @@ function isProviderRole(value: string): value is ProviderRole {
 }
 
 /**
- * Parse the submitted priority. The empty string means the model selector was
- * submitted without a priority, which is not a decision the operator made, so it
- * is rejected rather than defaulted.
- */
+Parse the submitted priority. The empty string means the model selector was
+submitted without a priority, which is not a decision the operator made, so it
+is rejected rather than defaulted.
+*/
 function parsePriority(raw: string | null): ProviderRolePriority | null {
   if (raw === "1") return 1;
   if (raw === "2") return 2;
@@ -124,7 +124,7 @@ export async function POST(
     {
       priority,
       model,
-      ...(reasoningEffort === undefined ? {} : { reasoningEffort })
+      ...(reasoningEffort !== undefined && { reasoningEffort })
     },
     config
   );

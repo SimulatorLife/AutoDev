@@ -51,7 +51,9 @@ function readCachedWorkspaceSync(
         return parsed.openlitWorkspacesSync;
       }
     } catch {
-      /* Ignore unreadable cache files. */
+      /*
+      Ignore unreadable cache files.
+      */
     }
   }
   return memoryWorkspaceSyncCache.get(resolved) ?? null;
@@ -81,7 +83,9 @@ function writeCachedWorkspaceSync(
       `${JSON.stringify({ ...existing, openlitWorkspacesSync: record }, null, 2)}\n`
     );
   } catch {
-    /* Non-fatal if cache cannot be persisted. */
+    /*
+    Non-fatal if cache cannot be persisted.
+    */
   }
 }
 
@@ -99,7 +103,9 @@ export interface SyncWorkspacesResult {
   readonly collapsedProjects: readonly string[];
 }
 
-/** Read the validated Data-owned workspace catalog for OpenLIT projection. */
+/**
+Read the validated Data-owned workspace catalog for OpenLIT projection.
+*/
 export function loadWorkspaceCatalogue(
   repositoryRoot: string
 ): readonly WorkspaceEntry[] {
@@ -330,8 +336,8 @@ run()
 }
 
 /**
- * Synchronize the canonical SimulatorLife/AutoDev OpenLIT project and workspace catalogue architecture.
- */
+Synchronize the canonical SimulatorLife/AutoDev OpenLIT project and workspace catalogue architecture.
+*/
 export async function syncWorkspaceCatalogue(
   options: SyncWorkspacesOptions = {}
 ): Promise<SyncWorkspacesResult> {

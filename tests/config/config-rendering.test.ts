@@ -545,13 +545,13 @@ test("orchestrator MCP contract is provider-agnostic and omits Codex-only plugin
     commands: orchestratorRoleCommands()
   });
 
-  for (const [roleName, roleCfg] of Object.entries(contract.roles)) {
+  for (const [roleName, roleConfig] of Object.entries(contract.roles)) {
     assert.ok(
-      !(roleCfg.mcp ?? []).includes("codex_app"),
+      !(roleConfig.mcp ?? []).includes("codex_app"),
       `${roleName} must not list Codex-only codex_app in canonical mcp`
     );
     assert.ok(
-      !(roleCfg.mcpTools ?? {}).codex_app,
+      !(roleConfig.mcpTools ?? {}).codex_app,
       `${roleName} must not list codex_app in canonical mcpTools`
     );
   }
@@ -569,10 +569,10 @@ test("context7 is enabled on docs-researcher and explorer only", () => {
 
   const enabledRoles = ["docs-researcher", "explorer"];
   for (const roleName of enabledRoles) {
-    const roleCfg = contract.roles[roleName];
-    assert.ok(roleCfg, `${roleName} role must be declared`);
+    const roleConfig = contract.roles[roleName];
+    assert.ok(roleConfig, `${roleName} role must be declared`);
     assert.ok(
-      (roleCfg.mcp ?? []).includes("context7"),
+      (roleConfig.mcp ?? []).includes("context7"),
       `${roleName} must enable context7`
     );
   }
@@ -586,10 +586,10 @@ test("context7 is enabled on docs-researcher and explorer only", () => {
     "worker"
   ];
   for (const roleName of disabledRoles) {
-    const roleCfg = contract.roles[roleName];
-    assert.ok(roleCfg, `${roleName} role must be declared`);
+    const roleConfig = contract.roles[roleName];
+    assert.ok(roleConfig, `${roleName} role must be declared`);
     assert.ok(
-      !(roleCfg.mcp ?? []).includes("context7"),
+      !(roleConfig.mcp ?? []).includes("context7"),
       `${roleName} must not enable context7`
     );
   }
@@ -613,8 +613,8 @@ test("context7 is enabled on docs-researcher and explorer only", () => {
     github: 9,
     xacpx: 10
   };
-  for (const [roleName, roleCfg] of Object.entries(contract.roles)) {
-    const mcp = roleCfg.mcp ?? [];
+  for (const [roleName, roleConfig] of Object.entries(contract.roles)) {
+    const mcp = roleConfig.mcp ?? [];
     let last = -1;
     for (const name of mcp) {
       const index = ORDER[name] ?? 99;
@@ -640,18 +640,18 @@ test("googleDeveloperKnowledge is enabled on the documentation roles only", () =
 
   const enabledRoles = new Set(["docs-researcher", "smart"]);
   for (const roleName of enabledRoles) {
-    const roleCfg = contract.roles[roleName];
-    assert.ok(roleCfg, `${roleName} role must be declared`);
+    const roleConfig = contract.roles[roleName];
+    assert.ok(roleConfig, `${roleName} role must be declared`);
     assert.ok(
-      (roleCfg.mcp ?? []).includes("googleDeveloperKnowledge"),
+      (roleConfig.mcp ?? []).includes("googleDeveloperKnowledge"),
       `${roleName} must enable googleDeveloperKnowledge`
     );
   }
 
-  for (const [roleName, roleCfg] of Object.entries(contract.roles)) {
+  for (const [roleName, roleConfig] of Object.entries(contract.roles)) {
     if (enabledRoles.has(roleName)) continue;
     assert.ok(
-      !(roleCfg.mcp ?? []).includes("googleDeveloperKnowledge"),
+      !(roleConfig.mcp ?? []).includes("googleDeveloperKnowledge"),
       `${roleName} must not enable googleDeveloperKnowledge`
     );
   }
@@ -681,14 +681,14 @@ test("codegraphcontext is enabled on code-capable roles with scoped four-tool al
     "orchestrator"
   ];
   for (const roleName of codeRoles) {
-    const roleCfg = contract.roles[roleName];
-    assert.ok(roleCfg, `${roleName} role must be declared`);
+    const roleConfig = contract.roles[roleName];
+    assert.ok(roleConfig, `${roleName} role must be declared`);
     assert.ok(
-      (roleCfg.mcp ?? []).includes("codegraphcontext"),
+      (roleConfig.mcp ?? []).includes("codegraphcontext"),
       `${roleName} must enable codegraphcontext`
     );
     assert.deepEqual(
-      roleCfg.mcpTools?.codegraphcontext,
+      roleConfig.mcpTools?.codegraphcontext,
       expectedTools,
       `${roleName} must have exactly the scoped four tools for codegraphcontext`
     );
@@ -696,14 +696,14 @@ test("codegraphcontext is enabled on code-capable roles with scoped four-tool al
 
   const nonCodeRoles = ["docs-researcher", "browser-tester"];
   for (const roleName of nonCodeRoles) {
-    const roleCfg = contract.roles[roleName];
-    assert.ok(roleCfg, `${roleName} role must be declared`);
+    const roleConfig = contract.roles[roleName];
+    assert.ok(roleConfig, `${roleName} role must be declared`);
     assert.ok(
-      !(roleCfg.mcp ?? []).includes("codegraphcontext"),
+      !(roleConfig.mcp ?? []).includes("codegraphcontext"),
       `${roleName} must not enable codegraphcontext`
     );
     assert.ok(
-      !(roleCfg.mcpTools ?? {}).codegraphcontext,
+      !(roleConfig.mcpTools ?? {}).codegraphcontext,
       `${roleName} must not list codegraphcontext in mcpTools`
     );
   }
@@ -745,20 +745,20 @@ test("lsp is scoped to precision tools on normal implementation roles and unrest
     "lsp_related_files"
   ];
   for (const roleName of ["default", "worker"]) {
-    const roleCfg = contract.roles[roleName];
-    assert.ok(roleCfg, `${roleName} role must be declared`);
+    const roleConfig = contract.roles[roleName];
+    assert.ok(roleConfig, `${roleName} role must be declared`);
     assert.ok(
-      (roleCfg.mcp ?? []).includes("lsp"),
+      (roleConfig.mcp ?? []).includes("lsp"),
       `${roleName} must enable lsp`
     );
     assert.deepEqual(
-      roleCfg.mcpTools?.lsp,
+      roleConfig.mcpTools?.lsp,
       expectedTools,
       `${roleName} must have exactly the scoped lsp precision tools`
     );
     for (const tool of demotedTools)
       assert.ok(
-        !roleCfg.mcpTools?.lsp?.includes(tool),
+        !roleConfig.mcpTools?.lsp?.includes(tool),
         `${roleName} must not expose ${tool}`
       );
   }
@@ -766,14 +766,14 @@ test("lsp is scoped to precision tools on normal implementation roles and unrest
   // Discovery, validation, and deep-debug roles keep the full LSP surface as
   // the escape hatch for questions the preferred owners cannot answer.
   for (const roleName of ["explorer", "validator", "smart", "orchestrator"]) {
-    const roleCfg = contract.roles[roleName];
-    assert.ok(roleCfg, `${roleName} role must be declared`);
+    const roleConfig = contract.roles[roleName];
+    assert.ok(roleConfig, `${roleName} role must be declared`);
     assert.ok(
-      (roleCfg.mcp ?? []).includes("lsp"),
+      (roleConfig.mcp ?? []).includes("lsp"),
       `${roleName} must enable lsp`
     );
     assert.ok(
-      !(roleCfg.mcpTools ?? {}).lsp,
+      !(roleConfig.mcpTools ?? {}).lsp,
       `${roleName} must keep the unrestricted lsp surface`
     );
   }

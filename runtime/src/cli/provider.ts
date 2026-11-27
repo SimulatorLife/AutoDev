@@ -1,7 +1,9 @@
 import { isChoice, unsupportedChoice } from "./command-choice.ts";
 import { UnmigratedRuntimeError } from "./runtime.ts";
 
-/** The provider vocabulary, owned here and consumed by validation and errors. */
+/**
+The provider vocabulary, owned here and consumed by validation and errors.
+*/
 export const PROVIDER_NAMES = [
   "claude",
   "mcode",

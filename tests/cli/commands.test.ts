@@ -57,12 +57,12 @@ test("CLI dispatches router, provider, hook, and install through typed backends"
     }),
     15
   );
-  const installArgs: string[] = [];
+  const installArguments: string[] = [];
   assert.equal(
     await runMain(["install", "--materialize-only"], {
       install: {
-        install: (args = []) => {
-          installArgs.push(...args);
+        install: (arguments_ = []) => {
+          installArguments.push(...arguments_);
           return 16;
         }
       }
@@ -72,15 +72,15 @@ test("CLI dispatches router, provider, hook, and install through typed backends"
   assert.equal(
     await runMain(["repo", "bootstrap", "--check"], {
       repo: {
-        bootstrap: (args = []) => {
-          calls.push(`repo bootstrap ${args.join(" ")}`);
+        bootstrap: (arguments_ = []) => {
+          calls.push(`repo bootstrap ${arguments_.join(" ")}`);
           return 17;
         }
       }
     }),
     17
   );
-  assert.deepEqual(installArgs, ["--materialize-only"]);
+  assert.deepEqual(installArguments, ["--materialize-only"]);
   assert.deepEqual(calls, [
     "router run",
     "provider claude",
@@ -181,12 +181,12 @@ test("router status uses its typed status result", async () => {
 });
 
 test("unmigrated provider and hook backends fail clearly instead of invoking wrappers", async () => {
-  for (const args of [
+  for (const arguments_ of [
     ["provider", "claude"],
     ["hook", "skill-read"]
   ] as string[][]) {
     assert.throws(
-      () => runMain(args),
+      () => runMain(arguments_),
       (error: unknown) => {
         assert.equal(error instanceof UnmigratedRuntimeError, true);
         assert.match(String(error), /runtime backend is not migrated/);

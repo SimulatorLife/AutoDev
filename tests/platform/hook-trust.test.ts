@@ -3,23 +3,23 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
+import { codexHookTrustEntries } from "@simulatorlife/autodev-runtime/platform/hook-trust";
 import {
   checkHookTrust,
   reconcileStaleOrchestratorState,
   syncHookTrust
 } from "@simulatorlife/autodev-runtime/platform/install-materializer";
-import { codexHookTrustEntries } from "@simulatorlife/autodev-runtime/platform/hook-trust";
 
 import { withTempDir } from "../support/test-helpers.ts";
 
 /**
- * The hooks Codex is given, and the hashes Codex computes for them.
- *
- * The hashes are the `currentHash` values Codex reported for these exact
- * definitions through its own `hooks/list`, so a computed hash that differs
- * from one of them means the computation no longer matches the Codex it is
- * meant to satisfy -- and Codex would skip the hook without saying so.
- */
+The hooks Codex is given, and the hashes Codex computes for them.
+
+The hashes are the `currentHash` values Codex reported for these exact
+definitions through its own `hooks/list`, so a computed hash that differs
+from one of them means the computation no longer matches the Codex it is
+meant to satisfy -- and Codex would skip the hook without saying so.
+*/
 const CODEX_HOOKS = {
   hooks: {
     SessionStart: [
@@ -99,7 +99,9 @@ const CODEX_HOOK_HASHES: Readonly<Record<string, string>> = {
     "sha256:f36cf114838a19935c986dfed17f6a4409d26034bc1ca79761ffb1c19f3dcce3"
 };
 
-/** The hash Codex computes for one hook position. */
+/**
+The hash Codex computes for one hook position.
+*/
 function expectedHash(key: string): string {
   const hash = CODEX_HOOK_HASHES[key];
   if (hash === undefined) throw new Error(`no expected hash for ${key}`);
@@ -126,11 +128,11 @@ test("the computed trust hashes are the hashes Codex computes for the same hooks
 test("syncHookTrust writes the computed hashes and strips obsolete config.toml entries", () =>
   withTempDir((dir) => {
     const codexHome = join(dir, ".codex");
-    const repoRoot = join(dir, "AutoDev");
+    const repositoryRoot = join(dir, "AutoDev");
     const configPath = join(codexHome, "config.toml");
 
     mkdirSync(codexHome, { recursive: true });
-    const projectHooks = join(repoRoot, ".codex", "hooks.json");
+    const projectHooks = join(repositoryRoot, ".codex", "hooks.json");
     writeCodexHooks(codexHome);
 
     // Initial config with obsolete entries, including trust for the project
@@ -153,13 +155,13 @@ trusted_hash = "sha256:obsolete2"
     writeFileSync(configPath, initialContent);
 
     // Before sync, checkHookTrust must fail
-    assert.equal(checkHookTrust(configPath, codexHome, repoRoot), false);
+    assert.equal(checkHookTrust(configPath, codexHome, repositoryRoot), false);
 
     // Run sync
-    syncHookTrust(configPath, codexHome, repoRoot);
+    syncHookTrust(configPath, codexHome, repositoryRoot);
 
     // After sync, checkHookTrust must pass
-    assert.equal(checkHookTrust(configPath, codexHome, repoRoot), true);
+    assert.equal(checkHookTrust(configPath, codexHome, repositoryRoot), true);
 
     // Verify the content doesn't contain obsolete entries
     const updatedContent = readFileSync(configPath, "utf8");
@@ -181,15 +183,15 @@ trusted_hash = "sha256:obsolete2"
 test("checkHookTrust detects a hash Codex no longer computes", () =>
   withTempDir((dir) => {
     const codexHome = join(dir, ".codex");
-    const repoRoot = join(dir, "AutoDev");
+    const repositoryRoot = join(dir, "AutoDev");
     const configPath = join(codexHome, "config.toml");
 
     mkdirSync(codexHome, { recursive: true });
     writeCodexHooks(codexHome);
     writeFileSync(configPath, 'model = "test"\n');
 
-    syncHookTrust(configPath, codexHome, repoRoot);
-    assert.equal(checkHookTrust(configPath, codexHome, repoRoot), true);
+    syncHookTrust(configPath, codexHome, repositoryRoot);
+    assert.equal(checkHookTrust(configPath, codexHome, repositoryRoot), true);
 
     // Tamper with a hash
     const content = readFileSync(configPath, "utf8");
@@ -199,20 +201,20 @@ test("checkHookTrust detects a hash Codex no longer computes", () =>
     );
     writeFileSync(configPath, tampered);
 
-    assert.equal(checkHookTrust(configPath, codexHome, repoRoot), false);
+    assert.equal(checkHookTrust(configPath, codexHome, repositoryRoot), false);
   }));
 
 test("checkHookTrust fails when the hook definition Codex is given has changed", () =>
   withTempDir((dir) => {
     const codexHome = join(dir, ".codex");
-    const repoRoot = join(dir, "AutoDev");
+    const repositoryRoot = join(dir, "AutoDev");
     const configPath = join(codexHome, "config.toml");
 
     mkdirSync(codexHome, { recursive: true });
     writeCodexHooks(codexHome);
     writeFileSync(configPath, 'model = "test"\n');
-    syncHookTrust(configPath, codexHome, repoRoot);
-    assert.equal(checkHookTrust(configPath, codexHome, repoRoot), true);
+    syncHookTrust(configPath, codexHome, repositoryRoot);
+    assert.equal(checkHookTrust(configPath, codexHome, repositoryRoot), true);
 
     // The definition changed, so the stored hash is no longer the hash Codex
     // computes for it.
@@ -238,7 +240,7 @@ test("checkHookTrust fails when the hook definition Codex is given has changed",
       `${JSON.stringify(changed, null, 2)}\n`
     );
 
-    assert.equal(checkHookTrust(configPath, codexHome, repoRoot), false);
+    assert.equal(checkHookTrust(configPath, codexHome, repositoryRoot), false);
   }));
 
 test("reconcileStaleOrchestratorState upgrades legacy degraded orchestrator defaults while keeping operator overrides", () =>

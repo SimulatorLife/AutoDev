@@ -138,18 +138,18 @@ function withInstallerFixture(
     repoRoot: string;
     envOutputFile: string;
     execInstall: (
-      args?: readonly string[],
-      extraEnv?: NodeJS.ProcessEnv
+      arguments_?: readonly string[],
+      extraEnvironment?: NodeJS.ProcessEnv
     ) => SpawnSyncReturns<string>;
   }) => void
 ): void {
   const root = realpathSync(
     mkdtempSync(path.join(tmpdir(), "autodev-install-env-"))
   );
-  const repoRoot = path.join(root, "repo");
-  const scriptsDir = path.join(repoRoot, "scripts");
-  const cliDir = path.join(repoRoot, "runtime", "src", "cli");
-  const envOutputFile = path.join(root, "captured-env.json");
+  const repositoryRoot_ = path.join(root, "repo");
+  const scriptsDir = path.join(repositoryRoot_, "scripts");
+  const cliDir = path.join(repositoryRoot_, "runtime", "src", "cli");
+  const environmentOutputFile = path.join(root, "captured-env.json");
   mkdirSync(scriptsDir, { recursive: true });
   mkdirSync(cliDir, { recursive: true });
   copyFileSync(installerScriptPath, path.join(scriptsDir, "install.sh"));
@@ -169,28 +169,28 @@ function withInstallerFixture(
       "];",
       "const snapshot = Object.fromEntries(keys.map((k) => [k, process.env[k] ?? null]));",
       "writeFileSync(",
-      `  ${JSON.stringify(envOutputFile)},`,
+      `  ${JSON.stringify(environmentOutputFile)},`,
       "  JSON.stringify({ args: process.argv.slice(2), env: snapshot })",
       ");"
     ].join("\n")
   );
   try {
     const execInstall = (
-      args: readonly string[] = [],
-      extraEnv: NodeJS.ProcessEnv = {}
+      arguments_: readonly string[] = [],
+      extraEnvironment: NodeJS.ProcessEnv = {}
     ) => {
-      const baseEnv: NodeJS.ProcessEnv = {
+      const baseEnvironment: NodeJS.ProcessEnv = {
         HOME: root,
         PATH: `${path.dirname(process.execPath)}:${process.env.PATH ?? "/usr/bin:/bin"}`,
-        ...extraEnv
+        ...extraEnvironment
       };
-      return spawnSync("bash", [path.join(scriptsDir, "install.sh"), ...args], {
+      return spawnSync("bash", [path.join(scriptsDir, "install.sh"), ...arguments_], {
         cwd: root,
-        env: baseEnv,
+        env: baseEnvironment,
         encoding: "utf8"
       });
     };
-    run({ repoRoot, envOutputFile, execInstall });
+    run({ repoRoot: repositoryRoot_, envOutputFile: environmentOutputFile, execInstall });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -201,9 +201,9 @@ test("scripts/install.sh loads repository-root .env via --env-file-if-exists and
   assert.match(installerScript, /--env-file-if-exists="\$repo_root\/\.env"/);
 
   withInstallerFixture(({ repoRoot, envOutputFile, execInstall }) => {
-    const envFile = path.join(repoRoot, ".env");
+    const environmentFile = path.join(repoRoot, ".env");
     writeFileSync(
-      envFile,
+      environmentFile,
       [
         `CODEX_HOME=${path.join(repoRoot, "dotenv-codex")}`,
         "AUTODEV_CHATGPT_ORGANIZATION_ID=org_from_dotenv",
@@ -268,11 +268,11 @@ test("normal install checks required Keychain API keys without migrating or over
   const previousMinimax = process.env.MINIMAX_API_KEY;
   const previousContext7 = process.env.CONTEXT7_API_KEY;
   const codexHome = path.join(root, ".codex");
-  const envFile = path.join(codexHome, ".env");
+  const environmentFile = path.join(codexHome, ".env");
   try {
     mkdirSync(codexHome, { recursive: true });
     writeFileSync(
-      envFile,
+      environmentFile,
       [
         "MINIMAX_API_KEY=minimax-from-dotenv",
         "CONTEXT7_API_KEY=context7-from-dotenv"
@@ -283,14 +283,14 @@ test("normal install checks required Keychain API keys without migrating or over
     process.env.MINIMAX_API_KEY = "minimax-from-env";
     process.env.CONTEXT7_API_KEY = "context7-from-env";
     const calls: string[][] = [];
-    const keychainDeps = {
+    const keychainDependencies = {
       platform: "darwin" as const,
-      runSecurity: (args: readonly string[]) => {
-        calls.push([...args]);
-        if (args[0] !== "find-generic-password") {
-          throw new Error(`Unexpected Keychain mutation: ${args.join(" ")}`);
+      runSecurity: (arguments_: readonly string[]) => {
+        calls.push([...arguments_]);
+        if (arguments_[0] !== "find-generic-password") {
+          throw new Error(`Unexpected Keychain mutation: ${arguments_.join(" ")}`);
         }
-        const service = args[args.indexOf("-s") + 1];
+        const service = arguments_[arguments_.indexOf("-s") + 1];
         if (service === "MINIMAX_API_KEY") return "kc-minimax\n";
         throw new Error("not found");
       }
@@ -301,16 +301,16 @@ test("normal install checks required Keychain API keys without migrating or over
           repositoryRoot: path.resolve(path.dirname(installerScriptPath), ".."),
           home: root,
           codexHome,
-          keychainDeps
+          keychainDeps: keychainDependencies
         }),
       /Missing required API key\(s\) in macOS Keychain: CONTEXT7_API_KEY/
     );
     assert.ok(
-      calls.every((args) => args[0] === "find-generic-password"),
+      calls.every((arguments_) => arguments_[0] === "find-generic-password"),
       "install must only check Keychain presence, never write or update items"
     );
-    assert.match(readFileSync(envFile, "utf8"), /MINIMAX_API_KEY=/);
-    assert.match(readFileSync(envFile, "utf8"), /CONTEXT7_API_KEY=/);
+    assert.match(readFileSync(environmentFile, "utf8"), /MINIMAX_API_KEY=/);
+    assert.match(readFileSync(environmentFile, "utf8"), /CONTEXT7_API_KEY=/);
   } finally {
     if (previousDisable === undefined)
       delete process.env.AUTODEV_DISABLE_KEYCHAIN;

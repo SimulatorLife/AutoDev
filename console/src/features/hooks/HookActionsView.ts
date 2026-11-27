@@ -5,7 +5,9 @@ import { CodeBlock } from "../../components/code/CodeBlock.ts";
 import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
 import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
 
-/** The same declared action representation on the list and detail pages. */
+/**
+The same declared action representation on the list and detail pages.
+*/
 export function HookActionsView({
   actions
 }: {

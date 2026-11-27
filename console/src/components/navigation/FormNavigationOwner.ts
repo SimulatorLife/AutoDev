@@ -20,12 +20,12 @@ export type FormNavigationStatus =
 
 export interface FormNavigationRouter {
   /**
-   * Ask for the destination's whole page.
-   *
-   * Asking with no kind is asking for the full page: Next.js's prefetch
-   * answers with the full page unless it is told otherwise, and a partial
-   * answer is the route's loading state rather than the page.
-   */
+  Ask for the destination's whole page.
+  
+  Asking with no kind is asking for the full page: Next.js's prefetch
+  answers with the full page unless it is told otherwise, and a partial
+  answer is the route's loading state rather than the page.
+  */
   readonly prefetch: (href: string) => void;
   readonly push: (
     href: string,
@@ -230,21 +230,21 @@ function extractNativeFormData(
     return null;
   }
   try {
-    const params = new URLSearchParams();
+    const parameters = new URLSearchParams();
     const fd = new FormData(form);
-    for (const [key, value] of fd.entries()) {
+    for (const [key, value] of fd) {
       if (typeof value === "string") {
-        params.append(key, value);
+        parameters.append(key, value);
       }
     }
-    return params;
+    return parameters;
   } catch {
     return null;
   }
 }
 
 function appendSelectOptions(
-  params: URLSearchParams,
+  parameters: URLSearchParams,
   name: string,
   options: Iterable<{
     readonly value: string;
@@ -254,18 +254,18 @@ function appendSelectOptions(
 ): void {
   for (const opt of options) {
     if (opt.selected && !opt.disabled) {
-      params.append(name, opt.value);
+      parameters.append(name, opt.value);
     }
   }
 }
 
 function appendFormFieldEntry(
-  params: URLSearchParams,
-  el: FormElementLike
+  parameters: URLSearchParams,
+  element: FormElementLike
 ): void {
-  if (el.disabled === true || !el.name) return;
-  const tag = (el.tagName ?? "").toUpperCase();
-  const type = (el.type ?? "").toLowerCase();
+  if (element.disabled === true || !element.name) return;
+  const tag = (element.tagName ?? "").toUpperCase();
+  const type = (element.type ?? "").toLowerCase();
 
   if (
     tag === "BUTTON" ||
@@ -278,36 +278,36 @@ function appendFormFieldEntry(
   }
 
   if (type === "checkbox" || type === "radio") {
-    if (el.checked === true) {
-      params.append(el.name, el.value ?? "on");
+    if (element.checked === true) {
+      parameters.append(element.name, element.value ?? "on");
     }
     return;
   }
 
-  if (tag === "SELECT" && el.options) {
-    appendSelectOptions(params, el.name, el.options);
+  if (tag === "SELECT" && element.options) {
+    appendSelectOptions(parameters, element.name, element.options);
     return;
   }
 
-  params.append(el.name, el.value ?? "");
+  parameters.append(element.name, element.value ?? "");
 }
 
 function extractSyntheticFormData(form: FormLike): URLSearchParams {
-  const params = new URLSearchParams();
+  const parameters = new URLSearchParams();
   const rawElements = form.elements
     ? Array.from(form.elements)
     : typeof form.querySelectorAll === "function"
       ? Array.from(form.querySelectorAll("input, select, textarea, button"))
       : [];
 
-  for (const el of rawElements as readonly FormElementLike[]) {
-    appendFormFieldEntry(params, el);
+  for (const element of rawElements as readonly FormElementLike[]) {
+    appendFormFieldEntry(parameters, element);
   }
-  return params;
+  return parameters;
 }
 
 function appendSubmitterEntry(
-  params: URLSearchParams,
+  parameters: URLSearchParams,
   submitter: HTMLElement | FormElementLike | SubmitterLike | null | undefined
 ): void {
   if (!submitter) return;
@@ -333,21 +333,21 @@ function appendSubmitterEntry(
         : "";
 
   if (name.length > 0) {
-    params.append(name, value);
+    parameters.append(name, value);
   }
 }
 
 /**
- * Extracts form field entries into URLSearchParams preserving repeated field
- * names, hidden inputs, disabled-control omission, and explicit submitter name/value.
- */
+Extracts form field entries into URLSearchParams preserving repeated field
+names, hidden inputs, disabled-control omission, and explicit submitter name/value.
+*/
 export function extractFormData(
   form: HTMLFormElement | FormLike,
   submitter?: HTMLElement | FormElementLike | SubmitterLike | null | undefined
 ): URLSearchParams {
-  const params = extractNativeFormData(form) ?? extractSyntheticFormData(form);
-  appendSubmitterEntry(params, submitter);
-  return params;
+  const parameters = extractNativeFormData(form) ?? extractSyntheticFormData(form);
+  appendSubmitterEntry(parameters, submitter);
+  return parameters;
 }
 
 function checkFormConstraints(
@@ -355,17 +355,17 @@ function checkFormConstraints(
   submitter?: SubmitterLike | null
 ): boolean {
   const sub = submitter as SubmitterLike | null;
-  const formEl = form as {
+  const formElement = form as {
     readonly noValidate?: boolean | undefined;
     readonly getAttribute?: ((name: string) => string | null) | undefined;
     readonly hasAttribute?: ((name: string) => boolean) | undefined;
   };
 
   const isNoValidate =
-    formEl.noValidate === true ||
-    formEl.hasAttribute?.("novalidate") === true ||
-    (formEl.getAttribute?.("novalidate") !== null &&
-      formEl.getAttribute?.("novalidate") !== undefined) ||
+    formElement.noValidate === true ||
+    formElement.hasAttribute?.("novalidate") === true ||
+    (formElement.getAttribute?.("novalidate") !== null &&
+      formElement.getAttribute?.("novalidate") !== undefined) ||
     sub?.formNoValidate === true ||
     sub?.hasAttribute?.("formnovalidate") === true ||
     (sub?.getAttribute?.("formnovalidate") !== null &&
@@ -460,8 +460,8 @@ function checkUnsupportedFormPayload(
     return "file_input";
   }
   if (form.elements) {
-    for (const el of form.elements) {
-      if ((el.type ?? "").toLowerCase() === "file") {
+    for (const element of form.elements) {
+      if ((element.type ?? "").toLowerCase() === "file") {
         return "file_input";
       }
     }
@@ -482,50 +482,50 @@ function hasNativeOptOut(
   form: FormLike,
   submitter?: SubmitterLike | null
 ): boolean {
-  const formEl = form as unknown as HTMLElement;
-  const subEl = submitter as unknown as HTMLElement;
+  const formElement = form as unknown as HTMLElement;
+  const subElement = submitter as unknown as HTMLElement;
   return (
     form.hasAttribute?.(DATA_NATIVE_SUBMIT) === true ||
     form.getAttribute?.(DATA_NO_INTERCEPT) === "true" ||
     (form.getAttribute?.(DATA_NATIVE_SUBMIT) !== null &&
       form.getAttribute?.(DATA_NATIVE_SUBMIT) !== undefined) ||
-    formEl?.dataset?.nativeSubmit !== undefined ||
-    formEl?.dataset?.noIntercept === "true" ||
-    subEl?.hasAttribute?.(DATA_NATIVE_SUBMIT) === true ||
-    subEl?.getAttribute?.(DATA_NO_INTERCEPT) === "true" ||
-    (subEl?.getAttribute?.(DATA_NATIVE_SUBMIT) !== null &&
-      subEl?.getAttribute?.(DATA_NATIVE_SUBMIT) !== undefined) ||
-    subEl?.dataset?.nativeSubmit !== undefined ||
-    subEl?.dataset?.noIntercept === "true"
+    formElement?.dataset?.nativeSubmit !== undefined ||
+    formElement?.dataset?.noIntercept === "true" ||
+    subElement?.hasAttribute?.(DATA_NATIVE_SUBMIT) === true ||
+    subElement?.getAttribute?.(DATA_NO_INTERCEPT) === "true" ||
+    (subElement?.getAttribute?.(DATA_NATIVE_SUBMIT) !== null &&
+      subElement?.getAttribute?.(DATA_NATIVE_SUBMIT) !== undefined) ||
+    subElement?.dataset?.nativeSubmit !== undefined ||
+    subElement?.dataset?.noIntercept === "true"
   );
 }
 
 function captureScrollAndFocus(): ScrollAndFocusSnapshot {
   const win = globalThis.window;
-  const doc = globalThis.document;
-  const activeEl = doc?.activeElement as HTMLElement | null | undefined;
+  const document = globalThis.document;
+  const activeElement = document?.activeElement as HTMLElement | null | undefined;
   return {
     scrollX: win?.scrollX ?? 0,
     scrollY: win?.scrollY ?? 0,
-    activeId: activeEl?.id || undefined,
-    activeName: (activeEl as HTMLInputElement | null)?.name || undefined,
-    activeTag: activeEl?.tagName || undefined,
-    activeValue: activeEl?.getAttribute?.("value") ?? undefined,
-    activePath: activeEl ? elementPath(activeEl) : undefined
+    activeId: activeElement?.id || undefined,
+    activeName: (activeElement as HTMLInputElement | null)?.name || undefined,
+    activeTag: activeElement?.tagName || undefined,
+    activeValue: activeElement?.getAttribute?.("value") ?? undefined,
+    activePath: activeElement ? elementPath(activeElement) : undefined
   };
 }
 
 /**
- * The place an element holds in the document.
- *
- * A name is not an identity. A form can carry a dozen controls called
- * "roles" -- one per role of one skill, on every row of the catalog -- and
- * restoring the focus to the first of them moves the operator to a different
- * control than the one they were working on, which is worse than leaving
- * the focus alone. The path is the element's position in the document, which
- * is what "the same control" means once the page has been rebuilt around
- * it.
- */
+The place an element holds in the document.
+
+A name is not an identity. A form can carry a dozen controls called
+"roles" -- one per role of one skill, on every row of the catalog -- and
+restoring the focus to the first of them moves the operator to a different
+control than the one they were working on, which is worse than leaving
+the focus alone. The path is the element's position in the document, which
+is what "the same control" means once the page has been rebuilt around
+it.
+*/
 function elementPath(element: Element): string | undefined {
   const segments: string[] = [];
   let current: Element | null = element;
@@ -543,20 +543,20 @@ function elementPath(element: Element): string | undefined {
 }
 
 /**
- * The control a snapshot pointed at, if it is still the same control.
- *
- * The path says where the control was; the tag, the name and the value say
- * what it was. A control that has moved or been replaced since the snapshot
- * was taken is not the control the operator was on, so it is not focused.
- */
+The control a snapshot pointed at, if it is still the same control.
+
+The path says where the control was; the tag, the name and the value say
+what it was. A control that has moved or been replaced since the snapshot
+was taken is not the control the operator was on, so it is not focused.
+*/
 function resolveSnapshotControl(
-  doc: Document,
+  document: Document,
   snapshot: ScrollAndFocusSnapshot
 ): HTMLElement | null {
   if (!snapshot.activePath) return null;
   let element: Element | null;
   try {
-    element = doc.querySelector(snapshot.activePath);
+    element = document.querySelector(snapshot.activePath);
   } catch {
     return null;
   }
@@ -579,15 +579,15 @@ function escapeCssSelector(value: string): string {
 }
 
 /**
- * The element the current URL's fragment names, if there is one.
- *
- * A link that carries a fragment is a link that says where to arrive: the
- * detail drawer is opened that way, so the operator lands on the panel they
- * asked for rather than at the top of the list it sits under. The element has
- * to exist and be focusable -- the drawers carry `tabIndex={-1}` for exactly
- * this -- and a fragment that names nothing is left to the heading, because a
- * browser scrolls to a missing fragment's target and gives up.
- */
+The element the current URL's fragment names, if there is one.
+
+A link that carries a fragment is a link that says where to arrive: the
+detail drawer is opened that way, so the operator lands on the panel they
+asked for rather than at the top of the list it sits under. The element has
+to exist and be focusable -- the drawers carry `tabIndex={-1}` for exactly
+this -- and a fragment that names nothing is left to the heading, because a
+browser scrolls to a missing fragment's target and gives up.
+*/
 function fragmentTarget(): HTMLElement | null {
   const hash = globalThis.location?.hash ?? "";
   if (hash.length < 2) return null;
@@ -600,7 +600,7 @@ function fragmentTarget(): HTMLElement | null {
   if (id.length === 0) return null;
   const escaped = escapeCssSelector(id);
   const element = globalThis.document.querySelector<HTMLElement>(
-    `[id="${escaped}"]`
+    `[id="${CSS.escape(escaped)}"]`
   );
   if (element === null) return null;
   return typeof element.focus === "function" ? element : null;
@@ -608,22 +608,22 @@ function fragmentTarget(): HTMLElement | null {
 
 function restoreScrollAndFocus(snapshot: ScrollAndFocusSnapshot): void {
   const win = globalThis.window;
-  const doc = globalThis.document;
+  const document = globalThis.document;
   if (win && typeof win.scrollTo === "function") {
     win.scrollTo(snapshot.scrollX, snapshot.scrollY);
   }
-  if (!doc || typeof doc.querySelector !== "function") return;
+  if (!document || typeof document.querySelector !== "function") return;
 
   if (snapshot.activeId) {
     const escapedId = escapeCssSelector(snapshot.activeId);
-    const el = doc.querySelector<HTMLElement>(`[id="${escapedId}"]`);
-    if (el && typeof el.focus === "function") {
-      el.focus({ preventScroll: true });
+    const element = document.querySelector<HTMLElement>(`[id="${CSS.escape(escapedId)}"]`);
+    if (element && typeof element.focus === "function") {
+      element.focus({ preventScroll: true });
       return;
     }
   }
 
-  const byPath = resolveSnapshotControl(doc, snapshot);
+  const byPath = resolveSnapshotControl(document, snapshot);
   if (byPath && typeof byPath.focus === "function") {
     byPath.focus({ preventScroll: true });
     return;
@@ -635,8 +635,8 @@ function restoreScrollAndFocus(snapshot: ScrollAndFocusSnapshot): void {
   if (snapshot.activeName) {
     try {
       const escapedName = escapeCssSelector(snapshot.activeName);
-      const matches = doc.querySelectorAll<HTMLElement>(
-        `[name="${escapedName}"]`
+      const matches = document.querySelectorAll<HTMLElement>(
+        `[name="${CSS.escape(escapedName)}"]`
       );
       const only = matches.length === 1 ? matches[0] : undefined;
       if (only) {
@@ -653,38 +653,38 @@ function restoreScrollAndFocus(snapshot: ScrollAndFocusSnapshot): void {
 // The promise is the caller's return value, so it stays one.
 function handleGetSubmission(
   actionUrl: URL,
-  params: URLSearchParams,
+  parameters: URLSearchParams,
   currentBase: string,
   options: HandleFormSubmissionOptions,
   snapshot: ScrollAndFocusSnapshot
 ): Promise<FormSubmissionResult> {
   options.onStatusChange?.("submitting", "Applying filters...");
-  const destUrl = new URL(actionUrl.pathname, actionUrl.origin);
-  const finalParams = new URLSearchParams(actionUrl.search);
+  const destinationUrl = new URL(actionUrl.pathname, actionUrl.origin);
+  const finalParameters = new URLSearchParams(actionUrl.search);
   const replacedKeys = new Set<string>();
-  for (const [key, value] of params.entries()) {
+  for (const [key, value] of parameters) {
     if (!replacedKeys.has(key)) {
-      finalParams.delete(key);
+      finalParameters.delete(key);
       replacedKeys.add(key);
     }
-    finalParams.append(key, value);
+    finalParameters.append(key, value);
   }
-  const searchStr = finalParams.toString();
-  destUrl.search = searchStr.length > 0 ? `?${searchStr}` : "";
+  const searchString = finalParameters.toString();
+  destinationUrl.search = searchString.length > 0 ? `?${searchString}` : "";
   if (actionUrl.hash) {
-    destUrl.hash = actionUrl.hash;
+    destinationUrl.hash = actionUrl.hash;
   }
-  const destHref = `${destUrl.pathname}${destUrl.search}${destUrl.hash}`;
+  const destinationHref = `${destinationUrl.pathname}${destinationUrl.search}${destinationUrl.hash}`;
 
   const currentParsed = new URL(currentBase);
   const currentPathAndQuery = `${currentParsed.pathname}${currentParsed.search}${currentParsed.hash}`;
 
-  if (destHref === currentPathAndQuery) {
+  if (destinationHref === currentPathAndQuery) {
     options.router.refresh();
   } else {
     // The destination's whole page is asked for before the navigation leaves,
     // so that the address bar and the page move together.
-    navigateToWholePage(options.router, destHref, "push", {
+    navigateToWholePage(options.router, destinationHref, "push", {
       scroll: false
     });
   }
@@ -693,7 +693,7 @@ function handleGetSubmission(
   return Promise.resolve({
     intercepted: true,
     method: "GET",
-    destination: destHref,
+    destination: destinationHref,
     status: "submitting"
   });
 }
@@ -706,20 +706,17 @@ const SKILL_PROMPT_SAVE_FAILURES = new Set([
   "failed"
 ]);
 
-function isKnownFailureDestination(destUrl: URL): boolean {
-  if (destUrl.searchParams.get("control") === "failed") {
+function isKnownFailureDestination(destinationUrl: URL): boolean {
+  if (destinationUrl.searchParams.get("control") === "failed") {
     return true;
   }
-  const saveParam = destUrl.searchParams.get("save");
-  if (saveParam !== null && SKILL_PROMPT_SAVE_FAILURES.has(saveParam)) {
-    return true;
-  }
-  return false;
+  const saveParameter = destinationUrl.searchParams.get("save");
+  return (saveParameter !== null && SKILL_PROMPT_SAVE_FAILURES.has(saveParameter));
 }
 
 async function handlePostSubmission(
   actionUrl: URL,
-  params: URLSearchParams,
+  parameters: URLSearchParams,
   form: FormLike,
   currentBase: string,
   options: HandleFormSubmissionOptions,
@@ -743,7 +740,7 @@ async function handlePostSubmission(
       headers: {
         "Content-Type": "application/x-www-form-urlencoded"
       },
-      body: params.toString(),
+      body: parameters.toString(),
       redirect: "follow",
       credentials: "same-origin"
     });
@@ -767,42 +764,42 @@ async function handlePostSubmission(
 
     const locHeader = response.headers?.get?.("location");
     const resolvedUrl = locHeader ?? response.url;
-    const destUrl = new URL(
+    const destinationUrl = new URL(
       resolvedUrl.length === 0 ? currentBase : resolvedUrl,
       currentBase
     );
 
     const currentParsed = new URL(currentBase);
-    if (destUrl.origin !== currentParsed.origin) {
+    if (destinationUrl.origin !== currentParsed.origin) {
       const message =
         "The server redirected this submission outside the Console. No navigation was performed.";
       options.onStatusChange?.("error", message);
       return {
         intercepted: true,
         method: "POST",
-        destination: destUrl.href,
+        destination: destinationUrl.href,
         status: "error",
         error: message
       };
     }
 
-    const destPathAndQuery = `${destUrl.pathname}${destUrl.search}${destUrl.hash}`;
+    const destinationPathAndQuery = `${destinationUrl.pathname}${destinationUrl.search}${destinationUrl.hash}`;
     const currentPathAndQuery = `${currentParsed.pathname}${currentParsed.search}${currentParsed.hash}`;
 
-    if (destPathAndQuery === currentPathAndQuery) {
+    if (destinationPathAndQuery === currentPathAndQuery) {
       options.router.refresh();
     } else {
       // The destination is rendered by the server after the write, so it
       // carries the write's result. A second round trip here would race the
       // navigation that is already on its way, and the page that lands would
       // be the one that lost the race.
-      navigateToWholePage(options.router, destPathAndQuery, "replace", {
+      navigateToWholePage(options.router, destinationPathAndQuery, "replace", {
         scroll: false
       });
     }
 
-    const rejected = isKnownFailureDestination(destUrl);
-    if (rejected) {
+    const isRejected = isKnownFailureDestination(destinationUrl);
+    if (isRejected) {
       options.onStatusChange?.(
         "error",
         "The server could not save these changes. Review the notice on this page."
@@ -813,9 +810,9 @@ async function handlePostSubmission(
     return {
       intercepted: true,
       method: "POST",
-      destination: destPathAndQuery,
-      status: rejected ? "error" : "completed",
-      ...(rejected ? { error: "The server rejected these changes." } : {})
+      destination: destinationPathAndQuery,
+      status: isRejected ? "error" : "completed",
+      ...(isRejected && { error: "The server rejected these changes." })
     };
   } catch (error) {
     options.router.refresh();
@@ -835,13 +832,13 @@ async function handlePostSubmission(
 }
 
 /**
- * Handles same-origin form submissions without full document reloads.
- *
- * GET requests perform Next client router navigation with preserved search params.
- * POST requests submit application/x-www-form-urlencoded to same-origin routes,
- * follow existing 303 redirects, and reconcile destinations via router.refresh
- * (for same-URL destinations) or router.replace/refresh (for changed URLs).
- */
+Handles same-origin form submissions without full document reloads.
+
+GET requests perform Next client router navigation with preserved search params.
+POST requests submit application/x-www-form-urlencoded to same-origin routes,
+follow existing 303 redirects, and reconcile destinations via router.refresh
+(for same-URL destinations) or router.replace/refresh (for changed URLs).
+*/
 export function handleFormSubmission(
   event: FormSubmissionEvent,
   options: HandleFormSubmissionOptions
@@ -956,12 +953,12 @@ export function handleFormSubmission(
   event.preventDefault();
 
   const snapshot = captureScrollAndFocus();
-  const params = extractFormData(form, submitter);
+  const parameters = extractFormData(form, submitter);
 
   if (method === "GET") {
     return handleGetSubmission(
       actionUrl,
-      params,
+      parameters,
       currentBase,
       options,
       snapshot
@@ -970,7 +967,7 @@ export function handleFormSubmission(
 
   return handlePostSubmission(
     actionUrl,
-    params,
+    parameters,
     form,
     currentBase,
     options,
@@ -979,9 +976,9 @@ export function handleFormSubmission(
 }
 
 /**
- * Registers global form navigation click and submit event listeners.
- * Returns an unregister cleanup function.
- */
+Registers global form navigation click and submit event listeners.
+Returns an unregister cleanup function.
+*/
 export function registerFormNavigation(
   options: FormNavigationListenerOptions
 ): () => void {
@@ -998,9 +995,9 @@ export function registerFormNavigation(
   let statusGeneration = 0;
 
   const handleClick = (event: Event): void => {
-    const targetEl = (event as MouseEvent).target;
-    if (targetEl && typeof (targetEl as Element).closest === "function") {
-      const submitter = (targetEl as Element).closest(
+    const targetElement = (event as MouseEvent).target;
+    if (targetElement && typeof (targetElement as Element).closest === "function") {
+      const submitter = (targetElement as Element).closest(
         'button[type="submit"], input[type="submit"], button:not([type]), input[type="image"]'
       );
       if (submitter) {
@@ -1058,8 +1055,8 @@ export function registerFormNavigation(
   };
 
   const eventTarget = target as EventTarget;
-  eventTarget.addEventListener("click", handleClick as EventListener, true);
-  eventTarget.addEventListener("submit", handleSubmit as EventListener, false);
+  eventTarget.addEventListener("click", handleClick as EventListener, {capture: true});
+  eventTarget.addEventListener("submit", handleSubmit as EventListener, {capture: false});
 
   return () => {
     if (clearSubmitterTimer !== null) {
@@ -1080,12 +1077,12 @@ export function registerFormNavigation(
 }
 
 /**
- * Root-mounted client island that intercepts same-origin GET/POST form submissions
- * across the AutoDev Console, replacing native document reloads with client-side
- * router navigation, in-place server component refreshes, and accessible feedback.
- */
+Root-mounted client island that intercepts same-origin GET/POST form submissions
+across the AutoDev Console, replacing native document reloads with client-side
+router navigation, in-place server component refreshes, and accessible feedback.
+*/
 export function FormNavigationOwner({
-  router: routerProp,
+  router: routerProperty,
   initialFeedback
 }: FormNavigationOwnerProps = {}): React.JSX.Element {
   let nextRouter: FormNavigationRouter | null = null;
@@ -1094,50 +1091,50 @@ export function FormNavigationOwner({
   } catch {
     // In environments without AppRouterContext (such as SSR or unit tests)
   }
-  const router = routerProp ?? nextRouter;
+  const router = routerProperty ?? nextRouter;
 
   const [feedback, setFeedback] = React.useState<{
     readonly status: FormNavigationStatus;
     readonly message: string;
     readonly revision: number;
   }>({ ...(initialFeedback ?? { status: "idle", message: "" }), revision: 0 });
-  const feedbackRef = React.useRef(feedback);
+  const feedbackReference = React.useRef(feedback);
   const [countdownSeconds, setCountdownSeconds] = React.useState<number | null>(
     feedback.status === "completed" || feedback.status === "error" ? 5 : null
   );
   const [isNavigationPending, startTransition] = React.useTransition();
-  const observedNavigationRef = React.useRef(false);
+  const observedNavigationReference = React.useRef(false);
 
   /**
-   * Move the focus to the new page's heading after an in-place navigation.
-   *
-   * Every navigation in the Console is an in-place one, and the focus the
-   * operator had on the link they activated was dropped to the document body
-   * when the page changed: the next Tab started at the skip link and walked the
-   * whole navigation again before reaching the page they asked for, and a
-   * screen reader was told nothing at all. Moving the focus to the heading is
-   * also the announcement -- a focused heading is read out -- so no separate
-   * live region is needed and nothing is said twice.
-   *
-   * This belongs here rather than in the page frame because the page frame is
-   * replaced by the navigation: the heading it renders survives, but the
-   * component that rendered it does not, so a component that has to remember
-   * the previous route cannot tell a navigation from the first load. This
-   * island is mounted in the root layout, and a layout is the one segment an
-   * in-place navigation does not replace.
-   *
-   * Two guards keep it out of the way. The first route is not a navigation --
-   * taking the focus on the initial load would steal it from a field the
-   * operator had already put it in. And a focus that is still somewhere
-   * deliberate is left alone: a form navigation restores the focus to the field
-   * that was submitted, and that field must win over the heading.
-   *
-   * A navigation that names a fragment lands on that fragment instead. The
-   * detail drawer is opened by a link carrying the drawer's own anchor, and
-   * the operator asked for *that panel*, not for the page it sits on -- and the
-   * fragment is what a browser would have scrolled to, so honouring it keeps
-   * the two in agreement.
-   */
+  Move the focus to the new page's heading after an in-place navigation.
+  
+  Every navigation in the Console is an in-place one, and the focus the
+  operator had on the link they activated was dropped to the document body
+  when the page changed: the next Tab started at the skip link and walked the
+  whole navigation again before reaching the page they asked for, and a
+  screen reader was told nothing at all. Moving the focus to the heading is
+  also the announcement -- a focused heading is read out -- so no separate
+  live region is needed and nothing is said twice.
+  
+  This belongs here rather than in the page frame because the page frame is
+  replaced by the navigation: the heading it renders survives, but the
+  component that rendered it does not, so a component that has to remember
+  the previous route cannot tell a navigation from the first load. This
+  island is mounted in the root layout, and a layout is the one segment an
+  in-place navigation does not replace.
+  
+  Two guards keep it out of the way. The first route is not a navigation --
+  taking the focus on the initial load would steal it from a field the
+  operator had already put it in. And a focus that is still somewhere
+  deliberate is left alone: a form navigation restores the focus to the field
+  that was submitted, and that field must win over the heading.
+  
+  A navigation that names a fragment lands on that fragment instead. The
+  detail drawer is opened by a link carrying the drawer's own anchor, and
+  the operator asked for *that panel*, not for the page it sits on -- and the
+  fragment is what a browser would have scrolled to, so honouring it keeps
+  the two in agreement.
+  */
   const currentPathname = usePathname();
   const isFirstPathname = React.useRef(true);
   React.useEffect(() => {
@@ -1163,9 +1160,9 @@ export function FormNavigationOwner({
       const nextFeedback = {
         status,
         message,
-        revision: feedbackRef.current.revision + 1
+        revision: feedbackReference.current.revision + 1
       };
-      feedbackRef.current = nextFeedback;
+      feedbackReference.current = nextFeedback;
       setFeedback(nextFeedback);
       setCountdownSeconds(
         status === "completed" || status === "error" ? 5 : null
@@ -1178,9 +1175,9 @@ export function FormNavigationOwner({
     const dismissedFeedback = {
       status: "idle" as const,
       message: "",
-      revision: feedbackRef.current.revision + 1
+      revision: feedbackReference.current.revision + 1
     };
-    feedbackRef.current = dismissedFeedback;
+    feedbackReference.current = dismissedFeedback;
     setFeedback(dismissedFeedback);
     setCountdownSeconds(null);
   }, []);
@@ -1202,15 +1199,15 @@ export function FormNavigationOwner({
 
   React.useEffect(() => {
     if (isNavigationPending) {
-      observedNavigationRef.current = true;
+      observedNavigationReference.current = true;
       return;
     }
-    if (!observedNavigationRef.current) return;
+    if (!observedNavigationReference.current) return;
 
-    observedNavigationRef.current = false;
+    observedNavigationReference.current = false;
     if (
-      feedbackRef.current.status === "submitting" &&
-      feedbackRef.current.message === "Applying filters..."
+      feedbackReference.current.status === "submitting" &&
+      feedbackReference.current.message === "Applying filters..."
     ) {
       publishFeedback("completed", "Filters applied.");
     }
@@ -1224,12 +1221,12 @@ export function FormNavigationOwner({
     const revision = feedback.revision;
     return scheduleFeedbackDismissal(
       (secondsRemaining) => {
-        if (feedbackRef.current.revision === revision) {
+        if (feedbackReference.current.revision === revision) {
           setCountdownSeconds(secondsRemaining);
         }
       },
       () => {
-        if (feedbackRef.current.revision !== revision) return;
+        if (feedbackReference.current.revision !== revision) return;
         dismissFeedback();
       }
     );

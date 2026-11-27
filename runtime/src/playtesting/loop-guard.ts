@@ -1,4 +1,6 @@
-/** AutoDev adapter for Jev Playtest Lab's pinned generic loop primitives. */
+/**
+AutoDev adapter for Jev Playtest Lab's pinned generic loop primitives.
+*/
 import type { PlaytestJsonValue } from "@simulatorlife/autodev-core";
 
 import {
@@ -7,9 +9,13 @@ import {
 } from "../../vendor/jev-playtest-lab/src/core.js";
 
 export interface PlaytestLoopObservation {
-  /** The game-owned objective exposed to this policy. */
+  /**
+  The game-owned objective exposed to this policy.
+  */
   readonly goal: string;
-  /** Already-filtered, player-visible observation; never engine/debug state. */
+  /**
+  Already-filtered, player-visible observation; never engine/debug state.
+  */
   readonly visibleState: PlaytestJsonValue;
   readonly legalActionIds: readonly string[];
 }
@@ -21,7 +27,9 @@ export interface PlaytestLoopGuardOptions {
 
 export interface PlaytestLoopInspection {
   readonly loop: boolean;
-  /** Upstream Jev Playtest Lab observation hash (16 lowercase hex chars). */
+  /**
+  Upstream Jev Playtest Lab observation hash (16 lowercase hex chars).
+  */
   readonly observationHash: string;
   readonly signature: string;
 }
@@ -44,10 +52,10 @@ function canonicalJsonValue(value: PlaytestJsonValue): PlaytestJsonValue {
 }
 
 /**
- * Bounded loop detection using the vendored upstream `LoopGuard` and
- * `observationHash` implementation without its Jev-specific 255-choice,
- * `noul`, or model-decision restrictions. Instantiate once per episode.
- */
+Bounded loop detection using the vendored upstream `LoopGuard` and
+`observationHash` implementation without its Jev-specific 255-choice,
+`noul`, or model-decision restrictions. Instantiate once per episode.
+*/
 export class PlaytestLoopGuard {
   private readonly guard: InstanceType<typeof LoopGuard>;
   private readonly goal: string;

@@ -1,9 +1,9 @@
 /**
- * Durable Data-owned owner-only human response and consent store.
- * Raw participant-linked response data never enters ClickHouse or Runtime
- * artifacts. The repository persists restricted JSON atomically in an
- * injected 0700 directory and computes all summaries from retained rows.
- */
+Durable Data-owned owner-only human response and consent store.
+Raw participant-linked response data never enters ClickHouse or Runtime
+artifacts. The repository persists restricted JSON atomically in an
+injected 0700 directory and computes all summaries from retained rows.
+*/
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import { constants as fsConstants } from "node:fs";
@@ -112,7 +112,9 @@ type HumanStudyAuthorizationValidators = Pick<
   | "isConsentValid"
 >;
 
-/** Repository-owned authorization checks shared by both human response import formats. */
+/**
+Repository-owned authorization checks shared by both human response import formats.
+*/
 function restrictHumanStudyValidators(
   state: StudyState,
   validators: HumanStudyAuthorizationValidators
@@ -273,7 +275,7 @@ function preferenceResponseMatchesStudy(
   const startB = Date.parse(response.exposureBStartedAt);
   const endB = Date.parse(response.exposureBEndedAt);
   const submittedAt = Date.parse(response.submittedAt);
-  const orderMatches =
+  const isOrderMatches =
     response.order === "A-first" ? endA <= startB : endB <= startA;
   return (
     Number.isFinite(startA) &&
@@ -283,7 +285,7 @@ function preferenceResponseMatchesStudy(
     Number.isFinite(submittedAt) &&
     endA >= startA &&
     endB >= startB &&
-    orderMatches &&
+    isOrderMatches &&
     submittedAt >= Math.max(endA, endB)
   );
 }
@@ -608,7 +610,9 @@ function assertPrivateFile(filePath: string): fs.Stats {
   return stat;
 }
 
-/** rootDirectory must be a private, caller-selected durable directory. */
+/**
+rootDirectory must be a private, caller-selected durable directory.
+*/
 export class RestrictedHumanResponseRepository {
   private readonly root: string;
   private readonly threshold: number;
@@ -732,7 +736,9 @@ export class RestrictedHumanResponseRepository {
         try {
           fs.closeSync(fd);
         } catch {
-          /* ignore */
+          /*
+          ignore
+          */
         }
       }
       if (inode !== undefined) {
@@ -746,7 +752,9 @@ export class RestrictedHumanResponseRepository {
             fs.unlinkSync(lockFile);
           }
         } catch {
-          /* The reservation is already absent or cannot be safely identified. */
+          /*
+          The reservation is already absent or cannot be safely identified.
+          */
         }
       }
       if ((error as NodeJS.ErrnoException).code === "EEXIST") {
@@ -849,7 +857,9 @@ export class RestrictedHumanResponseRepository {
     }
   }
 
-  /** Upgrade the one prior restricted-file schema in place under the writer lock. */
+  /**
+  Upgrade the one prior restricted-file schema in place under the writer lock.
+  */
   private migrateLegacyStudyFiles(): void {
     for (const name of fs.readdirSync(this.root)) {
       if (!STUDY_STATE_FILE_PATTERN.test(name)) continue;
@@ -1012,11 +1022,11 @@ export class RestrictedHumanResponseRepository {
         "Restricted state exceeds size limit."
       );
     }
-    const temp = filePath + "." + randomUUID() + ".tmp";
+    const temporary = filePath + "." + randomUUID() + ".tmp";
     let fd: number | undefined;
     try {
       fd = fs.openSync(
-        temp,
+        temporary,
         fsConstants.O_CREAT |
           fsConstants.O_EXCL |
           fsConstants.O_WRONLY |
@@ -1028,7 +1038,7 @@ export class RestrictedHumanResponseRepository {
       fs.closeSync(fd);
       fd = undefined;
       // Retained rename: the O_EXCL|O_NOFOLLOW temp file and directory fsync are a security contract write-file-atomic does not offer.
-      fs.renameSync(temp, filePath);
+      fs.renameSync(temporary, filePath);
       fs.chmodSync(filePath, 0o600);
       const dirFd = fs.openSync(this.root, fsConstants.O_RDONLY);
       try {
@@ -1039,9 +1049,11 @@ export class RestrictedHumanResponseRepository {
     } catch (error) {
       if (fd !== undefined) fs.closeSync(fd);
       try {
-        fs.unlinkSync(temp);
+        fs.unlinkSync(temporary);
       } catch {
-        /* renamed or absent */
+        /*
+        renamed or absent
+        */
       }
       if (error instanceof RestrictedHumanStudyStorageError) throw error;
       throw new RestrictedHumanStudyStorageError(
@@ -1220,11 +1232,11 @@ export class RestrictedHumanResponseRepository {
       const aEnd = Date.parse(a.endedAt);
       const bStart = Date.parse(b.startedAt);
       const bEnd = Date.parse(b.endedAt);
-      const ordered =
+      const isOrdered =
         a.order === b.order &&
         (a.order === "A-first" ? aEnd <= bStart : bEnd <= aStart);
       if (
-        !ordered ||
+        !isOrdered ||
         !Number.isFinite(aStart) ||
         !Number.isFinite(aEnd) ||
         !Number.isFinite(bStart) ||
@@ -1487,8 +1499,8 @@ export class RestrictedHumanResponseRepository {
     );
     if (!group) throw new TypeError("Response is not in a pending quarantine.");
     if (
-      !state.responses.some(
-        (response) => response.responseId === responseIdToKeep
+      state.responses.every(
+        (response) => response.responseId !== responseIdToKeep
       )
     ) {
       throw new TypeError(
@@ -1591,8 +1603,8 @@ export class RestrictedHumanResponseRepository {
         );
       }
       if (
-        !state.preferenceResponses.some(
-          (response) => response.responseId === responseIdToKeep
+        state.preferenceResponses.every(
+          (response) => response.responseId !== responseIdToKeep
         )
       ) {
         throw new TypeError(
@@ -1650,26 +1662,26 @@ export class RestrictedHumanResponseRepository {
         answer: byParticipant.get(participantId)?.answer ?? null
       }))
     );
-    const smallCategory = [
+    const isSmallCategory = [
       counts.preferA,
       counts.preferB,
       counts.ties,
       counts.unableToJudge,
       counts.missing
     ].some((count) => count > 0 && count < this.threshold);
-    const suppressed =
-      counts.eligibleParticipants < this.threshold || smallCategory;
+    const isSuppressed =
+      counts.eligibleParticipants < this.threshold || isSmallCategory;
     return {
       workspaceId: state.study.workspaceId,
       studyId,
       revision: state.revision,
       analysisPlanRef: plan.analysisPlanRef,
-      suppressionState: suppressed ? "suppressed" : "unsuppressed",
+      suppressionState: isSuppressed ? "suppressed" : "unsuppressed",
       incompleteExposurePairs:
         roster.incomplete > 0 && roster.incomplete < this.threshold
           ? null
           : roster.incomplete,
-      counts: suppressed ? null : counts,
+      counts: isSuppressed ? null : counts,
       createdAt: new Date().toISOString()
     };
   }
@@ -1684,9 +1696,7 @@ export class RestrictedHumanResponseRepository {
       state.study,
       this.activeResponses(state),
       {
-        ...(options.pairedArmBuildIds
-          ? { pairedArmBuildIds: options.pairedArmBuildIds }
-          : {})
+        ...(options.pairedArmBuildIds && { pairedArmBuildIds: options.pairedArmBuildIds })
       }
     );
     const arm = result.arms.filter((item) => item.armBuildId === buildSha);
@@ -1694,21 +1704,21 @@ export class RestrictedHumanResponseRepository {
     const constructArm = result.constructs.filter(
       (construct) => construct.armBuildId === buildSha
     );
-    const studySuppressed = result.retainedParticipants < this.threshold;
-    let anySuppressed = studySuppressed;
+    const isStudySuppressed = result.retainedParticipants < this.threshold;
+    let isAnySuppressed = isStudySuppressed;
     const items: RestrictedHumanItemSummary[] = arm.map((cell) => {
       const hasSmallCategoryCell = Object.values(cell.categoryCounts).some(
         (count) => count > 0 && count < this.threshold
       );
       const hasSmallMissingCell =
         cell.missingCount > 0 && cell.missingCount < this.threshold;
-      const suppressItem =
-        studySuppressed ||
+      const isSuppressItem =
+        isStudySuppressed ||
         cell.respondentCount < this.threshold ||
         hasSmallCategoryCell ||
         hasSmallMissingCell;
-      if (suppressItem) {
-        anySuppressed = true;
+      if (isSuppressItem) {
+        isAnySuppressed = true;
         return {
           itemId: cell.itemId,
           suppressionState: "suppressed",
@@ -1731,24 +1741,24 @@ export class RestrictedHumanResponseRepository {
     });
     const constructs: RestrictedHumanConstructSummary[] = constructArm.map(
       (cell) => {
-        const smallMissingCell =
+        const isSmallMissingCell =
           cell.missingCount > 0 && cell.missingCount < this.threshold;
-        const suppressConstruct =
-          studySuppressed ||
+        const isSuppressConstruct =
+          isStudySuppressed ||
           cell.respondentCount < this.threshold ||
-          smallMissingCell;
-        if (suppressConstruct) anySuppressed = true;
+          isSmallMissingCell;
+        if (isSuppressConstruct) isAnySuppressed = true;
         return {
           constructId: cell.constructId,
-          suppressionState: suppressConstruct ? "suppressed" : "unsuppressed",
-          mean: suppressConstruct ? null : cell.mean,
-          respondentCount: suppressConstruct ? null : cell.respondentCount,
-          missingCount: suppressConstruct ? null : cell.missingCount,
+          suppressionState: isSuppressConstruct ? "suppressed" : "unsuppressed",
+          mean: isSuppressConstruct ? null : cell.mean,
+          respondentCount: isSuppressConstruct ? null : cell.respondentCount,
+          missingCount: isSuppressConstruct ? null : cell.missingCount,
           unit: cell.unit
         };
       }
     );
-    if (studySuppressed) {
+    if (isStudySuppressed) {
       return {
         workspaceId: state.study.workspaceId,
         studyId,
@@ -1785,7 +1795,7 @@ export class RestrictedHumanResponseRepository {
       buildSha,
       instrument: state.study.instrument,
       measurementVersion: PLAYTESTS_MEASUREMENT_VERSION,
-      suppressionState: anySuppressed ? "partially-suppressed" : "unsuppressed",
+      suppressionState: isAnySuppressed ? "partially-suppressed" : "unsuppressed",
       retainedParticipants: result.retainedParticipants,
       items,
       constructs,
@@ -1803,19 +1813,21 @@ export class RestrictedHumanResponseRepository {
       { pairedArmBuildIds }
     );
     return result.pairedDifferences.map((cell) => {
-      const suppressed = cell.pairedParticipants < this.threshold;
+      const isSuppressed = cell.pairedParticipants < this.threshold;
       return {
         workspaceId: state.study.workspaceId,
         studyId,
         revision: state.revision,
         itemId: cell.itemId,
-        suppressionState: suppressed ? "suppressed" : "unsuppressed",
-        pairedParticipants: suppressed ? null : cell.pairedParticipants,
-        meanDifference: suppressed ? null : cell.meanDifference
+        suppressionState: isSuppressed ? "suppressed" : "unsuppressed",
+        pairedParticipants: isSuppressed ? null : cell.pairedParticipants,
+        meanDifference: isSuppressed ? null : cell.meanDifference
       };
     });
   }
-  /** Tombstone history contains state/revision metadata only, never prior values or identities. */
+  /**
+  Tombstone history contains state/revision metadata only, never prior values or identities.
+  */
   getTombstonedHistory(
     studyId: string
   ): readonly HumanStudyTombstoneMetadata[] {
@@ -1827,18 +1839,20 @@ function responseGroupKey(response: HumanStudyResponse): string {
   return JSON.stringify([response.studyId, response.responseId]);
 }
 
-/** Durable default restricted store location; never inside a game workspace. */
+/**
+Durable default restricted store location; never inside a game workspace.
+*/
 export function defaultRestrictedHumanStudyRoot(
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): string {
-  const configuredRoot = env.AUTODEV_HUMAN_STUDY_DATA_ROOT?.trim();
+  const configuredRoot = environment.AUTODEV_HUMAN_STUDY_DATA_ROOT?.trim();
   if (configuredRoot) {
     if (!path.isAbsolute(configuredRoot)) {
       throw new TypeError("AUTODEV_HUMAN_STUDY_DATA_ROOT must be absolute.");
     }
     return path.resolve(configuredRoot);
   }
-  const codexHome = env.CODEX_HOME?.trim() || path.join(homedir(), ".codex");
+  const codexHome = environment.CODEX_HOME?.trim() || path.join(homedir(), ".codex");
   if (!path.isAbsolute(codexHome)) {
     throw new TypeError(
       "CODEX_HOME must be absolute for restricted human-study storage."
@@ -1850,7 +1864,9 @@ export function defaultRestrictedHumanStudyRoot(
   );
 }
 
-/** One Data-owned owner-only store for the Runtime process. */
+/**
+One Data-owned owner-only store for the Runtime process.
+*/
 export function getDefaultRestrictedHumanResponseRepository(): RestrictedHumanResponseRepository {
   defaultRestrictedHumanResponseRepository ??=
     new RestrictedHumanResponseRepository({

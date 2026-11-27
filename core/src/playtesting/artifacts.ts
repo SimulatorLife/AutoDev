@@ -44,7 +44,7 @@ import {
   PLAYTESTS_GAME_MODES,
   type PLAYTESTS_HUMAN_STUDY_SCHEMA,
   type PLAYTESTS_SESSION_REVIEW_SCHEMA,
-  type PlaytestVersionedRef,
+  type PlaytestVersionedRef as PlaytestVersionedReference,
   type PlaytestVisualAssignmentManifest
 } from "./types.ts";
 
@@ -64,7 +64,9 @@ export type PlaytestReplayStatus =
   | "invalid";
 
 export interface PlaytestObservationField {
-  /** Dot-separated JSON keys and numeric array indices; wildcards are unsupported. */
+  /**
+  Dot-separated JSON keys and numeric array indices; wildcards are unsupported.
+  */
   readonly fieldPath: string;
   readonly unit: string | null;
   readonly displayRounding: string | null;
@@ -74,7 +76,9 @@ export interface PlaytestObservationField {
 
 export interface PlaytestObservationContract {
   readonly schemaVersion: 1;
-  /** SHA-256 canonical JSON digest of the adapter binding's observation schema. */
+  /**
+  SHA-256 canonical JSON digest of the adapter binding's observation schema.
+  */
   readonly schemaHash: string;
   readonly mode: "headless" | "browser" | "native-visual";
   readonly cohort: string;
@@ -84,20 +88,32 @@ export interface PlaytestObservationContract {
   readonly conformanceFixtureHash: string | null;
 }
 
-/** Exact execution identity needed to replay or explicitly identify nondeterminism. */
+/**
+Exact execution identity needed to replay or explicitly identify nondeterminism.
+*/
 export interface PlaytestEpisodeIdentity {
   readonly workspaceId: string;
-  /** Null for URL-only visual targets whose repository cannot be attested. */
+  /**
+  Null for URL-only visual targets whose repository cannot be attested.
+  */
   readonly repository: string | null;
-  /** Null when the rendered build cannot be independently mapped to a revision. */
+  /**
+  Null when the rendered build cannot be independently mapped to a revision.
+  */
   readonly buildSha: string | null;
   readonly gameBuild: string | null;
-  /** Null when a visual exploration does not have an engine scenario ID. */
+  /**
+  Null when a visual exploration does not have an engine scenario ID.
+  */
   readonly scenarioId: string | null;
   readonly configHash: string | null;
-  /** Null when the visual browser session has no reproducible game RNG seed. */
+  /**
+  Null when the visual browser session has no reproducible game RNG seed.
+  */
   readonly seed: string | null;
-  /** Hash of the adapter's initial RNG state; null means unobserved. */
+  /**
+  Hash of the adapter's initial RNG state; null means unobserved.
+  */
   readonly rngInitialStateHash: string | null;
   readonly rngAlgorithm: string | null;
   readonly rngVersion: string | null;
@@ -108,20 +124,28 @@ export interface PlaytestEpisodeIdentity {
   readonly observationSchemaHash: string | null;
   readonly actionSchemaHash: string | null;
   readonly eventSchemaHash: string | null;
-  /** Null for visual sessions that did not negotiate the engine JSON-RPC protocol. */
+  /**
+  Null for visual sessions that did not negotiate the engine JSON-RPC protocol.
+  */
   readonly protocolVersion: 1 | null;
   readonly runtimeVersion: string;
   readonly environmentHash: string;
 }
 
-/** Why Runtime stopped and, when recorded, the zero-based trace step. */
+/**
+Why Runtime stopped and, when recorded, the zero-based trace step.
+*/
 export interface PlaytestEpisodeTermination {
   readonly reason: PlaytestEpisodeTerminationReason;
-  /** Loop-guard stops point at their unexecuted decision; other stops may be null. */
+  /**
+  Loop-guard stops point at their unexecuted decision; other stops may be null.
+  */
   readonly step: number | null;
 }
 
-/** One step-indexed decision record; full trace bytes live in bounded artifacts. */
+/**
+One step-indexed decision record; full trace bytes live in bounded artifacts.
+*/
 export interface PlaytestEpisodeStep {
   readonly step: number;
   readonly revisionBefore: number;
@@ -135,7 +159,9 @@ export interface PlaytestEpisodeStep {
   readonly authoritativeOutcome: PlaytestJsonValue | null;
   readonly eventRefs: readonly PlaytestEvidenceLocator[];
   readonly frameRef: PlaytestEvidenceLocator | null;
-  /** Full-state/RNG point captured before this action; null when unsupported. */
+  /**
+  Full-state/RNG point captured before this action; null when unsupported.
+  */
   readonly checkpoint: PlaytestCheckpointDigest | null;
   readonly simulationWallMs: number | null;
   readonly logicalTicks: number | null;
@@ -153,7 +179,9 @@ export interface PlaytestEpisodeStep {
   }[];
 }
 
-/** Durable proof chain for one same-stream counterfactual episode. */
+/**
+Durable proof chain for one same-stream counterfactual episode.
+*/
 export interface PlaytestBranchLineage extends PlaytestAssignmentBranch {
   readonly replayTransitionHash: string;
   readonly snapshotArtifact: PlaytestArtifactReference | null;
@@ -164,26 +192,36 @@ export interface PlaytestBranchLineage extends PlaytestAssignmentBranch {
   readonly continuationPolicyVersion: string;
 }
 
-/** Indexed episode summary. Full traces/media remain external bounded artifacts. */
+/**
+Indexed episode summary. Full traces/media remain external bounded artifacts.
+*/
 export interface PlaytestEpisode {
   readonly schema: typeof PLAYTESTS_EPISODE_SCHEMA;
   readonly episodeId: string;
   readonly revision: number;
   readonly batchId: string;
   /**
-   * Batch-local frozen assignment this episode executed. Null only for
-   * history recorded before assignment manifests existed.
-   */
+  Batch-local frozen assignment this episode executed. Null only for
+  history recorded before assignment manifests existed.
+  */
   readonly assignmentId: string | null;
   readonly branchLineage: PlaytestBranchLineage | null;
-  /** Frozen execution mode and source/build facts; no mode is inferred at display time. */
+  /**
+  Frozen execution mode and source/build facts; no mode is inferred at display time.
+  */
   readonly executionProvenance: PlaytestExecutionProvenance;
-  /** Explicit player-authored report state, or absent for migrated history. */
+  /**
+  Explicit player-authored report state, or absent for migrated history.
+  */
   readonly playerDebrief: PlaytestPlayerDebriefV1;
   readonly identity: PlaytestEpisodeIdentity;
-  /** Null for URL-only visual sessions with no asserted engine scenario family. */
+  /**
+  Null for URL-only visual sessions with no asserted engine scenario family.
+  */
   readonly scenarioFamily: string | null;
-  /** Null when no validated player cohort was assigned to this episode. */
+  /**
+  Null when no validated player cohort was assigned to this episode.
+  */
   readonly policyCohort: string | null;
   readonly strategy: string;
   readonly status: PlaytestEpisodeState;
@@ -194,7 +232,9 @@ export interface PlaytestEpisode {
   readonly replayStatus: PlaytestReplayStatus;
   readonly trace: PlaytestEvidenceLocator | null;
   readonly frames: readonly PlaytestEvidenceLocator[];
-  /** Bounded animated highlight GIFs synthesized from recorded step frames. */
+  /**
+  Bounded animated highlight GIFs synthesized from recorded step frames.
+  */
   readonly highlightClips?: readonly PlaytestHighlightClip[];
   readonly stepCount: number;
   readonly metrics: readonly PlaytestNumericResult[];
@@ -210,7 +250,9 @@ export interface PlaytestEpisode {
   readonly missingReasons: readonly PlaytestMissingReason[];
 }
 
-/** Adapter-only episode facts required by confirmatory metrics and replay. */
+/**
+Adapter-only episode facts required by confirmatory metrics and replay.
+*/
 export type PlaytestAdapterEpisode = PlaytestEpisode & {
   readonly executionProvenance: PlaytestEpisode["executionProvenance"] & {
     readonly mode: "adapter-accelerated";
@@ -219,7 +261,9 @@ export type PlaytestAdapterEpisode = PlaytestEpisode & {
   readonly policyCohort: string;
 };
 
-/** Visual-only episode facts required by the discovery evidence contract. */
+/**
+Visual-only episode facts required by the discovery evidence contract.
+*/
 export type PlaytestVisualEpisode = PlaytestEpisode & {
   readonly executionProvenance: PlaytestEpisode["executionProvenance"] & {
     readonly mode: "autonomous-visual";
@@ -227,12 +271,12 @@ export type PlaytestVisualEpisode = PlaytestEpisode & {
 };
 
 /**
- * Assignment result returned by the live run owner. `state` is Runtime's
- * execution/episode disposition; `gameOutcome` is the game's separately
- * classified result. A missing episode has no game outcome, while a persisted
- * episode may explicitly report `unknown`. This projection is not stored in
- * the batch artifact: persisted episodes own game outcomes.
- */
+Assignment result returned by the live run owner. `state` is Runtime's
+execution/episode disposition; `gameOutcome` is the game's separately
+classified result. A missing episode has no game outcome, while a persisted
+episode may explicitly report `unknown`. This projection is not stored in
+the batch artifact: persisted episodes own game outcomes.
+*/
 export interface PlaytestRunAssignmentOutcome extends PlaytestAssignmentOutcome {
   readonly gameOutcome: PlaytestGameOutcomeKind | null;
 }
@@ -263,7 +307,9 @@ export type PlaytestCoverageCellStatus =
   | "covered"
   | "insufficient";
 
-/** One frozen mechanic × phase × scenario × cohort × policy × modality cell. */
+/**
+One frozen mechanic × phase × scenario × cohort × policy × modality cell.
+*/
 export interface PlaytestCoverageManifestCell {
   readonly coverageMetricId: string;
   readonly metricVersion: number;
@@ -286,13 +332,17 @@ export interface PlaytestCoverageManifestCell {
   readonly observedOpportunities: number;
   readonly eligibleOpportunities: number;
   readonly missingOpportunities: number;
-  /** Null when identities cannot be proven additive across episode rows. */
+  /**
+  Null when identities cannot be proven additive across episode rows.
+  */
   readonly observedIndependentUnits: number | null;
   readonly missingReasons: readonly PlaytestMissingReason[];
   readonly status: PlaytestCoverageCellStatus;
 }
 
-/** Content-addressed coverage plan and observed batch counts. */
+/**
+Content-addressed coverage plan and observed batch counts.
+*/
 export interface PlaytestCoverageManifest {
   readonly schema: typeof PLAYTESTS_COVERAGE_MANIFEST_SCHEMA;
   readonly workspaceId: string;
@@ -308,7 +358,9 @@ export interface PlaytestCoverageManifest {
   readonly contentHash: string;
 }
 
-/** Shared indexed/lifecycle fields for one execution-mode batch. */
+/**
+Shared indexed/lifecycle fields for one execution-mode batch.
+*/
 interface PlaytestBatchBase {
   readonly schema: typeof PLAYTESTS_BATCH_SCHEMA;
   readonly batchId: string;
@@ -318,7 +370,9 @@ interface PlaytestBatchBase {
   readonly policyIds: readonly string[];
   readonly cohortIds: readonly string[];
   readonly scenarioIds: readonly string[];
-  /** Null only when assignment inventory is unavailable/legacy; frozen batches use [] when none are terminally unobserved. */
+  /**
+  Null only when assignment inventory is unavailable/legacy; frozen batches use [] when none are terminally unobserved.
+  */
   readonly unobservedAssignments: readonly PlaytestAssignmentOutcome[] | null;
   readonly reviewPackets: readonly PlaytestReviewPacketReceipt[];
   readonly reviewReceipts: readonly PlaytestReviewReceipt[];
@@ -343,7 +397,9 @@ interface PlaytestBatchBase {
   readonly spanIds: readonly string[];
 }
 
-/** Workspace-scoped adapter batch; engine/build identity is mandatory. */
+/**
+Workspace-scoped adapter batch; engine/build identity is mandatory.
+*/
 export interface PlaytestAdapterBatch extends PlaytestBatchBase {
   readonly executionMode: "adapter-accelerated";
   readonly repository: string;
@@ -356,7 +412,9 @@ export interface PlaytestAdapterBatch extends PlaytestBatchBase {
   readonly eventSchemaHash: string | null;
   readonly protocolVersion: 1;
   readonly assignmentInventory: PlaytestAdapterBatchAssignmentInventory;
-  /** Null only for legacy records or incomplete historical runs. */
+  /**
+  Null only for legacy records or incomplete historical runs.
+  */
   readonly coverageManifest: PlaytestCoverageManifest | null;
   readonly reviewSelection: PlaytestBatchReviewSelection;
   readonly provenance: Omit<PlaytestProvenance, "buildSha"> & {
@@ -364,7 +422,9 @@ export interface PlaytestAdapterBatch extends PlaytestBatchBase {
   };
 }
 
-/** Workspace-scoped rendered-UI batch; unavailable engine facts stay null. */
+/**
+Workspace-scoped rendered-UI batch; unavailable engine facts stay null.
+*/
 export interface PlaytestVisualBatch extends PlaytestBatchBase {
   readonly executionMode: "autonomous-visual";
   readonly repository: null;
@@ -402,10 +462,14 @@ export type PlaytestAdapterBatchAssignmentInventory =
       readonly reason: "recorded-before-assignment-manifests";
     };
 
-/** Exactly one measured execution mode per batch; no mixed source facts. */
+/**
+Exactly one measured execution mode per batch; no mixed source facts.
+*/
 export type PlaytestBatch = PlaytestAdapterBatch | PlaytestVisualBatch;
 
-/** Immutable benchmark contract for a comparable build cohort. */
+/**
+Immutable benchmark contract for a comparable build cohort.
+*/
 export interface PlaytestBenchmark {
   readonly benchmarkId: string;
   readonly version: number;
@@ -441,17 +505,19 @@ export interface PlaytestBenchmark {
   readonly createdAt: string;
   readonly createdBy: string;
   /**
-   * Frozen benchmark cohort weight vector. Drives the §10/§11 mix-shift
-   * gate so per-cohort observations are standardized against a single
-   * canonical distribution instead of the build's sample mix.
-   * Cohort keys are unique non-empty IDs; weights are finite positive
-   * numbers summing to 1.0 within the canonical hash tolerance.
-   */
+  Frozen benchmark cohort weight vector. Drives the §10/§11 mix-shift
+  gate so per-cohort observations are standardized against a single
+  canonical distribution instead of the build's sample mix.
+  Cohort keys are unique non-empty IDs; weights are finite positive
+  numbers summing to 1.0 within the canonical hash tolerance.
+  */
   readonly cohortWeights: Readonly<Record<string, number>>;
   readonly contentHash: string;
 }
 
-/** Canonical frozen experiment manifest; no moving branch is an approved treatment. */
+/**
+Canonical frozen experiment manifest; no moving branch is an approved treatment.
+*/
 export interface PlaytestExperiment {
   readonly schema: typeof PLAYTESTS_EXPERIMENT_SCHEMA;
   readonly experimentId: string;
@@ -462,8 +528,8 @@ export interface PlaytestExperiment {
   readonly falsifier: string;
   readonly alternativeExplanations: readonly string[];
   readonly benchmarkId: string;
-  readonly baseline: PlaytestVersionedRef;
-  readonly treatment: PlaytestVersionedRef;
+  readonly baseline: PlaytestVersionedReference;
+  readonly treatment: PlaytestVersionedReference;
   readonly approvalId: string | null;
   readonly exposureUnit: "episode" | "learner" | "participant" | "cluster";
   readonly allocationSeed: string;
@@ -501,7 +567,9 @@ export interface PlaytestEvidenceTraceEvent {
   readonly revision: number;
 }
 
-/** Strictly player-visible, Runtime-projected trace step supplied to critique. */
+/**
+Strictly player-visible, Runtime-projected trace step supplied to critique.
+*/
 export interface PlaytestEvidenceTraceStep {
   readonly step: number;
   readonly phaseId: string | null;
@@ -551,7 +619,9 @@ export interface PlaytestEvidenceOmittedArtifact {
     | "step-not-selected";
 }
 
-/** Target-owned metric semantics supplied with the exact session evidence. */
+/**
+Target-owned metric semantics supplied with the exact session evidence.
+*/
 export interface PlaytestEvidenceMetricIntentV2 {
   readonly metricId: string;
   readonly version: number;
@@ -566,7 +636,9 @@ export interface PlaytestEvidenceMetricIntentV2 {
   readonly eventFields: readonly string[];
 }
 
-/** Metric intent fields needed to pool only semantically additive rows. */
+/**
+Metric intent fields needed to pool only semantically additive rows.
+*/
 export interface PlaytestEvidenceMetricIntent extends PlaytestEvidenceMetricIntentV2 {
   readonly analysisUnit:
     "episode" | "decision" | "cohort" | "learner-identity" | "participant";
@@ -578,7 +650,9 @@ export interface PlaytestEvidenceMetricIntent extends PlaytestEvidenceMetricInte
     | "descriptive";
 }
 
-/** Numeric-only source projection for one sibling episode in a packet. */
+/**
+Numeric-only source projection for one sibling episode in a packet.
+*/
 export interface PlaytestEvidenceCrossSessionMetric {
   readonly metricId: string;
   readonly metricVersion: number | string;
@@ -592,7 +666,9 @@ export interface PlaytestEvidenceCrossSessionMetric {
   readonly unit: string;
 }
 
-/** Player-visible and evaluator-backed summary for a cited sibling episode. */
+/**
+Player-visible and evaluator-backed summary for a cited sibling episode.
+*/
 export interface PlaytestEvidenceCrossSessionEpisode {
   readonly workspaceId: string;
   readonly batchId: string;
@@ -611,7 +687,9 @@ export interface PlaytestEvidenceCrossSessionEpisode {
   readonly metrics: readonly PlaytestEvidenceCrossSessionMetric[];
 }
 
-/** Deterministic selected context; the inclusion probability is conditional on this recorded inventory. */
+/**
+Deterministic selected context; the inclusion probability is conditional on this recorded inventory.
+*/
 export type PlaytestEvidenceCrossSessionContext =
   | {
       readonly status: "included";
@@ -629,7 +707,9 @@ export type PlaytestEvidenceCrossSessionContext =
       readonly eligibleSessions: 0;
     };
 
-/** Shared immutable fields across persisted packet versions. */
+/**
+Shared immutable fields across persisted packet versions.
+*/
 export interface PlaytestEvidencePacketFields {
   readonly packetId: string;
   readonly workspaceId: string;
@@ -668,30 +748,40 @@ export interface PlaytestEvidencePacketFields {
   readonly modelRevision: string | null;
   readonly promptHash: string | null;
   readonly measurementVersion: string;
-  /** Conservative UTF-8 byte upper bound on model tokens for this packet. */
+  /**
+  Conservative UTF-8 byte upper bound on model tokens for this packet.
+  */
   readonly tokenBudget: number;
   readonly generatedAt: string;
 }
 
-/** Persisted schema-v1 packets remain readable with cross-session context absent. */
+/**
+Persisted schema-v1 packets remain readable with cross-session context absent.
+*/
 export interface PlaytestEvidencePacketV1 extends PlaytestEvidencePacketFields {
   readonly schema: typeof PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1;
 }
 
-/** New bounded packet with a deterministic sample of sibling episode summaries. */
+/**
+New bounded packet with a deterministic sample of sibling episode summaries.
+*/
 export interface PlaytestEvidencePacketV2 extends PlaytestEvidencePacketFields {
   readonly schema: typeof PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V2;
   readonly crossSessionContext: PlaytestEvidenceCrossSessionContext;
 }
 
-/** New packets freeze aggregation semantics alongside each metric intent. */
+/**
+New packets freeze aggregation semantics alongside each metric intent.
+*/
 export interface PlaytestEvidencePacketV3 extends PlaytestEvidencePacketFields {
   readonly schema: typeof PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V3;
   readonly metricIntent: readonly PlaytestEvidenceMetricIntent[];
   readonly crossSessionContext: PlaytestEvidenceCrossSessionContext;
 }
 
-/** Current packets preserve the episode's exact execution/source provenance. */
+/**
+Current packets preserve the episode's exact execution/source provenance.
+*/
 export interface PlaytestEvidencePacketV4 extends PlaytestEvidencePacketFields {
   readonly schema: typeof PLAYTESTS_EVIDENCE_PACKET_SCHEMA;
   readonly metricIntent: readonly PlaytestEvidenceMetricIntent[];
@@ -699,28 +789,38 @@ export interface PlaytestEvidencePacketV4 extends PlaytestEvidencePacketFields {
   readonly executionProvenance: PlaytestExecutionProvenance;
 }
 
-/** Readable packet history; new builders create only schema v4 packets. */
+/**
+Readable packet history; new builders create only schema v4 packets.
+*/
 export type PlaytestEvidencePacket =
   | PlaytestEvidencePacketV1
   | PlaytestEvidencePacketV2
   | PlaytestEvidencePacketV3
   | PlaytestEvidencePacketV4;
 
-/** JSON media type used by Runtime's content-addressed packet artifact store. */
+/**
+JSON media type used by Runtime's content-addressed packet artifact store.
+*/
 export const PLAYTESTS_EVIDENCE_PACKET_MEDIA_TYPE =
   "application/vnd.autodev.playtest-evidence-packet+json" as const;
-/** JSON media type for the separately typed, unscored discovery packet. */
+/**
+JSON media type for the separately typed, unscored discovery packet.
+*/
 export const PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MEDIA_TYPE =
   "application/vnd.autodev.playtest-discovery-evidence-packet+json" as const;
 
-/** Versioned analyst review; facts, interpretations and human outcomes stay separate. */
+/**
+Versioned analyst review; facts, interpretations and human outcomes stay separate.
+*/
 export interface PlaytestSessionReview {
   readonly schema: typeof PLAYTESTS_SESSION_REVIEW_SCHEMA;
   readonly reviewId: string;
   readonly version: number;
   readonly episodeId: string;
   readonly supersedes: string | null;
-  /** Null only for migrated reviews predating frozen analyst input packets. */
+  /**
+  Null only for migrated reviews predating frozen analyst input packets.
+  */
   readonly evidencePacket: PlaytestEvidencePacketReference | null;
   readonly authorRole: "playtest-analyst";
   readonly authorId: string;
@@ -748,19 +848,25 @@ export interface PlaytestSessionReview {
   readonly notes: string;
 }
 
-/** Workspace-owned stored packet reference embedded in the immutable review. */
+/**
+Workspace-owned stored packet reference embedded in the immutable review.
+*/
 export interface PlaytestEvidencePacketReference {
   readonly packetId: string;
   readonly artifact: PlaytestArtifactReference;
 }
 
-/** Workspace-owned discovery packet artifact; never a confirmatory packet. */
+/**
+Workspace-owned discovery packet artifact; never a confirmatory packet.
+*/
 export interface PlaytestDiscoveryEvidencePacketReference {
   readonly packetId: string;
   readonly artifact: PlaytestArtifactReference;
 }
 
-/** Persisted hypothesis-only analyst output for one visual discovery episode. */
+/**
+Persisted hypothesis-only analyst output for one visual discovery episode.
+*/
 export interface PlaytestDiscoverySessionReview {
   readonly schema: typeof PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA;
   readonly analysisKind: "discovery";
@@ -805,21 +911,27 @@ export interface PlaytestDiscoverySessionReview {
   readonly status: "hypothesis" | "not observed";
 }
 
-/** Evidence citation tied to the exact session packet used in a batch synthesis. */
+/**
+Evidence citation tied to the exact session packet used in a batch synthesis.
+*/
 export interface PlaytestCrossSessionEvidenceRef {
   readonly episodeId: string;
   readonly packetId: string;
   readonly locator: PlaytestEvidenceLocator;
 }
 
-/** One cross-session theme; this is always a hypothesis, never verification. */
+/**
+One cross-session theme; this is always a hypothesis, never verification.
+*/
 export interface PlaytestCrossSessionClaim {
   readonly kind: "pattern" | "counterexample" | "confounder";
   readonly text: string;
   readonly evidenceRefs: readonly PlaytestCrossSessionEvidenceRef[];
 }
 
-/** Falsifiable follow-up grounded in one or more contributing session packets. */
+/**
+Falsifiable follow-up grounded in one or more contributing session packets.
+*/
 export interface PlaytestCrossSessionExperiment {
   readonly hypothesis: string;
   readonly falsifier: string;
@@ -835,7 +947,9 @@ export interface PlaytestCrossSessionMetricPacketRef {
   readonly packetId: string;
 }
 
-/** A descriptive pooled ratio over one exact measurement stratum. */
+/**
+A descriptive pooled ratio over one exact measurement stratum.
+*/
 export interface PlaytestCrossSessionMetricAggregate {
   readonly metricId: string;
   readonly metricVersion: number | string;
@@ -856,7 +970,9 @@ export interface PlaytestCrossSessionMetricAggregate {
   readonly policyVersion: string;
   readonly cohort: string;
   readonly observationMode: "headless" | "browser" | "native-visual";
-  /** Indices into the aggregation's canonical, episode-sorted sourcePackets list. */
+  /**
+  Indices into the aggregation's canonical, episode-sorted sourcePackets list.
+  */
   readonly sourcePacketIndices: readonly number[];
   readonly sessionCount: number;
   readonly numerator: number;
@@ -866,7 +982,9 @@ export interface PlaytestCrossSessionMetricAggregate {
   readonly missingReasons: readonly PlaytestMissingReason[];
   readonly estimate: number | null;
   readonly coverage: number | null;
-  /** Learner/participant/cluster identity is intentionally not summed. */
+  /**
+  Learner/participant/cluster identity is intentionally not summed.
+  */
   readonly independentUnits: number | null;
 }
 
@@ -899,15 +1017,17 @@ export interface PlaytestCrossSessionMetricAggregationFields {
     | null;
 }
 
-/** Runtime/Core computed from the exact frozen packets, never model-authored. */
+/**
+Runtime/Core computed from the exact frozen packets, never model-authored.
+*/
 export interface PlaytestCrossSessionMetricAggregation extends PlaytestCrossSessionMetricAggregationFields {
   readonly schema: "autodev-playtest-cross-session-metric-aggregation-v1";
 }
 
 /**
- * Immutable, separately-owned synthesis across selected session packets.
- * It cannot be confused with a single-session review or claim verification.
- */
+Immutable, separately-owned synthesis across selected session packets.
+It cannot be confused with a single-session review or claim verification.
+*/
 export interface PlaytestCrossSessionSynthesis {
   readonly schema: typeof PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA;
   readonly synthesisId: string;
@@ -927,14 +1047,18 @@ export interface PlaytestCrossSessionSynthesis {
     readonly batchId: string;
     readonly packetId: string;
   }[];
-  /** Every packet id allowed into the analysis, including packets not cited. */
+  /**
+  Every packet id allowed into the analysis, including packets not cited.
+  */
   readonly packetEligibleEpisodeIds: readonly string[];
   readonly metricAggregation: PlaytestCrossSessionMetricAggregation;
   readonly claims: readonly PlaytestCrossSessionClaim[];
   readonly experiments: readonly PlaytestCrossSessionExperiment[];
 }
 
-/** Instrument identities accepted by the consented human-study import path. */
+/**
+Instrument identities accepted by the consented human-study import path.
+*/
 export const PLAYTESTS_HUMAN_INSTRUMENTS = [
   "miniPXI",
   "PXI",
@@ -943,13 +1067,15 @@ export const PLAYTESTS_HUMAN_INSTRUMENTS = [
 export type PlaytestHumanInstrument =
   (typeof PLAYTESTS_HUMAN_INSTRUMENTS)[number];
 
-/** Frozen, game/build-specific plan for a separate A/B preference question. */
+/**
+Frozen, game/build-specific plan for a separate A/B preference question.
+*/
 export interface PlaytestHumanPreferencePlan {
   readonly analysisPlanRef: string;
   readonly questionVersion: string;
   readonly questionHash: string;
-  readonly buildA: PlaytestVersionedRef;
-  readonly buildB: PlaytestVersionedRef;
+  readonly buildA: PlaytestVersionedReference;
+  readonly buildB: PlaytestVersionedReference;
   readonly maximumExclusionRate: number;
   readonly practicalMargin: number;
   readonly minimumIndependentParticipants: number;
@@ -962,18 +1088,26 @@ export interface PlaytestHumanPreferencePlan {
   };
 }
 
-/** Approved human study metadata; participant identity stays in its consent owner. */
+/**
+Approved human study metadata; participant identity stays in its consent owner.
+*/
 export interface HumanPlaytestStudy {
   readonly schema: typeof PLAYTESTS_HUMAN_STUDY_SCHEMA;
   readonly studyId: string;
   readonly version: number;
   readonly workspaceId: string;
   readonly benchmarkId: string;
-  /** Exact immutable builds permitted for this study's exposures. */
-  readonly allowedBuilds: readonly PlaytestVersionedRef[];
-  /** Optional separate post-play preference plan; never an instrument item. */
+  /**
+  Exact immutable builds permitted for this study's exposures.
+  */
+  readonly allowedBuilds: readonly PlaytestVersionedReference[];
+  /**
+  Optional separate post-play preference plan; never an instrument item.
+  */
   readonly preferencePlan?: PlaytestHumanPreferencePlan;
-  /** Hash of the operator-approved item→construct map for full PXI, otherwise null. */
+  /**
+  Hash of the operator-approved item→construct map for full PXI, otherwise null.
+  */
   readonly pxiItemConstructMappingHash: string | null;
   readonly instrument: PlaytestHumanInstrument;
   readonly instrumentVersion: string;
@@ -994,7 +1128,9 @@ export interface HumanPlaytestStudy {
   readonly createdAt: string;
 }
 
-/** Consent-scoped response item; raw free-text/direct identity are not stored here. */
+/**
+Consent-scoped response item; raw free-text/direct identity are not stored here.
+*/
 export interface HumanExperienceResponse {
   readonly studyId: string;
   readonly responseId: string;
@@ -1006,7 +1142,7 @@ export interface HumanExperienceResponse {
   readonly instrument: PlaytestHumanInstrument;
   readonly instrumentVersion: string;
   readonly instrumentHash: string;
-  readonly build: PlaytestVersionedRef;
+  readonly build: PlaytestVersionedReference;
   readonly episodeId: string;
   readonly exposureStartedAt: string;
   readonly exposureEndedAt: string;
@@ -1018,7 +1154,9 @@ export interface HumanExperienceResponse {
   readonly withdrawn: boolean;
 }
 
-/** Human-data-grounded policy validity; absent human samples remain unvalidated. */
+/**
+Human-data-grounded policy validity; absent human samples remain unvalidated.
+*/
 export interface PlayerPolicyValidity {
   readonly workspaceId: string;
   readonly buildSha: string;
@@ -1040,7 +1178,9 @@ export interface PlayerPolicyValidity {
   readonly createdAt: string;
 }
 
-/** Blinded repeat/second-judge validation for an exact measurement version. */
+/**
+Blinded repeat/second-judge validation for an exact measurement version.
+*/
 export interface PlaytestJudgeValidation {
   readonly validationId: string;
   readonly workspaceId: string;
@@ -1210,7 +1350,9 @@ export const PLAYTEST_HIGHLIGHT_REASONS = [
 export type PlaytestHighlightReason =
   (typeof PLAYTEST_HIGHLIGHT_REASONS)[number];
 
-/** Bounded animated GIF clip highlighting an important playtest sequence. */
+/**
+Bounded animated GIF clip highlighting an important playtest sequence.
+*/
 export interface PlaytestHighlightClip {
   readonly id: string;
   readonly mediaType: typeof PLAYTEST_HIGHLIGHT_MEDIA_TYPE;
@@ -1242,7 +1384,9 @@ const HIGHLIGHT_CLIP_KEYS = [
 const MAX_HIGHLIGHT_TITLE_LENGTH = 160;
 const MAX_HIGHLIGHT_ID_LENGTH = 256;
 
-/** Core validation for episode highlight GIF clip descriptors. */
+/**
+Core validation for episode highlight GIF clip descriptors.
+*/
 export function assertPlaytestHighlightClips(
   value: unknown
 ): asserts value is readonly PlaytestHighlightClip[] {
@@ -1348,7 +1492,9 @@ export function assertPlaytestHighlightClips(
   }
 }
 
-/** Core validation for a game-owned, player-visible observation allowlist. */
+/**
+Core validation for a game-owned, player-visible observation allowlist.
+*/
 export function assertPlaytestObservationContract(
   value: unknown
 ): asserts value is PlaytestObservationContract {

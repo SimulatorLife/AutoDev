@@ -168,8 +168,8 @@ function resolveGithubRuntimeBinding(
     );
   }
 
-  const [owner, repo, extraSegment] = repository.split("/");
-  if (!owner || !repo || extraSegment !== undefined) {
+  const [owner, repository_, extraSegment] = repository.split("/", 3);
+  if (!owner || !repository_ || extraSegment !== undefined) {
     return unavailable(
       "invalid",
       `Invalid repository identifier format: "${repository}". Expected "owner/repo".`
@@ -179,7 +179,7 @@ function resolveGithubRuntimeBinding(
   return {
     available: true,
     owner,
-    repo,
+    repo: repository_,
     repository,
     token,
     unavailableWorkflows
@@ -229,10 +229,12 @@ function projectGithubWorkflows(
   const runsByWorkflowPath = new Map<string, GithubWorkflowRun[]>();
   for (const run of snapshot.runs) {
     addToIndex(runsByWorkflowId, run.workflowId, run);
-    if (run.workflowPath) {
-      addToIndex(runsByWorkflowPath, run.workflowPath, run);
-      addToIndex(runsByWorkflowPath, path.basename(run.workflowPath), run);
+    if (!run.workflowPath) {
+      continue;
     }
+
+    addToIndex(runsByWorkflowPath, run.workflowPath, run);
+    addToIndex(runsByWorkflowPath, path.basename(run.workflowPath), run);
   }
 
   const workflows = definitions.map((definition) => {
@@ -262,17 +264,17 @@ function projectGithubWorkflows(
 }
 
 /**
- * Observed GitHub Actions workflow *definitions* parsed from
- * `.github/workflows/*.yml` along with authoritative read-only GitHub Actions
- * runtime state and bounded recent run statistics.
- *
- * Runtime Control API owns authentication and validates configured
- * AUTODEV_GITHUB_REPOSITORY (or standard runner GITHUB_REPOSITORY). Public
- * repositories may be read without a GitHub token; private repositories need
- * a server-side AUTODEV_GITHUB_TOKEN with read-only Actions permission.
- * Returns an explicit unavailable/invalid state when configuration or API
- * access is absent/invalid.
- */
+Observed GitHub Actions workflow *definitions* parsed from
+`.github/workflows/*.yml` along with authoritative read-only GitHub Actions
+runtime state and bounded recent run statistics.
+
+Runtime Control API owns authentication and validates configured
+AUTODEV_GITHUB_REPOSITORY (or standard runner GITHUB_REPOSITORY). Public
+repositories may be read without a GitHub token; private repositories need
+a server-side AUTODEV_GITHUB_TOKEN with read-only Actions permission.
+Returns an explicit unavailable/invalid state when configuration or API
+access is absent/invalid.
+*/
 export async function githubWorkflowsView(
   repositoryRoot?: string,
   options: GithubWorkflowsViewOptions = {}

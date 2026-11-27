@@ -14,9 +14,11 @@ interface FetchStub {
   restore(): void;
 }
 
-/** Replace the global fetch so a probe can be exercised without a socket. */
+/**
+Replace the global fetch so a probe can be exercised without a socket.
+*/
 function stubFetch(respond: (url: string) => unknown): FetchStub {
-  const original = globalThis.fetch;
+  const original = fetch;
   const calls: FetchCall[] = [];
   globalThis.fetch = (async (input: unknown, init: RequestInit = {}) => {
     const url = String(input);
@@ -115,10 +117,10 @@ test("a cancelled caller does not start a health request", async () => {
 });
 
 test("a health probe refuses redirects and cancels its unread body", async () => {
-  let cancelled = false;
+  let isCancelled = false;
   const body = new ReadableStream({
     cancel() {
-      cancelled = true;
+      isCancelled = true;
     }
   });
   const stub = stubFetch(() => new Response(body));
@@ -128,7 +130,7 @@ test("a health probe refuses redirects and cancels its unread body", async () =>
     });
     assert.equal(await probe(), true);
     assert.equal(stub.calls[0]?.init.redirect, "error");
-    assert.equal(cancelled, true);
+    assert.equal(isCancelled, true);
   } finally {
     stub.restore();
   }

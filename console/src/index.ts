@@ -1,11 +1,11 @@
 export * from "./components/charts/BarChart.ts";
 export * from "./components/filters/FilterBar.ts";
 /**
- * Public Console component/utility surface.
- *
- * The URL-addressable shell components are server-renderable and use native
- * anchor links. The legacy client-side section-switching wrapper was removed.
- */
+Public Console component/utility surface.
+
+The URL-addressable shell components are server-renderable and use native
+anchor links. The legacy client-side section-switching wrapper was removed.
+*/
 
 export * from "./components/cards/StatCard.ts";
 export * from "./components/code/CodeBlock.ts";

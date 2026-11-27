@@ -1,14 +1,14 @@
 /**
- * Deterministic fixture evaluators for the four §1 measurement-contract
- * metrics: legal-action rejection, competitive-choice-share, repeat-forecast
- * error, and native miniPXI ENJ aggregation.
- *
- * Every evaluator is a pure function over an explicit event array. None
- * executes an arbitrary expression, calls out to an LLM, or imputes a value
- * for a genuinely missing input. Coverage, missing counts and missing
- * reasons are always reported alongside the estimate so a caller cannot
- * read a partial-coverage ratio as a complete one.
- */
+Deterministic fixture evaluators for the four §1 measurement-contract
+metrics: legal-action rejection, competitive-choice-share, repeat-forecast
+error, and native miniPXI ENJ aggregation.
+
+Every evaluator is a pure function over an explicit event array. None
+executes an arbitrary expression, calls out to an LLM, or imputes a value
+for a genuinely missing input. Coverage, missing counts and missing
+reasons are always reported alongside the estimate so a caller cannot
+read a partial-coverage ratio as a complete one.
+*/
 
 import { makePlaytestProvenance } from "./registry.ts";
 import {
@@ -21,7 +21,9 @@ import {
   PLAYTESTS_MINIPXI_ENJ_MIN
 } from "./types.ts";
 
-/** One fresh advertised legal-action request/response pair. */
+/**
+One fresh advertised legal-action request/response pair.
+*/
 export interface LegalActionRequestEvent {
   readonly requestId: string;
   readonly offeredIds: readonly string[];
@@ -32,12 +34,12 @@ export interface LegalActionRequestEvent {
 }
 
 /**
- * fixture/legal-rejection-v1 — numerator: fresh advertised legal requests the
- * engine rejected; denominator: all fresh advertised legal requests. A
- * request is "fresh" only when its expectedRevision matches currentRevision;
- * a stale request (revision drift) is excluded from both numerator and
- * denominator rather than silently counted as a rejection or an acceptance.
- */
+fixture/legal-rejection-v1 — numerator: fresh advertised legal requests the
+engine rejected; denominator: all fresh advertised legal requests. A
+request is "fresh" only when its expectedRevision matches currentRevision;
+a stale request (revision drift) is excluded from both numerator and
+denominator rather than silently counted as a rejection or an acceptance.
+*/
 export function evaluateLegalActionRejection(
   workspaceId: string,
   measurementVersion: string,
@@ -89,10 +91,14 @@ export function evaluateLegalActionRejection(
   };
 }
 
-/** One decision's full alternative-reward evaluation under a frozen plan. */
+/**
+One decision's full alternative-reward evaluation under a frozen plan.
+*/
 export interface CompetitiveChoiceDecisionEvent {
   readonly decisionId: string;
-  /** Present only when every legal alternative was evaluated under the frozen plan. */
+  /**
+  Present only when every legal alternative was evaluated under the frozen plan.
+  */
   readonly rewards: readonly number[] | null;
   readonly complete: boolean;
 }
@@ -100,13 +106,13 @@ export interface CompetitiveChoiceDecisionEvent {
 const COMPETITIVE_CHOICE_WINDOW = 0.05;
 
 /**
- * fixture/competitive-options-v1 — numerator: eligible decisions (complete
- * reward evaluation) with at least two actions within 0.05 of the best
- * expected reward; denominator: decisions with all legal alternatives
- * evaluated under a frozen continuation/RNG plan. An incomplete decision
- * (fork-unsupported or partial-alternatives) is excluded from both and
- * reported as missing — never counted as a zero.
- */
+fixture/competitive-options-v1 — numerator: eligible decisions (complete
+reward evaluation) with at least two actions within 0.05 of the best
+expected reward; denominator: decisions with all legal alternatives
+evaluated under a frozen continuation/RNG plan. An incomplete decision
+(fork-unsupported or partial-alternatives) is excluded from both and
+reported as missing — never counted as a zero.
+*/
 export function evaluateCompetitiveChoiceShare(
   workspaceId: string,
   measurementVersion: string,
@@ -160,24 +166,28 @@ export function evaluateCompetitiveChoiceShare(
   };
 }
 
-/** One revisited-rule prediction after visible feedback. */
+/**
+One revisited-rule prediction after visible feedback.
+*/
 export interface RepeatForecastProbeEvent {
   readonly ruleId: string;
   readonly expected: unknown;
   readonly actual: unknown;
   readonly beforeAction: boolean;
   readonly feedbackVisible: boolean;
-  /** True when the rule outcome is stochastic without a declared probability target. */
+  /**
+  True when the rule outcome is stochastic without a declared probability target.
+  */
   readonly stochasticWithoutTarget?: boolean;
 }
 
 /**
- * fixture/repeated-error-v1 — numerator: wrong preregistered deterministic
- * consequence predictions after visible feedback; denominator: eligible
- * revisits after visible feedback. A probe missing its before-action
- * commitment, missing feedback, or stochastic without a declared probability
- * target is excluded from both and reported as missing.
- */
+fixture/repeated-error-v1 — numerator: wrong preregistered deterministic
+consequence predictions after visible feedback; denominator: eligible
+revisits after visible feedback. A probe missing its before-action
+commitment, missing feedback, or stochastic without a declared probability
+target is excluded from both and reported as missing.
+*/
 export function evaluateRepeatForecastError(
   workspaceId: string,
   measurementVersion: string,
@@ -258,14 +268,18 @@ function deepEqual(a: unknown, b: unknown): boolean {
   return false;
 }
 
-/** One native miniPXI ENJ item response before aggregation. */
+/**
+One native miniPXI ENJ item response before aggregation.
+*/
 export interface MiniPxiEnjResponseEvent {
   readonly respondentId: string;
   readonly nativeValue: number | null;
   readonly missingReason?: PlaytestMissingReason;
 }
 
-/** Preserve the official native miniPXI response category without rescaling. */
+/**
+Preserve the official native miniPXI response category without rescaling.
+*/
 export function categorizeMiniPxiEnjValue(
   value: number
 ): PlaytestMiniPxiCategory {
@@ -280,11 +294,11 @@ export function categorizeMiniPxiEnjValue(
 }
 
 /**
- * fixture/minipxi-enj-v1 — mean of valid native ENJ responses (−3..+3),
- * respondent count, missing count/reasons and category distribution. The
- * mean is reported in the native Likert unit; it is never rescaled into a
- * 0-4 rubric category.
- */
+fixture/minipxi-enj-v1 — mean of valid native ENJ responses (−3..+3),
+respondent count, missing count/reasons and category distribution. The
+mean is reported in the native Likert unit; it is never rescaled into a
+0-4 rubric category.
+*/
 export function aggregateMiniPxiEnj(
   workspaceId: string,
   measurementVersion: string,

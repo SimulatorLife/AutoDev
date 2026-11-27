@@ -1,11 +1,11 @@
 /**
- * Canonical batch-run contract: one ordered, bounded assignment inventory per
- * server-generated batch, deterministic aggregate denominators, and the
- * frozen surveillance/discovery critique selection built from that inventory.
- *
- * Pure and infrastructure-free. Runtime executes assignments and computes the
- * SHA-256 of {@link playtestAssignmentManifestHashInput}; Data re-verifies it.
- */
+Canonical batch-run contract: one ordered, bounded assignment inventory per
+server-generated batch, deterministic aggregate denominators, and the
+frozen surveillance/discovery critique selection built from that inventory.
+
+Pure and infrastructure-free. Runtime executes assignments and computes the
+SHA-256 of {@link playtestAssignmentManifestHashInput}; Data re-verifies it.
+*/
 
 import { assertWorkspaceVisualPlaytestLimits } from "../workspaces/visual-playtesting.ts";
 import type {
@@ -40,24 +40,28 @@ import {
 } from "./types.ts";
 import { isPlaytestVisualPolicyId } from "./visual-decision.ts";
 
-/** First-milestone bound: one batch freezes at most 1,000 assignments. */
+/**
+First-milestone bound: one batch freezes at most 1,000 assignments.
+*/
 export const PLAYTESTS_MAX_BATCH_ASSIGNMENTS = 1000;
 
-/** First-milestone maximum complete sessions reviewed per batch. */
+/**
+First-milestone maximum complete sessions reviewed per batch.
+*/
 export const PLAYTESTS_MAX_BATCH_REVIEW_SESSIONS = 40;
 
 /**
- * Bound on one explicit Console analyst dispatch. It cannot exceed the
- * preregistered per-batch critique ceiling.
- */
+Bound on one explicit Console analyst dispatch. It cannot exceed the
+preregistered per-batch critique ceiling.
+*/
 export const PLAYTESTS_MAX_ANALYSIS_SESSIONS =
   PLAYTESTS_MAX_BATCH_REVIEW_SESSIONS;
 
 /**
- * Prepared cross-session MCP reads return complete packets in one response;
- * keep that transport bound separate from Console dispatch, which returns
- * packet identifiers and lets the analyst read packets one at a time.
- */
+Prepared cross-session MCP reads return complete packets in one response;
+keep that transport bound separate from Console dispatch, which returns
+packet identifiers and lets the analyst read packets one at a time.
+*/
 export const PLAYTESTS_MAX_CROSS_SESSION_PACKET_SESSIONS = 16;
 export const PLAYTESTS_MAX_ASSIGNMENT_MANIFEST_BYTES = 256 * 1024;
 export const PLAYTESTS_ASSIGNMENT_ID_PATTERN =
@@ -79,10 +83,10 @@ function isText(value: unknown, maximum = MAX_ASSIGNMENT_TEXT): boolean {
 }
 
 /**
- * Reject malformed, oversized, duplicate-ID or duplicate-content inventories.
- * Identical seed text under different policies/scenarios is a valid paired
- * design; an exact repeated (scenario, policy, version, seed) cell is not.
- */
+Reject malformed, oversized, duplicate-ID or duplicate-content inventories.
+Identical seed text under different policies/scenarios is a valid paired
+design; an exact repeated (scenario, policy, version, seed) cell is not.
+*/
 export function assertPlaytestBatchAssignments(
   assignments: readonly PlaytestBatchAssignment[],
   allowUnresolvedCohorts = false
@@ -144,7 +148,9 @@ export function assertPlaytestBatchAssignments(
   }
 }
 
-/** Require every assignment cell to belong to the frozen target benchmark. */
+/**
+Require every assignment cell to belong to the frozen target benchmark.
+*/
 export function assertPlaytestAssignmentsMatchBenchmark(
   assignments: readonly PlaytestBatchAssignment[],
   benchmark: PlaytestBenchmark
@@ -179,11 +185,11 @@ export function assertPlaytestAssignmentsMatchBenchmark(
 }
 
 /**
- * Runtime-owned persisted episode identity: unique per frozen batch
- * assignment. A game's own episode id is only its protocol handle -- games may
- * derive it from the seed, so it repeats across builds and batches and must
- * never key persisted evidence.
- */
+Runtime-owned persisted episode identity: unique per frozen batch
+assignment. A game's own episode id is only its protocol handle -- games may
+derive it from the seed, so it repeats across builds and batches and must
+never key persisted evidence.
+*/
 export function playtestEpisodeRecordId(
   batchId: string,
   assignmentId: string
@@ -191,10 +197,14 @@ export function playtestEpisodeRecordId(
   return batchId + "." + assignmentId;
 }
 
-/** The prefix every batch id carries, which an episode id does not repeat. */
+/**
+The prefix every batch id carries, which an episode id does not repeat.
+*/
 const BATCH_ID_PREFIX_PATTERN = /^batch-/u;
 
-/** Stable visual episode ID shared by Runtime execution and live Watch links. */
+/**
+Stable visual episode ID shared by Runtime execution and live Watch links.
+*/
 export function playtestVisualEpisodeRecordId(
   batchId: string,
   assignmentId: string
@@ -207,7 +217,9 @@ export function playtestVisualEpisodeRecordId(
   );
 }
 
-/** Canonical hash projection; excludes only contentHash. */
+/**
+Canonical hash projection; excludes only contentHash.
+*/
 export function playtestAssignmentManifestHashInput(
   manifest: PlaytestAssignmentManifestDraft
 ): string {
@@ -216,7 +228,9 @@ export function playtestAssignmentManifestHashInput(
   return canonicalPlaytestJson(hashable);
 }
 
-/** Structural manifest validation; callers separately verify the SHA-256. */
+/**
+Structural manifest validation; callers separately verify the SHA-256.
+*/
 export function assertPlaytestAssignmentManifest(
   value: unknown
 ): asserts value is PlaytestAssignmentManifest {
@@ -246,7 +260,7 @@ export function assertPlaytestAssignmentManifest(
 function assertAdapterAssignmentManifest(
   manifest: Record<string, unknown>
 ): void {
-  const keys = [
+  const keys = new Set([
     "schema",
     "mode",
     "batchId",
@@ -258,10 +272,10 @@ function assertAdapterAssignmentManifest(
     "createdAt",
     "assignments",
     "contentHash"
-  ];
+  ]);
   if (
-    Object.keys(manifest).length !== keys.length ||
-    Object.keys(manifest).some((key) => !keys.includes(key)) ||
+    Object.keys(manifest).length !== keys.size ||
+    Object.keys(manifest).some((key) => !keys.has(key)) ||
     manifest.schema !== PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA ||
     !isText(manifest.batchId, 128) ||
     !isText(manifest.workspaceId) ||
@@ -286,7 +300,7 @@ function assertAdapterAssignmentManifest(
 function assertVisualAssignmentManifest(
   manifest: Record<string, unknown>
 ): void {
-  const keys = [
+  const keys = new Set([
     "schema",
     "mode",
     "batchId",
@@ -303,14 +317,14 @@ function assertVisualAssignmentManifest(
     "createdAt",
     "assignments",
     "contentHash"
-  ];
+  ]);
   const origin =
     typeof manifest.targetOrigin === "string"
       ? approvedOrigin(manifest.targetOrigin)
       : null;
   if (
-    Object.keys(manifest).length !== keys.length ||
-    Object.keys(manifest).some((key) => !keys.includes(key)) ||
+    Object.keys(manifest).length !== keys.size ||
+    Object.keys(manifest).some((key) => !keys.has(key)) ||
     manifest.schema !== PLAYTESTS_VISUAL_ASSIGNMENT_MANIFEST_SCHEMA ||
     !isText(manifest.batchId, 128) ||
     !isText(manifest.workspaceId) ||
@@ -358,10 +372,10 @@ function assertVisualAssignmentManifest(
       throw new TypeError("Visual batch assignment is malformed.");
     }
     const current = assignment as Record<string, unknown>;
-    const assignmentKeys = ["assignmentId", "ordinal", "maxSteps"];
+    const assignmentKeys = new Set(["assignmentId", "ordinal", "maxSteps"]);
     if (
-      Object.keys(current).length !== assignmentKeys.length ||
-      Object.keys(current).some((key) => !assignmentKeys.includes(key)) ||
+      Object.keys(current).length !== assignmentKeys.size ||
+      Object.keys(current).some((key) => !assignmentKeys.has(key)) ||
       typeof current.assignmentId !== "string" ||
       !PLAYTESTS_ASSIGNMENT_ID_PATTERN.test(current.assignmentId) ||
       ids.has(current.assignmentId) ||
@@ -414,9 +428,9 @@ function approvedOrigin(value: string): string | null {
 }
 
 /**
- * Nine batch denominators from terminal assignment outcomes. Unfinished
- * assignments count only as assigned; instrumentation gaps are never losses.
- */
+Nine batch denominators from terminal assignment outcomes. Unfinished
+assignments count only as assigned; instrumentation gaps are never losses.
+*/
 export function playtestBatchCountsFromAssignments(input: {
   readonly assignmentCount: number;
   readonly outcomes: readonly PlaytestAssignmentOutcome[];
@@ -456,10 +470,10 @@ export function playtestBatchCountsFromAssignments(input: {
 }
 
 /**
- * Terminal batch execution state. Game crashes and losses complete a batch;
- * cancellation/revocation, an aborted owner or an all-infrastructure failure
- * do not. Budget truncation is preserved as truncated.
- */
+Terminal batch execution state. Game crashes and losses complete a batch;
+cancellation/revocation, an aborted owner or an all-infrastructure failure
+do not. Budget truncation is preserved as truncated.
+*/
 export function playtestBatchTerminalState(input: {
   readonly assignmentCount: number;
   readonly outcomes: readonly PlaytestAssignmentOutcome[];
@@ -480,7 +494,9 @@ export function playtestBatchTerminalState(input: {
   return "completed";
 }
 
-/** Batch-stable selection seed derived only from the frozen inventory hash. */
+/**
+Batch-stable selection seed derived only from the frozen inventory hash.
+*/
 export function playtestReviewSelectionSeed(inventoryHash: string): string {
   if (!SHA256_PATTERN.test(inventoryHash)) {
     throw new TypeError("Review selection requires a frozen inventory hash.");
@@ -488,7 +504,9 @@ export function playtestReviewSelectionSeed(inventoryHash: string): string {
   return "review-selection:" + inventoryHash;
 }
 
-/** Outcome stratum: completed sessions split by game outcome; others by state. */
+/**
+Outcome stratum: completed sessions split by game outcome; others by state.
+*/
 export function playtestReviewOutcomeKey(
   state: PlaytestAssignmentTerminalState,
   outcome: PlaytestGameOutcomeKind
@@ -496,7 +514,9 @@ export function playtestReviewOutcomeKey(
   return state === "completed" ? "completed:" + outcome : state;
 }
 
-/** One reviewable session (assignment with a persisted episode). */
+/**
+One reviewable session (assignment with a persisted episode).
+*/
 export interface PlaytestReviewCandidate {
   readonly assignmentId: string;
   readonly episodeId: string;
@@ -640,23 +660,23 @@ function discoverySelection(input: {
 }
 
 /**
- * Freeze the per-batch critique selection: seeded surveillance within policy x
- * scenario x outcome strata (with inclusion probabilities), then discovery
- * ranked only by the named, versioned evaluator signal over the remaining
- * sessions. Surveillance IDs are excluded before discovery.
- */
+Freeze the per-batch critique selection: seeded surveillance within policy x
+scenario x outcome strata (with inclusion probabilities), then discovery
+ranked only by the named, versioned evaluator signal over the remaining
+sessions. Surveillance IDs are excluded before discovery.
+*/
 export function selectPlaytestBatchReviews(
   input: PlaytestReviewSelectionInput
 ): PlaytestReviewSelection {
   const reviewCap = Math.min(input.maxReviewedSessions, input.critiqueBudget);
   if (
-    ![
+    [
       input.maxReviewedSessions,
       input.critiqueBudget,
       input.surveillanceSessions,
       input.discoverySessions,
       input.unreviewableAssignments
-    ].every((value) => Number.isSafeInteger(value) && value >= 0) ||
+    ].some((value) => !Number.isSafeInteger(value) || !(value >= 0)) ||
     input.surveillanceSessions + input.discoverySessions >
       input.maxReviewedSessions ||
     input.maxReviewedSessions > input.critiqueBudget
@@ -766,7 +786,9 @@ export function selectPlaytestBatchReviews(
   };
 }
 
-/** Distinct policy x scenario cells known before execution (outcome unknown). */
+/**
+Distinct policy x scenario cells known before execution (outcome unknown).
+*/
 export function playtestAssignmentStrataLowerBound(
   assignments: readonly PlaytestBatchAssignment[]
 ): number {

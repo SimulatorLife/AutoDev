@@ -348,7 +348,7 @@ function readers(overrides: Partial<OverviewReaders> = {}) {
   const gate = Promise.withResolvers<void>();
   const slow =
     <A extends unknown[], R>(name: keyof typeof calls, value: () => R) =>
-    async (..._args: A): Promise<Awaited<R>> => {
+    async (..._arguments: A): Promise<Awaited<R>> => {
       calls[name] += 1;
       started.push(name);
       if (started.length === 4) gate.resolve();

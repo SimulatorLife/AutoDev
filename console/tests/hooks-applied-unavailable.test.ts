@@ -7,20 +7,20 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { HooksView } from "../src/features/hooks/HooksView.ts";
 
 /**
- * A read that failed says why.
- *
- * The hooks page makes two reads: the canonical declaration and the
- * projection the Runtime published. They answer different questions, so one
- * of them failing says nothing about the other -- and the page keeps the
- * declaration when the projection cannot be read, which is right. What was
- * wrong was the silence: the applied section said "could not be read" and
- * nothing else, so an operator was left with a gap on the page and no
- * explanation for it, while the declaration's own failure says exactly what
- * went wrong.
- *
- * The reason is the failure's own vocabulary: the Control API's code and its
- * message, the same pair the resource-level failure renders.
- */
+A read that failed says why.
+
+The hooks page makes two reads: the canonical declaration and the
+projection the Runtime published. They answer different questions, so one
+of them failing says nothing about the other -- and the page keeps the
+declaration when the projection cannot be read, which is right. What was
+wrong was the silence: the applied section said "could not be read" and
+nothing else, so an operator was left with a gap on the page and no
+explanation for it, while the declaration's own failure says exactly what
+went wrong.
+
+The reason is the failure's own vocabulary: the Control API's code and its
+message, the same pair the resource-level failure renders.
+*/
 
 const DECLARATION = {
   event: "preToolUse" as const,
@@ -41,7 +41,7 @@ function renderHooks(appliedUnavailable?: {
       validationIssues: [],
       revision: "a".repeat(64),
       applied: null,
-      ...(appliedUnavailable === undefined ? {} : { appliedUnavailable }),
+      ...(appliedUnavailable !== undefined && { appliedUnavailable }),
       sourceText: null
     })
   );

@@ -1,31 +1,31 @@
 /**
- * Unit and contract tests for the OpenLIT generic dashboard variables.
- *
- * Verifies:
- *   1. Variable translation contract:
- *      - Unknown scope/source/signal rejected (returns null)
- *      - Invalid attribute key rejected (returns null)
- *      - All / empty selection returns null (no filter predicate added)
- *      - Single-value selection produces typed OpenLITQuery { op: "eq", value: ... }
- *      - Multi-value selection produces typed OpenLITQuery { op: "in", value: [...] }
- *      - Per-widget scope override: re-binds an opted-in variable to a
- *        different AttributeScope (e.g. span -> resource) at query time,
- *        validates the override against the signal's allowed scopes, fails
- *        closed on invalid scope, and never mutates the board spec.
- *      - applyDashboardVariables binds to structured query filters and honors widget opt-in
- *      - URL parameter serialization/deserialization (dashboard_var_*)
- *   2. Static patch verification:
- *      - Patch 01 declares typed DashboardVariableSpec surface
- *      - Structured query path is used (no string interpolation into SQL)
- *      - Real UI surface is wired:
- *        * DashboardVariableSelector mounted in dashboard-view.tsx
- *        * DashboardVariableEditor mounted in Dialog in dashboard-view.tsx
- *        * WidgetOptInEditor mounted in edit-widget-sheet.tsx
- *        * Dynamic candidate loading via /api/manage-dashboard/variables/distinct-values
- *      - Dashboard persistence round-trip through getBoardLayout and updateBoardLayout
- *        (ClickHouse OPENLIT_BOARD_TABLE_NAME.variables)
- *      - Patch 02 wires /autodev pages, proxy, and sidebar without leaking secrets
- */
+Unit and contract tests for the OpenLIT generic dashboard variables.
+
+Verifies:
+  1. Variable translation contract:
+     - Unknown scope/source/signal rejected (returns null)
+     - Invalid attribute key rejected (returns null)
+     - All / empty selection returns null (no filter predicate added)
+     - Single-value selection produces typed OpenLITQuery { op: "eq", value: ... }
+     - Multi-value selection produces typed OpenLITQuery { op: "in", value: [...] }
+     - Per-widget scope override: re-binds an opted-in variable to a
+       different AttributeScope (e.g. span -> resource) at query time,
+       validates the override against the signal's allowed scopes, fails
+       closed on invalid scope, and never mutates the board spec.
+     - applyDashboardVariables binds to structured query filters and honors widget opt-in
+     - URL parameter serialization/deserialization (dashboard_var_*)
+  2. Static patch verification:
+     - Patch 01 declares typed DashboardVariableSpec surface
+     - Structured query path is used (no string interpolation into SQL)
+     - Real UI surface is wired:
+       * DashboardVariableSelector mounted in dashboard-view.tsx
+       * DashboardVariableEditor mounted in Dialog in dashboard-view.tsx
+       * WidgetOptInEditor mounted in edit-widget-sheet.tsx
+       * Dynamic candidate loading via /api/manage-dashboard/variables/distinct-values
+     - Dashboard persistence round-trip through getBoardLayout and updateBoardLayout
+       (ClickHouse OPENLIT_BOARD_TABLE_NAME.variables)
+     - Patch 02 wires /autodev pages, proxy, and sidebar without leaking secrets
+*/
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -110,19 +110,14 @@ function resolveVariableScope(
 function variableToFilter(
   spec: DashboardVariableSpec,
   selection: string[] | undefined,
-  opts: { scopeOverride?: AttributeScope } = {}
+  options: { scopeOverride?: AttributeScope } = {}
 ): NormalizedFilter | null {
-  if (
-    !VALID_SIGNALS.has(spec.signal) ||
+  if (!VALID_SIGNALS.has(spec.signal) ||
     !bindingIsValid(spec.signal, spec.scope) ||
-    !ATTRIBUTE_KEY_PATTERN.test(spec.key)
-  ) {
+    !ATTRIBUTE_KEY_PATTERN.test(spec.key) || !Array.isArray(selection) || selection.length === 0) {
     return null;
   }
-  if (!Array.isArray(selection) || selection.length === 0) {
-    return null;
-  }
-  const effectiveScope = resolveVariableScope(spec, opts.scopeOverride);
+  const effectiveScope = resolveVariableScope(spec, options.scopeOverride);
   if (effectiveScope === null) return null;
   if (spec.multi && selection.length > 1) {
     return {
@@ -160,17 +155,17 @@ function applyDashboardVariables(
   query: NormalizedQueryLike,
   specs: DashboardVariableSpec[],
   state: Pick<DashboardVariableState, "values">,
-  opts: {
+  options: {
     widgetOptIn?: DashboardVariableOptIn;
     scopeOverrides?: Record<string, AttributeScope>;
   } = {}
 ): NormalizedQueryLike {
   const applicableSpecs = specs.filter((spec) =>
-    matchesDashboardVariable(spec, query.signal, opts.widgetOptIn)
+    matchesDashboardVariable(spec, query.signal, options.widgetOptIn)
   );
   const additions = applicableSpecs.reduce<NormalizedFilter[]>(
     (filters, spec) => {
-      const scopeOverride = opts.scopeOverrides?.[spec.id];
+      const scopeOverride = options.scopeOverrides?.[spec.id];
       const filter = variableToFilter(
         spec,
         state.values[spec.id],
@@ -207,27 +202,27 @@ function parseVariableSelection(raw: string | null): string[] {
     .filter((v) => v.length > 0);
 }
 
-function variablesToSearchParams(
+function variablesToSearchParameters(
   state: Pick<DashboardVariableState, "values">
 ): URLSearchParams {
-  const params = new URLSearchParams();
+  const parameters = new URLSearchParams();
   for (const [id, values] of Object.entries(state.values)) {
-    params.set(
+    parameters.set(
       `${DASHBOARD_VARIABLE_URL_PREFIX}${id}`,
       serializeVariableSelection(values)
     );
   }
-  return params;
+  return parameters;
 }
 
-function readVariablesFromSearchParams(
-  params: URLSearchParams | Record<string, string | string[] | undefined>
+function readVariablesFromSearchParameters(
+  parameters: URLSearchParams | Record<string, string | string[] | undefined>
 ): Record<string, string[]> {
   const out: Record<string, string[]> = {};
   const entries =
-    params instanceof URLSearchParams
-      ? Array.from(params.entries())
-      : Object.entries(params);
+    parameters instanceof URLSearchParams
+      ? Array.from(parameters.entries())
+      : Object.entries(parameters);
   for (const [key, raw] of entries) {
     if (!key.startsWith(DASHBOARD_VARIABLE_URL_PREFIX)) continue;
     const id = key.slice(DASHBOARD_VARIABLE_URL_PREFIX.length);
@@ -570,11 +565,11 @@ test("variable URL state serialization and parsing", () => {
     source: "url"
   };
 
-  const params = variablesToSearchParams(state);
-  assert.equal(params.get("dashboard_var_env"), "prod,staging");
-  assert.equal(params.get("dashboard_var_tier"), "*");
+  const parameters = variablesToSearchParameters(state);
+  assert.equal(parameters.get("dashboard_var_env"), "prod,staging");
+  assert.equal(parameters.get("dashboard_var_tier"), "*");
 
-  const parsed = readVariablesFromSearchParams(params);
+  const parsed = readVariablesFromSearchParameters(parameters);
   assert.deepEqual(parsed.env, ["prod", "staging"]);
   assert.deepEqual(parsed.tier, []);
 });
@@ -726,7 +721,7 @@ test("patch 01 wires a real dashboard variable UI surface", () => {
   );
   assert.doesNotMatch(
     patch,
-    /spec\.allowedValues\s*\+[\s`]*SELECT|\$\{.*spec\.key[^\n\r}\u2028\u2029]*\}.*FROM/u,
+    /spec\.allowedValues\s*\+[\s`]*SELECT|\$\{.*spec\.key[^\n\r}\u{2028}\u{2029}]*\}.*FROM/u,
     "patch must not concatenate allowedValues / spec.key into a SQL string"
   );
 });

@@ -32,12 +32,12 @@ type FakeAdapter = {
 };
 
 /**
- * A controllable fake adapter: the test pushes raw bytes into stdout/
- * stderr to simulate the far side of the pipe, and reads whatever the
- * client wrote to stdin back out as parsed JSON-RPC envelopes. This lets
- * tests exercise exact byte-level framing (partial lines, oversized lines,
- * malformed JSON) without a real process.
- */
+A controllable fake adapter: the test pushes raw bytes into stdout/
+stderr to simulate the far side of the pipe, and reads whatever the
+client wrote to stdin back out as parsed JSON-RPC envelopes. This lets
+tests exercise exact byte-level framing (partial lines, oversized lines,
+malformed JSON) without a real process.
+*/
 function fakeAdapter(): FakeAdapter {
   const stdout = new PassThrough();
   const stderr = new PassThrough();
@@ -73,7 +73,9 @@ function fakeAdapter(): FakeAdapter {
   };
 }
 
-/** Write one JSON-RPC envelope as one LF-terminated line on the fake stdout. */
+/**
+Write one JSON-RPC envelope as one LF-terminated line on the fake stdout.
+*/
 function send(adapter: FakeAdapter, envelope: Record<string, unknown>): void {
   adapter.stdout.write(JSON.stringify(envelope) + "\n");
 }
@@ -282,7 +284,7 @@ test("outstanding request ceiling: the 33rd concurrent request is rejected with 
   await negotiated;
 
   const pending: Promise<unknown>[] = [];
-  for (let i = 0; i < 32; i += 1) {
+  for (let index = 0; index < 32; index += 1) {
     pending.push(
       client.call("game.observe", {
         episodeId: "fixture-episode-1",

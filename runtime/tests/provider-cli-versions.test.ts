@@ -34,20 +34,20 @@ test("the version is read from the output shapes the CLIs actually print", () =>
 test("a provider's CLI is named by the command an operator would type", () => {
   // The resolver only reports a CLI that is there to be run, so the paths
   // point at an executable that exists rather than at one that does not.
-  const env = {
+  const environment = {
     CLAUDE_BIN: process.execPath,
     AGY_CLI_PATH: process.execPath
   } as NodeJS.ProcessEnv;
-  assert.equal(providerCliCommand("claude", env)?.command, "claude");
-  assert.equal(providerCliCommand("claude", env)?.program, process.execPath);
+  assert.equal(providerCliCommand("claude", environment)?.command, "claude");
+  assert.equal(providerCliCommand("claude", environment)?.program, process.execPath);
   // Every Antigravity provider is served by the one agy CLI.
   for (const provider of [
     "antigravity-gemini",
     "antigravity-argon",
     "antigravity-claude-gpt"
   ]) {
-    assert.equal(providerCliCommand(provider, env)?.command, "agy");
-    assert.equal(providerCliCommand(provider, env)?.program, process.execPath);
+    assert.equal(providerCliCommand(provider, environment)?.command, "agy");
+    assert.equal(providerCliCommand(provider, environment)?.program, process.execPath);
   }
   // The name of each provider's CLI is known whether or not the CLI is
   // installed, so a provider whose CLI is missing is still named.
@@ -58,16 +58,16 @@ test("a provider's CLI is named by the command an operator would type", () => {
   assert.equal(providerCliName("opencli-gemini"), "opencli");
   // A provider that is not served by a local CLI has none.
   assert.equal(providerCliName("not-a-provider"), null);
-  assert.equal(providerCliCommand("not-a-provider", env), null);
+  assert.equal(providerCliCommand("not-a-provider", environment), null);
 });
 
 test("a CLI that is not installed has no command to run", () => {
   // An empty PATH and a home with no install: the CLI is not on this machine.
-  const env = { PATH: "", HOME: "/nonexistent-home" } as NodeJS.ProcessEnv;
-  assert.equal(providerCliCommand("claude", env), null);
-  assert.equal(providerCliCommand("antigravity-gemini", env), null);
-  assert.equal(providerCliCommand("minimax", env), null);
-  assert.equal(providerCliCommand("copilot", env), null);
+  const environment = { PATH: "", HOME: "/nonexistent-home" } as NodeJS.ProcessEnv;
+  assert.equal(providerCliCommand("claude", environment), null);
+  assert.equal(providerCliCommand("antigravity-gemini", environment), null);
+  assert.equal(providerCliCommand("minimax", environment), null);
+  assert.equal(providerCliCommand("copilot", environment), null);
 });
 
 test("the version read is the version the CLI printed", async () => {
@@ -151,9 +151,7 @@ test("the service reports the version it read and the reason for the one it coul
       args: []
     }),
     capture: (command) =>
-      command.command === "codex"
-        ? Promise.resolve({ ok: true, version: "0.154.0" })
-        : Promise.resolve({
+      Promise.resolve(command.command === "codex" ? { ok: true, version: "0.154.0" } : {
             ok: false,
             reason: "The claude CLI did not report a version."
           })

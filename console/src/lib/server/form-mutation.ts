@@ -1,16 +1,18 @@
-/** Same-origin and bounded form parsing shared by server-side mutation routes. */
+/**
+Same-origin and bounded form parsing shared by server-side mutation routes.
+*/
 
 const CONTENT_LENGTH_PATTERN = /^\d+$/u;
 const FORM_CONTENT_TYPE = "application/x-www-form-urlencoded";
 
 /**
- * Whether this request carries a URL-encoded form body.
- *
- * The list is the one the bounded parser accepts, and it is named here so a
- * route that has to tell a form from a JSON body asks the same question the
- * parser answers. A route that answered it differently would parse a body the
- * parser refuses, or refuse a body it parses.
- */
+Whether this request carries a URL-encoded form body.
+
+The list is the one the bounded parser accepts, and it is named here so a
+route that has to tell a form from a JSON body asks the same question the
+parser answers. A route that answered it differently would parse a body the
+parser refuses, or refuse a body it parses.
+*/
 function isUrlEncodedFormRequest(request: Request): boolean {
   const contentType = (request.headers.get("content-type") ?? "")
     .trim()
@@ -23,14 +25,14 @@ function isUrlEncodedFormRequest(request: Request): boolean {
 }
 
 /**
- * A toggle's enabled field, when it names one.
- *
- * The value is three-valued on purpose: "true" and "false" are the two
- * answers a form can give, and anything else -- a missing field, a truncated
- * one, an unexpected value -- is not an answer at all. The caller refuses
- * such a submission rather than guessing which way the toggle was meant to
- * point.
- */
+A toggle's enabled field, when it names one.
+
+The value is three-valued on purpose: "true" and "false" are the two
+answers a form can give, and anything else -- a missing field, a truncated
+one, an unexpected value -- is not an answer at all. The caller refuses
+such a submission rather than guessing which way the toggle was meant to
+point.
+*/
 export function parseEnabled(raw: string | null): boolean | null {
   if (raw === "true") return true;
   if (raw === "false") return false;
@@ -57,8 +59,7 @@ export async function readStrictUrlEncodedFormBody(
   request: Request,
   maxBytes: number
 ): Promise<URLSearchParams | null> {
-  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) return null;
-  if (!isUrlEncodedFormRequest(request)) {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || !isUrlEncodedFormRequest(request)) {
     return null;
   }
 

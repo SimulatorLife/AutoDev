@@ -5,7 +5,7 @@ import type { QuotaAxiResponse } from "quota-axi";
 
 import {
   QUOTA_READ_INTERVAL_MS,
-  quotaAxiArgs,
+  quotaAxiArgs as quotaAxiArguments,
   QuotaPoll,
   type QuotaPollPlan
 } from "../src/router/quota-poll.ts";
@@ -55,7 +55,9 @@ const RATE_LIMITED_CLAUDE = provider("claude", {
 
 const FULL_READ: QuotaPollPlan = { providers: null, deferred: new Set() };
 
-/** A poll that has made one full read of `providers` at `at`. */
+/**
+A poll that has made one full read of `providers` at `at`.
+*/
 function pollAfterRead(
   providers: readonly QuotaProvider[],
   at = NOW,
@@ -235,13 +237,13 @@ test("a persisted record with unusable read times keeps only the usable ones", (
 test("a read that includes Claude reads it through Claude Code inference", () => {
   // The bridge's token lacks the profile scope the OAuth usage endpoint
   // needs, so quota-axi can read Claude only from an inference call.
-  assert.deepEqual(quotaAxiArgs(FULL_READ), [
+  assert.deepEqual(quotaAxiArguments(FULL_READ), [
     "--json",
     "--no-credential-refresh",
     "--allow-claude-inference"
   ]);
   assert.deepEqual(
-    quotaAxiArgs({
+    quotaAxiArguments({
       providers: ["claude", "codex"],
       deferred: new Set(["agy"])
     }),
@@ -257,7 +259,7 @@ test("a read that includes Claude reads it through Claude Code inference", () =>
 test("a read without Claude never asks for inference", () => {
   // quota-axi rejects the inference flag on a read that leaves Claude out.
   assert.deepEqual(
-    quotaAxiArgs({ providers: ["codex"], deferred: new Set(["claude"]) }),
+    quotaAxiArguments({ providers: ["codex"], deferred: new Set(["claude"]) }),
     ["--json", "--no-credential-refresh", "--provider=codex"]
   );
 });

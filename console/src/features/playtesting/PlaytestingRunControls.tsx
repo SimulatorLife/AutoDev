@@ -52,7 +52,9 @@ export type PlaytestingRunSetup =
       readonly message: string;
     };
 
-/** One editable, ordered set submitted through the canonical batch API. */
+/**
+One editable, ordered set submitted through the canonical batch API.
+*/
 interface RunSubmission {
   readonly workspaceId: string;
   readonly assignments: readonly {
@@ -529,7 +531,7 @@ function RunRequestForm({
                   candidate.scenarioId === assignment.scenarioId &&
                   candidate.policyId === assignment.policyId
               )!;
-              const duplicate = duplicateCells.has(
+              const isDuplicate = duplicateCells.has(
                 JSON.stringify([
                   assignment.scenarioId,
                   assignment.policyId,
@@ -669,7 +671,7 @@ function RunRequestForm({
                         }}
                       />
                     </label>
-                    {duplicate ? (
+                    {isDuplicate ? (
                       <p className="text-sm text-error" role="alert">
                         Scenario, policy, and seed must identify a unique
                         session in this batch.
@@ -769,7 +771,7 @@ export function playtestingRunSetupBlocker(setup: PlaytestingRunSetup): {
   return {
     label: firstReason?.label ?? "Adapter mode unavailable",
     message: readiness.reasons.map((reason) => reason.message).join(" "),
-    ...(firstReason === undefined ? {} : { code: firstReason.code })
+    ...(firstReason !== undefined && { code: firstReason.code })
   };
 }
 
@@ -890,13 +892,13 @@ function restorePendingLaunch(
       value.operation.kind !== "batch" ||
       !Array.isArray(value.operation.assignments) ||
       value.operation.assignments.length === 0 ||
-      !value.operation.assignments.every(
+      value.operation.assignments.some(
         (assignment) =>
-          isRecord(assignment) &&
-          typeof assignment.scenario === "string" &&
-          typeof assignment.policy === "string" &&
-          typeof assignment.seed === "string" &&
-          Number.isSafeInteger(assignment.maxSteps)
+          !isRecord(assignment) ||
+          typeof assignment.scenario !== "string" ||
+          typeof assignment.policy !== "string" ||
+          typeof assignment.seed !== "string" ||
+          !Number.isSafeInteger(assignment.maxSteps)
       )
     ) {
       return null;
@@ -1012,8 +1014,8 @@ function isStartedResponse(
     !Array.isArray(value.assignmentIds) ||
     value.assignmentIds.length !== value.assignmentCount ||
     new Set(value.assignmentIds).size !== value.assignmentIds.length ||
-    !value.assignmentIds.every(
-      (id) => typeof id === "string" && ASSIGNMENT_ID_PATTERN.test(id)
+    value.assignmentIds.some(
+      (id) => typeof id !== "string" || !ASSIGNMENT_ID_PATTERN.test(id)
     ) ||
     typeof value.createdAt !== "string" ||
     !Number.isFinite(Date.parse(value.createdAt)) ||
@@ -1037,8 +1039,8 @@ function withPlaytestLaunchLock<Result>(
   workspaceId: string | null,
   operation: () => Promise<Result>
 ): Promise<Result> {
-  if (!workspaceId || !globalThis.navigator.locks) return operation();
-  return globalThis.navigator.locks
+  if (!workspaceId || !navigator.locks) return operation();
+  return navigator.locks
     .request<Promise<Result>>(
       `autodev-playtest-launch:${workspaceId}`,
       { mode: "exclusive" },
@@ -1183,7 +1185,7 @@ async function submitPlaytestLaunch(input: {
   input.setNotice(null);
   try {
     if (input.storageKey) {
-      globalThis.localStorage.setItem(
+      localStorage.setItem(
         input.storageKey,
         JSON.stringify(launchRequest)
       );
@@ -1226,7 +1228,7 @@ async function submitPlaytestLaunch(input: {
     );
   } else {
     try {
-      globalThis.localStorage.setItem(
+      localStorage.setItem(
         LAST_ACCEPTED_LAUNCH_STORAGE_PREFIX +
           encodeURIComponent(capabilities.workspaceId),
         JSON.stringify({
@@ -1281,7 +1283,7 @@ async function beginPlaytestLaunch(input: {
     if (input.storageKey) {
       let saved: string | null;
       try {
-        saved = globalThis.localStorage.getItem(input.storageKey);
+        saved = localStorage.getItem(input.storageKey);
       } catch {
         input.setFailure(
           "This browser cannot check for an unresolved request in another tab; no launch was submitted."
@@ -1300,7 +1302,7 @@ async function beginPlaytestLaunch(input: {
         return;
       }
       try {
-        const marker = globalThis.localStorage.getItem(
+        const marker = localStorage.getItem(
           LAST_ACCEPTED_LAUNCH_STORAGE_PREFIX +
             encodeURIComponent(capabilities.workspaceId)
         );
@@ -1313,7 +1315,7 @@ async function beginPlaytestLaunch(input: {
             )
           : null;
         if (shared) {
-          globalThis.localStorage.setItem(
+          localStorage.setItem(
             input.storageKey,
             JSON.stringify(shared)
           );
@@ -1330,7 +1332,7 @@ async function beginPlaytestLaunch(input: {
     }
     const launchRequest: RecoverablePlaytestLaunchRequest = {
       ...launchPayload,
-      requestId: (input.requestIdRef.current ??= globalThis.crypto.randomUUID())
+      requestId: (input.requestIdRef.current ??= crypto.randomUUID())
     } as RecoverablePlaytestLaunchRequest;
     await input.submit(launchRequest);
   });
@@ -1423,13 +1425,13 @@ function pendingRunPanel(input: {
       : assignmentCount === 1
         ? "assignment"
         : "assignments";
-  const lookupPending = lookup?.state === "pending";
+  const isLookupPending = lookup?.state === "pending";
   const canDiscard =
     lookup?.state === "not-found" || lookup?.state === "expired";
   const retryLabel =
     lookup?.state === "not-found"
       ? "Retry same request"
-      : lookupPending
+      : isLookupPending
         ? "Resume same request"
         : "Check request status";
   return React.createElement(
@@ -1451,7 +1453,7 @@ function pendingRunPanel(input: {
       { className: MUTED_BODY_CLASS },
       `${String(assignmentCount)} ${countLabel} · request ${launch.requestId}`
     ),
-    lookupPending
+    isLookupPending
       ? React.createElement(
           "p",
           { className: MUTED_BODY_CLASS },
@@ -1474,13 +1476,13 @@ function pendingRunPanel(input: {
               variant: "primary",
               disabled: lookup?.state === "accepted",
               onClick:
-                lookup?.state === "not-found" || lookupPending
+                lookup?.state === "not-found" || isLookupPending
                   ? input.onRetry
                   : input.onRecover
             },
             retryLabel
           ),
-          lookupPending
+          isLookupPending
             ? React.createElement(
                 Button,
                 {
@@ -1543,7 +1545,7 @@ export function usePlaytestingLaunchRecovery({
   function clearPendingLaunch(): void {
     if (storageKey) {
       try {
-        globalThis.localStorage.removeItem(storageKey);
+        localStorage.removeItem(storageKey);
       } catch {
         // Browser storage can be unavailable; Runtime remains the authority.
       }
@@ -1567,7 +1569,7 @@ export function usePlaytestingLaunchRecovery({
       const restored = restorePendingLaunch(serialized, workspaceId);
       if (!restored) {
         try {
-          globalThis.localStorage.removeItem(storageKey);
+          localStorage.removeItem(storageKey);
         } catch {
           // Ignore corrupt, inaccessible local recovery data.
         }
@@ -1580,7 +1582,7 @@ export function usePlaytestingLaunchRecovery({
       );
     };
     try {
-      restore(globalThis.localStorage.getItem(storageKey));
+      restore(localStorage.getItem(storageKey));
     } catch {
       setNotice(
         "A previous request could not be restored. Check active runs before submitting another launch."
@@ -1741,7 +1743,7 @@ export function PlaytestingRunControls({
     onRunStarted
   });
   const unavailable = playtestingRunSetupBlocker(setup);
-  const adapterRunReady =
+  const isAdapterRunReady =
     capabilities?.modeReadiness["adapter-accelerated"].status === "ready" &&
     capabilities.runnableAssignments.length > 0;
 
@@ -1768,7 +1770,7 @@ export function PlaytestingRunControls({
     },
     blockedRunPanel(unavailable),
     capabilities &&
-      adapterRunReady &&
+      isAdapterRunReady &&
       launchRecovery.recoveryReady &&
       !launchRecovery.pendingLaunch
       ? React.createElement(RunRequestForm, {

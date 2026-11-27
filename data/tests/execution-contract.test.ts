@@ -10,13 +10,13 @@ import {
 } from "@simulatorlife/autodev-data";
 
 /**
- * The execution contract is read, never written.
- *
- * It is generated from the canonical role declarations, so the properties that
- * matter here are the ones a reader would get wrong: the global section and a
- * workspace's section are separate assignments rather than two views of one,
- * and a contract that cannot be read says so rather than reporting no roles.
- */
+The execution contract is read, never written.
+
+It is generated from the canonical role declarations, so the properties that
+matter here are the ones a reader would get wrong: the global section and a
+workspace's section are separate assignments rather than two views of one,
+and a contract that cannot be read says so rather than reporting no roles.
+*/
 
 function contractFile(contract: unknown): { path: string; revision: string } {
   const directory = mkdtempSync(join(tmpdir(), "autodev-contract-"));

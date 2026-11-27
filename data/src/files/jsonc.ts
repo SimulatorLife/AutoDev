@@ -1,15 +1,14 @@
+import { isRecord } from "@simulatorlife/autodev-core";
 import {
   parse as parseJsonc,
   type ParseError,
   printParseErrorCode
 } from "jsonc-parser";
 
-import { isRecord } from "@simulatorlife/autodev-core";
-
 /**
- * Parse a JSONC document into a plain JSON object using the established
- * `jsonc-parser` dependency, failing closed on syntax errors or non-object roots.
- */
+Parse a JSONC document into a plain JSON object using the established
+`jsonc-parser` dependency, failing closed on syntax errors or non-object roots.
+*/
 export function parseJsoncObject(
   content: string,
   label = "JSONC document"

@@ -1,14 +1,14 @@
 /**
- * Evidence locator/review/finding validation (measurement-contract §6).
- *
- * A review submission is only as trustworthy as its locators: this module
- * is the gate that stops a nonexistent event, an irrelevant-but-real event,
- * or a locator pointing at the wrong episode from ever becoming a
- * `supported` claim. Every validator here requires an explicit, queryable
- * "known evidence" index supplied by the caller (Runtime/Data own the real
- * store); Core never trusts a locator's shape alone as proof it resolves to
- * real, relevant data.
- */
+Evidence locator/review/finding validation (measurement-contract §6).
+
+A review submission is only as trustworthy as its locators: this module
+is the gate that stops a nonexistent event, an irrelevant-but-real event,
+or a locator pointing at the wrong episode from ever becoming a
+`supported` claim. Every validator here requires an explicit, queryable
+"known evidence" index supplied by the caller (Runtime/Data own the real
+store); Core never trusts a locator's shape alone as proof it resolves to
+real, relevant data.
+*/
 
 import type {
   PlaytestEvidencePacket,
@@ -23,40 +23,66 @@ import {
   type PlaytestReviewCompleteness
 } from "./types.ts";
 
-/** What the caller's evidence store can resolve a locator to. */
+/**
+What the caller's evidence store can resolve a locator to.
+*/
 export interface PlaytestKnownEvidenceIndex {
-  /** Episode ids that actually exist. */
+  /**
+  Episode ids that actually exist.
+  */
   readonly episodeIds: ReadonlySet<string>;
-  /** event locator id -> the episode it actually belongs to. */
+  /**
+  event locator id -> the episode it actually belongs to.
+  */
   readonly eventEpisodeOf: ReadonlyMap<string, string>;
-  /** event locator id -> the rule/mechanic it is actually relevant to. */
+  /**
+  event locator id -> the rule/mechanic it is actually relevant to.
+  */
   readonly eventRelevantRuleOf: ReadonlyMap<string, string>;
-  /** Review ids that actually exist. */
+  /**
+  Review ids that actually exist.
+  */
   readonly reviewIds: ReadonlySet<string>;
-  /** Finding ids that actually exist. */
+  /**
+  Finding ids that actually exist.
+  */
   readonly findingIds: ReadonlySet<string>;
-  /** Comparison ids that actually exist. */
+  /**
+  Comparison ids that actually exist.
+  */
   readonly comparisonIds: ReadonlySet<string>;
-  /** frame locator id -> the episode it actually belongs to. */
+  /**
+  frame locator id -> the episode it actually belongs to.
+  */
   readonly frameEpisodeOf: ReadonlyMap<string, string>;
 }
 
-/** Minimum prose needed for a new analyst report to be interpretable. */
+/**
+Minimum prose needed for a new analyst report to be interpretable.
+*/
 export const PLAYTEST_REVIEW_MIN_NARRATIVE_CHARACTERS = 16;
 export const PLAYTEST_REVIEW_MIN_NARRATIVE_WORDS = 3;
 const NARRATIVE_WORD_SEPARATOR = /\s+/u;
 
-/** One claim this evidence check is being asked to support/contradict. */
+/**
+One claim this evidence check is being asked to support/contradict.
+*/
 export interface PlaytestClaim {
   readonly claimId: string;
-  /** The rule/mechanic the claim is actually about. */
+  /**
+  The rule/mechanic the claim is actually about.
+  */
   readonly relevantRule: string;
-  /** The episode the claim is actually about. */
+  /**
+  The episode the claim is actually about.
+  */
   readonly episodeId: string;
   readonly evidenceRefs: readonly PlaytestEvidenceLocator[];
 }
 
-/** Per-claim verdict with a reason, not just a boolean. */
+/**
+Per-claim verdict with a reason, not just a boolean.
+*/
 export interface PlaytestClaimVerdict {
   readonly claimId: string;
   readonly verdict: PlaytestEvidenceVerdict;
@@ -120,19 +146,19 @@ function locatorEpisodeId(
 }
 
 /**
- * Validate a single claim's locators against the known evidence index and
- * return a verdict with reasons. Required adversarial cases (measurement-
- * contract §6) are each a distinct `reasons` entry so a caller can
- * distinguish them:
- *
- * - nonexistent event -> `insufficient`, reason names the missing locator.
- * - existing irrelevant event -> `insufficient`, reason names the mismatch.
- * - cited list containing the supposedly absent action -> caller-level
- *   semantic check (see `assertNoContradictingLocator` below); this
- *   function only validates existence/relevance, not the claim's logic.
- * - correct event with wrong rule -> `insufficient`, rule mismatch reason.
- * - wrong episode -> `insufficient`, episode mismatch reason.
- */
+Validate a single claim's locators against the known evidence index and
+return a verdict with reasons. Required adversarial cases (measurement-
+contract §6) are each a distinct `reasons` entry so a caller can
+distinguish them:
+
+- nonexistent event -> `insufficient`, reason names the missing locator.
+- existing irrelevant event -> `insufficient`, reason names the mismatch.
+- cited list containing the supposedly absent action -> caller-level
+  semantic check (see `assertNoContradictingLocator` below); this
+  function only validates existence/relevance, not the claim's logic.
+- correct event with wrong rule -> `insufficient`, rule mismatch reason.
+- wrong episode -> `insufficient`, episode mismatch reason.
+*/
 export function verifyPlaytestClaim(
   claim: PlaytestClaim,
   index: PlaytestKnownEvidenceIndex
@@ -145,7 +171,7 @@ export function verifyPlaytestClaim(
     };
   }
   const reasons: string[] = [];
-  let anySupporting = false;
+  let isAnySupporting = false;
   for (const locator of claim.evidenceRefs) {
     const locatorLabel = `${locator.kind}:${locator.id}`;
     if (!locatorExists(locator, index)) {
@@ -168,12 +194,12 @@ export function verifyPlaytestClaim(
         continue;
       }
     }
-    anySupporting = true;
+    isAnySupporting = true;
   }
-  if (anySupporting && reasons.length === 0) {
+  if (isAnySupporting && reasons.length === 0) {
     return { claimId: claim.claimId, verdict: "supported", reasons: [] };
   }
-  if (anySupporting && reasons.length > 0) {
+  if (isAnySupporting && reasons.length > 0) {
     // Mixed: at least one locator supports, but at least one other locator
     // is contradicted/irrelevant. Treat as insufficient rather than
     // silently discarding the bad locator -- a reviewer must see the gap.
@@ -183,12 +209,12 @@ export function verifyPlaytestClaim(
 }
 
 /**
- * Explicit adversarial check: a claim that the game rejected an action as
- * illegal is contradicted outright when the cited "absent action" locator
- * actually appears in the same decision's offered/legal list. This guards
- * the specific §6 case "cited list containing the supposedly absent
- * action".
- */
+Explicit adversarial check: a claim that the game rejected an action as
+illegal is contradicted outright when the cited "absent action" locator
+actually appears in the same decision's offered/legal list. This guards
+the specific §6 case "cited list containing the supposedly absent
+action".
+*/
 export function assertNoContradictingLocator(
   claimedAbsentActionId: string,
   actualOfferedActionIds: readonly string[]
@@ -201,11 +227,11 @@ export function assertNoContradictingLocator(
 }
 
 /**
- * Validate a review's overall evidence sufficiency: every finding it
- * references must itself carry at least one evidence locator, and the
- * review itself must carry at least one. A review without evidence
- * locators is invalid -- not a successful empty report.
- */
+Validate a review's overall evidence sufficiency: every finding it
+references must itself carry at least one evidence locator, and the
+review itself must carry at least one. A review without evidence
+locators is invalid -- not a successful empty report.
+*/
 export function assertPlaytestSessionReviewHasEvidence(
   review: Pick<
     PlaytestSessionReview,
@@ -328,9 +354,9 @@ const REVIEW_GROUNDING_STOP_WORDS = new Set([
 
 const GROUNDING_WORD_SEPARATOR = /[^a-z\d]+/u;
 /**
- * A 40- or 64-hex value is a hash the packet already carries, not a word a
- * review can be grounded in.
- */
+A 40- or 64-hex value is a hash the packet already carries, not a word a
+review can be grounded in.
+*/
 const HASH_LIKE_VALUE_PATTERN = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu;
 
 function groundingWords(value: string): Set<string> {
@@ -338,7 +364,7 @@ function groundingWords(value: string): Set<string> {
     value
       .normalize("NFKD")
       .toLowerCase()
-      .replaceAll(/[\u0300-\u036F]/gu, "")
+      .replaceAll(/[\u{300}-\u{36F}]/gu, "")
       .split(GROUNDING_WORD_SEPARATOR)
       .filter(
         (word) => word.length >= 3 && !REVIEW_GROUNDING_STOP_WORDS.has(word)
@@ -483,7 +509,7 @@ function requirePacketGroundedText(
   label: string
 ): void {
   const words = groundingWords(value);
-  if (![...words].some((word) => anchors.has(word))) {
+  if ([...words].every((word) => !anchors.has(word))) {
     throw new TypeError(
       `${label} must name a packet-specific phase, action, outcome, metric, or visible value; a citation alone is not an evidence-grounded explanation.`
     );
@@ -491,10 +517,10 @@ function requirePacketGroundedText(
 }
 
 /**
- * Reject length-valid boilerplate that cites a real locator but says nothing
- * about the cited packet. This is a structural grounding check, not a truth,
- * quality, or human-experience score.
- */
+Reject length-valid boilerplate that cites a real locator but says nothing
+about the cited packet. This is a structural grounding check, not a truth,
+quality, or human-experience score.
+*/
 export function assertPlaytestReviewNarrativeGroundedInPacket(
   review: Pick<
     PlaytestSessionReview,
@@ -567,10 +593,10 @@ export function assertPlaytestReviewNarrativeGroundedInPacket(
 }
 
 /**
- * Reject label-only/placeholder narratives on new analyst submissions while
- * leaving historical persisted reviews readable. This is a structural floor,
- * not a quality score or an authorization to promote a hypothesis.
- */
+Reject label-only/placeholder narratives on new analyst submissions while
+leaving historical persisted reviews readable. This is a structural floor,
+not a quality score or an authorization to promote a hypothesis.
+*/
 export function assertPlaytestReviewNarrativeMinimums(
   review: Pick<
     PlaytestSessionReview,
@@ -816,7 +842,9 @@ function assertReviewFollowUpSection(
   );
 }
 
-/** Enforce explicit section accounting and agreement with the submitted lists. */
+/**
+Enforce explicit section accounting and agreement with the submitted lists.
+*/
 export function assertPlaytestReviewCompleteness(
   review: Pick<
     PlaytestSessionReview,
@@ -847,10 +875,10 @@ export function assertPlaytestReviewCompleteness(
       `Review "${review.reviewId}" has an incomplete report-completeness record.`
     );
   }
-  const historicalNotRecorded = Object.values(completeness).some(
+  const isHistoricalNotRecorded = Object.values(completeness).some(
     (section) => section.status === PLAYTEST_REVIEW_SECTION_NOT_RECORDED
   );
-  if (historicalNotRecorded && !options.allowHistoricalNotRecorded) {
+  if (isHistoricalNotRecorded && !options.allowHistoricalNotRecorded) {
     throw new TypeError(
       `Review "${review.reviewId}" uses a historical not-recorded section status for a new review.`
     );
@@ -883,11 +911,11 @@ export function assertPlaytestReviewCompleteness(
 }
 
 /**
- * A finding's `evidenceStatus` may only be `verified` when every evidence
- * locator it cites actually resolves and is relevant. `corroborated` and
- * `hypothesis` require at least one locator but tolerate unresolved
- * secondary locators; `not observed` requires zero locators.
- */
+A finding's `evidenceStatus` may only be `verified` when every evidence
+locator it cites actually resolves and is relevant. `corroborated` and
+`hypothesis` require at least one locator but tolerate unresolved
+secondary locators; `not observed` requires zero locators.
+*/
 export function assertPlaytestFindingEvidenceStatusConsistent(
   finding: Pick<
     PlaytestFinding,

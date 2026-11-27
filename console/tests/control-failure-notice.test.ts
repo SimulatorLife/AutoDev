@@ -7,18 +7,18 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ControlFailureNotice } from "../src/components/status/ControlFailureNotice.ts";
 
 /**
- * The page's own refusal notice.
- *
- * The Console has one owner for the countdown that ends a result: the root
- * feedback owner, which announces a write's outcome, counts the five seconds
- * down, and sends the operator here for the reason -- "The server could not
- * save these changes. Review the notice on this page."
- *
- * This notice is that reason, so it stays while the operator acts on it. A
- * second countdown here would end the notice before the reason could be read,
- * leave the root feedback pointing at nothing, and give the Console two sets
- * of words for one behaviour.
- */
+The page's own refusal notice.
+
+The Console has one owner for the countdown that ends a result: the root
+feedback owner, which announces a write's outcome, counts the five seconds
+down, and sends the operator here for the reason -- "The server could not
+save these changes. Review the notice on this page."
+
+This notice is that reason, so it stays while the operator acts on it. A
+second countdown here would end the notice before the reason could be read,
+leave the root feedback pointing at nothing, and give the Console two sets
+of words for one behaviour.
+*/
 test("the refusal notice names the reason the route observed", () => {
   const markup = renderToStaticMarkup(
     React.createElement(ControlFailureNotice, {

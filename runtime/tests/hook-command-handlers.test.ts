@@ -30,10 +30,10 @@ test("session-start delegates the typed ensure runner and preserves a healthy st
     const seen: { deps: RouterEnsureDeps; options: RouterEnsureOptions }[] = [];
     const runner = {
       async runRouterEnsure(
-        deps: RouterEnsureDeps,
+        dependencies: RouterEnsureDeps,
         options: RouterEnsureOptions
       ): Promise<RouterEnsureResult> {
-        seen.push({ deps, options });
+        seen.push({ deps: dependencies, options });
         return { status: "healthy-launchd", exitCode: 0 };
       }
     };
@@ -74,17 +74,17 @@ test("session-start ensures the code graph after a successful startup", async ()
 });
 
 test("session-start skips the code graph when the router is not healthy", async () => {
-  let ensured = false;
+  let isEnsured = false;
   const runner = {
     async runRouterEnsure(): Promise<RouterEnsureResult> {
       return { status: "launchd-failed", exitCode: 1 };
     },
     async ensureCodeGraph(): Promise<void> {
-      ensured = true;
+      isEnsured = true;
     }
   };
   assert.equal(await createSessionStart(runner)(Buffer.from("{}")), 1);
-  assert.equal(ensured, false);
+  assert.equal(isEnsured, false);
 });
 
 test("a code graph failure does not fail the session", async () => {

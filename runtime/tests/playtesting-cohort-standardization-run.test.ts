@@ -1,27 +1,27 @@
 /**
- * Cohort mix-shift derivation over real runs (§10/§11).
- *
- * The central rule under test is the refusal. The standardizer's validator
- * demands the observed cohort set be exactly the benchmark's weighted cohort
- * set, and the tempting way to satisfy that is to fill a gap with zeros. Zeros
- * say "we looked and observed nothing"; an absent cohort says "we never
- * looked". These tests pin the refusal so the padding cannot come back quietly.
- *
- * The behavioural oracle is §10's own worked example, tabulated in the
- * measurement contract: builds A/B/C with fixed easy/hard weights of 50/50 and
- * deliberately different sample mixes. Reproducing those exact numbers is
- * stronger evidence than invented ones, because a drift in the weighting would
- * have to disagree with the contract to pass.
- *
- * Every fixture is validated by the canonical Core assertion as it is built
- * (`assertPlaytestNumericResults`, `assertPlaytestBenchmark`). That is
- * deliberate: an earlier hand-written fixture passed this file's behavioural
- * assertions while carrying rows no real run could produce -- provenance with
- * no evaluator or rubric hash, and `coverage`/`estimate` that did not
- * reconcile with the counts. A fixture the canonical validator rejects makes
- * every assertion about it vacuous, so the fixture now has to be real before
- * any test can run.
- */
+Cohort mix-shift derivation over real runs (§10/§11).
+
+The central rule under test is the refusal. The standardizer's validator
+demands the observed cohort set be exactly the benchmark's weighted cohort
+set, and the tempting way to satisfy that is to fill a gap with zeros. Zeros
+say "we looked and observed nothing"; an absent cohort says "we never
+looked". These tests pin the refusal so the padding cannot come back quietly.
+
+The behavioural oracle is §10's own worked example, tabulated in the
+measurement contract: builds A/B/C with fixed easy/hard weights of 50/50 and
+deliberately different sample mixes. Reproducing those exact numbers is
+stronger evidence than invented ones, because a drift in the weighting would
+have to disagree with the contract to pass.
+
+Every fixture is validated by the canonical Core assertion as it is built
+(`assertPlaytestNumericResults`, `assertPlaytestBenchmark`). That is
+deliberate: an earlier hand-written fixture passed this file's behavioural
+assertions while carrying rows no real run could produce -- provenance with
+no evaluator or rubric hash, and `coverage`/`estimate` that did not
+reconcile with the counts. A fixture the canonical validator rejects makes
+every assertion about it vacuous, so the fixture now has to be real before
+any test can run.
+*/
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
@@ -46,7 +46,9 @@ import {
 const WORKSPACE_ID = "owner/mix-shift";
 const EVALUATOR_HASH = "9".repeat(64);
 const RUBRIC_HASH = "3".repeat(64);
-/** §10 names these cohorts "easy"/"hard" with a 50/50 fixed weight. */
+/**
+§10 names these cohorts "easy"/"hard" with a 50/50 fixed weight.
+*/
 const EASY = "easy";
 const HARD = "hard";
 
@@ -59,14 +61,14 @@ function closeTo(actual: number, expected: number): void {
 }
 
 /**
- * A metric row whose derived fields agree with its counts.
- *
- * `estimate`, `coverage` and `opportunityCount` are computed from the resolved
- * counts rather than hand-written, which is both what a real producer does and
- * what keeps an override from quietly producing an incoherent row. The
- * canonical assertion runs last, so an impossible row fails here, loudly, with
- * Core's own message.
- */
+A metric row whose derived fields agree with its counts.
+
+`estimate`, `coverage` and `opportunityCount` are computed from the resolved
+counts rather than hand-written, which is both what a real producer does and
+what keeps an override from quietly producing an incoherent row. The
+canonical assertion runs last, so an impossible row fails here, loudly, with
+Core's own message.
+*/
 function metricRow(
   overrides: Partial<PlaytestNumericResult> = {}
 ): PlaytestNumericResult {
@@ -310,7 +312,9 @@ function batch(
   } as unknown as PlaytestAdapterBatch;
 }
 
-/** One measured build: its batch plus one episode per cohort it exercised. */
+/**
+One measured build: its batch plus one episode per cohort it exercised.
+*/
 function run(
   buildSha: string,
   cohortRows: Readonly<Record<string, readonly PlaytestNumericResult[]>>
@@ -369,13 +373,13 @@ test("reproduces §10's worked example: three builds with changing cohort mix", 
 
   const bySha = new Map(builds.map((build) => [build.buildId, build]));
   const a = bySha.get(BUILD_A)!;
-  closeTo(a.standardizedRate ?? Number.NaN, 0.7);
-  closeTo(a.rawObservedRate ?? Number.NaN, 0.7);
+  closeTo(a.standardizedRate ?? NaN, 0.7);
+  closeTo(a.rawObservedRate ?? NaN, 0.7);
 
   const b = bySha.get(BUILD_B)!;
   // The §10 finding: the raw number rises while the fixed-weight number falls.
-  closeTo(b.standardizedRate ?? Number.NaN, 0.65);
-  closeTo(b.rawObservedRate ?? Number.NaN, 0.85);
+  closeTo(b.standardizedRate ?? NaN, 0.65);
+  closeTo(b.rawObservedRate ?? NaN, 0.85);
   assert.equal(
     (b.rawObservedRate ?? 0) > (a.rawObservedRate ?? 0),
     true,
@@ -388,8 +392,8 @@ test("reproduces §10's worked example: three builds with changing cohort mix", 
   );
 
   const c = bySha.get(BUILD_C)!;
-  closeTo(c.standardizedRate ?? Number.NaN, 0.7);
-  closeTo(c.rawObservedRate ?? Number.NaN, 0.86);
+  closeTo(c.standardizedRate ?? NaN, 0.7);
+  closeTo(c.rawObservedRate ?? NaN, 0.86);
 
   // The two rates are reported separately, and the comparison between the two
   // is what carries the finding. A's rates coincide because its sample mix
@@ -401,10 +405,10 @@ test("reproduces §10's worked example: three builds with changing cohort mix", 
 
   // Missingness never became a rate, but it is still reported: A observed 20
   // of 30 eligible opportunities.
-  closeTo(a.sourceCoverage ?? Number.NaN, 20 / 30);
+  closeTo(a.sourceCoverage ?? NaN, 20 / 30);
   assert.equal(a.totalObserved, 20);
   assert.equal(a.totalMissing, 10);
-  closeTo(b.sourceCoverage ?? Number.NaN, 1);
+  closeTo(b.sourceCoverage ?? NaN, 1);
 });
 
 test("per-cohort counts are summed from the metric rows each episode recorded", () => {

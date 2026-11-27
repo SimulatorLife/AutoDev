@@ -133,7 +133,7 @@ test("replay mode streams scripted turns in order, repeats the last one, and rec
 });
 
 test("the example turns reproduce MiniMax-M3's nested exec_command call, then finish", async () => {
-  const fixture = JSON.parse(
+  const { turns } = JSON.parse(
     await readFile(
       join(SKILL_DIR, "examples", "exec-command.turns.json"),
       "utf8"
@@ -151,7 +151,6 @@ test("the example turns reproduce MiniMax-M3's nested exec_command call, then fi
       }>
     >;
   };
-  const { turns } = fixture;
   assert.equal(turns.length, 2);
   const callEvent = turns[0]?.find(
     (event) =>
@@ -184,11 +183,11 @@ test("a turns file that is not { turns: [...] } is refused instead of silently f
 
 test("top-level skill is provider-agnostic and delegates Codex wire details to references/", async () => {
   const skill = await readFile(join(SKILL_DIR, "SKILL.md"), "utf8");
-  const codexRef = await readFile(
+  const codexReference = await readFile(
     join(SKILL_DIR, "references", "codex-responses.md"),
     "utf8"
   );
   assert.match(skill, /^name: autodev-request-capture$/m);
   assert.match(skill, /references\/codex-responses\.md/);
-  assert.match(codexRef, /x-codex-turn-metadata/);
+  assert.match(codexReference, /x-codex-turn-metadata/);
 });

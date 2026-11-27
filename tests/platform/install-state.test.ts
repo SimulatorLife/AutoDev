@@ -17,15 +17,15 @@ test("router auth creates a private token, preserves existing env content, and i
   withTempDir((directory) => {
     const path = join(directory, ".env");
     writeFileSync(path, "OTHER=value\n");
-    const env = { AUTODEV_SKIP_LAUNCHCTL: "1" };
-    const token = ensureRouterAuth(path, env);
+    const environment = { AUTODEV_SKIP_LAUNCHCTL: "1" };
+    const token = ensureRouterAuth(path, environment);
     assert.match(token, /^[0-9a-f]{64}$/u);
     assert.equal(
       readFileSync(path, "utf8"),
       `OTHER=value\nCODEX_ROUTER_AUTH_TOKEN=${token}\n`
     );
     assert.equal(lstatSync(path).mode & 0o777, 0o600);
-    assert.equal(ensureRouterAuth(path, env), token);
+    assert.equal(ensureRouterAuth(path, environment), token);
     assert.equal(
       readFileSync(path, "utf8"),
       `OTHER=value\nCODEX_ROUTER_AUTH_TOKEN=${token}\n`
@@ -63,9 +63,9 @@ test("router auth replaces an empty token entry rather than treating it as confi
 
 test("migrateEnvSecretsToKeychain moves Keychain-managed secrets out of .env while preserving other entries", () =>
   withTempDir((directory) => {
-    const envPath = join(directory, ".env");
+    const environmentPath = join(directory, ".env");
     writeFileSync(
-      envPath,
+      environmentPath,
       [
         "# Keep comments",
         "CODEX_ROUTER_AUTH_TOKEN=router-secret",
@@ -77,10 +77,10 @@ test("migrateEnvSecretsToKeychain moves Keychain-managed secrets out of .env whi
       { mode: 0o600 }
     );
     const store = new Map<string, string>();
-    const deps = {
+    const dependencies = {
       platform: "darwin" as const,
-      runSecurity: (args: readonly string[], input?: string) => {
-        if (args[0] === "-i" && input) {
+      runSecurity: (arguments_: readonly string[], input?: string) => {
+        if (arguments_[0] === "-i" && input) {
           const match =
             /-s "([^"]+)" -T "\/usr\/bin\/security" -w "((?:[^"\\]|\\.)*)"/u.exec(
               input
@@ -88,8 +88,8 @@ test("migrateEnvSecretsToKeychain moves Keychain-managed secrets out of .env whi
           if (match) store.set(match[1]!, match[2]!);
           return "";
         }
-        if (args[0] === "find-generic-password") {
-          const service = args[args.indexOf("-s") + 1]!;
+        if (arguments_[0] === "find-generic-password") {
+          const service = arguments_[arguments_.indexOf("-s") + 1]!;
           const value = store.get(service);
           if (!value) throw new Error("missing");
           return `${value}\n`;
@@ -97,13 +97,13 @@ test("migrateEnvSecretsToKeychain moves Keychain-managed secrets out of .env whi
         throw new Error("unexpected command");
       }
     };
-    const env = { USER: "tester", AUTODEV_DISABLE_KEYCHAIN: "0" };
-    assert.deepEqual(findPlaintextKeychainSecrets(envPath), [
+    const environment = { USER: "tester", AUTODEV_DISABLE_KEYCHAIN: "0" };
+    assert.deepEqual(findPlaintextKeychainSecrets(environmentPath), [
       "MINIMAX_API_KEY",
       "CONTEXT7_API_KEY",
       "AUTODEV_CHATGPT_TUNNEL_API_KEY"
     ]);
-    const migrated = migrateEnvSecretsToKeychain(envPath, env, { deps });
+    const migrated = migrateEnvSecretsToKeychain(environmentPath, environment, { deps: dependencies });
     assert.deepEqual(migrated, [
       "MINIMAX_API_KEY",
       "CONTEXT7_API_KEY",
@@ -115,19 +115,19 @@ test("migrateEnvSecretsToKeychain moves Keychain-managed secrets out of .env whi
       store.get("AUTODEV_CHATGPT_TUNNEL_API_KEY"),
       "tunnel-plaintext"
     );
-    assert.deepEqual(findPlaintextKeychainSecrets(envPath), []);
+    assert.deepEqual(findPlaintextKeychainSecrets(environmentPath), []);
     assert.equal(
-      readFileSync(envPath, "utf8"),
+      readFileSync(environmentPath, "utf8"),
       [
         "# Keep comments",
         "CODEX_ROUTER_AUTH_TOKEN=router-secret",
         "OPENCLI_GEMINI_ACCOUNT=me@example.com"
       ].join("\n") + "\n"
     );
-    assert.equal(lstatSync(envPath).mode & 0o777, 0o600);
-    assert.deepEqual(checkRequiredKeychainSecrets(undefined, env, deps), []);
+    assert.equal(lstatSync(environmentPath).mode & 0o777, 0o600);
+    assert.deepEqual(checkRequiredKeychainSecrets(undefined, environment, dependencies), []);
     store.delete("CONTEXT7_API_KEY");
-    assert.deepEqual(checkRequiredKeychainSecrets(undefined, env, deps), [
+    assert.deepEqual(checkRequiredKeychainSecrets(undefined, environment, dependencies), [
       "CONTEXT7_API_KEY"
     ]);
   }));

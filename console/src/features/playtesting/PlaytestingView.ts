@@ -37,7 +37,7 @@ import {
 import {
   DataTable,
   type DataTableFeatures,
-  type DataTableProps
+  type DataTableProps as DataTableProperties
 } from "../../components/tables/DataTable.ts";
 import { TabNav } from "../../components/tabs/Tabs.ts";
 import { TEXT_CONTROL_CLASS } from "../../components/ui/field-classes.ts";
@@ -1097,11 +1097,11 @@ function analystReviewDetail(
         : React.createElement(
             "ul",
             { className: "flex flex-col gap-1 text-sm text-fg-secondary" },
-            review.evidenceRefs.map((ref, index) =>
+            review.evidenceRefs.map((reference, index) =>
               React.createElement(
                 "li",
-                { key: `${ref.kind}-${ref.id}-${index}` },
-                `${ref.kind} · ${ref.id}${ref.step === undefined ? "" : ` · step ${String(ref.step)}`}`
+                { key: `${reference.kind}-${reference.id}-${index}` },
+                `${reference.kind} · ${reference.id}${reference.step === undefined ? "" : ` · step ${String(reference.step)}`}`
               )
             )
           )
@@ -1257,7 +1257,7 @@ function analystHypotheses(
           { className: "mb-4" },
           analystReviewDetail(selected, scope)
         ),
-    React.createElement<DataTableProps<ControlApiPlaytestingReview>>(
+    React.createElement<DataTableProperties<ControlApiPlaytestingReview>>(
       DataTable,
       {
         data: reviews,
@@ -1365,7 +1365,7 @@ function findingsTable(
       header: "Witness",
       cell: ({ row: { original: finding } }) => {
         const episode = finding.evidenceRefs.find(
-          (ref) => ref.kind === "episode"
+          (reference) => reference.kind === "episode"
         );
         if (!episode)
           return React.createElement(StatusBadge, {
@@ -1414,7 +1414,7 @@ function findingsTable(
         { className: `mb-3 ${MUTED_BODY_CLASS}` },
         "A finding is a claim about the game that was checked against the evidence and kept a stable identity, so the same problem is one row here however many times it was seen. Its evidence status says how well that claim is supported; a session win or loss is not itself a finding."
       ),
-      React.createElement<DataTableProps<PlaytestFinding>>(DataTable, {
+      React.createElement<DataTableProperties<PlaytestFinding>>(DataTable, {
         data: rows,
         columns,
         keyExtractor: (finding) => `${finding.findingId}:${finding.version}`,
@@ -1847,7 +1847,7 @@ function comparisonsTable(
         "aria-labelledby": "playtesting-comparisons-heading"
       },
       sectionHeading("playtesting-comparisons-heading", "Comparisons"),
-      React.createElement<DataTableProps<PlaytestComparison>>(DataTable, {
+      React.createElement<DataTableProperties<PlaytestComparison>>(DataTable, {
         data: rows,
         columns,
         keyExtractor: (row) => `${row.comparisonId}:${row.version}`,

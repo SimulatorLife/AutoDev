@@ -222,17 +222,17 @@ test("transient and rate_limit failure classes are treated as expired once coold
 });
 
 /**
- * A browser-driven bridge (opencli) answers a turn it could not serve with a
- * 503, which the router classifies as `unavailable`. The Runtime cools the
- * provider down for that failure and routes to it again once the cooldown has
- * passed, so the verdict has to say the same thing: while the cooldown is in
- * force the provider is not ready, and afterwards it is.
- *
- * The verdict that used to stay "Unavailable" until the provider happened to
- * serve another request was the reason the two opencli providers read
- * Unavailable for hours after a single failed turn, while the Runtime was
- * routing to them.
- */
+A browser-driven bridge (opencli) answers a turn it could not serve with a
+503, which the router classifies as `unavailable`. The Runtime cools the
+provider down for that failure and routes to it again once the cooldown has
+passed, so the verdict has to say the same thing: while the cooldown is in
+force the provider is not ready, and afterwards it is.
+
+The verdict that used to stay "Unavailable" until the provider happened to
+serve another request was the reason the two opencli providers read
+Unavailable for hours after a single failed turn, while the Runtime was
+routing to them.
+*/
 test("a transient upstream failure is live only while the Runtime is still cooling the provider down", () => {
   const failure = {
     at: "2026-11-09T11:05:00.000Z",

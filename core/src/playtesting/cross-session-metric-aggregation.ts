@@ -1,10 +1,12 @@
-/** Deterministic, bounded aggregation of exact frozen playtest metric packets. */
+/**
+Deterministic, bounded aggregation of exact frozen playtest metric packets.
+*/
 import { isCount, isRecord } from "../shared/object-guards.ts";
 import { SHA256_PATTERN } from "../shared/sha256.ts";
 import type {
   PlaytestCrossSessionMetricAggregate,
   PlaytestCrossSessionMetricAggregation,
-  PlaytestCrossSessionMetricPacketRef,
+  PlaytestCrossSessionMetricPacketRef as PlaytestCrossSessionMetricPacketReference,
   PlaytestEvidencePacket
 } from "./artifacts.ts";
 import { PLAYTESTS_MAX_ANALYSIS_SESSIONS } from "./batch-run.ts";
@@ -97,16 +99,16 @@ interface MetricAccumulator {
 }
 
 /**
- * Pool only frozen ratio-of-sums metric rows inside identical measurement
- * strata. This is descriptive selected-session arithmetic, not a comparison,
- * confidence interval, or population estimate.
- */
+Pool only frozen ratio-of-sums metric rows inside identical measurement
+strata. This is descriptive selected-session arithmetic, not a comparison,
+confidence interval, or population estimate.
+*/
 export function aggregatePlaytestCrossSessionMetrics(input: {
   readonly workspaceId: string;
   readonly analysisId: string;
   readonly packets: readonly PlaytestCrossSessionMetricPacketInput[];
 }): PlaytestCrossSessionMetricAggregation {
-  const sourcePackets = normalizeMetricPacketRefs(input);
+  const sourcePackets = normalizeMetricPacketReferences(input);
   const refusal = metricAggregationRefusal(input.packets, sourcePackets);
   if (refusal !== null) {
     return metricAggregationResult({
@@ -139,7 +141,7 @@ type MetricAggregationRefusal = {
 
 function metricAggregationRefusal(
   packets: readonly PlaytestCrossSessionMetricPacketInput[],
-  sourcePackets: readonly PlaytestCrossSessionMetricPacketRef[]
+  sourcePackets: readonly PlaytestCrossSessionMetricPacketReference[]
 ): MetricAggregationRefusal | null {
   if (
     packets.some(
@@ -339,12 +341,12 @@ function assertAccumulatorCounts(accumulator: MetricAccumulator): void {
 
 function aggregateRows(
   accumulators: ReadonlyMap<string, MetricAccumulator>,
-  sourcePackets: readonly PlaytestCrossSessionMetricPacketRef[]
+  sourcePackets: readonly PlaytestCrossSessionMetricPacketReference[]
 ): readonly PlaytestCrossSessionMetricAggregate[] {
   const sourceIndexByPacketId = new Map(
     sourcePackets.map((source, index) => [source.packetId, index])
   );
-  return [...accumulators.entries()]
+  return [...accumulators]
     .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
     .map(([, accumulator]) => aggregateRow(accumulator, sourceIndexByPacketId));
 }
@@ -412,7 +414,7 @@ function sortedMetricOmissions(
 function metricAggregationOutcome(input: {
   readonly workspaceId: string;
   readonly analysisId: string;
-  readonly sourcePackets: readonly PlaytestCrossSessionMetricPacketRef[];
+  readonly sourcePackets: readonly PlaytestCrossSessionMetricPacketReference[];
   readonly rows: readonly PlaytestCrossSessionMetricAggregate[];
   readonly omittedMetrics: PlaytestCrossSessionMetricAggregation["omittedMetrics"];
 }): PlaytestCrossSessionMetricAggregation {
@@ -452,11 +454,11 @@ function metricAggregationOutcome(input: {
   });
 }
 
-function normalizeMetricPacketRefs(input: {
+function normalizeMetricPacketReferences(input: {
   readonly workspaceId: string;
   readonly analysisId: string;
   readonly packets: readonly PlaytestCrossSessionMetricPacketInput[];
-}): readonly PlaytestCrossSessionMetricPacketRef[] {
+}): readonly PlaytestCrossSessionMetricPacketReference[] {
   if (
     !WORKSPACE_ID_PATTERN.test(input.workspaceId) ||
     !isIdentifier(input.analysisId) ||
@@ -469,7 +471,7 @@ function normalizeMetricPacketRefs(input: {
   }
   const episodeIds = new Set<string>();
   const packetIds = new Set<string>();
-  const refs = input.packets.map(({ episodeId, batchId, packet }) => {
+  const references = input.packets.map(({ episodeId, batchId, packet }) => {
     assertPlaytestEvidencePacket(packet);
     if (
       !isIdentifier(episodeId) ||
@@ -486,7 +488,7 @@ function normalizeMetricPacketRefs(input: {
     packetIds.add(packet.packetId);
     return { episodeId, batchId, packetId: packet.packetId };
   });
-  return refs.sort((left, right) =>
+  return references.sort((left, right) =>
     left.episodeId < right.episodeId
       ? -1
       : left.episodeId > right.episodeId
@@ -499,7 +501,7 @@ function metricAggregationResult(input: {
   readonly workspaceId: string;
   readonly analysisId: string;
   readonly status: PlaytestCrossSessionMetricAggregation["status"];
-  readonly sourcePackets: readonly PlaytestCrossSessionMetricPacketRef[];
+  readonly sourcePackets: readonly PlaytestCrossSessionMetricPacketReference[];
   readonly rows?: readonly PlaytestCrossSessionMetricAggregate[];
   readonly omittedMetrics?: PlaytestCrossSessionMetricAggregation["omittedMetrics"];
   readonly reason: PlaytestCrossSessionMetricAggregation["reason"];
@@ -711,8 +713,8 @@ function isMetricPacketReference(
   return (
     isRecord(value) &&
     Object.keys(value).length === 3 &&
-    !Object.keys(value).some(
-      (key) => !["episodeId", "batchId", "packetId"].includes(key)
+    Object.keys(value).every(
+      (key) => ["episodeId", "batchId", "packetId"].includes(key)
     ) &&
     isIdentifier(value.episodeId) &&
     isIdentifier(value.batchId) &&
@@ -743,9 +745,7 @@ function assertSelectedMetricPacketCoverage(
 ): void {
   if (
     sourceEpisodeIds.size !== selectedEpisodeIds.size ||
-    [...selectedEpisodeIds].some(
-      (episodeId) => !sourceEpisodeIds.has(episodeId)
-    )
+    !selectedEpisodeIds.isSubsetOf(sourceEpisodeIds)
   ) {
     throw new TypeError(
       "Cross-session aggregation must bind every packet selected for its analysis."
@@ -931,9 +931,7 @@ function assertMetricAggregateMeasures(value: Record<string, unknown>): void {
     throw new TypeError("Cross-session metric aggregate measures are invalid.");
   }
   if (
-    value.analysisUnit === "episode"
-      ? value.independentUnits !== value.sessionCount
-      : value.independentUnits !== null
+    value.independentUnits !== (value.analysisUnit === "episode" ? value.sessionCount : null)
   ) {
     throw new TypeError(
       "Cross-session independent units must be episode-deduplicated or explicitly unavailable."
@@ -1045,7 +1043,9 @@ function assertMetricAggregationStatus(value: MetricAggregationEnvelope): void {
   }
 }
 
-/** Validate the trusted Runtime aggregate against its exact analyst selection. */
+/**
+Validate the trusted Runtime aggregate against its exact analyst selection.
+*/
 export function assertPlaytestCrossSessionMetricAggregation(
   value: unknown,
   workspaceId: string,

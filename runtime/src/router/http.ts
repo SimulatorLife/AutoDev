@@ -1,4 +1,4 @@
-import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { type IncomingMessage, type ServerResponse } from "node:http";
@@ -43,7 +43,6 @@ import {
 import {
   getDefaultRouterEventRecorder,
   isRequestRefusalClass,
-  noteRequestIdentity,
   recordRouterEvent,
   type RouterEvent,
   RouterEventRecorder,
@@ -88,17 +87,18 @@ import {
   setControlApiMcpObservationsSource,
   setControlApiProviderHealthSource
 } from "../control-api/request-handler.ts";
+import { readLocalAdmission } from "../mcp/gateway-admission.ts";
 import {
   providerModelDiscoveryPersistenceSnapshot,
   restoreProviderModelDiscoveryPersistence
 } from "../providers/model-discovery.ts";
-import { readLocalAdmission } from "../mcp/gateway-admission.ts";
 import {
-  NATIVE_SESSION_EVENTS_PATH,
   NATIVE_SESSION_EVENT_LIMIT,
+  NATIVE_SESSION_EVENTS_PATH,
   nativeSessionIdentity,
   nativeSessionObservationSchema
 } from "../shared/native-session-observation.ts";
+import { didHandleAcpRoute } from "../xacpx/http.ts";
 import { createAgentEventIngest } from "./agent-event-ingest.ts";
 import {
   correlationSnapshot,
@@ -136,7 +136,6 @@ import {
   closeBridgeSubagentsForRequest,
   getDefaultExecutionContract,
   getWorkspaceMetadata,
-  orchestratorProviderForSession,
   providerCapabilities,
   recordSpawnFailure,
   rememberWorkspaceMetadata,
@@ -151,10 +150,9 @@ import {
   observeRouterWorkspaceGitCommits,
   withExtractedTraceContext
 } from "./telemetry.ts";
-import { didHandleAcpRoute } from "../xacpx/http.ts";
 import {
   getDefaultUsageTracker,
-  type RecordUsageEventParams,
+  type RecordUsageEventParams as RecordUsageEventParameters,
   safeWorkspaceId,
   usageOrigin,
   type UsageTracker
@@ -253,7 +251,7 @@ const USAGE_ELIGIBLE_PHASES = new Set(["selected", "skipped", "result"]);
 function usageEventFromRouterEvent(
   event: RouterEvent,
   rawWorkspace: string | WorkspaceInput | null | undefined
-): RecordUsageEventParams | null {
+): RecordUsageEventParameters | null {
   if (
     !event.requestId ||
     !event.provider ||
@@ -270,7 +268,7 @@ function usageEventFromRouterEvent(
     provider: event.provider,
     model: event.model,
     workspace: usageWorkspaceForEvent(event.workspace, event.cwd, rawWorkspace),
-    ...(event.outcome == null ? {} : { outcome: event.outcome }),
+    ...(event.outcome != null && { outcome: event.outcome }),
     failureClass: event.failureClass,
     status: event.status,
     elapsedMs: event.elapsedMs,
@@ -298,7 +296,9 @@ function isNonProviderHealthFailure(event: RouterEvent): boolean {
   );
 }
 
-/** Fold one routing event into the provider's health counters. */
+/**
+Fold one routing event into the provider's health counters.
+*/
 function applyProviderHealthEvent(event: RouterEvent): void {
   const state = event.provider ? providerState(event.provider) : null;
   if (state && event.phase === "selected") {
@@ -323,7 +323,7 @@ function applyProviderHealthEvent(event: RouterEvent): void {
         timestamp: event.timestamp,
         class: event.failureClass,
         status: event.status,
-        ...(event.model ? { model: event.model } : {})
+        ...(event.model && { model: event.model })
       };
     }
   }
@@ -452,7 +452,9 @@ function warnDiscarded(restored: boolean, state: string): void {
     writeErrorLine(`Warning: invalid persisted ${state} state was discarded.`);
 }
 
-/** How each persisted section is restored; a section absent here is ignored. */
+/**
+How each persisted section is restored; a section absent here is ignored.
+*/
 const PERSISTED_SECTION_RESTORERS: Readonly<
   Record<string, (value: unknown, parsed: Record<string, unknown>) => void>
 > = {
@@ -487,12 +489,12 @@ const PERSISTED_SECTION_RESTORERS: Readonly<
   }
 };
 
-function restorePersistedSection(args: {
+function restorePersistedSection(arguments_: {
   section: string;
   value: unknown;
   parsed: Record<string, unknown>;
 }): void {
-  const { section, value, parsed } = args;
+  const { section, value, parsed } = arguments_;
   if (ROUTING_POLICY_PERSISTENCE_SECTIONS.has(section)) {
     ROUTING_POLICY.restoreRuntimeState({
       ...ROUTING_POLICY.runtimeState(),
@@ -537,12 +539,12 @@ export function providerState(provider: string) {
 }
 
 /**
- * Whether this process is the router server, the one process that owns the
- * persisted router state. The router's entry script is `server.ts`, not this
- * module, so asking whether *this* module is the entry script said "no" in the
- * running router: state was written only at shutdown, and a router that was
- * killed lost everything it had learned since it started.
- */
+Whether this process is the router server, the one process that owns the
+persisted router state. The router's entry script is `server.ts`, not this
+module, so asking whether *this* module is the entry script said "no" in the
+running router: state was written only at shutdown, and a router that was
+killed lost everything it had learned since it started.
+*/
 const IS_ROUTER_PROCESS = isEntryPoint(new URL("server.ts", import.meta.url));
 
 const routerPersistence = new RouterPersistence({
@@ -570,16 +572,16 @@ const routerPersistence = new RouterPersistence({
 setDefaultPersistenceManager(routerPersistence);
 
 /**
- * Record what a provider's model listing said about its account.
- *
- * A browser-driven bridge reads its models from the signed-in site, so the
- * periodic listing is the first to find a site signed out -- usually long
- * before a request is routed there. A listing that says so is a provider
- * failure (`sign_in_required`), the same evidence a turn refused for it
- * would leave, so the provider stops reading Ready while it waits for the
- * operator. A listing that succeeds again withdraws that failure, and only
- * that failure: it is not evidence the provider serves turns.
- */
+Record what a provider's model listing said about its account.
+
+A browser-driven bridge reads its models from the signed-in site, so the
+periodic listing is the first to find a site signed out -- usually long
+before a request is routed there. A listing that says so is a provider
+failure (`sign_in_required`), the same evidence a turn refused for it
+would leave, so the provider stops reading Ready while it waits for the
+operator. A listing that succeeds again withdraws that failure, and only
+that failure: it is not evidence the provider serves turns.
+*/
 export function recordProviderSignIn(
   provider: string,
   detail: string | null,
@@ -807,14 +809,14 @@ function providerTierPriorities(provider: string): string[] {
 }
 
 /**
- * The models of one provider that are out.
- *
- * A cooldown belongs to the route that failed, not to the provider: a rejected
- * model cools one model. The provider-wide cooldown is therefore only non-null
- * when the whole provider is out, and the models that are out are named here
- * -- otherwise a provider with one rejected model reads as "ready" and the
- * traffic that vanished has nowhere to show up.
- */
+The models of one provider that are out.
+
+A cooldown belongs to the route that failed, not to the provider: a rejected
+model cools one model. The provider-wide cooldown is therefore only non-null
+when the whole provider is out, and the models that are out are named here
+-- otherwise a provider with one rejected model reads as "ready" and the
+traffic that vanished has nowhere to show up.
+*/
 function scopedProviderCooldowns(
   provider: string,
   now: number
@@ -828,13 +830,13 @@ function scopedProviderCooldowns(
       ])
     );
   return {
-    ...(Object.keys(models).length > 0
-      ? { modelCooldowns: serialize(models) }
-      : {})
+    ...((Object.keys(models).length > 0) && { modelCooldowns: serialize(models) })
   };
 }
 
-/** A provider's cooldown as the status response states it; all-clear when none. */
+/**
+A provider's cooldown as the status response states it; all-clear when none.
+*/
 function providerCooldownFields(
   cooldown: CooldownEntry | null,
   now: number
@@ -884,7 +886,7 @@ function routerProviderStatus(
     route.provider,
     "orchestrator"
   );
-  const orchestratorCapable =
+  const isOrchestratorCapable =
     ROUTING_POLICY.providerRoleCapabilityReason(
       route.provider,
       "orchestrator"
@@ -902,11 +904,11 @@ function routerProviderStatus(
     route.provider,
     {
       orchestratorEnabled,
-      orchestratorCapable,
+      orchestratorCapable: isOrchestratorCapable,
       subagentEnabled,
       status: readiness,
       orchestratorStatus: orchestratorEnabled
-        ? orchestratorCapable
+        ? isOrchestratorCapable
           ? readiness
           : "cannot_delegate"
         : "disabled",
@@ -944,12 +946,14 @@ function serializeProviderCooldown(
     until: new Date(cooldown.until).toISOString(),
     resetsAt: cooldown.resetsAt ?? null,
     lastResortEligible: COOLDOWNS.allowsLastResort(cooldown, now),
-    ...(cooldown.model === undefined ? {} : { scope: "model" as const }),
-    ...(cooldown.model === undefined ? {} : { model: cooldown.model })
+    ...(cooldown.model !== undefined && { scope: "model" as const }),
+    ...(cooldown.model !== undefined && { model: cooldown.model })
   };
 }
 
-/** Typed live provider evidence the Control API serves to the Console. */
+/**
+Typed live provider evidence the Control API serves to the Console.
+*/
 function controlApiProviderHealth(
   now: number
 ): Record<string, ControlApiProviderHealth> {
@@ -972,9 +976,7 @@ function controlApiProviderHealth(
           : null;
       const health: ControlApiProviderHealth = {
         cooldown: cooldown ? serializeProviderCooldown(cooldown, now) : null,
-        ...(modelCooldownEntries.length > 0
-          ? { modelCooldowns: Object.fromEntries(modelCooldownEntries) }
-          : {}),
+        ...((modelCooldownEntries.length > 0) && { modelCooldowns: Object.fromEntries(modelCooldownEntries) }),
         failureStreak: COOLDOWNS.failureStreak(route.provider) ?? 0,
         probeFailureStreak: COOLDOWNS.probeFailureStreak(route.provider) ?? 0,
         inFlightRequests: getActiveRequests(route.provider),
@@ -988,9 +990,7 @@ function controlApiProviderHealth(
               at: activeLastFailure.timestamp,
               failureClass: activeLastFailure.class,
               status: activeLastFailure.status ?? null,
-              ...(activeLastFailure.model === undefined
-                ? {}
-                : { model: activeLastFailure.model })
+              ...(activeLastFailure.model !== undefined && { model: activeLastFailure.model })
             }
           : null,
         lastCheck: state.lastCheck
@@ -1001,37 +1001,41 @@ function controlApiProviderHealth(
 }
 setControlApiProviderHealthSource(controlApiProviderHealth);
 
-/** Re-read one provider's model listing, for a check; null when nothing lists models. */
+/**
+Re-read one provider's model listing, for a check; null when nothing lists models.
+*/
 export type ProviderModelRecheck = (
   provider: string
 ) => Promise<ControlApiProviderModelDiscovery | null>;
 
 /**
- * The failure class a check records for a provider that has no route.
- *
- * A provider can be configured without a route: it is listed, it holds
- * priorities, models and limits, and no request can reach it. The verdict the
- * Console shows for it is `Missing CODEX_ROUTE`, and a re-check cannot change
- * that -- a route is configuration, not something a probe discovers.
- */
+The failure class a check records for a provider that has no route.
+
+A provider can be configured without a route: it is listed, it holds
+priorities, models and limits, and no request can reach it. The verdict the
+Console shows for it is `Missing CODEX_ROUTE`, and a re-check cannot change
+that -- a route is configuration, not something a probe discovers.
+*/
 const MISSING_ROUTE_FAILURE_CLASS = "missing_route";
 
 /**
- * Re-check one provider now, on an operator's request.
- *
- * Routing only re-probes a provider when a request is about to use it, so a
- * provider marked unavailable stays that way until traffic happens to try it
- * again. The check runs what routing would: the live probe (credential, the
- * bridge's health endpoint, or Codex's own auth), then the provider's model
- * listing. Model discovery is reported separately from provider health.
- *
- * A passing probe clears a probe-failure cooldown, and the passing check is
- * recorded as health evidence (`lastCheck`) that a request failure older than
- * it no longer stands for. A failing operator-requested probe records health
- * evidence without increasing cooldown penalties or failure streaks. A
- * provider-declared quota or rate-limit cooldown remains in effect.
- */
-/** What one operator check found, from its probe and its model listing. */
+Re-check one provider now, on an operator's request.
+
+Routing only re-probes a provider when a request is about to use it, so a
+provider marked unavailable stays that way until traffic happens to try it
+again. The check runs what routing would: the live probe (credential, the
+bridge's health endpoint, or Codex's own auth), then the provider's model
+listing. Model discovery is reported separately from provider health.
+
+A passing probe clears a probe-failure cooldown, and the passing check is
+recorded as health evidence (`lastCheck`) that a request failure older than
+it no longer stands for. A failing operator-requested probe records health
+evidence without increasing cooldown penalties or failure streaks. A
+provider-declared quota or rate-limit cooldown remains in effect.
+*/
+/**
+What one operator check found, from its probe and its model listing.
+*/
 function providerCheckVerdict(
   provider: string,
   probe: ProviderProbeResult,
@@ -1198,7 +1202,7 @@ export function getRouterStatus(
 
 export async function requestBody(
   request: IncomingMessage,
-  maxBytes = Number.POSITIVE_INFINITY
+  maxBytes = Infinity
 ): Promise<string> {
   const chunks: Buffer[] = [];
   let bytes = 0;
@@ -1241,10 +1245,10 @@ export function resolveTurnMetadataHeader(
 }
 
 /**
- * Resolve the client surface that originated an HTTP request from Codex's
- * `originator` header, falling back to the product token of `User-Agent`.
- * Returns `null` when neither header carries an observable originator.
- */
+Resolve the client surface that originated an HTTP request from Codex's
+`originator` header, falling back to the product token of `User-Agent`.
+Returns `null` when neither header carries an observable originator.
+*/
 export function requestClientSurface(
   request: IncomingMessage
 ): ClientSurface | null {
@@ -1262,22 +1266,22 @@ export function requestClientSurface(
 }
 
 /**
- * Who is asking: the session (a Codex root thread and its whole agent tree
- * share it) and the thread itself. Codex 0.154.0 sends both on every request
- * -- `session-id`/`thread-id` headers, `client_metadata`, and turn metadata --
- * and a subagent's thread differs from its session.
- *
- * The canonical Codex 0.154.0+ header (`session-id`) is recognized at the top
- * of the precedence list so a metadata-less continuation/compaction request
- * that supplies only the canonical header is still identified as the same
- * session whose workspace metadata was previously remembered, instead of
- * falling back to the process-wide anonymous bucket. The legacy
- * `x-codex-session-id`/`x-session-id`/`x-conversation-id` aliases remain in
- * the precedence list so already-remembered workspace metadata continues to
- * resolve for older callers. Thread identity accepts Codex's canonical
- * `thread-id` header, `client_metadata.thread_id`, or turn metadata; the former
- * `x-codex-thread-id` header is no longer accepted.
- */
+Who is asking: the session (a Codex root thread and its whole agent tree
+share it) and the thread itself. Codex 0.154.0 sends both on every request
+-- `session-id`/`thread-id` headers, `client_metadata`, and turn metadata --
+and a subagent's thread differs from its session.
+
+The canonical Codex 0.154.0+ header (`session-id`) is recognized at the top
+of the precedence list so a metadata-less continuation/compaction request
+that supplies only the canonical header is still identified as the same
+session whose workspace metadata was previously remembered, instead of
+falling back to the process-wide anonymous bucket. The legacy
+`x-codex-session-id`/`x-session-id`/`x-conversation-id` aliases remain in
+the precedence list so already-remembered workspace metadata continues to
+resolve for older callers. Thread identity accepts Codex's canonical
+`thread-id` header, `client_metadata.thread_id`, or turn metadata; the former
+`x-codex-thread-id` header is no longer accepted.
+*/
 export function requestSession(
   request: IncomingMessage,
   payload: Record<string, unknown> | null | undefined,
@@ -1286,9 +1290,13 @@ export function requestSession(
   key: string;
   scope: "identified" | "process-fallback";
   thread: string | null;
-  /** The source session identity; a thread-only fallback is not a session ID. */
+  /**
+  The source session identity; a thread-only fallback is not a session ID.
+  */
   sessionId?: string;
-  /** The observed client surface from request headers, or null when absent. */
+  /**
+  The observed client surface from request headers, or null when absent.
+  */
   clientSurface: ClientSurface | null;
 } {
   const clientSurface = requestClientSurface(request);
@@ -1334,7 +1342,7 @@ export function requestSession(
       scope: "identified",
       thread,
       clientSurface,
-      ...(explicitSession ? { sessionId: explicitSession } : {})
+      ...(explicitSession && { sessionId: explicitSession })
     };
   return {
     key: PROCESS_FALLBACK_SESSION_KEY,
@@ -1411,8 +1419,8 @@ export function repositoryIdentity(remote: unknown): string | null {
     .map((part) => part.replace(GIT_EXTENSION_PATTERN, ""));
   if (parts.length < 2) return null;
   const owner = parts.at(-2)!.replaceAll(REPO_ID_SANITIZE_PATTERN, "");
-  const repo = parts.at(-1)!.replaceAll(REPO_ID_SANITIZE_PATTERN, "");
-  return owner && repo ? `${owner}/${repo}` : null;
+  const repository = parts.at(-1)!.replaceAll(REPO_ID_SANITIZE_PATTERN, "");
+  return owner && repository ? `${owner}/${repository}` : null;
 }
 
 function resolveTurnMetadataWorkspaces(
@@ -1569,14 +1577,14 @@ export function addWorkspaceIdToTurnMetadata(
 }
 
 /**
- * The client's own entry for one workspace, as a one-entry `workspaces` map.
- *
- * The client's map carries the workspace's git identity in each entry, and a
- * remembered copy that dropped it would label the workspace by its path
- * basename on every later turn. Only the entry for the workspace that was
- * resolved is kept: the map's shape stays one workspace per map, which is
- * what the downstream resolver treats as unambiguous.
- */
+The client's own entry for one workspace, as a one-entry `workspaces` map.
+
+The client's map carries the workspace's git identity in each entry, and a
+remembered copy that dropped it would label the workspace by its path
+basename on every later turn. Only the entry for the workspace that was
+resolved is kept: the map's shape stays one workspace per map, which is
+what the downstream resolver treats as unambiguous.
+*/
 function clientWorkspaceEntry(
   workspaces: Record<string, Record<string, unknown>>,
   workspacePath: string
@@ -1617,7 +1625,9 @@ export function workspaceMetadataForSession(
   try {
     workspacePath = resolveCwd(payload, headers);
   } catch {
-    /* ignore unresolvable */
+    /*
+    ignore unresolvable
+    */
   }
   if (workspacePath) {
     if (session?.scope === "identified") {
@@ -1690,44 +1700,46 @@ export async function loadCatalog(
       const modelSlugs = new Set(models.map((m) => m.slug));
       const codexModels = ROUTING_POLICY.config.providers?.codex?.models ?? {};
       for (const [key, slug] of Object.entries(codexModels)) {
-        if (typeof slug === "string" && slug && !modelSlugs.has(slug)) {
-          models.unshift({
-            slug,
-            display_name: slug,
-            description: `OpenAI Codex model for ${key}.`,
-            default_reasoning_level:
-              key === "orchestrator"
-                ? (ROUTING_POLICY.config.orchestrator?.reasoningEffort?.codex ??
-                  "xhigh")
-                : key === "smart"
-                  ? "high"
-                  : "medium",
-            supported_reasoning_levels: [
-              { effort: "low", description: "Low reasoning" },
-              { effort: "medium", description: "Balanced reasoning" },
-              { effort: "high", description: "High reasoning" },
-              { effort: "xhigh", description: "Extra-high reasoning" },
-              { effort: "max", description: "Maximum reasoning" }
-            ],
-            shell_type: "shell_command",
-            visibility: "list",
-            supported_in_api: true,
-            priority: 0,
-            context_window: 1_000_000,
-            max_context_window: 1_000_000,
-            supports_parallel_tool_calls: true,
-            supports_reasoning_summaries: true,
-            support_verbosity: true,
-            supports_search_tool: true,
-            tool_mode: "code_mode_only",
-            truncation_policy: { mode: "tokens", limit: 10_000 },
-            experimental_supported_tools: [],
-            use_responses_lite: true,
-            multi_agent_version: "v1",
-            input_modalities: ["text", "image"]
-          });
-          modelSlugs.add(slug);
+        if (typeof slug !== "string" || !slug || modelSlugs.has(slug)) {
+          continue;
         }
+
+        models.unshift({
+          slug,
+          display_name: slug,
+          description: `OpenAI Codex model for ${key}.`,
+          default_reasoning_level:
+            key === "orchestrator"
+              ? (ROUTING_POLICY.config.orchestrator?.reasoningEffort?.codex ??
+                "xhigh")
+              : key === "smart"
+                ? "high"
+                : "medium",
+          supported_reasoning_levels: [
+            { effort: "low", description: "Low reasoning" },
+            { effort: "medium", description: "Balanced reasoning" },
+            { effort: "high", description: "High reasoning" },
+            { effort: "xhigh", description: "Extra-high reasoning" },
+            { effort: "max", description: "Maximum reasoning" }
+          ],
+          shell_type: "shell_command",
+          visibility: "list",
+          supported_in_api: true,
+          priority: 0,
+          context_window: 1_000_000,
+          max_context_window: 1_000_000,
+          supports_parallel_tool_calls: true,
+          supports_reasoning_summaries: true,
+          support_verbosity: true,
+          supports_search_tool: true,
+          tool_mode: "code_mode_only",
+          truncation_policy: { mode: "tokens", limit: 10_000 },
+          experimental_supported_tools: [],
+          use_responses_lite: true,
+          multi_agent_version: "v1",
+          input_modalities: ["text", "image"]
+        });
+        modelSlugs.add(slug);
       }
     }
     return {
@@ -1741,7 +1753,9 @@ export async function loadCatalog(
   }
 }
 
-/** Local enrollment credentials authorize observations only, not execution. */
+/**
+Local enrollment credentials authorize observations only, not execution.
+*/
 async function handleNativeSessionObservation(
   request: IncomingMessage,
   response: ServerResponse
@@ -1879,8 +1893,7 @@ async function handlePreflightRoutes(
     sendJson(response, 200, await loadCatalog());
     return true;
   }
-  if (await handleControlApiRequest(request, response, pathname)) return true;
-  return false;
+  return Boolean(await handleControlApiRequest(request, response, pathname));
 }
 
 export async function handle(
@@ -1921,7 +1934,9 @@ export async function handle(
         );
       }
     } catch {
-      /* client disconnect absorbed */
+      /*
+      client disconnect absorbed
+      */
     }
   }
 }

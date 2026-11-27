@@ -1,28 +1,28 @@
 #!/usr/bin/env node
 
 /**
- * Probe whether Codex can write to `.git` under the repository's command rules.
- *
- * The workspace-write sandbox keeps `<root>/.git` read-only, so a staging
- * command that is allowed to run outside the sandbox can write the index and
- * a staging command that stays inside it cannot. The rules in
- * `agents/rules/default.rules` grant that exemption to the Git commands that
- * need it, but the exemption is per command: a command the model issues
- * together with another one (chained with `&&` or `;`), or a command the
- * model issues in a shape Codex runs on another path (an explicit shell, a
- * command too long to run directly), is judged as a whole, so the exemption
- * is lost and the write fails with `.git/index.lock: Operation not permitted`.
- *
- * The probe proves which command forms keep the write access. It runs a real
- * Codex against a throwaway Git repository and an isolated CODEX_HOME holding
- * the repository's rules file, so it needs no API key and no network: the
- * model is a scripted fake provider.
- *
- *   node git-write-access-probe.ts [--codex <binary>] [--rules <path>] [--keep]
- *
- * "--keep" leaves the throwaway CODEX_HOME and repository behind and prints
- * their paths.
- */
+Probe whether Codex can write to `.git` under the repository's command rules.
+
+The workspace-write sandbox keeps `<root>/.git` read-only, so a staging
+command that is allowed to run outside the sandbox can write the index and
+a staging command that stays inside it cannot. The rules in
+`agents/rules/default.rules` grant that exemption to the Git commands that
+need it, but the exemption is per command: a command the model issues
+together with another one (chained with `&&` or `;`), or a command the
+model issues in a shape Codex runs on another path (an explicit shell, a
+command too long to run directly), is judged as a whole, so the exemption
+is lost and the write fails with `.git/index.lock: Operation not permitted`.
+
+The probe proves which command forms keep the write access. It runs a real
+Codex against a throwaway Git repository and an isolated CODEX_HOME holding
+the repository's rules file, so it needs no API key and no network: the
+model is a scripted fake provider.
+
+  node git-write-access-probe.ts [--codex <binary>] [--rules <path>] [--keep]
+
+"--keep" leaves the throwaway CODEX_HOME and repository behind and prints
+their paths.
+*/
 
 import { spawn, spawnSync } from "node:child_process";
 import {
@@ -60,29 +60,43 @@ const MODEL_CATALOG = fileURLToPath(
 const REPOSITORY_RULES = fileURLToPath(
   new URL("../../../../agents/rules/default.rules", import.meta.url)
 );
-/** How many paths the long-command case stages. */
+/**
+How many paths the long-command case stages.
+*/
 const LONG_COMMAND_PATHS = 128;
-/** The staging command every case starts from. */
+/**
+The staging command every case starts from.
+*/
 const STAGE = "git add file.txt";
 
 export interface WriteAccessCase {
-  /** The arguments the scripted model passes to `exec_command`. */
+  /**
+  The arguments the scripted model passes to `exec_command`.
+  */
   readonly arguments: Readonly<Record<string, unknown>>;
-  /** The command, for the report. */
+  /**
+  The command, for the report.
+  */
   readonly command: string;
-  /** What the case is meant to show. */
+  /**
+  What the case is meant to show.
+  */
   readonly intent: string;
-  /** Whether the command is meant to write to `.git` at all. */
+  /**
+  Whether the command is meant to write to `.git` at all.
+  */
   readonly writes: boolean;
-  /** A command run in the work dir after the run; its output means the write happened. */
+  /**
+  A command run in the work dir after the run; its output means the write happened.
+  */
   readonly check?: string;
 }
 
 /**
- * The command forms an agent actually uses. The staging command is the one
- * that needs `.git` to be writable; the others are the forms that either keep
- * or lose the exemption.
- */
+The command forms an agent actually uses. The staging command is the one
+that needs `.git` to be writable; the others are the forms that either keep
+or lose the exemption.
+*/
 export function writeAccessCases(): readonly WriteAccessCase[] {
   const longPaths = Array.from(
     { length: LONG_COMMAND_PATHS },
@@ -206,11 +220,17 @@ export function writeAccessCases(): readonly WriteAccessCase[] {
 export interface WriteAccessResult {
   readonly command: string;
   readonly intent: string;
-  /** Whether the command is meant to write to `.git` at all. */
+  /**
+  Whether the command is meant to write to `.git` at all.
+  */
   readonly writes: boolean;
-  /** Whether the write reached the repository: staged in the index or committed. */
+  /**
+  Whether the write reached the repository: staged in the index or committed.
+  */
   readonly staged: boolean;
-  /** The tool result the model saw. */
+  /**
+  The tool result the model saw.
+  */
   readonly detail: string;
 }
 
@@ -218,26 +238,36 @@ export interface WriteAccessOptions {
   readonly codex: string;
   readonly rules: string;
   readonly keep: boolean;
-  /** A Codex permission profile to add to the probe's own config. */
+  /**
+  A Codex permission profile to add to the probe's own config.
+  */
   readonly permissionProfile?: string | undefined;
-  /** Drop "sandbox_mode" from the probe's config, so a profile is the only policy. */
+  /**
+  Drop "sandbox_mode" from the probe's config, so a profile is the only policy.
+  */
   readonly noSandboxMode?: boolean | undefined;
-  /** Extra sandbox writable roots; "%WORK%" is the case's work directory. */
+  /**
+  Extra sandbox writable roots; "%WORK%" is the case's work directory.
+  */
   readonly writableRoots?: readonly string[] | undefined;
-  /** Only run the cases whose command contains this text. */
+  /**
+  Only run the cases whose command contains this text.
+  */
   readonly filter?: string | undefined;
 }
 
-/** The scripted turns the fake provider serves: one command, then one message. */
+/**
+The scripted turns the fake provider serves: one command, then one message.
+*/
 export function writeAccessTurns(
-  args: Readonly<Record<string, unknown>>
+  arguments_: Readonly<Record<string, unknown>>
 ): SseEvent[][] {
   const raw = readFileSync(EXAMPLE_TURNS, "utf8");
   const escapedMarker = JSON.stringify(
     JSON.stringify({ cmd: "echo autodev-probe" })
   ).slice(1, -1);
-  const escapedArgs = JSON.stringify(JSON.stringify(args)).slice(1, -1);
-  const replaced = raw.replaceAll(escapedMarker, escapedArgs);
+  const escapedArguments = JSON.stringify(JSON.stringify(arguments_)).slice(1, -1);
+  const replaced = raw.replaceAll(escapedMarker, escapedArguments);
   if (replaced === raw) {
     throw new Error("the example turns no longer carry the probe command");
   }
@@ -246,12 +276,16 @@ export function writeAccessTurns(
 
 const BARE_TOML_KEY = /^[A-Za-z0-9_-]+$/u;
 
-/** A TOML key: bare when it can be, quoted when it cannot. */
+/**
+A TOML key: bare when it can be, quoted when it cannot.
+*/
 function tomlKey(key: string): string {
   return BARE_TOML_KEY.test(key) ? key : JSON.stringify(key);
 }
 
-/** A TOML table, recursively. */
+/**
+A TOML table, recursively.
+*/
 function emitTomlTable(header: string, body: unknown): string {
   const lines = [`[${header}]`];
   for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
@@ -265,10 +299,10 @@ function emitTomlTable(header: string, body: unknown): string {
 }
 
 /**
- * A Codex permission profile, split into the top-level keys and the tables.
- * TOML needs the top-level keys before the first table header, so the two
- * halves cannot simply be appended.
- */
+A Codex permission profile, split into the top-level keys and the tables.
+TOML needs the top-level keys before the first table header, so the two
+halves cannot simply be appended.
+*/
 export function splitProfile(profile: string): {
   readonly scalars: readonly string[];
   readonly tables: readonly string[];
@@ -319,7 +353,9 @@ function configToml(
   };
 }
 
-/** The tool result the model saw, which is where the failure shows up. */
+/**
+The tool result the model saw, which is where the failure shows up.
+*/
 export function recordedToolOutput(record: string): string | null {
   if (!existsSync(record)) return null;
   const lines = readFileSync(record, "utf8")
@@ -376,9 +412,9 @@ async function runCodex(
 }
 
 /**
- * Whether the write reached the repository: something is in the index, or the
- * command committed it.
- */
+Whether the write reached the repository: something is in the index, or the
+command committed it.
+*/
 export function writeReachedRepository(work: string, check?: string): boolean {
   if (check !== undefined) {
     const result = spawnSync("sh", ["-c", check], {
@@ -468,7 +504,7 @@ async function runCase(
   const run = await runCodex(options.codex, home, work);
   await closeServer(server);
 
-  const staged = writeReachedRepository(work, testCase.check);
+  const isStaged = writeReachedRepository(work, testCase.check);
   const detail = recordedToolOutput(record) ?? run.stderr.trim();
   if (options.keep) process.stderr.write("kept " + root + "\n");
   else
@@ -482,7 +518,7 @@ async function runCase(
     command: testCase.command,
     intent: testCase.intent,
     writes: testCase.writes,
-    staged,
+    staged: isStaged,
     detail
   };
 }
@@ -542,7 +578,9 @@ interface ProbeArguments {
   readonly noSandboxMode: boolean;
 }
 
-/** Read one option's value, or report that it is missing. */
+/**
+Read one option's value, or report that it is missing.
+*/
 function optionValue(
   argv: readonly string[],
   index: number,

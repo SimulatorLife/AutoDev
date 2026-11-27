@@ -48,9 +48,11 @@ test(
 
     const result = await resultPromise;
     assert.equal(result.kind, "ok");
-    if (result.kind === "ok") {
-      assert.equal(result.data.runtimeFactsAvailable, false);
-      assert.equal(result.data.runtimeMessage, RESPONSE.runtimeMessage);
+    if (result.kind !== "ok") {
+      return;
     }
+
+    assert.equal(result.data.runtimeFactsAvailable, false);
+    assert.equal(result.data.runtimeMessage, RESPONSE.runtimeMessage);
   }
 );

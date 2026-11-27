@@ -18,12 +18,12 @@ import {
 const WORKSPACE_ID = "owner/game";
 
 /**
- * These tests pin the cross-session dispatch contract rather than packet
- * construction: an operator names a selection, and every named session comes
- * back either as a packet or as a named receipt. The one failure a review
- * cannot detect is a session that vanishes, because the analyst then reasons
- * over "several sessions" while holding evidence from one.
- */
+These tests pin the cross-session dispatch contract rather than packet
+construction: an operator names a selection, and every named session comes
+back either as a packet or as a named receipt. The one failure a review
+cannot detect is a session that vanishes, because the analyst then reasons
+over "several sessions" while holding evidence from one.
+*/
 
 function episode(
   episodeId: string,
@@ -94,10 +94,10 @@ function episode(
 }
 
 /**
- * `selectedEpisodeIds` is the batch's frozen bounded review selection. It is a
- * separate argument so a test can set the cap or budget without accidentally
- * rewriting the selection it is trying to exercise.
- */
+`selectedEpisodeIds` is the batch's frozen bounded review selection. It is a
+separate argument so a test can set the cap or budget without accidentally
+rewriting the selection it is trying to exercise.
+*/
 function batch(
   batchId: string,
   overrides: Partial<PlaytestBatch> = {},
@@ -196,7 +196,7 @@ async function dispatch(
     server as unknown as {
       _registeredTools: Record<
         string,
-        { handler: (args: unknown) => Promise<unknown> }
+        { handler: (arguments_: unknown) => Promise<unknown> }
       >;
     }
   )._registeredTools["playtest.prepareCrossSessionReview"]!.handler({
@@ -373,7 +373,7 @@ test("a selection is bounded and rejects duplicates as one selection", async () 
     server as unknown as {
       _registeredTools: Record<
         string,
-        { handler: (args: unknown) => Promise<unknown> }
+        { handler: (arguments_: unknown) => Promise<unknown> }
       >;
     }
   )._registeredTools["playtest.prepareCrossSessionReview"]!.handler({
@@ -414,7 +414,7 @@ test("the analyst MCP role cannot dispatch cross-session packet preparation", as
     server as unknown as {
       _registeredTools: Record<
         string,
-        { handler: (args: unknown) => Promise<unknown> }
+        { handler: (arguments_: unknown) => Promise<unknown> }
       >;
     }
   )._registeredTools["playtest.prepareCrossSessionReview"]!.handler({

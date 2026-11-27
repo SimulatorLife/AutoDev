@@ -7,15 +7,15 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { HooksView } from "../src/features/hooks/HooksView.ts";
 
 /**
- * A count over the declared source is a number only when the source was read.
- *
- * The hooks page reads the canonical declaration, and an invalid or
- * unreadable one publishes an empty list of events. The cards above the table
- * counted that list: a target that declares no hooks and a target nobody read
- * are different claims, and only the first is a count. The card beside them
- * already said "Invalid" or "Not observed" -- the two cards that claimed a
- * number did not agree with it.
- */
+A count over the declared source is a number only when the source was read.
+
+The hooks page reads the canonical declaration, and an invalid or
+unreadable one publishes an empty list of events. The cards above the table
+counted that list: a target that declares no hooks and a target nobody read
+are different claims, and only the first is a count. The card beside them
+already said "Invalid" or "Not observed" -- the two cards that claimed a
+number did not agree with it.
+*/
 
 const DECLARATION = {
   event: "preToolUse" as const,

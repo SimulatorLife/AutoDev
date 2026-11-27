@@ -31,7 +31,7 @@ test("GitHub metrics bound independent reads and preserve aggregation order", as
     }
   };
   const github: CollectMetricsOptions["github"] = {
-    paginate: async <T>(_method: unknown, _params: Record<string, unknown>) => {
+    paginate: async <T>(_method: unknown, _parameters: Record<string, unknown>) => {
       const repository = repositories[0];
       return (await withRead([
         {
@@ -44,8 +44,8 @@ test("GitHub metrics bound independent reads and preserve aggregation order", as
     rest: {
       actions: { listWorkflowRuns: {} },
       pulls: {
-        list: async (params) => {
-          const fullName = `${params.owner}/${params.repo}`;
+        list: async (parameters) => {
+          const fullName = `${parameters.owner}/${parameters.repo}`;
           const index = repositories.indexOf(fullName);
           const createdAt = new Date(Date.now() - index * 1000).toISOString();
           const pull: PullSummary = {
@@ -66,10 +66,10 @@ test("GitHub metrics bound independent reads and preserve aggregation order", as
   const originalPaginate = github.paginate;
   github.paginate = async <T>(
     method: unknown,
-    params: Record<string, unknown>
+    parameters: Record<string, unknown>
   ) => {
-    workflowCalls.push(String(params.workflow_id));
-    return originalPaginate<T>(method, params);
+    workflowCalls.push(String(parameters.workflow_id));
+    return originalPaginate<T>(method, parameters);
   };
 
   const metrics = await collectMetrics({

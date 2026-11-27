@@ -1,14 +1,14 @@
 /**
- * Server-only Console agent-model mutation route.
- *
- * Receives the bounded form submission from an agent-model control on a
- * provider's page, validates its same-origin browser context, and forwards a
- * typed PATCH to Runtime using the server-side Control API credential. An
- * empty `model` returns the role to its tier's model.
- *
- * Only POST is exported. The response redirects back to the page the control
- * was rendered on, with a could-not-be-confirmed or refusal notice on failure.
- */
+Server-only Console agent-model mutation route.
+
+Receives the bounded form submission from an agent-model control on a
+provider's page, validates its same-origin browser context, and forwards a
+typed PATCH to Runtime using the server-side Control API credential. An
+empty `model` returns the role to its tier's model.
+
+Only POST is exported. The response redirects back to the page the control
+was rendered on, with a could-not-be-confirmed or refusal notice on failure.
+*/
 
 import type { NextRequest, NextResponse } from "next/server.js";
 

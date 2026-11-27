@@ -1,66 +1,66 @@
 /**
- * Source-owned OpenTelemetry instrumentation for the Codex tools MCP shim.
- *
- * The shim is the producer that owns the `tools/call` operation: Claude
- * sends a JSON-RPC `tools/call` request over stdio, this shim forwards the
- * call to its owning bridge, and the bridge replies with Codex's tool
- * output. Every `tools/call` therefore produces exactly one observation at
- * this producer; no other layer sees the operation.
- *
- * The shim uses the official OpenTelemetry JS SDK and OTLP HTTP exporter.
- * It never hand-builds OTLP, never duplicates telemetry from the router,
- * never reads from or writes to the router's telemetry module, and never
- * alters `/status` aggregation. The exporter's endpoint and headers
- * come from the shared OTLP configuration owner
- * (@simulatorlife/autodev-runtime/telemetry/otlp-config), so this producer
- * and the router resolve the operator's endpoint the same way. Spans are only
- * exported when a real `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`)
- * is configured; without an endpoint the OTel API's no-op tracer remains
- * in place and the call path is unchanged.
- *
- * Resource identity: the shim is a separate subprocess launched by
- * Claude MCP config in runtime/src/providers/claude.ts. Its parent chain
- * (router -> Claude CLI -> shim) is the only source for any per-turn
- * `OTEL_RESOURCE_ATTRIBUTES`. This module reads the env-detected
- * resource so per-turn `autodev.workspace` and `autodev.agent.role`
- * inherited from the Claude CLI (@simulatorlife/autodev-runtime/telemetry/resource-context)
- * still flow to the shim's spans; it then layers the shim's own
- * `service.name=autodev-codex-tools-mcp` and `service.version` on top
- * so the producer is identifiable regardless of the operator-set
- * `OTEL_SERVICE_NAME`. Validated AutoDev context is only attached
- * after `safeAutoDevWorkspaceKey` / `safeAutoDevAgentRole` accept the
- * value, so the same privacy contract holds for inherited attributes.
- *
- * Per-call correlation: a shared gateway serves many roles, workspaces and
- * sessions from one process, so its resource cannot name them. The caller
- * that verified a call's admission passes that call's role, workspace key and
- * AutoDev session as `McpToolCallCorrelation`; they become span attributes
- * (`autodev.agent.role`, `autodev.workspace`, `autodev.session.id`), never
- * metric dimensions, and only after the same `safeAutoDev*` validation the
- * router applies. A value that is absent or fails validation is left off the
- * span -- Not observed -- rather than replaced by a placeholder.
- *
- * Privacy contract (mirrors docs/observability-target-state.md):
- * - Tool names are bounded and appear only on this MCP operation span;
- *   arguments, results, prompts, request IDs, conversation IDs, raw
- *   workspace paths and JSON-RPC ids are never attached. The only session
- *   identity is a validated, caller-verified AutoDev session ID.
- * - Errors use categorical `error.type` values only; raw messages,
- *   bridge URLs, HTTP status, and tool content are not exported.
- * - If tracer setup or export fails, the MCP callback still runs exactly
- *   once and its result remains authoritative.
- *
- * Semantic conventions: this shim handles the MCP server-side operation,
- * so the span kind is SERVER. MCP/GenAI attribute strings are pinned to
- * open-telemetry/semantic-conventions-genai at
- * MCP_SEMCONV_GENAI_REVISION. That mapping is Development-only and has no
- * tagged release; tests lock the revision and attributes so a convention
- * update is explicit. The older npm package's MCP/GenAI names are deprecated
- * redirects, so this producer does not treat them as its source of truth.
- * Span names follow `tools/call <gen_ai.tool.name>`; the tool name is never a
- * metric dimension. `params._meta` W3C trace context is extracted when present;
- * no session or request identifiers are recorded.
- */
+Source-owned OpenTelemetry instrumentation for the Codex tools MCP shim.
+
+The shim is the producer that owns the `tools/call` operation: Claude
+sends a JSON-RPC `tools/call` request over stdio, this shim forwards the
+call to its owning bridge, and the bridge replies with Codex's tool
+output. Every `tools/call` therefore produces exactly one observation at
+this producer; no other layer sees the operation.
+
+The shim uses the official OpenTelemetry JS SDK and OTLP HTTP exporter.
+It never hand-builds OTLP, never duplicates telemetry from the router,
+never reads from or writes to the router's telemetry module, and never
+alters `/status` aggregation. The exporter's endpoint and headers
+come from the shared OTLP configuration owner
+(@simulatorlife/autodev-runtime/telemetry/otlp-config), so this producer
+and the router resolve the operator's endpoint the same way. Spans are only
+exported when a real `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`)
+is configured; without an endpoint the OTel API's no-op tracer remains
+in place and the call path is unchanged.
+
+Resource identity: the shim is a separate subprocess launched by
+Claude MCP config in runtime/src/providers/claude.ts. Its parent chain
+(router -> Claude CLI -> shim) is the only source for any per-turn
+`OTEL_RESOURCE_ATTRIBUTES`. This module reads the env-detected
+resource so per-turn `autodev.workspace` and `autodev.agent.role`
+inherited from the Claude CLI (@simulatorlife/autodev-runtime/telemetry/resource-context)
+still flow to the shim's spans; it then layers the shim's own
+`service.name=autodev-codex-tools-mcp` and `service.version` on top
+so the producer is identifiable regardless of the operator-set
+`OTEL_SERVICE_NAME`. Validated AutoDev context is only attached
+after `safeAutoDevWorkspaceKey` / `safeAutoDevAgentRole` accept the
+value, so the same privacy contract holds for inherited attributes.
+
+Per-call correlation: a shared gateway serves many roles, workspaces and
+sessions from one process, so its resource cannot name them. The caller
+that verified a call's admission passes that call's role, workspace key and
+AutoDev session as `McpToolCallCorrelation`; they become span attributes
+(`autodev.agent.role`, `autodev.workspace`, `autodev.session.id`), never
+metric dimensions, and only after the same `safeAutoDev*` validation the
+router applies. A value that is absent or fails validation is left off the
+span -- Not observed -- rather than replaced by a placeholder.
+
+Privacy contract (mirrors docs/observability-target-state.md):
+- Tool names are bounded and appear only on this MCP operation span;
+  arguments, results, prompts, request IDs, conversation IDs, raw
+  workspace paths and JSON-RPC ids are never attached. The only session
+  identity is a validated, caller-verified AutoDev session ID.
+- Errors use categorical `error.type` values only; raw messages,
+  bridge URLs, HTTP status, and tool content are not exported.
+- If tracer setup or export fails, the MCP callback still runs exactly
+  once and its result remains authoritative.
+
+Semantic conventions: this shim handles the MCP server-side operation,
+so the span kind is SERVER. MCP/GenAI attribute strings are pinned to
+open-telemetry/semantic-conventions-genai at
+MCP_SEMCONV_GENAI_REVISION. That mapping is Development-only and has no
+tagged release; tests lock the revision and attributes so a convention
+update is explicit. The older npm package's MCP/GenAI names are deprecated
+redirects, so this producer does not treat them as its source of truth.
+Span names follow `tools/call <gen_ai.tool.name>`; the tool name is never a
+metric dimension. `params._meta` W3C trace context is extracted when present;
+no session or request identifiers are recorded.
+*/
 
 import {
   context,
@@ -95,11 +95,11 @@ import {
   ATTR_SERVICE_NAME,
   ATTR_SERVICE_VERSION
 } from "@opentelemetry/semantic-conventions";
+import { safeAutoDevSessionId } from "@simulatorlife/autodev-core";
 import {
   readOtlpHeaders,
   readOtlpTraceEndpoint
 } from "@simulatorlife/autodev-runtime/telemetry/otlp-config";
-import { safeAutoDevSessionId } from "@simulatorlife/autodev-core";
 import {
   safeAutoDevAgentRole,
   safeAutoDevWorkspaceKey
@@ -129,7 +129,9 @@ let externalTelemetry:
   | { server: string; endpoint: string; headers: Record<string, string> }
   | undefined;
 
-/** Reuse the same MCP span contract in the externally scoped tool filter. */
+/**
+Reuse the same MCP span contract in the externally scoped tool filter.
+*/
 export function configureExternalMcpTelemetry(
   server: string,
   endpoint: string,
@@ -145,10 +147,10 @@ let commandExecutionContext:
   { role: string; workspace: string | null } | undefined;
 
 /**
- * The Commands stdio backend owns execution spans, not another tools/call
- * observation. Configure its resource before the first command is executed.
- * The role and workspace come from trusted backend admission.
- */
+The Commands stdio backend owns execution spans, not another tools/call
+observation. Configure its resource before the first command is executed.
+The role and workspace come from trusted backend admission.
+*/
 export function configureCommandExecutionTelemetry(
   role: string,
   workspace: string | null
@@ -176,27 +178,27 @@ const state: ShimTelemetryState = {
 };
 
 /**
- * Build the resource the shim attaches to its spans: an explicit shim
- * `service.name` and `service.version`, merged with the env-detected
- * attributes (`OTEL_RESOURCE_ATTRIBUTES`, `OTEL_SERVICE_NAME`) that the
- * Claude CLI passes down to this MCP server subprocess. AutoDev context
- * is validated through `safeAutoDevWorkspaceKey` / `safeAutoDevAgentRole`
- * before it can become telemetry; missing or unsafe values are dropped.
- *
- * The function is intentionally synchronous against the env detector
- * (which is itself sync); no other async detector is enabled. This
- * keeps `ensureOtelInitialized` synchronous and guarantees the SDK
- * registration happens before any tool call.
- */
+Build the resource the shim attaches to its spans: an explicit shim
+`service.name` and `service.version`, merged with the env-detected
+attributes (`OTEL_RESOURCE_ATTRIBUTES`, `OTEL_SERVICE_NAME`) that the
+Claude CLI passes down to this MCP server subprocess. AutoDev context
+is validated through `safeAutoDevWorkspaceKey` / `safeAutoDevAgentRole`
+before it can become telemetry; missing or unsafe values are dropped.
+
+The function is intentionally synchronous against the env detector
+(which is itself sync); no other async detector is enabled. This
+keeps `ensureOtelInitialized` synchronous and guarantees the SDK
+registration happens before any tool call.
+*/
 function buildResource(): Resource {
   // Start with the env-detected attributes so the parent's
   // OTEL_RESOURCE_ATTRIBUTES (set by withAutoDevOtelResourceContext in
   // runtime/src/providers/claude.ts) and OTEL_SERVICE_NAME reach the shim's
   // spans. Non-AutoDev attributes pass through verbatim; AutoDev
   // context is validated below.
-  const envResource = detectResources({ detectors: [envDetector] });
+  const environmentResource = detectResources({ detectors: [envDetector] });
   const merged: Record<string, string> = {};
-  for (const [key, value] of Object.entries(envResource.attributes)) {
+  for (const [key, value] of Object.entries(environmentResource.attributes)) {
     if (typeof value === "string" && value.length > 0) merged[key] = value;
   }
   // The shim's own producer identity always wins, so a misconfigured
@@ -240,7 +242,9 @@ function logTelemetryError(message: string): void {
       : "autodev-codex-tools";
     process.stderr.write(`[${producer}-telemetry] ${message}\n`);
   } catch {
-    /* ignore */
+    /*
+    ignore
+    */
   }
 }
 
@@ -273,12 +277,12 @@ function buildSpanProcessors(): SpanProcessor[] {
 }
 
 /**
- * Initialize the official OpenTelemetry SDK synchronously and exactly
- * once. With no configured endpoint and no test exporter, the API's
- * no-op tracer remains in place. Exporter initialization is non-blocking
- * with respect to MCP traffic; BatchSpanProcessor sends spans
- * asynchronously.
- */
+Initialize the official OpenTelemetry SDK synchronously and exactly
+once. With no configured endpoint and no test exporter, the API's
+no-op tracer remains in place. Exporter initialization is non-blocking
+with respect to MCP traffic; BatchSpanProcessor sends spans
+asynchronously.
+*/
 export function ensureOtelInitialized(): Tracer {
   if (state.initialized) return state.tracer;
   state.initialized = true;
@@ -306,16 +310,18 @@ export function ensureOtelInitialized(): Tracer {
   return state.tracer;
 }
 
-/** Whether the official OTLP HTTP exporter is installed. Exposed for diagnostics. */
+/**
+Whether the official OTLP HTTP exporter is installed. Exposed for diagnostics.
+*/
 export function isOtlpExporterInstalled(): boolean {
   return state.otlpExporterInstalled;
 }
 
 /**
- * Install a test exporter before the first telemetry event. Production
- * never calls this; the test suite uses one in-memory exporter and resets
- * its contents between cases rather than replacing the global SDK.
- */
+Install a test exporter before the first telemetry event. Production
+never calls this; the test suite uses one in-memory exporter and resets
+its contents between cases rather than replacing the global SDK.
+*/
 export function setTestExporter(exporter: SpanExporter | null): void {
   if (state.initialized && state.testExporter !== exporter) {
     throw new Error(
@@ -343,16 +349,20 @@ export function resetTelemetryForTest(): void {
   try {
     exporter?.reset?.();
   } catch {
-    /* ignore test exporter cleanup failures */
+    /*
+    ignore test exporter cleanup failures
+    */
   }
 }
 
-/** Flush queued spans and shut down the provider before the MCP process exits. */
 /**
- * Deliver every span recorded so far without ending the process's telemetry.
- * A component that closes while its process lives on -- a backend pool --
- * flushes; only the process's own exit shuts the provider down.
- */
+Flush queued spans and shut down the provider before the MCP process exits.
+*/
+/**
+Deliver every span recorded so far without ending the process's telemetry.
+A component that closes while its process lives on -- a backend pool --
+flushes; only the process's own exit shuts the provider down.
+*/
 export async function flushTelemetry(): Promise<void> {
   try {
     await state.provider?.forceFlush();
@@ -373,16 +383,16 @@ export async function shutdownTelemetry(): Promise<void> {
 }
 
 /**
- * Reset the global provider for isolated tests. The production process
- * calls `shutdownTelemetry` once, on stdio close.
- *
- * Calling `trace.disable()`, `context.disable()`, and `propagation.disable()`
- * is required because the OTel API guards global registration against
- * duplicates: without unregistering all three globals that
- * `registerTracerProvider` installs, a follow-up `ensureOtelInitialized()`
- * silently no-ops and leaves the previous context manager, propagator, or
- * tracer provider in place.
- */
+Reset the global provider for isolated tests. The production process
+calls `shutdownTelemetry` once, on stdio close.
+
+Calling `trace.disable()`, `context.disable()`, and `propagation.disable()`
+is required because the OTel API guards global registration against
+duplicates: without unregistering all three globals that
+`registerTracerProvider` installs, a follow-up `ensureOtelInitialized()`
+silently no-ops and leaves the previous context manager, propagator, or
+tracer provider in place.
+*/
 export async function shutdownTelemetryForTest(): Promise<void> {
   const provider = state.provider;
   state.provider = null;
@@ -399,36 +409,50 @@ export async function shutdownTelemetryForTest(): Promise<void> {
     try {
       disable();
     } catch {
-      /* ignore disable failures */
+      /*
+      ignore disable failures
+      */
     }
   }
   try {
     if (provider) await provider.shutdown();
   } catch {
-    /* ignore shutdown failures */
+    /*
+    ignore shutdown failures
+    */
   }
   const exporter = state.testExporter as
     (SpanExporter & { shutdown?: () => Promise<void> }) | null;
   try {
     if (exporter) await exporter.shutdown();
   } catch {
-    /* ignore */
+    /*
+    ignore
+    */
   }
 }
 
 /**
- * The admission facts a gateway verified for one `tools/call`. Every field is
- * optional and untrusted until validated here; the caller must take them from
- * the verified grant or admission, never from MCP arguments or headers.
- */
+The admission facts a gateway verified for one `tools/call`. Every field is
+optional and untrusted until validated here; the caller must take them from
+the verified grant or admission, never from MCP arguments or headers.
+*/
 export interface McpToolCallCorrelation {
-  /** The canonical backend server name the call was routed to. */
+  /**
+  The canonical backend server name the call was routed to.
+  */
   readonly server?: string | null;
-  /** The AutoDev role the call was admitted under. */
+  /**
+  The AutoDev role the call was admitted under.
+  */
   readonly role?: string | null;
-  /** The AutoDev workspace key (`owner/repo` or a bounded label), never a path. */
+  /**
+  The AutoDev workspace key (`owner/repo` or a bounded label), never a path.
+  */
   readonly workspace?: string | null;
-  /** The AutoDev session ID the router also attributes, for trace joins. */
+  /**
+  The AutoDev session ID the router also attributes, for trace joins.
+  */
   readonly sessionId?: string | null;
 }
 
@@ -449,7 +473,9 @@ function correlationAttributes(
 
 export interface ToolCallOutcome {
   status: "ok" | "error";
-  /** Categorical error tag; never includes tool arguments or output. */
+  /**
+  Categorical error tag; never includes tool arguments or output.
+  */
   errorType?: string;
 }
 
@@ -460,20 +486,26 @@ function attachOutcome(span: Span, outcome: ToolCallOutcome): void {
       try {
         span.setAttribute(ATTR_ERROR_TYPE, errorType);
       } catch {
-        /* ignore attribute failures */
+        /*
+        ignore attribute failures
+        */
       }
     }
     try {
       span.setStatus({ code: SpanStatusCode.ERROR });
     } catch {
-      /* ignore */
+      /*
+      ignore
+      */
     }
     return;
   }
   try {
     span.setStatus({ code: SpanStatusCode.OK });
   } catch {
-    /* ignore */
+    /*
+    ignore
+    */
   }
 }
 
@@ -501,23 +533,23 @@ function endSpan(span: Span): void {
 }
 
 /**
- * Record one source-owned observation of the MCP `tools/call` operation
- * handled by the codex-tools-shim. The callback runs to completion
- * regardless of telemetry state; telemetry is never allowed to block,
- * mutate, or fail the call it observes. Tool arguments, results,
- * prompts, request IDs, and JSON-RPC ids are never attached to the span;
- * `correlation` adds only the validated admission facts described on
- * `McpToolCallCorrelation`.
- *
- * The MCP and GenAI attribute names are from the incubating semantic-
- * conventions package entrypoint; their source mapping is pinned by
- * `MCP_SEMCONV_GENAI_REVISION` and asserted in tests.
- *
- * Returns the outcome reported by the callback. If the callback throws,
- * the span is finalized as ERROR and the throw propagates so the shim's
- * own error handling remains the single owner of caller-visible
- * failure semantics.
- */
+Record one source-owned observation of the MCP `tools/call` operation
+handled by the codex-tools-shim. The callback runs to completion
+regardless of telemetry state; telemetry is never allowed to block,
+mutate, or fail the call it observes. Tool arguments, results,
+prompts, request IDs, and JSON-RPC ids are never attached to the span;
+`correlation` adds only the validated admission facts described on
+`McpToolCallCorrelation`.
+
+The MCP and GenAI attribute names are from the incubating semantic-
+conventions package entrypoint; their source mapping is pinned by
+`MCP_SEMCONV_GENAI_REVISION` and asserted in tests.
+
+Returns the outcome reported by the callback. If the callback throws,
+the span is finalized as ERROR and the throw propagates so the shim's
+own error handling remains the single owner of caller-visible
+failure semantics.
+*/
 export async function recordToolCallSpan(
   name: string,
   callback: () => Promise<ToolCallOutcome>,
@@ -568,11 +600,11 @@ export async function recordToolCallSpan(
 }
 
 /**
- * Observe actual command execution once, independent of how many times its
- * native MCP task is polled or its result retrieved. This internal span is
- * deliberately not a tools/call span, so existing MCP counts do not double.
- * Never export argv, paths, output, messages, or task/session identifiers.
- */
+Observe actual command execution once, independent of how many times its
+native MCP task is polled or its result retrieved. This internal span is
+deliberately not a tools/call span, so existing MCP counts do not double.
+Never export argv, paths, output, messages, or task/session identifiers.
+*/
 export async function recordCommandExecutionSpan(
   commandId: string,
   executionClass: CommandDefinition["executionClass"],
@@ -611,7 +643,9 @@ export async function recordCommandExecutionSpan(
           result.outputTruncated
         );
       } catch {
-        /* observation cannot change the command result */
+        /*
+        observation cannot change the command result
+        */
       }
       attachOutcome(
         span,
@@ -626,7 +660,9 @@ export async function recordCommandExecutionSpan(
       try {
         span.setAttribute("autodev.command.outcome", "infrastructure_error");
       } catch {
-        /* ignore attribute failures */
+        /*
+        ignore attribute failures
+        */
       }
       attachOutcome(span, {
         status: "error",

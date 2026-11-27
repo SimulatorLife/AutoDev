@@ -1,16 +1,16 @@
 /**
- * Stdio host for the generic adapter.
- *
- * Serves the game-adapter protocol from a `GenericAdapter`, so the Runtime's
- * existing `PlaytestAdapterClient` talks to AutoDev's process and AutoDev talks
- * to the game through its declared bindings. The game ships an entry module and
- * a binding file; it does not ship protocol code.
- *
- * The transport is the same strict JSON-RPC the client validates: one request
- * per line, a response or error per id, and no invented envelope fields. A
- * malformed request is answered with a protocol error rather than dropped,
- * because a dropped request is a client that waits forever.
- */
+Stdio host for the generic adapter.
+
+Serves the game-adapter protocol from a `GenericAdapter`, so the Runtime's
+existing `PlaytestAdapterClient` talks to AutoDev's process and AutoDev talks
+to the game through its declared bindings. The game ships an entry module and
+a binding file; it does not ship protocol code.
+
+The transport is the same strict JSON-RPC the client validates: one request
+per line, a response or error per id, and no invented envelope fields. A
+malformed request is answered with a protocol error rather than dropped,
+because a dropped request is a client that waits forever.
+*/
 import type { Readable, Writable } from "node:stream";
 
 import {
@@ -45,7 +45,9 @@ const METHOD_NOT_FOUND = -32_601;
 const INTERNAL_ERROR = -32_603;
 const PARSE_ERROR = -32_700;
 
-/** Parse one line into a request, rejecting anything the protocol forbids. */
+/**
+Parse one line into a request, rejecting anything the protocol forbids.
+*/
 function parseAdapterRequest(line: string):
   | {
       readonly ok: true;
@@ -96,16 +98,22 @@ function parseAdapterRequest(line: string):
 export interface GenericAdapterHostOptions extends GenericAdapterOptions {
   readonly input: Readable;
   readonly output: Writable;
-  /** Bound so an unbounded line cannot grow the buffer without limit. */
+  /**
+  Bound so an unbounded line cannot grow the buffer without limit.
+  */
   readonly maximumLineBytes?: number;
 }
 
 export interface GenericAdapterHost {
   readonly adapter: GenericAdapter;
-  /** Resolves once the input stream ends. */
+  /**
+  Resolves once the input stream ends.
+  */
   serve(): Promise<void>;
-  /** Forward a game-emitted notification, e.g. `game.event`. */
-  notify(method: string, params: Readonly<Record<string, unknown>>): void;
+  /**
+  Forward a game-emitted notification, e.g. `game.event`.
+  */
+  notify(method: string, parameters: Readonly<Record<string, unknown>>): void;
   close(): Promise<void>;
 }
 
@@ -130,9 +138,9 @@ function okResponse(id: string, result: unknown): PlaytestJsonRpcResponse {
 }
 
 /**
- * Start the host. Binding problems surface before any stream is read, so a game
- * with an unusable declaration is told so rather than seeing a transport error.
- */
+Start the host. Binding problems surface before any stream is read, so a game
+with an unusable declaration is told so rather than seeing a transport error.
+*/
 export async function startGenericAdapterHost(
   options: GenericAdapterHostOptions
 ): Promise<GenericAdapterHost> {
@@ -140,12 +148,12 @@ export async function startGenericAdapterHost(
   const framer = new JsonLineFramer(
     options.maximumLineBytes ?? PLAYTESTS_ADAPTER_DEFAULT_QUOTAS.maxMessageBytes
   );
-  let closed = false;
+  let isClosed = false;
 
   const write = (
     envelope: PlaytestJsonRpcResponse | PlaytestJsonRpcNotification
   ): void => {
-    if (closed) return;
+    if (isClosed) return;
     options.output.write(`${JSON.stringify(envelope)}\n`);
   };
 
@@ -226,16 +234,16 @@ export async function startGenericAdapterHost(
       });
       await queue;
     },
-    notify: (method, params) => {
+    notify: (method, parameters) => {
       write({
         jsonrpc: "2.0",
         method,
-        params
+        params: parameters
       } as unknown as PlaytestJsonRpcNotification);
     },
     close: async () => {
-      if (closed) return;
-      closed = true;
+      if (isClosed) return;
+      isClosed = true;
       options.input.off("data", onData);
       await adapter.close();
     }

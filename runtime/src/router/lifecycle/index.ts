@@ -16,7 +16,7 @@ export interface RouterLifecycleOptions {
 }
 
 export interface ShutdownServer {
-  close(cb: (err?: Error) => void): void;
+  close(callback: (error?: Error) => void): void;
   closeAllConnections?(): void;
 }
 
@@ -94,7 +94,9 @@ export class RouterLifecycle {
       try {
         controller.abort();
       } catch {
-        /* best effort during shutdown */
+        /*
+        best effort during shutdown
+        */
       }
     }
   }
@@ -142,7 +144,9 @@ export class RouterLifecycle {
         try {
           await options.persistState();
         } catch {
-          /* logging handled by persist callback */
+          /*
+          logging handled by persist callback
+          */
         }
       }
       if (options.server && typeof options.server.close === "function") {
@@ -155,7 +159,9 @@ export class RouterLifecycle {
             httpServer.closeAllConnections?.();
           });
         } catch {
-          /* best effort server close */
+          /*
+          best effort server close
+          */
         }
       }
       writeErrorLine(
@@ -205,15 +211,15 @@ async function waitForActiveRequestsToDrain(
 let defaultRouterLifecycle: RouterLifecycle | null = null;
 
 /**
- * The router's lifecycle, which is the owner of every fact about it.
- *
- * This accessor and the owner are the only way in. The module used to also
- * export a free function for each of the owner's methods -- `isDraining`,
- * `getLifecycleStatus`, `beginShutdown` and six more -- each of which did
- * nothing but forward to the instance this returns. Two names for one
- * capability is two paths into it, and a reader of the router's public surface
- * could not tell which one the runtime actually used.
- */
+The router's lifecycle, which is the owner of every fact about it.
+
+This accessor and the owner are the only way in. The module used to also
+export a free function for each of the owner's methods -- `isDraining`,
+`getLifecycleStatus`, `beginShutdown` and six more -- each of which did
+nothing but forward to the instance this returns. Two names for one
+capability is two paths into it, and a reader of the router's public surface
+could not tell which one the runtime actually used.
+*/
 export function getDefaultRouterLifecycle(
   options?: RouterLifecycleOptions
 ): RouterLifecycle {

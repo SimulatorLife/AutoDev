@@ -7,9 +7,8 @@ import test from "node:test";
 import {
   codexEnvironmentHeaders,
   environmentVariableName,
-  resolveRemoteMcpHeaders,
-  type RemoteBackendSpec
-} from "@simulatorlife/autodev-runtime/shared/mcp-headers";
+  type RemoteBackendSpec,
+  resolveRemoteMcpHeaders} from "@simulatorlife/autodev-runtime/shared/mcp-headers";
 
 const URL = "https://mcp.example.invalid/mcp";
 
@@ -48,7 +47,7 @@ test("remote credentials resolve only against the backend environment and existi
     writeFileSync(secretFile, "FIXTURE_FILE_KEY=fixture-file-value\n", {
       mode: 0o600
     });
-    const env = {
+    const environment = {
       AUTODEV_OPENLIT_SECRET_FILE: secretFile,
       FIXTURE_BEARER: "fixture-bearer",
       FIXTURE_API_KEY: "fixture-api-key"
@@ -63,7 +62,7 @@ test("remote credentials resolve only against the backend environment and existi
         "X-Literal": "literal"
       }
     };
-    const headers = resolveRemoteMcpHeaders(spec, "fixture", env);
+    const headers = resolveRemoteMcpHeaders(spec, "fixture", environment);
     assert.ok(headers instanceof Headers);
     assert.equal(headers.get("authorization"), "Bearer fixture-bearer");
     assert.equal(headers.get("x-api-key"), "fixture-api-key");
@@ -71,7 +70,7 @@ test("remote credentials resolve only against the backend environment and existi
     assert.equal(headers.get("x-template"), "prefix fixture-api-key");
     assert.equal(headers.get("x-literal"), "literal");
     assert.equal(spec.http_headers["X-Api-Key"], "${FIXTURE_API_KEY}");
-    assert.equal(env.FIXTURE_API_KEY, "fixture-api-key");
+    assert.equal(environment.FIXTURE_API_KEY, "fixture-api-key");
   } finally {
     temporary.remove();
   }
@@ -82,7 +81,7 @@ test("missing and malformed remote credential references fail closed", () => {
     path.join(tmpdir(), "autodev-mcp-header-")
   );
   try {
-    const env: NodeJS.ProcessEnv = Object.assign(
+    const environment: NodeJS.ProcessEnv = Object.assign(
       Object.create({ FIXTURE_INHERITED: "not-an-owned-credential" }),
       {
         AUTODEV_OPENLIT_SECRET_FILE: path.join(temporary.path, "absent.env"),
@@ -102,7 +101,7 @@ test("missing and malformed remote credential references fail closed", () => {
               http_headers: { "X-Key": "${" + variable + "}" }
             },
             "fixture",
-            env
+            environment
           ),
         /Missing credential for remote MCP server fixture/u
       );
@@ -114,7 +113,7 @@ test("missing and malformed remote credential references fail closed", () => {
               bearer_token_env_var: variable
             },
             "fixture",
-            env
+            environment
           ),
         /Missing credential for remote MCP server fixture/u
       );
@@ -134,7 +133,7 @@ test("missing and malformed remote credential references fail closed", () => {
               http_headers: { "X-Key": invalid }
             },
             "fixture",
-            env
+            environment
           ),
         /Invalid remote MCP credential reference/u
       );
@@ -144,7 +143,7 @@ test("missing and malformed remote credential references fail closed", () => {
         resolveRemoteMcpHeaders(
           { url: URL, bearer_token_env_var: "" },
           "fixture",
-          env
+          environment
         ),
       /Invalid remote MCP credential reference/u
     );
@@ -155,7 +154,7 @@ test("missing and malformed remote credential references fail closed", () => {
 
 test("remote declarations cannot override transport state, merge duplicate headers, or leak invalid values", () => {
   const sentinel = "fixture-private-marker";
-  const env = {
+  const environment = {
     FIXTURE_TOKEN: "valid-fixture",
     FIXTURE_BAD: sentinel + "\r\ninjected"
   };
@@ -182,7 +181,7 @@ test("remote declarations cannot override transport state, merge duplicate heade
   ];
   for (const spec of invalid) {
     assert.throws(
-      () => resolveRemoteMcpHeaders(spec, "fixture", env),
+      () => resolveRemoteMcpHeaders(spec, "fixture", environment),
       (error: unknown) =>
         error instanceof Error &&
         error.message ===
@@ -198,7 +197,7 @@ test("remote declarations cannot override transport state, merge duplicate heade
         http_headers: { Authorization: "Bearer explicit-fixture" }
       },
       "fixture",
-      env
+      environment
     ).get("Authorization"),
     "Bearer explicit-fixture"
   );

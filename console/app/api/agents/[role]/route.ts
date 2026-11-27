@@ -1,8 +1,8 @@
 /**
- * Server-only Console Agent enablement mutation route. The browser submits a
- * bounded same-origin form; only this server route holds the Control API
- * credential and forwards the revision-checked PATCH to Runtime.
- */
+Server-only Console Agent enablement mutation route. The browser submits a
+bounded same-origin form; only this server route holds the Control API
+credential and forwards the revision-checked PATCH to Runtime.
+*/
 
 import type { NextRequest, NextResponse } from "next/server.js";
 

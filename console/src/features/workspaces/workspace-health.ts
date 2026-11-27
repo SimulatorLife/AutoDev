@@ -9,18 +9,20 @@ import {
 } from "../../components/status/StatusBadge.ts";
 
 /**
- * How one workspace's canonical configuration reads, and how one workspace's
- * runtime availability reads.
- *
- * Both are pairs of different claims, and both pairs are kept apart on
- * purpose. A configuration fault and a healthy configuration are different
- * facts; an unobserved workspace and an idle workspace are different facts
- * too -- the first is missing evidence, the second is a measurement of zero.
- * Collapsing either pair would let a fault or a gap render as a quiet,
- * confident answer.
- */
+How one workspace's canonical configuration reads, and how one workspace's
+runtime availability reads.
 
-/** The badge tone for a workspace's configuration health. */
+Both are pairs of different claims, and both pairs are kept apart on
+purpose. A configuration fault and a healthy configuration are different
+facts; an unobserved workspace and an idle workspace are different facts
+too -- the first is missing evidence, the second is a measurement of zero.
+Collapsing either pair would let a fault or a gap render as a quiet,
+confident answer.
+*/
+
+/**
+The badge tone for a workspace's configuration health.
+*/
 export function workspaceConfigurationBadgeVariant(
   health: WorkspaceConfigurationHealth
 ): StatusBadgeVariant {
@@ -28,12 +30,12 @@ export function workspaceConfigurationBadgeVariant(
 }
 
 /**
- * The badge label for a workspace's configuration health.
- *
- * A role scope that names roles nothing answers to is named in the label:
- * the operator has to see *which* scope is broken, not only that something
- * is.
- */
+The badge label for a workspace's configuration health.
+
+A role scope that names roles nothing answers to is named in the label:
+the operator has to see *which* scope is broken, not only that something
+is.
+*/
 export function workspaceConfigurationBadgeLabel(
   health: WorkspaceConfigurationHealth
 ): string {
@@ -44,7 +46,9 @@ export function workspaceConfigurationBadgeLabel(
   return `Unknown roles: ${health.unknownRoles.join(", ")}`;
 }
 
-/** The badge tone for a workspace's runtime availability. */
+/**
+The badge tone for a workspace's runtime availability.
+*/
 export function workspaceAvailabilityBadgeVariant(
   availability: WorkspaceRuntimeAvailability
 ): StatusBadgeVariant {
@@ -53,12 +57,12 @@ export function workspaceAvailabilityBadgeVariant(
 }
 
 /**
- * The badge label for a workspace's runtime availability.
- *
- * The observed state names the count, because a workspace the runtime
- * answered for has a measured number of live agents -- including zero, which
- * is a fact about an idle workspace and not a missing measurement.
- */
+The badge label for a workspace's runtime availability.
+
+The observed state names the count, because a workspace the runtime
+answered for has a measured number of live agents -- including zero, which
+is a fact about an idle workspace and not a missing measurement.
+*/
 export function workspaceAvailabilityBadgeLabel(
   availability: WorkspaceRuntimeAvailability
 ): string {

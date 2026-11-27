@@ -1,18 +1,18 @@
 /**
- * Metric-registry schema, default expansion and required-field rejection.
- *
- * The Core layer never silently rewrites a game-owned metric definition: any
- * omitted field is filled by shallow replacement from the registry-level
- * `defaults` block, and any field that remains absent after expansion is a
- * hard error. The expansion is intentionally *shallow* — a default for a
- * scalar field replaces the scalar; a default for an object field is dropped
- * if the override is present (the game must opt in wholesale). Deep merge
- * would silently rewrite the game-owned portion.
- *
- * The defaults themselves are typed so that the compiler rejects an unknown
- * default key, and the runtime validator below rejects any unknown override
- * key. The result is one place where the registry vocabulary is written.
- */
+Metric-registry schema, default expansion and required-field rejection.
+
+The Core layer never silently rewrites a game-owned metric definition: any
+omitted field is filled by shallow replacement from the registry-level
+`defaults` block, and any field that remains absent after expansion is a
+hard error. The expansion is intentionally *shallow* — a default for a
+scalar field replaces the scalar; a default for an object field is dropped
+if the override is present (the game must opt in wholesale). Deep merge
+would silently rewrite the game-owned portion.
+
+The defaults themselves are typed so that the compiler rejects an unknown
+default key, and the runtime validator below rejects any unknown override
+key. The result is one place where the registry vocabulary is written.
+*/
 
 import { isRecord } from "../shared/object-guards.ts";
 import { SHA256_PATTERN } from "../shared/sha256.ts";
@@ -28,7 +28,9 @@ import {
   type PlaytestScoreBand
 } from "./types.ts";
 
-/** Fields every metric definition must surface after default expansion. */
+/**
+Fields every metric definition must surface after default expansion.
+*/
 export const PLAYTESTS_METRIC_REQUIRED_FIELDS = [
   "metricId",
   "version",
@@ -76,7 +78,9 @@ const REGISTRY_INPUT_FIELDS = new Set([
   "dimensionRubrics"
 ]);
 
-/** A registry-level defaults block. */
+/**
+A registry-level defaults block.
+*/
 export interface PlaytestRegistryDefaults {
   readonly audience: string;
   readonly scenarioEligibility: readonly string[];
@@ -104,7 +108,9 @@ export interface PlaytestRegistryDefaults {
     "investigate" | "blocker" | "major" | "minor" | "informational";
 }
 
-/** A metric definition before default expansion. */
+/**
+A metric definition before default expansion.
+*/
 export interface PlaytestMetricDefinitionInput {
   readonly metricId: string;
   readonly version: number;
@@ -137,7 +143,9 @@ export interface PlaytestMetricDefinitionInput {
   readonly guardrailMargin?: number | null;
 }
 
-/** A metric definition after default expansion; frozen, normalized. */
+/**
+A metric definition after default expansion; frozen, normalized.
+*/
 export interface PlaytestMetricDefinition {
   readonly metricId: string;
   readonly version: number;
@@ -170,7 +178,9 @@ export interface PlaytestMetricDefinition {
   readonly guardrailMargin: number | null;
 }
 
-/** One game-owned required opportunity cell for a deterministic metric. */
+/**
+One game-owned required opportunity cell for a deterministic metric.
+*/
 export interface PlaytestCoverageRequirement {
   readonly coverageMetricId: string;
   readonly mechanicKey: string;
@@ -184,7 +194,9 @@ export interface PlaytestCoverageRequirement {
   readonly unsupportedReason: string | null;
 }
 
-/** A metric registry as supplied by the game/adapter. */
+/**
+A metric registry as supplied by the game/adapter.
+*/
 export interface PlaytestMetricRegistryInput {
   readonly schemaVersion: 2;
   readonly workspaceId: string;
@@ -197,7 +209,9 @@ export interface PlaytestMetricRegistryInput {
   readonly dimensionRubrics?: readonly PlaytestDimensionRubric[];
 }
 
-/** A metric registry after validation and default expansion. */
+/**
+A metric registry after validation and default expansion.
+*/
 export interface PlaytestMetricRegistry {
   readonly schema: typeof PLAYTESTS_REGISTRY_SCHEMA;
   readonly schemaVersion: 2;
@@ -524,12 +538,12 @@ function assertDimensionRubric(
 }
 
 /**
- * Shallow-merge a single metric input over the registry defaults. The merge
- * is *shallow by design*: a default for a scalar field replaces the scalar,
- * a default for an array field replaces the array, and an object default is
- * dropped if the input is present. Deep merge would silently rewrite the
- * game-owned portion of the definition.
- */
+Shallow-merge a single metric input over the registry defaults. The merge
+is *shallow by design*: a default for a scalar field replaces the scalar,
+a default for an array field replaces the array, and an object default is
+dropped if the input is present. Deep merge would silently rewrite the
+game-owned portion of the definition.
+*/
 function expandMetricDefinition(
   input: PlaytestMetricDefinitionInput,
   defaults: PlaytestRegistryDefaults
@@ -708,11 +722,13 @@ function assertMetricHumanAndMargins(
   }
   for (const marginField of ["meaningfulMargin", "guardrailMargin"] as const) {
     const margin = value[marginField];
-    if (margin !== undefined && margin !== null) {
-      assertFiniteNumber(margin, `${field}.${marginField}`);
-      if (margin < 0) {
-        throw new TypeError(`${field}.${marginField} must be non-negative.`);
-      }
+    if (margin === undefined || margin === null) {
+      continue;
+    }
+
+    assertFiniteNumber(margin, `${field}.${marginField}`);
+    if (margin < 0) {
+      throw new TypeError(`${field}.${marginField} must be non-negative.`);
     }
   }
 }
@@ -754,7 +770,7 @@ function expandCoverageRequirements(
   return raw.map((entry, index) => {
     const field = "coverageRequirements[" + String(index) + "]";
     if (!isRecord(entry)) throw new TypeError(field + " must be an object.");
-    const keys = [
+    const keys = new Set([
       "coverageMetricId",
       "mechanicKey",
       "phaseId",
@@ -765,10 +781,10 @@ function expandCoverageRequirements(
       "requiredOpportunities",
       "requiredIndependentUnits",
       "unsupportedReason"
-    ];
+    ]);
     if (
-      Object.keys(entry).length !== keys.length ||
-      Object.keys(entry).some((key) => !keys.includes(key))
+      Object.keys(entry).length !== keys.size ||
+      Object.keys(entry).some((key) => !keys.has(key))
     ) {
       throw new TypeError(field + " has unknown or missing fields.");
     }
@@ -847,7 +863,7 @@ function expandCoverageRequirements(
       requirement.cohort,
       requirement.policy,
       requirement.modality
-    ].join("\u001F");
+    ].join("\u{1F}");
     if (seen.has(key))
       throw new TypeError("Coverage requirement cells must be unique.");
     seen.add(key);
@@ -855,7 +871,9 @@ function expandCoverageRequirements(
   });
 }
 
-/** Validate a metric-registry input and return the expanded form. */
+/**
+Validate a metric-registry input and return the expanded form.
+*/
 export function expandPlaytestRegistry(input: unknown): PlaytestMetricRegistry {
   if (!isRecord(input)) {
     throw new TypeError("Metric registry must be a plain object.");
@@ -934,7 +952,9 @@ export function expandPlaytestRegistry(input: unknown): PlaytestMetricRegistry {
   };
 }
 
-/** Look up an expanded metric definition by its stable id. */
+/**
+Look up an expanded metric definition by its stable id.
+*/
 export function lookupPlaytestMetric(
   registry: PlaytestMetricRegistry,
   metricId: string
@@ -945,7 +965,9 @@ export function lookupPlaytestMetric(
   throw new Error(`Metric "${metricId}" not found in registry.`);
 }
 
-/** Look up a dimension rubric by its stable id (or `null` if absent). */
+/**
+Look up a dimension rubric by its stable id (or `null` if absent).
+*/
 export function lookupPlaytestDimensionRubric(
   registry: PlaytestMetricRegistry,
   dimensionId: string
@@ -957,10 +979,10 @@ export function lookupPlaytestDimensionRubric(
 }
 
 /**
- * Build a minimal default registry-level defaults block that matches the
- * normative `metric contract §1` sample. Intended for tests and fixtures;
- * production registries must construct their own.
- */
+Build a minimal default registry-level defaults block that matches the
+normative `metric contract §1` sample. Intended for tests and fixtures;
+production registries must construct their own.
+*/
 export function defaultPlaytestRegistryDefaults(): PlaytestRegistryDefaults {
   return {
     audience: "first-time-adult",
@@ -982,7 +1004,9 @@ export function defaultPlaytestRegistryDefaults(): PlaytestRegistryDefaults {
   };
 }
 
-/** Build the canonical provenance helper used by every evaluator. */
+/**
+Build the canonical provenance helper used by every evaluator.
+*/
 export function makePlaytestProvenance(
   workspaceId: string,
   measurementVersion: string,
@@ -998,16 +1022,10 @@ export function makePlaytestProvenance(
   return {
     workspaceId,
     measurementVersion,
-    ...(options.buildSha === undefined ? {} : { buildSha: options.buildSha }),
-    ...(options.evaluatorHash === undefined
-      ? {}
-      : { evaluatorHash: options.evaluatorHash }),
-    ...(options.rubricHash === undefined
-      ? {}
-      : { rubricHash: options.rubricHash }),
-    ...(options.instrumentVersion === undefined
-      ? {}
-      : { instrumentVersion: options.instrumentVersion }),
+    ...(options.buildSha !== undefined && { buildSha: options.buildSha }),
+    ...(options.evaluatorHash !== undefined && { evaluatorHash: options.evaluatorHash }),
+    ...(options.rubricHash !== undefined && { rubricHash: options.rubricHash }),
+    ...(options.instrumentVersion !== undefined && { instrumentVersion: options.instrumentVersion }),
     generatedAt
   };
 }

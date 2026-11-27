@@ -2,7 +2,9 @@ import { NextResponse } from "next/server.js";
 
 import { controlApiFailureCode, type ControlApiResult } from "./control-api.ts";
 
-/** The Console API's uncached JSON error envelope. */
+/**
+The Console API's uncached JSON error envelope.
+*/
 export function jsonErrorResponse(
   status: number,
   code: string,
@@ -14,7 +16,9 @@ export function jsonErrorResponse(
   );
 }
 
-/** Project a typed Control API read without caching or losing failure status. */
+/**
+Project a typed Control API read without caching or losing failure status.
+*/
 export function controlApiReadResponse<T>(
   result: ControlApiResult<T>
 ): NextResponse {

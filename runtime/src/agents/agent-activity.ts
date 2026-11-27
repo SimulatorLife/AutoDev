@@ -10,58 +10,58 @@ import {
 } from "../shared/native-session-observation.ts";
 
 /**
- * Shared state machine for session/agent activity that spans request gaps.
- *
- * A single HTTP request to the router only covers one model turn. What an
- * orchestrator or role subagent is actually doing lives in the *gaps*
- * between requests too: it can be waiting on a tool result the client has
- * not sent back yet, waiting on a human, or waiting on a subagent it just
- * spawned. None of that is visible to a naive "in-flight while the HTTP
- * request is open" counter, which is why the router previously had no way
- * to describe it. This module tracks that activity explicitly, keyed by a
- * caller-chosen `subject` (typically a session key, or a synthetic id for a
- * single ungrouped attempt), independent of any one HTTP request's lifetime.
- *
- * States:
- *   active         a request is currently being served for this subject.
- *   tool_wait      the last response ended with a tool call; the router is
- *                  waiting for the continuation that carries the tool result.
- *   user_wait      the subject is explicitly waiting on user input or the
- *                  next turn (via lifecycle events or explicit input_required).
- *   subagent_wait  the subject is waiting on a spawned subagent to report back.
- *   resumed        a new request just arrived after a wait state; observable
- *                  until the next explicit transition (begin/end/lifecycle).
- *   finished       the activity ended successfully (normal final responses
- *                  with no tool calls transition here). Terminal.
- *   failed         the activity ended in failure. Terminal.
- *   stale          derived, not stored: a non-terminal record whose state has
- *                  not moved in longer than the TTL is reported as stale
- *                  rather than left to describe a wait that will never end
- *                  (a bridge crashed, a client disconnected without saying
- *                  so, and so on).
- *
- * Every mutating method is idempotent against redelivery: applying the same
- * event twice (matched by requestId, or by an explicit eventId for events
- * that arrive over the network and may be retried) leaves the record exactly
- * where the first application left it. A terminal record (finished/failed)
- * never reopens.
- *
- * Records are grouped by an optional `kind` (what this activity represents --
- * e.g. "session" for an orchestrator/role turn, "bridge_subagent" for a
- * bridge-reported child turn, "subagent_slot" for a held concurrency slot)
- * and an optional `tag` (a grouping key within that kind, e.g. a session
- * key), so a caller can count "how many subagent slots are live for this
- * session" without maintaining a parallel counter of its own.
- *
- * `subagent_slot` records describe *admission accounting* (a held
- * concurrency slot), not an agent doing work that should show up in
- * agent-facing counts -- a session already accounts for the work its slots
- * gate. Every counting/aggregation method in this module (`countLive`,
- * `countByState`, `snapshot`) therefore defaults to only the agent kinds
- * (`AGENT_ACTIVITY_KINDS`: "session" and "bridge_subagent") unless a caller passes an
- * explicit `kind` filter, which is how concurrency accounting opts back in to
- * see its own `subagent_slot` records.
- */
+Shared state machine for session/agent activity that spans request gaps.
+
+A single HTTP request to the router only covers one model turn. What an
+orchestrator or role subagent is actually doing lives in the *gaps*
+between requests too: it can be waiting on a tool result the client has
+not sent back yet, waiting on a human, or waiting on a subagent it just
+spawned. None of that is visible to a naive "in-flight while the HTTP
+request is open" counter, which is why the router previously had no way
+to describe it. This module tracks that activity explicitly, keyed by a
+caller-chosen `subject` (typically a session key, or a synthetic id for a
+single ungrouped attempt), independent of any one HTTP request's lifetime.
+
+States:
+  active         a request is currently being served for this subject.
+  tool_wait      the last response ended with a tool call; the router is
+                 waiting for the continuation that carries the tool result.
+  user_wait      the subject is explicitly waiting on user input or the
+                 next turn (via lifecycle events or explicit input_required).
+  subagent_wait  the subject is waiting on a spawned subagent to report back.
+  resumed        a new request just arrived after a wait state; observable
+                 until the next explicit transition (begin/end/lifecycle).
+  finished       the activity ended successfully (normal final responses
+                 with no tool calls transition here). Terminal.
+  failed         the activity ended in failure. Terminal.
+  stale          derived, not stored: a non-terminal record whose state has
+                 not moved in longer than the TTL is reported as stale
+                 rather than left to describe a wait that will never end
+                 (a bridge crashed, a client disconnected without saying
+                 so, and so on).
+
+Every mutating method is idempotent against redelivery: applying the same
+event twice (matched by requestId, or by an explicit eventId for events
+that arrive over the network and may be retried) leaves the record exactly
+where the first application left it. A terminal record (finished/failed)
+never reopens.
+
+Records are grouped by an optional `kind` (what this activity represents --
+e.g. "session" for an orchestrator/role turn, "bridge_subagent" for a
+bridge-reported child turn, "subagent_slot" for a held concurrency slot)
+and an optional `tag` (a grouping key within that kind, e.g. a session
+key), so a caller can count "how many subagent slots are live for this
+session" without maintaining a parallel counter of its own.
+
+`subagent_slot` records describe *admission accounting* (a held
+concurrency slot), not an agent doing work that should show up in
+agent-facing counts -- a session already accounts for the work its slots
+gate. Every counting/aggregation method in this module (`countLive`,
+`countByState`, `snapshot`) therefore defaults to only the agent kinds
+(`AGENT_ACTIVITY_KINDS`: "session" and "bridge_subagent") unless a caller passes an
+explicit `kind` filter, which is how concurrency accounting opts back in to
+see its own `subagent_slot` records.
+*/
 
 export const AGENT_ACTIVITY_TTL_ENV = "CODEX_ROUTER_AGENT_ACTIVITY_TTL_MS";
 export const DEFAULT_AGENT_ACTIVITY_TTL_MS = 300_000;
@@ -111,11 +111,15 @@ const LIFECYCLE_EVENT_STATES = new Set([
   "failed"
 ]);
 
-/** Bound on retained per-record idempotency markers, so a long-lived subject cannot grow without bound. */
+/**
+Bound on retained per-record idempotency markers, so a long-lived subject cannot grow without bound.
+*/
 const MAX_TRACKED_EVENT_IDS = 64;
 type NullableText = string | null | undefined;
 
-/** The tracker's internal, mutable per-subject record. */
+/**
+The tracker's internal, mutable per-subject record.
+*/
 interface ActivityRecord {
   subject: string;
   kind: string;
@@ -137,12 +141,16 @@ interface ActivityRecord {
   settledRequestIds: Set<string>;
   lifecycleEventIds: Set<string>;
 }
-/** The read-only view of a record handed to callers. */
+/**
+The read-only view of a record handed to callers.
+*/
 interface AgentActivitySnapshot {
   subject: string;
   kind: string;
   tag: string | null;
-  /** Present only when a source explicitly supplied a validated session ID. */
+  /**
+  Present only when a source explicitly supplied a validated session ID.
+  */
   sessionId?: string;
   clientSurface?: ClientSurface;
   state: string;
@@ -158,7 +166,9 @@ interface AgentActivitySnapshot {
 
 export interface AgentActivityLiveSessionIdentity {
   readonly sessionId: string;
-  /** State and timestamp of the newest live activity record for this ID. */
+  /**
+  State and timestamp of the newest live activity record for this ID.
+  */
   readonly state: AgentActivityLiveState;
   readonly lastActivityAt: number;
   readonly provider: string | null;
@@ -168,20 +178,28 @@ export interface AgentActivityLiveSessionIdentity {
 }
 
 export interface AgentActivityLiveSessionsProjection {
-  /** Only source-confirmed IDs; this is not a completeness claim. */
+  /**
+  Only source-confirmed IDs; this is not a completeness claim.
+  */
   readonly identitiesObserved: readonly AgentActivityLiveSessionIdentity[];
-  /** Exact number of unique validated live IDs before the list cap. */
+  /**
+  Exact number of unique validated live IDs before the list cap.
+  */
   readonly identifiedSessionCount: number;
-  /** True only when more than the tracker's fixed 100-ID limit was observed. */
+  /**
+  True only when more than the tracker's fixed 100-ID limit was observed.
+  */
   readonly partial: boolean;
   /**
-   * Count of live activity records without a validated ID, not a session
-   * count. A nonzero value means the overall live-session total is unknown.
-   */
+  Count of live activity records without a validated ID, not a session
+  count. A nonzero value means the overall live-session total is unknown.
+  */
   readonly unattributedLiveActivityCount: number;
 }
 
-/** Options accepted by the tracker's mutators and filters. */
+/**
+Options accepted by the tracker's mutators and filters.
+*/
 interface AgentActivityOptions {
   sessionId?: NullableText;
   requestId?: NullableText;
@@ -200,10 +218,14 @@ interface AgentActivityOptions {
   hasActiveSubagents?: boolean | undefined;
 }
 
-/** Session IDs are attribution metadata, never activity filters or metric dimensions. */
+/**
+Session IDs are attribution metadata, never activity filters or metric dimensions.
+*/
 type AgentActivityFilter = Omit<AgentActivityOptions, "sessionId">;
 
-/** A normalized untrusted lifecycle event; session identity is router-owned. */
+/**
+A normalized untrusted lifecycle event; session identity is router-owned.
+*/
 type AgentLifecycleEvent = Omit<AgentActivityOptions, "sessionId"> & {
   state?: string | undefined;
   eventId?: unknown;
@@ -230,11 +252,13 @@ function trackEventId(set: Set<string>, eventId: unknown): boolean {
   return false;
 }
 
-/** Reads the TTL from the environment, falling back to the documented default for anything unset or invalid. */
+/**
+Reads the TTL from the environment, falling back to the documented default for anything unset or invalid.
+*/
 export function resolveAgentActivityTtlMs(
-  env: Record<string, string | undefined> = process.env
+  environment: Record<string, string | undefined> = process.env
 ): number {
-  const parsed = Number.parseInt(env?.[AGENT_ACTIVITY_TTL_ENV] ?? "");
+  const parsed = Number.parseInt(environment?.[AGENT_ACTIVITY_TTL_ENV] ?? "");
   return Number.isInteger(parsed) && parsed > 0
     ? parsed
     : DEFAULT_AGENT_ACTIVITY_TTL_MS;
@@ -248,8 +272,8 @@ function snapshotRecord(
     subject: rec.subject,
     kind: rec.kind,
     tag: rec.tag,
-    ...(rec.sessionId ? { sessionId: rec.sessionId } : {}),
-    ...(rec.clientSurface ? { clientSurface: rec.clientSurface } : {}),
+    ...(rec.sessionId && { sessionId: rec.sessionId }),
+    ...(rec.clientSurface && { clientSurface: rec.clientSurface }),
     state: isStale(rec, at) ? "stale" : rec.state,
     provider: rec.provider,
     model: rec.model,
@@ -307,12 +331,12 @@ type RecordAttribution = Pick<
 >;
 
 /**
- * An exact duplicate of the currently open attempt: not a new transition,
- * but proof the same request is still genuinely open, so it refreshes the
- * staleness clock exactly as an explicit touch() would -- the open leg stays
- * live until it actually settles rather than going stale out from under a
- * request the router knows perfectly well is still going.
- */
+An exact duplicate of the currently open attempt: not a new transition,
+but proof the same request is still genuinely open, so it refreshes the
+staleness clock exactly as an explicit touch() would -- the open leg stays
+live until it actually settles rather than going stale out from under a
+request the router knows perfectly well is still going.
+*/
 function refreshOpenAttempt(
   rec: ActivityRecord,
   at: number
@@ -325,7 +349,9 @@ function refreshOpenAttempt(
   return snapshotRecord(rec, at);
 }
 
-/** Starts a new activity span on a terminal record for a later, different request. */
+/**
+Starts a new activity span on a terminal record for a later, different request.
+*/
 function reopenRecord(
   rec: ActivityRecord,
   requestId: string,
@@ -350,10 +376,10 @@ function reopenRecord(
 }
 
 /**
- * Creates an independent tracker. Each caller (the router process, a test)
- * gets its own instance rather than reaching into shared module state, which
- * is what makes the TTL/stale behaviour testable with a fake clock.
- */
+Creates an independent tracker. Each caller (the router process, a test)
+gets its own instance rather than reaching into shared module state, which
+is what makes the TTL/stale behaviour testable with a fake clock.
+*/
 export function createAgentActivityTracker({
   ttlMs = resolveAgentActivityTtlMs(),
   now = () => Date.now()
@@ -364,7 +390,9 @@ export function createAgentActivityTracker({
       : DEFAULT_AGENT_ACTIVITY_TTL_MS;
   const subjects = new Map<string, ActivityRecord>();
 
-  /** A caller-supplied timestamp when it is a finite number, otherwise the tracker clock. */
+  /**
+  A caller-supplied timestamp when it is a finite number, otherwise the tracker clock.
+  */
   function instantOf(timestamp: number | undefined): number {
     return isFiniteInstant(timestamp) ? timestamp : now();
   }
@@ -425,14 +453,14 @@ export function createAgentActivityTracker({
   }
 
   /**
-   * A request just started being served for `subject`. Idempotent against a
-   * redelivered begin for the same (subject, requestId) attempt while it is
-   * still open. If the subject was waiting on something, the transition is
-   * recorded as "resumed" rather than silently folded back into "active" --
-   * that distinction is what "derive tool waits from ... continuations" asks
-   * for: a continuation is observable as a resume, not indistinguishable
-   * from any other turn.
-   */
+  A request just started being served for `subject`. Idempotent against a
+  redelivered begin for the same (subject, requestId) attempt while it is
+  still open. If the subject was waiting on something, the transition is
+  recorded as "resumed" rather than silently folded back into "active" --
+  that distinction is what "derive tool waits from ... continuations" asks
+  for: a continuation is observable as a resume, not indistinguishable
+  from any other turn.
+  */
   function beginRequest(
     subject: string,
     options: AgentActivityOptions = {}
@@ -456,9 +484,7 @@ export function createAgentActivityTracker({
       kind,
       tag,
       parentRequestId,
-      ...(Object.hasOwn(options, "sessionId")
-        ? { sessionId: safeSessionId }
-        : {})
+      ...(Object.hasOwn(options, "sessionId") && { sessionId: safeSessionId })
     });
     if (tag !== null && tag !== undefined) rec.tag = tag;
     if (parentRequestId !== null && parentRequestId !== undefined)
@@ -512,18 +538,18 @@ export function createAgentActivityTracker({
   }
 
   /**
-   * The request just settled. `hasToolCalls` -- derived by the caller from
-   * the router-visible response body -- decides the gap state: a response
-   * that ended with a tool call is followed by tool_wait. A response that
-   * failed ends in failed (terminal). A successful response with an explicit
-   * inputRequired protocol marker enters user_wait. If the subject has active
-   * subagents or subagent slots, it enters subagent_wait. Normal final responses
-   * (no tool calls, no explicit input_required, no active subagents) transition
-   * to finished (terminal), so user_wait and subagent_wait are reserved for explicit waits.
-   * Idempotent per (subject, requestId): a redelivered or duplicate result
-   * for a request already settled is a no-op, and a terminal record is
-   * never reopened by a later result.
-   */
+  The request just settled. `hasToolCalls` -- derived by the caller from
+  the router-visible response body -- decides the gap state: a response
+  that ended with a tool call is followed by tool_wait. A response that
+  failed ends in failed (terminal). A successful response with an explicit
+  inputRequired protocol marker enters user_wait. If the subject has active
+  subagents or subagent slots, it enters subagent_wait. Normal final responses
+  (no tool calls, no explicit input_required, no active subagents) transition
+  to finished (terminal), so user_wait and subagent_wait are reserved for explicit waits.
+  Idempotent per (subject, requestId): a redelivered or duplicate result
+  for a request already settled is a no-op, and a terminal record is
+  never reopened by a later result.
+  */
   function endRequest(
     subject: string,
     {
@@ -561,14 +587,14 @@ export function createAgentActivityTracker({
   }
 
   /**
-   * Ends the activity outright -- finished on success, failed otherwise --
-   * regardless of whether the last response carried a tool call. This is
-   * distinct from endRequest: endRequest describes "the request settled, and
-   * here is what the subject is waiting on next" (a gap state), while finish
-   * describes "there is no next wait, this activity is over" (e.g. a held
-   * concurrency slot being released, or an explicit close). Idempotent per
-   * (subject, requestId) and never reopens a terminal record.
-   */
+  Ends the activity outright -- finished on success, failed otherwise --
+  regardless of whether the last response carried a tool call. This is
+  distinct from endRequest: endRequest describes "the request settled, and
+  here is what the subject is waiting on next" (a gap state), while finish
+  describes "there is no next wait, this activity is over" (e.g. a held
+  concurrency slot being released, or an explicit close). Idempotent per
+  (subject, requestId) and never reopens a terminal record.
+  */
   function finish(
     subject: string,
     {
@@ -590,20 +616,20 @@ export function createAgentActivityTracker({
   }
 
   /**
-   * A heartbeat: `subject` is confirmed still genuinely in progress, so its
-   * staleness clock is postponed without otherwise changing anything. This is
-   * distinct from every other mutator here, which all describe *something
-   * happened* (a request began, ended, a lifecycle event arrived); `touch`
-   * describes *nothing happened, and that is expected* -- a long single
-   * upstream turn whose only signal is still-open bytes on the wire, or a
-   * held concurrency slot whose owning session was just observed to still be
-   * making requests. Without it, the TTL has no way to distinguish "legitimately
-   * still running" from "abandoned" for activity that can outlast the TTL, and
-   * either the TTL has to be weakened for everyone or genuine long-running
-   * work gets misreported as stale. A no-op for an unknown subject and never
-   * reopens or otherwise touches a terminal record -- a terminal record's
-   * staleness is moot, and touching it would misreport when it actually ended.
-   */
+  A heartbeat: `subject` is confirmed still genuinely in progress, so its
+  staleness clock is postponed without otherwise changing anything. This is
+  distinct from every other mutator here, which all describe *something
+  happened* (a request began, ended, a lifecycle event arrived); `touch`
+  describes *nothing happened, and that is expected* -- a long single
+  upstream turn whose only signal is still-open bytes on the wire, or a
+  held concurrency slot whose owning session was just observed to still be
+  making requests. Without it, the TTL has no way to distinguish "legitimately
+  still running" from "abandoned" for activity that can outlast the TTL, and
+  either the TTL has to be weakened for everyone or genuine long-running
+  work gets misreported as stale. A no-op for an unknown subject and never
+  reopens or otherwise touches a terminal record -- a terminal record's
+  staleness is moot, and touching it would misreport when it actually ended.
+  */
   function touch(
     subject: string,
     { timestamp }: AgentActivityOptions = {}
@@ -637,7 +663,9 @@ export function createAgentActivityTracker({
     return false;
   }
 
-  /** The subject just spawned a subagent it is now waiting on. Idempotent (re-applying while already waiting is a no-op). */
+  /**
+  The subject just spawned a subagent it is now waiting on. Idempotent (re-applying while already waiting is a no-op).
+  */
   function noteSubagentWait(
     subject: string,
     {
@@ -669,7 +697,9 @@ export function createAgentActivityTracker({
     return snapshotRecord(rec, at);
   }
 
-  /** The subagent the subject was waiting on reported back. A no-op unless the subject was actually in subagent_wait. */
+  /**
+  The subagent the subject was waiting on reported back. A no-op unless the subject was actually in subagent_wait.
+  */
   function noteSubagentResolved(
     subject: string,
     { timestamp }: AgentActivityOptions = {}
@@ -688,14 +718,14 @@ export function createAgentActivityTracker({
   }
 
   /**
-   * Applies a normalized lifecycle event, as accepted over the existing
-   * agent-events endpoint: `{ state, eventId?, timestamp? }` where `state`
-   * is one of user_wait/subagent_wait/tool_wait/resumed/finished/failed.
-   * Unknown states are rejected (returns null) rather than silently ignored,
-   * so a caller can tell a malformed event from a legitimate no-op.
-   * Idempotent by eventId when the caller supplies one; a terminal record
-   * never reopens, including via a duplicated terminal event.
-   */
+  Applies a normalized lifecycle event, as accepted over the existing
+  agent-events endpoint: `{ state, eventId?, timestamp? }` where `state`
+  is one of user_wait/subagent_wait/tool_wait/resumed/finished/failed.
+  Unknown states are rejected (returns null) rather than silently ignored,
+  so a caller can tell a malformed event from a legitimate no-op.
+  Idempotent by eventId when the caller supplies one; a terminal record
+  never reopens, including via a duplicated terminal event.
+  */
   function applyLifecycleEvent(
     subject: string,
     event: AgentLifecycleEvent
@@ -725,10 +755,10 @@ export function createAgentActivityTracker({
   }
 
   /**
-   * Native lifecycle signals describe a host session, not a router request.
-   * Keep them TTL-bound (never fabricate an open request) and independent of
-   * managed execution subjects, even if native IDs happen to match.
-   */
+  Native lifecycle signals describe a host session, not a router request.
+  Keep them TTL-bound (never fabricate an open request) and independent of
+  managed execution subjects, even if native IDs happen to match.
+  */
   function observeNativeSession(
     observation: NativeSessionObservation
   ): AgentActivitySnapshot | null {
@@ -790,19 +820,23 @@ export function createAgentActivityTracker({
     return rec ? snapshotRecord(rec, at) : null;
   }
 
-  /** Marks every matured non-terminal record stale as of `at`. Idempotent; returns the count actually swept. */
+  /**
+  Marks every matured non-terminal record stale as of `at`. Idempotent; returns the count actually swept.
+  */
   function sweep(at = now()): number {
     let swept = 0;
     for (const rec of subjects.values()) {
-      if (isStale(rec, at)) {
-        if (rec.role === "orchestrator" && hasLiveChildren(rec.subject)) {
-          rec.updatedAt = at;
-          rec.state = "subagent_wait";
-          continue;
-        }
-        rec.state = "stale";
-        swept += 1;
+      if (!isStale(rec, at)) {
+        continue;
       }
+
+      if (rec.role === "orchestrator" && hasLiveChildren(rec.subject)) {
+        rec.updatedAt = at;
+        rec.state = "subagent_wait";
+        continue;
+      }
+      rec.state = "stale";
+      swept += 1;
     }
     return swept;
   }
@@ -827,19 +861,22 @@ export function createAgentActivityTracker({
     return true;
   }
 
-  /** Count of subjects currently in a live (non-terminal, non-stale) state, optionally filtered. Never negative by construction: it is a fresh count over records, not a running counter. */
+  /**
+  Count of subjects currently in a live (non-terminal, non-stale) state, optionally filtered. Never negative by construction: it is a fresh count over records, not a running counter.
+  */
   function countLive(filter: AgentActivityFilter = {}, at = now()): number {
     sweep(at);
     let count = 0;
     for (const rec of subjects.values()) {
-      if (!LIVE_STATES.has(rec.state)) continue;
-      if (!matches(rec, filter)) continue;
+      if (!LIVE_STATES.has(rec.state) || !matches(rec, filter)) continue;
       count += 1;
     }
     return Math.max(0, count);
   }
 
-  /** List of subjects currently in a live (non-terminal, non-stale) state, optionally filtered. Excludes bookkeeping kinds (e.g. subagent_slot) unless kind is explicitly filtered. */
+  /**
+  List of subjects currently in a live (non-terminal, non-stale) state, optionally filtered. Excludes bookkeeping kinds (e.g. subagent_slot) unless kind is explicitly filtered.
+  */
   function listLive(
     filter: AgentActivityFilter = {},
     at = now()
@@ -847,22 +884,21 @@ export function createAgentActivityTracker({
     sweep(at);
     const live = [];
     for (const rec of subjects.values()) {
-      if (!LIVE_STATES.has(rec.state)) continue;
-      if (!matches(rec, filter)) continue;
+      if (!LIVE_STATES.has(rec.state) || !matches(rec, filter)) continue;
       live.push(snapshotRecord(rec, at));
     }
     return live;
   }
 
   /**
-   * Distinct session identities explicitly attached to live agent activity.
-   * It uses listLive's default agent kinds and excludes subagent-slot
-   * admission bookkeeping, whose tag is not a session identity.
-   * `identitiesObserved` contains only validated IDs; it does not claim that
-   * every live conversation has an ID. `unattributedLiveActivityCount` counts
-   * live activity records without one, not guessed or deduplicated sessions.
-   * `partial` is reserved for truncation of the identified list.
-   */
+  Distinct session identities explicitly attached to live agent activity.
+  It uses listLive's default agent kinds and excludes subagent-slot
+  admission bookkeeping, whose tag is not a session identity.
+  `identitiesObserved` contains only validated IDs; it does not claim that
+  every live conversation has an ID. `unattributedLiveActivityCount` counts
+  live activity records without one, not guessed or deduplicated sessions.
+  `partial` is reserved for truncation of the identified list.
+  */
   function listLiveSessions(at = now()): AgentActivityLiveSessionsProjection {
     type MutableIdentity = {
       sessionId: string;
@@ -918,14 +954,14 @@ export function createAgentActivityTracker({
       const update = (field: "provider" | "model" | "role") => {
         const value = activity[field];
         if (value === null) return;
-        if (
-          activity.updatedAt > times[field] ||
-          (activity.updatedAt === times[field] &&
-            (identity[field] === null || value < identity[field]!))
-        ) {
-          identity[field] = value;
-          times[field] = activity.updatedAt;
+        if (!(activity.updatedAt > times[field]) &&
+          (activity.updatedAt !== times[field] ||
+            identity[field] !== null && !(value < identity[field]!))) {
+          return;
         }
+
+        identity[field] = value;
+        times[field] = activity.updatedAt;
       };
       update("provider");
       update("model");
@@ -948,7 +984,9 @@ export function createAgentActivityTracker({
     };
   }
 
-  /** Count of subjects grouped by state, optionally filtered. */
+  /**
+  Count of subjects grouped by state, optionally filtered.
+  */
   function countByState(
     filter: AgentActivityFilter = {},
     at = now()
@@ -962,7 +1000,9 @@ export function createAgentActivityTracker({
     return counts;
   }
 
-  /** Distinct `tag` values with at least one live record of `kind`. */
+  /**
+  Distinct `tag` values with at least one live record of `kind`.
+  */
   function distinctTags(
     { kind }: { kind?: string } = {},
     at = now()
@@ -977,7 +1017,9 @@ export function createAgentActivityTracker({
     return [...tags];
   }
 
-  /** A status-shaped snapshot: totals, live count, and per-provider/per-model state breakdowns, for surfacing on /status. */
+  /**
+  A status-shaped snapshot: totals, live count, and per-provider/per-model state breakdowns, for surfacing on /status.
+  */
   function snapshot(at = now()) {
     sweep(at);
     const byProvider: StateCountsByKey = {};

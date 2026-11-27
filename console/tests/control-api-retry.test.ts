@@ -18,7 +18,9 @@ function transportError(code: string): Error {
   return error;
 }
 
-/** A fetch that fails with each scripted error, then answers with the response. */
+/**
+A fetch that fails with each scripted error, then answers with the response.
+*/
 function scripted(
   failures: readonly Error[],
   response: () => Response = () => Response.json({ ok: true })

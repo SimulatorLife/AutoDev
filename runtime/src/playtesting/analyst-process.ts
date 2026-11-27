@@ -1,4 +1,6 @@
-/** Launch the existing provider-neutral analyst role for a bounded evidence selection. */
+/**
+Launch the existing provider-neutral analyst role for a bounded evidence selection.
+*/
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
@@ -24,7 +26,9 @@ import {
 const ANALYST_ROLE = "playtest-analyst" as const;
 const ANALYST_TIMEOUT_MS = 10 * 60 * 1000;
 const TERMINATION_GRACE_MS = 2000;
-/** How much of the analyst child's own output a failure report may carry. */
+/**
+How much of the analyst child's own output a failure report may carry.
+*/
 const ANALYST_DIAGNOSTIC_MAX_CHARS = 2000;
 
 function removeIsolatedWorkspace(workspace: string): void {
@@ -43,14 +47,14 @@ export interface PlaytestAnalystProcessInput {
   readonly analysisKind: "confirmatory" | "discovery";
   readonly metricAggregation: PlaytestCrossSessionMetricAggregation | null;
   /**
-   * Whether this request must produce findings.
-   *
-   * A hypothesis review states what the packet shows; a findings request
-   * also files the defect claims the packet supports, each with the strict
-   * identity the register deduplicates on. The request says which it wants,
-   * because the two are different jobs and the register is a registry of
-   * defects rather than a second copy of every review.
-   */
+  Whether this request must produce findings.
+  
+  A hypothesis review states what the packet shows; a findings request
+  also files the defect claims the packet supports, each with the strict
+  identity the register deduplicates on. The request says which it wants,
+  because the two are different jobs and the register is a registry of
+  defects rather than a second copy of every review.
+  */
   readonly requireFindings: boolean;
 }
 
@@ -60,9 +64,9 @@ export interface PlaytestAnalystProcessResult {
   readonly timedOut: boolean;
   readonly launchFailed: boolean;
   /**
-   * What the analyst child said before it ended, bounded. A failed analyst
-   * must be diagnosable: the child is the only one who knows why it stopped.
-   */
+  What the analyst child said before it ended, bounded. A failed analyst
+  must be diagnosable: the child is the only one who knows why it stopped.
+  */
   readonly diagnostic: string | null;
 }
 
@@ -137,15 +141,15 @@ function playtestAnalystPrompt(input: PlaytestAnalystProcessInput): string {
 }
 
 /**
- * Start the existing `run-provider-agent` CLI in its read-only analyst role.
- * The agent runs in a private, source-empty Git root, not the game checkout.
- * Codex 0.154 omits its structured workspace metadata for a non-Git cwd, which
- * makes the provider router refuse the request; the empty local Git metadata
- * supplies that boundary without a remote, tracked file, or game commit. The
- * allowlisted tools use the workspace-bound Playtesting repository directly;
- * the child receives no Control API credential or run-control client. Runtime
- * retains dispatch lifecycle/status.
- */
+Start the existing `run-provider-agent` CLI in its read-only analyst role.
+The agent runs in a private, source-empty Git root, not the game checkout.
+Codex 0.154 omits its structured workspace metadata for a non-Git cwd, which
+makes the provider router refuse the request; the empty local Git metadata
+supplies that boundary without a remote, tracked file, or game commit. The
+allowlisted tools use the workspace-bound Playtesting repository directly;
+the child receives no Control API credential or run-control client. Runtime
+retains dispatch lifecycle/status.
+*/
 export function launchPlaytestAnalystProcess(
   input: PlaytestAnalystProcessInput,
   options: PlaytestAnalystProcessOptions = {}
@@ -156,7 +160,7 @@ export function launchPlaytestAnalystProcess(
   // The service that dispatches the analyst knows the authoritative checkout;
   // the Runtime source root is the materialized tree the child actually runs
   // from.
-  const configurationRoot =
+  const configRoot =
     environment.AUTODEV_REPO_ROOT?.trim() || repositoryRoot;
   const providerAgent = resolveRuntimeSourcePath(
     repositoryRoot,
@@ -227,11 +231,11 @@ export function launchPlaytestAnalystProcess(
     // Pointing it at the materialized Runtime tree instead left the server
     // without a catalog ("The canonical workspace catalog is unavailable"), so
     // it exposed no playtest tool at all and the analyst submitted no review.
-    AUTODEV_REPO_ROOT: configurationRoot,
+    AUTODEV_REPO_ROOT: configRoot,
     // AutoDev's managed configuration -- the model catalog and the analysis
     // skill -- lives in the authoritative checkout, not in the materialized
     // Runtime tree. The analyst child may read it, and only it.
-    AUTODEV_CONFIGURATION_ROOT: configurationRoot,
+    AUTODEV_CONFIGURATION_ROOT: configRoot,
     AUTODEV_PLAYTEST_WORKSPACE_ID: input.workspaceId,
     AUTODEV_PLAYTEST_ROLE: ANALYST_ROLE,
     AUTODEV_PLAYTEST_ACTOR_ID: input.actor,
@@ -240,9 +244,7 @@ export function launchPlaytestAnalystProcess(
     AUTODEV_PLAYTEST_ANALYSIS_ID: input.analysisId,
     AUTODEV_PLAYTEST_SELECTED_EPISODE_IDS: JSON.stringify(input.episodeIds),
     AUTODEV_PLAYTEST_ANALYSIS_KIND: input.analysisKind,
-    ...(input.metricAggregation === null
-      ? {}
-      : {
+    ...(input.metricAggregation !== null && {
           AUTODEV_PLAYTEST_ANALYSIS_METRIC_AGGREGATION: JSON.stringify(
             input.metricAggregation
           )
@@ -289,16 +291,16 @@ export function launchPlaytestAnalystProcess(
     throw error;
   }
 
-  let timedOut = false;
-  let launchFailed = false;
-  let settled = false;
+  let isTimedOut = false;
+  let isLaunchFailed = false;
+  let isSettled = false;
   let forceKill: NodeJS.Timeout | undefined;
   let resolveCompletion!: (result: PlaytestAnalystProcessResult) => void;
   const completion = new Promise<PlaytestAnalystProcessResult>((resolve) => {
     resolveCompletion = resolve;
   });
   const timeout = setTimeout(() => {
-    timedOut = true;
+    isTimedOut = true;
     child.kill("SIGTERM");
     forceKill = setTimeout(() => child.kill("SIGKILL"), TERMINATION_GRACE_MS);
     forceKill.unref();
@@ -308,16 +310,16 @@ export function launchPlaytestAnalystProcess(
     exitCode: number | null,
     signal: NodeJS.Signals | null
   ): void => {
-    if (settled) return;
-    settled = true;
+    if (isSettled) return;
+    isSettled = true;
     if (timeout) clearTimeout(timeout);
     if (forceKill) clearTimeout(forceKill);
     removeIsolatedWorkspace(canonicalIsolatedRoot);
     resolveCompletion({
       exitCode,
       signal,
-      timedOut,
-      launchFailed,
+      timedOut: isTimedOut,
+      launchFailed: isLaunchFailed,
       diagnostic: analystDiagnostic()
     });
   };
@@ -343,7 +345,7 @@ export function launchPlaytestAnalystProcess(
   child.stdout?.on("data", recordOutput);
   child.stderr?.on("data", recordOutput);
   child.once("error", () => {
-    launchFailed = true;
+    isLaunchFailed = true;
     finish(null, null);
   });
   child.once("close", (exitCode, signal) => {
@@ -353,7 +355,7 @@ export function launchPlaytestAnalystProcess(
   return {
     completion,
     terminate() {
-      if (settled || forceKill) return;
+      if (isSettled || forceKill) return;
       child.kill("SIGTERM");
       forceKill = setTimeout(() => child.kill("SIGKILL"), TERMINATION_GRACE_MS);
       forceKill.unref();

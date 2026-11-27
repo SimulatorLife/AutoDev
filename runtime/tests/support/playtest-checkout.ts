@@ -1,4 +1,6 @@
-/** Real committed-build preparation for Playtesting tests, isolated from CODEX_HOME. */
+/**
+Real committed-build preparation for Playtesting tests, isolated from CODEX_HOME.
+*/
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,7 +13,9 @@ import {
   preparePlaytestSandbox
 } from "../../src/playtesting/docker-sandbox.ts";
 
-/** Commit every file in a fixture checkout so the Runtime can snapshot it. */
+/**
+Commit every file in a fixture checkout so the Runtime can snapshot it.
+*/
 export function commitFixtureCheckout(root: string): string {
   execFileSync("git", ["init", "--quiet", root]);
   execFileSync("git", ["-C", root, "add", "--all"]);
@@ -32,7 +36,9 @@ export function commitFixtureCheckout(root: string): string {
   }).trim();
 }
 
-/** The production preparer with a temporary snapshot root. */
+/**
+The production preparer with a temporary snapshot root.
+*/
 export function isolatedPlaytestPreparer(): {
   readonly prepare: (
     approval: WorkspacePlaytestApproval

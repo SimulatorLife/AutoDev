@@ -28,10 +28,10 @@ import {
 
 export const ROUTER_AUTH_VARIABLE = "CODEX_ROUTER_AUTH_TOKEN";
 /**
- * The private Router-to-bridge credentials, one per bridge that authenticates
- * the router. Each is loaded by both the router's and that bridge's launcher,
- * and never forwarded into the provider process the bridge runs.
- */
+The private Router-to-bridge credentials, one per bridge that authenticates
+the router. Each is loaded by both the router's and that bridge's launcher,
+and never forwarded into the provider process the bridge runs.
+*/
 export const BRIDGE_ROUTER_AUTH_VARIABLES = {
   Copilot: "CODEX_ROUTER_COPILOT_API_KEY",
   opencli: "CODEX_ROUTER_OPENCLI_API_KEY"
@@ -61,14 +61,16 @@ function appendToken(filePath: string, variable: string, token: string): void {
   chmodSync(filePath, 0o600);
 }
 
-function publishLaunchdToken(token: string, env: NodeJS.ProcessEnv): void {
-  if (env.AUTODEV_SKIP_LAUNCHCTL === "1") return;
+function publishLaunchdToken(token: string, environment: NodeJS.ProcessEnv): void {
+  if (environment.AUTODEV_SKIP_LAUNCHCTL === "1") return;
   try {
     execFileSync("launchctl", ["setenv", ROUTER_AUTH_VARIABLE, token], {
       stdio: "ignore"
     });
   } catch {
-    /* launchd may be inaccessible in a sandbox */
+    /*
+    launchd may be inaccessible in a sandbox
+    */
   }
 }
 
@@ -91,7 +93,7 @@ function ensurePrivateToken(
 
 export function ensureRouterAuth(
   filePath: string,
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): string {
   const result = ensurePrivateToken(filePath, ROUTER_AUTH_VARIABLE);
   writeErrorLine(
@@ -99,11 +101,13 @@ export function ensureRouterAuth(
       ? `created router auth token in ${filePath}`
       : `ok router auth token already exists in ${filePath}`
   );
-  publishLaunchdToken(result.token, env);
+  publishLaunchdToken(result.token, environment);
   return result.token;
 }
 
-/** Ensure every bridge's Router credential exists; returns each token by bridge. */
+/**
+Ensure every bridge's Router credential exists; returns each token by bridge.
+*/
 export function ensureBridgeRouterAuth(
   filePath: string
 ): Record<keyof typeof BRIDGE_ROUTER_AUTH_VARIABLES, string> {
@@ -125,7 +129,7 @@ export function ensureBridgeRouterAuth(
   return tokens;
 }
 
-function parseEnvAssignment(
+function parseEnvironmentAssignment(
   rawLine: string
 ): { key: string; value: string } | null {
   const trimmed = rawLine.trim();
@@ -147,7 +151,9 @@ function parseEnvAssignment(
   return { key, value };
 }
 
-/** Return the list of Keychain-managed secret names present in an env file. */
+/**
+Return the list of Keychain-managed secret names present in an env file.
+*/
 export function findPlaintextKeychainSecrets(
   filePath: string,
   targets: readonly KeychainSecretName[] = KEYCHAIN_SECRET_NAMES
@@ -156,7 +162,7 @@ export function findPlaintextKeychainSecrets(
   const targetSet = new Set<string>(targets);
   const found = new Set<KeychainSecretName>();
   for (const line of readFileSync(filePath, "utf8").split(LINE_SPLIT_PATTERN)) {
-    const parsed = parseEnvAssignment(line);
+    const parsed = parseEnvironmentAssignment(line);
     if (parsed && targetSet.has(parsed.key) && parsed.value.trim()) {
       found.add(parsed.key as KeychainSecretName);
     }
@@ -165,27 +171,27 @@ export function findPlaintextKeychainSecrets(
 }
 
 /**
- * Migrate Keychain-managed secrets out of `$CODEX_HOME/.env` into macOS
- * Keychain, verifying each Keychain write before atomically rewriting the env
- * file without those plaintext secrets.
- */
+Migrate Keychain-managed secrets out of `$CODEX_HOME/.env` into macOS
+Keychain, verifying each Keychain write before atomically rewriting the env
+file without those plaintext secrets.
+*/
 export function migrateEnvSecretsToKeychain(
   filePath: string,
-  env: NodeJS.ProcessEnv = process.env,
+  environment: NodeJS.ProcessEnv = process.env,
   options: {
     readonly secrets?: readonly KeychainSecretName[];
     readonly deps?: KeychainDeps;
   } = {}
 ): KeychainSecretName[] {
   if (!existsSync(filePath)) return [];
-  const deps = options.deps ?? {};
-  if (!keychainAvailable(env, deps)) return [];
+  const dependencies = options.deps ?? {};
+  if (!keychainAvailable(environment, dependencies)) return [];
   const targets = new Set<string>(options.secrets ?? KEYCHAIN_SECRET_NAMES);
   const rawContent = readFileSync(filePath, "utf8");
   const lines = rawContent.split(LINE_SPLIT_PATTERN);
   const extracted = new Map<KeychainSecretName, string>();
   for (const line of lines) {
-    const parsed = parseEnvAssignment(line);
+    const parsed = parseEnvironmentAssignment(line);
     if (parsed && targets.has(parsed.key)) {
       const value = parsed.value.trim();
       if (value) extracted.set(parsed.key as KeychainSecretName, value);
@@ -194,8 +200,8 @@ export function migrateEnvSecretsToKeychain(
   if (extracted.size === 0) return [];
   const migrated: KeychainSecretName[] = [];
   for (const [name, value] of extracted) {
-    writeKeychainSecret(name, value, env, deps);
-    if (readKeychainSecret(name, env, { deps }) !== value) {
+    writeKeychainSecret(name, value, environment, dependencies);
+    if (readKeychainSecret(name, environment, { deps: dependencies }) !== value) {
       throw new Error(`Keychain verification failed while migrating ${name}`);
     }
     migrated.push(name);
@@ -203,8 +209,8 @@ export function migrateEnvSecretsToKeychain(
   }
   const migratedSet = new Set<string>(migrated);
   const remaining = lines.filter((line) => {
-    const parsed = parseEnvAssignment(line);
-    return !(parsed && migratedSet.has(parsed.key));
+    const parsed = parseEnvironmentAssignment(line);
+    return !parsed || !migratedSet.has(parsed.key);
   });
   const nextContent =
     remaining.length === 0 || (remaining.length === 1 && remaining[0] === "")
@@ -219,17 +225,17 @@ export const REQUIRED_INSTALL_KEYCHAIN_SECRETS: readonly KeychainSecretName[] =
   ["MINIMAX_API_KEY", "CONTEXT7_API_KEY"];
 
 /**
- * Verify that required API keys exist in macOS Keychain without writing or
- * migrating Keychain entries or modifying `.env`. Returns any missing keys.
- */
+Verify that required API keys exist in macOS Keychain without writing or
+migrating Keychain entries or modifying `.env`. Returns any missing keys.
+*/
 export function checkRequiredKeychainSecrets(
   names: readonly KeychainSecretName[] = REQUIRED_INSTALL_KEYCHAIN_SECRETS,
-  env: NodeJS.ProcessEnv = process.env,
-  deps: KeychainDeps = {}
+  environment: NodeJS.ProcessEnv = process.env,
+  dependencies: KeychainDeps = {}
 ): KeychainSecretName[] {
-  if (!keychainAvailable(env, deps)) return [];
+  if (!keychainAvailable(environment, dependencies)) return [];
   return names.filter(
-    (name) => readKeychainSecret(name, env, { deps }) === null
+    (name) => readKeychainSecret(name, environment, { deps: dependencies }) === null
   );
 }
 
@@ -273,8 +279,8 @@ function cli(argv: string[]): number {
             `unsupported Keychain secret: ${name} (expected one of: ${KEYCHAIN_SECRET_NAMES.join(", ")})`
           );
         }
-        const present = readKeychainSecret(name) !== null;
-        writeLine(`${name}: ${present ? "present" : "missing"}`);
+        const isPresent = readKeychainSecret(name) !== null;
+        writeLine(`${name}: ${isPresent ? "present" : "missing"}`);
       }
       return 0;
     }

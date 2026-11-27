@@ -1,12 +1,12 @@
 /**
- * Pure rules for deriving the reusable reconciliation contract from raw
- * evidence.
- *
- * Every function here is deterministic and infrastructure-free so the rule
- * layer can be unit-tested without disk, network, or process boundaries.
- * Runtime uses `buildReconciliationView` to derive the shared contract from
- * evidence; Console consumes that status and history instead of re-deriving it.
- */
+Pure rules for deriving the reusable reconciliation contract from raw
+evidence.
+
+Every function here is deterministic and infrastructure-free so the rule
+layer can be unit-tested without disk, network, or process boundaries.
+Runtime uses `buildReconciliationView` to derive the shared contract from
+evidence; Console consumes that status and history instead of re-deriving it.
+*/
 
 import type {
   ConvergenceStatus,
@@ -17,10 +17,10 @@ import type {
 } from "./types.ts";
 
 /**
- * Stable, human-readable message that Console can render alongside the
- * convergence badge. The strings are intentional copy so the same wording
- * appears in tests, Console, and the migration tracker.
- */
+Stable, human-readable message that Console can render alongside the
+convergence badge. The strings are intentional copy so the same wording
+appears in tests, Console, and the migration tracker.
+*/
 const CONVERGENCE_EXPLANATION = {
   converged:
     "The runtime has observed the latest desired generation; convergence is recorded.",
@@ -42,22 +42,22 @@ interface Generations {
 }
 
 /**
- * Derive a convergence status from the simplest possible inputs.
- *
- * The order matters and is part of the contract:
- *
- * 1. A redacted error from the most recent observation wins: error.
- * 2. No evidence at all is unknown / not-observed.
- * 3. A non-empty desired generation with no observed generation is pending.
- * 4. Desired and observed generations that match are converged.
- * 5. Any other mismatch (observed older than desired) is pending.
- *
- * `restartRequired` flags the case where a successful apply wrote the new
- * desired generation but the runtime still needs to restart (e.g. Codex
- * already running with the old prompt projection). When restart is
- * required the runtime cannot have observed the new generation yet, so
- * the derivation falls through to `pending`.
- */
+Derive a convergence status from the simplest possible inputs.
+
+The order matters and is part of the contract:
+
+1. A redacted error from the most recent observation wins: error.
+2. No evidence at all is unknown / not-observed.
+3. A non-empty desired generation with no observed generation is pending.
+4. Desired and observed generations that match are converged.
+5. Any other mismatch (observed older than desired) is pending.
+
+`restartRequired` flags the case where a successful apply wrote the new
+desired generation but the runtime still needs to restart (e.g. Codex
+already running with the old prompt projection). When restart is
+required the runtime cannot have observed the new generation yet, so
+the derivation falls through to `pending`.
+*/
 export function deriveConvergence(
   generations: Generations,
   options: {
@@ -80,9 +80,9 @@ export function deriveConvergence(
 }
 
 /**
- * Derive a full reconciliation status from raw evidence. The result is the
- * canonical shape Runtime and Data return to Console.
- */
+Derive a full reconciliation status from raw evidence. The result is the
+canonical shape Runtime and Data return to Console.
+*/
 export function deriveReconciliationStatus(
   evidence: ReconciliationEvidence,
   options: {
@@ -96,12 +96,8 @@ export function deriveReconciliationStatus(
       observed: evidence.observedGeneration
     },
     {
-      ...(options.hasObservation === undefined
-        ? {}
-        : { hasObservation: options.hasObservation }),
-      ...(options.restartRequired === undefined
-        ? {}
-        : { restartRequired: options.restartRequired }),
+      ...(options.hasObservation !== undefined && { hasObservation: options.hasObservation }),
+      ...(options.restartRequired !== undefined && { restartRequired: options.restartRequired }),
       lastError: evidence.lastError
     }
   );
@@ -117,10 +113,10 @@ export function deriveReconciliationStatus(
 }
 
 /**
- * Trim a history to the bounded limit the Console renders. Newest entries
- * come first so the surface is forward-looking; older history stays in the
- * audit sink rather than in the response.
- */
+Trim a history to the bounded limit the Console renders. Newest entries
+come first so the surface is forward-looking; older history stays in the
+audit sink rather than in the response.
+*/
 export function trimOperationHistory(
   entries: readonly OperationHistoryEntry[]
 ): readonly OperationHistoryEntry[] {
@@ -128,26 +124,22 @@ export function trimOperationHistory(
 }
 
 /**
- * Build the canonical reconciliation view from evidence + history. This is
- * the single function the Control API handlers use to assemble their
- * response envelopes so the Console, tests, and audit sink share the
- * exact same shape.
- */
-export function buildReconciliationView(args: {
+Build the canonical reconciliation view from evidence + history. This is
+the single function the Control API handlers use to assemble their
+response envelopes so the Console, tests, and audit sink share the
+exact same shape.
+*/
+export function buildReconciliationView(arguments_: {
   readonly evidence: ReconciliationEvidence;
   readonly history: readonly OperationHistoryEntry[];
   readonly hasObservation?: boolean;
   readonly restartRequired?: boolean;
 }): ReconciliationView {
   return {
-    status: deriveReconciliationStatus(args.evidence, {
-      ...(args.hasObservation === undefined
-        ? {}
-        : { hasObservation: args.hasObservation }),
-      ...(args.restartRequired === undefined
-        ? {}
-        : { restartRequired: args.restartRequired })
+    status: deriveReconciliationStatus(arguments_.evidence, {
+      ...(arguments_.hasObservation !== undefined && { hasObservation: arguments_.hasObservation }),
+      ...(arguments_.restartRequired !== undefined && { restartRequired: arguments_.restartRequired })
     }),
-    history: trimOperationHistory(args.history)
+    history: trimOperationHistory(arguments_.history)
   };
 }

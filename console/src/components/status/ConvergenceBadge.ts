@@ -15,12 +15,12 @@ import {
 } from "./StatusBadge.ts";
 
 /**
- * Convergence verdict as the shared status vocabulary.
- *
- * `pending` and `converged` map onto the badge variants that already mean
- * "awaiting observation" and "observed correct", so one component speaks one
- * language for health and for desired-vs-actual state.
- */
+Convergence verdict as the shared status vocabulary.
+
+`pending` and `converged` map onto the badge variants that already mean
+"awaiting observation" and "observed correct", so one component speaks one
+language for health and for desired-vs-actual state.
+*/
 export function convergenceBadgeVariant(
   convergence: ConvergenceStatus
 ): StatusBadgeVariant {
@@ -31,13 +31,13 @@ export function convergenceBadgeVariant(
 }
 
 /**
- * Desired-vs-actual state for one mutable item.
- *
- * The verdict is a badge; the Runtime-derived explanation and the desired /
- * observed generations are the hover title, so an operator can see why an item
- * is still converging without opening a second page. Nothing here is inferred
- * from configuration: an unobserved item stays `Not observed`.
- */
+Desired-vs-actual state for one mutable item.
+
+The verdict is a badge; the Runtime-derived explanation and the desired /
+observed generations are the hover title, so an operator can see why an item
+is still converging without opening a second page. Nothing here is inferred
+from configuration: an unobserved item stays `Not observed`.
+*/
 export function ConvergenceBadge({
   convergence,
   explanation,
@@ -64,7 +64,7 @@ export function ConvergenceBadge({
     // "Converged" — and the one value that genuinely needed mapping,
     // `not-observed`, needed a hand-written special case that existed only
     // because this label was handed a string it should never have been given.
-    ...(lines.length === 1 ? {} : { title: lines.join("\n") })
+    ...(lines.length !== 1 && { title: lines.join("\n") })
   });
 }
 
@@ -73,20 +73,20 @@ const HISTORY_ROW_CLASS =
   "flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs text-fg-muted";
 
 /**
- * Render one reconciliation field. `null` means the Runtime has not observed it,
- * which must never render as an empty value that could read as "none".
- */
+Render one reconciliation field. `null` means the Runtime has not observed it,
+which must never render as an empty value that could read as "none".
+*/
 function fieldValue(value: React.ReactNode): React.ReactNode {
   return value ?? NOT_OBSERVED_LABEL;
 }
 
 /**
- * An instant the Runtime reported, or nothing when it reported none.
- *
- * The two moments in this panel are moments like any other, so they are
- * rendered the way the Console renders a moment: read through the one owner,
- * rather than printed as the raw wire value.
- */
+An instant the Runtime reported, or nothing when it reported none.
+
+The two moments in this panel are moments like any other, so they are
+rendered the way the Console renders a moment: read through the one owner,
+rather than printed as the raw wire value.
+*/
 function instantField(value: string | null, label: string): React.ReactNode {
   return React.createElement(InstantDisplay, { value, label });
 }
@@ -130,13 +130,13 @@ function historyRow(entry: OperationHistoryEntry): React.JSX.Element {
 }
 
 /**
- * Full desired-vs-actual panel for a mutable resource: the verdict, the
- * generations behind it, when the apply and observation happened, and the
- * bounded operation history for that resource.
- *
- * Everything here is Runtime-derived evidence. Absent evidence renders as
- * `Not observed`, never as an empty string or a zero.
- */
+Full desired-vs-actual panel for a mutable resource: the verdict, the
+generations behind it, when the apply and observation happened, and the
+bounded operation history for that resource.
+
+Everything here is Runtime-derived evidence. Absent evidence renders as
+`Not observed`, never as an empty string or a zero.
+*/
 export function ReconciliationPanel({
   status,
   history,

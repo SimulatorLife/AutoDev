@@ -1,23 +1,23 @@
 /**
- * Unit and contract tests for the AutoDev Control API proxy in OpenLIT.
- *
- * Reproduces and verifies the proxy unit tests that ship inside
- * patches/openlit/02-autodev-pages.patch (src/client/src/__tests__/lib/autodev/control-api.test.ts).
- *
- * Verifies:
- *   1. Unauthenticated requests (missing NextAuth session) are rejected with 401.
- *   2. CSRF protection: exact Origin validation for every state-changing mutation
- *      (reject missing/mismatched/malformed Origin with 403). Non-state-changing
- *      GET requests without Origin are allowed.
- *   3. Forwarding contract: forwards ONLY `Authorization: Bearer <token>` and
- *      `X-AutoDev-Actor: <actor>`. Never sends `X-AutoDev-Role` or `X-AutoDev-Actor-Email`.
- *   4. Actor forwarding: forwards both viewer and operator actor IDs without role headers.
- *   5. Service credential safety: service token remains server-only and is never leaked
- *      in client responses.
- *   6. Error mapping: maps upstream 401, 403, and 502 (unreachable) errors to normalized envelopes.
- *   7. Kill switch: AUTODEV_CONTROL_API_DISABLED=1 short-circuits with 503.
- *   8. Patch 02 static inspection confirms all security gates are wired in the patch.
- */
+Unit and contract tests for the AutoDev Control API proxy in OpenLIT.
+
+Reproduces and verifies the proxy unit tests that ship inside
+patches/openlit/02-autodev-pages.patch (src/client/src/__tests__/lib/autodev/control-api.test.ts).
+
+Verifies:
+  1. Unauthenticated requests (missing NextAuth session) are rejected with 401.
+  2. CSRF protection: exact Origin validation for every state-changing mutation
+     (reject missing/mismatched/malformed Origin with 403). Non-state-changing
+     GET requests without Origin are allowed.
+  3. Forwarding contract: forwards ONLY `Authorization: Bearer <token>` and
+     `X-AutoDev-Actor: <actor>`. Never sends `X-AutoDev-Role` or `X-AutoDev-Actor-Email`.
+  4. Actor forwarding: forwards both viewer and operator actor IDs without role headers.
+  5. Service credential safety: service token remains server-only and is never leaked
+     in client responses.
+  6. Error mapping: maps upstream 401, 403, and 502 (unreachable) errors to normalized envelopes.
+  7. Kill switch: AUTODEV_CONTROL_API_DISABLED=1 short-circuits with 503.
+  8. Patch 02 static inspection confirms all security gates are wired in the patch.
+*/
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -86,44 +86,44 @@ interface ForwardOptions {
 }
 
 async function forwardToControlApi(
-  opts: ForwardOptions
+  options: ForwardOptions
 ): Promise<
   | { ok: true; status: number; body: unknown }
   | { ok: false; status: number; err: string }
 > {
-  if (opts.disabled === "1" || opts.disabled === "true") {
+  if (options.disabled === "1" || options.disabled === "true") {
     return {
       ok: false,
       status: 503,
       err: "AutoDev Control API proxy is disabled via AUTODEV_CONTROL_API_DISABLED"
     };
   }
-  const baseUrl = opts.baseUrl ?? "http://127.0.0.1:4100";
-  const token = opts.token ?? "test-service-token";
+  const baseUrl = options.baseUrl ?? "http://127.0.0.1:4100";
+  const token = options.token ?? "test-service-token";
 
-  if (!opts.actor) {
+  if (!options.actor) {
     return { ok: false, status: 401, err: "unauthenticated" };
   }
 
-  const url = `${baseUrl.replace(/\/+$/u, "")}/control/${opts.path}`;
+  const url = `${baseUrl.replace(/\/+$/u, "")}/control/${options.path}`;
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
     Accept: "application/json",
-    "X-AutoDev-Actor": opts.actor
+    "X-AutoDev-Actor": options.actor
   };
   let body: string | undefined;
-  if (opts.body !== undefined) {
+  if (options.body !== undefined) {
     headers["Content-Type"] = "application/json";
-    body = JSON.stringify(opts.body);
+    body = JSON.stringify(options.body);
   }
 
-  const fetchFn = opts.fetchImpl ?? globalThis.fetch;
+  const fetchFunction = options.fetchImpl ?? globalThis.fetch;
   let response: Response;
   try {
-    response = await fetchFn(url, {
-      method: opts.method,
+    response = await fetchFunction(url, {
+      method: options.method,
       headers,
-      ...(body === undefined ? {} : { body })
+      ...(body !== undefined && { body })
     });
   } catch (error) {
     return {
@@ -185,10 +185,12 @@ test("proxy rejects unauthenticated requests with 401", async () => {
     actor: null
   });
   assert.equal(res.ok, false);
-  if (!res.ok) {
-    assert.equal(res.status, 401);
-    assert.equal(res.err, "unauthenticated");
+  if (res.ok) {
+    return;
   }
+
+  assert.equal(res.status, 401);
+  assert.equal(res.err, "unauthenticated");
 });
 
 test("proxy enforces exact Origin for mutations (CSRF protection)", () => {
@@ -196,10 +198,12 @@ test("proxy enforces exact Origin for mutations (CSRF protection)", () => {
   for (const method of ["POST", "PATCH", "PUT", "DELETE"]) {
     const missing = verifyOriginForMutation(method, null, "app.example.com");
     assert.equal(missing.ok, false);
-    if (!missing.ok) {
-      assert.equal(missing.status, 403);
-      assert.match(missing.err, /missing Origin/i);
+    if (missing.ok) {
+      continue;
     }
+
+    assert.equal(missing.status, 403);
+    assert.match(missing.err, /missing Origin/i);
   }
 
   // Mismatched Origin -> 403
@@ -398,10 +402,12 @@ test("proxy maps upstream 401, 403, and 502 errors to normalized envelopes", asy
     }
   });
   assert.equal(res502.ok, false);
-  if (!res502.ok) {
-    assert.equal(res502.status, 502);
-    assert.match(res502.err, /AutoDev Control API unreachable/);
+  if (res502.ok) {
+    return;
   }
+
+  assert.equal(res502.status, 502);
+  assert.match(res502.err, /AutoDev Control API unreachable/);
 });
 
 test("proxy kill switch AUTODEV_CONTROL_API_DISABLED returns 503", async () => {
@@ -412,10 +418,12 @@ test("proxy kill switch AUTODEV_CONTROL_API_DISABLED returns 503", async () => {
     disabled: "1"
   });
   assert.equal(res.ok, false);
-  if (!res.ok) {
-    assert.equal(res.status, 503);
-    assert.match(res.err, /AUTODEV_CONTROL_API_DISABLED/);
+  if (res.ok) {
+    return;
   }
+
+  assert.equal(res.status, 503);
+  assert.match(res.err, /AUTODEV_CONTROL_API_DISABLED/);
 });
 
 test("patch 02 satisfies all mutation proxy security requirements", () => {

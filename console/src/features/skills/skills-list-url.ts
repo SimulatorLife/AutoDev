@@ -63,9 +63,9 @@ function firstValue(value: string | readonly string[] | undefined): string {
 The filters an address asks for.
 */
 export function readSkillsFilters(
-  params: Readonly<Record<string, string | readonly string[] | undefined>>
+  parameters: Readonly<Record<string, string | readonly string[] | undefined>>
 ): SkillsListFilters {
-  return { role: firstValue(params.role).trim() };
+  return { role: firstValue(parameters.role).trim() };
 }
 
 /**

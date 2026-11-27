@@ -1,10 +1,10 @@
 /**
- * Centralized secret resolution and macOS Keychain integration.
- *
- * Reads runtime credentials from explicit environment variables, macOS Keychain
- * via `/usr/bin/security`, or the owner-only `openlit-secrets.env` file without
- * logging or exposing secret values.
- */
+Centralized secret resolution and macOS Keychain integration.
+
+Reads runtime credentials from explicit environment variables, macOS Keychain
+via `/usr/bin/security`, or the owner-only `openlit-secrets.env` file without
+logging or exposing secret values.
+*/
 import { execFileSync } from "node:child_process";
 import {
   closeSync,
@@ -21,9 +21,11 @@ import path from "node:path";
 const LINE_BREAK = /\r?\n/u;
 const SECURITY_CLI = "/usr/bin/security";
 const SECURITY_TIMEOUT_MS = 5000;
-const CONTROL_CHAR_PATTERN = /[\x00-\x1f\x7f]/u;
+const CONTROL_CHAR_PATTERN = /[\u{0}-\u{1F}\u{7F}]/u;
 
-/** Secrets managed through macOS Keychain by AutoDev. */
+/**
+Secrets managed through macOS Keychain by AutoDev.
+*/
 export const KEYCHAIN_SECRET_NAMES = [
   "MINIMAX_API_KEY",
   "CONTEXT7_API_KEY",
@@ -37,35 +39,37 @@ const KEYCHAIN_SECRET_SET = new Set<string>(KEYCHAIN_SECRET_NAMES);
 
 export interface KeychainDeps {
   readonly platform?: NodeJS.Platform;
-  readonly runSecurity?: (args: readonly string[], input?: string) => string;
+  readonly runSecurity?: (arguments_: readonly string[], input?: string) => string;
 }
 
 export function isKeychainSecretName(name: string): name is KeychainSecretName {
   return KEYCHAIN_SECRET_SET.has(name);
 }
 
-/** The Keychain item account; launchd may omit USER and inherit LOGNAME=root. */
-export function keychainAccount(env: NodeJS.ProcessEnv = process.env): string {
-  return env.USER?.trim() || userInfo().username;
+/**
+The Keychain item account; launchd may omit USER and inherit LOGNAME=root.
+*/
+export function keychainAccount(environment: NodeJS.ProcessEnv = process.env): string {
+  return environment.USER?.trim() || userInfo().username;
 }
 
 export function keychainAvailable(
-  env: NodeJS.ProcessEnv = process.env,
-  deps: KeychainDeps = {}
+  environment: NodeJS.ProcessEnv = process.env,
+  dependencies: KeychainDeps = {}
 ): boolean {
-  if (env.AUTODEV_DISABLE_KEYCHAIN === "1") return false;
+  if (environment.AUTODEV_DISABLE_KEYCHAIN === "1") return false;
   if (
-    env.AUTODEV_DISABLE_KEYCHAIN !== "0" &&
-    !env.AUTODEV_KEYCHAIN_FILE?.trim() &&
+    environment.AUTODEV_DISABLE_KEYCHAIN !== "0" &&
+    !environment.AUTODEV_KEYCHAIN_FILE?.trim() &&
     process.env.AUTODEV_DISABLE_KEYCHAIN === "1"
   ) {
     return false;
   }
-  return (deps.platform ?? process.platform) === "darwin";
+  return (dependencies.platform ?? process.platform) === "darwin";
 }
 
-function defaultRunSecurity(args: readonly string[], input?: string): string {
-  return execFileSync(SECURITY_CLI, [...args], {
+function defaultRunSecurity(arguments_: readonly string[], input?: string): string {
+  return execFileSync(SECURITY_CLI, [...arguments_], {
     encoding: "utf8",
     input,
     stdio: [input === undefined ? "ignore" : "pipe", "pipe", "ignore"],
@@ -73,36 +77,36 @@ function defaultRunSecurity(args: readonly string[], input?: string): string {
   });
 }
 
-function escapeSecurityArg(value: string): string {
+function escapeSecurityArgument(value: string): string {
   return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
 
-function keychainFileArgs(env: NodeJS.ProcessEnv): string[] {
-  const customKeychain = env.AUTODEV_KEYCHAIN_FILE?.trim();
+function keychainFileArguments(environment: NodeJS.ProcessEnv): string[] {
+  const customKeychain = environment.AUTODEV_KEYCHAIN_FILE?.trim();
   return customKeychain ? [customKeychain] : [];
 }
 
 /**
- * Read a generic-password secret from macOS Keychain using `/usr/bin/security`.
- * Returns `null` when unavailable, disabled, or absent; never logs secrets.
- */
+Read a generic-password secret from macOS Keychain using `/usr/bin/security`.
+Returns `null` when unavailable, disabled, or absent; never logs secrets.
+*/
 export function readKeychainSecret(
   service: string,
-  env: NodeJS.ProcessEnv = process.env,
+  environment: NodeJS.ProcessEnv = process.env,
   options: {
     readonly exactAccount?: boolean;
     readonly deps?: KeychainDeps;
   } = {}
 ): string | null {
-  const deps = options.deps ?? {};
-  if (!keychainAvailable(env, deps)) return null;
-  const runSecurity = deps.runSecurity ?? defaultRunSecurity;
-  const extra = keychainFileArgs(env);
+  const dependencies = options.deps ?? {};
+  if (!keychainAvailable(environment, dependencies)) return null;
+  const runSecurity = dependencies.runSecurity ?? defaultRunSecurity;
+  const extra = keychainFileArguments(environment);
   const attempts: string[][] = [
     [
       "find-generic-password",
       "-a",
-      keychainAccount(env),
+      keychainAccount(environment),
       "-s",
       service,
       "-w",
@@ -112,29 +116,31 @@ export function readKeychainSecret(
   if (!options.exactAccount) {
     attempts.push(["find-generic-password", "-s", service, "-w", ...extra]);
   }
-  for (const args of attempts) {
+  for (const arguments_ of attempts) {
     try {
-      const value = runSecurity(args).trim();
+      const value = runSecurity(arguments_).trim();
       if (value) return value;
     } catch {
-      /* item absent or inaccessible */
+      /*
+      item absent or inaccessible
+      */
     }
   }
   return null;
 }
 
 /**
- * Store or update a generic-password secret in macOS Keychain via `security -i`
- * so the secret never appears in process arguments, trusting `/usr/bin/security`
- * for unattended LaunchAgent retrieval without interactive prompts.
- */
+Store or update a generic-password secret in macOS Keychain via `security -i`
+so the secret never appears in process arguments, trusting `/usr/bin/security`
+for unattended LaunchAgent retrieval without interactive prompts.
+*/
 export function writeKeychainSecret(
   service: string,
   value: string,
-  env: NodeJS.ProcessEnv = process.env,
-  deps: KeychainDeps = {}
+  environment: NodeJS.ProcessEnv = process.env,
+  dependencies: KeychainDeps = {}
 ): void {
-  if (!keychainAvailable(env, deps)) {
+  if (!keychainAvailable(environment, dependencies)) {
     throw new Error(`macOS Keychain is unavailable for storing ${service}`);
   }
   if (
@@ -149,21 +155,21 @@ export function writeKeychainSecret(
       `Keychain secret ${service} must be non-empty and free of control characters`
     );
   }
-  const runSecurity = deps.runSecurity ?? defaultRunSecurity;
-  const account = keychainAccount(env);
-  const extra = keychainFileArgs(env).map(escapeSecurityArg);
+  const runSecurity = dependencies.runSecurity ?? defaultRunSecurity;
+  const account = keychainAccount(environment);
+  const extra = keychainFileArguments(environment).map(escapeSecurityArgument);
   const command =
     [
       "add-generic-password",
       "-U",
       "-a",
-      escapeSecurityArg(account),
+      escapeSecurityArgument(account),
       "-s",
-      escapeSecurityArg(service),
+      escapeSecurityArgument(service),
       "-T",
-      escapeSecurityArg(SECURITY_CLI),
+      escapeSecurityArgument(SECURITY_CLI),
       "-w",
-      escapeSecurityArg(value),
+      escapeSecurityArgument(value),
       ...extra
     ].join(" ") + "\n";
   try {
@@ -174,59 +180,61 @@ export function writeKeychainSecret(
 }
 
 /**
- * Delete a generic-password secret from macOS Keychain. Returns `true` if a
- * matching item was removed, `false` when no matching item existed.
- */
+Delete a generic-password secret from macOS Keychain. Returns `true` if a
+matching item was removed, `false` when no matching item existed.
+*/
 export function deleteKeychainSecret(
   service: string,
-  env: NodeJS.ProcessEnv = process.env,
-  deps: KeychainDeps = {}
+  environment: NodeJS.ProcessEnv = process.env,
+  dependencies: KeychainDeps = {}
 ): boolean {
-  if (!keychainAvailable(env, deps)) return false;
-  const runSecurity = deps.runSecurity ?? defaultRunSecurity;
-  const extra = keychainFileArgs(env);
+  if (!keychainAvailable(environment, dependencies)) return false;
+  const runSecurity = dependencies.runSecurity ?? defaultRunSecurity;
+  const extra = keychainFileArguments(environment);
   const attempts: string[][] = [
     [
       "delete-generic-password",
       "-a",
-      keychainAccount(env),
+      keychainAccount(environment),
       "-s",
       service,
       ...extra
     ],
     ["delete-generic-password", "-s", service, ...extra]
   ];
-  let deleted = false;
-  for (const args of attempts) {
+  let isDeleted = false;
+  for (const arguments_ of attempts) {
     try {
-      runSecurity(args);
-      deleted = true;
+      runSecurity(arguments_);
+      isDeleted = true;
     } catch {
-      /* item absent */
+      /*
+      item absent
+      */
     }
   }
-  return deleted;
+  return isDeleted;
 }
 
 /**
- * Resolve a Keychain-backed secret with explicit environment variable
- * precedence (`env[name]` overrides macOS Keychain).
- */
+Resolve a Keychain-backed secret with explicit environment variable
+precedence (`env[name]` overrides macOS Keychain).
+*/
 export function resolveManagedSecret(
   name: string,
-  env: NodeJS.ProcessEnv = process.env,
-  deps: KeychainDeps = {}
+  environment: NodeJS.ProcessEnv = process.env,
+  dependencies: KeychainDeps = {}
 ): string | null {
-  const direct = env[name]?.trim();
+  const direct = environment[name]?.trim();
   if (direct) return direct;
   if (!isKeychainSecretName(name)) return null;
-  return readKeychainSecret(name, env, { deps });
+  return readKeychainSecret(name, environment, { deps: dependencies });
 }
 
 /**
- * Securely overwrite a regular plaintext credential file with zeroes and fsync
- * before removing it. Symlinks are unlinked without touching their target.
- */
+Securely overwrite a regular plaintext credential file with zeroes and fsync
+before removing it. Symlinks are unlinked without touching their target.
+*/
 export function secureDeleteFile(filePath: string): void {
   let stat;
   try {
@@ -271,30 +279,30 @@ function valueFor(content: string, name: string): string | null {
     const raw = assignment.slice(separator + 1).trim();
     const first = raw[0];
     const last = raw.at(-1);
-    const quoted =
+    const isQuoted =
       raw.length >= 2 &&
       ((first === '"' && last === '"') || (first === "'" && last === "'"));
-    const value = quoted ? raw.slice(1, -1) : raw;
+    const value = isQuoted ? raw.slice(1, -1) : raw;
     return value || null;
   }
   return null;
 }
 
 /**
- * Read an exact secret without logging it. Runtime services use this for
- * role-scoped MCP children so a credential need not be copied into a model
- * process environment or MCP command-line argument.
- */
+Read an exact secret without logging it. Runtime services use this for
+role-scoped MCP children so a credential need not be copied into a model
+process environment or MCP command-line argument.
+*/
 export function readRuntimeSecret(
   name: string,
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): string | null {
-  const direct = env[name]?.trim();
+  const direct = environment[name]?.trim();
   if (direct) return direct;
-  const home = env.HOME?.trim() || homedir();
-  const codexHome = env.CODEX_HOME?.trim() || path.join(home, ".codex");
+  const home = environment.HOME?.trim() || homedir();
+  const codexHome = environment.CODEX_HOME?.trim() || path.join(home, ".codex");
   const secretFile =
-    env.AUTODEV_OPENLIT_SECRET_FILE?.trim() ||
+    environment.AUTODEV_OPENLIT_SECRET_FILE?.trim() ||
     path.join(codexHome, "openlit-secrets.env");
   try {
     return valueFor(readFileSync(secretFile, "utf8"), name);

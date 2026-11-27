@@ -34,20 +34,20 @@ test(
     const sentinel = "synthetic-private-upstream-error";
     const protocolVersions: Array<string | string[] | undefined> = [];
     let deleted = 0;
-    let admitted = false;
-    const server = createServer((req, res) => {
-      if (req.method === "DELETE") {
-        if (req.headers["mcp-session-id"] === "fixture-session") deleted += 1;
+    let isAdmitted = false;
+    const server = createServer((request, res) => {
+      if (request.method === "DELETE") {
+        if (request.headers["mcp-session-id"] === "fixture-session") deleted += 1;
         res.writeHead(204).end();
         return;
       }
-      if (req.method === "GET") {
+      if (request.method === "GET") {
         res.writeHead(405).end();
         return;
       }
       const chunks: Buffer[] = [];
-      req.on("data", (chunk: Buffer) => chunks.push(chunk));
-      req.on("end", () => {
+      request.on("data", (chunk: Buffer) => chunks.push(chunk));
+      request.on("end", () => {
         const message = JSON.parse(Buffer.concat(chunks).toString("utf8"));
         if (message.id === undefined) {
           res.writeHead(202).end();
@@ -68,8 +68,8 @@ test(
             serverInfo: { name: "gateway-fixture", version: "1" }
           });
         } else if (message.method === "tools/call") {
-          protocolVersions.push(req.headers["mcp-protocol-version"]);
-          admitted =
+          protocolVersions.push(request.headers["mcp-protocol-version"]);
+          isAdmitted =
             typeof message.params._meta?.[SESSION_GRANT_META_KEY] === "string";
           if (message.params.arguments?.fail) {
             res.writeHead(503).end(sentinel);
@@ -125,7 +125,7 @@ test(
           error.message.includes("HTTP 503") &&
           !error.message.includes(sentinel)
       );
-      assert.ok(admitted);
+      assert.ok(isAdmitted);
       assert.equal(protocolVersions.length, 2);
       assert.ok(protocolVersions[0]);
       assert.equal(protocolVersions[0], protocolVersions[1]);

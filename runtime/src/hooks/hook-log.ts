@@ -15,7 +15,9 @@ export type HookDenialPolicy =
 export interface PreToolUseDenialLogEntry {
   readonly hook: "role-sandbox" | "block-ccc-cli" | "file-surface";
   readonly policy: HookDenialPolicy;
-  /** The session origin the policy decision was made under. */
+  /**
+  The session origin the policy decision was made under.
+  */
   readonly origin: HookSessionOrigin;
   readonly role: string | null;
   readonly model: string | null;
@@ -68,9 +70,9 @@ function normalizeReason(reason: string): string {
 }
 
 /**
- * Append a best-effort JSONL event record to `$CODEX_HOME/hooks/hooks.log`.
- * Never throws so logging issues cannot alter hook policy enforcement.
- */
+Append a best-effort JSONL event record to `$CODEX_HOME/hooks/hooks.log`.
+Never throws so logging issues cannot alter hook policy enforcement.
+*/
 export function appendHookLogRecord(
   record: Record<string, unknown>,
   logFilePath = path.join(codexHome(), "hooks", "hooks.log")
@@ -90,9 +92,9 @@ export function appendHookLogRecord(
 }
 
 /**
- * Normalize whitespace, redact common credential patterns, and truncate a shell
- * command string before writing it to `hooks.log`.
- */
+Normalize whitespace, redact common credential patterns, and truncate a shell
+command string before writing it to `hooks.log`.
+*/
 export function sanitizeCommandHead(command: string): string {
   let cleaned = command.replaceAll(/\s+/gu, " ").trim();
   for (const [pattern, replacement] of REDACT_RULES) {
@@ -102,10 +104,10 @@ export function sanitizeCommandHead(command: string): string {
 }
 
 /**
- * Extract and sanitize the command head for shell-execution tools only. Returns
- * `null` for non-shell tools such as `apply_patch` or `read_file` so patch and
- * file bodies are never written to `hooks.log`.
- */
+Extract and sanitize the command head for shell-execution tools only. Returns
+`null` for non-shell tools such as `apply_patch` or `read_file` so patch and
+file bodies are never written to `hooks.log`.
+*/
 export function extractShellCommandHead(
   toolName: string | null,
   toolInput: unknown
@@ -139,8 +141,8 @@ export function extractShellCommandHead(
 }
 
 /**
- * Record a structured `PreToolUse` policy denial event to `hooks.log`.
- */
+Record a structured `PreToolUse` policy denial event to `hooks.log`.
+*/
 export function logPreToolUseDenial(
   entry: PreToolUseDenialLogEntry,
   logFilePath?: string
@@ -159,7 +161,7 @@ export function logPreToolUseDenial(
       turn: entry.turn,
       tool: entry.tool,
       reason: normalizeReason(entry.reason),
-      ...(commandHead ? { commandHead } : {})
+      ...(commandHead && { commandHead })
     },
     logFilePath
   );

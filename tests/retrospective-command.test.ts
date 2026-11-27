@@ -30,15 +30,15 @@ interface EvaluationResult {
 }
 
 /**
- * Optional behavioral runner:
- * Set AUTODEV_RETROSPECTIVE_EVAL_RUNNER to an executable path, then run
- * pnpm run test:root.
- * The executable receives JSON {prompt, scenario, guidance, authorization} on
- * stdin and returns the normalized EvaluationResult as JSON on stdout.
- * It must execute the agent in an isolated environment and independently
- * verify writes; self-reported model claims do not count as verified writes.
- * If unset, only structural/fixture tests run; no model quality is claimed.
- */
+Optional behavioral runner:
+Set AUTODEV_RETROSPECTIVE_EVAL_RUNNER to an executable path, then run
+pnpm run test:root.
+The executable receives JSON {prompt, scenario, guidance, authorization} on
+stdin and returns the normalized EvaluationResult as JSON on stdout.
+It must execute the agent in an isolated environment and independently
+verify writes; self-reported model claims do not count as verified writes.
+If unset, only structural/fixture tests run; no model quality is claimed.
+*/
 const runner = process.env.AUTODEV_RETROSPECTIVE_EVAL_RUNNER;
 const source = readFileSync(
   new URL("../.rulesync/commands/retrospective.md", import.meta.url),

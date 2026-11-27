@@ -1,23 +1,23 @@
 /**
- * Server-only Console provider agent-limit mutation route.
- *
- * Receives the bounded form submission from a provider row's Per session /
- * Across sessions steppers or its Unlimited checkbox, validates its same-origin
- * browser context, and forwards a typed PATCH to Runtime using the server-side
- * Control API credential. The browser never receives that credential and never
- * bypasses Runtime.
- *
- * Both axes are always sent, including one the operator did not change: an
- * omitted axis is unobserved, and Runtime would read that as "leave it alone"
- * while the Console's own read of the row is what the operator is looking at.
- * An axis the operator explicitly cleared sends `unlimited`, which is a
- * decision and must not be confused with an axis that was not submitted.
- *
- * Only POST is exported. The response redirects back to the Providers page the
- * control was rendered on; any missing/invalid evidence or failed request adds
- * a could-not-be-confirmed notice instead of a success claim, because the
- * refreshed provider state is authoritative.
- */
+Server-only Console provider agent-limit mutation route.
+
+Receives the bounded form submission from a provider row's Per session /
+Across sessions steppers or its Unlimited checkbox, validates its same-origin
+browser context, and forwards a typed PATCH to Runtime using the server-side
+Control API credential. The browser never receives that credential and never
+bypasses Runtime.
+
+Both axes are always sent, including one the operator did not change: an
+omitted axis is unobserved, and Runtime would read that as "leave it alone"
+while the Console's own read of the row is what the operator is looking at.
+An axis the operator explicitly cleared sends `unlimited`, which is a
+decision and must not be confused with an axis that was not submitted.
+
+Only POST is exported. The response redirects back to the Providers page the
+control was rendered on; any missing/invalid evidence or failed request adds
+a could-not-be-confirmed notice instead of a success claim, because the
+refreshed provider state is authoritative.
+*/
 
 import type { NextRequest, NextResponse } from "next/server.js";
 
@@ -45,18 +45,18 @@ const MAX_FORM_BODY_BYTES = 4096;
 const MAX_AGENT_LIMIT = 999;
 
 /**
- * One submitted limit axis. `ok: false` means the submission is malformed and
- * the route must fail closed; a successful `value` of `null` is the explicit
- * Unlimited decision, which is a different thing and must not be conflated
- * with a malformed value.
- */
+One submitted limit axis. `ok: false` means the submission is malformed and
+the route must fail closed; a successful `value` of `null` is the explicit
+Unlimited decision, which is a different thing and must not be conflated
+with a malformed value.
+*/
 type SubmittedLimit =
   { readonly ok: true; readonly value: number | null } | { readonly ok: false };
 
 /**
- * The single change a submission makes, as a partial limits pair. A malformed
- * change fails the route closed.
- */
+The single change a submission makes, as a partial limits pair. A malformed
+change fails the route closed.
+*/
 type SubmittedChange =
   | {
       readonly ok: true;
@@ -76,11 +76,11 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
- * Read the current value of one axis. "unlimited" is an explicit decision;
- * anything else must be a positive integer within the bound the steppers can
- * produce. A missing or malformed value fails the route rather than inventing a
- * limit.
- */
+Read the current value of one axis. "unlimited" is an explicit decision;
+anything else must be a positive integer within the bound the steppers can
+produce. A missing or malformed value fails the route rather than inventing a
+limit.
+*/
 function parseAxis(raw: string | null): SubmittedLimit {
   if (raw === "unlimited") return { ok: true, value: null };
   if (raw === null || !AGENT_LIMIT_PATTERN.test(raw)) return MALFORMED_LIMIT;
@@ -91,14 +91,14 @@ function parseAxis(raw: string | null): SubmittedLimit {
 }
 
 /**
- * The single change this submission makes.
- *
- * The steppers and the Unlimited control are submit buttons carrying the value
- * they would set, under names distinct from the hidden fields holding the state
- * they would change. Exactly one of them must be present: without an override
- * the submission describes no change, and with two it is ambiguous which one the
- * operator meant.
- */
+The single change this submission makes.
+
+The steppers and the Unlimited control are submit buttons carrying the value
+they would set, under names distinct from the hidden fields holding the state
+they would change. Exactly one of them must be present: without an override
+the submission describes no change, and with two it is ambiguous which one the
+operator meant.
+*/
 function readOverride(form: URLSearchParams): SubmittedChange {
   const unlimited = form.get("setUnlimited");
   if (unlimited !== null) {

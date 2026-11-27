@@ -1,17 +1,17 @@
 /**
- * The per-thread rollout analyzer.
- *
- * A Codex rollout is a JSONL transcript of one thread: the root turn and every
- * subagent is its own file. This module turns one such file into the facts
- * the diagnostics report: the turns it ran, the silences longer than a minute
- * inside it, the tools it called, the calls that failed and why, how much it
- * investigated before it first edited a file, and what its tokens, compactions
- * and prompt overhead cost.
- *
- * The excerpt of a failure is redacted before it leaves this module: a
- * failing tool call's own arguments are the one place a credential can reach
- * a report.
- */
+The per-thread rollout analyzer.
+
+A Codex rollout is a JSONL transcript of one thread: the root turn and every
+subagent is its own file. This module turns one such file into the facts
+the diagnostics report: the turns it ran, the silences longer than a minute
+inside it, the tools it called, the calls that failed and why, how much it
+investigated before it first edited a file, and what its tokens, compactions
+and prompt overhead cost.
+
+The excerpt of a failure is redacted before it leaves this module: a
+failing tool call's own arguments are the one place a credential can reach
+a report.
+*/
 
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -39,20 +39,26 @@ import type {
   MutableTurn
 } from "./working-shapes.ts";
 
-/** The `turn_context` record: carries the model the turn ran against. */
+/**
+The `turn_context` record: carries the model the turn ran against.
+*/
 interface TurnContextPayload {
   model?: string;
   [key: string]: unknown;
 }
 
-/** A single content part attached to a `response_item`. */
+/**
+A single content part attached to a `response_item`.
+*/
 interface ResponseContentPart {
   type?: string;
   text?: string;
   [key: string]: unknown;
 }
 
-/** The `response_item` variants the tracer cares about. */
+/**
+The `response_item` variants the tracer cares about.
+*/
 type ResponseItemPayload =
   | {
       type: "message";
@@ -83,8 +89,10 @@ type ResponseItemPayload =
       [key: string]: unknown;
     };
 
-/** The `event_msg` variants the tracer cares about. */
-type EventMsgPayload =
+/**
+The `event_msg` variants the tracer cares about.
+*/
+type EventMessagePayload =
   | { type: "task_started"; turn_id?: string; [key: string]: unknown }
   | {
       type: "task_complete";
@@ -101,12 +109,14 @@ type EventMsgPayload =
     }
   | { type: string; [key: string]: unknown };
 
-/** A rollout JSONL line, discriminated by its `type` field. */
+/**
+A rollout JSONL line, discriminated by its `type` field.
+*/
 type RolloutPayload =
   | { type: "session_meta"; payload?: SessionMetaPayload; timestamp?: string }
   | { type: "turn_context"; payload?: TurnContextPayload; timestamp?: string }
   | { type: "response_item"; payload?: ResponseItemPayload; timestamp?: string }
-  | { type: "event_msg"; payload?: EventMsgPayload; timestamp?: string }
+  | { type: "event_msg"; payload?: EventMessagePayload; timestamp?: string }
   | { type: string; payload?: Record<string, unknown>; timestamp?: string };
 
 const EXCERPT = 160;
@@ -114,7 +124,9 @@ const FAILURE_EXCERPT = 400;
 const CACHE_DROP_MIN_INPUT = 10_000;
 const CACHE_DROP_THRESHOLD = 0.5;
 const GAP_SECONDS = 60;
-/** Codebase-context MCP servers, as the target state names them. */
+/**
+Codebase-context MCP servers, as the target state names them.
+*/
 const CONTEXT_SERVERS: Readonly<
   Record<string, keyof SessionInvestigation["context"]>
 > = {
@@ -123,10 +135,10 @@ const CONTEXT_SERVERS: Readonly<
   lsp: "lsp"
 };
 /**
- * The `filesystem` MCP server's tools, by what they do to the investigation:
- * it is the one file surface, so its calls are the file reads, searches and
- * edits a thread made.
- */
+The `filesystem` MCP server's tools, by what they do to the investigation:
+it is the one file surface, so its calls are the file reads, searches and
+edits a thread made.
+*/
 const FILESYSTEM_SERVER = "filesystem";
 const FILESYSTEM_READ_TOOLS = new Set([
   "read_text_file",
@@ -143,7 +155,9 @@ const FILESYSTEM_EDIT_TOOLS = new Set([
   "move_file",
   "copy_file"
 ]);
-/** `item_completed` kinds that are not tool calls. */
+/**
+`item_completed` kinds that are not tool calls.
+*/
 const NON_TOOL_ITEMS = new Set([
   "UserMessage",
   "AgentMessage",
@@ -161,13 +175,13 @@ const SKILL_READ_FILE_REGEX = /([A-Za-z0-9_.-]+)\/SKILL\.md\b/gu;
 const TOOL_FAILURE =
   /Encountered error in tool execution|Delegation is unavailable|tool call failed|Transport closed|Command blocked by PreToolUse hook|Script failed|Script error|^aborted|No such tool|not found in ALL_TOOLS/imu;
 /**
- * The credentials that must never reach a report.
- *
- * A failing tool call's excerpt carries the command that failed, and that
- * command carries whatever the caller passed it. These three patterns cover
- * the three ways a credential gets there: a bearer header, a provider's key
- * prefix, and an environment or flag assignment.
- */
+The credentials that must never reach a report.
+
+A failing tool call's excerpt carries the command that failed, and that
+command carries whatever the caller passed it. These three patterns cover
+the three ways a credential gets there: a bearer header, a provider's key
+prefix, and an environment or flag assignment.
+*/
 const BEARER_TOKEN_REGEX = /\b(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}/giu;
 const PROVIDER_KEY_REGEX =
   /\b(?:sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{8,}|AKIA[0-9A-Z]{16}|AIza[A-Za-z0-9_-]{20,})\b/gu;
@@ -180,11 +194,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Remove the credentials from an excerpt.
- *
- * The assignment form keeps the variable's name -- the name is the diagnostic
- * -- and replaces only its value.
- */
+Remove the credentials from an excerpt.
+
+The assignment form keeps the variable's name -- the name is the diagnostic
+-- and replaces only its value.
+*/
 export function redactSecrets(text: string): string {
   return text
     .replaceAll(BEARER_TOKEN_REGEX, `$1${REDACTED}`)
@@ -192,10 +206,10 @@ export function redactSecrets(text: string): string {
     .replaceAll(SECRET_ASSIGNMENT_REGEX, `$1${REDACTED}`);
 }
 
-function excerpt(value: unknown, maxLen = EXCERPT): string {
+function excerpt(value: unknown, maxLength = EXCERPT): string {
   const text = typeof value === "string" ? value : JSON.stringify(value ?? "");
   const flat = text.replaceAll(/\s+/gu, " ").trim();
-  return flat.length > maxLen ? `${flat.slice(0, maxLen)}…` : flat;
+  return flat.length > maxLength ? `${flat.slice(0, maxLength)}…` : flat;
 }
 
 function parseTurnContextPayload(raw: unknown): TurnContextPayload {
@@ -209,12 +223,14 @@ function parseContentParts(raw: unknown): ResponseContentPart[] | null {
   if (!Array.isArray(raw)) return null;
   const parts: ResponseContentPart[] = [];
   for (const item of raw) {
-    if (isRecord(item)) {
-      const part: ResponseContentPart = { ...item };
-      if (typeof item.type === "string") part.type = item.type;
-      if (typeof item.text === "string") part.text = item.text;
-      parts.push(part);
+    if (!isRecord(item)) {
+      continue;
     }
+
+    const part: ResponseContentPart = { ...item };
+    if (typeof item.type === "string") part.type = item.type;
+    if (typeof item.text === "string") part.text = item.text;
+    parts.push(part);
   }
   return parts;
 }
@@ -257,23 +273,23 @@ function parseResponseItemPayload(raw: unknown): ResponseItemPayload | null {
   }
 }
 
-function parseEventMsgPayload(raw: unknown): EventMsgPayload | null {
+function parseEventMessagePayload(raw: unknown): EventMessagePayload | null {
   if (!isRecord(raw) || typeof raw.type !== "string") return null;
   switch (raw.type) {
     case "task_started": {
-      const payload: EventMsgPayload = { ...raw, type: "task_started" };
+      const payload: EventMessagePayload = { ...raw, type: "task_started" };
       if (typeof raw.turn_id === "string") payload.turn_id = raw.turn_id;
       return payload;
     }
     case "task_complete": {
-      const payload: EventMsgPayload = { ...raw, type: "task_complete" };
+      const payload: EventMessagePayload = { ...raw, type: "task_complete" };
       if (typeof raw.turn_id === "string") payload.turn_id = raw.turn_id;
       if (typeof raw.last_agent_message === "string")
         payload.last_agent_message = raw.last_agent_message;
       return payload;
     }
     case "turn_aborted": {
-      const payload: EventMsgPayload = { ...raw, type: "turn_aborted" };
+      const payload: EventMessagePayload = { ...raw, type: "turn_aborted" };
       if (typeof raw.turn_id === "string") payload.turn_id = raw.turn_id;
       if (typeof raw.reason === "string") payload.reason = raw.reason;
       return payload;
@@ -298,7 +314,7 @@ function isResponseItemPayload(
   );
 }
 
-function isEventMsgPayload(payload: unknown): payload is EventMsgPayload {
+function isEventMessagePayload(payload: unknown): payload is EventMessagePayload {
   return isRecord(payload) && typeof payload.type === "string";
 }
 
@@ -321,7 +337,7 @@ function parseRolloutPayload(raw: unknown): RolloutPayload | null {
       return withTimestamp(
         {
           type: "session_meta",
-          ...(payload === undefined ? {} : { payload })
+          ...(payload !== undefined && { payload })
         },
         timestamp
       );
@@ -333,7 +349,7 @@ function parseRolloutPayload(raw: unknown): RolloutPayload | null {
       return withTimestamp(
         {
           type: "turn_context",
-          ...(payload === undefined ? {} : { payload })
+          ...(payload !== undefined && { payload })
         },
         timestamp
       );
@@ -343,17 +359,17 @@ function parseRolloutPayload(raw: unknown): RolloutPayload | null {
       return withTimestamp(
         {
           type: "response_item",
-          ...(payload === null ? {} : { payload })
+          ...(payload !== null && { payload })
         },
         timestamp
       );
     }
     case "event_msg": {
-      const payload = parseEventMsgPayload(raw.payload);
+      const payload = parseEventMessagePayload(raw.payload);
       return withTimestamp(
         {
           type: "event_msg",
-          ...(payload === null ? {} : { payload })
+          ...(payload !== null && { payload })
         },
         timestamp
       );
@@ -363,7 +379,7 @@ function parseRolloutPayload(raw: unknown): RolloutPayload | null {
       return withTimestamp(
         {
           type: raw.type,
-          ...(payload === undefined ? {} : { payload })
+          ...(payload !== undefined && { payload })
         },
         timestamp
       );
@@ -437,7 +453,9 @@ function itemDetail(
   }
 }
 
-/** The tools a call reached: its own name, plus every `tools.<name>(` it calls. */
+/**
+The tools a call reached: its own name, plus every `tools.<name>(` it calls.
+*/
 function toolsOfCall(payload: ResponseItemPayload): string[] {
   if (payload.type !== "custom_tool_call" && payload.type !== "function_call") {
     return [];
@@ -508,7 +526,9 @@ interface PromptAccumulatorState {
   skillsCatalogBytes: number;
   loadedSkills: Set<string>;
   skillsByRoot: Record<string, number>;
-  /** SKILL.md reads per skill name: one per tool call that names it. */
+  /**
+  SKILL.md reads per skill name: one per tool call that names it.
+  */
   skillReadCounts: Map<string, number>;
 }
 
@@ -602,7 +622,7 @@ function createTraceAccumulator(
 }
 
 function traceItemLabel(
-  payload: ResponseItemPayload | EventMsgPayload | undefined,
+  payload: ResponseItemPayload | EventMessagePayload | undefined,
   isResponse: boolean
 ): string {
   if (!payload) return "";
@@ -617,28 +637,28 @@ function traceItemLabel(
 function recordTraceGap(
   at: string | null,
   label: string,
-  acc: ThreadTraceAccumulator
+  accumulator: ThreadTraceAccumulator
 ): void {
   if (!at) return;
-  if (acc.previous && acc.open.size > 0) {
-    const seconds = (Date.parse(at) - Date.parse(acc.previous.at)) / 1000;
+  if (accumulator.previous && accumulator.open.size > 0) {
+    const seconds = (Date.parse(at) - Date.parse(accumulator.previous.at)) / 1000;
     if (seconds >= GAP_SECONDS)
-      acc.gaps.push({
+      accumulator.gaps.push({
         seconds: Math.round(seconds),
-        after: acc.previous.label,
+        after: accumulator.previous.label,
         before: label,
-        at: acc.previous.at
+        at: accumulator.previous.at
       });
   }
-  acc.previous = { at, label };
+  accumulator.previous = { at, label };
 }
 
 function recordGapAndItems(
   record: RolloutPayload,
   at: string | null,
-  payload: ResponseItemPayload | EventMsgPayload | undefined,
+  payload: ResponseItemPayload | EventMessagePayload | undefined,
   withItems: boolean,
-  acc: ThreadTraceAccumulator
+  accumulator: ThreadTraceAccumulator
 ): void {
   const isResponse = record.type === "response_item";
   const isTurnishEvent =
@@ -647,9 +667,9 @@ function recordGapAndItems(
     TASK_OR_TURN_REGEX.test(payload.type);
   if (!isResponse && !isTurnishEvent) return;
   const label = traceItemLabel(payload, isResponse);
-  recordTraceGap(at, label, acc);
+  recordTraceGap(at, label, accumulator);
   if (withItems && isResponse && at && payload)
-    acc.items.push({
+    accumulator.items.push({
       at,
       kind: payload.type,
       detail: itemDetail(payload),
@@ -667,7 +687,7 @@ function callInputText(payload: ResponseItemPayload): string | null {
 
 function recordTagOnlyAssistantMessage(
   payload: ResponseItemPayload,
-  acc: ThreadTraceAccumulator
+  accumulator: ThreadTraceAccumulator
 ): void {
   if (payload.type !== "message" || payload.role !== "assistant") return;
   const text = (payload.content ?? [])
@@ -676,9 +696,9 @@ function recordTagOnlyAssistantMessage(
     .trim();
   const match = TAG_ONLY_ASSISTANT_MESSAGE_REGEX.exec(text);
   if (!match || match[1]?.toLowerCase() !== match[2]?.toLowerCase()) return;
-  acc.tagOnlyMessages += 1;
-  if (acc.tagOnlySamples.length < 3 && !acc.tagOnlySamples.includes(text)) {
-    acc.tagOnlySamples.push(text);
+  accumulator.tagOnlyMessages += 1;
+  if (accumulator.tagOnlySamples.length < 3 && !accumulator.tagOnlySamples.includes(text)) {
+    accumulator.tagOnlySamples.push(text);
   }
 }
 
@@ -688,23 +708,23 @@ function recordToolCallOutput(
     ResponseItemPayload,
     { type: "custom_tool_call_output" | "function_call_output" }
   >,
-  acc: ThreadTraceAccumulator
+  accumulator: ThreadTraceAccumulator
 ): void {
   const text = outputText(payload.output);
   const failure = TOOL_FAILURE.exec(text);
   if (!failure) return;
   const callId = typeof payload.call_id === "string" ? payload.call_id : "";
-  const input = callId ? acc.callInputs.get(callId) : undefined;
+  const input = callId ? accumulator.callInputs.get(callId) : undefined;
   const detail = redactSecrets(
     excerpt(text.slice(Math.max(0, failure.index - 40)))
   );
-  acc.toolFailures.push({
+  accumulator.toolFailures.push({
     at: at ?? "",
-    tool: (callId && acc.callTools.get(callId)) || "?",
+    tool: (callId && accumulator.callTools.get(callId)) || "?",
     callId,
     detail,
     category: classifyToolFailure(detail, input),
-    ...(input ? { input } : {})
+    ...(input && { input })
   });
 }
 
@@ -724,7 +744,7 @@ function recordPromptSkillReads(
     ResponseItemPayload,
     { type: "custom_tool_call" | "function_call" }
   >,
-  acc: ThreadTraceAccumulator
+  accumulator: ThreadTraceAccumulator
 ): void {
   const raw = rawCallArgumentText(payload);
   if (!raw.includes("SKILL.md")) return;
@@ -734,27 +754,29 @@ function recordPromptSkillReads(
   for (const match of raw.matchAll(SKILL_READ_FILE_REGEX)) {
     if (match[1]) skillsInCall.add(match[1]);
   }
-  const counts = acc.prompt.skillReadCounts;
+  const counts = accumulator.prompt.skillReadCounts;
   for (const skill of skillsInCall)
     counts.set(skill, (counts.get(skill) ?? 0) + 1);
 }
 
 /**
- * A string's length in Unicode code points.
- *
- * A surrogate pair is one code point and an unpaired surrogate is one; this
- * is the length `Array.from(text)` reports, without building the array.
- */
+A string's length in Unicode code points.
+
+A surrogate pair is one code point and an unpaired surrogate is one; this
+is the length `Array.from(text)` reports, without building the array.
+*/
 export function countCodePoints(text: string): number {
   let pairs = 0;
   for (let index = 0; index < text.length - 1; index += 1) {
     const high = text.charCodeAt(index);
     if (high < 0xd8_00 || high > 0xdb_ff) continue;
     const low = text.charCodeAt(index + 1);
-    if (low >= 0xdc_00 && low <= 0xdf_ff) {
-      pairs += 1;
-      index += 1;
+    if (!(low >= 0xdc_00) || !(low <= 0xdf_ff)) {
+      continue;
     }
+
+    pairs += 1;
+    index += 1;
   }
   return text.length - pairs;
 }
@@ -796,26 +818,26 @@ function normalizeSkillRoot(skillFilePath: string, cwd: string): string {
 
 function recordInitialDeveloperPrompt(
   payload: Extract<ResponseItemPayload, { type: "message" }>,
-  acc: ThreadTraceAccumulator
+  accumulator: ThreadTraceAccumulator
 ): void {
-  if (acc.prompt.seenAgentOutput || payload.role !== "developer") return;
+  if (accumulator.prompt.seenAgentOutput || payload.role !== "developer") return;
   const text = (payload.content ?? [])
     .map((part) => (typeof part.text === "string" ? part.text : ""))
     .join("\n");
   if (!text) return;
-  acc.prompt.initialDeveloperBytes += Buffer.byteLength(text, "utf8");
-  acc.prompt.initialDeveloperChars += countCodePoints(text);
+  accumulator.prompt.initialDeveloperBytes += Buffer.byteLength(text, "utf8");
+  accumulator.prompt.initialDeveloperChars += countCodePoints(text);
   const skillsBlock = SKILLS_INSTRUCTIONS_REGEX.exec(text);
   if (skillsBlock) {
-    acc.prompt.skillsCatalogBytes += Buffer.byteLength(skillsBlock[0], "utf8");
+    accumulator.prompt.skillsCatalogBytes += Buffer.byteLength(skillsBlock[0], "utf8");
   }
   for (const match of text.matchAll(SKILL_CATALOG_LINE_REGEX)) {
     const name = match[1];
     const skillPath = match[2];
-    if (!name || !skillPath || acc.prompt.loadedSkills.has(name)) continue;
-    acc.prompt.loadedSkills.add(name);
-    const root = normalizeSkillRoot(skillPath, acc.cwd);
-    acc.prompt.skillsByRoot[root] = (acc.prompt.skillsByRoot[root] ?? 0) + 1;
+    if (!name || !skillPath || accumulator.prompt.loadedSkills.has(name)) continue;
+    accumulator.prompt.loadedSkills.add(name);
+    const root = normalizeSkillRoot(skillPath, accumulator.cwd);
+    accumulator.prompt.skillsByRoot[root] = (accumulator.prompt.skillsByRoot[root] ?? 0) + 1;
   }
 }
 
@@ -823,75 +845,75 @@ function recordToolUsage(
   record: RolloutPayload,
   at: string | null,
   payload: ResponseItemPayload | undefined,
-  acc: ThreadTraceAccumulator
+  accumulator: ThreadTraceAccumulator
 ): void {
   if (record.type !== "response_item") return;
   if (record.payload && countImageObjects(record.payload) > 0) {
-    acc.compaction.responseImageItems += 1;
+    accumulator.compaction.responseImageItems += 1;
   }
   if (!payload) return;
   if (payload.type === "message") {
-    recordInitialDeveloperPrompt(payload, acc);
-    if (payload.role === "assistant") acc.prompt.seenAgentOutput = true;
-    recordTagOnlyAssistantMessage(payload, acc);
+    recordInitialDeveloperPrompt(payload, accumulator);
+    if (payload.role === "assistant") accumulator.prompt.seenAgentOutput = true;
+    recordTagOnlyAssistantMessage(payload, accumulator);
     return;
   }
   if (payload.type === "custom_tool_call" || payload.type === "function_call") {
-    acc.prompt.seenAgentOutput = true;
-    recordPromptSkillReads(payload, acc);
+    accumulator.prompt.seenAgentOutput = true;
+    recordPromptSkillReads(payload, accumulator);
     const reached = toolsOfCall(payload);
-    for (const tool of reached) acc.tools[tool] = (acc.tools[tool] ?? 0) + 1;
+    for (const tool of reached) accumulator.tools[tool] = (accumulator.tools[tool] ?? 0) + 1;
     if (typeof payload.call_id !== "string") return;
-    acc.callTools.set(payload.call_id, reached.join("+"));
+    accumulator.callTools.set(payload.call_id, reached.join("+"));
     const rawInput = callInputText(payload);
-    if (rawInput) acc.callInputs.set(payload.call_id, rawInput);
+    if (rawInput) accumulator.callInputs.set(payload.call_id, rawInput);
     return;
   }
   if (
     payload.type === "custom_tool_call_output" ||
     payload.type === "function_call_output"
   ) {
-    recordToolCallOutput(at, payload, acc);
+    recordToolCallOutput(at, payload, accumulator);
   }
 }
 
 function recordReadInvestigation(
   cwd: string,
   sourcePath: string,
-  acc: ThreadTraceAccumulator
+  accumulator: ThreadTraceAccumulator
 ): void {
   const file = path.resolve(cwd, sourcePath);
-  if (acc.reads.has(file)) acc.investigation.repeatedReads += 1;
-  acc.reads.add(file);
-  acc.investigation.filesRead = acc.reads.size;
+  if (accumulator.reads.has(file)) accumulator.investigation.repeatedReads += 1;
+  accumulator.reads.add(file);
+  accumulator.investigation.filesRead = accumulator.reads.size;
 }
 
 function recordSearchInvestigation(
   cwd: string,
   query: string,
   sourcePath: string,
-  acc: ThreadTraceAccumulator
+  accumulator: ThreadTraceAccumulator
 ): void {
   const key = `${query}\0${path.resolve(cwd, sourcePath)}`;
-  acc.investigation.searches += 1;
-  if (acc.searchKeys.has(key)) acc.investigation.repeatedSearches += 1;
-  acc.searchKeys.add(key);
+  accumulator.investigation.searches += 1;
+  if (accumulator.searchKeys.has(key)) accumulator.investigation.repeatedSearches += 1;
+  accumulator.searchKeys.add(key);
 }
 
 function recordCommandInvestigation(
   item: Record<string, unknown>,
-  acc: ThreadTraceAccumulator
+  accumulator: ThreadTraceAccumulator
 ): void {
-  const cwd = typeof item.cwd === "string" ? item.cwd : acc.cwd;
+  const cwd = typeof item.cwd === "string" ? item.cwd : accumulator.cwd;
   const parsed = Array.isArray(item.parsed_cmd) ? item.parsed_cmd : [];
   for (const entry of parsed) {
     if (!isRecord(entry)) continue;
     if (entry.type === "read" && typeof entry.path === "string") {
-      recordReadInvestigation(cwd, entry.path, acc);
+      recordReadInvestigation(cwd, entry.path, accumulator);
     } else if (entry.type === "search") {
       const query = typeof entry.query === "string" ? entry.query : "";
       const searchPath = typeof entry.path === "string" ? entry.path : ".";
-      recordSearchInvestigation(cwd, query, searchPath, acc);
+      recordSearchInvestigation(cwd, query, searchPath, accumulator);
     }
   }
 }
@@ -900,10 +922,10 @@ function recordInvestigation(
   record: RolloutPayload,
   at: string | null,
   payload: Record<string, unknown>,
-  acc: ThreadTraceAccumulator
+  accumulator: ThreadTraceAccumulator
 ): void {
   if (record.type !== "event_msg") return;
-  const investigation = acc.investigation;
+  const investigation = accumulator.investigation;
   if (investigation.firstEditAt !== null) return;
   if (payload.type === "token_count") {
     const info = isRecord(payload.info) ? payload.info : undefined;
@@ -925,10 +947,10 @@ function recordInvestigation(
   }
   if (NON_TOOL_ITEMS.has(kind)) return;
   investigation.toolCalls += 1;
-  if (kind === "CommandExecution") recordCommandInvestigation(item, acc);
+  if (kind === "CommandExecution") recordCommandInvestigation(item, accumulator);
   else if (kind === "McpToolCall" && typeof item.server === "string") {
     if (item.server === FILESYSTEM_SERVER)
-      recordFilesystemInvestigation(item, acc);
+      recordFilesystemInvestigation(item, accumulator);
     const server = CONTEXT_SERVERS[item.server];
     if (server) investigation.context[server] += 1;
   }
@@ -946,31 +968,33 @@ function isFilesystemEdit(
   );
 }
 
-/** A `filesystem` read or search, counted like the shell's own. */
+/**
+A `filesystem` read or search, counted like the shell's own.
+*/
 function recordFilesystemInvestigation(
   item: Record<string, unknown>,
-  acc: ThreadTraceAccumulator
+  accumulator: ThreadTraceAccumulator
 ): void {
   const tool = typeof item.tool === "string" ? item.tool : "";
-  const args = isRecord(item.arguments) ? item.arguments : {};
+  const arguments_ = isRecord(item.arguments) ? item.arguments : {};
   if (FILESYSTEM_READ_TOOLS.has(tool)) {
-    const paths = Array.isArray(args.paths) ? args.paths : [args.path];
+    const paths = Array.isArray(arguments_.paths) ? arguments_.paths : [arguments_.path];
     for (const file of paths)
-      if (typeof file === "string") recordReadInvestigation(acc.cwd, file, acc);
+      if (typeof file === "string") recordReadInvestigation(accumulator.cwd, file, accumulator);
   } else if (FILESYSTEM_SEARCH_TOOLS.has(tool)) {
-    const query = typeof args.pattern === "string" ? args.pattern : "";
-    const searchPath = typeof args.path === "string" ? args.path : ".";
-    recordSearchInvestigation(acc.cwd, query, searchPath, acc);
+    const query = typeof arguments_.pattern === "string" ? arguments_.pattern : "";
+    const searchPath = typeof arguments_.path === "string" ? arguments_.path : ".";
+    recordSearchInvestigation(accumulator.cwd, query, searchPath, accumulator);
   }
 }
 
-function turnOutcome(payload: EventMsgPayload): string {
+function turnOutcome(payload: EventMessagePayload): string {
   if (payload.type === "turn_aborted")
     return `aborted:${typeof payload.reason === "string" ? payload.reason : "?"}`;
   return payload.error === undefined ? "completed" : "failed";
 }
 
-function turnDetail(payload: EventMsgPayload): string | null {
+function turnDetail(payload: EventMessagePayload): string | null {
   if (payload.error !== undefined) {
     const message =
       isRecord(payload.error) && typeof payload.error.message === "string"
@@ -985,8 +1009,8 @@ function turnDetail(payload: EventMsgPayload): string | null {
 
 function recordStartedTurn(
   at: string | null,
-  payload: EventMsgPayload,
-  acc: ThreadTraceAccumulator
+  payload: EventMessagePayload,
+  accumulator: ThreadTraceAccumulator
 ): void {
   if (payload.type !== "task_started") return;
   const turnId = typeof payload.turn_id === "string" ? payload.turn_id : "";
@@ -997,35 +1021,35 @@ function recordStartedTurn(
     outcome: "running",
     detail: null
   };
-  acc.open.set(turnId, turn);
-  acc.turns.push(turn);
+  accumulator.open.set(turnId, turn);
+  accumulator.turns.push(turn);
 }
 
 function recordCompletedTurn(
   at: string | null,
-  payload: EventMsgPayload,
-  acc: ThreadTraceAccumulator
+  payload: EventMessagePayload,
+  accumulator: ThreadTraceAccumulator
 ): void {
   if (payload.type !== "task_complete" && payload.type !== "turn_aborted")
     return;
   const turnId = typeof payload.turn_id === "string" ? payload.turn_id : "";
-  const turn = acc.open.get(turnId);
+  const turn = accumulator.open.get(turnId);
   if (!turn) return;
   turn.ended = at;
   turn.outcome = turnOutcome(payload);
   turn.detail = turnDetail(payload);
-  acc.open.delete(turnId);
+  accumulator.open.delete(turnId);
 }
 
 function recordTurnEvent(
   record: RolloutPayload,
   at: string | null,
-  payload: EventMsgPayload | undefined,
-  acc: ThreadTraceAccumulator
+  payload: EventMessagePayload | undefined,
+  accumulator: ThreadTraceAccumulator
 ): void {
   if (record.type !== "event_msg" || !payload) return;
-  recordStartedTurn(at, payload, acc);
-  recordCompletedTurn(at, payload, acc);
+  recordStartedTurn(at, payload, accumulator);
+  recordCompletedTurn(at, payload, accumulator);
 }
 
 function traceMetadata(records: RolloutPayload[]): {
@@ -1057,7 +1081,7 @@ function round1(value: number): number {
 
 function recordTokenEfficiency(
   payload: Record<string, unknown>,
-  acc: ThreadTraceAccumulator
+  accumulator: ThreadTraceAccumulator
 ): void {
   if (payload.type !== "token_count" || !isRecord(payload.info)) return;
   const total = isRecord(payload.info.total_token_usage)
@@ -1070,7 +1094,7 @@ function recordTokenEfficiency(
   const rawCached = finiteNonNegative(total, "cached_input_tokens");
   const rawOut = finiteNonNegative(total, "output_tokens");
   const rawReas = finiteNonNegative(total, "reasoning_output_tokens");
-  const state = acc.tokenState;
+  const state = accumulator.tokenState;
   if (state.prevRawTotal === rawTotal && state.prevRawIn === rawIn) return;
   if (state.prevRawTotal !== null && rawTotal < state.prevRawTotal) {
     state.offsetIn += state.prevRawIn ?? 0;
@@ -1106,10 +1130,10 @@ function recordTokenEfficiency(
 
 function recordCompactionRecord(
   record: RolloutPayload,
-  acc: ThreadTraceAccumulator
+  accumulator: ThreadTraceAccumulator
 ): void {
   if (record.type === "compacted") {
-    acc.compaction.compactedRecords += 1;
+    accumulator.compaction.compactedRecords += 1;
     const replacementHistory =
       isRecord(record.payload) &&
       Array.isArray(record.payload.replacement_history)
@@ -1121,16 +1145,16 @@ function recordCompactionRecord(
       "utf8"
     );
     const imageCount = countImageObjects(replacementHistory);
-    acc.compaction.maxReplacementItems = Math.max(
-      acc.compaction.maxReplacementItems,
+    accumulator.compaction.maxReplacementItems = Math.max(
+      accumulator.compaction.maxReplacementItems,
       replacementHistory.length
     );
-    acc.compaction.maxReplacementBytes = Math.max(
-      acc.compaction.maxReplacementBytes,
+    accumulator.compaction.maxReplacementBytes = Math.max(
+      accumulator.compaction.maxReplacementBytes,
       serializedBytes
     );
-    acc.compaction.maxReplacementImages = Math.max(
-      acc.compaction.maxReplacementImages,
+    accumulator.compaction.maxReplacementImages = Math.max(
+      accumulator.compaction.maxReplacementImages,
       imageCount
     );
     return;
@@ -1140,44 +1164,44 @@ function recordCompactionRecord(
     isRecord(record.payload) &&
     record.payload.type === "context_compacted"
   ) {
-    acc.compaction.contextCompactedEvents += 1;
+    accumulator.compaction.contextCompactedEvents += 1;
   }
 }
 
-function incrementCount(acc: ThreadTraceAccumulator, key: string): void {
-  acc.counts[key] = (acc.counts[key] ?? 0) + 1;
+function incrementCount(accumulator: ThreadTraceAccumulator, key: string): void {
+  accumulator.counts[key] = (accumulator.counts[key] ?? 0) + 1;
 }
 
 function accumulateTraceRecord(
   record: RolloutPayload,
   withItems: boolean,
-  acc: ThreadTraceAccumulator
+  accumulator: ThreadTraceAccumulator
 ): void {
   const at = typeof record.timestamp === "string" ? record.timestamp : null;
-  recordCompactionRecord(record, acc);
+  recordCompactionRecord(record, accumulator);
   if (record.type === "response_item") {
     const payload = isResponseItemPayload(record.payload)
       ? record.payload
       : undefined;
-    incrementCount(acc, `response_item:${payload?.type ?? ""}`);
-    recordGapAndItems(record, at, payload, withItems, acc);
-    recordToolUsage(record, at, payload, acc);
+    incrementCount(accumulator, `response_item:${payload?.type ?? ""}`);
+    recordGapAndItems(record, at, payload, withItems, accumulator);
+    recordToolUsage(record, at, payload, accumulator);
     return;
   }
   if (record.type === "event_msg") {
-    const payload = isEventMsgPayload(record.payload)
+    const payload = isEventMessagePayload(record.payload)
       ? record.payload
       : undefined;
-    incrementCount(acc, `event_msg:${payload?.type ?? ""}`);
-    recordGapAndItems(record, at, payload, withItems, acc);
-    recordTurnEvent(record, at, payload, acc);
+    incrementCount(accumulator, `event_msg:${payload?.type ?? ""}`);
+    recordGapAndItems(record, at, payload, withItems, accumulator);
+    recordTurnEvent(record, at, payload, accumulator);
     if (payload) {
-      recordTokenEfficiency(payload, acc);
-      recordInvestigation(record, at, payload, acc);
+      recordTokenEfficiency(payload, accumulator);
+      recordInvestigation(record, at, payload, accumulator);
     }
     return;
   }
-  incrementCount(acc, record.type);
+  incrementCount(accumulator, record.type);
 }
 
 function inferCodexHomeFromRolloutPath(file: string): string | null {
@@ -1247,19 +1271,19 @@ function skillReadSummary(counts: ReadonlyMap<string, number>): {
 }
 
 function buildThreadEfficiency(
-  acc: ThreadTraceAccumulator,
+  accumulator: ThreadTraceAccumulator,
   codexHome: string | null,
   threadId: string,
   sessionId: string | null
 ): SessionThreadEfficiency {
-  const state = acc.tokenState;
+  const state = accumulator.tokenState;
   const inputTokens = state.offsetIn + (state.prevRawIn ?? 0);
   const cachedInputTokens = state.offsetCached + state.prevRawCached;
   const outputTokens = state.offsetOut + state.prevRawOut;
   const reasoningOutputTokens = state.offsetReas + state.prevRawReas;
   const totalTokens = state.offsetTotal + (state.prevRawTotal ?? 0);
-  const compaction = acc.compaction;
-  const prompt = acc.prompt;
+  const compaction = accumulator.compaction;
+  const prompt = accumulator.prompt;
   return {
     tokens: {
       observed: state.observed,
@@ -1305,7 +1329,7 @@ function buildThreadEfficiency(
         codexHome,
         threadId,
         sessionId,
-        acc.turns.map((turn) => turn.turnId).filter(Boolean)
+        accumulator.turns.map((turn) => turn.turnId).filter(Boolean)
       )
     }
   };
@@ -1327,7 +1351,7 @@ function buildThreadTrace(
   records: RolloutPayload[],
   meta: SessionMetaPayload,
   context: TurnContextPayload,
-  acc: ThreadTraceAccumulator,
+  accumulator: ThreadTraceAccumulator,
   options: { withItems: boolean; codexHome?: string | undefined }
 ): SessionThreadTrace {
   const { start, end } = timestampBounds(records);
@@ -1360,57 +1384,61 @@ function buildThreadTrace(
     file,
     start,
     end,
-    counts: acc.counts,
-    turns: acc.turns,
-    gaps: [...acc.gaps].sort((a, b) => b.seconds - a.seconds).slice(0, 5),
-    tools: acc.tools,
-    toolFailures: acc.toolFailures,
-    ...(acc.tagOnlyMessages > 0
-      ? {
+    counts: accumulator.counts,
+    turns: accumulator.turns,
+    gaps: [...accumulator.gaps].sort((a, b) => b.seconds - a.seconds).slice(0, 5),
+    tools: accumulator.tools,
+    toolFailures: accumulator.toolFailures,
+    ...((accumulator.tagOnlyMessages > 0) && {
           anomalies: {
-            tagOnlyMessages: acc.tagOnlyMessages,
-            samples: acc.tagOnlySamples
+            tagOnlyMessages: accumulator.tagOnlyMessages,
+            samples: accumulator.tagOnlySamples
           }
-        }
-      : {}),
-    efficiency: buildThreadEfficiency(acc, resolvedHome, id, sessionId),
-    investigation: acc.investigation,
-    ...(options.withItems
-      ? { items: acc.items.map((item) => ({ ...item, threadId: id })) }
-      : {})
+        }),
+    efficiency: buildThreadEfficiency(accumulator, resolvedHome, id, sessionId),
+    investigation: accumulator.investigation,
+    ...(options.withItems && { items: accumulator.items.map((item) => ({ ...item, threadId: id })) })
   };
 }
 
-/** How a thread's rollout should be read. */
+/**
+How a thread's rollout should be read.
+*/
 export interface TraceThreadOptions {
-  /** Collect the truncated rollout items as well as the summary. */
+  /**
+  Collect the truncated rollout items as well as the summary.
+  */
   readonly items: boolean;
-  /** The `$CODEX_HOME` the rollout belongs to; inferred from the path when absent. */
+  /**
+  The `$CODEX_HOME` the rollout belongs to; inferred from the path when absent.
+  */
   readonly codexHome?: string | undefined;
 }
 
 /**
- * Read one rollout into the thread's facts.
- *
- * The rollout is untrusted JSON: every record is parsed defensively and a
- * malformed line is skipped rather than aborting the read.
- */
+Read one rollout into the thread's facts.
+
+The rollout is untrusted JSON: every record is parsed defensively and a
+malformed line is skipped rather than aborting the read.
+*/
 export function traceThread(
   file: string,
   options: TraceThreadOptions
 ): SessionThreadTrace {
   const records = readJsonl(file);
   const { meta, context } = traceMetadata(records);
-  const acc = createTraceAccumulator(meta);
+  const accumulator = createTraceAccumulator(meta);
   for (const record of records)
-    accumulateTraceRecord(record, options.items, acc);
-  return buildThreadTrace(file, records, meta, context, acc, {
+    accumulateTraceRecord(record, options.items, accumulator);
+  return buildThreadTrace(file, records, meta, context, accumulator, {
     withItems: options.items,
     codexHome: options.codexHome
   });
 }
 
-/** The SHA-256 of a file's bytes, used for the deployment-drift comparison. */
+/**
+The SHA-256 of a file's bytes, used for the deployment-drift comparison.
+*/
 export function fileDigest(filePath: string): string {
   return createHash("sha256").update(readFileSync(filePath)).digest("hex");
 }

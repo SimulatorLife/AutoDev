@@ -11,7 +11,7 @@ const READINESS_POLL_DELAYS_MS = [
 
 type ReadinessStatus = "initializing" | "unavailable";
 
-interface PlaytestingReadinessProps {
+interface PlaytestingReadinessProperties {
   readonly workspaceId: string;
   readonly initialStatus: ReadinessStatus;
   readonly initialCode?: string;
@@ -30,8 +30,8 @@ interface ReadinessEnvelope {
 }
 
 function endpoint(workspaceId: string): string {
-  const params = new URLSearchParams({ workspaceId });
-  return `/api/playtesting/readiness?${params.toString()}`;
+  const parameters = new URLSearchParams({ workspaceId });
+  return `/api/playtesting/readiness?${parameters.toString()}`;
 }
 
 function failureDetails(
@@ -54,7 +54,7 @@ function pollReadiness(
   workspaceId: string,
   setUnavailable: (code: string, message: string) => void
 ): () => void {
-  let cancelled = false;
+  let isCancelled = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let attempt = 0;
 
@@ -66,7 +66,7 @@ function pollReadiness(
       });
       const payload = (await response.json()) as ReadinessEnvelope;
       if (!response.ok || payload.kind !== "ok" || !payload.data) {
-        if (!cancelled) {
+        if (!isCancelled) {
           const failure = failureDetails(response, payload);
           setUnavailable(failure.code, failure.message);
         }
@@ -78,7 +78,7 @@ function pollReadiness(
         (payload.data.status !== "initializing" &&
           payload.data.status !== "ready")
       ) {
-        if (!cancelled) {
+        if (!isCancelled) {
           setUnavailable(
             "autodev_console_playtesting_readiness_invalid_response",
             "The Playtesting readiness response was invalid."
@@ -89,11 +89,11 @@ function pollReadiness(
       if (payload.data.status === "ready") {
         // The current tree is the server-rendered initialization fallback.
         // Replace it with a fresh server read once Data confirms readiness.
-        if (!cancelled) globalThis.location.reload();
+        if (!isCancelled) globalThis.location.reload();
         return;
       }
     } catch {
-      if (!cancelled) {
+      if (!isCancelled) {
         setUnavailable(
           "autodev_console_playtesting_readiness_unreachable",
           "The Playtesting readiness endpoint could not be reached."
@@ -102,7 +102,7 @@ function pollReadiness(
       return;
     }
 
-    if (cancelled) return;
+    if (isCancelled) return;
     const delay = READINESS_POLL_DELAYS_MS[attempt];
     if (delay === undefined) {
       setUnavailable(
@@ -117,7 +117,7 @@ function pollReadiness(
 
   timer = setTimeout(() => void poll(), READINESS_POLL_DELAYS_MS[0]);
   return () => {
-    cancelled = true;
+    isCancelled = true;
     if (timer !== undefined) clearTimeout(timer);
   };
 }
@@ -127,7 +127,7 @@ export function PlaytestingReadiness({
   initialStatus,
   initialCode = "autodev_control_playtesting_source_initializing",
   initialMessage = "Playtesting Data is initializing. This page will load automatically when the Data schema is ready."
-}: PlaytestingReadinessProps): React.JSX.Element {
+}: PlaytestingReadinessProperties): React.JSX.Element {
   const [status, setStatus] = useState<ReadinessStatus>(initialStatus);
   const [code, setCode] = useState(initialCode);
   const [message, setMessage] = useState(initialMessage);

@@ -3,22 +3,22 @@ import { expect, test } from "@playwright/test";
 import { SWEEP_ROUTES, waitForPageContent } from "./acceptance-helpers.ts";
 
 /**
- * Every moment the Console shows is one Inline Display Toggle.
- *
- * "When did this happen" used to be answered in seven spellings: `2/11/2026`,
- * a `toLocaleString()` in the *server's* zone, the raw wire value with its
- * milliseconds, an ISO date and clock with `Z` on one page and `UTC` on the
- * next. Now a timestamp reads as relative time ("3 hours ago") and, when
- * activated, as the full date and time in the operator's own zone
- * ("Nov 19, 2026, 10:30 AM"). UTC belongs to logs, telemetry and storage.
- *
- * This is a rendering claim, so it is measured where it happens: in the
- * hydrated browser, on every route, over the text a reader actually sees.
- *
- * A region marked `data-verbatim` is the exception, and it is marked rather
- * than assumed: a recorded frame or a stored record is quoted as the machine
- * wrote it, and reformatting its moments would falsify the record.
- */
+Every moment the Console shows is one Inline Display Toggle.
+
+"When did this happen" used to be answered in seven spellings: `2/11/2026`,
+a `toLocaleString()` in the *server's* zone, the raw wire value with its
+milliseconds, an ISO date and clock with `Z` on one page and `UTC` on the
+next. Now a timestamp reads as relative time ("3 hours ago") and, when
+activated, as the full date and time in the operator's own zone
+("Nov 19, 2026, 10:30 AM"). UTC belongs to logs, telemetry and storage.
+
+This is a rendering claim, so it is measured where it happens: in the
+hydrated browser, on every route, over the text a reader actually sees.
+
+A region marked `data-verbatim` is the exception, and it is marked rather
+than assumed: a recorded frame or a stored record is quoted as the machine
+wrote it, and reformatting its moments would falsify the record.
+*/
 test("no route shows a moment in a storage or server-zone spelling", async ({
   page
 }) => {
@@ -40,8 +40,7 @@ test("no route shows a moment in a storage or server-zone spelling", async ({
         /\d{2}:\d{2}:\d{2}/u
       ];
       for (const element of Array.from(document.querySelectorAll("main *"))) {
-        if (element.children.length > 0) continue;
-        if (element.closest("[data-verbatim='true']") !== null) continue;
+        if ((element.children.length > 0) || (element.closest("[data-verbatim='true']") !== null)) continue;
         const text = (element.textContent ?? "").trim();
         if (!text) continue;
         for (const shape of STORAGE_SPELLINGS) {
@@ -55,8 +54,7 @@ test("no route shows a moment in a storage or server-zone spelling", async ({
       for (const time of Array.from(
         document.querySelectorAll("main time[datetime]")
       )) {
-        if (time.closest("[data-verbatim='true']") !== null) continue;
-        if (/^\d{4}-\d{2}-\d{2}$/u.test(time.getAttribute("datetime") ?? ""))
+        if ((time.closest("[data-verbatim='true']") !== null) || /^\d{4}-\d{2}-\d{2}$/u.test(time.getAttribute("datetime") ?? ""))
           continue;
         if (
           time.querySelector("[data-inline-display-toggle='instant']") === null
@@ -81,7 +79,7 @@ test("no route shows a moment in a storage or server-zone spelling", async ({
 test("a timestamp toggles between relative and local time by pointer and keyboard", async ({
   page
 }) => {
-  let found = false;
+  let isFound = false;
   for (const path of SWEEP_ROUTES) {
     await page.goto(path);
     await waitForPageContent(page);
@@ -89,7 +87,7 @@ test("a timestamp toggles between relative and local time by pointer and keyboar
       .locator("main [data-inline-display-toggle='instant']")
       .first();
     if ((await toggle.count()) === 0) continue;
-    found = true;
+    isFound = true;
 
     await expect(toggle).toHaveAttribute("data-representation", "relative");
     await expect(toggle).toHaveText(/ ago$|^in /u);
@@ -115,5 +113,5 @@ test("a timestamp toggles between relative and local time by pointer and keyboar
     await expect(toggle).toHaveAttribute("data-representation", "local");
     break;
   }
-  expect(found, "at least one route shows a timestamp").toBe(true);
+  expect(isFound, "at least one route shows a timestamp").toBe(true);
 });

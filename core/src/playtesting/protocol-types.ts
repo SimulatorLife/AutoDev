@@ -1,6 +1,8 @@
 import type { PlaytestAdapterQuotas, PlaytestMissingReason } from "./types.ts";
 
-/** JSON-compatible game state; Runtime validates it against the negotiated schema. */
+/**
+JSON-compatible game state; Runtime validates it against the negotiated schema.
+*/
 export type PlaytestJsonValue =
   | null
   | boolean
@@ -17,7 +19,9 @@ export interface PlaytestArtifactReference {
   readonly revision?: number;
 }
 
-/** `game.capabilities` is always the first call on a newly started adapter. */
+/**
+`game.capabilities` is always the first call on a newly started adapter.
+*/
 export interface GameCapabilitiesParams {
   readonly protocolVersion: 1;
 }
@@ -39,16 +43,22 @@ export interface GameResetResult {
   };
 }
 
-/** Compact digest for one exact engine state, including RNG when observable. */
+/**
+Compact digest for one exact engine state, including RNG when observable.
+*/
 export interface GameRngCheckpoint {
   readonly algorithm: string;
   readonly version: string;
-  /** Null means the engine cannot expose a stable state for this stream. */
+  /**
+  Null means the engine cannot expose a stable state for this stream.
+  */
   readonly stateHash: string | null;
   readonly reproducible: boolean;
 }
 
-/** Persisted full-state digest and RNG point for one pre-action decision. */
+/**
+Persisted full-state digest and RNG point for one pre-action decision.
+*/
 export interface PlaytestCheckpointDigest {
   readonly stateHash: string;
   readonly rngCheckpoint: GameRngCheckpoint;
@@ -83,7 +93,9 @@ export interface GameStepParams extends GameEpisodeRevisionParams {
   readonly actionId: string;
 }
 
-/** Illegal/stale actions are JSON-RPC errors, never successful rejected steps. */
+/**
+Illegal/stale actions are JSON-RPC errors, never successful rejected steps.
+*/
 export interface GameStepResult {
   readonly episodeId: string;
   readonly revision: number;
@@ -92,11 +104,15 @@ export interface GameStepResult {
   readonly terminal: boolean;
 }
 
-/** Game-owned evaluator sufficient statistics for one frozen metric. */
+/**
+Game-owned evaluator sufficient statistics for one frozen metric.
+*/
 export interface GameMetricEvaluation {
   readonly metricId: string;
   readonly metricVersion: number;
-  /** Null for a whole-episode result; otherwise the exact game-owned phase. */
+  /**
+  Null for a whole-episode result; otherwise the exact game-owned phase.
+  */
   readonly phaseId: string | null;
   readonly evaluatorRef: string;
   readonly evaluatorHash: string;
@@ -114,9 +130,13 @@ export interface GameOutcomeResult {
   readonly revision: number;
   readonly state: "terminal" | "partial";
   readonly outcome: PlaytestJsonValue | null;
-  /** Game-native outcome facts, distinct from rubric-controlled metric rows. */
+  /**
+  Game-native outcome facts, distinct from rubric-controlled metric rows.
+  */
   readonly metrics: Readonly<Record<string, number | null>>;
-  /** Typed sufficient statistics emitted by the approved game evaluator code. */
+  /**
+  Typed sufficient statistics emitted by the approved game evaluator code.
+  */
   readonly evaluations: readonly GameMetricEvaluation[];
   readonly missingReasons: readonly string[];
 }
@@ -137,23 +157,31 @@ export interface GameInvariantsResult {
 export interface GameSnapshotResult {
   readonly episodeId: string;
   readonly revision: number;
-  /** Full relevant engine-state digest, including hidden state. */
+  /**
+  Full relevant engine-state digest, including hidden state.
+  */
   readonly stateHash: string;
   readonly rngCheckpoint: GameRngCheckpoint;
-  /** Present only when includeArtifact was requested. */
+  /**
+  Present only when includeArtifact was requested.
+  */
   readonly snapshot: PlaytestArtifactReference | null;
   readonly integrityHash: string | null;
 }
 
 export interface GameSnapshotParams extends GameEpisodeRevisionParams {
-  /** Digest-only checkpoints avoid writing a large engine image per decision. */
+  /**
+  Digest-only checkpoints avoid writing a large engine image per decision.
+  */
   readonly includeArtifact: boolean;
 }
 
 export interface GameReplayParams {
   readonly trace: PlaytestArtifactReference;
   readonly expectedBuildSha: string;
-  /** Reconstruct the pre-action state of this zero-based decision. */
+  /**
+  Reconstruct the pre-action state of this zero-based decision.
+  */
   readonly throughStep: number;
 }
 
@@ -184,7 +212,9 @@ export interface GameForkResult {
 }
 
 export interface GameCaptureRangeParams extends GameEpisodeRevisionParams {
-  /** Inclusive, zero-based decision-step bounds, matching PlaytestEpisodeStep.step. */
+  /**
+  Inclusive, zero-based decision-step bounds, matching PlaytestEpisodeStep.step.
+  */
   readonly startStep: number;
   readonly endStep: number;
 }
@@ -193,7 +223,9 @@ export interface GameCaptureEvent {
   readonly eventId: string;
   readonly type: string;
   readonly phaseId: string | null;
-  /** Zero-based decision step, matching GameCaptureRangeParams and the trace. */
+  /**
+  Zero-based decision step, matching GameCaptureRangeParams and the trace.
+  */
   readonly step: number;
   readonly revision: number;
   readonly actor: string | null;
@@ -222,7 +254,9 @@ export interface GameCancelParams {
 export interface GameCancelResult {
   readonly requestId: string;
   readonly acknowledged: boolean;
-  /** Acknowledgement alone does not establish whether the original operation rolled back. */
+  /**
+  Acknowledgement alone does not establish whether the original operation rolled back.
+  */
   readonly episodeDisposition: "unchanged" | "aborted" | "unknown";
 }
 
@@ -239,6 +273,8 @@ export interface GameProgressNotificationParams {
   readonly total: number;
 }
 
-/** Negotiated quotas are used by the transport, not by a policy prompt. */
+/**
+Negotiated quotas are used by the transport, not by a policy prompt.
+*/
 export type GameAdapterQuotaContract = AdapterQuotaBound<PlaytestAdapterQuotas>;
 type AdapterQuotaBound<T> = { readonly [K in keyof T]: T[K] };

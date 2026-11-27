@@ -12,6 +12,10 @@ import {
   type RoutingPolicyState
 } from "@simulatorlife/autodev-core";
 import {
+  hasRoleContract,
+  roleContract
+} from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import {
   ANTIGRAVITY_PROVIDER_PATTERNS,
   CLAUDE_MODEL_PATTERN,
   CODEX_MODEL_PATTERN,
@@ -20,14 +24,10 @@ import {
   OPENCLI_GEMINI_MODEL_PATTERN
 } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
 import {
-  hasRoleContract,
-  roleContract
-} from "@simulatorlife/autodev-runtime/shared/execution-contract";
-import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
-import {
   isKeychainSecretName,
   resolveManagedSecret
 } from "@simulatorlife/autodev-runtime/shared/runtime-secrets";
+import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
 import { providerCapabilities, providerDeliversRoleMcp } from "./subagents.ts";
 
@@ -49,7 +49,9 @@ export interface RawRouteConfig {
   baseUrl: string;
   healthUrl?: string;
   envKey?: string | null;
-  /** Maximum simultaneous requests for this provider; absent means unlimited. */
+  /**
+  Maximum simultaneous requests for this provider; absent means unlimited.
+  */
   maxConcurrentRequests?: number;
 }
 
@@ -59,11 +61,15 @@ export interface ProviderRoute {
   baseUrl: string;
   healthUrl?: string;
   envKey?: string | null;
-  /** Maximum simultaneous requests for this provider; absent means unlimited. */
+  /**
+  Maximum simultaneous requests for this provider; absent means unlimited.
+  */
   maxConcurrentRequests?: number;
 }
 
-/** External operator links for one provider; each is an absolute https URL. */
+/**
+External operator links for one provider; each is an absolute https URL.
+*/
 export interface ProviderLinksConfig {
   usage?: string;
   documentation?: string;
@@ -115,39 +121,41 @@ export interface RoutingRuntime {
 }
 
 /**
- * A limit is either a positive integer or `null` for unlimited. Anything else —
- * a negative number, a float, a string — normalises to `null` rather than being
- * stored, so an unrecognised persisted value cannot become an active limit.
- */
+A limit is either a positive integer or `null` for unlimited. Anything else —
+a negative number, a float, a string — normalises to `null` rather than being
+stored, so an unrecognised persisted value cannot become an active limit.
+*/
 function normaliseLimit(value: unknown): number | null {
-  if (value === null || value === undefined) return null;
-  if (typeof value !== "number" || !Number.isFinite(value)) return null;
-  if (!Number.isInteger(value) || value < 1) return null;
+  if (value === null || value === undefined || typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value < 1) return null;
   return value;
 }
 
 /**
- * Why a provider/model route may not serve a role right now.
- *
- * `provider_cannot_delegate` is a capability, not a switch: the provider is
- * enabled and ranked for the role, and no operator action can make it serve
- * that tier, because the orchestrator's whole job is delegating.
- *
- * `provider_cannot_reach_role_mcp` is the same kind of fact about a named
- * role: the provider's transport cannot reach the role's MCP surface, so the
- * role's tools would be missing no matter how the provider is switched.
- */
+Why a provider/model route may not serve a role right now.
+
+`provider_cannot_delegate` is a capability, not a switch: the provider is
+enabled and ranked for the role, and no operator action can make it serve
+that tier, because the orchestrator's whole job is delegating.
+
+`provider_cannot_reach_role_mcp` is the same kind of fact about a named
+role: the provider's transport cannot reach the role's MCP surface, so the
+role's tools would be missing no matter how the provider is switched.
+*/
 export type RouteDisabledReason =
   | "provider_disabled"
   | "model_disabled"
   | "provider_cannot_delegate"
   | "provider_cannot_reach_role_mcp";
 
-/** Which of a provider's operator-set agent limits refuses a new agent. */
+/**
+Which of a provider's operator-set agent limits refuses a new agent.
+*/
 export type AgentLimitReason =
   "agent_limit_per_session" | "agent_limit_across_sessions";
 
-/** One live agent as the agent limits see it: who it is and which session. */
+/**
+One live agent as the agent limits see it: who it is and which session.
+*/
 export interface LiveProviderAgent {
   readonly subject: string;
   readonly sessionId?: string | null | undefined;
@@ -241,10 +249,10 @@ function nonEmptyString(value: unknown): value is string {
 }
 
 /**
- * Read one persisted role assignment, or `null` when the stored value is not
- * one. Rejecting a malformed entry rather than coercing it keeps an unreadable
- * persisted value from becoming an active routing decision.
- */
+Read one persisted role assignment, or `null` when the stored value is not
+one. Rejecting a malformed entry rather than coercing it keeps an unreadable
+persisted value from becoming an active routing decision.
+*/
 function readRoleAssignment(value: unknown): ProviderRoleAssignment | null {
   if (!isRecord(value)) return null;
   const { priority } = value;
@@ -261,7 +269,7 @@ function readRoleAssignment(value: unknown): ProviderRoleAssignment | null {
   return {
     priority,
     model: nonEmptyString(value.model) ? value.model.trim() : null,
-    ...(reasoningEffort ? { reasoningEffort } : {})
+    ...(reasoningEffort && { reasoningEffort })
   };
 }
 
@@ -349,10 +357,10 @@ function validateRoutesBlock(
 }
 
 /**
- * Every configured model must route to the provider it is listed under. A
- * mistyped id otherwise loads fine and only fails at the provider, turn by
- * turn, looking like an outage.
- */
+Every configured model must route to the provider it is listed under. A
+mistyped id otherwise loads fine and only fails at the provider, turn by
+turn, looking like an outage.
+*/
 function validateProviderModelRoutes(
   routesInput: unknown,
   providers: Record<string, ProviderModelsEntry>
@@ -365,7 +373,7 @@ function validateProviderModelRoutes(
     : DEFAULT_ROUTES.map((route) => [route.provider, route.pattern]);
   for (const [provider, { models }] of Object.entries(providers)) {
     // A provider without any route is never selected; route checks own that.
-    if (!routes.some(([routeProvider]) => routeProvider === provider)) continue;
+    if (routes.every(([routeProvider]) => routeProvider !== provider)) continue;
     for (const [tier, model] of Object.entries(models)) {
       if (!nonEmptyString(model))
         throw new Error(
@@ -553,11 +561,9 @@ function buildRoutes(
       provider === "codex" && environment.CODEX_ROUTER_GPT_BASE_URL
         ? environment.CODEX_ROUTER_GPT_BASE_URL
         : route.baseUrl,
-    ...(route.healthUrl === undefined ? {} : { healthUrl: route.healthUrl }),
-    ...(route.envKey === undefined ? {} : { envKey: route.envKey }),
-    ...(route.maxConcurrentRequests === undefined
-      ? {}
-      : { maxConcurrentRequests: route.maxConcurrentRequests })
+    ...(route.healthUrl !== undefined && { healthUrl: route.healthUrl }),
+    ...(route.envKey !== undefined && { envKey: route.envKey }),
+    ...(route.maxConcurrentRequests !== undefined && { maxConcurrentRequests: route.maxConcurrentRequests })
   }));
 }
 
@@ -569,10 +575,10 @@ function defaultRoleAliases(config: RoutingConfig): string[] {
 }
 
 /**
- * Bounded counts of provider Runtime overrides cleared by
- * `RoutingPolicy.resetProviderOverrides`, reported to the Control API audit
- * trail in place of replaying the (potentially large) cleared state.
- */
+Bounded counts of provider Runtime overrides cleared by
+`RoutingPolicy.resetProviderOverrides`, reported to the Control API audit
+trail in place of replaying the (potentially large) cleared state.
+*/
 export interface ProviderOverrideResetCounts {
   readonly roleAssignments: number;
   readonly disabledProviders: number;
@@ -587,11 +593,11 @@ export class RoutingPolicy {
   readonly configFile: string;
   private runtime: RoutingRuntime;
   /**
-   * Per-provider, per-role priority and model. A provider absent from this map
-   * has never been configured for a role, which is a different answer from
-   * having been configured as `disabled` — the first is unobserved, the second
-   * is a decision the operator made.
-   */
+  Per-provider, per-role priority and model. A provider absent from this map
+  has never been configured for a role, which is a different answer from
+  having been configured as `disabled` — the first is unobserved, the second
+  is a decision the operator made.
+  */
   private readonly roleAssignments = new Map<
     string,
     Partial<Record<ProviderRole, ProviderRoleAssignment>>
@@ -606,10 +612,10 @@ export class RoutingPolicy {
   private readonly agentEnablementRevisions = new Map<string, number>();
   private readonly providerLimits = new Map<string, ProviderAgentLimits>();
   /**
-   * Per-provider, per-agent-role model preference. Agent roles that share a
-   * tier share its model; an entry here lets one of them (an explorer, say)
-   * run a different model of the same provider than its siblings.
-   */
+  Per-provider, per-agent-role model preference. Agent roles that share a
+  tier share its model; an entry here lets one of them (an explorer, say)
+  run a different model of the same provider than its siblings.
+  */
   private readonly agentModels = new Map<string, Record<string, string>>();
 
   constructor(
@@ -639,11 +645,11 @@ export class RoutingPolicy {
   }
 
   /**
-   * A provider serves a role when it is not globally disabled and its
-   * assignment for that role is not `disabled`. An unobserved assignment counts
-   * as enabled: a provider that was never configured away must keep routing,
-   * which is the same default the previous per-role disable lists had.
-   */
+  A provider serves a role when it is not globally disabled and its
+  assignment for that role is not `disabled`. An unobserved assignment counts
+  as enabled: a provider that was never configured away must keep routing,
+  which is the same default the previous per-role disable lists had.
+  */
   isProviderEnabledForRole(provider: unknown, role: ProviderRole): boolean {
     if (!this.isProviderEnabled(provider)) return false;
     const assignment = this.assignmentFor(provider, role);
@@ -651,18 +657,18 @@ export class RoutingPolicy {
   }
 
   /**
-   * The capability a provider needs to serve a role at all.
-   *
-   * The orchestrator's job is delegating, so a provider without an authorized
-   * XACPX delegation path cannot serve the orchestrator tier however it is enabled and
-   * ranked. This is deliberately a separate fact from enablement: the Console
-   * and the router status used to report a provider as enabled for the
-   * orchestrator while the router refused to route to it, so an operator
-   * disabled every other provider on the strength of that report and was then
-   * told no provider was enabled -- when the one that was enabled could never
-   * have served the role. Enablement answers "did the operator switch this
-   * on?"; this answers "can it serve at all?".
-   */
+  The capability a provider needs to serve a role at all.
+  
+  The orchestrator's job is delegating, so a provider without an authorized
+  XACPX delegation path cannot serve the orchestrator tier however it is enabled and
+  ranked. This is deliberately a separate fact from enablement: the Console
+  and the router status used to report a provider as enabled for the
+  orchestrator while the router refused to route to it, so an operator
+  disabled every other provider on the strength of that report and was then
+  told no provider was enabled -- when the one that was enabled could never
+  have served the role. Enablement answers "did the operator switch this
+  on?"; this answers "can it serve at all?".
+  */
   providerRoleCapabilityReason(
     provider: unknown,
     role: ProviderRole
@@ -678,12 +684,12 @@ export class RoutingPolicy {
   }
 
   /**
-   * Whether a provider can serve a role right now: enabled for it, and able to.
-   *
-   * The router's own filter and every surface that reports a provider's role
-   * participation read this one predicate, so "the Console shows it as
-   * enabled" and "the router will route to it" cannot drift apart.
-   */
+  Whether a provider can serve a role right now: enabled for it, and able to.
+  
+  The router's own filter and every surface that reports a provider's role
+  participation read this one predicate, so "the Console shows it as
+  enabled" and "the router will route to it" cannot drift apart.
+  */
   canProviderServeRole(provider: unknown, role: ProviderRole): boolean {
     return (
       this.isProviderEnabledForRole(provider, role) &&
@@ -692,12 +698,12 @@ export class RoutingPolicy {
   }
 
   /**
-   * Why a provider cannot serve a role, as one sentence, or null when it can.
-   *
-   * One source for the wording: the Console's refusal and the router's
-   * rejection both name the same cause, so an operator who reads one of them
-   * is not sent to a different explanation by the other.
-   */
+  Why a provider cannot serve a role, as one sentence, or null when it can.
+  
+  One source for the wording: the Console's refusal and the router's
+  rejection both name the same cause, so an operator who reads one of them
+  is not sent to a different explanation by the other.
+  */
   providerRoleCapabilityExplanation(
     provider: unknown,
     role: ProviderRole
@@ -711,12 +717,12 @@ export class RoutingPolicy {
   }
 
   /**
-   * Whether a provider's transport can reach a named role's MCP surface.
-   *
-   * A provider that cannot reach the surface cannot serve the role, whatever
-   * the tier says, because the role's tools would simply be missing. This is
-   * a property of the transport, not of the operator's switches.
-   */
+  Whether a provider's transport can reach a named role's MCP surface.
+  
+  A provider that cannot reach the surface cannot serve the role, whatever
+  the tier says, because the role's tools would simply be missing. This is
+  a property of the transport, not of the operator's switches.
+  */
   providerReachesRoleMcp(
     provider: unknown,
     agentRole: string | null | undefined
@@ -729,7 +735,9 @@ export class RoutingPolicy {
     return providerDeliversRoleMcp(provider, contract.mcp ?? []);
   }
 
-  /** The provider's assignment for a role, or `undefined` when unobserved. */
+  /**
+  The provider's assignment for a role, or `undefined` when unobserved.
+  */
   assignmentFor(
     provider: unknown,
     role: ProviderRole
@@ -755,20 +763,18 @@ export class RoutingPolicy {
     existing[role] = {
       priority: assignment.priority,
       model: assignment.model,
-      ...(assignment.reasoningEffort
-        ? { reasoningEffort: assignment.reasoningEffort }
-        : {})
+      ...(assignment.reasoningEffort && { reasoningEffort: assignment.reasoningEffort })
     };
     this.roleAssignments.set(key, existing);
   }
 
   /**
-   * Forget a provider's assignment for one role, returning it to the
-   * unobserved default. This is the counterpart a rollback needs: restoring
-   * "no assignment" is not the same as writing back the assignment the change
-   * was replacing, because leaving the rejected assignment in place would let a
-   * change that never persisted keep affecting routing.
-   */
+  Forget a provider's assignment for one role, returning it to the
+  unobserved default. This is the counterpart a rollback needs: restoring
+  "no assignment" is not the same as writing back the assignment the change
+  was replacing, because leaving the rejected assignment in place would let a
+  change that never persisted keep affecting routing.
+  */
   clearProviderAssignment(provider: unknown, role: ProviderRole): void {
     if (typeof provider !== "string" || !provider.trim()) return;
     const key = this.providerKey(provider);
@@ -797,11 +803,11 @@ export class RoutingPolicy {
   }
 
   /**
-   * Clear one role's assignments across every provider, returning those
-   * providers to the unobserved default. This is the counterpart of
-   * `resetDisabledProviders`/`resetDisabledModels`: a role is a dimension of
-   * the same state, so resetting one dimension must be possible independently.
-   */
+  Clear one role's assignments across every provider, returning those
+  providers to the unobserved default. This is the counterpart of
+  `resetDisabledProviders`/`resetDisabledModels`: a role is a dimension of
+  the same state, so resetting one dimension must be possible independently.
+  */
   resetRoleAssignment(role: ProviderRole): void {
     for (const [provider, assignments] of this.roleAssignments) {
       if (!Object.hasOwn(assignments, role)) continue;
@@ -813,10 +819,10 @@ export class RoutingPolicy {
   }
 
   /**
-   * Forget a provider's agent limits, returning it to "no limits configured"
-   * rather than to Unlimited. This is the counterpart a rollback needs: a
-   * rejected change must not leave limits behind that the operator never set.
-   */
+  Forget a provider's agent limits, returning it to "no limits configured"
+  rather than to Unlimited. This is the counterpart a rollback needs: a
+  rejected change must not leave limits behind that the operator never set.
+  */
   clearProviderLimits(provider: unknown): void {
     if (typeof provider !== "string" || !provider.trim()) return;
     this.providerLimits.delete(this.providerKey(provider));
@@ -829,23 +835,22 @@ export class RoutingPolicy {
   }
 
   /**
-   * Whether the provider's agent limits refuse one more agent, and which.
-   *
-   * The limits bound how many agents run on the provider at once: `perSession`
-   * within one session (the root and its subagents share a session id),
-   * `acrossSessions` over every session. `live` is the provider's live agents.
-   * An agent already among them is continuing, not arriving, so it is never
-   * refused -- a lowered limit gates new agents rather than cutting off the
-   * ones mid-turn. An agent without a session id is its own session.
-   */
+  Whether the provider's agent limits refuse one more agent, and which.
+  
+  The limits bound how many agents run on the provider at once: `perSession`
+  within one session (the root and its subagents share a session id),
+  `acrossSessions` over every session. `live` is the provider's live agents.
+  An agent already among them is continuing, not arriving, so it is never
+  refused -- a lowered limit gates new agents rather than cutting off the
+  ones mid-turn. An agent without a session id is its own session.
+  */
   agentLimitReason(
     provider: unknown,
     agent: LiveProviderAgent,
     live: readonly LiveProviderAgent[]
   ): AgentLimitReason | null {
     const limits = this.limitsFor(provider);
-    if (!limits) return null;
-    if (live.some(({ subject }) => subject === agent.subject)) return null;
+    if (!limits || live.some(({ subject }) => subject === agent.subject)) return null;
     if (limits.acrossSessions !== null && live.length >= limits.acrossSessions)
       return "agent_limit_across_sessions";
     if (limits.perSession === null || !agent.sessionId) return null;
@@ -865,7 +870,9 @@ export class RoutingPolicy {
     });
   }
 
-  /** The provider's model preference for one agent role, if the operator set one. */
+  /**
+  The provider's model preference for one agent role, if the operator set one.
+  */
   agentModelFor(provider: unknown, agentRole: unknown): string | undefined {
     return typeof provider === "string" && typeof agentRole === "string"
       ? this.agentModels.get(this.providerKey(provider))?.[
@@ -874,7 +881,9 @@ export class RoutingPolicy {
       : undefined;
   }
 
-  /** Every agent-role model preference the operator set for one provider. */
+  /**
+  Every agent-role model preference the operator set for one provider.
+  */
   agentModelsFor(provider: unknown): Record<string, string> {
     return typeof provider === "string"
       ? { ...this.agentModels.get(this.providerKey(provider)) }
@@ -882,21 +891,19 @@ export class RoutingPolicy {
   }
 
   /**
-   * Set or (with `null`) clear one agent role's model preference on a
-   * provider. Only agent roles the routing config names are accepted; the
-   * orchestrator is governed by its provider-role assignment instead.
-   */
+  Set or (with `null`) clear one agent role's model preference on a
+  provider. Only agent roles the routing config names are accepted; the
+  orchestrator is governed by its provider-role assignment instead.
+  */
   setAgentModel(
     provider: unknown,
     agentRole: unknown,
     model: string | null
   ): void {
-    if (typeof provider !== "string" || !provider.trim()) return;
-    if (typeof agentRole !== "string") return;
+    if (typeof provider !== "string" || !provider.trim() || (typeof agentRole !== "string")) return;
     const key = this.providerKey(provider);
     const role = agentRole.trim().toLowerCase();
-    if (!Object.hasOwn(this.config.providers, key)) return;
-    if (!Object.hasOwn(this.config.roles, role)) return;
+    if (!Object.hasOwn(this.config.providers, key) || !Object.hasOwn(this.config.roles, role)) return;
     const next = { ...this.agentModels.get(key) };
     if (model === null || !model.trim()) delete next[role];
     else next[role] = model.trim();
@@ -905,21 +912,21 @@ export class RoutingPolicy {
   }
 
   /**
-   * Forget an operator model choice the provider said it does not have.
-   *
-   * A role assignment or agent-role preference can name a model id the
-   * provider later stops recognising: opencli renamed Gemini's models
-   * (`4-argon-complex-tasks` became `4-argon`), and the persisted orchestrator
-   * assignment kept the old id. Every request then picked that id, was refused
-   * as an unknown model, cooled the model down for a few minutes, and tried it
-   * again -- about twenty failed hops per session, each spending seconds
-   * before the router fell through to the next provider. The provider's
-   * refusal is the authority: the choice is cleared, so the role falls back to
-   * the tier's configured model. A configured model is never cleared here; a
-   * refusal of one is a provider fault the cooldown handles.
-   *
-   * Returns whether any choice named the model.
-   */
+  Forget an operator model choice the provider said it does not have.
+  
+  A role assignment or agent-role preference can name a model id the
+  provider later stops recognising: opencli renamed Gemini's models
+  (`4-argon-complex-tasks` became `4-argon`), and the persisted orchestrator
+  assignment kept the old id. Every request then picked that id, was refused
+  as an unknown model, cooled the model down for a few minutes, and tried it
+  again -- about twenty failed hops per session, each spending seconds
+  before the router fell through to the next provider. The provider's
+  refusal is the authority: the choice is cleared, so the role falls back to
+  the tier's configured model. A configured model is never cleared here; a
+  refusal of one is a provider fault the cooldown handles.
+  
+  Returns whether any choice named the model.
+  */
   forgetRejectedModel(provider: unknown, model: unknown): boolean {
     if (typeof provider !== "string" || typeof model !== "string") return false;
     const key = this.providerKey(provider);
@@ -928,7 +935,7 @@ export class RoutingPolicy {
     const configured = this.config.providers[key]?.models ?? {};
     if (Object.values(configured).some((id) => id.trim() === modelId))
       return false;
-    let forgot = false;
+    let isForgot = false;
     const assignments = this.roleAssignments.get(key);
     if (assignments) {
       for (const role of PROVIDER_ROLES) {
@@ -937,11 +944,9 @@ export class RoutingPolicy {
         assignments[role] = {
           priority: assignment.priority,
           model: null,
-          ...(assignment.reasoningEffort
-            ? { reasoningEffort: assignment.reasoningEffort }
-            : {})
+          ...(assignment.reasoningEffort && { reasoningEffort: assignment.reasoningEffort })
         };
-        forgot = true;
+        isForgot = true;
       }
     }
     const preferences = this.agentModels.get(key);
@@ -950,27 +955,27 @@ export class RoutingPolicy {
         Object.entries(preferences).filter(([, id]) => id.trim() !== modelId)
       );
       if (Object.keys(kept).length !== Object.keys(preferences).length) {
-        forgot = true;
+        isForgot = true;
         if (Object.keys(kept).length === 0) this.agentModels.delete(key);
         else this.agentModels.set(key, kept);
       }
     }
-    return forgot;
+    return isForgot;
   }
 
   /**
-   * Clear every provider Runtime override -- role assignments, agent-role
-   * models, provider-wide disables, model disables, and provider agent
-   * limits -- in one atomic
-   * in-memory step. Agent enablement, provider discovery snapshots,
-   * cooldown/health state, and concurrency limits are untouched: none of them
-   * are provider routing overrides, so an operator resetting providers has no
-   * reason to expect them to move.
-   *
-   * Returns bounded counts rather than the cleared state itself, so a caller
-   * can audit exactly what was cleared without replaying potentially large
-   * configuration back into the audit log.
-   */
+  Clear every provider Runtime override -- role assignments, agent-role
+  models, provider-wide disables, model disables, and provider agent
+  limits -- in one atomic
+  in-memory step. Agent enablement, provider discovery snapshots,
+  cooldown/health state, and concurrency limits are untouched: none of them
+  are provider routing overrides, so an operator resetting providers has no
+  reason to expect them to move.
+  
+  Returns bounded counts rather than the cleared state itself, so a caller
+  can audit exactly what was cleared without replaying potentially large
+  configuration back into the audit log.
+  */
   resetProviderOverrides(): ProviderOverrideResetCounts {
     const roleAssignmentCount = [...this.roleAssignments.values()].reduce(
       (total, assignments) => total + Object.keys(assignments).length,
@@ -995,10 +1000,10 @@ export class RoutingPolicy {
   }
 
   /**
-   * Every model the routing config maps a provider tier to, once per model,
-   * with the tiers that provider serves with it. Model ids are unique across
-   * providers because each must match its own provider's route.
-   */
+  Every model the routing config maps a provider tier to, once per model,
+  with the tiers that provider serves with it. Model ids are unique across
+  providers because each must match its own provider's route.
+  */
   configuredModels(): ConfiguredModel[] {
     const byModel = new Map<string, ConfiguredModel>();
     for (const [provider, { models }] of Object.entries(
@@ -1014,7 +1019,9 @@ export class RoutingPolicy {
     return [...byModel.values()];
   }
 
-  /** Providers visible to configuration and the request router share one set. */
+  /**
+  Providers visible to configuration and the request router share one set.
+  */
   providerIds(): string[] {
     return [
       ...new Set([
@@ -1024,7 +1031,9 @@ export class RoutingPolicy {
     ].sort((left, right) => ROUTING_MODEL_COLLATOR.compare(left, right));
   }
 
-  /** Replace one provider's volatile, source-confirmed model snapshot. */
+  /**
+  Replace one provider's volatile, source-confirmed model snapshot.
+  */
   setDiscoveredProviderModels(
     provider: unknown,
     models: readonly ControlApiDiscoveredProviderModel[]
@@ -1052,7 +1061,9 @@ export class RoutingPolicy {
     this.discoveredProviderModels.set(key, discovered);
   }
 
-  /** Provider-reported model IDs and routeability, not operator assignments. */
+  /**
+  Provider-reported model IDs and routeability, not operator assignments.
+  */
   discoveredModels(): DiscoveredProviderModel[] {
     return [...this.discoveredProviderModels.values()]
       .flatMap((models) => [...models.values()])
@@ -1063,7 +1074,9 @@ export class RoutingPolicy {
       );
   }
 
-  /** Whether one model is assigned or currently provider-discovered. */
+  /**
+  Whether one model is assigned or currently provider-discovered.
+  */
   isKnownModel(model: unknown): model is string {
     if (this.isConfiguredModel(model)) return true;
     if (typeof model !== "string" || model.trim().length === 0) return false;
@@ -1075,7 +1088,9 @@ export class RoutingPolicy {
     );
   }
 
-  /** Model choices are scoped to their owner; an ID from another provider is not a choice. */
+  /**
+  Model choices are scoped to their owner; an ID from another provider is not a choice.
+  */
   isModelAvailableForProvider(provider: unknown, model: unknown): boolean {
     if (typeof provider !== "string" || typeof model !== "string") return false;
     const key = this.providerKey(provider);
@@ -1115,10 +1130,10 @@ export class RoutingPolicy {
   }
 
   /**
-   * The single enablement check for a provider/model route: the provider must
-   * be enabled for the role, must be able to serve it, and, when the route
-   * names a model, that model must be enabled too.
-   */
+  The single enablement check for a provider/model route: the provider must
+  be enabled for the role, must be able to serve it, and, when the route
+  names a model, that model must be enabled too.
+  */
   routeDisabledReason(
     route: { provider: string; model?: string | null | undefined },
     role: ProviderRole
@@ -1183,7 +1198,9 @@ export class RoutingPolicy {
     this.restoreAgentModels(state.agentModels);
   }
 
-  /** Rebuild agent-role models; a malformed entry is skipped, not defaulted. */
+  /**
+  Rebuild agent-role models; a malformed entry is skipped, not defaulted.
+  */
   private restoreAgentModels(raw: unknown): void {
     if (!isRecord(raw)) return;
     for (const [provider, models] of Object.entries(raw)) {
@@ -1195,11 +1212,11 @@ export class RoutingPolicy {
   }
 
   /**
-   * Rebuild role assignments from persisted state. A provider or role whose
-   * persisted entry is malformed is skipped rather than restored as a default,
-   * because an unreadable value is not the same as an operator's decision to
-   * leave the role at priority 1.
-   */
+  Rebuild role assignments from persisted state. A provider or role whose
+  persisted entry is malformed is skipped rather than restored as a default,
+  because an unreadable value is not the same as an operator's decision to
+  leave the role at priority 1.
+  */
   private restoreRoleAssignments(raw: unknown): void {
     if (!isRecord(raw)) return;
     for (const [provider, assignments] of Object.entries(raw)) {
@@ -1296,11 +1313,11 @@ export class RoutingPolicy {
   }
 
   /**
-   * The assignment that governs a provider for one kind of traffic: the
-   * orchestrator's for the orchestrator, the subagent's for every tier a
-   * subagent runs in. One assignment governs both the rank and the
-   * enablement, so the two cannot disagree.
-   */
+  The assignment that governs a provider for one kind of traffic: the
+  orchestrator's for the orchestrator, the subagent's for every tier a
+  subagent runs in. One assignment governs both the rank and the
+  enablement, so the two cannot disagree.
+  */
   private governingAssignment(
     provider: string,
     role: ProviderRole
@@ -1312,17 +1329,17 @@ export class RoutingPolicy {
   }
 
   /**
-   * A tier's effective priority groups, best first.
-   *
-   * `providerGroups` is the default ranking; an operator's assignment for the
-   * tier's governing role overrides it. A provider assigned priority N joins
-   * group N whether or not the routing config lists it for the tier -- which is
-   * how an opt-in provider such as opencli enters routing from the Console --
-   * and one assigned `disabled` leaves the tier. A provider neither listed nor
-   * assigned does not serve the tier. Before this, the Console's P1/P2/P3 were
-   * persisted and reported but never read: order came from the config alone,
-   * and the `default`/`smart` assignments steered nothing.
-   */
+  A tier's effective priority groups, best first.
+  
+  `providerGroups` is the default ranking; an operator's assignment for the
+  tier's governing role overrides it. A provider assigned priority N joins
+  group N whether or not the routing config lists it for the tier -- which is
+  how an opt-in provider such as opencli enters routing from the Console --
+  and one assigned `disabled` leaves the tier. A provider neither listed nor
+  assigned does not serve the tier. Before this, the Console's P1/P2/P3 were
+  persisted and reported but never read: order came from the config alone,
+  and the `default`/`smart` assignments steered nothing.
+  */
   effectiveProviderGroups(tier: string, role: ProviderRole): string[][] {
     const configured = new Map<string, number>();
     for (const [index, group] of (
@@ -1347,12 +1364,14 @@ export class RoutingPolicy {
       if (rank === undefined) continue;
       ranked.set(rank, [...(ranked.get(rank) ?? []), provider]);
     }
-    return [...ranked.entries()]
+    return [...ranked]
       .sort(([left], [right]) => left - right)
       .map(([, providers]) => providers);
   }
 
-  /** Every configured tier's effective groups, under the role that governs it. */
+  /**
+  Every configured tier's effective groups, under the role that governs it.
+  */
   effectiveTierGroups(): Record<string, string[][]> {
     return Object.fromEntries(
       Object.keys(this.config.providerGroups).map((tier) => [
@@ -1381,15 +1400,15 @@ export class RoutingPolicy {
   }
 
   /**
-   * Why a tier has no provider to serve it, split by cause.
-   *
-   * An empty candidate list has two very different reasons, and the operator
-   * can only act on one of them: every provider is switched off (the enable
-   * switches are the fix), or the only enabled provider cannot serve the tier
-   * at all (no switch will make it serve). The router used to report the first
-   * cause for both, which sent the operator to a control surface that could
-   * not fix anything.
-   */
+  Why a tier has no provider to serve it, split by cause.
+  
+  An empty candidate list has two very different reasons, and the operator
+  can only act on one of them: every provider is switched off (the enable
+  switches are the fix), or the only enabled provider cannot serve the tier
+  at all (no switch will make it serve). The router used to report the first
+  cause for both, which sent the operator to a control surface that could
+  not fix anything.
+  */
   tierServingBlockers(
     tier: string,
     role: ProviderRole
@@ -1414,18 +1433,18 @@ export class RoutingPolicy {
   }
 
   /**
-   * The providers a tier cannot use, and why each one is out.
-   *
-   * A provider that is switched off, whose governing role is disabled, or
-   * whose model is switched off never becomes a candidate: it is dropped
-   * before the chain runs, without a word. The chain's refusal then names
-   * only the providers it tried, which reads as though the others had never
-   * been configured -- and an operator who had enabled a provider for a role
-   * could not see why it was never asked.
-   *
-   * Only providers the operator has configured are named. A provider that
-   * belongs to no tier is not excluded from it; it was never in it.
-   */
+  The providers a tier cannot use, and why each one is out.
+  
+  A provider that is switched off, whose governing role is disabled, or
+  whose model is switched off never becomes a candidate: it is dropped
+  before the chain runs, without a word. The chain's refusal then names
+  only the providers it tried, which reads as though the others had never
+  been configured -- and an operator who had enabled a provider for a role
+  could not see why it was never asked.
+  
+  Only providers the operator has configured are named. A provider that
+  belongs to no tier is not excluded from it; it was never in it.
+  */
   excludedProviders(
     tier: string,
     role: ProviderRole
@@ -1485,13 +1504,17 @@ export class RoutingPolicy {
       : null;
   }
 
-  /** The capability tier one role is served by, or null when it names none. */
+  /**
+  The capability tier one role is served by, or null when it names none.
+  */
   tierForRole(role: unknown): string | null {
     if (typeof role !== "string" || role.trim().length === 0) return null;
     return this.config.roles[role.trim().toLowerCase()]?.tier ?? null;
   }
 
-  /** The providers that can serve the orchestrator tier at all. */
+  /**
+  The providers that can serve the orchestrator tier at all.
+  */
   orchestratorCapableProviders(): string[] {
     return this.providerIds().filter(
       (provider) =>
@@ -1500,13 +1523,13 @@ export class RoutingPolicy {
   }
 
   /**
-   * The configured AutoDev alias that names one executable Agent role.
-   *
-   * The execution contract defines Agent capabilities, but it cannot disable
-   * an Agent in pinned RuleSync 43.8.0. The Router's `roles` map is the
-   * authoritative source for names that can actually enter through
-   * `autodev/<role>`; the orchestrator uses its dedicated alias.
-   */
+  The configured AutoDev alias that names one executable Agent role.
+  
+  The execution contract defines Agent capabilities, but it cannot disable
+  an Agent in pinned RuleSync 43.8.0. The Router's `roles` map is the
+  authoritative source for names that can actually enter through
+  `autodev/<role>`; the orchestrator uses its dedicated alias.
+  */
   agentModelAlias(agentRole: unknown): string | null {
     if (typeof agentRole !== "string" || agentRole.trim().length === 0)
       return null;
@@ -1525,7 +1548,9 @@ export class RoutingPolicy {
       : null;
   }
 
-  /** Null means the configured Agent has no Runtime model-router alias. */
+  /**
+  Null means the configured Agent has no Runtime model-router alias.
+  */
   isAgentEnabled(agentRole: unknown): boolean | null {
     const alias = this.agentModelAlias(agentRole);
     if (!alias || typeof agentRole !== "string") return null;
@@ -1533,7 +1558,9 @@ export class RoutingPolicy {
     return !this.disabledAgentRoles.has(role);
   }
 
-  /** Stable per-role generation, or null when no named router alias exists. */
+  /**
+  Stable per-role generation, or null when no named router alias exists.
+  */
   agentEnablementGeneration(agentRole: unknown): number | null {
     if (
       this.agentModelAlias(agentRole) === null ||
@@ -1545,7 +1572,9 @@ export class RoutingPolicy {
     );
   }
 
-  /** Returns false for an Agent without a configured router alias. */
+  /**
+  Returns false for an Agent without a configured router alias.
+  */
   setAgentEnabled(agentRole: unknown, enabled: boolean): boolean {
     const alias = this.agentModelAlias(agentRole);
     if (!alias || typeof agentRole !== "string") return false;
@@ -1606,9 +1635,7 @@ export class RoutingPolicy {
         {
           ...route,
           model,
-          ...(configuredEffort === null
-            ? {}
-            : { reasoningEffort: configuredEffort })
+          ...(configuredEffort !== null && { reasoningEffort: configuredEffort })
         }
       ];
     });
@@ -1643,7 +1670,9 @@ export class RoutingPolicy {
     return this.preferProvider(candidates, preferred, "orchestrator");
   }
 
-  /** Move an enabled preferred provider to the front; the rest keep their order. */
+  /**
+  Move an enabled preferred provider to the front; the rest keep their order.
+  */
   private preferProvider<T extends Candidate>(
     candidates: T[],
     preferred: string | null,
@@ -1702,12 +1731,12 @@ export class RoutingPolicy {
   }
 
   /**
-   * The model each of a provider's configured tiers is routed to: the
-   * operator's Console assignment for the role that governs the tier, else
-   * the routing config's. Status reported the config's alone, so a Console
-   * assignment of ChatGPT's Advanced level to every opencli-chatgpt tier
-   * read as `default: balanced` while every worker turn ran on Advanced.
-   */
+  The model each of a provider's configured tiers is routed to: the
+  operator's Console assignment for the role that governs the tier, else
+  the routing config's. Status reported the config's alone, so a Console
+  assignment of ChatGPT's Advanced level to every opencli-chatgpt tier
+  read as `default: balanced` while every worker turn ran on Advanced.
+  */
   effectiveModels(provider: string): Record<string, string> {
     const models = this.config.providers[provider]?.models ?? {};
     return Object.fromEntries(
@@ -1718,7 +1747,9 @@ export class RoutingPolicy {
     );
   }
 
-  /** The model a provider serves a tier with, before any agent-role model. */
+  /**
+  The model a provider serves a tier with, before any agent-role model.
+  */
   tierModel(provider: string, tier: string): string | undefined {
     return (
       this.governingAssignment(

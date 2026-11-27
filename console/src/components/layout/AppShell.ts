@@ -26,31 +26,31 @@ import { SkipLink } from "./SkipLink.ts";
 
 export interface AppShellProps {
   /**
-   * The section this page belongs to.
-   *
-   * It is absent for a page that is not one of the Console's sections -- the
-   * page a bad address lands on, for instance. A page that claims a section it
-   * does not belong to puts the wrong name in the heading the navigation owner
-   * announces after a navigation, and marks the wrong item in the rail: the
-   * operator is told they are on a page they are not on.
-   */
+  The section this page belongs to.
+  
+  It is absent for a page that is not one of the Console's sections -- the
+  page a bad address lands on, for instance. A page that claims a section it
+  does not belong to puts the wrong name in the heading the navigation owner
+  announces after a navigation, and marks the wrong item in the rail: the
+  operator is told they are on a page they are not on.
+  */
   readonly activeSection?: CanonicalNavSection | undefined;
   /**
-   * The page's own name, for a page that belongs to no section.
-   *
-   * Every other page takes its name from the section it belongs to, so this is
-   * only for the ones that are not a section's page.
-   */
+  The page's own name, for a page that belongs to no section.
+  
+  Every other page takes its name from the section it belongs to, so this is
+  only for the ones that are not a section's page.
+  */
   readonly title?: string | undefined;
   readonly counts?: Partial<Record<CanonicalNavSection, number>> | undefined;
   readonly children?: React.ReactNode | undefined;
   readonly actions?: React.ReactNode | undefined;
   /**
-   * One-line summary of what this resource surface is for. It belongs in the
-   * shell header rather than in the page body so every resource has exactly one
-   * title block: a page that repeats its own `h1` under the shell's breadcrumb
-   * title renders two headings for the same resource.
-   */
+  One-line summary of what this resource surface is for. It belongs in the
+  shell header rather than in the page body so every resource has exactly one
+  title block: a page that repeats its own `h1` under the shell's breadcrumb
+  title renders two headings for the same resource.
+  */
   readonly description?: string | undefined;
 }
 
@@ -63,21 +63,21 @@ export function AppShell({
   description
 }: AppShellProps): React.JSX.Element {
   /**
-   * What the page calls itself in the header.
-   *
-   * A page that belongs to a section is named by that section; a page that
-   * belongs to no section is named by itself. It has to name itself either
-   * way: the heading is the one thing the navigation owner announces after a
-   * navigation, and a heading that says "Workspaces" on a page that is not
-   * the Workspaces page announces the wrong resource.
-   */
+  What the page calls itself in the header.
+  
+  A page that belongs to a section is named by that section; a page that
+  belongs to no section is named by itself. It has to name itself either
+  way: the heading is the one thing the navigation owner announces after a
+  navigation, and a heading that says "Workspaces" on a page that is not
+  the Workspaces page announces the wrong resource.
+  */
   const heading = title ?? activeSection ?? "AutoDev Console";
   /**
-   * The heading is focusable so it can receive the focus after an in-place
-   * navigation -- the navigation owner moves it there, because a focused
-   * heading is also how the new page is announced -- and it is out of the tab
-   * order so it is never a stop the operator has to walk past.
-   */
+  The heading is focusable so it can receive the focus after an in-place
+  navigation -- the navigation owner moves it there, because a focused
+  heading is also how the new page is announced -- and it is out of the tab
+  order so it is never a stop the operator has to walk past.
+  */
   return React.createElement(
     "div",
     {
@@ -219,9 +219,9 @@ export function AppShell({
 }
 
 /**
- * The route-level loading boundary keeps the same navigation and page frame
- * visible while a dynamic page waits for its server-owned data.
- */
+The route-level loading boundary keeps the same navigation and page frame
+visible while a dynamic page waits for its server-owned data.
+*/
 export function ConsoleLoadingShell(): React.JSX.Element {
   const pathname = usePathname();
   // An address that names no section loads no section: the old fallback
@@ -231,7 +231,9 @@ export function ConsoleLoadingShell(): React.JSX.Element {
   return React.createElement(ConsoleLoadingPage, { activeSection });
 }
 
-/** Accessible fallback used while the Console page's server data is pending. */
+/**
+Accessible fallback used while the Console page's server data is pending.
+*/
 export function ConsoleLoadingPage({
   activeSection
 }: {
@@ -280,31 +282,31 @@ export function ConsoleLoadingPage({
 }
 
 /**
- * The other ways out of a failed address.
- *
- * Two of the Console's sections, so a pointer-only operator is never stranded
- * with no way onward. The section the failed address named is the primary way
- * out and is not repeated here.
- */
+The other ways out of a failed address.
+
+Two of the Console's sections, so a pointer-only operator is never stranded
+with no way onward. The section the failed address named is the primary way
+out and is not repeated here.
+*/
 const OTHER_FAILURE_DESTINATIONS: readonly CanonicalNavSection[] = [
   "Providers",
   "Workspaces"
 ];
 
 /**
- * Where a failure page takes the operator, and what it calls that way.
- *
- * A failure page knows the section the operator was reaching for -- the
- * address named it, and the address is the one thing the operator cannot
- * check for themselves. So the page takes them back to *that* section, and
- * the link says so: "Return to Hooks" is a promise the page can keep, because
- * the operator was reaching for Hooks when the address failed.
- *
- * A page that belongs to no section has nowhere to return to, so its link
- * names a destination instead of a return -- "Go to Agents" is a statement
- * about where the link leads, where "Return to Agents" on a page the operator
- * was never on would be a claim about where they had been.
- */
+Where a failure page takes the operator, and what it calls that way.
+
+A failure page knows the section the operator was reaching for -- the
+address named it, and the address is the one thing the operator cannot
+check for themselves. So the page takes them back to *that* section, and
+the link says so: "Return to Hooks" is a promise the page can keep, because
+the operator was reaching for Hooks when the address failed.
+
+A page that belongs to no section has nowhere to return to, so its link
+names a destination instead of a return -- "Go to Agents" is a statement
+about where the link leads, where "Return to Agents" on a page the operator
+was never on would be a claim about where they had been.
+*/
 function failureEscape(section: CanonicalNavSection | undefined): {
   readonly href: string;
   readonly label: string;
@@ -315,8 +317,8 @@ function failureEscape(section: CanonicalNavSection | undefined): {
 }
 
 /**
- * Route-level 404 boundary rendered when a route does not exist.
- */
+Route-level 404 boundary rendered when a route does not exist.
+*/
 export function ConsoleNotFoundShell(): React.JSX.Element {
   // The page a bad address lands on belongs to no section, and it says so:
   // the old fallback claimed Workspaces, so the heading named a page the
@@ -339,7 +341,9 @@ export function ConsoleNotFoundPage({
   section
 }: {
   readonly title: string;
-  /** The section the failed address was reaching for, when it named one. */
+  /**
+  The section the failed address was reaching for, when it named one.
+  */
   readonly section?: CanonicalNavSection | undefined;
 }): React.JSX.Element {
   const escape = failureEscape(section);
@@ -417,27 +421,27 @@ export interface ConsoleErrorPageProps {
   readonly error: Error & { readonly digest?: string };
   readonly reset: () => void;
   /**
-   * The section that failed, when the failed address named one.
-   *
-   * Absent when it named none, and then the page claims none: the same
-   * answer the not-found page gives, because it is the same fact. A page that
-   * belongs to no section has no section to mark in the rail and no section
-   * to name in its heading.
-   */
+  The section that failed, when the failed address named one.
+  
+  Absent when it named none, and then the page claims none: the same
+  answer the not-found page gives, because it is the same fact. A page that
+  belongs to no section has no section to mark in the rail and no section
+  to name in its heading.
+  */
   readonly activeSection?: CanonicalNavSection | undefined;
   /**
-   * The page's own name, for a failure that belongs to no section.
-   *
-   * Every other page takes its name from the section it belongs to, so this is
-   * only for a page that is not a section's page.
-   */
+  The page's own name, for a failure that belongs to no section.
+  
+  Every other page takes its name from the section it belongs to, so this is
+  only for a page that is not a section's page.
+  */
   readonly title?: string | undefined;
 }
 
 /**
- * Route-level error boundary rendered when an uncaught render error occurs.
- */
-export function ConsoleErrorShell(props: {
+Route-level error boundary rendered when an uncaught render error occurs.
+*/
+export function ConsoleErrorShell(properties: {
   readonly error: Error & { readonly digest?: string };
   readonly reset: () => void;
 }): React.JSX.Element {
@@ -448,8 +452,8 @@ export function ConsoleErrorShell(props: {
   const activeSection =
     canonicalSectionFromPath(usePathname() ?? "") ?? undefined;
   return React.createElement(ConsoleErrorPage, {
-    error: props.error,
-    reset: props.reset,
+    error: properties.error,
+    reset: properties.reset,
     activeSection
   });
 }

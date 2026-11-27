@@ -17,18 +17,18 @@ import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
 const FLEX_COLUMN_DETAILS_CLASS = "flex flex-col gap-2";
 
 /**
- * The Runtime's health verdict for a server, in the Console's status tone.
- *
- * `ready` and `error` are verdicts and get the success and error tones.
- * `configured` means the Runtime saw the server named in a session but never
- * exercised it, and `observed` means it saw a span that carried no readiness
- * signal: neither is a correctness claim, so neither gets the success tone.
- * `stale` means the Runtime saw the server, but not recently enough to call
- * it ready.
- *
- * The badge's label always carries the Runtime's own word, so the tone never
- * becomes the only record of what the Runtime reported.
- */
+The Runtime's health verdict for a server, in the Console's status tone.
+
+`ready` and `error` are verdicts and get the success and error tones.
+`configured` means the Runtime saw the server named in a session but never
+exercised it, and `observed` means it saw a span that carried no readiness
+signal: neither is a correctness claim, so neither gets the success tone.
+`stale` means the Runtime saw the server, but not recently enough to call
+it ready.
+
+The badge's label always carries the Runtime's own word, so the tone never
+becomes the only record of what the Runtime reported.
+*/
 function runtimeHealthStatus(
   health: ControlApiMcpRuntimeHealth
 ): StatusBadgeVariant {
@@ -39,18 +39,18 @@ function runtimeHealthStatus(
 }
 
 /**
- * The Runtime's own evidence about one server.
- *
- * Every number here is a count the Runtime recorded. The page does not derive
- * a verdict from the declaration and does not present the declaration as
- * evidence: a server that was declared but never reached says "Not observed",
- * and only a server the Runtime has seen reports counts.
- *
- * `observationAvailable` separates the two ways there can be no evidence: the
- * observation read could not be read at all, and the Runtime read it and had
- * seen nothing. The page says which, because "we could not ask" and "we asked
- * and it has not been reached" are different facts.
- */
+The Runtime's own evidence about one server.
+
+Every number here is a count the Runtime recorded. The page does not derive
+a verdict from the declaration and does not present the declaration as
+evidence: a server that was declared but never reached says "Not observed",
+and only a server the Runtime has seen reports counts.
+
+`observationAvailable` separates the two ways there can be no evidence: the
+observation read could not be read at all, and the Runtime read it and had
+seen nothing. The page says which, because "we could not ask" and "we asked
+and it has not been reached" are different facts.
+*/
 export function McpRuntimeEvidence({
   evidence,
   observationAvailable = true
@@ -127,14 +127,14 @@ export function McpRuntimeEvidence({
 }
 
 /**
- * The tools the Runtime has observed being called on this server.
- *
- * These are calls the Runtime saw, not the server's tool inventory: a tool
- * the server offers but nothing has called is absent, and a tool the server
- * no longer offers may still be listed. The heading says so, because the
- * configured allowlist above it is a different thing and the page keeps the
- * two apart.
- */
+The tools the Runtime has observed being called on this server.
+
+These are calls the Runtime saw, not the server's tool inventory: a tool
+the server offers but nothing has called is absent, and a tool the server
+no longer offers may still be listed. The heading says so, because the
+configured allowlist above it is a different thing and the page keeps the
+two apart.
+*/
 export function McpObservedTools({
   evidence
 }: {
@@ -171,9 +171,9 @@ export function McpObservedTools({
 }
 
 /**
- * The one badge the list and the detail page both use for a server's
- * connection, so the two surfaces cannot drift into different verdicts.
- */
+The one badge the list and the detail page both use for a server's
+connection, so the two surfaces cannot drift into different verdicts.
+*/
 export function McpConnectionBadge({
   evidence
 }: {
@@ -183,6 +183,6 @@ export function McpConnectionBadge({
     status: evidence
       ? runtimeHealthStatus(evidence.health)
       : NOT_OBSERVED_STATUS,
-    ...(evidence ? { label: `Runtime health: ${evidence.health}` } : {})
+    ...(evidence && { label: `Runtime health: ${evidence.health}` })
   });
 }

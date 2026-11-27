@@ -1,41 +1,41 @@
 /**
- * `PlayerPolicyValidity`: whether a player policy may stand in for people.
- *
- * The measurement contract (§6) requires this artifact and says two things
- * about it that decide the whole design here:
- *
- * - "held-out human decision-state IDs **when available**";
- * - "Prerogister acceptance bounds against relevant human data; **absent data
- *   means unvalidated-synthetic-cohort**", and such a cohort must downgrade
- *   novice/learner UX generalizations to model-specific signals rather than
- *   leave an authoritative claim with a footnote.
- *
- * So the verdict is derived, never asserted. With no human data the answer is
- * `unvalidated-synthetic`, which is the contract's own word, not a threshold
- * this codebase chose. With human data the bounds are supplied by the caller —
- * the project preregisters them, Core applies them — because choosing those
- * numbers here would fabricate exactly the judgement §6 reserves for the
- * project.
- *
- * Every metric is `null` when unmeasured. A `0` legality rate and an unmeasured
- * one are different facts, and only one of them belongs on a claim that
- * authorizes a policy to speak for a player.
- */
+`PlayerPolicyValidity`: whether a player policy may stand in for people.
+
+The measurement contract (§6) requires this artifact and says two things
+about it that decide the whole design here:
+
+- "held-out human decision-state IDs **when available**";
+- "Prerogister acceptance bounds against relevant human data; **absent data
+  means unvalidated-synthetic-cohort**", and such a cohort must downgrade
+  novice/learner UX generalizations to model-specific signals rather than
+  leave an authoritative claim with a footnote.
+
+So the verdict is derived, never asserted. With no human data the answer is
+`unvalidated-synthetic`, which is the contract's own word, not a threshold
+this codebase chose. With human data the bounds are supplied by the caller —
+the project preregisters them, Core applies them — because choosing those
+numbers here would fabricate exactly the judgement §6 reserves for the
+project.
+
+Every metric is `null` when unmeasured. A `0` legality rate and an unmeasured
+one are different facts, and only one of them belongs on a claim that
+authorizes a policy to speak for a player.
+*/
 import { SHA256_PATTERN } from "../shared/sha256.ts";
 import type { PlayerPolicyValidity } from "./artifacts.ts";
 import { canonicalPlaytestJson } from "./canonical-json.ts";
 import type { PlaytestComparison } from "./types.ts";
 
 /**
- * Canonical text a caller hashes to produce a citable record identity.
- *
- * Core carries no hashing on purpose: `node:crypto` cannot be bundled into the
- * browser-reachable console package, and every other artifact here follows the
- * same split -- Core supplies the canonical form, the caller (Runtime) takes
- * the SHA-256. `competenceReportRefs` cites the digest as
- * `{ kind: "policy-validity", id }`, so a changed record changes its own
- * citation instead of silently continuing to answer for it.
- */
+Canonical text a caller hashes to produce a citable record identity.
+
+Core carries no hashing on purpose: `node:crypto` cannot be bundled into the
+browser-reachable console package, and every other artifact here follows the
+same split -- Core supplies the canonical form, the caller (Runtime) takes
+the SHA-256. `competenceReportRefs` cites the digest as
+`{ kind: "policy-validity", id }`, so a changed record changes its own
+citation instead of silently continuing to answer for it.
+*/
 export function playtestPolicyValidityHashInput(
   validity: PlayerPolicyValidity
 ): string {
@@ -43,10 +43,10 @@ export function playtestPolicyValidityHashInput(
 }
 
 /**
- * Acceptance bounds the caller preregistered against human data. Absent bounds
- * are not a permissive default: they mean nobody registered the criteria, so
- * the cohort stays synthetic.
- */
+Acceptance bounds the caller preregistered against human data. Absent bounds
+are not a permissive default: they mean nobody registered the criteria, so
+the cohort stays synthetic.
+*/
 export interface PlaytestPolicyCompetenceBounds {
   readonly minLegalityRate: number;
   readonly minRepeatability: number;
@@ -63,9 +63,13 @@ export interface BuildPlaytestPolicyValidityInput {
   readonly actionSchemaHash: string;
   readonly policyId: string;
   readonly policyVersion: string;
-  /** Held-out human decision states. Empty when no human data exists. */
+  /**
+  Held-out human decision states. Empty when no human data exists.
+  */
   readonly heldOutHumanStateIds: readonly string[];
-  /** Preregistered bounds; omit when none were registered. */
+  /**
+  Preregistered bounds; omit when none were registered.
+  */
   readonly bounds?: PlaytestPolicyCompetenceBounds | undefined;
   readonly legalityRate: number | null;
   readonly repeatability: number | null;
@@ -77,13 +81,17 @@ export interface BuildPlaytestPolicyValidityInput {
   readonly createdAt: string;
 }
 
-/** A build is identified by a 40-character Git revision or a 64-char digest. */
+/**
+A build is identified by a 40-character Git revision or a 64-char digest.
+*/
 const BUILD_ID = /^([a-f\d]{40}|[a-f\d]{64})$/iu;
 const BUILDER_ID = /^[^/\s]+\/[^/\s]+$/u;
 const BOUNDED_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/u;
 const MAX_HELD_OUT_STATES = 4096;
 
-/** Proportion in [0, 1]; a rate outside it is a data error, not an extreme. */
+/**
+Proportion in [0, 1]; a rate outside it is a data error, not an extreme.
+*/
 function isRate(value: number | null): boolean {
   return value !== null && Number.isFinite(value) && value >= 0 && value <= 1;
 }
@@ -153,18 +161,18 @@ function assertPolicyMeasurements(
 }
 
 /**
- * Derive the validity record for one build/cohort/policy.
- *
- * `competence` is never supplied by the caller. The three possible values map
- * to three distinct situations, and collapsing them is what would let an
- * unmeasured policy authorize a human-proxy claim:
- *
- * - `unvalidated-synthetic` — no human data or no preregistered bounds;
- * - `insufficient` — bounds exist but a required metric was not measured, so
- *   the criteria cannot be applied;
- * - `passed` / `failed` — every required metric was measured and applied
- *   against the preregistered bounds.
- */
+Derive the validity record for one build/cohort/policy.
+
+`competence` is never supplied by the caller. The three possible values map
+to three distinct situations, and collapsing them is what would let an
+unmeasured policy authorize a human-proxy claim:
+
+- `unvalidated-synthetic` — no human data or no preregistered bounds;
+- `insufficient` — bounds exist but a required metric was not measured, so
+  the criteria cannot be applied;
+- `passed` / `failed` — every required metric was measured and applied
+  against the preregistered bounds.
+*/
 export function buildPlaytestPolicyValidity(
   input: BuildPlaytestPolicyValidityInput
 ): PlayerPolicyValidity {
@@ -224,13 +232,13 @@ export function buildPlaytestPolicyValidity(
 }
 
 /**
- * Whether a validity record may support a claim about human players.
- *
- * §6 requires an unvalidated cohort to downgrade novice/learner UX
- * generalizations to model-specific signals and disable human-proxy
- * comparisons. Returning the reason keeps that downgrade from being a silent
- * branch: a caller has to carry the sentence into its own output.
- */
+Whether a validity record may support a claim about human players.
+
+§6 requires an unvalidated cohort to downgrade novice/learner UX
+generalizations to model-specific signals and disable human-proxy
+comparisons. Returning the reason keeps that downgrade from being a silent
+branch: a caller has to carry the sentence into its own output.
+*/
 export function playtestHumanProxyRefusal(
   validity: PlayerPolicyValidity
 ): string | null {

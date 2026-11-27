@@ -108,7 +108,7 @@ function withUsageConfig(): () => void {
   const oldUrl = process.env.AUTODEV_OPENLIT_USAGE_URL;
   const oldControlToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   const oldCodexHome = process.env.CODEX_HOME;
-  const oldFetch = globalThis.fetch;
+  const oldFetch = fetch;
   process.env.AUTODEV_OPENLIT_USAGE_TOKEN = usageToken;
   process.env.AUTODEV_OPENLIT_USAGE_URL = "http://openlit.test";
   delete process.env.AUTODEV_CONTROL_API_TOKEN;

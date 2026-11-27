@@ -1,16 +1,16 @@
 /**
- * A refused action that says the page moved is recovered from.
- *
- * The Runtime's driver refuses an action the page no longer offers as the
- * observation promised. That refusal says the thing the policy looked at is
- * not what the page offers now, and the answer to that is to look again: the
- * episode observes the game once more and decides with the refusal in its
- * history, bounded by the budgets the operator approved.
- *
- * A refusal that says anything else -- the action was not allowed, the game
- * needs setup, the episode is out of budget -- is final, and the episode ends
- * on it with the truthful reason rather than with "crashed for no reason".
- */
+A refused action that says the page moved is recovered from.
+
+The Runtime's driver refuses an action the page no longer offers as the
+observation promised. That refusal says the thing the policy looked at is
+not what the page offers now, and the answer to that is to look again: the
+episode observes the game once more and decides with the refusal in its
+history, bounded by the budgets the operator approved.
+
+A refusal that says anything else -- the action was not allowed, the game
+needs setup, the episode is out of budget -- is final, and the episode ends
+on it with the truthful reason rather than with "crashed for no reason".
+*/
 import assert from "node:assert/strict";
 import test from "node:test";
 

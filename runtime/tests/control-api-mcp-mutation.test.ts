@@ -27,13 +27,13 @@ const SERVICE_TOKEN = "m".repeat(64);
 const OPERATOR_ACTOR = "mcp-mutation-operator";
 
 /**
- * The canonical declaration the write starts from.
- *
- * It is the repository's own declaration, because the roles the projection is
- * rendered against name the servers it declares, and a declaration that left
- * one of them out would fail to render. A comment is added so the write has a
- * comment to preserve.
- */
+The canonical declaration the write starts from.
+
+It is the repository's own declaration, because the roles the projection is
+rendered against name the servers it declares, and a declaration that left
+one of them out would fail to render. A comment is added so the write has a
+comment to preserve.
+*/
 const DECLARATION = readFileSync(
   path.join(REPOSITORY_ROOT, ".rulesync", "mcp.jsonc"),
   "utf8"
@@ -55,12 +55,12 @@ function request(method: string, url: string, body?: unknown): IncomingMessage {
 }
 
 /**
- * A repository root and a Codex home.
- *
- * The projection is generated from the declaration by RuleSync and applied to
- * the Codex home, so the fixture carries the repository's own configuration
- * and roles: they are what the projection is rendered against.
- */
+A repository root and a Codex home.
+
+The projection is generated from the declaration by RuleSync and applied to
+the Codex home, so the fixture carries the repository's own configuration
+and roles: they are what the projection is rendered against.
+*/
 function fixture(declaration: string = DECLARATION): {
   readonly repositoryRoot: string;
   readonly codexHome: string;
@@ -99,9 +99,9 @@ function fixture(declaration: string = DECLARATION): {
 }
 
 /**
- * The credential the Control API requires, installed for the duration of the
- * request and removed again afterwards.
- */
+The credential the Control API requires, installed for the duration of the
+request and removed again afterwards.
+*/
 async function withControlApiCredential<T>(run: () => Promise<T>): Promise<T> {
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   const previousOperators = process.env.AUTODEV_CONTROL_OPERATORS;
@@ -304,7 +304,7 @@ test("a canonical MCP write preserves header values and publishes only header na
       .join("\n");
   const declaration = DECLARATION.replaceAll(
     /("mcpServers": \{\n)/gu,
-    (opening: string) => opening + probe("    ") + "\n"
+    (opening: string) => opening + probe(' '.repeat(4)) + "\n"
   );
   const options = fixture(declaration);
   const catalog = await call("GET", "/control/mcps", options);

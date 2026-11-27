@@ -1,108 +1,116 @@
 import React from "react";
 
 /**
- * The Console's button vocabulary.
- *
- * A filter bar used to render its primary action three different ways, which
- * reads as three different products. Buttons stay native `<button>` elements so
- * form submission and focus behaviour stay correct; only the chrome is shared.
- */
+The Console's button vocabulary.
+
+A filter bar used to render its primary action three different ways, which
+reads as three different products. Buttons stay native `<button>` elements so
+form submission and focus behaviour stay correct; only the chrome is shared.
+*/
 
 /**
- * Every control in the button vocabulary is a pointer target.
- *
- * The cursor is the primary signal that a thing is clickable, and the Console
- * had none of it. Every button -- "Apply filters", "Reset to defaults", the
- * per-session steppers, the provider row's limit buttons -- rendered with the
- * default arrow while looking like a button and behaving like one, so the
- * pointer contradicted the chrome. The Console's own newer surfaces spelled
- * `cursor-pointer` inline instead, which left the same role with two
- * spellings and the shared vocabulary with none.
- *
- * It lives in the "after" class of every variant because that is the piece
- * each variant's full, compact and icon forms share, and because the disabled
- * cursor already lived there: a disabled button keeps `not-allowed`, which
- * says "this is a target, and it is off" rather than pretending it is not one.
- */
+Every control in the button vocabulary is a pointer target.
+
+The cursor is the primary signal that a thing is clickable, and the Console
+had none of it. Every button -- "Apply filters", "Reset to defaults", the
+per-session steppers, the provider row's limit buttons -- rendered with the
+default arrow while looking like a button and behaving like one, so the
+pointer contradicted the chrome. The Console's own newer surfaces spelled
+`cursor-pointer` inline instead, which left the same role with two
+spellings and the shared vocabulary with none.
+
+It lives in the "after" class of every variant because that is the piece
+each variant's full, compact and icon forms share, and because the disabled
+cursor already lived there: a disabled button keeps `not-allowed`, which
+says "this is a target, and it is off" rather than pretending it is not one.
+*/
 const BUTTON_POINTER_CLASS = "cursor-pointer";
 
 const DEFAULT_BUTTON_SIZE_CLASS = "px-3 py-1.5 text-sm font-medium";
 const COMPACT_BUTTON_SIZE_CLASS = "px-2 py-1 text-xs font-medium";
 
 /**
- * What a control that is working looks like.
- *
- * A disabled control is dropped out of the page's focus order the moment it is
- * disabled, so the operator who pressed it loses their place in the document
- * and the next Tab starts from the top of the page. A control that is working
- * is not unavailable -- it is busy -- so it wears the unavailable chrome
- * without the unavailable focus behaviour.
- */
+What a control that is working looks like.
+
+A disabled control is dropped out of the page's focus order the moment it is
+disabled, so the operator who pressed it loses their place in the document
+and the next Tab starts from the top of the page. A control that is working
+is not unavailable -- it is busy -- so it wears the unavailable chrome
+without the unavailable focus behaviour.
+*/
 const BUSY_AFTER_CLASS =
   "aria-disabled:cursor-not-allowed aria-disabled:opacity-60";
 
-/** The one primary action in a group: applying, saving, confirming. */
+/**
+The one primary action in a group: applying, saving, confirming.
+*/
 const PRIMARY_BUTTON_BEFORE_SIZE_CLASS =
   "rounded border border-transparent bg-accent";
 const PRIMARY_BUTTON_AFTER_SIZE_CLASS = `text-fg-inverse transition-colors hover:brightness-110 ${BUTTON_POINTER_CLASS} disabled:cursor-not-allowed disabled:opacity-60 ${BUSY_AFTER_CLASS}`;
 export const PRIMARY_BUTTON_CLASS = `${PRIMARY_BUTTON_BEFORE_SIZE_CLASS} ${DEFAULT_BUTTON_SIZE_CLASS} ${PRIMARY_BUTTON_AFTER_SIZE_CLASS}`;
 
-/** A supporting action: secondary filters, cancel, and inline toggles. */
+/**
+A supporting action: secondary filters, cancel, and inline toggles.
+*/
 const SECONDARY_BUTTON_BEFORE_SIZE_CLASS =
   "rounded border border-border-strong bg-surface-raised";
 const SECONDARY_BUTTON_AFTER_SIZE_CLASS = `text-fg transition-colors hover:bg-hover ${BUTTON_POINTER_CLASS} disabled:cursor-not-allowed disabled:opacity-60 ${BUSY_AFTER_CLASS}`;
 export const SECONDARY_BUTTON_CLASS = `${SECONDARY_BUTTON_BEFORE_SIZE_CLASS} ${DEFAULT_BUTTON_SIZE_CLASS} ${SECONDARY_BUTTON_AFTER_SIZE_CLASS}`;
 
-/** A compact outlined control such as the sidebar collapse toggle. */
+/**
+A compact outlined control such as the sidebar collapse toggle.
+*/
 const OUTLINE_BUTTON_CHROME_CLASS = `rounded-full border border-border-strong bg-surface text-fg shadow-sm transition-colors hover:bg-hover ${BUTTON_POINTER_CLASS} disabled:cursor-not-allowed disabled:opacity-60 ${BUSY_AFTER_CLASS}`;
 export const OUTLINE_BUTTON_CLASS = OUTLINE_BUTTON_CHROME_CLASS;
 
 const ICON_BUTTON_SIZE_CLASS = "h-6 w-6 p-0 text-sm font-medium";
 
 /**
- * A control drawn inside another element -- such as the re-check symbol inside
- * a Status badge -- rather than beside it: no border or fill of its own, the
- * colour of what it sits in, and a 16px box as an icon so it fits a badge's
- * line.
- */
+A control drawn inside another element -- such as the re-check symbol inside
+a Status badge -- rather than beside it: no border or fill of its own, the
+colour of what it sits in, and a 16px box as an icon so it fits a badge's
+line.
+*/
 const INLINE_BUTTON_CHROME_CLASS = `inline-flex items-center justify-center rounded-full text-current opacity-80 transition-opacity hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-current ${BUTTON_POINTER_CLASS} disabled:cursor-not-allowed disabled:opacity-60 ${BUSY_AFTER_CLASS}`;
 const INLINE_ICON_BUTTON_SIZE_CLASS = "size-4 p-0";
 
 /**
- * An irreversible action: erasing or purging. Separate from the error status
- * colour so "this control is destructive" reads consistently with every other
- * destructive control rather than being re-typed per feature.
- */
+An irreversible action: erasing or purging. Separate from the error status
+colour so "this control is destructive" reads consistently with every other
+destructive control rather than being re-typed per feature.
+*/
 const DESTRUCTIVE_BUTTON_BEFORE_SIZE_CLASS =
   "rounded border border-error/60 bg-error/15";
 const DESTRUCTIVE_BUTTON_AFTER_SIZE_CLASS = `text-error transition-colors hover:bg-error/25 ${BUTTON_POINTER_CLASS} disabled:cursor-not-allowed disabled:opacity-60 ${BUSY_AFTER_CLASS}`;
 export const DESTRUCTIVE_BUTTON_CLASS = `${DESTRUCTIVE_BUTTON_BEFORE_SIZE_CLASS} ${DEFAULT_BUTTON_SIZE_CLASS} ${DESTRUCTIVE_BUTTON_AFTER_SIZE_CLASS}`;
 
 /**
- * A quiet bordered control: the button that acts inside a panel without being
- * the panel's primary action -- "Generate assignments", "Add session", "Close".
- *
- * The playtesting strand spelled this chrome out seven times across three
- * files, and the copies had drifted: two of them carried a hover surface and
- * one carried a `hover:bg-surface-muted` that named a token the theme has
- * never had, so its hover emitted no rule at all. The others had no hover
- * surface, which is why a quiet button in one panel answered the pointer and
- * the same button in another panel did not.
- *
- * It is a member of this family, so it lives here rather than in the feature
- * that needed it: the border is the quiet surface's own edge, the hover is the
- * product's hover surface, and the pointer and the disabled cursor come from
- * the same place every other control gets them from. It is split into the same
- * three pieces as the other variants -- the shape, the shared size, and the
- * interaction -- so a quiet button takes the family's size scale rather than
- * carrying a padding of its own that the size maps could not reach.
- */
+A quiet bordered control: the button that acts inside a panel without being
+the panel's primary action -- "Generate assignments", "Add session", "Close".
+
+The playtesting strand spelled this chrome out seven times across three
+files, and the copies had drifted: two of them carried a hover surface and
+one carried a `hover:bg-surface-muted` that named a token the theme has
+never had, so its hover emitted no rule at all. The others had no hover
+surface, which is why a quiet button in one panel answered the pointer and
+the same button in another panel did not.
+
+It is a member of this family, so it lives here rather than in the feature
+that needed it: the border is the quiet surface's own edge, the hover is the
+product's hover surface, and the pointer and the disabled cursor come from
+the same place every other control gets them from. It is split into the same
+three pieces as the other variants -- the shape, the shared size, and the
+interaction -- so a quiet button takes the family's size scale rather than
+carrying a padding of its own that the size maps could not reach.
+*/
 const QUIET_BUTTON_BEFORE_SIZE_CLASS = "rounded-md border border-border";
 const QUIET_BUTTON_AFTER_SIZE_CLASS = `transition-colors hover:bg-hover ${BUTTON_POINTER_CLASS} disabled:cursor-not-allowed disabled:opacity-60 ${BUSY_AFTER_CLASS}`;
 export const QUIET_BUTTON_CLASS = `${QUIET_BUTTON_BEFORE_SIZE_CLASS} ${DEFAULT_BUTTON_SIZE_CLASS} ${QUIET_BUTTON_AFTER_SIZE_CLASS}`;
 
 export interface ButtonProps {
-  /** Optional here so callers can pass the label as `createElement`'s child. */
+  /**
+  Optional here so callers can pass the label as `createElement`'s child.
+  */
   readonly children?: React.ReactNode;
   readonly type?: "submit" | "button" | "reset" | undefined;
   readonly variant?:
@@ -116,43 +124,49 @@ export interface ButtonProps {
   readonly size?: "default" | "compact" | "icon" | undefined;
   readonly disabled?: boolean | undefined;
   /**
-   * The control is working.
-   *
-   * A disabled control is dropped out of the page's focus order the moment it
-   * is disabled, so the operator who pressed it loses their place in the
-   * document. A control that is working is not unavailable -- it is busy --
-   * and it says so: `aria-disabled` keeps it announced as unavailable while it
-   * stays focusable, and the visible label carries the state. The Console's own
-   * form owner publishes its pending state the same way, for the same reason.
-   *
-   * A busy control does not act: the action it stands for is already
-   * happening, so a second press is swallowed by the vocabulary rather than
-   * reaching the caller's handler. That is what makes the busy state a safe
-   * replacement for a control that used to be disabled while it worked -- the
-   * operator keeps their place in the page and the request happens once.
-   */
+  The control is working.
+  
+  A disabled control is dropped out of the page's focus order the moment it
+  is disabled, so the operator who pressed it loses their place in the
+  document. A control that is working is not unavailable -- it is busy --
+  and it says so: `aria-disabled` keeps it announced as unavailable while it
+  stays focusable, and the visible label carries the state. The Console's own
+  form owner publishes its pending state the same way, for the same reason.
+  
+  A busy control does not act: the action it stands for is already
+  happening, so a second press is swallowed by the vocabulary rather than
+  reaching the caller's handler. That is what makes the busy state a safe
+  replacement for a control that used to be disabled while it worked -- the
+  operator keeps their place in the page and the request happens once.
+  */
   readonly busy?: boolean | undefined;
   readonly className?: string | undefined;
   readonly title?: string | undefined;
   readonly onClick?: (() => void) | undefined;
-  /** Marks the control for tests and stable browser assertions. */
+  /**
+  Marks the control for tests and stable browser assertions.
+  */
   readonly testId?: string | undefined;
   /**
-   * The field name and value a submit button contributes to its form.
-   *
-   * A server-rendered control that expresses a choice cannot hold that choice in
-   * component state, because there is no component state on the server. It
-   * submits it: the button carries the value it would set under its own field
-   * name, which is what lets a row offer several choices from one form without
-   * a client-side handler to remember which was picked. The name is deliberately
-   * the caller's to choose -- it is the wire contract between the control and
-   * the route, not a detail of the button's appearance.
-   */
+  The field name and value a submit button contributes to its form.
+  
+  A server-rendered control that expresses a choice cannot hold that choice in
+  component state, because there is no component state on the server. It
+  submits it: the button carries the value it would set under its own field
+  name, which is what lets a row offer several choices from one form without
+  a client-side handler to remember which was picked. The name is deliberately
+  the caller's to choose -- it is the wire contract between the control and
+  the route, not a detail of the button's appearance.
+  */
   readonly name?: string | undefined;
   readonly value?: string | undefined;
-  /** Extra attributes, for state flags and ARIA the vocabulary does not model. */
+  /**
+  Extra attributes, for state flags and ARIA the vocabulary does not model.
+  */
   readonly dataAttributes?: Readonly<Record<string, string>> | undefined;
-  /** Accessible name, when the visible label alone does not describe the action. */
+  /**
+  Accessible name, when the visible label alone does not describe the action.
+  */
   readonly ariaLabel?: string | undefined;
   readonly ariaControls?: string | undefined;
   readonly ariaExpanded?: boolean | undefined;
@@ -216,13 +230,13 @@ export function Button({
       ...(busy === true
         ? { "aria-disabled": "true", "data-submitting": "true" }
         : { onClick }),
-      ...(disabled === undefined ? {} : { disabled }),
-      ...(title === undefined ? {} : { title }),
-      ...(name === undefined ? {} : { name }),
-      ...(value === undefined ? {} : { value }),
-      ...(ariaLabel === undefined ? {} : { "aria-label": ariaLabel }),
-      ...(ariaControls === undefined ? {} : { "aria-controls": ariaControls }),
-      ...(ariaExpanded === undefined ? {} : { "aria-expanded": ariaExpanded }),
+      ...(disabled !== undefined && { disabled }),
+      ...(title !== undefined && { title }),
+      ...(name !== undefined && { name }),
+      ...(value !== undefined && { value }),
+      ...(ariaLabel !== undefined && { "aria-label": ariaLabel }),
+      ...(ariaControls !== undefined && { "aria-controls": ariaControls }),
+      ...(ariaExpanded !== undefined && { "aria-expanded": ariaExpanded }),
       className: `${
         size === "default"
           ? BUTTON_VARIANT_CLASS[variant]
@@ -230,7 +244,7 @@ export function Button({
             ? BUTTON_VARIANT_COMPACT_CLASS[variant]
             : BUTTON_VARIANT_ICON_CLASS[variant]
       }${className === undefined ? "" : ` ${className}`}`,
-      ...(testId === undefined ? {} : { "data-button": testId }),
+      ...(testId !== undefined && { "data-button": testId }),
       ...dataAttributes
     },
     children

@@ -22,12 +22,12 @@ const SPAN_ID = "0123456789abcdef";
 const TRACE_ID = "0123456789abcdef0123456789abcdef";
 
 /**
- * One span, at each magnitude the formatter has to choose a unit for.
- *
- * The first one is the case the two formatters disagreed about hardest: a
- * span of a third of a microsecond used to be rendered "0 µs" on the
- * Evaluations trace panel, which claims the span took no time at all.
- */
+One span, at each magnitude the formatter has to choose a unit for.
+
+The first one is the case the two formatters disagreed about hardest: a
+span of a third of a microsecond used to be rendered "0 µs" on the
+Evaluations trace panel, which claims the span took no time at all.
+*/
 const SPANS: readonly (readonly [number, string])[] = [
   [300, "1 µs"],
   [940_000_000, "940 ms"],

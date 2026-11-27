@@ -47,25 +47,25 @@ test("analyst dispatch uses the existing provider-agent role with a read-only sc
     args: readonly string[];
     options: SpawnOptions;
   }[] = [];
-  const eventHandlers = new Map<string, (...args: unknown[]) => void>();
+  const eventHandlers = new Map<string, (...arguments_: unknown[]) => void>();
   const child = {
-    once(event: string, handler: (...args: unknown[]) => void) {
+    once(event: string, handler: (...arguments_: unknown[]) => void) {
       eventHandlers.set(event, handler);
       return child;
     },
     kill: () => true,
-    emitForTest(event: string, ...args: unknown[]) {
-      eventHandlers.get(event)?.(...args);
+    emitForTest(event: string, ...arguments_: unknown[]) {
+      eventHandlers.get(event)?.(...arguments_);
     }
   } as unknown as ChildProcess & {
-    emitForTest(event: string, ...args: unknown[]): void;
+    emitForTest(event: string, ...arguments_: unknown[]): void;
   };
   const spawnProcess = ((
     command: string,
-    args: string[],
+    arguments_: string[],
     options: SpawnOptions
   ) => {
-    calls.push({ command, args, options });
+    calls.push({ command, args: arguments_, options });
     return child;
   }) as unknown as typeof spawn;
   const processHandle = launchPlaytestAnalystProcess(
@@ -234,23 +234,23 @@ test("analyst dispatch uses the existing provider-agent role with a read-only sc
 });
 
 test("analyst dispatch needs no unused Control API credential", async () => {
-  const eventHandlers = new Map<string, (...args: unknown[]) => void>();
+  const eventHandlers = new Map<string, (...arguments_: unknown[]) => void>();
   const child = {
-    once(event: string, handler: (...args: unknown[]) => void) {
+    once(event: string, handler: (...arguments_: unknown[]) => void) {
       eventHandlers.set(event, handler);
       return child;
     },
     kill: () => true,
-    emitForTest(event: string, ...args: unknown[]) {
-      eventHandlers.get(event)?.(...args);
+    emitForTest(event: string, ...arguments_: unknown[]) {
+      eventHandlers.get(event)?.(...arguments_);
     }
   } as unknown as ChildProcess & {
-    emitForTest(event: string, ...args: unknown[]): void;
+    emitForTest(event: string, ...arguments_: unknown[]): void;
   };
   let spawnCount = 0;
   const spawnProcess = ((
     _command: string,
-    _args: string[],
+    _arguments: string[],
     _options: SpawnOptions
   ) => {
     spawnCount += 1;
@@ -283,29 +283,29 @@ test("analyst dispatch needs no unused Control API credential", async () => {
 });
 
 test("a failed analyst reports what the child said, bounded", async () => {
-  const eventHandlers = new Map<string, (...args: unknown[]) => void>();
-  const streamHandlers = new Map<string, (...args: unknown[]) => void>();
+  const eventHandlers = new Map<string, (...arguments_: unknown[]) => void>();
+  const streamHandlers = new Map<string, (...arguments_: unknown[]) => void>();
   const stream = {
-    on(event: string, handler: (...args: unknown[]) => void) {
+    on(event: string, handler: (...arguments_: unknown[]) => void) {
       streamHandlers.set(event, handler);
       return stream;
     }
   };
   const child = {
-    once(event: string, handler: (...args: unknown[]) => void) {
+    once(event: string, handler: (...arguments_: unknown[]) => void) {
       eventHandlers.set(event, handler);
       return child;
     },
     stdout: stream,
     stderr: stream,
     kill: () => true,
-    emitForTest(event: string, ...args: unknown[]) {
-      eventHandlers.get(event)?.(...args);
+    emitForTest(event: string, ...arguments_: unknown[]) {
+      eventHandlers.get(event)?.(...arguments_);
     }
   } as unknown as ChildProcess;
   const spawnProcess = ((
     _command: string,
-    _args: string[],
+    _arguments: string[],
     _options: SpawnOptions
   ) => child) as unknown as typeof spawn;
   const processHandle = launchPlaytestAnalystProcess(
@@ -337,18 +337,18 @@ test("a failed analyst reports what the child said, bounded", async () => {
 });
 
 test("discovery analyst dispatch has no metric aggregation and receives a hypothesis-only prompt", async () => {
-  const eventHandlers = new Map<string, (...args: unknown[]) => void>();
+  const eventHandlers = new Map<string, (...arguments_: unknown[]) => void>();
   const child = {
-    once(event: string, handler: (...args: unknown[]) => void) {
+    once(event: string, handler: (...arguments_: unknown[]) => void) {
       eventHandlers.set(event, handler);
       return child;
     },
     kill: () => true,
-    emitForTest(event: string, ...args: unknown[]) {
-      eventHandlers.get(event)?.(...args);
+    emitForTest(event: string, ...arguments_: unknown[]) {
+      eventHandlers.get(event)?.(...arguments_);
     }
   } as unknown as ChildProcess & {
-    emitForTest(event: string, ...args: unknown[]): void;
+    emitForTest(event: string, ...arguments_: unknown[]): void;
   };
   const calls: {
     args: readonly string[];
@@ -356,10 +356,10 @@ test("discovery analyst dispatch has no metric aggregation and receives a hypoth
   }[] = [];
   const spawnProcess = ((
     _command: string,
-    args: string[],
+    arguments_: string[],
     options: SpawnOptions
   ) => {
-    calls.push({ args, options });
+    calls.push({ args: arguments_, options });
     return child;
   }) as unknown as typeof spawn;
   const processHandle = launchPlaytestAnalystProcess(
@@ -409,25 +409,25 @@ test("discovery analyst dispatch has no metric aggregation and receives a hypoth
 
 test("a findings request asks for the strict finding identity, and a hypothesis review omits findings", async () => {
   const prompts: string[] = [];
-  const eventHandlers = new Map<string, (...args: unknown[]) => void>();
+  const eventHandlers = new Map<string, (...arguments_: unknown[]) => void>();
   const child = {
-    once(event: string, handler: (...args: unknown[]) => void) {
+    once(event: string, handler: (...arguments_: unknown[]) => void) {
       eventHandlers.set(event, handler);
       return child;
     },
     kill: () => true,
-    emitForTest(event: string, ...args: unknown[]) {
-      eventHandlers.get(event)?.(...args);
+    emitForTest(event: string, ...arguments_: unknown[]) {
+      eventHandlers.get(event)?.(...arguments_);
     }
   } as unknown as ChildProcess & {
-    emitForTest(event: string, ...args: unknown[]): void;
+    emitForTest(event: string, ...arguments_: unknown[]): void;
   };
   const spawnProcess = ((
     _command: string,
-    args: string[],
+    arguments_: string[],
     _options: SpawnOptions
   ) => {
-    prompts.push(args.at(-1) ?? "");
+    prompts.push(arguments_.at(-1) ?? "");
     return child;
   }) as unknown as typeof spawn;
   for (const requireFindings of [true, false]) {
@@ -466,29 +466,29 @@ test("a findings request asks for the strict finding identity, and a hypothesis 
 });
 
 test("a failed analyst reports what the child said, bounded", async () => {
-  const eventHandlers = new Map<string, (...args: unknown[]) => void>();
-  const streamHandlers = new Map<string, (...args: unknown[]) => void>();
+  const eventHandlers = new Map<string, (...arguments_: unknown[]) => void>();
+  const streamHandlers = new Map<string, (...arguments_: unknown[]) => void>();
   const stream = {
-    on(event: string, handler: (...args: unknown[]) => void) {
+    on(event: string, handler: (...arguments_: unknown[]) => void) {
       streamHandlers.set(event, handler);
       return stream;
     }
   };
   const child = {
-    once(event: string, handler: (...args: unknown[]) => void) {
+    once(event: string, handler: (...arguments_: unknown[]) => void) {
       eventHandlers.set(event, handler);
       return child;
     },
     stdout: stream,
     stderr: stream,
     kill: () => true,
-    emitForTest(event: string, ...args: unknown[]) {
-      eventHandlers.get(event)?.(...args);
+    emitForTest(event: string, ...arguments_: unknown[]) {
+      eventHandlers.get(event)?.(...arguments_);
     }
   } as unknown as ChildProcess;
   const spawnProcess = ((
     _command: string,
-    _args: string[],
+    _arguments: string[],
     _options: SpawnOptions
   ) => child) as unknown as typeof spawn;
   const processHandle = launchPlaytestAnalystProcess(

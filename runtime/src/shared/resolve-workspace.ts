@@ -11,7 +11,9 @@ export type RequestHeaders = Record<string, string | string[] | undefined>;
 
 export class WorkspaceResolutionError extends Error {}
 
-/** More than one workspace in the turn metadata exists on this host. */
+/**
+More than one workspace in the turn metadata exists on this host.
+*/
 export class AmbiguousWorkspaceError extends WorkspaceResolutionError {
   candidates: string[];
   constructor(candidates: string[]) {
@@ -34,7 +36,9 @@ export function isDirectory(path: unknown): path is string {
   }
 }
 
-/** Parse turn metadata only when it contains a valid JSON object. */
+/**
+Parse turn metadata only when it contains a valid JSON object.
+*/
 export function parseTurnMetadataJson(value: unknown): JsonObject | null {
   if (typeof value !== "string" || !value.trim()) return null;
   try {
@@ -119,21 +123,21 @@ export function resolveWorkspaceFromTurnMetadata(
 }
 
 function findDirectoryInObject(
-  obj: JsonObject | null | undefined
+  object: JsonObject | null | undefined
 ): string | null {
-  if (!obj || typeof obj !== "object") return null;
+  if (!object || typeof object !== "object") return null;
   for (const key of WORKSPACE_KEYS) {
-    const value = obj[key];
+    const value = object[key];
     if (isDirectory(value)) return value;
   }
   return null;
 }
 
 /**
- * Resolve a workspace from structured request fields only; task prose is
- * never consulted. The explicit operator override is provider-specific and is
- * passed by the caller after resolving its environment variable.
- */
+Resolve a workspace from structured request fields only; task prose is
+never consulted. The explicit operator override is provider-specific and is
+passed by the caller after resolving its environment variable.
+*/
 export function resolveCwd(
   payload: JsonObject | null | undefined,
   headers: RequestHeaders | null | undefined,

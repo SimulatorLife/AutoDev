@@ -12,25 +12,25 @@ test("macOS lifecycle uses typed launchd operations without shell interpolation"
   const calls: string[][] = [];
   // launchd's bootout is asynchronous: the label stays printable for one more
   // poll after the command returns.
-  let loaded = true;
+  let isLoaded = true;
   let unloadPolls = 0;
-  const runner = (_command: string, args: string[]): CommandResult => {
-    calls.push(args);
-    if (args[0] === "bootout") {
+  const runner = (_command: string, arguments_: string[]): CommandResult => {
+    calls.push(arguments_);
+    if (arguments_[0] === "bootout") {
       unloadPolls = 1;
       return { stdout: "", stderr: "", status: 0 };
     }
-    if (args[0] === "bootstrap") {
-      loaded = true;
+    if (arguments_[0] === "bootstrap") {
+      isLoaded = true;
       return { stdout: "", stderr: "", status: 0 };
     }
-    if (args[0] === "print") {
+    if (arguments_[0] === "print") {
       if (unloadPolls > 0) {
         unloadPolls -= 1;
-        if (unloadPolls === 0) loaded = false;
+        if (unloadPolls === 0) isLoaded = false;
         return { stdout: "gui/501/com.autodev.router", stderr: "", status: 0 };
       }
-      return loaded
+      return isLoaded
         ? { stdout: "gui/501/com.autodev.router", stderr: "", status: 0 }
         : { stdout: "", stderr: "not loaded", status: 1 };
     }
@@ -63,11 +63,9 @@ test("macOS lifecycle uses typed launchd operations without shell interpolation"
 
 test("bootout throws when the job is still loaded after the bounded wait, so no caller bootstraps over it", () => {
   const calls: string[][] = [];
-  const runner = (_command: string, args: string[]): CommandResult => {
-    calls.push(args);
-    return args[0] === "print"
-      ? { stdout: "gui/501/com.autodev.router", stderr: "", status: 0 }
-      : { stdout: "", stderr: "", status: 0 };
+  const runner = (_command: string, arguments_: string[]): CommandResult => {
+    calls.push(arguments_);
+    return ({ stdout: arguments_[0] === "print" ? "gui/501/com.autodev.router" : "", stderr: "", status: 0 });
   };
   const sleeps: number[] = [];
   const client = new LaunchdClient({
@@ -90,7 +88,7 @@ test("bootout throws when the job is still loaded after the bounded wait, so no 
   );
   assert.deepEqual(sleeps, [25, 25, 25]);
   assert.equal(
-    calls.filter((args) => args[0] === "bootout").length,
+    calls.filter((arguments_) => arguments_[0] === "bootout").length,
     1,
     "bootout is issued once and then polled for completion"
   );
@@ -99,8 +97,8 @@ test("bootout throws when the job is still loaded after the bounded wait, so no 
 test("bootout of a job that is not loaded is a no-op", () => {
   const calls: string[][] = [];
   const client = new LaunchdClient({
-    runner: (_command, args) => {
-      calls.push(args);
+    runner: (_command, arguments_) => {
+      calls.push(arguments_);
       return { stdout: "", stderr: "Could not find service", status: 113 };
     },
     uid: 501

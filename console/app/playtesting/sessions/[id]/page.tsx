@@ -45,12 +45,12 @@ import {
 export const dynamic = "force-dynamic";
 
 /**
- * Whether an in-flight run owns the episode this page is asking for.
- *
- * A missing episode is only "pending" when a live run owns it. Any other
- * missing episode is missing for good, and saying "initializing" for it would
- * leave the operator waiting for something that will never arrive.
- */
+Whether an in-flight run owns the episode this page is asking for.
+
+A missing episode is only "pending" when a live run owns it. Any other
+missing episode is missing for good, and saying "initializing" for it would
+leave the operator waiting for something that will never arrive.
+*/
 async function liveRunOwnsSession(
   workspaceId: string,
   episodeId: string,
@@ -72,7 +72,9 @@ async function liveRunOwnsSession(
   );
 }
 
-/** The page's answer while the episode's first frames are still being written. */
+/**
+The page's answer while the episode's first frames are still being written.
+*/
 function sessionPendingContent(episodeId: string): React.JSX.Element {
   return React.createElement(
     "section",
@@ -106,14 +108,14 @@ function sessionPendingContent(episodeId: string): React.JSX.Element {
 }
 
 /**
- * The page's answer when the episode could not be read.
- *
- * A session id this workspace never recorded is not a server fault. The
- * shared failure shell's default hint tells the operator to configure a
- * server-side integration and restart the Console, which sends them to fix
- * something that is not broken. Say what is actually true instead, and give
- * them the way back to the list they came from.
- */
+The page's answer when the episode could not be read.
+
+A session id this workspace never recorded is not a server fault. The
+shared failure shell's default hint tells the operator to configure a
+server-side integration and restart the Console, which sends them to fix
+something that is not broken. Say what is actually true instead, and give
+them the way back to the list they came from.
+*/
 function sessionFailureContent(
   result: Exclude<ControlApiResult<unknown>, { readonly kind: "ok" }>,
   scope: PlaytestingScope,
@@ -141,7 +143,7 @@ function sessionFailureContent(
       title: playtestingSessionFailureTitle(failure),
       code: failure.code,
       message: failure.message,
-      ...(hint === null ? {} : { hint })
+      ...(hint !== null && { hint })
     }),
     React.createElement(
       NavigationLink,
@@ -155,7 +157,7 @@ function sessionFailureContent(
   );
 }
 
-interface PlaytestingSessionPageProps {
+interface PlaytestingSessionPageProperties {
   readonly params: Promise<{ readonly id: string }>;
   readonly searchParams?: Promise<
     Record<string, string | readonly string[] | undefined>
@@ -163,18 +165,18 @@ interface PlaytestingSessionPageProps {
 }
 
 /**
- * The title of the tab this session is open in.
- *
- * Every other detail page names the item it is about: "default · Agents",
- * "claude · Providers", "lsp · MCPs". This one said "Playtesting session" for
- * every session, so an operator with two sessions open could not tell the tabs
- * apart -- and the tab is what you read when you have many of them.
- *
- * The route's own id is the name, and it is the name the page shows too: the
- * episode's heading reads the same id. The metadata function does not fetch the
- * episode to learn more, because a metadata function that fetched would double
- * every session request.
- */
+The title of the tab this session is open in.
+
+Every other detail page names the item it is about: "default · Agents",
+"claude · Providers", "lsp · MCPs". This one said "Playtesting session" for
+every session, so an operator with two sessions open could not tell the tabs
+apart -- and the tab is what you read when you have many of them.
+
+The route's own id is the name, and it is the name the page shows too: the
+episode's heading reads the same id. The metadata function does not fetch the
+episode to learn more, because a metadata function that fetched would double
+every session request.
+*/
 export async function generateMetadata({
   params
 }: {
@@ -187,7 +189,7 @@ export async function generateMetadata({
 export default async function PlaytestingSessionPage({
   params,
   searchParams
-}: PlaytestingSessionPageProps): Promise<React.JSX.Element> {
+}: PlaytestingSessionPageProperties): Promise<React.JSX.Element> {
   const [{ id }, query] = await Promise.all([
     params,
     searchParams ?? Promise.resolve({})
@@ -231,8 +233,8 @@ export default async function PlaytestingSessionPage({
   }
   if (
     workspaces.data.catalogStatus !== "valid" ||
-    !workspaces.data.workspaces.some(
-      (workspace) => workspace.id === scope.workspaceId
+    workspaces.data.workspaces.every(
+      (workspace) => workspace.id !== scope.workspaceId
     )
   ) {
     return React.createElement(
@@ -294,7 +296,7 @@ export default async function PlaytestingSessionPage({
       detail,
       scope,
       window: window?.kind === "ok" ? window.data : null,
-      ...(windowUnavailable === undefined ? {} : { windowUnavailable })
+      ...(windowUnavailable !== undefined && { windowUnavailable })
     })
   );
 }

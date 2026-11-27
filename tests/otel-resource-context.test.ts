@@ -9,12 +9,12 @@ import {
 } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
 
 test("AutoDev OTel resource context is bounded, source-owned, and preserves other attributes", () => {
-  const env = {
+  const environment = {
     OTEL_RESOURCE_ATTRIBUTES:
       "service.name=copilot,autodev.workspace=stale,custom.label=one%2Ctwo,autodev.agent.role=old"
   };
   const updated = withAutoDevOtelResourceContext(
-    env,
+    environment,
     "SimulatorLife/AutoDev",
     "worker"
   );
@@ -24,7 +24,7 @@ test("AutoDev OTel resource context is bounded, source-owned, and preserves othe
     "service.name=copilot,custom.label=one%2Ctwo,autodev.workspace=SimulatorLife%2FAutoDev,autodev.agent.role=worker"
   );
   assert.equal(
-    env.OTEL_RESOURCE_ATTRIBUTES,
+    environment.OTEL_RESOURCE_ATTRIBUTES,
     "service.name=copilot,autodev.workspace=stale,custom.label=one%2Ctwo,autodev.agent.role=old",
     "per-request context must not mutate the parent environment"
   );

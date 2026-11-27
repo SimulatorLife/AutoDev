@@ -1,16 +1,16 @@
 /**
- * The mutable working shapes the diagnostics engine builds.
- *
- * The published contract in `@simulatorlife/autodev-core` is readonly: a
- * consumer receives facts, not a structure it can edit. The engine, on the
- * other hand, accumulates -- a thread's turns, a session's token totals, a
- * router provider's counters -- and every one of those is filled field by
- * field before it is published.
- *
- * These are the two shapes that reconcile: the engine works on the mutable
- * mirror, and the mirror is assignable to the readonly contract at the
- * boundary.
- */
+The mutable working shapes the diagnostics engine builds.
+
+The published contract in `@simulatorlife/autodev-core` is readonly: a
+consumer receives facts, not a structure it can edit. The engine, on the
+other hand, accumulates -- a thread's turns, a session's token totals, a
+router provider's counters -- and every one of those is filled field by
+field before it is published.
+
+These are the two shapes that reconcile: the engine works on the mutable
+mirror, and the mirror is assignable to the readonly contract at the
+boundary.
+*/
 
 import type {
   FleetSessionRow,
@@ -23,7 +23,9 @@ import type {
   SessionToolFailure
 } from "@simulatorlife/autodev-core";
 
-/** The writable mirror of a published type. */
+/**
+The writable mirror of a published type.
+*/
 export type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
 export type MutableInvestigation = Omit<

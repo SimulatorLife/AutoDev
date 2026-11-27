@@ -1,11 +1,11 @@
 /**
- * Public entry point for the Playtesting statistical analysis layer.
- *
- * Re-exports the narrow Runtime-owned API plus its expected error types
- * so callers can `import { RuntimePlaytestStatAnalysis } from
- * "@simulatorlife/autodev-runtime/playtesting/statistics"` (via the
- * playtesting barrel) without depending on the internal module shape.
- */
+Public entry point for the Playtesting statistical analysis layer.
+
+Re-exports the narrow Runtime-owned API plus its expected error types
+so callers can `import { RuntimePlaytestStatAnalysis } from
+"@simulatorlife/autodev-runtime/playtesting/statistics"` (via the
+playtesting barrel) without depending on the internal module shape.
+*/
 
 export {
   EXPECTED_LOCK_TAG,

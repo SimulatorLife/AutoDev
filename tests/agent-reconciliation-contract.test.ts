@@ -75,45 +75,45 @@ assert.equal(
 
 const SCENARIOS = contract.scenarios;
 
-function getPath(obj: unknown, dotted: string): unknown {
+function getPath(object: unknown, dotted: string): unknown {
   return dotted
     .split(".")
     .reduce<unknown>(
-      (cur, part) =>
-        cur !== null && typeof cur === "object"
-          ? (cur as Record<string, unknown>)[part]
+      (current, part) =>
+        current !== null && typeof current === "object"
+          ? (current as Record<string, unknown>)[part]
           : undefined,
-      obj
+      object
     );
 }
 
 function evalOps(
   name: string,
   operations: ContractOp[],
-  ctx: { status: Record<string, unknown> }
+  context: { status: Record<string, unknown> }
 ): void {
   for (const op of operations) {
     switch (op.op) {
       case "status_field": {
-        const value = getPath(ctx.status, op.field!);
+        const value = getPath(context.status, op.field!);
         assert.equal(value, op.expected, `${name}: ${op.field}`);
         break;
       }
       case "status_deep_equal": {
-        const value = getPath(ctx.status, op.field!);
+        const value = getPath(context.status, op.field!);
         assert.deepEqual(value, op.expected, `${name}: ${op.field}`);
         break;
       }
       case "status_no_key": {
         assert.equal(
-          Object.hasOwn(ctx.status, op.key!),
+          Object.hasOwn(context.status, op.key!),
           false,
           `${name}: ${op.key} must not appear on status.agents`
         );
         break;
       }
       case "status_shape": {
-        const target = op.field ? getPath(ctx.status, op.field) : ctx.status;
+        const target = op.field ? getPath(context.status, op.field) : context.status;
         const keys = Object.keys(
           (target as Record<string, unknown>) ?? {}
         ).sort();
@@ -464,7 +464,7 @@ describe("agent reconciliation contract: router event -> usage projection keying
 
   test("persisted-event replay keys usage by requestId and survives known fields without inventing an outcome", () => {
     resetRouterTelemetry();
-    const tmpFile = join(
+    const temporaryFile = join(
       tmpdir(),
       `autodev-router-state-contract-${Date.now()}.json`
     );
@@ -502,7 +502,7 @@ describe("agent reconciliation contract: router event -> usage projection keying
     });
     try {
       writeFileSync(
-        tmpFile,
+        temporaryFile,
         JSON.stringify({
           schema: "autodev-router-persisted-state-v4",
           updatedAt: new Date().toISOString(),
@@ -517,14 +517,14 @@ describe("agent reconciliation contract: router event -> usage projection keying
         }),
         "utf8"
       );
-      loadRouterState(tmpFile);
+      loadRouterState(temporaryFile);
       const status = getDefaultUsageTracker().usageStatus();
       // Only the event carrying a requestId is keyed into Usage; the
       // null-requestId event is skipped rather than invented an identity.
       assert.equal(status.totals.successes, 1);
       assert.equal(Object.hasOwn(status.byWorkspace, "AutoDev"), true);
     } finally {
-      rmSync(tmpFile, { force: true });
+      rmSync(temporaryFile, { force: true });
       resetRouterTelemetry();
     }
   });
@@ -534,7 +534,7 @@ describe("agent reconciliation contract: router event -> usage projection keying
     // recorded origin says it was a subagent request. Replay must read that
     // origin rather than re-deriving "direct" from the missing role.
     resetRouterTelemetry();
-    const tmpFile = join(
+    const temporaryFile = join(
       tmpdir(),
       `autodev-router-state-origin-${Date.now()}.json`
     );
@@ -568,7 +568,7 @@ describe("agent reconciliation contract: router event -> usage projection keying
     });
     try {
       writeFileSync(
-        tmpFile,
+        temporaryFile,
         JSON.stringify({
           schema: "autodev-router-persisted-state-v4",
           updatedAt: new Date().toISOString(),
@@ -579,13 +579,13 @@ describe("agent reconciliation contract: router event -> usage projection keying
         }),
         "utf8"
       );
-      loadRouterState(tmpFile);
+      loadRouterState(temporaryFile);
       const status = getDefaultUsageTracker().usageStatus();
       assert.equal(status.byOrigin.subagent?.successes, 1);
       assert.equal(status.byOrigin.direct?.successes, 1);
       assert.equal(status.byRole.unattributed?.successes, 2);
     } finally {
-      rmSync(tmpFile, { force: true });
+      rmSync(temporaryFile, { force: true });
       resetRouterTelemetry();
     }
   });

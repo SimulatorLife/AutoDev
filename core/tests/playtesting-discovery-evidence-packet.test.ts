@@ -422,7 +422,7 @@ test("v2 hash covers playerSelfReport and validates report states and frame rece
         playerSelfReport: report
       })
     );
-  const invalidRef = {
+  const invalidReference = {
     ...reports[4]!,
     checkpoint: {
       ...(reports[4] as { checkpoint: object }).checkpoint,
@@ -433,7 +433,7 @@ test("v2 hash covers playerSelfReport and validates report states and frame rece
     () =>
       assertPlaytestDiscoveryEvidencePacket({
         ...packet,
-        playerSelfReport: invalidRef
+        playerSelfReport: invalidReference
       }),
     /does not resolve/u
   );

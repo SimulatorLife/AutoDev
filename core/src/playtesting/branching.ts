@@ -43,11 +43,11 @@ function assertArtifactReference(
 } {
   if (!isRecord(value))
     throw new TypeError(field + " must be an artifact reference.");
-  const allowed = ["artifactId", "sha256", "bytes", "mediaType", "revision"];
+  const allowed = new Set(["artifactId", "sha256", "bytes", "mediaType", "revision"]);
   if (
     Object.keys(value).length < 4 ||
-    Object.keys(value).length > allowed.length ||
-    Object.keys(value).some((key) => !allowed.includes(key))
+    Object.keys(value).length > allowed.size ||
+    Object.keys(value).some((key) => !allowed.has(key))
   ) {
     throw new TypeError(field + " is malformed.");
   }
@@ -82,10 +82,10 @@ export function assertPlaytestRngCheckpoint(
   field = "rngCheckpoint"
 ): asserts value is GameRngCheckpoint {
   if (!isRecord(value)) throw new TypeError(field + " must be an object.");
-  const expected = ["algorithm", "version", "stateHash", "reproducible"];
+  const expected = new Set(["algorithm", "version", "stateHash", "reproducible"]);
   if (
-    Object.keys(value).length !== expected.length ||
-    Object.keys(value).some((key) => !expected.includes(key))
+    Object.keys(value).length !== expected.size ||
+    Object.keys(value).some((key) => !expected.has(key))
   ) {
     throw new TypeError(field + " contains unsupported fields.");
   }
@@ -102,10 +102,10 @@ export function assertPlaytestCheckpointDigest(
   field = "checkpoint"
 ): asserts value is PlaytestCheckpointDigest {
   if (!isRecord(value)) throw new TypeError(field + " must be an object.");
-  const expected = ["stateHash", "rngCheckpoint"];
+  const expected = new Set(["stateHash", "rngCheckpoint"]);
   if (
-    Object.keys(value).length !== expected.length ||
-    Object.keys(value).some((key) => !expected.includes(key))
+    Object.keys(value).length !== expected.size ||
+    Object.keys(value).some((key) => !expected.has(key))
   ) {
     throw new TypeError(field + " contains unsupported fields.");
   }
@@ -137,12 +137,14 @@ export function samePlaytestCheckpoint(
   );
 }
 
-/** Validate a branch source before it is frozen into a Data assignment. */
+/**
+Validate a branch source before it is frozen into a Data assignment.
+*/
 export function assertPlaytestAssignmentBranch(
   value: unknown
 ): asserts value is PlaytestAssignmentBranch {
   if (!isRecord(value)) throw new TypeError("Branch source must be an object.");
-  const expected = [
+  const expected = new Set([
     "parentEpisodeId",
     "parentEpisodeRevision",
     "parentBatchId",
@@ -152,10 +154,10 @@ export function assertPlaytestAssignmentBranch(
     "alternativeActionId",
     "rngPolicy",
     "rngPolicyVersion"
-  ];
+  ]);
   if (
-    Object.keys(value).length !== expected.length ||
-    Object.keys(value).some((key) => !expected.includes(key))
+    Object.keys(value).length !== expected.size ||
+    Object.keys(value).some((key) => !expected.has(key))
   ) {
     throw new TypeError("Branch source contains unsupported fields.");
   }
@@ -196,14 +198,16 @@ export function assertPlaytestAssignmentBranch(
   );
 }
 
-/** Validate the persisted proof chain of a completed or partial branch episode. */
+/**
+Validate the persisted proof chain of a completed or partial branch episode.
+*/
 export function assertPlaytestBranchLineage(
   value: unknown,
   episode?: Pick<PlaytestEpisode, "completeness" | "missingReasons">
 ): asserts value is PlaytestBranchLineage {
   if (!isRecord(value))
     throw new TypeError("Branch lineage must be an object.");
-  const expected = [
+  const expected = new Set([
     "parentEpisodeId",
     "parentEpisodeRevision",
     "parentBatchId",
@@ -220,10 +224,10 @@ export function assertPlaytestBranchLineage(
     "forkRngCheckpoint",
     "continuationPolicyId",
     "continuationPolicyVersion"
-  ];
+  ]);
   if (
-    Object.keys(value).length !== expected.length ||
-    Object.keys(value).some((key) => !expected.includes(key))
+    Object.keys(value).length !== expected.size ||
+    Object.keys(value).some((key) => !expected.has(key))
   ) {
     throw new TypeError("Branch lineage contains unsupported fields.");
   }

@@ -12,7 +12,7 @@ import {
   type WholePageRouter
 } from "./whole-page-navigation.ts";
 
-type NavigationLinkProps = Omit<
+type NavigationLinkProperties = Omit<
   React.ComponentProps<typeof Link>,
   "onMouseEnter" | "onTouchStart" | "prefetch"
 > & {
@@ -20,13 +20,13 @@ type NavigationLinkProps = Omit<
 };
 
 /**
- * Whether the click is the Console's to navigate.
- *
- * A modified click belongs to the browser: a command click opens the
- * destination in a new tab, a middle click opens it in a background tab, and a
- * link that carries a download attribute downloads. The Console leaves those
- * alone and only takes over the plain click.
- */
+Whether the click is the Console's to navigate.
+
+A modified click belongs to the browser: a command click opens the
+destination in a new tab, a middle click opens it in a background tab, and a
+link that carries a download attribute downloads. The Console leaves those
+alone and only takes over the plain click.
+*/
 function isPlainNavigationClick(
   event: React.MouseEvent<HTMLAnchorElement>
 ): boolean {
@@ -38,7 +38,9 @@ function isPlainNavigationClick(
   return event.button === 0;
 }
 
-/** Intent events that authorize one dynamic-route prefetch. */
+/**
+Intent events that authorize one dynamic-route prefetch.
+*/
 export interface NavigationIntentHandlers {
   readonly onMouseEnter: () => void;
   readonly onTouchStart: () => void;
@@ -74,13 +76,13 @@ function toHrefString(href: React.ComponentProps<typeof Link>["href"]): string {
 
 const RECENT_PREFETCHES = new Map<string, number>();
 /**
- * The Console does not ask for the same destination twice inside the router's
- * own reuse window: the second ask would be thrown away, because the router
- * may only reuse a page it fetched for that window. The window is the
- * Console's live-count cadence, so a destination the operator comes back to
- * after a moment is warm again -- and one they come back to after a minute
- * is fetched afresh, which is what a page of live state wants.
- */
+The Console does not ask for the same destination twice inside the router's
+own reuse window: the second ask would be thrown away, because the router
+may only reuse a page it fetched for that window. The window is the
+Console's live-count cadence, so a destination the operator comes back to
+after a moment is warm again -- and one they come back to after a minute
+is fetched afresh, which is what a page of live state wants.
+*/
 const PREFETCH_COOLDOWN_MS = ROUTER_STALE_SECONDS * 1000;
 
 export function shouldPrefetch(
@@ -108,28 +110,28 @@ export function clearPrefetchCacheForTests(): void {
 }
 
 /**
- * How long a pointer has to rest on a link before the link warms it.
- *
- * The Console's rail is fourteen links, and a pointer crossing it enters
- * every link it passes. Each entry used to warm that destination's whole
- * page: fourteen full page reads for a pointer that was only passing
- * through, each one a server render of a route the operator may never
- * open.
- *
- * The delay is the difference between a pointer that is travelling and a
- * pointer that has arrived. The destination the pointer settles on is the
- * one the operator is about to open, and it is warmed when they arrive.
- */
+How long a pointer has to rest on a link before the link warms it.
+
+The Console's rail is fourteen links, and a pointer crossing it enters
+every link it passes. Each entry used to warm that destination's whole
+page: fourteen full page reads for a pointer that was only passing
+through, each one a server render of a route the operator may never
+open.
+
+The delay is the difference between a pointer that is travelling and a
+pointer that has arrived. The destination the pointer settles on is the
+one the operator is about to open, and it is warmed when they arrive.
+*/
 export const PREFETCH_INTENT_DELAY_MS = 200;
 
 /**
- * The warm-up the pointer is heading towards.
- *
- * One pending warm-up at a time, shared by every link: the pointer has one
- * destination at a time, and the last link it entered is the one it is
- * heading towards. A second intent replaces the first rather than adding
- * to it.
- */
+The warm-up the pointer is heading towards.
+
+One pending warm-up at a time, shared by every link: the pointer has one
+destination at a time, and the last link it entered is the one it is
+heading towards. A second intent replaces the first rather than adding
+to it.
+*/
 let pendingWarmUp: { readonly timer: ReturnType<typeof setTimeout> } | null =
   null;
 
@@ -140,22 +142,21 @@ function cancelPendingWarmUp(): void {
 }
 
 /**
- * Warm the destination the pointer settled on.
- *
- * The delay is the whole point: it is what turns a sweep across the rail
- * into one warm-up instead of fourteen. A click does not wait for it --
- * the click asks for the destination's page itself, and asks for it at
- * once -- so a pointer that arrives and clicks is not delayed by the
- * delay.
- */
+Warm the destination the pointer settled on.
+
+The delay is the whole point: it is what turns a sweep across the rail
+into one warm-up instead of fourteen. A click does not wait for it --
+the click asks for the destination's page itself, and asks for it at
+once -- so a pointer that arrives and clicks is not delayed by the
+delay.
+*/
 export function scheduleWholePageWarmUp(
   router: WholePageRouter | null,
   destination: string,
   delayMs: number = PREFETCH_INTENT_DELAY_MS
 ): void {
   cancelPendingWarmUp();
-  if (router === null) return;
-  if (!destination) return;
+  if ((router === null) || !destination) return;
   const timer = setTimeout(() => {
     pendingWarmUp = null;
     // The cooldown is consulted when the warm-up happens rather than when
@@ -167,49 +168,51 @@ export function scheduleWholePageWarmUp(
   pendingWarmUp = { timer };
 }
 
-/** Forget the pending warm-up; the tests need a clean slate. */
+/**
+Forget the pending warm-up; the tests need a clean slate.
+*/
 export function clearPendingWarmUpForTests(): void {
   cancelPendingWarmUp();
 }
 
 /**
- * A link that routes in place.
- *
- * The link warms its destination on a pointer, touch or keyboard intent, so
- * that the dashboard does not start a request for every visible resource when
- * it opens. The warm-up waits for the intent to settle, so a pointer
- * crossing the rail warms the destination it came to rest on rather than
- * every destination it passed. The warm-up is a **full** prefetch, and the
- * kind is the whole point.
- *
- * A partial prefetch answers with the route's loading state rather than with
- * the page. The navigation then finds that answer waiting for it, applies the
- * loading state, and waits for a page that is never going to arrive: the URL
- * does not change, the page does not move, and the browser acceptance
- * measured exactly that -- the server answered the navigation request in
- * sixteen milliseconds with a complete response, and the Console stayed where
- * it was.
- *
- * A full prefetch answers with the page itself. The navigation finds the
- * answer it asked for, applies it, and commits.
- *
- * There is nothing to lose by the warm-up being full. Every Console route is
- * server-rendered for the visit (`force-dynamic`), so a partial answer would
- * have been thrown away when the route was rendered again, and the request
- * the prefetch saves is one the page has to make anyway.
- *
- * The click asks for the destination's whole page as well, and navigates
- * through the owner. The owner leaves in place in the same turn as the ask,
- * and leaves again when the answer arrives, so the navigation commits whether
- * the router already held the destination's page or had to fetch it. See
- * `whole-page-navigation.ts` for why the ask and the navigation belong
- * together.
- */
+A link that routes in place.
+
+The link warms its destination on a pointer, touch or keyboard intent, so
+that the dashboard does not start a request for every visible resource when
+it opens. The warm-up waits for the intent to settle, so a pointer
+crossing the rail warms the destination it came to rest on rather than
+every destination it passed. The warm-up is a **full** prefetch, and the
+kind is the whole point.
+
+A partial prefetch answers with the route's loading state rather than with
+the page. The navigation then finds that answer waiting for it, applies the
+loading state, and waits for a page that is never going to arrive: the URL
+does not change, the page does not move, and the browser acceptance
+measured exactly that -- the server answered the navigation request in
+sixteen milliseconds with a complete response, and the Console stayed where
+it was.
+
+A full prefetch answers with the page itself. The navigation finds the
+answer it asked for, applies it, and commits.
+
+There is nothing to lose by the warm-up being full. Every Console route is
+server-rendered for the visit (`force-dynamic`), so a partial answer would
+have been thrown away when the route was rendered again, and the request
+the prefetch saves is one the page has to make anyway.
+
+The click asks for the destination's whole page as well, and navigates
+through the owner. The owner leaves in place in the same turn as the ask,
+and leaves again when the answer arrives, so the navigation commits whether
+the router already held the destination's page or had to fetch it. See
+`whole-page-navigation.ts` for why the ask and the navigation belong
+together.
+*/
 export function NavigationLink({
   href,
   dataAttributes,
-  ...props
-}: NavigationLinkProps): React.JSX.Element {
+  ...properties
+}: NavigationLinkProperties): React.JSX.Element {
   let router: ReturnType<typeof useRouter> | null = null;
   try {
     router = useRouter();
@@ -218,10 +221,10 @@ export function NavigationLink({
   }
 
   /**
-   * The Console asks for the destination's whole page on intent. See
-   * `whole-page-navigation.ts` for why the whole page is the answer worth
-   * having.
-   */
+  The Console asks for the destination's whole page on intent. See
+  `whole-page-navigation.ts` for why the whole page is the answer worth
+  having.
+  */
   const prefetch = React.useCallback((): void => {
     if (!router) return;
     const destination = toHrefString(href);
@@ -233,16 +236,13 @@ export function NavigationLink({
     scheduleWholePageWarmUp(router, destination);
   }, [href, router]);
 
-  const { onClick, onFocus } = props;
+  const { onClick, onFocus } = properties;
   const handleClick = React.useCallback(
     (event: React.MouseEvent<HTMLAnchorElement>): void => {
       onClick?.(event);
-      if (event.defaultPrevented) return;
-      if (!router) return;
+      if (event.defaultPrevented || !router) return;
       const destination = toHrefString(href);
-      if (!destination) return;
-      if (!isLocalWholePageDestination(destination)) return;
-      if (!isPlainNavigationClick(event)) return;
+      if (!destination || !isLocalWholePageDestination(destination) || !isPlainNavigationClick(event)) return;
       // The Console owns this navigation: the owner asks for the destination's
       // whole page and leaves in place, and it leaves again when the answer
       // arrives. See `whole-page-navigation.ts` for why the two belong
@@ -254,7 +254,7 @@ export function NavigationLink({
   );
 
   return React.createElement(Link, {
-    ...props,
+    ...properties,
     href,
     ...dataAttributes,
     prefetch: false,

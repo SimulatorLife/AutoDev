@@ -1,4 +1,6 @@
-/** Workspaces-owned, owner-only local persistence for exact playtest approvals. */
+/**
+Workspaces-owned, owner-only local persistence for exact playtest approvals.
+*/
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -24,7 +26,9 @@ const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
 const OWNER_DIRECTORY_MODE = 0o700;
 const OWNER_FILE_MODE = 0o600;
 const APPROVAL_SCHEMA_V1 = "autodev-workspace-playtest-approval-v1";
-/** v1 pinned one commit; v2 authorizes the checkout's latest committed build. */
+/**
+v1 pinned one commit; v2 authorizes the checkout's latest committed build.
+*/
 const V1_PINNED_BUILD_FIELDS = [
   "buildSha",
   "gameBuild",
@@ -32,10 +36,10 @@ const V1_PINNED_BUILD_FIELDS = [
 ] as const;
 
 /**
- * One-way migration of a stored v1 approval: the pinned commit, game build
- * and config hash are dropped because v2 resolves them per batch. Everything
- * the operator authorized (checkout, image, command, grants, limits) is kept.
- */
+One-way migration of a stored v1 approval: the pinned commit, game build
+and config hash are dropped because v2 resolves them per batch. Everything
+the operator authorized (checkout, image, command, grants, limits) is kept.
+*/
 function migrateStoredApproval(value: unknown): {
   readonly value: unknown;
   readonly migrated: boolean;
@@ -119,10 +123,10 @@ function ensurePrivateDirectory(directory: string, root: string): void {
 }
 
 /**
- * The repository persists one current approval revision per canonical
- * workspace. The file is not checked into the game repository, and its ID is a
- * one-way digest so repository names never become filesystem path segments.
- */
+The repository persists one current approval revision per canonical
+workspace. The file is not checked into the game repository, and its ID is a
+one-way digest so repository names never become filesystem path segments.
+*/
 export class WorkspacePlaytestApprovalRepository {
   private readonly root: string;
 

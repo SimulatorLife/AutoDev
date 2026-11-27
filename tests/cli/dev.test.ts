@@ -54,8 +54,8 @@ function createFakeDependencies(
   const dependencies: DevBackendDependencies = {
     platform: "darwin",
     repoRoot: "/mock/repo",
-    runCommand: (command, args, options): DevCommandResult => {
-      commands.push({ command, args, options });
+    runCommand: (command, arguments_, options): DevCommandResult => {
+      commands.push({ command, args: arguments_, options });
       return { status: 0 };
     },
     isPortListening: async () => true,
@@ -363,12 +363,10 @@ test("dev Control API probe rejects an incomplete Providers v5 response", async 
   let requestCount = 0;
   const fetchImpl: typeof fetch = async () => {
     requestCount += 1;
-    return requestCount === 1
-      ? Response.json({
+    return Response.json(requestCount === 1 ? {
           schema: CONTROL_API_CONTRACT.schema,
           version: CONTROL_API_CONTRACT.version
-        })
-      : Response.json({
+        } : {
           schema: "autodev-control-providers-v5",
           quotaAxi: null,
           providers: [{ id: "codex" }]
@@ -582,7 +580,7 @@ test("OpenLIT reconciliation fingerprints mounted config for service restarts", 
     join(repoRoot, "scripts", "openlit", "up.sh"),
     "utf8"
   );
-  const [clickhouseService, openlitService = ""] = compose.split("  openlit:");
+  const [clickhouseService, openlitService = ""] = compose.split("  openlit:", 2);
 
   assert.match(
     runner,
@@ -636,15 +634,15 @@ test("ensureConsoleSecrets synchronizes only a temporary Console environment", (
   const scriptsDir = join(tempDir, "scripts", "openlit");
   mkdirSync(consoleDir, { recursive: true });
   mkdirSync(scriptsDir, { recursive: true });
-  const consoleEnv = join(consoleDir, ".env.local");
+  const consoleEnvironment = join(consoleDir, ".env.local");
   const scriptPath = join(scriptsDir, "bootstrap-secrets.sh");
   writeFileSync(
     scriptPath,
-    `#!/bin/sh\ncat > "${consoleEnv}" << 'EOF'\nAUTODEV_CONTROL_API_TOKEN=synced-token\nAUTODEV_OPENLIT_USAGE_TOKEN=synced-usage\nEOF\n`,
+    `#!/bin/sh\ncat > "${consoleEnvironment}" << 'EOF'\nAUTODEV_CONTROL_API_TOKEN=synced-token\nAUTODEV_OPENLIT_USAGE_TOKEN=synced-usage\nEOF\n`,
     { mode: 0o755 }
   );
   writeFileSync(
-    consoleEnv,
+    consoleEnvironment,
     "AUTODEV_CONTROL_API_TOKEN=stale-token\nAUTODEV_OPENLIT_USAGE_TOKEN=stale-usage\n"
   );
   const secretDir = mkdtempSync(join(tmpdir(), "autodev-dev-canon-"));
@@ -659,7 +657,7 @@ test("ensureConsoleSecrets synchronizes only a temporary Console environment", (
   process.env.AUTODEV_OPENLIT_SECRET_FILE = secretFile;
   try {
     ensureConsoleSecrets(tempDir);
-    const synchronized = readFileSync(consoleEnv, "utf8");
+    const synchronized = readFileSync(consoleEnvironment, "utf8");
     assert.match(synchronized, /AUTODEV_CONTROL_API_TOKEN=synced-token/u);
     assert.match(synchronized, /AUTODEV_OPENLIT_USAGE_TOKEN=synced-usage/u);
     assert.doesNotMatch(
@@ -681,9 +679,7 @@ test("ensureConsoleSecrets synchronizes only a temporary Console environment", (
 test("already-ready services still reconcile the current image and config", async () => {
   const { dependencies, commands, loggedMessages } = createFakeDependencies({
     isPortListening: async (port) => {
-      if (port === 8123) return true;
-      if (port === 4100) return true;
-      return false;
+      return (port === 8123) || (port === 4100);
     },
     isOpenlitHttpReady: async () => true
   });
@@ -708,34 +704,34 @@ test("already-ready services still reconcile the current image and config", asyn
     "test-usage-token"
   );
   assert.ok(
-    loggedMessages.some((msg) => msg.includes("Reconciling the OpenLIT"))
+    loggedMessages.some((message) => message.includes("Reconciling the OpenLIT"))
   );
   assert.ok(
-    loggedMessages.some((msg) =>
-      msg.includes("OpenLIT Usage v5 and ClickHouse are ready")
+    loggedMessages.some((message) =>
+      message.includes("OpenLIT Usage v5 and ClickHouse are ready")
     )
   );
 });
 
 test("macOS opens Docker when daemon is absent and then starts OpenLIT", async () => {
   let dockerProbeCount = 0;
-  let upScriptRan = false;
+  let isUpScriptRan = false;
 
   const { dependencies, commands } = createFakeDependencies({
     platform: "darwin",
     repoRoot: "/mock/repo",
-    runCommand: (command, args, options): DevCommandResult => {
-      commands.push({ command, args, options });
-      if (command === "docker" && args[0] === "info") {
+    runCommand: (command, arguments_, options): DevCommandResult => {
+      commands.push({ command, args: arguments_, options });
+      if (command === "docker" && arguments_[0] === "info") {
         dockerProbeCount += 1;
         // First probe fails (daemon absent); second probe (during wait) succeeds.
-        return dockerProbeCount === 1 ? { status: 1 } : { status: 0 };
+        return ({ status: dockerProbeCount === 1 ? 1 : 0 });
       }
-      if (command === "open" && args[0] === "-a" && args[1] === "Docker") {
+      if (command === "open" && arguments_[0] === "-a" && arguments_[1] === "Docker") {
         return { status: 0 };
       }
-      if (command === "bash" && args[0]?.endsWith("scripts/openlit/up.sh")) {
-        upScriptRan = true;
+      if (command === "bash" && arguments_[0]?.endsWith("scripts/openlit/up.sh")) {
+        isUpScriptRan = true;
         return { status: 0 };
       }
       return { status: 0 };
@@ -743,12 +739,11 @@ test("macOS opens Docker when daemon is absent and then starts OpenLIT", async (
     isPortListening: async (port) => {
       if (port === 8123) {
         // ClickHouse ready only after up.sh ran
-        return upScriptRan;
+        return isUpScriptRan;
       }
-      if (port === 4100) return true;
-      return false;
+      return port === 4100;
     },
-    isOpenlitHttpReady: async () => upScriptRan
+    isOpenlitHttpReady: async () => isUpScriptRan
   });
 
   const result = await ensureBackends(dependencies);
@@ -770,15 +765,15 @@ test("macOS opens Docker when daemon is absent and then starts OpenLIT", async (
   // open(1) hands its environment to Docker Desktop, so the launch carries
   // only the login-session identity -- never the caller's toolchain
   // environment or the Usage service token.
-  const desktopEnv = commands[1]?.options.env ?? {};
+  const desktopEnvironment = commands[1]?.options.env ?? {};
   assert.deepEqual(
-    Object.keys(desktopEnv).sort(),
+    Object.keys(desktopEnvironment).sort(),
     ["HOME", "LOGNAME", "PATH", "USER"].filter(
       (name) => name === "PATH" || Boolean(process.env[name])
     )
   );
-  assert.equal(desktopEnv.PATH, "/usr/bin:/bin:/usr/sbin:/sbin");
-  assert.equal(desktopEnv.HOME, process.env.HOME);
+  assert.equal(desktopEnvironment.PATH, "/usr/bin:/bin:/usr/sbin:/sbin");
+  assert.equal(desktopEnvironment.HOME, process.env.HOME);
 
   assert.equal(commands[2]?.command, "docker");
   assert.deepEqual(commands[2]?.args, ["info"]);
@@ -790,9 +785,9 @@ test("macOS opens Docker when daemon is absent and then starts OpenLIT", async (
 test("other platform without Docker fails before running up", async () => {
   const { dependencies, commands } = createFakeDependencies({
     platform: "linux",
-    runCommand: (command, args, options): DevCommandResult => {
-      commands.push({ command, args, options });
-      if (command === "docker" && args[0] === "info") {
+    runCommand: (command, arguments_, options): DevCommandResult => {
+      commands.push({ command, args: arguments_, options });
+      if (command === "docker" && arguments_[0] === "info") {
         return { status: 1 };
       }
       return { status: 0 };
@@ -805,8 +800,8 @@ test("other platform without Docker fails before running up", async () => {
     async () => {
       await ensureBackends(dependencies);
     },
-    (err: Error) => {
-      assert.match(err.message, /Docker Engine is required for OpenLIT Usage/);
+    (error: Error) => {
+      assert.match(error.message, /Docker Engine is required for OpenLIT Usage/);
       return true;
     }
   );
@@ -815,8 +810,8 @@ test("other platform without Docker fails before running up", async () => {
   assert.equal(commands[0]?.command, "docker");
   assert.equal(
     commands.some(
-      (cmd) =>
-        cmd.command === "open" || cmd.args.some((arg) => arg.includes("up.sh"))
+      (command) =>
+        command.command === "open" || command.args.some((argument) => argument.includes("up.sh"))
     ),
     false,
     "Must not launch Docker Desktop or run up.sh on non-macOS platform"
@@ -827,12 +822,12 @@ test("startup script failure propagates", async () => {
   const { dependencies, commands } = createFakeDependencies({
     platform: "darwin",
     repoRoot: "/mock/repo",
-    runCommand: (command, args, options): DevCommandResult => {
-      commands.push({ command, args, options });
-      if (command === "docker" && args[0] === "info") {
+    runCommand: (command, arguments_, options): DevCommandResult => {
+      commands.push({ command, args: arguments_, options });
+      if (command === "docker" && arguments_[0] === "info") {
         return { status: 0 };
       }
-      if (command === "bash" && args[0]?.endsWith("scripts/openlit/up.sh")) {
+      if (command === "bash" && arguments_[0]?.endsWith("scripts/openlit/up.sh")) {
         return {
           status: 1,
           error: new Error("Container build error")
@@ -848,9 +843,9 @@ test("startup script failure propagates", async () => {
     async () => {
       await ensureBackends(dependencies);
     },
-    (err: Error) => {
+    (error: Error) => {
       assert.match(
-        err.message,
+        error.message,
         /OpenLIT startup failed: Container build error/
       );
       return true;
@@ -859,29 +854,29 @@ test("startup script failure propagates", async () => {
 });
 
 test("successful startup waits for ClickHouse and HTTP readiness", async () => {
-  let upScriptRan = false;
+  let isUpScriptRan = false;
   let postUpPolls = 0;
 
   const { dependencies, commands, sleptDurations } = createFakeDependencies({
     platform: "darwin",
     repoRoot: "/mock/repo",
-    runCommand: (command, args, options): DevCommandResult => {
-      commands.push({ command, args, options });
-      if (command === "bash" && args[0]?.endsWith("scripts/openlit/up.sh")) {
-        upScriptRan = true;
+    runCommand: (command, arguments_, options): DevCommandResult => {
+      commands.push({ command, args: arguments_, options });
+      if (command === "bash" && arguments_[0]?.endsWith("scripts/openlit/up.sh")) {
+        isUpScriptRan = true;
       }
       return { status: 0 };
     },
     isPortListening: async (port) => {
       if (port === 8123) {
         // ClickHouse becomes ready once up.sh has run
-        return upScriptRan;
+        return isUpScriptRan;
       }
       if (port === 4100) return false;
       return false;
     },
     isOpenlitHttpReady: async () => {
-      if (!upScriptRan) return false;
+      if (!isUpScriptRan) return false;
       postUpPolls += 1;
       // First poll in waitForOpenlitStack returns false (triggering sleep), subsequent poll returns true
       return postUpPolls >= 2;
@@ -902,8 +897,8 @@ test("successful startup waits for ClickHouse and HTTP readiness", async () => {
   );
   assert.ok(
     commands.some(
-      (cmd) =>
-        cmd.command === "bash" && cmd.args.some((arg) => arg.includes("up.sh"))
+      (command) =>
+        command.command === "bash" && command.args.some((argument) => argument.includes("up.sh"))
     )
   );
 });
@@ -914,13 +909,13 @@ test("ensureModelRouter recognizes already-active router without restarting", as
   const ready = await ensureModelRouter({
     repoRoot: "/mock/repo",
     isPortListening: async (port) => port === 4100 || port === 4101,
-    runCommand: (command, args, options) => {
-      commands.push({ command, args, options });
+    runCommand: (command, arguments_, options) => {
+      commands.push({ command, args: arguments_, options });
       return { status: 0 };
     },
     sleep: async () => {},
-    writeLine: (msg) => {
-      loggedMessages.push(msg);
+    writeLine: (message) => {
+      loggedMessages.push(message);
     },
     platform: "darwin"
   });
@@ -932,8 +927,8 @@ test("ensureModelRouter recognizes already-active router without restarting", as
     "Must not execute commands if already active"
   );
   assert.ok(
-    loggedMessages.some((msg) =>
-      msg.includes("AutoDev Model Router is active (ports 4100, 4101)")
+    loggedMessages.some((message) =>
+      message.includes("AutoDev Model Router is active (ports 4100, 4101)")
     )
   );
 });
@@ -946,15 +941,12 @@ test("ensureModelRouter materializes runtime and kickstarts launchd service when
   const ready = await ensureModelRouter({
     repoRoot: "/mock/repo",
     isPortListening: async (port) => {
-      if (pollCount >= 2 && (port === 4100 || port === 4101)) {
-        return true;
-      }
-      return false;
+      return pollCount >= 2 && (port === 4100 || port === 4101);
     },
-    runCommand: (command, args, options) => {
-      commands.push({ command, args, options });
+    runCommand: (command, arguments_, options) => {
+      commands.push({ command, args: arguments_, options });
       // When launchctl print is called, return 0 (indicating loaded in launchd)
-      if (command === "launchctl" && args[0] === "print") {
+      if (command === "launchctl" && arguments_[0] === "print") {
         return { status: 0 };
       }
       return { status: 0 };
@@ -962,8 +954,8 @@ test("ensureModelRouter materializes runtime and kickstarts launchd service when
     sleep: async () => {
       pollCount += 1;
     },
-    writeLine: (msg) => {
-      loggedMessages.push(msg);
+    writeLine: (message) => {
+      loggedMessages.push(message);
     },
     platform: "darwin"
   });
@@ -975,15 +967,15 @@ test("ensureModelRouter materializes runtime and kickstarts launchd service when
   );
   assert.equal(commands[0]?.command, "node");
   assert.ok(
-    commands[0]?.args.some((arg) => arg.includes("--materialize-only"))
+    commands[0]?.args.some((argument) => argument.includes("--materialize-only"))
   );
   assert.equal(commands[1]?.command, "launchctl");
   assert.equal(commands[1]?.args[0], "print");
   assert.equal(commands[2]?.command, "launchctl");
   assert.equal(commands[2]?.args[0], "kickstart");
   assert.ok(
-    loggedMessages.some((msg) =>
-      msg.includes("AutoDev Model Router is ready (ports 4100, 4101)")
+    loggedMessages.some((message) =>
+      message.includes("AutoDev Model Router is ready (ports 4100, 4101)")
     )
   );
 });
@@ -996,16 +988,16 @@ test("ensureModelRouter restarts router when forceRestart is true even if ports 
     repoRoot: "/mock/repo",
     forceRestart: true,
     isPortListening: async (port) => port === 4100 || port === 4101,
-    runCommand: (command, args, options) => {
-      commands.push({ command, args, options });
-      if (command === "launchctl" && args[0] === "print") {
+    runCommand: (command, arguments_, options) => {
+      commands.push({ command, args: arguments_, options });
+      if (command === "launchctl" && arguments_[0] === "print") {
         return { status: 0 };
       }
       return { status: 0 };
     },
     sleep: async () => {},
-    writeLine: (msg) => {
-      loggedMessages.push(msg);
+    writeLine: (message) => {
+      loggedMessages.push(message);
     },
     platform: "darwin"
   });
@@ -1017,15 +1009,15 @@ test("ensureModelRouter restarts router when forceRestart is true even if ports 
   );
   assert.equal(commands[0]?.command, "node");
   assert.ok(
-    commands[0]?.args.some((arg) => arg.includes("--materialize-only"))
+    commands[0]?.args.some((argument) => argument.includes("--materialize-only"))
   );
   assert.equal(commands[1]?.command, "launchctl");
   assert.equal(commands[1]?.args[0], "print");
   assert.equal(commands[2]?.command, "launchctl");
   assert.equal(commands[2]?.args[0], "kickstart");
   assert.ok(
-    loggedMessages.some((msg) =>
-      msg.includes(
+    loggedMessages.some((message) =>
+      message.includes(
         "Reconciling AutoDev Model Router integration and restarting..."
       )
     )
@@ -1036,8 +1028,8 @@ test("ensureConsolePortAvailable does nothing when port is free", async () => {
   const commands: RecordedCommand[] = [];
   await ensureConsolePortAvailable(3300, {
     isPortListening: async () => false,
-    runCommand: (command, args, options) => {
-      commands.push({ command, args, options });
+    runCommand: (command, arguments_, options) => {
+      commands.push({ command, args: arguments_, options });
       return { status: 0 };
     },
     sleep: async () => {},
@@ -1052,24 +1044,24 @@ test("ensureConsolePortAvailable does nothing when port is free", async () => {
 test("ensureConsolePortAvailable stops conflicting launchd console service when occupied", async () => {
   const commands: RecordedCommand[] = [];
   const loggedMessages: string[] = [];
-  let listening = true;
+  let isListening = true;
 
   await ensureConsolePortAvailable(3300, {
-    isPortListening: async () => listening,
-    runCommand: (command, args, options) => {
-      commands.push({ command, args, options });
-      if (command === "launchctl" && args[0] === "print") {
+    isPortListening: async () => isListening,
+    runCommand: (command, arguments_, options) => {
+      commands.push({ command, args: arguments_, options });
+      if (command === "launchctl" && arguments_[0] === "print") {
         return { status: 0 };
       }
-      if (command === "launchctl" && args[0] === "bootout") {
-        listening = false;
+      if (command === "launchctl" && arguments_[0] === "bootout") {
+        isListening = false;
         return { status: 0 };
       }
       return { status: 0 };
     },
     sleep: async () => {},
-    writeLine: (msg) => {
-      loggedMessages.push(msg);
+    writeLine: (message) => {
+      loggedMessages.push(message);
     },
     platform: "darwin",
     repoRoot: "/mock/repo"
@@ -1081,11 +1073,11 @@ test("ensureConsolePortAvailable stops conflicting launchd console service when 
   assert.equal(commands[1]?.command, "launchctl");
   assert.equal(commands[1]?.args[0], "bootout");
   assert.ok(
-    loggedMessages.some((msg) =>
-      msg.includes("Stopping conflicting LaunchAgent com.codex.autodev-console")
+    loggedMessages.some((message) =>
+      message.includes("Stopping conflicting LaunchAgent com.codex.autodev-console")
     )
   );
   assert.ok(
-    loggedMessages.some((msg) => msg.includes("Port 3300 is now available"))
+    loggedMessages.some((message) => message.includes("Port 3300 is now available"))
   );
 });

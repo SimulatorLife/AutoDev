@@ -14,19 +14,19 @@ import {
 } from "../src/lib/server/views.ts";
 
 /**
- * Where a skill lives is a fact about the machine, and the page has to say it.
- *
- * The catalogue holds every skill the project defines, but Codex only reaches
- * the copy that is installed somewhere it looks: the project, the operator's
- * own directory, the machine's shared directory, or the skills Codex ships
- * with. Three of the sixteen catalogue skills were installed nowhere at all,
- * and the page listed them beside live ones as though any role could invoke
- * them.
- *
- * A skill installed inside a repository belongs to that repository's workspace
- * alone, so its roles are assigned inside that workspace and the assignment
- * has to say which one.
- */
+Where a skill lives is a fact about the machine, and the page has to say it.
+
+The catalogue holds every skill the project defines, but Codex only reaches
+the copy that is installed somewhere it looks: the project, the operator's
+own directory, the machine's shared directory, or the skills Codex ships
+with. Three of the sixteen catalogue skills were installed nowhere at all,
+and the page listed them beside live ones as though any role could invoke
+them.
+
+A skill installed inside a repository belongs to that repository's workspace
+alone, so its roles are assigned inside that workspace and the assignment
+has to say which one.
+*/
 
 const REPO_SKILL: ScopedSkillDefinition = {
   name: "opentelemetry",

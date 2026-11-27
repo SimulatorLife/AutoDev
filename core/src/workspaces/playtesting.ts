@@ -1,13 +1,15 @@
-/** Workspaces-owned local approval boundary for running a target game. */
 /**
- * Operator-authored approval stored by Workspaces, not by a game adapter.
- * Model-controlled requests may select only a scenario/seed/policy within this
- * record; they cannot change the checkout, command, image, budgets or grants.
- *
- * The approval authorizes a checkout, not one commit: every batch runs the
- * checkout's latest committed build, resolved by the Runtime at batch start
- * and recorded as that batch's {@link WorkspacePlaytestBuild}.
- */
+Workspaces-owned local approval boundary for running a target game.
+*/
+/**
+Operator-authored approval stored by Workspaces, not by a game adapter.
+Model-controlled requests may select only a scenario/seed/policy within this
+record; they cannot change the checkout, command, image, budgets or grants.
+
+The approval authorizes a checkout, not one commit: every batch runs the
+checkout's latest committed build, resolved by the Runtime at batch start
+and recorded as that batch's {@link WorkspacePlaytestBuild}.
+*/
 import { hasControlCharacters } from "../shared/control-characters.ts";
 import { isRecord } from "../shared/object-guards.ts";
 import { SHA256_PATTERN } from "../shared/sha256.ts";
@@ -31,7 +33,9 @@ export interface WorkspacePlaytestApproval {
   readonly workspaceId: string;
   readonly revision: number;
   readonly approvalId: string;
-  /** Canonical local real path, resolved when the operator approves it. */
+  /**
+  Canonical local real path, resolved when the operator approves it.
+  */
   readonly checkoutRoot: string;
   readonly adapterImageDigest: string;
   readonly workingDirectory: string;
@@ -50,10 +54,10 @@ export interface WorkspacePlaytestApproval {
 }
 
 /**
- * The exact committed build one batch executes: the approved checkout's HEAD
- * commit at batch start, the game-build label supplied to its adapter, and the
- * SHA-256 of that commit's playtest.config.json.
- */
+The exact committed build one batch executes: the approved checkout's HEAD
+commit at batch start, the game-build label supplied to its adapter, and the
+SHA-256 of that commit's playtest.config.json.
+*/
 export interface WorkspacePlaytestBuild {
   readonly buildSha: string;
   readonly gameBuild: string;
@@ -89,11 +93,11 @@ function assertAdapterCommand(command: unknown): void {
     command.length === 0 ||
     command.length > 128 ||
     command.some(
-      (arg) =>
-        typeof arg !== "string" ||
-        arg.length === 0 ||
-        arg.length > 4096 ||
-        arg.includes("\0")
+      (argument) =>
+        typeof argument !== "string" ||
+        argument.length === 0 ||
+        argument.length > 4096 ||
+        argument.includes("\0")
     )
   ) {
     throw new TypeError(
@@ -223,7 +227,9 @@ function assertLimits(
   }
 }
 
-/** Validate a Workspaces approval before any Runtime process can start. */
+/**
+Validate a Workspaces approval before any Runtime process can start.
+*/
 export function assertWorkspacePlaytestApproval(
   value: unknown
 ): asserts value is WorkspacePlaytestApproval {

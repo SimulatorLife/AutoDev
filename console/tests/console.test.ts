@@ -13,6 +13,7 @@ import test from "node:test";
 
 import {
   type AgentDefinition,
+  APPROVAL_POLICIES,
   CANONICAL_NAV_GROUPS,
   CANONICAL_NAVIGATION,
   type CanonicalNavSection,
@@ -32,7 +33,6 @@ import {
   LOCAL_CONTROL_API_ACTOR,
   type McpServerResource,
   PROVIDER_ROLES,
-  APPROVAL_POLICIES,
   type SkillEligibility,
   type ToolCatalogItem,
   type UsageGitChangeMetrics,
@@ -63,7 +63,7 @@ import {
 } from "../src/components/filters/resolve-filter.ts";
 import {
   AutoSubmitSelectField,
-  type AutoSubmitSelectFieldProps
+  type AutoSubmitSelectFieldProps as AutoSubmitSelectFieldProperties
 } from "../src/components/forms/AutoSubmitSelectField.ts";
 import { HierarchicalSelect } from "../src/components/forms/HierarchicalSelect.ts";
 import { SUBMIT_ON_CHANGE_SCRIPT } from "../src/components/forms/submit-on-change.ts";
@@ -116,12 +116,12 @@ import {
   singleValue,
   unreadWindow
 } from "../src/features/evaluations/evaluations-url.ts";
+import { ChatgptTunnelPanel } from "../src/features/mcps/ChatgptTunnelPanel.ts";
 import type { ProviderModelDiscoveryState } from "../src/features/providers/provider-model-discovery.ts";
 import { ProviderStatusBadge } from "../src/features/providers/provider-status.ts";
 import { providerUsageView } from "../src/features/providers/provider-usage/view.ts";
 import { ProviderLimitsControls } from "../src/features/providers/ProviderLimitsControls.ts";
 import { ProviderRoleControls } from "../src/features/providers/ProviderRoleControls.ts";
-import { ChatgptTunnelPanel } from "../src/features/mcps/ChatgptTunnelPanel.ts";
 import { toolUsageView } from "../src/features/tools/tool-usage-view.ts";
 import {
   AgentDetailView,
@@ -141,7 +141,7 @@ import {
   CodeEditor,
   ConvergenceBadge,
   DataTable,
-  type DataTableProps,
+  type DataTableProps as DataTableProperties,
   DETAIL_DRAWER_CLASS,
   DETAIL_DRAWER_HEADER_CLASS,
   DETAIL_DRAWER_SUBTITLE_CLASS,
@@ -233,7 +233,7 @@ import {
 } from "../src/lib/server/control-api.ts";
 import {
   readOpenLITUsageConfig,
-  usageSelectionFromSearchParams
+  usageSelectionFromSearchParams as usageSelectionFromSearchParameters
 } from "../src/lib/server/openlit-usage.ts";
 import { activeSessionsFromRuntime } from "../src/lib/server/usage-active-sessions.ts";
 import {
@@ -246,7 +246,9 @@ import {
   skillsFromControlApi,
   unresolvedSkillAssignmentsFromControlApi
 } from "../src/lib/server/views.ts";
-/** Find one rendered anchor by destination without depending on prop order. */
+/**
+Find one rendered anchor by destination without depending on prop order.
+*/
 function anchorMarkupForHref(markup: string, href: string): string {
   const escapedHref = href.replaceAll("&", "&amp;").replaceAll('"', "&quot;");
   for (const match of markup.matchAll(/<a\b[^>]*>/gu)) {
@@ -334,14 +336,14 @@ const UNOBSERVED_GIT_CHANGES = {
 } satisfies UsageGitChangeMetrics;
 
 /**
- * The Runtime's MCP observation read, answered: the Runtime was asked and has
- * seen no MCP server.
- *
- * This is a finding, not a gap, and the page renders it differently from an
- * unreadable read (`runtime: null`). Most MCP renders want it: a server the
- * Runtime has never reached is the interesting case, and it is the one that
- * has to read `Not observed` rather than blank.
- */
+The Runtime's MCP observation read, answered: the Runtime was asked and has
+seen no MCP server.
+
+This is a finding, not a gap, and the page renders it differently from an
+unreadable read (`runtime: null`). Most MCP renders want it: a server the
+Runtime has never reached is the interesting case, and it is the one that
+has to read `Not observed` rather than blank.
+*/
 const NO_MCP_OBSERVATIONS: ControlApiMcpRuntimeResponse = {
   schema: "autodev-control-mcp-runtime-v1",
   source: "runtime.telemetry",
@@ -351,12 +353,12 @@ const NO_MCP_OBSERVATIONS: ControlApiMcpRuntimeResponse = {
 };
 
 /**
- * Desired-vs-actual evidence for an agent. The detail response guard treats this
- * as a precondition of the page, so every `AgentDetailView` call supplies it.
- * It is unobserved on purpose: an agent the Runtime has not reconciled against
- * is the interesting case, and it is the one that has to read `Not observed`
- * rather than blank.
- */
+Desired-vs-actual evidence for an agent. The detail response guard treats this
+as a precondition of the page, so every `AgentDetailView` call supplies it.
+It is unobserved on purpose: an agent the Runtime has not reconciled against
+is the interesting case, and it is the one that has to read `Not observed`
+rather than blank.
+*/
 const AGENT_RECONCILIATION: ControlApiAgentDetailResponse["reconciliation"] = {
   status: {
     convergence: "not-observed",
@@ -433,8 +435,7 @@ test("the icon set holds no glyph that nothing renders", () => {
       recursive: true
     })) {
       const file = join(consoleRoot, dir, relative.toString());
-      if (!/\.tsx?$/u.test(file) || !statSync(file).isFile()) continue;
-      if (file.endsWith(join("icons", "Icon.ts"))) continue;
+      if (!/\.tsx?$/u.test(file) || !statSync(file).isFile() || file.endsWith(join("icons", "Icon.ts"))) continue;
       const source = readFileSync(file, "utf8");
       // Match the property, not any occurrence of the word: a section name like
       // "Tools" also appears in prose, in a route path, and in a test id.
@@ -539,8 +540,7 @@ test("missing evidence is reported in one word, from one constant", () => {
       recursive: true
     })) {
       const file = join(consoleRoot, dir, relative.toString());
-      if (!file.endsWith(".ts") || !statSync(file).isFile()) continue;
-      if (VOCABULARY_DECLARATIONS.some((skip) => file.endsWith(skip))) continue;
+      if (!file.endsWith(".ts") || !statSync(file).isFile() || VOCABULARY_DECLARATIONS.some((skip) => file.endsWith(skip))) continue;
       const source = readFileSync(file, "utf8");
       source.split("\n").forEach((line, index) => {
         const trimmed = line.trim();
@@ -588,12 +588,12 @@ test("missing evidence is reported in one word, from one constant", () => {
 });
 
 /**
- * The word a badge renders, read out of its markup.
- *
- * The badge is a dot beside a word, and the word is the part that carries the
- * meaning, so the assertion is about the word rather than about the badge's
- * markup as a whole.
- */
+The word a badge renders, read out of its markup.
+
+The badge is a dot beside a word, and the word is the part that carries the
+meaning, so the assertion is about the word rather than about the badge's
+markup as a whole.
+*/
 function badgeLabel(markup: string): string {
   const match = /class="min-w-0 truncate">([^<]*)<\/span>/u.exec(markup);
   assert.ok(match, `the badge must render a label, got: ${markup}`);
@@ -638,7 +638,9 @@ test("a status the Console has no word for is still named", () => {
   assert.match(known, /text-success/u);
 });
 
-/** The `/tools` source filter, which is the shape every bounded filter takes. */
+/**
+The `/tools` source filter, which is the shape every bounded filter takes.
+*/
 const SPEC: FilterSpec = {
   name: "source",
   allowed: ["all", "native", "mcp", "plugin"],
@@ -666,7 +668,7 @@ test("an unrecognised URL filter is named, never resolved into a default", async
     value: "all",
     unapplied: null
   });
-  assert.deepEqual(resolveFilter("   ", SPEC), {
+  assert.deepEqual(resolveFilter(' '.repeat(3), SPEC), {
     value: "all",
     unapplied: null
   });
@@ -857,20 +859,18 @@ test("a heading that shares a row with a sibling sits in a row that can wrap", (
 });
 
 /**
- * Whether a `flex` class string is a row that spaces its children apart, holds
- * a heading, and cannot wrap.
- *
- * The heading is part of the test rather than the rule because a row of two
- * equal chips has nothing to starve.
- */
+Whether a `flex` class string is a row that spaces its children apart, holds
+a heading, and cannot wrap.
+
+The heading is part of the test rather than the rule because a row of two
+equal chips has nothing to starve.
+*/
 function headingRowWithoutWrap(
   source: string,
   match: RegExpMatchArray
 ): boolean {
   const classList = match[1] ?? "";
-  if (!/\bjustify-(?:between|end)\b/u.test(classList)) return false;
-  if (!/\bitems-center\b/u.test(classList)) return false;
-  if (/\bflex-(?:wrap|col|reverse)\b/u.test(classList)) return false;
+  if (!/\bjustify-(?:between|end)\b/u.test(classList) || !/\bitems-center\b/u.test(classList) || /\bflex-(?:wrap|col|reverse)\b/u.test(classList)) return false;
   const after = source.slice(match.index ?? 0, (match.index ?? 0) + 900);
   return /createElement\(\s*"h[1-6]"/u.test(after);
 }
@@ -1279,11 +1279,11 @@ test("AppNav renders Configure/Observe/Operate groups with canonical membership,
   const groupIndexes = expectedOrder.map((group) =>
     markup.indexOf(`data-nav-group="${group.id}"`)
   );
-  for (const [i, idx] of groupIndexes.entries()) {
-    assert.ok(idx !== -1, `Group ${expectedOrder[i]?.id} must render`);
-    if (i > 0) {
+  for (const [index, index_] of groupIndexes.entries()) {
+    assert.ok(index_ !== -1, `Group ${expectedOrder[index]?.id} must render`);
+    if (index > 0) {
       assert.ok(
-        (idx ?? -1) > (groupIndexes[i - 1] ?? -1),
+        (index_ ?? -1) > (groupIndexes[index - 1] ?? -1),
         `Group order must be Configure → Observe → Operate`
       );
     }
@@ -1301,14 +1301,14 @@ test("AppNav renders Configure/Observe/Operate groups with canonical membership,
       }
     }
     for (const section of group.sections) {
-      const idx = markup.indexOf(`data-nav-item="${section.toLowerCase()}"`);
-      assert.ok(idx !== -1, `${section} must be present in AppNav`);
-      assert.ok(idx > lastIndex, `${section} must appear in canonical order`);
+      const index = markup.indexOf(`data-nav-item="${section.toLowerCase()}"`);
+      assert.ok(index !== -1, `${section} must be present in AppNav`);
+      assert.ok(index > lastIndex, `${section} must appear in canonical order`);
       assert.ok(
-        idx >= groupStart && idx < groupEnd,
+        index >= groupStart && index < groupEnd,
         `${section} must be rendered inside the ${group.id} group`
       );
-      lastIndex = idx;
+      lastIndex = index;
     }
   }
 
@@ -1378,23 +1378,23 @@ test("compact navigation dismissal policy handles primary clicks and Escape", ()
 });
 
 /**
- * The Console's keyboard-focus contract is a single global rule rather than a
- * per-component class: `:where(a, button, ...):focus-visible` draws an accent
- * outline at zero specificity, so a component may omit the utility without
- * losing the indicator. Tests assert the rule exists instead of demanding every
- * anchor re-declare it.
- *
- * The rule carries a second selector clause for the form controls, and both are
- * required. `:focus-visible` alone leaves the calendar picker inside a
- * `type="date"` input with no indicator at all, because Chromium delegates focus
- * to the control's internal fields and reports the host as not focus-visible at
- * that stop -- so a check that only looks for `:focus-visible` passes on a Console
- * where a keyboard user loses the indicator mid-field.
- *
- * The gap between `:focus-visible` and `{` is matched by `[^{]*` rather than
- * `\s*` because the two clauses are comma-separated in one block. Without it this
- * helper goes red on a rule that is correct.
- */
+The Console's keyboard-focus contract is a single global rule rather than a
+per-component class: `:where(a, button, ...):focus-visible` draws an accent
+outline at zero specificity, so a component may omit the utility without
+losing the indicator. Tests assert the rule exists instead of demanding every
+anchor re-declare it.
+
+The rule carries a second selector clause for the form controls, and both are
+required. `:focus-visible` alone leaves the calendar picker inside a
+`type="date"` input with no indicator at all, because Chromium delegates focus
+to the control's internal fields and reports the host as not focus-visible at
+that stop -- so a check that only looks for `:focus-visible` passes on a Console
+where a keyboard user loses the indicator mid-field.
+
+The gap between `:focus-visible` and `{` is matched by `[^{]*` rather than
+`\s*` because the two clauses are comma-separated in one block. Without it this
+helper goes red on a rule that is correct.
+*/
 function globalFocusRingIsDeclared(): boolean {
   const css = readFileSync(
     join(import.meta.dirname, "..", "app", "globals.css"),
@@ -1549,7 +1549,7 @@ test("Breadcrumbs renders a server-renderable landmark with native ancestor link
     "the shared :focus-visible outline rule must exist for keyboard focus"
   );
   const ancestorTag =
-    anchorMarkupForHref(navMarkup, "/mcps").match(/^<a\b[^>]*>/u)?.[0] ?? "";
+    /^<a\b[^>]*>/u.exec(anchorMarkupForHref(navMarkup, "/mcps"))?.[0] ?? "";
   assert.doesNotMatch(ancestorTag, /focus-visible:outline-none/u);
 
   // Current-page item: a non-link <span aria-current="page"> with the
@@ -1562,11 +1562,11 @@ test("Breadcrumbs renders a server-renderable landmark with native ancestor link
 
   // The trail is ordered: ancestor appears before the current-page item,
   // separated by a hidden "/" separator span.
-  const ancestorIdx = navMarkup.indexOf('href="/mcps"');
-  const currentIdx = navMarkup.indexOf('aria-current="page"');
-  assert.ok(ancestorIdx !== -1 && currentIdx !== -1);
+  const ancestorIndex = navMarkup.indexOf('href="/mcps"');
+  const currentIndex = navMarkup.indexOf('aria-current="page"');
+  assert.ok(ancestorIndex !== -1 && currentIndex !== -1);
   assert.ok(
-    ancestorIdx < currentIdx,
+    ancestorIndex < currentIndex,
     "Breadcrumbs must place the ancestor before the current page"
   );
   assert.match(navMarkup, /aria-hidden="true"[^>]*>\/</);
@@ -2280,7 +2280,9 @@ test("PromptsView distinguishes an unavailable command source from a valid empty
   assert.match(missing, /Not observed/);
 });
 
-/** Shared "nothing observed yet" reconciliation fixture for detail renders. */
+/**
+Shared "nothing observed yet" reconciliation fixture for detail renders.
+*/
 const unobservedPromptReconciliation: ControlApiPromptDetailResponse["reconciliation"] =
   {
     status: {
@@ -2728,7 +2730,7 @@ test("DataTable renders table with columns and data", () => {
     { id: "2", name: "Beta" }
   ];
   const markup = renderToStaticMarkup(
-    React.createElement<DataTableProps<TestRow>>(DataTable, {
+    React.createElement<DataTableProperties<TestRow>>(DataTable, {
       data,
       columns: [
         { id: "id", header: "ID", cell: ({ row: { original: r } }) => r.id },
@@ -2773,7 +2775,7 @@ test("DataTable distributes column width by weight, not by absolute length", () 
     readonly id: string;
   }
   const markup = renderToStaticMarkup(
-    React.createElement<DataTableProps<TestRow>>(DataTable, {
+    React.createElement<DataTableProperties<TestRow>>(DataTable, {
       data: [{ id: "1" }],
       columns: [
         {
@@ -2823,7 +2825,7 @@ test("DataTable wraps column headers instead of truncating them", () => {
     readonly id: string;
   }
   const markup = renderToStaticMarkup(
-    React.createElement<DataTableProps<TestRow>>(DataTable, {
+    React.createElement<DataTableProperties<TestRow>>(DataTable, {
       data: [{ id: "1" }],
       columns: [
         {
@@ -2862,16 +2864,16 @@ test("DataTable wraps column headers instead of truncating them", () => {
 });
 
 /**
- * Renders the Evaluations view with the props every caller would otherwise have
- * to restate.
- *
- * The view now takes its filter state and the values each filter axis can
- * narrow on as props rather than inventing them. Supplying an empty selection
- * here is not a shortcut: it is the state the resource is in when no filter is
- * set, and a test that means to exercise a filter has to say so explicitly.
- */
+Renders the Evaluations view with the props every caller would otherwise have
+to restate.
+
+The view now takes its filter state and the values each filter axis can
+narrow on as props rather than inventing them. Supplying an empty selection
+here is not a shortcut: it is the state the resource is in when no filter is
+set, and a test that means to exercise a filter has to say so explicitly.
+*/
 function renderEvaluations(
-  props: Partial<React.ComponentProps<typeof EvaluationsView>> &
+  properties: Partial<React.ComponentProps<typeof EvaluationsView>> &
     Pick<React.ComponentProps<typeof EvaluationsView>, "evaluations">
 ): string {
   return renderToStaticMarkup(
@@ -2885,19 +2887,19 @@ function renderEvaluations(
         until: ""
       },
       filterOptions: { roles: [], models: [], prompts: [] },
-      ...props
+      ...properties
     })
   );
 }
 
 /**
- * A filter state for a test, overriding only what it names.
- *
- * Module level because several tests here need one and three others declare
- * their own local `filters` with the same shape. Those are left alone: one of
- * them takes `(from, until)` rather than an overrides object, so folding them
- * in would be a change to tests this work does not own.
- */
+A filter state for a test, overriding only what it names.
+
+Module level because several tests here need one and three others declare
+their own local `filters` with the same shape. Those are left alone: one of
+them takes `(from, until)` rather than an overrides object, so folding them
+in would be a change to tests this work does not own.
+*/
 function evaluationsFilters(
   over: Partial<EvaluationsFilters> = {}
 ): EvaluationsFilters {
@@ -3387,7 +3389,7 @@ test("DataTable clamps prose cells on an inner box, not the table cell", () => {
     readonly description: string;
   }
   const markup = renderToStaticMarkup(
-    React.createElement<DataTableProps<TestRow>>(DataTable, {
+    React.createElement<DataTableProperties<TestRow>>(DataTable, {
       data: [{ id: "1", description: "A long description." }],
       columns: [
         { id: "id", header: "ID", cell: ({ row: { original: r } }) => r.id },
@@ -3429,7 +3431,7 @@ test("DataTable keeps a truncated cell's full value reachable, whatever it is bu
     align?: "truncate" | "tokens" | "prose",
     text: string = value
   ) =>
-    React.createElement<DataTableProps<{ v: string }>>(DataTable, {
+    React.createElement<DataTableProperties<{ v: string }>>(DataTable, {
       data: [{ v: text }],
       columns: [
         {
@@ -3478,7 +3480,7 @@ test("DataTable keeps a truncated cell's full value reachable, whatever it is bu
   // copy of the value. The title is derived from the node's own children, so it
   // repeats exactly what the cell shows rather than describing it.
   const elementCell = renderToStaticMarkup(
-    React.createElement<DataTableProps<{ v: string }>>(DataTable, {
+    React.createElement<DataTableProperties<{ v: string }>>(DataTable, {
       data: [{ v: value }],
       columns: [
         {
@@ -3530,7 +3532,7 @@ test("DataTable keeps a truncated cell's full value reachable, whatever it is bu
       React.createElement(StatusBadge, { status: "not-observed", label: r.v })
   ]) {
     const cut = renderToStaticMarkup(
-      React.createElement<DataTableProps<{ v: string }>>(DataTable, {
+      React.createElement<DataTableProperties<{ v: string }>>(DataTable, {
         data: [{ v: value }],
         columns: [
           {
@@ -4041,13 +4043,15 @@ test("Control API detail fetchers encode identifiers and preserve not-found stat
       })
   });
   assert.equal(stalePrompt.kind, "invalid-response");
-  if (stalePrompt.kind === "invalid-response") {
-    assert.equal(
-      stalePrompt.code,
-      "autodev_control_api_invalid_prompt_detail_response"
-    );
-    assert.match(stalePrompt.message, /v4 reconciliation contract/);
+  if (stalePrompt.kind !== "invalid-response") {
+    return;
   }
+
+  assert.equal(
+    stalePrompt.code,
+    "autodev_control_api_invalid_prompt_detail_response"
+  );
+  assert.match(stalePrompt.message, /v4 reconciliation contract/);
 });
 
 test("a prompt detail that could not be read keeps the Runtime's reason", async () => {
@@ -4304,14 +4308,16 @@ test("fetchControlApi extracts code and message from Control API error envelope"
     { fetchImpl }
   );
   assert.equal(result.kind, "unauthorized");
-  if (result.kind === "unauthorized") {
-    assert.equal(result.status, 401);
-    assert.equal(result.code, "autodev_control_api_unauthorized");
-    assert.equal(
-      result.message,
-      "Control API requires the AutoDev server-side service credential."
-    );
+  if (result.kind !== "unauthorized") {
+    return;
   }
+
+  assert.equal(result.status, 401);
+  assert.equal(result.code, "autodev_control_api_unauthorized");
+  assert.equal(
+    result.message,
+    "Control API requires the AutoDev server-side service credential."
+  );
 });
 
 test("fetchControlApi transparently retries transient connection errors like ECONNREFUSED", async () => {
@@ -4319,9 +4325,9 @@ test("fetchControlApi transparently retries transient connection errors like ECO
   const fetchImpl: typeof fetch = async () => {
     callCount += 1;
     if (callCount === 1) {
-      const err = new TypeError("fetch failed");
-      Object.assign(err, { cause: { code: "ECONNREFUSED" } });
-      throw err;
+      const error = new TypeError("fetch failed");
+      Object.assign(error, { cause: { code: "ECONNREFUSED" } });
+      throw error;
     }
     return Response.json({
       schema: "autodev-control-skills-v2",
@@ -4349,9 +4355,9 @@ test("fetchControlApiBinary transparently retries transient connection errors li
   const fetchImpl: typeof fetch = async () => {
     callCount += 1;
     if (callCount === 1) {
-      const err = new TypeError("fetch failed");
-      Object.assign(err, { cause: { code: "ECONNREFUSED" } });
-      throw err;
+      const error = new TypeError("fetch failed");
+      Object.assign(error, { cause: { code: "ECONNREFUSED" } });
+      throw error;
     }
     return new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), {
       status: 200,
@@ -4368,10 +4374,12 @@ test("fetchControlApiBinary transparently retries transient connection errors li
   );
   assert.equal(callCount, 2);
   assert.equal(result.kind, "ok");
-  if (result.kind === "ok") {
-    assert.equal(result.data.mediaType, "image/png");
-    assert.equal(result.data.bytes.byteLength, 4);
+  if (result.kind !== "ok") {
+    return;
   }
+
+  assert.equal(result.data.mediaType, "image/png");
+  assert.equal(result.data.bytes.byteLength, 4);
 });
 
 test("readControlApiConfig and readOpenLITUsageConfig fall back to canonical secret file when token is unset", () => {
@@ -4399,11 +4407,11 @@ test("readControlApiConfig and readOpenLITUsageConfig fall back to canonical sec
 });
 
 /**
- * Regression suite: missing data must NOT render green/optimistic state.
- *
- * Each view must report `Not observed` -- and only that word -- rather than
- * fabricated `100%`, `Connected`, `Active`, `Recorded`, or `Available`.
- */
+Regression suite: missing data must NOT render green/optimistic state.
+
+Each view must report `Not observed` -- and only that word -- rather than
+fabricated `100%`, `Connected`, `Active`, `Recorded`, or `Available`.
+*/
 
 test("Usage role and provider breakdowns use distinct semantic chart series", () => {
   const metrics: UsageMetricsData = {
@@ -4504,8 +4512,8 @@ test("Usage values stay readable at large scales and keep unattributed groups ex
   assert.equal(formatCount(8320), "8,320");
   assert.equal(formatTokenCount(1_443_517_000), "1.4B");
   assert.equal(formatTokenCount(3_561_000), "3.6M");
-  assert.equal(formatLatency(42_364.660_695_649_996), "42.4 s");
-  assert.equal(formatLatency(84.313_416_499_999_99), "84.3 ms");
+  assert.equal(formatLatency(42_364.660695649996), "42.4 s");
+  assert.equal(formatLatency(84.31341649999999), "84.3 ms");
   assert.equal(formatLatency(null), "Not observed");
 
   const markup = renderToStaticMarkup(
@@ -4515,13 +4523,13 @@ test("Usage values stay readable at large scales and keep unattributed groups ex
         totalInputTokens: 1_443_517_000,
         totalOutputTokens: 3_561_000,
         cacheReadRate: null,
-        p95LatencyMs: 42_364.660_695_649_996,
+        p95LatencyMs: 42_364.660695649996,
         p95ProviderQueueMs: null,
         p95ProviderSiteMs: null,
         estimatedCostUsd: 0.01,
         physicalAttempts: 8320,
         mcpCalls: 6,
-        p95McpDurationMs: 84.313_416_499_999_99,
+        p95McpDurationMs: 84.31341649999999,
         mcpErrors: 0,
         failedAttempts: 0,
         attemptErrorsByProvider: [],
@@ -4591,7 +4599,7 @@ test("the Active sessions URL selection carries no custom bounds", () => {
 
   // Parsed, and distinct from a range.
   assert.deepEqual(
-    usageSelectionFromSearchParams({ range: "ACTIVE_SESSIONS" }, now),
+    usageSelectionFromSearchParameters({ range: "ACTIVE_SESSIONS" }, now),
     { range: "ACTIVE_SESSIONS", values: {} }
   );
 
@@ -4599,14 +4607,14 @@ test("the Active sessions URL selection carries no custom bounds", () => {
   // onto it: a 14-day window on a selection with no window would describe
   // something that does not apply.
   assert.equal(
-    usageSelectionFromSearchParams({ range: "ACTIVE_SESSIONS" }, now)
+    usageSelectionFromSearchParameters({ range: "ACTIVE_SESSIONS" }, now)
       .customRange,
     undefined
   );
 
   // An unrecognised scope still falls back rather than passing through.
   assert.equal(
-    usageSelectionFromSearchParams({ range: "live" }, now).range,
+    usageSelectionFromSearchParameters({ range: "live" }, now).range,
     "24H"
   );
 
@@ -4818,7 +4826,7 @@ test("live session state projects Runtime counters without inventing defaults", 
 test("Usage URL filters preserve stock time ranges, custom dates, and server-only credentials", () => {
   const now = new Date("2026-10-01T12:00:00.000Z");
   assert.deepEqual(
-    usageSelectionFromSearchParams(
+    usageSelectionFromSearchParameters(
       {
         range: "7D",
         workspace: ["repo-a", "repo-b", "repo-a", ""],
@@ -4840,7 +4848,7 @@ test("Usage URL filters preserve stock time ranges, custom dates, and server-onl
     }
   );
   assert.deepEqual(
-    usageSelectionFromSearchParams(
+    usageSelectionFromSearchParameters(
       { range: "CUSTOM", startDate: "2026-09-01", endDate: "2026-10-01" },
       now
     ),
@@ -4851,7 +4859,7 @@ test("Usage URL filters preserve stock time ranges, custom dates, and server-onl
     }
   );
   assert.equal(
-    usageSelectionFromSearchParams({ range: "all-time" }, now).range,
+    usageSelectionFromSearchParameters({ range: "all-time" }, now).range,
     "24H"
   );
   assert.deepEqual(
@@ -5242,7 +5250,7 @@ test("McpDetailView combines canonical desired state with unknown runtime health
   assert.match(overviewMarkup, /Not observed/);
   assert.doesNotMatch(overviewMarkup, /Connected/);
 
-  const configurationMarkup = renderToStaticMarkup(
+  const configMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
       revision: "b".repeat(64),
       sourceValidity: true,
@@ -5253,7 +5261,7 @@ test("McpDetailView combines canonical desired state with unknown runtime health
       activeTab: "configuration"
     })
   );
-  assert.match(configurationMarkup, /codexcli: disabled/);
+  assert.match(configMarkup, /codexcli: disabled/);
 
   const roleAccessMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
@@ -5890,7 +5898,7 @@ test("McpDetailView renders full §14 diagnostic sub-panels across their owning 
     }
   ];
 
-  const configurationMarkup = renderToStaticMarkup(
+  const configMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
       revision: "b".repeat(64),
       sourceValidity: true,
@@ -5901,13 +5909,13 @@ test("McpDetailView renders full §14 diagnostic sub-panels across their owning 
       activeTab: "configuration"
     })
   );
-  assert.match(configurationMarkup, /data-section="mcp-configuration"/);
-  assert.match(configurationMarkup, /Server configuration/);
-  assert.match(configurationMarkup, /exec run-lsp\.sh/);
-  assert.match(configurationMarkup, /\/Users\/test\/workspace/);
-  assert.match(configurationMarkup, /LSP_SERVER_PATH, LSP_TIMEOUT/);
-  assert.match(configurationMarkup, /mode: approve/);
-  assert.match(configurationMarkup, /tools: lsp_goto_definition/);
+  assert.match(configMarkup, /data-section="mcp-configuration"/);
+  assert.match(configMarkup, /Server configuration/);
+  assert.match(configMarkup, /exec run-lsp\.sh/);
+  assert.match(configMarkup, /\/Users\/test\/workspace/);
+  assert.match(configMarkup, /LSP_SERVER_PATH, LSP_TIMEOUT/);
+  assert.match(configMarkup, /mode: approve/);
+  assert.match(configMarkup, /tools: lsp_goto_definition/);
 
   const connectionHealthMarkup = renderToStaticMarkup(
     React.createElement(McpDetailView, {
@@ -6863,7 +6871,7 @@ test("the sidebar counts the resource, not the filter that emptied it", async ()
   // and never sees the badge at all -- it is the page that owns both the read
   // and the shell's counts, so the page is the only level where "the badge
   // disagrees with the card" is expressible.
-  const originalFetch = globalThis.fetch;
+  const originalFetch = fetch;
   process.env.AUTODEV_CONTROL_API_TOKEN = "evaluation-badge-test-token";
   process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
   globalThis.fetch = async (input) => {
@@ -6944,15 +6952,15 @@ test("a Control API that is reachable but slow is not reported as unreachable", 
   // that raises it. Asserted at both levels that can express it: the reader
   // records it, and the page reports it. A reader-only test would pass while the
   // page still said "unreachable", which is the half an operator reads.
-  const originalFetch = globalThis.fetch;
+  const originalFetch = fetch;
   process.env.AUTODEV_CONTROL_API_TOKEN = "evaluation-timeout-test-token";
   process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
 
   // A fetch that never settles, so the Console's own deadline is what ends it.
-  let hungRead = true;
+  let isHungRead = true;
   globalThis.fetch = ((input: RequestInfo | URL) => {
     const url = String(input);
-    if (url.endsWith("/control/evaluations") && hungRead) {
+    if (url.endsWith("/control/evaluations") && isHungRead) {
       return new Promise<Response>((_resolve, reject) => {
         // Reject on abort, exactly as the platform fetch does, so the reader's
         // catch is reached the way it is in production rather than by a stub
@@ -7009,7 +7017,7 @@ test("a Control API that is reachable but slow is not reported as unreachable", 
     // The other direction, which is the one that would be easy to break by
     // treating every read failure as a timeout. A read that fails immediately is
     // the service not being there, and it must keep saying so.
-    hungRead = false;
+    isHungRead = false;
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/control/evaluations")) {
@@ -7053,7 +7061,7 @@ test("a refused connection says what was refused without printing the address", 
   // "connect ECONNREFUSED 127.0.0.1:4101", which would put the configured
   // Control API address into a panel the browser renders. So the reader names the
   // errno and not the message, and that is asserted here rather than trusted.
-  const originalFetch = globalThis.fetch;
+  const originalFetch = fetch;
   process.env.AUTODEV_CONTROL_API_TOKEN = "evaluation-refused-test-token";
   process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
 
@@ -7158,7 +7166,7 @@ test("a write abandoned at the deadline reads the same as a read that was", asyn
     }) as typeof globalThis.fetch;
   };
 
-  const originalFetch = globalThis.fetch;
+  const originalFetch = fetch;
   const config = {
     baseUrl: "http://127.0.0.1:4101",
     serviceToken: "post-classifier-test-token"
@@ -7236,7 +7244,7 @@ test("an unconfigured Control API says which results it would have read", async 
   //
   // This branch had no test at all on any page, so the message was free to name
   // the wrong resource for as long as it existed.
-  const previousEnv = saveConsolePageEnvironment();
+  const previousEnvironment = saveConsolePageEnvironment();
   const isolatedHome = mkdtempSync(
     join(tmpdir(), "autodev-evaluations-unset-")
   );
@@ -7244,7 +7252,7 @@ test("an unconfigured Control API says which results it would have read", async 
   process.env.CODEX_HOME = isolatedHome;
   delete process.env.AUTODEV_CONTROL_API_TOKEN;
   delete process.env.AUTODEV_OPENLIT_SECRET_FILE;
-  const previousFetch = globalThis.fetch;
+  const previousFetch = fetch;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     throw new Error(
       `An unconfigured read must not reach the network: ${String(input)}`
@@ -7272,7 +7280,7 @@ test("an unconfigured Control API says which results it would have read", async 
     assert.doesNotMatch(markup, /Pass Rate/);
   } finally {
     globalThis.fetch = previousFetch;
-    restoreConsolePageEnvironment(previousEnv);
+    restoreConsolePageEnvironment(previousEnvironment);
     rmSync(isolatedHome, { recursive: true, force: true });
   }
 });
@@ -7293,8 +7301,8 @@ test("a trace lookup that failed says what failed and offers the way back", asyn
   // offered nothing at all. A failed lookup is reached by hand-editing the URL or
   // by following a link to a span telemetry no longer holds, so the one case
   // where an operator most needs to try a different span was a dead end.
-  const previousFetch = globalThis.fetch;
-  const previousEnv = saveConsolePageEnvironment();
+  const previousFetch = fetch;
+  const previousEnvironment = saveConsolePageEnvironment();
   const isolatedHome = mkdtempSync(
     join(tmpdir(), "autodev-evaluations-trace-")
   );
@@ -7402,14 +7410,14 @@ test("a trace lookup that failed says what failed and offers the way back", asyn
     }
   } finally {
     globalThis.fetch = previousFetch;
-    restoreConsolePageEnvironment(previousEnv);
+    restoreConsolePageEnvironment(previousEnvironment);
     rmSync(isolatedHome, { recursive: true, force: true });
   }
 });
 
 test("EvaluationsPage loads the linked trace through the Usage token and keeps prompt scope", async () => {
-  const previousFetch = globalThis.fetch;
-  const previousEnv = saveConsolePageEnvironment();
+  const previousFetch = fetch;
+  const previousEnvironment = saveConsolePageEnvironment();
   const isolatedHome = mkdtempSync(join(tmpdir(), "autodev-evaluations-page-"));
   const requests: Array<{
     url: string;
@@ -7505,7 +7513,7 @@ test("EvaluationsPage loads the linked trace through the Usage token and keeps p
     assert.equal(markup.includes("evaluation-usage-test-token"), false);
   } finally {
     globalThis.fetch = previousFetch;
-    restoreConsolePageEnvironment(previousEnv);
+    restoreConsolePageEnvironment(previousEnvironment);
     rmSync(isolatedHome, { recursive: true, force: true });
   }
 });
@@ -7522,8 +7530,8 @@ test("the trace table marks the span the trace was opened for, and only that one
   // Parent column, so the selected id appears four times in the table while only
   // one of those links is the cell that is selected. A marker that fell on a
   // parent link would satisfy "marked once" while pointing at the wrong cell.
-  const previousFetch = globalThis.fetch;
-  const previousEnv = saveConsolePageEnvironment();
+  const previousFetch = fetch;
+  const previousEnvironment = saveConsolePageEnvironment();
   const isolatedHome = mkdtempSync(
     join(tmpdir(), "autodev-evaluations-selection-")
   );
@@ -7656,14 +7664,14 @@ test("the trace table marks the span the trace was opened for, and only that one
     );
   } finally {
     globalThis.fetch = previousFetch;
-    restoreConsolePageEnvironment(previousEnv);
+    restoreConsolePageEnvironment(previousEnvironment);
     rmSync(isolatedHome, { recursive: true, force: true });
   }
 });
 
 test("EvaluationsPage rejects malformed trace query IDs without calling the Usage endpoint", async () => {
-  const previousFetch = globalThis.fetch;
-  const previousEnv = saveConsolePageEnvironment();
+  const previousFetch = fetch;
+  const previousEnvironment = saveConsolePageEnvironment();
   const isolatedHome = mkdtempSync(join(tmpdir(), "autodev-evaluations-page-"));
   let usageRequests = 0;
   try {
@@ -7699,7 +7707,7 @@ test("EvaluationsPage rejects malformed trace query IDs without calling the Usag
     assert.equal(usageRequests, 0);
   } finally {
     globalThis.fetch = previousFetch;
-    restoreConsolePageEnvironment(previousEnv);
+    restoreConsolePageEnvironment(previousEnvironment);
     rmSync(isolatedHome, { recursive: true, force: true });
   }
 });
@@ -7944,10 +7952,10 @@ test("the filter bar's leading sentence agrees with itself when there is one res
   // more than one result in practice: `truncated` is the driver's flag, and the
   // Console does not get to decide what it implies.
   const sentence = (
-    props: Partial<React.ComponentProps<typeof EvaluationsView>> &
+    properties: Partial<React.ComponentProps<typeof EvaluationsView>> &
       Pick<React.ComponentProps<typeof EvaluationsView>, "evaluations">
   ): string => {
-    const markup = renderEvaluations(props);
+    const markup = renderEvaluations(properties);
     const found = />([^<]*retained[^<]*)</.exec(markup);
     assert.ok(found !== null, "the filter bar states a result count");
     return (found[1] ?? "").trim();
@@ -8179,8 +8187,8 @@ test("a repeated selection parameter is not a choice, and opens nothing", async 
   // `result` by taking the first and `spanId` by the same rule, so one resource
   // answered the same question two ways. One resolver, in the module that owns
   // the URL contract, for every parameter that selects something.
-  const previousFetch = globalThis.fetch;
-  const previousEnv = saveConsolePageEnvironment();
+  const previousFetch = fetch;
+  const previousEnvironment = saveConsolePageEnvironment();
   const isolatedHome = mkdtempSync(join(tmpdir(), "autodev-evaluations-page-"));
   let usageRequests = 0;
   try {
@@ -8239,7 +8247,7 @@ test("a repeated selection parameter is not a choice, and opens nothing", async 
     );
   } finally {
     globalThis.fetch = previousFetch;
-    restoreConsolePageEnvironment(previousEnv);
+    restoreConsolePageEnvironment(previousEnvironment);
     rmSync(isolatedHome, { recursive: true, force: true });
   }
 });
@@ -8631,18 +8639,18 @@ test("page links keep the filters and the section and drop the open run", () => 
 });
 
 /**
- * Nests the HTML parser rewrites, which is what breaks hydration.
- *
- * Deliberately not a general content-model check. A content model is stricter
- * than the parser: `<dl><div>` is conforming and `<ul><div>` is not, yet the
- * parser preserves both, so both are safe. React's #418 is the parser producing
- * a *different tree* than React built, and only these rules do that.
- *
- * Derived by measuring it rather than by reading a spec: each rule below was
- * confirmed against Chromium's own parser to move an element, and each one is
- * pinned by the self-check at the end of the test below. A rule that cannot be
- * shown to move something is not in this table.
- */
+Nests the HTML parser rewrites, which is what breaks hydration.
+
+Deliberately not a general content-model check. A content model is stricter
+than the parser: `<dl><div>` is conforming and `<ul><div>` is not, yet the
+parser preserves both, so both are safe. React's #418 is the parser producing
+a *different tree* than React built, and only these rules do that.
+
+Derived by measuring it rather than by reading a spec: each rule below was
+confirmed against Chromium's own parser to move an element, and each one is
+pinned by the self-check at the end of the test below. A rule that cannot be
+shown to move something is not in this table.
+*/
 const PARSER_REWRITES = new Map<string, ReadonlySet<string>>([
   // A block element closes an open <p> and becomes its sibling.
   [
@@ -8689,15 +8697,15 @@ const PARSER_REWRITES = new Map<string, ReadonlySet<string>>([
 ]);
 
 /**
- * The same, for table structure, which behaves differently and is the reason
- * these two tables are not one.
- *
- * Content that is not table structure is foster-parented out only when the parser
- * meets it as a DIRECT child of the table, thead, tbody, tfoot or tr. The same tag
- * one level deeper is ordinary content: a `<span>` inside a `<th>` inside a `<tr>`
- * is exactly how a column header is built, and a rule that reached through the
- * `<th>` to the `<tr>` would report every such header as a hydration bug.
- */
+The same, for table structure, which behaves differently and is the reason
+these two tables are not one.
+
+Content that is not table structure is foster-parented out only when the parser
+meets it as a DIRECT child of the table, thead, tbody, tfoot or tr. The same tag
+one level deeper is ordinary content: a `<span>` inside a `<th>` inside a `<tr>`
+is exactly how a column header is built, and a rule that reached through the
+`<th>` to the `<tr>` would report every such header as a hydration bug.
+*/
 const TABLE_STRUCTURE_REWRITES = new Map<string, ReadonlySet<string>>([
   [
     "table",
@@ -8709,31 +8717,33 @@ const TABLE_STRUCTURE_REWRITES = new Map<string, ReadonlySet<string>>([
   ["tr", new Set(["div", "p", "span", "a", "ul", "table"])]
 ]);
 
-/** Fragment and strict-mode emit nothing, so they occupy no index or path. */
+/**
+Fragment and strict-mode emit nothing, so they occupy no index or path.
+*/
 const TRANSPARENT_TYPES: ReadonlySet<symbol> = new Set([
   Symbol.for("react.fragment"),
   Symbol.for("react.strict_mode")
 ]);
 
 /**
- * React 19 renamed the element tag from `react.element` to
- * `react.transitional.element`. Checking only the old name makes every node look
- * like a non-element, so the walk sees nothing and reports a clean page.
- */
+React 19 renamed the element tag from `react.element` to
+`react.transitional.element`. Checking only the old name makes every node look
+like a non-element, so the walk sees nothing and reports a clean page.
+*/
 const ELEMENT_TYPES: ReadonlySet<symbol> = new Set([
   Symbol.for("react.element"),
   Symbol.for("react.transitional.element")
 ]);
 
 /**
- * The element's `$$typeof` tag, which React 19 renamed but kept the shape of.
- *
- * `React.JSX.Element` does not declare `$$typeof`, so this is read through a
- * narrow structural type from `unknown` rather than cast from the element. A cast
- * from `React.JSX.Element` to a shape carrying `$$typeof` is rejected outright,
- * and widening the argument to `ReactNode` instead -- which does cast -- throws
- * away the narrowing the walk depends on and puts the error somewhere else.
- */
+The element's `$$typeof` tag, which React 19 renamed but kept the shape of.
+
+`React.JSX.Element` does not declare `$$typeof`, so this is read through a
+narrow structural type from `unknown` rather than cast from the element. A cast
+from `React.JSX.Element` to a shape carrying `$$typeof` is rejected outright,
+and widening the argument to `ReactNode` instead -- which does cast -- throws
+away the narrowing the walk depends on and puts the error somewhere else.
+*/
 function elementTagOf(node: unknown): symbol | null {
   if (node === null || typeof node !== "object") return null;
   const tag = (node as { $$typeof?: unknown }).$$typeof;
@@ -8752,15 +8762,12 @@ function elementChildrenOf(node: React.JSX.Element): React.JSX.Element[] {
       child.forEach(push);
       return;
     }
-    if (typeof child === "function") return;
-    if (child === null || child === undefined || typeof child === "boolean")
-      return;
-    if (typeof child === "string" || typeof child === "number") return;
+    if ((typeof child === "function") || child === null || child === undefined || typeof child === "boolean" || typeof child === "string" || typeof child === "number") return;
     const resolved = resolveForNesting(child);
     if (resolved === null) return;
     const tag = elementTagOf(resolved);
     if (tag !== null && TRANSPARENT_TYPES.has(tag)) {
-      elementChildrenOf(resolved).forEach((c) => flat.push(c));
+      for (const c of elementChildrenOf(resolved)) flat.push(c);
       return;
     }
     flat.push(resolved);
@@ -8770,19 +8777,19 @@ function elementChildrenOf(node: React.JSX.Element): React.JSX.Element[] {
 }
 
 /**
- * Render a component far enough to see the elements it emits.
- *
- * The Console is server-rendered, so a component is a function call with no hooks
- * to run and no state to lose. Without this the walk would never see the table
- * inside `DataTable` or the form inside `FilterBar`, and would report a clean
- * page having looked at almost none of it.
- */
+Render a component far enough to see the elements it emits.
+
+The Console is server-rendered, so a component is a function call with no hooks
+to run and no state to lose. Without this the walk would never see the table
+inside `DataTable` or the form inside `FilterBar`, and would report a clean
+page having looked at almost none of it.
+*/
 function resolveForNesting(node: React.ReactNode): React.JSX.Element | null {
   if (!isReactElement(node)) return null;
   const type = node.type;
   if (typeof type !== "function") return node;
   try {
-    const rendered = (type as (props: unknown) => React.ReactNode)(node.props);
+    const rendered = (type as (properties: unknown) => React.ReactNode)(node.props);
     // Narrowed here rather than widened at the call site. A component that
     // returned an array or a primitive used to be pushed as though it were an
     // element, and the walk then read `.props` off it; every component in this
@@ -8801,14 +8808,14 @@ interface NestingOffence {
 }
 
 /**
- * The nestings the parser rewrites, anywhere below `node`.
- *
- * `ancestors` is the chain of enclosing tags and the entry point seeds it with the
- * node's own tag, because the root is a parent like any other. Seeding inside the
- * recursive function instead adds the root twice per level, and the doubled chain
- * reports nonsense like `tr > span` for a `<span>` inside a `<th>` -- a false
- * positive produced entirely by the walk, not by the markup.
- */
+The nestings the parser rewrites, anywhere below `node`.
+
+`ancestors` is the chain of enclosing tags and the entry point seeds it with the
+node's own tag, because the root is a parent like any other. Seeding inside the
+recursive function instead adds the root twice per level, and the doubled chain
+reports nonsense like `tr > span` for a `<span>` inside a `<th>` -- a false
+positive produced entirely by the walk, not by the markup.
+*/
 function nestingsBelow(
   node: React.JSX.Element,
   ancestors: readonly string[]
@@ -9200,25 +9207,25 @@ test("every link whose destination is the history table names an element that is
     // The fragment comes off first: a link to the bare list carries no `?`, so
     // splitting on that alone leaves `#evaluation-history` glued to the path and
     // every such link reports as leaving the resource.
-    const [withoutFragment = href] = href.split("#");
-    const [path, query] = withoutFragment.split("?");
+    const [withoutFragment = href] = href.split("#", 1);
+    const [path, query] = withoutFragment.split("?", 2);
     assert.equal(path, "/evaluations", `the link ${href} leaves this resource`);
-    const params: Record<string, string> = Object.fromEntries(
-      new URLSearchParams(query ?? "").entries()
+    const parameters: Record<string, string> = Object.fromEntries(
+      new URLSearchParams(query ?? "")
     );
-    const selection = singleValue(params[EVALUATION_RESULT_PARAM]);
-    const requestedSpan = singleValue(params[EVALUATION_SPAN_PARAM]);
+    const selection = singleValue(parameters[EVALUATION_RESULT_PARAM]);
+    const requestedSpan = singleValue(parameters[EVALUATION_SPAN_PARAM]);
     const shape = {
       evaluations: rows,
-      filters: parseEvaluationsFilters(params),
-      tab: resolveEvaluationsTab(params.tab),
-      page: resolveEvaluationsPage(params[EVALUATIONS_PAGE_PARAM]),
-      ...(selection === undefined ? {} : { selection })
+      filters: parseEvaluationsFilters(parameters),
+      tab: resolveEvaluationsTab(parameters.tab),
+      page: resolveEvaluationsPage(parameters[EVALUATIONS_PAGE_PARAM]),
+      ...(selection !== undefined && { selection })
     };
 
     const byState = new Map<string, Set<string>>();
-    const collect = (label: string, props: Record<string, unknown>): void => {
-      const markup = renderEvaluations({ ...shape, ...props });
+    const collect = (label: string, properties: Record<string, unknown>): void => {
+      const markup = renderEvaluations({ ...shape, ...properties });
       byState.set(label, new Set(captured(/id="([^"]+)"/g, markup)));
     };
 
@@ -9431,7 +9438,7 @@ test("a page past the end clamps to the last page, however far past it is", asyn
   // The URL layer used to refuse any page of five digits or more and answer with
   // the first page instead, so `?page=99` clamped to the last page while
   // `?page=100000` silently became the first. One operator mistake, two answers.
-  const originalFetch = globalThis.fetch;
+  const originalFetch = fetch;
   process.env.AUTODEV_CONTROL_API_TOKEN = "evaluation-page-clamp-test-token";
   process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
   globalThis.fetch = async (input) => {
@@ -9900,7 +9907,7 @@ test("a run that reports no prompt is counted, not hidden", () => {
     {
       id: "whitespace",
       agentRole: "architect",
-      promptName: "   ",
+      promptName: ' '.repeat(3),
       model: "opus",
       metrics: [],
       passed: null,
@@ -10095,9 +10102,9 @@ test("every section heading on this page sits one level below the page title", (
       { level: 1, text: "the page title" },
       ...outline
     ];
-    for (let i = 1; i < withTitle.length; i += 1) {
-      const previous = withTitle[i - 1]!;
-      const current = withTitle[i]!;
+    for (let index = 1; index < withTitle.length; index += 1) {
+      const previous = withTitle[index - 1]!;
+      const current = withTitle[index]!;
       assert.ok(
         current.level - previous.level <= 1,
         `${label}: h${previous.level} "${previous.text}" -> h${current.level} "${current.text}" skips a level`
@@ -10497,10 +10504,12 @@ test("fetchEvaluations rejects a response that will not say whether it is capped
     { fetchImpl: withFlag }
   );
   assert.equal(accepted.kind, "ok");
-  if (accepted.kind === "ok") {
-    assert.equal(accepted.data.totalEvaluations, 5000);
-    assert.equal(accepted.data.truncated, true);
+  if (accepted.kind !== "ok") {
+    return;
   }
+
+  assert.equal(accepted.data.totalEvaluations, 5000);
+  assert.equal(accepted.data.truncated, true);
 });
 
 test("fetchEvaluations rejects a response whose size claims contradict its rows", async () => {
@@ -10582,7 +10591,7 @@ test("fetchEvaluations rejects a response whose size claims contradict its rows"
       envelope(
         total,
         truncated,
-        Array.from({ length: count }, (_, i) => row(`r${i}`))
+        Array.from({ length: count }, (_, index) => row(`r${index}`))
       )
     );
     assert.equal(
@@ -10596,7 +10605,7 @@ test("fetchEvaluations rejects a response whose size claims contradict its rows"
   // The target state's rule for this resource is that an unreadable source is
   // never represented as a successful empty result: the page has to render the
   // failure, with no retained-results card and no run table beside it.
-  const originalFetch = globalThis.fetch;
+  const originalFetch = fetch;
   process.env.AUTODEV_CONTROL_API_TOKEN = "evaluations-total-test-token";
   process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
   globalThis.fetch = (async (input: RequestInfo | URL) => {
@@ -11157,7 +11166,7 @@ test("EvaluationsView links valid span references and marks invalid ones", () =>
   const spanId = "0123456789abcdef";
   const row = (reported: string | undefined) => ({
     id: "eval-with-trace",
-    ...(reported === undefined ? {} : { spanId: reported }),
+    ...(reported !== undefined && { spanId: reported }),
     agentRole: "orchestrator",
     model: "gpt-5.6-terra",
     metrics: [],
@@ -11221,11 +11230,13 @@ test("fetchEvaluations issues authenticated GET to /control/evaluations", async 
   };
   const result = await fetchEvaluations(config, { fetchImpl: mockFetch });
   assert.equal(result.kind, "ok");
-  if (result.kind === "ok") {
-    assert.equal(result.data.totalEvaluations, 1);
-    assert.equal(result.data.evaluations[0]?.agentRole, "orchestrator");
-    assert.equal(result.data.evaluations[0]?.spanId, "0123456789abcdef");
+  if (result.kind !== "ok") {
+    return;
   }
+
+  assert.equal(result.data.totalEvaluations, 1);
+  assert.equal(result.data.evaluations[0]?.agentRole, "orchestrator");
+  assert.equal(result.data.evaluations[0]?.spanId, "0123456789abcdef");
 });
 
 test("fetchEvaluations preserves unavailable telemetry status", async () => {
@@ -11249,10 +11260,12 @@ test("fetchEvaluations preserves unavailable telemetry status", async () => {
     }
   );
   assert.equal(result.kind, "http-error");
-  if (result.kind === "http-error") {
-    assert.equal(result.status, 503);
-    assert.equal(result.code, "autodev_control_evaluations_unavailable");
+  if (result.kind !== "http-error") {
+    return;
   }
+
+  assert.equal(result.status, 503);
+  assert.equal(result.code, "autodev_control_evaluations_unavailable");
 });
 
 test("Prompts fetcher validates source state and rejects stale contracts", async () => {
@@ -11411,12 +11424,14 @@ test("fetchGithubWorkflows issues authenticated GET to /control/github", async (
   };
   const result = await fetchGithubWorkflows(config, { fetchImpl: mockFetch });
   assert.equal(result.kind, "ok");
-  if (result.kind === "ok") {
-    assert.equal(result.data.catalogStatus, "valid");
-    assert.equal(result.data.runtimeFactsAvailable, false);
-    assert.equal(result.data.workflows[0]?.id, "_scheduler.yml");
-    assert.deepEqual(result.data.workflows[0]?.schedules, ["*/15 * * * *"]);
+  if (result.kind !== "ok") {
+    return;
   }
+
+  assert.equal(result.data.catalogStatus, "valid");
+  assert.equal(result.data.runtimeFactsAvailable, false);
+  assert.equal(result.data.workflows[0]?.id, "_scheduler.yml");
+  assert.deepEqual(result.data.workflows[0]?.schedules, ["*/15 * * * *"]);
 });
 
 test("EvaluationsView renders metrics, pass rate, and outcome badges when evaluations exist", () => {
@@ -11868,11 +11883,11 @@ test("Agents provider summaries stay not observed without provider configuration
 });
 
 /**
- * The canonical JSONC a hook declaration holds.
- *
- * The comments are the point: a raw view that lost them would be a
- * serialization of the declaration rather than its source.
- */
+The canonical JSONC a hook declaration holds.
+
+The comments are the point: a raw view that lost them would be a
+serialization of the declaration rather than its source.
+*/
 const HOOKS_SOURCE_TEXT = `{
   // The session's own start hook.
   "hooks": {
@@ -11881,8 +11896,8 @@ const HOOKS_SOURCE_TEXT = `{
 }`;
 
 /**
- * The canonical JSONC a permission policy holds.
- */
+The canonical JSONC a permission policy holds.
+*/
 const PERMISSIONS_SOURCE_TEXT = `{
   // The portable policy the session runs under.
   "codexcli": {
@@ -12133,8 +12148,8 @@ test("HooksView names the fault the Runtime located instead of only calling the 
 });
 
 /**
- * A hook declaration as one event's page receives it.
- */
+A hook declaration as one event's page receives it.
+*/
 const HOOK_DECLARATION = {
   event: "preToolUse" as const,
   origin: "shared" as const,
@@ -13897,9 +13912,9 @@ test("a Disabled role's rendered form still submits the five fields its route re
   const DISABLED_ATTRIBUTE = /(?:^|\s)disabled(?=[\s/>=]|$)/u;
   const submitted: string[] = [];
   for (const control of body.matchAll(/<(input|select)\b([^>]*)>/gu)) {
-    const attrs = control[2] ?? "";
-    if (DISABLED_ATTRIBUTE.test(attrs)) continue;
-    const name = /\bname="([^"]*)"/u.exec(attrs)?.[1];
+    const attributes = control[2] ?? "";
+    if (DISABLED_ATTRIBUTE.test(attributes)) continue;
+    const name = /\bname="([^"]*)"/u.exec(attributes)?.[1];
     if (!name) continue;
     submitted.push(name);
   }
@@ -13911,11 +13926,11 @@ test("a Disabled role's rendered form still submits the five fields its route re
 
   // The model is dimmed and non-interactive, so the value has to arrive from
   // the hidden carry. Drop that carry and this assertion is what fails.
-  const selectIsDisabled = /<select[^>]*(?:^|\s)disabled(?:[\s/>=]|>)/u.test(
+  const isSelectIsDisabled = /<select[^>]*(?:^|\s)disabled(?:[\s/>=]|>)/u.test(
     body
   );
   assert.ok(
-    selectIsDisabled,
+    isSelectIsDisabled,
     "the role's model select must be disabled while the role is Disabled"
   );
   assert.equal(hiddenValue(markup, formTag, "model"), "");
@@ -14004,9 +14019,9 @@ test("a Disabled role preserves its exact assignment while provider discovery is
   const body = markup.slice(start, markup.indexOf("</form>", start));
   const submitted = [];
   for (const control of body.matchAll(/<(input|select)\b([^>]*)>/gu)) {
-    const attrs = control[2] ?? "";
-    if (/(?:^|\s)disabled(?=[\s/>=]|$)/u.test(attrs)) continue;
-    const name = /\bname="([^"]*)"/u.exec(attrs)?.[1];
+    const attributes = control[2] ?? "";
+    if (/(?:^|\s)disabled(?=[\s/>=]|$)/u.test(attributes)) continue;
+    const name = /\bname="([^"]*)"/u.exec(attributes)?.[1];
     if (!name) continue;
     submitted.push(name);
   }
@@ -14522,7 +14537,7 @@ async function withControlRouteEnvironment(
   fetchImpl: typeof fetch,
   run: () => Promise<void>
 ): Promise<void> {
-  const previousFetch = globalThis.fetch;
+  const previousFetch = fetch;
   const saved = Object.fromEntries(
     CONTROL_ROUTE_ENV_KEYS.map((key) => [key, process.env[key]])
   );
@@ -15782,13 +15797,13 @@ test("ToolDetailView surfaces observed historical use and falls back to Unavaila
 });
 
 /**
- * Purge erases a raw experience envelope irreversibly. Even with the
- * allowlisted AppNav island, purge remains a server-rendered form action: the
- * confirmation cannot depend on window.confirm or a disabled-until-checked
- * button; it has to be a field the route refuses to act without. These tests pin
- * that the route only forwards a purge with an experience id, a Runtime-accepted
- * reason, and explicit confirmation.
- */
+Purge erases a raw experience envelope irreversibly. Even with the
+allowlisted AppNav island, purge remains a server-rendered form action: the
+confirmation cannot depend on window.confirm or a disabled-until-checked
+button; it has to be a field the route refuses to act without. These tests pin
+that the route only forwards a purge with an experience id, a Runtime-accepted
+reason, and explicit confirmation.
+*/
 function memoryPurgeRequest(fields: Record<string, string>): NextRequest {
   return new NextRequest("http://console.test/api/memory", {
     method: "POST",
@@ -15809,7 +15824,7 @@ async function withMemoryRoute(
   respond: () => Response = () =>
     Response.json({ purged: true }, { status: 200 })
 ): Promise<void> {
-  const previousFetch = globalThis.fetch;
+  const previousFetch = fetch;
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   const token = "p".repeat(64);
   process.env.AUTODEV_CONTROL_API_TOKEN = token;
@@ -16686,9 +16701,9 @@ test("AutoSubmitSelectField is marked for the page-level submit and shows the se
 });
 
 /**
- * The submit listener as the browser runs it: the inline script, evaluated
- * against a document that records the listener it installs.
- */
+The submit listener as the browser runs it: the inline script, evaluated
+against a document that records the listener it installs.
+*/
 function installedSubmitListener(): (event: { target: unknown }) => void {
   let listener: ((event: { target: unknown }) => void) | undefined;
   const document = {
@@ -16765,14 +16780,14 @@ test("AutoSubmitSelectFieldProps rejects a multi-select at the type level", () =
   // stays unconfirmed, so auto-submitting on every change would submit a
   // partial, unintended selection. The shared SelectField keeps "multiple"
   // (it has its own coverage); this component's props must not.
-  const props: AutoSubmitSelectFieldProps = {
+  const properties: AutoSubmitSelectFieldProperties = {
     name: "workspaceId",
     label: "Workspace",
     options: [{ value: "workspace-a", label: "workspace-a" }],
     // @ts-expect-error "multiple" is excluded from AutoSubmitSelectFieldProps.
     multiple: true
   };
-  assert.ok(props);
+  assert.ok(properties);
 });
 
 test("FilterBar omits its button for a single auto-submitting choice", () => {
@@ -16810,15 +16825,15 @@ test("GET FilterBar submit cancels native document navigation", async () => {
   const fields = React.Children.toArray(filterForm.props.children).flatMap(
     (child): FormElementLike[] => {
       if (!React.isValidElement(child) || child.type !== "input") return [];
-      const props = child.props as React.InputHTMLAttributes<HTMLInputElement>;
-      if (typeof props.name !== "string") return [];
+      const properties = child.props as React.InputHTMLAttributes<HTMLInputElement>;
+      if (typeof properties.name !== "string") return [];
       return [
         {
           tagName: "INPUT",
-          type: props.type ?? "text",
-          name: props.name,
-          value: String(props.value ?? props.defaultValue ?? ""),
-          disabled: props.disabled
+          type: properties.type ?? "text",
+          name: properties.name,
+          value: String(properties.value ?? properties.defaultValue ?? ""),
+          disabled: properties.disabled
         }
       ];
     }
@@ -16992,7 +17007,7 @@ test("ProviderRoleControls wires role priority and model dropdowns to auto-submi
     }>;
     const roleRow = (
       roleRowElement.type as (
-        props: typeof roleRowElement.props
+        properties: typeof roleRowElement.props
       ) => React.ReactElement<{
         readonly action?: string;
         readonly method?: string;
@@ -17042,10 +17057,10 @@ test("ProviderRoleControls wires role priority and model dropdowns to auto-submi
       continue;
     }
     assert.ok(roleModelElement, "Role row must render RoleModelSelect");
-    const modelSelectFn = roleModelElement.type as (
-      props: unknown
+    const modelSelectFunction = roleModelElement.type as (
+      properties: unknown
     ) => React.ReactElement<React.ComponentProps<typeof AutoSubmitSelectField>>;
-    const modelSelectElement = modelSelectFn(roleModelElement.props);
+    const modelSelectElement = modelSelectFunction(roleModelElement.props);
     assert.equal(modelSelectElement.type, AutoSubmitSelectField);
 
     const modelMarkup = renderToStaticMarkup(modelSelectElement);
@@ -17408,10 +17423,10 @@ test("no feature view hand-types a code or config surface", () => {
     if (!file.endsWith(".ts") || !statSync(file).isFile()) continue;
     const source = readFileSync(file, "utf8");
     for (const match of source.matchAll(surface)) {
-      const props = match[1] ?? "";
-      if (!/className:\s*[`'"][^`'"]*font-mono/u.test(props)) continue;
+      const properties = match[1] ?? "";
+      if (!/className:\s*[`'"][^`'"]*font-mono/u.test(properties)) continue;
       offenders.push(
-        `${relative.toString()}: ${props.trim().replaceAll(/\s+/gu, " ").slice(0, 70)}`
+        `${relative.toString()}: ${properties.trim().replaceAll(/\s+/gu, " ").slice(0, 70)}`
       );
     }
   }
@@ -17552,12 +17567,12 @@ test("every labelled fact has one implementation, and 'Not observed' has one spe
     const file = join(featuresDir, name);
     if (!file.endsWith(".ts") || !statSync(file).isFile()) continue;
     const source = readFileSync(file, "utf8");
-    const buildsOwnFact =
+    const isBuildsOwnFact =
       /createElement\(\s*"dt"/.test(source) &&
       /createElement\(\s*"dd",\s*\{\s*className:\s*(["'`])[^"'`]*\btext-sm\b/.test(
         source
       );
-    if (buildsOwnFact && !source.includes("DetailValue")) {
+    if (isBuildsOwnFact && !source.includes("DetailValue")) {
       detailCopies.push(name);
     }
     if (/const NOT_OBSERVED_LABEL\s*=/.test(source)) {
@@ -17718,8 +17733,7 @@ test("one page rhythm: every view body stacks its sections through the shared cl
     const file = join(featuresDir, name);
     if (!file.endsWith(".ts") || !statSync(file).isFile()) continue;
     const source = readFileSync(file, "utf8");
-    if (!source.includes('"data-feature"')) continue;
-    if (source.includes("PageBody")) continue;
+    if (!source.includes('"data-feature"') || source.includes("PageBody")) continue;
     offenders.push(`${name}: writes data-feature without PageBody`);
   }
   assert.deepEqual(
@@ -17965,8 +17979,7 @@ test("nothing truncates text it cannot give back", () => {
   for (const root of roots) {
     for (const relative of readdirSync(root, { recursive: true })) {
       const file = join(root, relative.toString());
-      if (!file.endsWith(".ts") || !statSync(file).isFile()) continue;
-      if (SHAPE_OWNERS.has(relative.toString())) continue;
+      if (!file.endsWith(".ts") || !statSync(file).isFile() || SHAPE_OWNERS.has(relative.toString())) continue;
       for (const line of unrecoverableTruncations(
         readFileSync(file, "utf8"),
         shapes
@@ -17983,13 +17996,13 @@ test("nothing truncates text it cannot give back", () => {
 });
 
 /**
- * Line numbers of every `createElement` in one module that can cut its own text
- * and carries no `title`.
- *
- * The element's own utilities are checked first, then whatever it composes in: a
- * `className` of `` `${TAG_SHAPE} …` `` writes none of the truncation itself, and
- * reading only the literal is how this defect shipped.
- */
+Line numbers of every `createElement` in one module that can cut its own text
+and carries no `title`.
+
+The element's own utilities are checked first, then whatever it composes in: a
+`className` of `` `${TAG_SHAPE} …` `` writes none of the truncation itself, and
+reading only the literal is how this defect shipped.
+*/
 function unrecoverableTruncations(
   source: string,
   shapes: ReadonlyMap<string, readonly string[]>
@@ -18005,21 +18018,21 @@ function unrecoverableTruncations(
   // the next `truncate` in that file walks straight through.
   const open: { props: string; end: number }[] = [];
   for (let at = source.indexOf("React.createElement("); at !== -1;) {
-    const propsStart = source.indexOf("{", at + "React.createElement(".length);
-    const propsEnd = matchingBrace(source, propsStart);
-    if (propsStart === -1 || propsEnd === -1) break;
+    const propertiesStart = source.indexOf("{", at + "React.createElement(".length);
+    const propertiesEnd = matchingBrace(source, propertiesStart);
+    if (propertiesStart === -1 || propertiesEnd === -1) break;
     while (open.length > 0 && (open.at(-1)?.end ?? -1) < at) open.pop();
-    const props = source.slice(propsStart, propsEnd + 1);
+    const properties = source.slice(propertiesStart, propertiesEnd + 1);
     const line = source.slice(0, at).split("\n").length;
-    const written = writtenClassName(props);
+    const written = writtenClassName(properties);
     const composed = [...shapes]
       .filter(([name]) => written.includes(`\${${name}}`))
       .flatMap(([, values]) => values);
     const cuts =
       cutsItsOwnText(written) || composed.some((v) => cutsItsOwnText(v));
-    const titled = /\btitle:/u.test(props);
-    const titledAbove = open.some((frame) => /\btitle:/u.test(frame.props));
-    if (cuts && !titled && !titledAbove) {
+    const isTitled = /\btitle:/u.test(properties);
+    const isTitledAbove = open.some((frame) => /\btitle:/u.test(frame.props));
+    if (cuts && !isTitled && !isTitledAbove) {
       found.push(line);
     }
     // Resume at the *next* call, not one character past this props object.
@@ -18028,23 +18041,23 @@ function unrecoverableTruncations(
     // the wrong origin and attributed to the wrong line -- which is how a real
     // unrecoverable truncation passed a guard that was scanning all along.
     open.push({
-      props,
+      props: properties,
       end: matchingParen(source, at + "React.createElement(".length - 1)
     });
-    at = source.indexOf("React.createElement(", propsEnd);
+    at = source.indexOf("React.createElement(", propertiesEnd);
   }
   return found;
 }
 
 /**
- * Every exported `UPPER_SNAKE` shape constant across the product, mapped to the
- * class lists it can stand for.
- *
- * Resolution has to happen across modules: a call site writes `${TAG_SHAPE}`,
- * which is imported from another file, so the constant's own module is the only
- * place those utilities appear. Every declaration of a name is kept, because
- * quietly preferring one of them is how a composed shape slips through again.
- */
+Every exported `UPPER_SNAKE` shape constant across the product, mapped to the
+class lists it can stand for.
+
+Resolution has to happen across modules: a call site writes `${TAG_SHAPE}`,
+which is imported from another file, so the constant's own module is the only
+place those utilities appear. Every declaration of a name is kept, because
+quietly preferring one of them is how a composed shape slips through again.
+*/
 function allSharedShapeClasses(
   roots: readonly string[]
 ): ReadonlyMap<string, readonly string[]> {
@@ -18073,14 +18086,14 @@ function allSharedShapeClasses(
 }
 
 /**
- * Whether a class list can cut its own text without a marker.
- *
- * `truncate` is the obvious form. The other is a chip that refuses to wrap and
- * caps its own width: capped by its cell, it is cut by whatever contains it, and
- * because `inline-flex` blockifies to `flex` as a flex item, `text-overflow`
- * does not apply to it. Either utility inside a longer utility name is not the
- * utility this is about, so both are matched on word boundaries.
- */
+Whether a class list can cut its own text without a marker.
+
+`truncate` is the obvious form. The other is a chip that refuses to wrap and
+caps its own width: capped by its cell, it is cut by whatever contains it, and
+because `inline-flex` blockifies to `flex` as a flex item, `text-overflow`
+does not apply to it. Either utility inside a longer utility name is not the
+utility this is about, so both are matched on word boundaries.
+*/
 function cutsItsOwnText(classList: string): boolean {
   const bare = (utility: string): RegExp =>
     new RegExp(String.raw`(^|\s)${utility}(\s|$)`, "u");
@@ -18092,74 +18105,77 @@ function cutsItsOwnText(classList: string): boolean {
   );
 }
 
-/** The literal `className` value on one `createElement` props object. */
-function writtenClassName(props: string): string {
-  return props.match(/className:\s*(["'`])([\s\S]*?)\1/u)?.[2] ?? "";
+/**
+The literal `className` value on one `createElement` props object.
+*/
+function writtenClassName(properties: string): string {
+  return /className:\s*(["'`])([\s\S]*?)\1/u.exec(properties)?.[2] ?? "";
 }
 
-/** Index of the `)` matching the `(` at `from`, or -1 within the bound. */
+/**
+Index of the `)` matching the `(` at `from`, or -1 within the bound.
+*/
 function matchingParen(source: string, from: number): number {
   let depth = 0;
-  for (let i = from; i < source.length && i < from + 4000; i++) {
-    const ch = source[i];
+  for (let index = from; index < source.length && index < from + 4000; index++) {
+    const ch = source[index];
     if (ch === "(") depth++;
     else if (ch === ")") {
       depth--;
-      if (depth === 0) return i;
+      if (depth === 0) return index;
     }
   }
   return -1;
 }
 
 /**
- * The class list of every exported `UPPER_SNAKE` shape constant in one module,
- * so a guard reading a call site's `className` can see utilities that the site
- * composes in from a shared shape rather than writes itself.
- */
+The class list of every exported `UPPER_SNAKE` shape constant in one module,
+so a guard reading a call site's `className` can see utilities that the site
+composes in from a shared shape rather than writes itself.
+*/
 function sharedShapeClasses(
   source: string
 ): readonly (readonly [string, string])[] {
-  const out: [string, string][] = [];
-  for (const m of source.matchAll(
+  const out: [string, string][] = Array.from(source.matchAll(
     /export const ([A-Z][A-Z0-9_]*)\s*=\s*["'`]([^"'`]*)["'`]/gu
-  )) {
-    out.push([m[1] ?? "", m[2] ?? ""]);
-  }
+  ), m => [m[1] ?? "", m[2] ?? ""]);
   return out;
 }
 
-/** Index of the `}` matching the `{` at `from`, or -1 within the bound. */
+/**
+Index of the `}` matching the `{` at `from`, or -1 within the bound.
+*/
 function matchingBrace(source: string, from: number): number {
   let depth = 0;
-  for (let i = from; i < source.length && i < from + 4000; i++) {
-    const ch = source[i];
+  for (let index = from; index < source.length && index < from + 4000; index++) {
+    const ch = source[index];
     if (ch === "{") depth++;
     else if (ch === "}") {
       depth--;
-      if (depth === 0) return i;
+      if (depth === 0) return index;
     }
   }
   return -1;
 }
 
 /**
- * Every `Name({` or `Name<T>({` call where `Name` is capitalised and not
- * preceded by a dot, member access, or another identifier character.
- *
- * Scanned rather than matched: a regex over this shape is either ambiguous or
- * flagged as unsafe, and the intent is simple enough to read directly.
- */
+Every `Name({` or `Name<T>({` call where `Name` is capitalised and not
+preceded by a dot, member access, or another identifier character.
+
+Scanned rather than matched: a regex over this shape is either ambiguous or
+flagged as unsafe, and the intent is simple enough to read directly.
+*/
 function findCapitalisedObjectCalls(
   source: string
 ): { name: string; braceAt: number }[] {
   const found: { name: string; braceAt: number }[] = [];
-  for (let i = 0; i < source.length; i++) {
-    const ch = source[i] ?? "";
+  for (let index = 0; index < source.length; index++) {
+    const ch = source[index] ?? "";
     if (!/[A-Z]/.test(ch)) continue;
-    if (i > 0 && /[A-Za-z0-9_.$]/.test(source[i - 1] ?? "")) continue;
-    let end = i;
+    if (index > 0 && /[A-Za-z0-9_.$]/.test(source[index - 1] ?? "")) continue;
+    let end = index;
     while (end < source.length && /[A-Za-z0-9]/.test(source[end] ?? "")) end++;
-    const name = source.slice(i, end);
+    const name = source.slice(index, end);
     let cursor = end;
     if (source[cursor] === "<") {
       cursor++;
@@ -18168,22 +18184,22 @@ function findCapitalisedObjectCalls(
     }
     if (source[cursor] !== "(" || source[cursor + 1] !== "{") continue;
     found.push({ name, braceAt: cursor + 1 });
-    i = end;
+    index = end;
   }
   return found;
 }
 
 /**
- * Names this source imports. Read from the whole file rather than line by
- * line: most views import DataTable across several lines, and a line-based
- * scan silently missed exactly the case the caller below exists to catch.
- */
+Names this source imports. Read from the whole file rather than line by
+line: most views import DataTable across several lines, and a line-based
+scan silently missed exactly the case the caller below exists to catch.
+*/
 function importedNames(source: string): Set<string> {
   const names = new Set<string>();
-  for (let i = 0; i < source.length; i++) {
-    if (!source.startsWith("import", i)) continue;
-    if (i > 0 && /[A-Za-z0-9_$]/.test(source[i - 1] ?? "")) continue;
-    const open = source.indexOf("{", i);
+  for (let index = 0; index < source.length; index++) {
+    if (!source.startsWith("import", index)) continue;
+    if (index > 0 && /[A-Za-z0-9_$]/.test(source[index - 1] ?? "")) continue;
+    const open = source.indexOf("{", index);
     if (open === -1) continue;
     const close = matchingBrace(source, open);
     if (close === -1) continue;
@@ -18191,7 +18207,7 @@ function importedNames(source: string): Set<string> {
       const name = part.trim().replace(/^type\s+/u, "");
       if (name.length > 0) names.add(name);
     }
-    i = close;
+    index = close;
   }
   return names;
 }
@@ -18516,7 +18532,7 @@ test("DataTable renders no row-level handler, and has no way to ask for one", ()
   // spec's own rule stands: a resource is opened through its own link, not by
   // making its whole row an unlabelled control.
   const markup = renderToStaticMarkup(
-    React.createElement<DataTableProps<{ id: string }>>(DataTable, {
+    React.createElement<DataTableProperties<{ id: string }>>(DataTable, {
       data: [{ id: "a" }, { id: "b" }],
       columns: [
         {
@@ -18709,7 +18725,7 @@ test("the permissions view says the execution contract was not read", () => {
   // contract falls back to an empty one. "No role has a matrix" and "nobody
   // read the contract" are different claims, and only the second one tells
   // the operator what to go and fix.
-  const props = {
+  const properties = {
     policy: {
       approvalPolicy: "on-request" as const,
       approvalsReviewer: "user",
@@ -18725,7 +18741,7 @@ test("the permissions view says the execution contract was not read", () => {
   };
   const unobserved = renderToStaticMarkup(
     React.createElement(PermissionsView, {
-      ...props,
+      ...properties,
       executionContractObserved: false,
       sourceText: null
     })
@@ -18741,7 +18757,7 @@ test("the permissions view says the execution contract was not read", () => {
 
   const observed = renderToStaticMarkup(
     React.createElement(PermissionsView, {
-      ...props,
+      ...properties,
       executionContractObserved: true,
       sourceText: null
     })
@@ -19069,9 +19085,7 @@ test("a Runtime response with no concurrency limit is readable, and says so", as
           ...runtime,
           concurrency: {
             ...observedConcurrency,
-            ...(effectivePerSessionLimit === undefined
-              ? {}
-              : { effectivePerSessionLimit })
+            ...(effectivePerSessionLimit !== undefined && { effectivePerSessionLimit })
           }
         }
       })
@@ -19092,9 +19106,7 @@ test("a Runtime response with no concurrency limit is readable, and says so", as
           ...runtime,
           concurrency: {
             ...observedConcurrency,
-            ...(effectivePerSessionLimit === undefined
-              ? {}
-              : { effectivePerSessionLimit })
+            ...(effectivePerSessionLimit !== undefined && { effectivePerSessionLimit })
           }
         }
       })
@@ -19399,8 +19411,7 @@ test("ChatgptTunnelPanel and fetchChatgptTunnel render status without leaking se
   for (const field of ["grant", "role", "roles", "workspace"])
     assert.doesNotMatch(readyMarkup, new RegExp(`name="${field}"`, "u"));
   assert.doesNotMatch(readyMarkup, /value="configure"/u);
-  const actions = [...readyMarkup.matchAll(/name="action" value="([a-z]+)"/gu)]
-    .map((match) => match[1])
+  const actions = Array.from(readyMarkup.matchAll(/name="action" value="([a-z]+)"/gu), (match) => match[1])
     .sort();
   assert.deepEqual(actions, ["disable", "forget", "rotate"]);
 });

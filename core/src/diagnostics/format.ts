@@ -1,14 +1,14 @@
 /**
- * The text rendering of the session diagnostics.
- *
- * The same report is rendered by the Control API's `?format=text` response, by
- * `pnpm autodev -- diagnostics`, and by the skill wrapper. When each of those
- * formatted its own copy, the CLI and the HTTP answer described the same
- * session differently -- which is exactly the drift this module removes.
- *
- * Everything here is pure: no clock, no filesystem, no network. The engine that
- * produces the report lives in `@simulatorlife/autodev-data/diagnostics`.
- */
+The text rendering of the session diagnostics.
+
+The same report is rendered by the Control API's `?format=text` response, by
+`pnpm autodev -- diagnostics`, and by the skill wrapper. When each of those
+formatted its own copy, the CLI and the HTTP answer described the same
+session differently -- which is exactly the drift this module removes.
+
+Everything here is pure: no clock, no filesystem, no network. The engine that
+produces the report lives in `@simulatorlife/autodev-data/diagnostics`.
+*/
 
 import {
   classifyToolFailure,
@@ -30,17 +30,29 @@ import {
   type ToolFailureCategory
 } from "./types.ts";
 
-/** What the text rendering includes. */
+/**
+What the text rendering includes.
+*/
 export interface SessionDiagnosticsTextOptions {
-  /** Include the failing tool calls' details. */
+  /**
+  Include the failing tool calls' details.
+  */
   readonly failures?: boolean;
-  /** Include every failing tool call, not the first few per category. */
+  /**
+  Include every failing tool call, not the first few per category.
+  */
   readonly allFailures?: boolean;
-  /** Include the token, compaction and prompt-overhead lines. */
+  /**
+  Include the token, compaction and prompt-overhead lines.
+  */
   readonly efficiency?: boolean;
-  /** Include the paginated rollout items. */
+  /**
+  Include the paginated rollout items.
+  */
   readonly items?: boolean;
-  /** Include the paginated router events. */
+  /**
+  Include the paginated router events.
+  */
   readonly events?: boolean;
 }
 
@@ -48,7 +60,7 @@ const EXCERPT = 160;
 const FAILURE_PREVIEW_INPUT_EXCERPT = 180;
 const FAILURE_CAP_PER_CATEGORY = 2;
 const BYTES_PER_MIB = 1_048_576;
-const INDENT = "   ";
+const INDENT = ' '.repeat(3);
 const DASH = "-";
 const SKILL_READ_PREVIEW_LIMIT = 8;
 const TRAILING_SEPARATORS_REGEX = /[\\/]+$/u;
@@ -62,12 +74,12 @@ const LOG_HEADING =
 const BRIDGE_HEADING = "== bridge log alerts (tail 64 KB)";
 
 /**
- * The last path segment of a path, without the filesystem.
- *
- * The fleet scan renders a workspace as its directory name. The Console and the
- * CLI both need that name, and the Core layer cannot read the filesystem, so
- * the one segment is taken from the string.
- */
+The last path segment of a path, without the filesystem.
+
+The fleet scan renders a workspace as its directory name. The Console and the
+CLI both need that name, and the Core layer cannot read the filesystem, so
+the one segment is taken from the string.
+*/
 function lastSegment(value: string | null): string {
   if (value === null || value === "") return DASH;
   const normalized = value.replace(TRAILING_SEPARATORS_REGEX, "");
@@ -75,10 +87,10 @@ function lastSegment(value: string | null): string {
   return index === -1 ? normalized : normalized.slice(index + 1);
 }
 
-function excerpt(value: unknown, maxLen = EXCERPT): string {
+function excerpt(value: unknown, maxLength = EXCERPT): string {
   const text = typeof value === "string" ? value : JSON.stringify(value ?? "");
   const flat = text.replaceAll(/\s+/gu, " ").trim();
-  return flat.length > maxLen ? `${flat.slice(0, maxLen)}…` : flat;
+  return flat.length > maxLength ? `${flat.slice(0, maxLength)}…` : flat;
 }
 
 function formatCompactNumber(value: number): string {
@@ -103,7 +115,7 @@ function countBy(
 }
 
 function topCounts(counts: Map<string, number>): string {
-  return [...counts.entries()]
+  return [...counts]
     .sort((a, b) => b[1] - a[1])
     .map(([key, count]) => `${key}=${count}`)
     .join(" ");
@@ -212,7 +224,9 @@ function renderThreadEfficiency(efficiency: SessionThreadEfficiency): string[] {
   return [tokenLine, compLine, promptLine];
 }
 
-/** The first skills a thread read, each with its read count when repeated. */
+/**
+The first skills a thread read, each with its read count when repeated.
+*/
 function skillReadPreview(prompt: SessionThreadPromptOverhead): string {
   if (prompt.skillsRead.length === 0) return "";
   const shown = prompt.skillsRead
@@ -264,7 +278,7 @@ function renderThreadFailures(
       omitted.set(category, (omitted.get(category) ?? 0) + 1);
     }
   }
-  for (const [category, hidden] of omitted.entries()) {
+  for (const [category, hidden] of omitted) {
     lines.push(
       `${INDENT}... (+${hidden} more ${category} failures; pass --all-failures to list all)`
     );
@@ -415,12 +429,12 @@ function renderItemLine(item: SessionThreadItem): string {
 }
 
 /**
- * Render one session's diagnostics as text.
- *
- * The rendering is deterministic: the same report always produces the same
- * text, so the CLI's output and the Control API's `?format=text` response are
- * byte-identical for the same evidence.
- */
+Render one session's diagnostics as text.
+
+The rendering is deterministic: the same report always produces the same
+text, so the CLI's output and the Control API's `?format=text` response are
+byte-identical for the same evidence.
+*/
 export function renderSessionDiagnosticsReport(
   report: SessionDiagnosticsReport,
   options: SessionDiagnosticsTextOptions = {}
@@ -475,7 +489,9 @@ export function renderSessionDiagnosticsReport(
   return out.join("\n");
 }
 
-/** Render the recent-sessions listing as text. */
+/**
+Render the recent-sessions listing as text.
+*/
 export function renderRecentSessions(
   response: SessionRecentListResponse
 ): string {
@@ -487,9 +503,11 @@ export function renderRecentSessions(
     .join("\n");
 }
 
-/** Render one fleet-scan row as text. */
+/**
+Render one fleet-scan row as text.
+*/
 export function renderFleetSessionRow(row: FleetSessionRow): string {
-  const repo = lastSegment(row.cwd);
+  const repository = lastSegment(row.cwd);
   const topFail = row.topFailureCategory ? ` (${row.topFailureCategory})` : "";
   const providerSummary = Object.entries(row.providers)
     .sort((a, b) => b[1] - a[1])
@@ -500,13 +518,15 @@ export function renderFleetSessionRow(row: FleetSessionRow): string {
     0
   );
   return (
-    `${INDENT}${row.lastWrite.slice(0, 16)} ${row.id} [${repo}] client=${row.clientSurface ?? DASH} th=${row.threads} tok=${formatCompactNumber(row.totalTokens)} ` +
+    `${INDENT}${row.lastWrite.slice(0, 16)} ${row.id} [${repository}] client=${row.clientSurface ?? DASH} th=${row.threads} tok=${formatCompactNumber(row.totalTokens)} ` +
     `cache=${row.cacheHitPct ?? QUESTION}${PERCENT} drops=${row.cacheDrops} comp=${row.compactions} skills<=${row.maxSkillsLoaded} ` +
     `fail=${row.toolFailures}${topFail} hooks=${row.preToolUseBlocks} skip=${skipCount} req=${providerSummary || DASH}`
   );
 }
 
-/** Render the fleet scan as text. */
+/**
+Render the fleet scan as text.
+*/
 export function renderFleetScanReport(
   report: SessionFleetScanResponse
 ): string {
@@ -548,7 +568,9 @@ export function renderFleetScanReport(
   return lines.join("\n");
 }
 
-/** Render the hook-denial summary as text. */
+/**
+Render the hook-denial summary as text.
+*/
 export function renderHookDenialsReport(summary: HookDenialSummary): string {
   const lines = [
     `== hook denials (${summary.logFile}) since=${summary.cutoff} (${summary.sinceDays}d)`,

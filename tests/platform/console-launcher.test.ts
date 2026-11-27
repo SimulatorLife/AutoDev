@@ -78,11 +78,11 @@ test("console LaunchAgent plist matches label, loopback service requirements and
   );
 
   // Must NOT carry secret tokens or credentials in EnvironmentVariables or plist
-  const envMatch = content.match(
+  const environmentMatch = content.match(
     /<key>EnvironmentVariables<\/key>\s*<dict>([\s\S]*?)<\/dict>/u
   );
-  assert.ok(envMatch, "EnvironmentVariables block must exist in plist");
-  const environmentVariables = envMatch[1];
+  assert.ok(environmentMatch, "EnvironmentVariables block must exist in plist");
+  const environmentVariables = environmentMatch[1];
   assert.ok(
     environmentVariables,
     "EnvironmentVariables block must not be empty"
@@ -144,9 +144,9 @@ test("console LaunchAgent rendering replaces all placeholders without interpolat
 
 test("console launcher rejects a non-numeric port before starting Next", () =>
   withTempDir((directory) => {
-    const fakeRepo = join(directory, "repo");
+    const fakeRepository = join(directory, "repo");
     const codexHome = join(directory, "codex-home");
-    const consoleDir = join(fakeRepo, "console");
+    const consoleDir = join(fakeRepository, "console");
     const fakeNode = join(directory, "fake-node");
     const marker = join(directory, "node-was-invoked");
 
@@ -173,7 +173,7 @@ test("console launcher rejects a non-numeric port before starting Next", () =>
         ...process.env,
         HOME: directory,
         CODEX_HOME: codexHome,
-        AUTODEV_REPO_ROOT: fakeRepo,
+        AUTODEV_REPO_ROOT: fakeRepository,
         AUTODEV_NODE_BIN: fakeNode,
         // The exact value a mis-rendered plist shipped.
         AUTODEV_CONSOLE_PORT: "__AUTODEV_CONSOLE_PORT__"
@@ -200,15 +200,15 @@ test("console launcher rejects a non-numeric port before starting Next", () =>
 
 test("console launcher refuses to run and gives clear error if BUILD_ID is missing", () =>
   withTempDir((directory) => {
-    const fakeRepo = join(directory, "repo");
-    const consoleDir = join(fakeRepo, "console");
+    const fakeRepository = join(directory, "repo");
+    const consoleDir = join(fakeRepository, "console");
     mkdirSync(consoleDir, { recursive: true });
 
     const result = spawnSync("bash", [runScriptPath], {
       encoding: "utf8",
       env: {
         ...process.env,
-        AUTODEV_REPO_ROOT: fakeRepo,
+        AUTODEV_REPO_ROOT: fakeRepository,
         CODEX_HOME: join(directory, "codex")
       }
     });
@@ -228,9 +228,9 @@ test("console launcher refuses to run and gives clear error if BUILD_ID is missi
 
 test("console launcher adheres to loopback binding contract, exact-key tokens, and URL overrides", () =>
   withTempDir((directory) => {
-    const fakeRepo = join(directory, "repo");
+    const fakeRepository = join(directory, "repo");
     const codexHome = join(directory, "codex-home");
-    const consoleDir = join(fakeRepo, "console");
+    const consoleDir = join(fakeRepository, "console");
     const buildIdDir = join(consoleDir, ".next");
     const nextBinDir = join(consoleDir, "node_modules/next/dist/bin");
     const fakeNode = join(directory, "fake-node");
@@ -248,13 +248,13 @@ test("console launcher adheres to loopback binding contract, exact-key tokens, a
 
     const controlToken = "c".repeat(64);
     const usageToken = "u".repeat(64);
-    const dbPassword = "p".repeat(64);
+    const databasePassword = "p".repeat(64);
 
     // openlit-secrets.env carries multiple secrets; only control & usage tokens must be parsed
     writeFileSync(
       join(codexHome, "openlit-secrets.env"),
       [
-        `OPENLIT_DB_PASSWORD=${dbPassword}`,
+        `OPENLIT_DB_PASSWORD=${databasePassword}`,
         `AUTODEV_CONTROL_API_TOKEN=${controlToken}`,
         `OPENLIT_OTLP_API_KEY=${"k".repeat(64)}`,
         `AUTODEV_OPENLIT_USAGE_TOKEN=${usageToken}`
@@ -302,7 +302,7 @@ test("console launcher adheres to loopback binding contract, exact-key tokens, a
         ...process.env,
         HOME: directory,
         CODEX_HOME: codexHome,
-        AUTODEV_REPO_ROOT: fakeRepo,
+        AUTODEV_REPO_ROOT: fakeRepository,
         AUTODEV_NODE_BIN: fakeNode,
         AUTODEV_CONSOLE_PORT: "3300",
         // Test inherited tokens in parent environment get reset
@@ -317,10 +317,10 @@ test("console launcher adheres to loopback binding contract, exact-key tokens, a
         .trim()
         .split("\n")
         .map((line) => {
-          const colonIdx = line.indexOf(":");
-          return colonIdx === -1
+          const colonIndex = line.indexOf(":");
+          return colonIndex === -1
             ? [line, ""]
-            : [line.slice(0, colonIdx), line.slice(colonIdx + 1)];
+            : [line.slice(0, colonIndex), line.slice(colonIndex + 1)];
         })
     );
 
@@ -340,10 +340,10 @@ test("console launcher adheres to loopback binding contract, exact-key tokens, a
     );
 
     // Verify next binary invocation arguments: must bind to loopback 127.0.0.1 and port 3300
-    const args = lines.ARGS;
-    assert.ok(args, "fake Node process must report the launched arguments");
+    const arguments_ = lines.ARGS;
+    assert.ok(arguments_, "fake Node process must report the launched arguments");
     assert.match(
-      args,
+      arguments_,
       /next start --hostname 127\.0\.0\.1 --port 3300/,
       "Must exec next start with --hostname 127.0.0.1 --port 3300"
     );
@@ -406,9 +406,9 @@ test("console launcher adheres to loopback binding contract, exact-key tokens, a
 
 test("console launcher reports a backend that did not answer as a temporary failure", () =>
   withTempDir((directory) => {
-    const fakeRepo = join(directory, "repo");
+    const fakeRepository = join(directory, "repo");
     const codexHome = join(directory, "codex-home");
-    const consoleDir = join(fakeRepo, "console");
+    const consoleDir = join(fakeRepository, "console");
     const buildIdDir = join(consoleDir, ".next");
     const nextBinDir = join(consoleDir, "node_modules/next/dist/bin");
     const fakeNode = join(directory, "fake-node");
@@ -449,7 +449,7 @@ test("console launcher reports a backend that did not answer as a temporary fail
         ...process.env,
         HOME: directory,
         CODEX_HOME: codexHome,
-        AUTODEV_REPO_ROOT: fakeRepo,
+        AUTODEV_REPO_ROOT: fakeRepository,
         AUTODEV_NODE_BIN: fakeNode,
         AUTODEV_CONSOLE_PORT: "3300"
       }
@@ -470,9 +470,9 @@ test("console launcher reports a backend that did not answer as a temporary fail
 
 test("console launcher terminates slow sibling preflight instead of blocking when one backend fails", () =>
   withTempDir((directory) => {
-    const fakeRepo = join(directory, "repo");
+    const fakeRepository = join(directory, "repo");
     const codexHome = join(directory, "codex-home");
-    const consoleDir = join(fakeRepo, "console");
+    const consoleDir = join(fakeRepository, "console");
     const buildIdDir = join(consoleDir, ".next");
     const nextBinDir = join(consoleDir, "node_modules/next/dist/bin");
     const fakeNode = join(directory, "fake-node");
@@ -514,7 +514,7 @@ test("console launcher terminates slow sibling preflight instead of blocking whe
         ...process.env,
         HOME: directory,
         CODEX_HOME: codexHome,
-        AUTODEV_REPO_ROOT: fakeRepo,
+        AUTODEV_REPO_ROOT: fakeRepository,
         AUTODEV_NODE_BIN: fakeNode,
         AUTODEV_CONSOLE_PORT: "3300"
       }

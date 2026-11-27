@@ -91,13 +91,13 @@ async function readCatalog(call: Call): Promise<readonly McpCatalogRecord[]> {
 }
 
 /**
- * Records the Runtime's observation of a server and of the calls on it.
- *
- * The observation is the one the bridges report: a call that ran against the
- * server and came back. That is the evidence the server's health is read
- * from, and it is the only evidence the Runtime has now that the OTLP
- * receiver is gone.
- */
+Records the Runtime's observation of a server and of the calls on it.
+
+The observation is the one the bridges report: a call that ran against the
+server and came back. That is the evidence the server's health is read
+from, and it is the only evidence the Runtime has now that the OTLP
+receiver is gone.
+*/
 function observeServer(serverName: string, calls: number): void {
   const tracker = getDefaultCorrelationTracker();
   for (let index = 0; index < calls; index += 1) {

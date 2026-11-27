@@ -1,16 +1,16 @@
 /**
- * The unscoped fleet diagnostics views.
- *
- * Two views sit beside the fleet-wide Usage aggregate: the newest sessions
- * with their efficiency and failure rollups, and the hook denials the policy
- * recorded. Both are read from the Control API's diagnostics routes -- the same
- * engine the session view and the CLI read -- so a number here and the same
- * number in a session's own report are the same measurement.
- *
- * The recent-sessions rows link straight into the session-scoped page, which is
- * what makes the fleet view a way *into* a session rather than a table of
- * numbers with no next step.
- */
+The unscoped fleet diagnostics views.
+
+Two views sit beside the fleet-wide Usage aggregate: the newest sessions
+with their efficiency and failure rollups, and the hook denials the policy
+recorded. Both are read from the Control API's diagnostics routes -- the same
+engine the session view and the CLI read -- so a number here and the same
+number in a session's own report are the same measurement.
+
+The recent-sessions rows link straight into the session-scoped page, which is
+what makes the fleet view a way *into* a session rather than a table of
+numbers with no next step.
+*/
 
 import {
   type FleetSessionRow,
@@ -37,7 +37,7 @@ import { Tag } from "../../components/status/Tag.ts";
 import {
   DataTable,
   type DataTableFeatures,
-  type DataTableProps
+  type DataTableProps as DataTableProperties
 } from "../../components/tables/DataTable.ts";
 import { TabNav } from "../../components/tabs/Tabs.ts";
 import { InstantDisplay } from "../../components/ui/InstantDisplay.ts";
@@ -47,7 +47,9 @@ import {
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
 
-/** A read that did not produce evidence, and why. */
+/**
+A read that did not produce evidence, and why.
+*/
 export interface UsageFleetFailure {
   readonly code: string;
   readonly message: string;
@@ -75,7 +77,9 @@ const CHART_PALETTE = {
   series2: { bar: "bg-chart-2", value: "text-chart-2" }
 } as const;
 
-/** What every hook chart says when the window held no PreToolUse denial. */
+/**
+What every hook chart says when the window held no PreToolUse denial.
+*/
 const NO_HOOK_DENIAL_MESSAGE =
   "No PreToolUse denial was observed in this window.";
 
@@ -107,12 +111,12 @@ function fleetHref(
   range: string,
   changes: Readonly<Record<string, string | number | undefined>>
 ): string {
-  const params = new URLSearchParams({ range });
+  const parameters = new URLSearchParams({ range });
   for (const [key, value] of Object.entries(changes)) {
     if (value === undefined || value === "") continue;
-    params.set(key, String(value));
+    parameters.set(key, String(value));
   }
-  return `/usage?${params.toString()}`;
+  return `/usage?${parameters.toString()}`;
 }
 
 function panel(title: string, children: React.ReactNode): React.JSX.Element {
@@ -250,7 +254,7 @@ function renderRecentSessions(
   const recent: RecentSessionRow[] = (scan.recentSessions ?? scan.sessions).map(
     (row) => {
       const rollout = byId.get(row.id);
-      return { ...row, ...(rollout ? { rollout } : {}) };
+      return { ...row, ...(rollout && { rollout }) };
     }
   );
   return React.createElement(
@@ -290,7 +294,7 @@ function renderRecentSessions(
     ),
     panel(
       "Recent sessions",
-      React.createElement<DataTableProps<RecentSessionRow>>(DataTable, {
+      React.createElement<DataTableProperties<RecentSessionRow>>(DataTable, {
         data: recent,
         columns: sessionColumns(range),
         keyExtractor: (row) => row.id,
@@ -401,7 +405,7 @@ function renderHookDenials(
     ),
     panel(
       "Top denial reasons",
-      React.createElement<DataTableProps<{ reason: string; count: number }>>(
+      React.createElement<DataTableProperties<{ reason: string; count: number }>>(
         DataTable,
         {
           data: summary.byReason,
@@ -428,7 +432,7 @@ function renderHookDenials(
     panel(
       "Top blocked commands",
       React.createElement<
-        DataTableProps<{
+        DataTableProperties<{
           commandHead: string;
           policy: string;
           count: number;
@@ -464,12 +468,12 @@ function renderHookDenials(
 }
 
 /**
- * The unscoped Usage page's tab strip.
- *
- * `Aggregate usage` stays the default so every existing `/usage` link and
- * acceptance spec behaves exactly as it did; the two fleet diagnostics views
- * sit beside it.
- */
+The unscoped Usage page's tab strip.
+
+`Aggregate usage` stays the default so every existing `/usage` link and
+acceptance spec behaves exactly as it did; the two fleet diagnostics views
+sit beside it.
+*/
 export function UsageFleetDiagnosticsView({
   view,
   range,

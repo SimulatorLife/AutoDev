@@ -12,8 +12,8 @@ import {
 import type { WholePageRouter } from "../src/components/navigation/whole-page-navigation.ts";
 
 /**
- * A router that records what it was asked to warm.
- */
+A router that records what it was asked to warm.
+*/
 function recordingRouter(): {
   readonly router: WholePageRouter;
   readonly warmed: string[];

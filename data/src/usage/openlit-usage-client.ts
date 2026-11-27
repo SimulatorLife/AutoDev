@@ -44,28 +44,28 @@ const MAX_SESSION_LABEL_LENGTH = 128;
 const NOT_APPLICABLE_KIND = "not-applicable" as const;
 
 /**
- * The ceiling the deployed OpenLIT puts on one ClickHouse query.
- *
- * The Usage API answers with the whole dashboard for the requested window,
- * and it runs its widget, filter, trace and git queries in parallel, so its
- * own answer is bounded by its slowest single query -- and that query gives
- * up at this ceiling. The OpenLIT ClickHouse client states this ceiling
- * explicitly: its own library default was 30 seconds, which was short
- * enough for the widest range to fail under load.
- */
+The ceiling the deployed OpenLIT puts on one ClickHouse query.
+
+The Usage API answers with the whole dashboard for the requested window,
+and it runs its widget, filter, trace and git queries in parallel, so its
+own answer is bounded by its slowest single query -- and that query gives
+up at this ceiling. The OpenLIT ClickHouse client states this ceiling
+explicitly: its own library default was 30 seconds, which was short
+enough for the widest range to fail under load.
+*/
 export const OPENLIT_QUERY_TIMEOUT_MS = 120_000;
 
 /**
- * The ceiling on a Usage API request.
- *
- * It has to sit above the ceiling of the service, not level with it. A
- * client that gave up at the same instant as the service would race the
- * service's own answer: the request would be reported as unreachable for a
- * range the service was about to answer, and whether the console showed the
- * range or an error would depend on which side gave up first. Half again the
- * service's ceiling leaves room for the API's own fan-out and for the
- * answer to travel back.
- */
+The ceiling on a Usage API request.
+
+It has to sit above the ceiling of the service, not level with it. A
+client that gave up at the same instant as the service would race the
+service's own answer: the request would be reported as unreachable for a
+range the service was about to answer, and whether the console showed the
+range or an error would depend on which side gave up first. Half again the
+service's ceiling leaves room for the API's own fan-out and for the
+answer to travel back.
+*/
 export const REQUEST_TIMEOUT_MS =
   OPENLIT_QUERY_TIMEOUT_MS + OPENLIT_QUERY_TIMEOUT_MS / 2;
 const MAX_TRACE_SPANS = 200;
@@ -289,12 +289,12 @@ export class OpenLITUsageClient {
   }
 
   /**
-   * Read one page of a session's spans.
-   *
-   * The page is a window onto the session's full span list: the response
-   * carries the exact `total`, the `hasMore` flag, and the session's whole
-   * cost estimate rather than this page's.
-   */
+  Read one page of a session's spans.
+  
+  The page is a window onto the session's full span list: the response
+  carries the exact `total`, the `hasMore` flag, and the session's whole
+  cost estimate rather than this page's.
+  */
   async querySession(
     sessionId: unknown,
     selection: UsageSessionQuerySelection,
@@ -318,9 +318,7 @@ export class OpenLITUsageClient {
           body: JSON.stringify({
             sessionId: validatedSessionId,
             range: selection.range,
-            ...(selection.range === "CUSTOM"
-              ? { customRange: selection.customRange }
-              : {}),
+            ...((selection.range === "CUSTOM") && { customRange: selection.customRange }),
             limit: page.limit,
             offset: page.offset,
             sortDirection: page.sortDirection
@@ -471,11 +469,11 @@ function sessionNumber(
 }
 
 /**
- * Clamp a requested page into the bounds the endpoint accepts.
- *
- * The bounds are the endpoint's own, applied here as well so a caller cannot
- * ask for a page the endpoint will refuse.
- */
+Clamp a requested page into the bounds the endpoint accepts.
+
+The bounds are the endpoint's own, applied here as well so a caller cannot
+ask for a page the endpoint will refuse.
+*/
 export function normalizeSessionSpanPagination(
   pagination: UsageSessionSpanPagination | undefined
 ): {
@@ -711,10 +709,7 @@ function parseOpenLITTraceDetail(value: unknown): UsageTraceDetail | null {
 function parseOpenLITUsageResponse(
   value: unknown
 ): OpenLITUsageResponse | null {
-  if (!isRecord(value) || value.schema !== "autodev-openlit-usage-v5") {
-    return null;
-  }
-  if (!Array.isArray(value.widgets)) return null;
+  if (!isRecord(value) || value.schema !== "autodev-openlit-usage-v5" || !Array.isArray(value.widgets)) return null;
 
   const widgets: OpenLITWidgetResult[] = [];
   const seenWidgetIds = new Set<UsageWidgetId>();
@@ -829,12 +824,10 @@ function parseWidgetResult(candidate: unknown): OpenLITWidgetResult | null {
     observed: candidate.observed,
     partial: candidate.partial,
     rows: candidate.rows,
-    ...(typeof candidate.valuePath === "string"
-      ? { valuePath: candidate.valuePath }
-      : {}),
-    ...(ratio ? { ratio } : {}),
-    ...(typeof candidate.xAxis === "string" ? { xAxis: candidate.xAxis } : {}),
-    ...(typeof candidate.yAxis === "string" ? { yAxis: candidate.yAxis } : {})
+    ...((typeof candidate.valuePath === "string") && { valuePath: candidate.valuePath }),
+    ...(ratio && { ratio }),
+    ...((typeof candidate.xAxis === "string") && { xAxis: candidate.xAxis }),
+    ...((typeof candidate.yAxis === "string") && { yAxis: candidate.yAxis })
   };
 }
 
@@ -855,9 +848,7 @@ function parseRatio(value: unknown): OpenLITRatio | null {
   return {
     numerator: value.numerator,
     denominator: value.denominator,
-    ...(typeof value.multiplier === "number"
-      ? { multiplier: value.multiplier }
-      : {})
+    ...((typeof value.multiplier === "number") && { multiplier: value.multiplier })
   };
 }
 
@@ -875,7 +866,7 @@ function parseFilterOptions(
       !isRecord(option) ||
       typeof option.supported !== "boolean" ||
       !Array.isArray(option.values) ||
-      !option.values.every((entry) => typeof entry === "string")
+      option.values.some((entry) => typeof entry !== "string")
     ) {
       return null;
     }
@@ -972,12 +963,12 @@ function contextCompactionUnsupportedFilters(
 }
 
 /**
- * The filters a provider hop cannot answer.
- *
- * A hop records the provider that now serves the agent, the provider it came
- * from, the agent's role and its workspace. It does not record the requested
- * model or a skill, so a selection on either of them cannot describe hops.
- */
+The filters a provider hop cannot answer.
+
+A hop records the provider that now serves the agent, the provider it came
+from, the agent's role and its workspace. It does not record the requested
+model or a skill, so a selection on either of them cannot describe hops.
+*/
 function providerHopUnsupportedFilters(
   selection: UsageFilterSelection
 ): readonly UsageProviderHopUnsupportedFilter[] {
@@ -1023,20 +1014,20 @@ function unavailableGitChanges(
 }
 
 /**
- * A counted Git metric.
- *
- * The Git widgets answer from a metric query, and their `observed` flag
- * means "the query matched a data point" rather than "the source answered
- * the question". The two are the same for a widget whose query always
- * returns a row, and they are not the same for a metric query: a query that
- * succeeded and matched nothing is a count of zero, not an absence of
- * evidence. Reading it as absent sends the reader after a capture the
- * source made and reported as empty -- and it is why a scoped view whose
- * filter matched no commit rendered every Git panel as unobserved.
- *
- * A query that did not succeed is the unobserved case, and it is the only
- * one.
- */
+A counted Git metric.
+
+The Git widgets answer from a metric query, and their `observed` flag
+means "the query matched a data point" rather than "the source answered
+the question". The two are the same for a widget whose query always
+returns a row, and they are not the same for a metric query: a query that
+succeeded and matched nothing is a count of zero, not an absence of
+evidence. Reading it as absent sends the reader after a capture the
+source made and reported as empty -- and it is why a scoped view whose
+filter matched no commit rendered every Git panel as unobserved.
+
+A query that did not succeed is the unobserved case, and it is the only
+one.
+*/
 function gitCount(widget: OpenLITWidgetResult | undefined): number | null {
   if (!widget?.querySucceeded) return null;
   if (!widget.observed || widget.rows.length === 0) return 0;
@@ -1044,10 +1035,10 @@ function gitCount(widget: OpenLITWidgetResult | undefined): number | null {
 }
 
 /**
- * Read the partial-commit count without turning a malformed observed value
- * into zero. Only a successful empty query is evidence that no partial diff
- * was measured in the selected range.
- */
+Read the partial-commit count without turning a malformed observed value
+into zero. Only a successful empty query is evidence that no partial diff
+was measured in the selected range.
+*/
 function observedPartialCommitCount(
   widget: OpenLITWidgetResult | undefined
 ): number | null {
@@ -1057,13 +1048,13 @@ function observedPartialCommitCount(
 }
 
 /**
- * One bounded breakdown of counts by category.
- *
- * An empty breakdown is only read as "no rows at all" when the total it
- * breaks down agrees with it; otherwise the source returned rows it cannot
- * explain and the breakdown is not observed. A breakdown the source did not
- * observe is not an empty one either: it is missing.
- */
+One bounded breakdown of counts by category.
+
+An empty breakdown is only read as "no rows at all" when the total it
+breaks down agrees with it; otherwise the source returned rows it cannot
+explain and the breakdown is not observed. A breakdown the source did not
+observe is not an empty one either: it is missing.
+*/
 function breakdownRows(
   widget: OpenLITWidgetResult | undefined,
   total: number | null
@@ -1079,25 +1070,24 @@ function breakdownRows(
 }
 
 /**
- * The logical-request breakdown by workspace.
- *
- * This is the one breakdown whose group key can be absent, so it cannot reuse
- * `groupedRows`: a group key the source renders as an empty or null value is
- * a request that carried no workspace attribution, not a malformed row, and
- * rejecting the whole breakdown because of it would throw away every
- * attributed workspace with it. Such requests belong to no workspace, so they
- * are reported with a `null` workspace rather than folded into one.
- *
- * An empty breakdown is only read as "no requests at all" when the logical
- * request total agrees; otherwise the source returned rows it cannot explain
- * and the breakdown is not observed.
- */
+The logical-request breakdown by workspace.
+
+This is the one breakdown whose group key can be absent, so it cannot reuse
+`groupedRows`: a group key the source renders as an empty or null value is
+a request that carried no workspace attribution, not a malformed row, and
+rejecting the whole breakdown because of it would throw away every
+attributed workspace with it. Such requests belong to no workspace, so they
+are reported with a `null` workspace rather than folded into one.
+
+An empty breakdown is only read as "no requests at all" when the logical
+request total agrees; otherwise the source returned rows it cannot explain
+and the breakdown is not observed.
+*/
 function workspaceRequestBreakdown(
   widget: OpenLITWidgetResult | undefined,
   observedRequests: number | null
 ): UsageWorkspaceRequestBreakdown | null {
-  if (!widget?.querySucceeded || !widget.observed) return null;
-  if (!widget.xAxis || !widget.yAxis) return null;
+  if (!widget?.querySucceeded || !widget.observed || !widget.xAxis || !widget.yAxis) return null;
   if (widget.rows.length === 0) {
     return observedRequests === 0
       ? { rows: [], partial: widget.partial }
@@ -1163,13 +1153,13 @@ function gitChangeMetrics(
   }
   const partialWidget = widgets.get("git-partial-commits");
   const partialCommits = observedPartialCommitCount(partialWidget);
-  const lineTotalsComplete = partialCommits === 0;
+  const isLineTotalsComplete = partialCommits === 0;
   const breakdownIds: readonly UsageWidgetId[] = [
     "git-commits-by-workspace",
     "git-commits-by-provider",
     "git-commits-by-agent"
   ];
-  const breakdownsPartial = breakdownIds.some(
+  const isBreakdownsPartial = breakdownIds.some(
     (id) => widgets.get(id)?.partial === true
   );
 
@@ -1178,7 +1168,7 @@ function gitChangeMetrics(
     notApplicableReason: null,
     unsupportedFilters,
     partial: partialCommits === null ? null : partialCommits > 0,
-    breakdownsPartial,
+    breakdownsPartial: isBreakdownsPartial,
     commits,
     filesChanged: gitCount(widgets.get("git-files-changed")),
     filesAdded: gitCount(widgets.get("git-files-added")),
@@ -1186,10 +1176,10 @@ function gitChangeMetrics(
     // numstat cannot report line counts for binary or otherwise unsummarized
     // diffs. A sum of the rows it could read is not the complete range total,
     // and an all-binary range must not become a measured zero.
-    linesAdded: lineTotalsComplete
+    linesAdded: isLineTotalsComplete
       ? gitCount(widgets.get("git-lines-added"))
       : null,
-    linesRemoved: lineTotalsComplete
+    linesRemoved: isLineTotalsComplete
       ? gitCount(widgets.get("git-lines-removed"))
       : null,
     partialCommits,
@@ -1205,7 +1195,9 @@ function gitChangeMetrics(
   };
 }
 
-/** The provider-hop evidence one Usage snapshot carries. */
+/**
+The provider-hop evidence one Usage snapshot carries.
+*/
 interface ProviderHopMetrics {
   readonly providerHops: number | null;
   readonly providerHopRatePercent: number | null;
@@ -1228,13 +1220,13 @@ const PROVIDER_HOP_BREAKDOWN_IDS: readonly UsageWidgetId[] = [
 ];
 
 /**
- * Read the provider-hop evidence.
- *
- * A hop is recorded on the logical request that observed it, so the hop count
- * and its breakdowns answer the same question about the same requests. A
- * selection on a dimension the hop does not carry leaves the whole evidence
- * unavailable rather than answering it for every provider, model or skill.
- */
+Read the provider-hop evidence.
+
+A hop is recorded on the logical request that observed it, so the hop count
+and its breakdowns answer the same question about the same requests. A
+selection on a dimension the hop does not carry leaves the whole evidence
+unavailable rather than answering it for every provider, model or skill.
+*/
 function providerHopMetrics(
   widgets: ReadonlyMap<UsageWidgetId, OpenLITWidgetResult>,
   selection: UsageFilterSelection,
@@ -1333,9 +1325,9 @@ function toUsageSnapshot(
     widgets.get("context-compactions-by-provider"),
     compactions
   );
-  const compactionsAvailable = unsupportedCompactionFilters.length === 0;
+  const isCompactionsAvailable = unsupportedCompactionFilters.length === 0;
   const hops = providerHopMetrics(widgets, selection, logicalRequests);
-  const breakdownsPartial = [
+  const isBreakdownsPartial = [
     "context-compactions-by-workspace",
     "context-compactions-by-model",
     "context-compactions-by-agent",
@@ -1372,27 +1364,27 @@ function toUsageSnapshot(
       attemptErrors === null
         ? null
         : attemptErrors.map(({ name, count }) => ({ provider: name, count })),
-    contextCompactions: compactionsAvailable ? compactions : null,
-    contextCompactionRatePercent: compactionsAvailable
+    contextCompactions: isCompactionsAvailable ? compactions : null,
+    contextCompactionRatePercent: isCompactionsAvailable
       ? deriveContextCompactionRatePercent(compactions, logicalRequests)
       : null,
-    contextCompactionsOverTime: compactionsAvailable
+    contextCompactionsOverTime: isCompactionsAvailable
       ? (compactionTimeSeries?.map(({ name, count }) => ({
           bucket: name,
           count
         })) ?? null)
       : null,
-    contextCompactionsByWorkspace: compactionsAvailable
+    contextCompactionsByWorkspace: isCompactionsAvailable
       ? compactionsByWorkspace
       : null,
-    contextCompactionsByModel: compactionsAvailable ? compactionsByModel : null,
-    contextCompactionsByAgent: compactionsAvailable ? compactionsByAgent : null,
-    contextCompactionsByProvider: compactionsAvailable
+    contextCompactionsByModel: isCompactionsAvailable ? compactionsByModel : null,
+    contextCompactionsByAgent: isCompactionsAvailable ? compactionsByAgent : null,
+    contextCompactionsByProvider: isCompactionsAvailable
       ? compactionsByProvider
       : null,
     contextCompactionsUnsupportedFilters: unsupportedCompactionFilters,
     contextCompactionsBreakdownsPartial:
-      compactionsAvailable && breakdownsPartial,
+      isCompactionsAvailable && isBreakdownsPartial,
     providerHops: hops.providerHops,
     providerHopRatePercent: hops.providerHopRatePercent,
     providerHopsOverTime: hops.providerHopsOverTime,

@@ -1,12 +1,12 @@
 /**
- * The canonical skill's convergence, driven in a browser.
- *
- * A skill reaches the runtime as a link to the canonical source itself, so
- * the runtime's observed state is the very source the operator is editing.
- * The page has to say so rather than leaving the operator to assume it: the
- * generations behind the verdict, and the operation history the Runtime
- * recorded for the resource.
- */
+The canonical skill's convergence, driven in a browser.
+
+A skill reaches the runtime as a link to the canonical source itself, so
+the runtime's observed state is the very source the operator is editing.
+The page has to say so rather than leaving the operator to assume it: the
+generations behind the verdict, and the operation history the Runtime
+recorded for the resource.
+*/
 import { expect, test } from "@playwright/test";
 
 const SKILL_ROUTE = "/skills/code-review";

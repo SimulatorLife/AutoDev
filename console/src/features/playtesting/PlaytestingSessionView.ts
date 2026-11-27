@@ -27,7 +27,7 @@ import {
 import {
   DataTable,
   type DataTableFeatures,
-  type DataTableProps
+  type DataTableProps as DataTableProperties
 } from "../../components/tables/DataTable.ts";
 import {
   ACTION_LINK_CLASS,
@@ -309,9 +309,9 @@ function traceStepFacts(entry: PlaytestJsonValue): TraceStepFacts {
         .map(recordedScalar)
         .filter((w): w is string => w !== null)
     : [];
-  const frameRefs = Array.isArray(top?.frameRefs) ? top.frameRefs : [];
+  const frameReferences = Array.isArray(top?.frameRefs) ? top.frameRefs : [];
   const frameId =
-    readRecorded(frameRefs.map(asTraceRecord), ["id", "artifactId"]) ??
+    readRecorded(frameReferences.map(asTraceRecord), ["id", "artifactId"]) ??
     readRecorded([top], ["frameId"]);
 
   return {
@@ -433,7 +433,7 @@ function metricTable(
       meta: { weight: 220, align: "prose" }
     }
   ];
-  return React.createElement<DataTableProps<Metric>>(DataTable, {
+  return React.createElement<DataTableProperties<Metric>>(DataTable, {
     data: episode.metrics,
     columns,
     keyExtractor: (metric) =>
@@ -657,13 +657,13 @@ function episodeSteps(
       ...window.entries.map((entry, index) => {
         const facts = traceStepFacts(entry);
         const step = facts.step;
-        const selected = step !== null && scope.step === step;
+        const isSelected = step !== null && scope.step === step;
         return React.createElement(
           "li",
           {
             key: `${step ?? "unindexed"}:${index}`,
-            className: `border-b py-3 last:border-b-0 ${selected ? "rounded-md border border-accent bg-surface-raised px-3" : "border-border"}`,
-            ...(selected ? { "aria-current": "step" } : {}),
+            className: `border-b py-3 last:border-b-0 ${isSelected ? "rounded-md border border-accent bg-surface-raised px-3" : "border-border"}`,
+            ...(isSelected && { "aria-current": "step" }),
             "data-playtest-step": step === null ? "unindexed" : String(step)
           },
           React.createElement(
@@ -701,14 +701,14 @@ function episodeSteps(
                     ),
                     className: EVIDENCE_LINK_CLASS
                   },
-                  selected ? "Selected step" : "Open this step"
+                  isSelected ? "Selected step" : "Open this step"
                 )
           ),
           React.createElement(
             "details",
             {
               className: "mt-2 rounded-md border border-border px-3 py-2",
-              open: selected,
+              open: isSelected,
               "data-playtest-step-details":
                 step === null ? "unindexed" : String(step)
             },
@@ -1566,10 +1566,7 @@ function spectatorOfferSummary(
   const offered = facts?.offeredCandidates ?? null;
   const actionable = facts?.actionableControls ?? null;
   const notOffered = facts?.controlsNotOffered ?? null;
-  if (offered === null || actionable === null || notOffered === null) {
-    return null;
-  }
-  if (notOffered === 0) {
+  if (offered === null || actionable === null || notOffered === null || (notOffered === 0)) {
     return null;
   }
   return React.createElement(
@@ -1728,7 +1725,7 @@ function visualGameSpectatorStage(
   const availableSteps = spectatorAvailableSteps(window, totalSteps);
   const firstStep = availableSteps[0] ?? 0;
   const lastStep = availableSteps.at(-1) ?? 0;
-  const prevStep = availableSteps.findLast((s) => s < currentStep) ?? null;
+  const previousStep = availableSteps.findLast((s) => s < currentStep) ?? null;
   const nextStep = availableSteps.find((s) => s > currentStep) ?? null;
   const progressPct =
     lastStep > 0 ? Math.round((currentStep / lastStep) * 100) : 100;
@@ -1786,9 +1783,7 @@ function visualGameSpectatorStage(
             className:
               "inline-flex items-center gap-1.5 rounded-full bg-accent/15 px-3 py-1 text-xs font-semibold text-accent"
           },
-          episode.executionProvenance.mode === "adapter-accelerated"
-            ? React.createElement(Icon, { name: "bolt", size: 14 })
-            : React.createElement(Icon, { name: "globe", size: 14 }),
+          React.createElement(Icon, ({ name: episode.executionProvenance.mode === "adapter-accelerated" ? "bolt" : "globe", size: 14 })),
           episode.executionProvenance.mode === "adapter-accelerated"
             ? "Fast Engine Simulation"
             : "Autonomous Visual AI Player"
@@ -1987,7 +1982,7 @@ function visualGameSpectatorStage(
                   "Step 0"
                 )
               ),
-          prevStep === null
+          previousStep === null
             ? React.createElement(
                 "span",
                 {
@@ -2007,7 +2002,7 @@ function visualGameSpectatorStage(
                   href: playtestingEpisodeHref(
                     traceScope,
                     episode.episodeId,
-                    prevStep
+                    previousStep
                   ),
                   className: STEP_BUTTON_CLASS
                 },
@@ -2233,26 +2228,26 @@ function aiGameplayCriticScorecard(
                 ? React.createElement(
                     "div",
                     { className: "flex flex-wrap gap-x-3 gap-y-1" },
-                    ...claim.evidenceRefs.map((ref, refIndex) =>
+                    ...claim.evidenceRefs.map((reference, referenceIndex) =>
                       React.createElement(
                         NavigationLink,
                         {
-                          key: ref.kind + ":" + ref.id + ":" + String(refIndex),
+                          key: reference.kind + ":" + reference.id + ":" + String(referenceIndex),
                           href: playtestingEpisodeHref(
                             scope,
                             episode.episodeId,
-                            typeof ref.step === "number" ? ref.step : null
+                            typeof reference.step === "number" ? reference.step : null
                           ),
                           className: EVIDENCE_LINK_CLASS,
                           dataAttributes: {
-                            "data-analyst-evidence": ref.kind,
-                            "data-analyst-evidence-id": ref.id
+                            "data-analyst-evidence": reference.kind,
+                            "data-analyst-evidence-id": reference.id
                           }
                         },
-                        ref.kind +
-                          (typeof ref.step === "number"
-                            ? " · step " + String(ref.step)
-                            : " · " + ref.id)
+                        reference.kind +
+                          (typeof reference.step === "number"
+                            ? " · step " + String(reference.step)
+                            : " · " + reference.id)
                       )
                     )
                   )
@@ -2385,26 +2380,26 @@ function discoveryAnalystReview(
                 ? React.createElement(
                     "div",
                     { className: "flex flex-wrap gap-x-3 gap-y-1" },
-                    ...claim.evidenceRefs.map((ref, refIndex) =>
+                    ...claim.evidenceRefs.map((reference, referenceIndex) =>
                       React.createElement(
                         NavigationLink,
                         {
-                          key: ref.kind + ":" + ref.id + ":" + String(refIndex),
+                          key: reference.kind + ":" + reference.id + ":" + String(referenceIndex),
                           href: playtestingEpisodeHref(
                             scope,
                             review.episodeId,
-                            typeof ref.step === "number" ? ref.step : null
+                            typeof reference.step === "number" ? reference.step : null
                           ),
                           className: EVIDENCE_LINK_CLASS,
                           dataAttributes: {
-                            "data-discovery-evidence": ref.kind,
-                            "data-discovery-evidence-id": ref.id
+                            "data-discovery-evidence": reference.kind,
+                            "data-discovery-evidence-id": reference.id
                           }
                         },
-                        ref.kind +
-                          (typeof ref.step === "number"
-                            ? " · step " + String(ref.step)
-                            : " · " + ref.id)
+                        reference.kind +
+                          (typeof reference.step === "number"
+                            ? " · step " + String(reference.step)
+                            : " · " + reference.id)
                       )
                     )
                   )
@@ -2446,22 +2441,22 @@ function discoveryAnalystReview(
                 React.createElement(
                   "div",
                   { className: "flex flex-wrap gap-x-3 gap-y-1" },
-                  ...experiment.evidenceRefs.map((ref, refIndex) =>
+                  ...experiment.evidenceRefs.map((reference, referenceIndex) =>
                     React.createElement(
                       NavigationLink,
                       {
-                        key: ref.kind + ":" + ref.id + ":" + String(refIndex),
+                        key: reference.kind + ":" + reference.id + ":" + String(referenceIndex),
                         href: playtestingEpisodeHref(
                           scope,
                           review.episodeId,
-                          typeof ref.step === "number" ? ref.step : null
+                          typeof reference.step === "number" ? reference.step : null
                         ),
                         className: EVIDENCE_LINK_CLASS
                       },
-                      ref.kind +
-                        (typeof ref.step === "number"
-                          ? " · step " + String(ref.step)
-                          : " · " + ref.id)
+                      reference.kind +
+                        (typeof reference.step === "number"
+                          ? " · step " + String(reference.step)
+                          : " · " + reference.id)
                     )
                   )
                 )
@@ -2962,7 +2957,7 @@ export function PlaytestingSessionView({
             },
             ...episode.frames.map((frame, index) => {
               const frameIndex = frame.frameIndex ?? index;
-              const src = `/api/playtesting/episodes/${encodeURIComponent(episode.episodeId)}/media/${encodeURIComponent(frame.id)}?workspaceId=${encodeURIComponent(detail.workspaceId)}`;
+              const source = `/api/playtesting/episodes/${encodeURIComponent(episode.episodeId)}/media/${encodeURIComponent(frame.id)}?workspaceId=${encodeURIComponent(detail.workspaceId)}`;
               return React.createElement(
                 "li",
                 {
@@ -2974,7 +2969,7 @@ export function PlaytestingSessionView({
                   "figure",
                   { className: "flex flex-col gap-2" },
                   React.createElement("img", {
-                    src,
+                    src: source,
                     alt: `Recorded game frame ${frameIndex + 1}${frame.step === undefined ? "" : ` at step ${frame.step}`}`,
                     loading: "lazy",
                     decoding: "async",

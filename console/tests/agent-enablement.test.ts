@@ -168,7 +168,7 @@ test("agent enablement fetcher PATCHes role with exact revision request", async 
 test("same-origin Agent form redirects in place and does not reflect success", async () => {
   const priorToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   const priorBaseUrl = process.env.AUTODEV_CONTROL_API_BASE_URL;
-  const priorFetch = globalThis.fetch;
+  const priorFetch = fetch;
   process.env.AUTODEV_CONTROL_API_TOKEN = "server-secret";
   process.env.AUTODEV_CONTROL_API_BASE_URL = "http://runtime.test";
   let requestBody: unknown;

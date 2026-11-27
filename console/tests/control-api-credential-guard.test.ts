@@ -85,29 +85,31 @@ test("every page shares one guard, and names its own surface in it", () => {
   const spelling = [];
 
   for (const file of pageFiles(APP)) {
-    const src = readFileSync(file, "utf8");
+    const source = readFileSync(file, "utf8");
     const at = relative(APP, file);
-    if (src.includes("autodev_control_api_disabled")) spelling.push(at);
+    if (source.includes("autodev_control_api_disabled")) spelling.push(at);
     const calls = [
-      ...src.matchAll(/controlApiCredentialUnavailable\(\s*"([^"]*)"\s*\)/gu)
+      ...source.matchAll(/controlApiCredentialUnavailable\(\s*"([^"]*)"\s*\)/gu)
     ];
-    if (calls.length > 0) {
-      using.push(at);
-      for (const match of calls) {
-        const noun = match[1] ?? "";
-        assert.notEqual(noun.trim(), "", `${at} names no surface`);
-        // Render through the real helper, so a page that passed a noun the
-        // sentence cannot hold fails here rather than on a page nobody visits.
-        const markup = renderToStaticMarkup(
-          controlApiCredentialUnavailable(noun)
-        );
-        assert.ok(
-          markup.includes(
-            `Set AUTODEV_CONTROL_API_TOKEN in the Next.js server environment to read ${noun}.`
-          ),
-          `${at} does not render its own surface into the message`
-        );
-      }
+    if (calls.length === 0) {
+      continue;
+    }
+
+    using.push(at);
+    for (const match of calls) {
+      const noun = match[1] ?? "";
+      assert.notEqual(noun.trim(), "", `${at} names no surface`);
+      // Render through the real helper, so a page that passed a noun the
+      // sentence cannot hold fails here rather than on a page nobody visits.
+      const markup = renderToStaticMarkup(
+        controlApiCredentialUnavailable(noun)
+      );
+      assert.ok(
+        markup.includes(
+          `Set AUTODEV_CONTROL_API_TOKEN in the Next.js server environment to read ${noun}.`
+        ),
+        `${at} does not render its own surface into the message`
+      );
     }
   }
 

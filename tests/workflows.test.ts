@@ -98,9 +98,9 @@ async function runGithubScriptBody(
 ): Promise<unknown> {
   const AsyncFunction = Object.getPrototypeOf(async function () {})
     .constructor as new (
-    ...args: string[]
+    ...arguments_: string[]
   ) => (...values: unknown[]) => Promise<unknown>;
-  const fn = new AsyncFunction(
+  const function_ = new AsyncFunction(
     "github",
     "context",
     "core",
@@ -110,13 +110,13 @@ async function runGithubScriptBody(
     "require",
     body
   );
-  const previousEnv: Record<string, string | undefined> = {};
+  const previousEnvironment: Record<string, string | undefined> = {};
   for (const [key, value] of Object.entries(stubs.env ?? {})) {
-    previousEnv[key] = process.env[key];
+    previousEnvironment[key] = process.env[key];
     process.env[key] = value;
   }
   try {
-    return await fn(
+    return await function_(
       stubs.github ?? {},
       stubs.context ?? {},
       stubs.core ?? {},
@@ -126,7 +126,7 @@ async function runGithubScriptBody(
       githubScriptRequire
     );
   } finally {
-    for (const [key, value] of Object.entries(previousEnv)) {
+    for (const [key, value] of Object.entries(previousEnvironment)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
@@ -138,15 +138,15 @@ async function runGithubScriptBody(
 const extractScriptBlocks = (source: string): RunBlock[] => {
   const lines = source.split("\n");
   const blocks: RunBlock[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] ?? "";
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index] ?? "";
     const scriptMatch = line.match(/^(\s*)script: \|-?\s*$/);
     if (!scriptMatch) continue;
     const scriptIndent = (scriptMatch[1] ?? "").length;
     const body: string[] = [];
-    let j = i + 1;
-    for (; j < lines.length; j++) {
-      const nextLine = lines[j] ?? "";
+    let index_ = index + 1;
+    for (; index_ < lines.length; index_++) {
+      const nextLine = lines[index_] ?? "";
       if (nextLine.trim() === "") {
         body.push("");
         continue;
@@ -154,8 +154,8 @@ const extractScriptBlocks = (source: string): RunBlock[] => {
       if ((nextLine.match(/^ */)?.[0].length ?? 0) <= scriptIndent) break;
       body.push(nextLine);
     }
-    blocks.push({ startLine: i + 1, body: body.join("\n") });
-    i = j - 1;
+    blocks.push({ startLine: index + 1, body: body.join("\n") });
+    index = index_ - 1;
   }
   return blocks;
 };
@@ -163,15 +163,15 @@ const extractScriptBlocks = (source: string): RunBlock[] => {
 const extractRunBlocks = (source: string): RunBlock[] => {
   const lines = source.split("\n");
   const blocks: RunBlock[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] ?? "";
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index] ?? "";
     const runMatch = line.match(/^(\s*)run: \|-?\s*$/);
     if (!runMatch) continue;
     const runIndent = (runMatch[1] ?? "").length;
     const body = [];
-    let j = i + 1;
-    for (; j < lines.length; j++) {
-      const nextLine = lines[j] ?? "";
+    let index_ = index + 1;
+    for (; index_ < lines.length; index_++) {
+      const nextLine = lines[index_] ?? "";
       if (nextLine.trim() === "") {
         body.push("");
         continue;
@@ -179,8 +179,8 @@ const extractRunBlocks = (source: string): RunBlock[] => {
       if ((nextLine.match(/^ */)?.[0].length ?? 0) <= runIndent) break;
       body.push(nextLine);
     }
-    blocks.push({ startLine: i + 1, body: body.join("\n") });
-    i = j - 1;
+    blocks.push({ startLine: index + 1, body: body.join("\n") });
+    index = index_ - 1;
   }
   return blocks;
 };
@@ -193,12 +193,6 @@ type PromptConfig = {
     sourceWorkflow?: string;
   }>;
 };
-type ValidationProfile = {
-  packageManager: string;
-  pnpmVersion?: string;
-  commands: Array<{ run: string }>;
-};
-type ValidationProfiles = Record<string, ValidationProfile>;
 type ProviderManifest = {
   schemaVersion: number;
   tools: Record<string, { package: string }>;
@@ -340,6 +334,12 @@ test("target-aware reusable workflows use the PAT checkout", async () => {
 });
 
 test("AutoDev CI is repository-native and pnpm-native", async () => {
+  type ValidationProfile = {
+    packageManager: string;
+    pnpmVersion?: string;
+    commands: Array<{ run: string }>;
+  };
+  type ValidationProfiles = Record<string, ValidationProfile>;
   const packageJson = JSON.parse(
     await readFile(path.join(root, "package.json"), "utf8")
   );
@@ -891,7 +891,7 @@ test("the scheduler plans against the catalog the owner reads", async () => {
     block.body.includes("workflow_id: 'run-prompt.yml'")
   );
   assert.ok(planBlock, "expected to find the scheduler's plan script block");
-  const cfg = JSON.parse(
+  const config_ = JSON.parse(
     await readFile(
       path.join(root, ".github", "workflows", "weights.json"),
       "utf8"
@@ -903,7 +903,7 @@ test("the scheduler plans against the catalog the owner reads", async () => {
     const plan = (await runGithubScriptBody(planBlock!.body, {
       env: {
         GITHUB_WORKSPACE: root,
-        CFG_JSON: JSON.stringify(cfg),
+        CFG_JSON: JSON.stringify(config_),
         GITHUB_RUN_NUMBER: "1"
       },
       core: { info: () => {} }
@@ -1002,7 +1002,7 @@ test("the CI git credential helper answers from the environment without persisti
   );
   assert.ok(helperMatch);
   const helper = helperMatch[1] ?? "";
-  const repo = await mkdtemp(path.join(tmpdir(), "autodev-credential-helper-"));
+  const repository = await mkdtemp(path.join(tmpdir(), "autodev-credential-helper-"));
   // Isolated from this machine's global/system git config and credential
   // helpers (for example the macOS keychain), so only the workflow's helper can
   // answer and no real credential is ever read.
@@ -1015,11 +1015,11 @@ test("the CI git credential helper answers from the environment without persisti
   };
   try {
     const git = (
-      args: string[],
+      arguments_: string[],
       options: { input?: string; env?: NodeJS.ProcessEnv } = {}
     ) =>
-      spawnSync("git", args, {
-        cwd: repo,
+      spawnSync("git", arguments_, {
+        cwd: repository,
         encoding: "utf8",
         env: isolated,
         ...options
@@ -1063,7 +1063,7 @@ test("the CI git credential helper answers from the environment without persisti
     assert.equal(fill.status, 0, fill.stderr);
     assert.match(fill.stdout, /^username=x-access-token$/m);
     assert.match(fill.stdout, new RegExp(`^password=${token}$`, "m"));
-    const gitConfig = await readFile(path.join(repo, ".git", "config"), "utf8");
+    const gitConfig = await readFile(path.join(repository, ".git", "config"), "utf8");
     assert.equal(gitConfig.includes(token), false);
     assert.equal(
       git(["remote", "get-url", "origin"]).stdout.trim(),
@@ -1078,7 +1078,7 @@ test("the CI git credential helper answers from the environment without persisti
       "a missing token must fail loudly rather than prompt or push anonymously"
     );
   } finally {
-    await rm(repo, { recursive: true, force: true });
+    await rm(repository, { recursive: true, force: true });
   }
 });
 
@@ -1129,7 +1129,7 @@ test("Node actions use the pnpm-compatible .node-version pin", async () => {
   const version = await readFile(path.join(root, ".node-version"), "utf8");
   const pin = version.trim();
   assert.match(pin, /^\d+\.\d+\.\d+$/u);
-  const major = pin.split(".")[0];
+  const major = pin.split(".", 1)[0];
   const manifest = JSON.parse(
     await readFile(path.join(root, "package.json"), "utf8")
   ) as { engines: { node: string }; devDependencies: Record<string, string> };
@@ -1141,10 +1141,10 @@ test("Node actions use the pnpm-compatible .node-version pin", async () => {
   );
   assert.match(workspace, new RegExp(`"@types/node": \\^${major}\\.`, "u"));
   for (const directory of ["runtime", "data", "console"]) {
-    const pkg = JSON.parse(
+    const package_ = JSON.parse(
       await readFile(path.join(root, directory, "package.json"), "utf8")
     ) as { devDependencies: Record<string, string> };
-    assert.equal(pkg.devDependencies["@types/node"], "catalog:", directory);
+    assert.equal(package_.devDependencies["@types/node"], "catalog:", directory);
   }
   assert.equal(existsSync(path.join(root, ".nvmrc")), false);
   for (const name of [

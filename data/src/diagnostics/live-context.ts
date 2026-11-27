@@ -1,17 +1,17 @@
 /**
- * The live runtime context.
- *
- * A session's rollouts say what it did; they do not say what the runtime was
- * doing while it did it. This module reads the other side of that: the router's
- * live status, the threads whose latest turn has not ended, the provider
- * processes and router processes that are running, and whether the installed
- * runtime differs from the checkout.
- *
- * The router status can arrive two ways. The Runtime's Control API answers
- * from inside the same process, so it hands this module the status directly
- * rather than making the router call itself over loopback; the CLI, which is
- * a separate process, reads `GET http://127.0.0.1:4100/status`.
- */
+The live runtime context.
+
+A session's rollouts say what it did; they do not say what the runtime was
+doing while it did it. This module reads the other side of that: the router's
+live status, the threads whose latest turn has not ended, the provider
+processes and router processes that are running, and whether the installed
+runtime differs from the checkout.
+
+The router status can arrive two ways. The Runtime's Control API answers
+from inside the same process, so it hands this module the status directly
+rather than making the router call itself over loopback; the CLI, which is
+a separate process, reads `GET http://127.0.0.1:4100/status`.
+*/
 
 import { execFileSync } from "node:child_process";
 import {
@@ -37,7 +37,9 @@ import { readHeadMeta, rolloutFiles } from "./rollout-discovery.ts";
 import { fileDigest } from "./thread-tracer.ts";
 import type { Mutable } from "./working-shapes.ts";
 
-/** The router's `/status` body, as this module reads it. */
+/**
+The router's `/status` body, as this module reads it.
+*/
 export interface RouterStatusBody {
   readonly agents?: {
     readonly canonicalLiveCount?: number;
@@ -74,7 +76,9 @@ function countMap(raw: unknown): Record<string, number> | null {
   return counts;
 }
 
-/** Narrow an untrusted router status body to the fields this module reads. */
+/**
+Narrow an untrusted router status body to the fields this module reads.
+*/
 export function parseRouterStatus(raw: unknown): RouterStatusBody | null {
   if (!isRecord(raw)) return null;
   const result: Mutable<RouterStatusBody> = {};
@@ -100,9 +104,9 @@ export function parseRouterStatus(raw: unknown): RouterStatusBody | null {
   return result;
 }
 
-function run(command: string, args: string[]): string {
+function run(command: string, arguments_: string[]): string {
   try {
-    return execFileSync(command, args, { encoding: "utf8", timeout: 5000 });
+    return execFileSync(command, arguments_, { encoding: "utf8", timeout: 5000 });
   } catch {
     return "";
   }
@@ -118,7 +122,9 @@ function providerProcesses(): string[] {
     );
 }
 
-/** Router and bridge processes, with when they started. */
+/**
+Router and bridge processes, with when they started.
+*/
 function services(): SessionLiveReport["services"] {
   return run("ps", ["-Ao", "pid,lstart,command"])
     .split("\n")
@@ -163,7 +169,9 @@ function turnMarkers(source: string): { started: number; ended: number } {
   };
 }
 
-/** Whether the rollout's latest turn has started and not yet ended. */
+/**
+Whether the rollout's latest turn has started and not yet ended.
+*/
 export function hasOpenTurn(file: string): boolean {
   const { text, full } = readTailText(file, 256 * 1024);
   // A long turn's start can lie far before the tail; read the whole file then.
@@ -173,30 +181,30 @@ export function hasOpenTurn(file: string): boolean {
   return started > ended;
 }
 
-function checkoutRuntimeSourceRoot(repoRoot: string): string | null {
-  const monorepoRuntimeSrc = path.join(repoRoot, "runtime", "src");
+function checkoutRuntimeSourceRoot(repositoryRoot: string): string | null {
+  const monorepoRuntimeSource = path.join(repositoryRoot, "runtime", "src");
   if (
-    existsSync(path.join(repoRoot, "runtime", "package.json")) &&
-    existsSync(monorepoRuntimeSrc)
+    existsSync(path.join(repositoryRoot, "runtime", "package.json")) &&
+    existsSync(monorepoRuntimeSource)
   )
-    return monorepoRuntimeSrc;
-  const legacySrc = path.join(repoRoot, "src");
-  return existsSync(legacySrc) ? legacySrc : null;
+    return monorepoRuntimeSource;
+  const legacySource = path.join(repositoryRoot, "src");
+  return existsSync(legacySource) ? legacySource : null;
 }
 
 /**
- * Installed runtime modules that differ from the checkout.
- *
- * The running services execute the installed copies, so a fix that is only in
- * the checkout is not live.
- */
+Installed runtime modules that differ from the checkout.
+
+The running services execute the installed copies, so a fix that is only in
+the checkout is not live.
+*/
 export function deploymentDrift(
   codexHome: string,
-  repoRoot: string | null | undefined
+  repositoryRoot: string | null | undefined
 ): SessionLiveReport["drift"] {
   const installedRoot = path.join(codexHome, "src");
-  const checkoutSrcRoot = repoRoot ? checkoutRuntimeSourceRoot(repoRoot) : null;
-  if (!checkoutSrcRoot || !existsSync(installedRoot)) return null;
+  const checkoutSourceRoot = repositoryRoot ? checkoutRuntimeSourceRoot(repositoryRoot) : null;
+  if (!checkoutSourceRoot || !existsSync(installedRoot)) return null;
   const differing: string[] = [];
   const missing: string[] = [];
   let checked = 0;
@@ -209,7 +217,7 @@ export function deploymentDrift(
       }
       if (!entry.name.endsWith(".ts")) continue;
       const rel = path.relative(installedRoot, filePath);
-      const source = path.join(checkoutSrcRoot, rel);
+      const source = path.join(checkoutSourceRoot, rel);
       checked += 1;
       if (!existsSync(source)) missing.push(rel);
       else if (fileDigest(source) !== fileDigest(filePath)) differing.push(rel);
@@ -219,7 +227,9 @@ export function deploymentDrift(
   return { checked, differing, missing };
 }
 
-/** The log files the diagnostics read, newest first. */
+/**
+The log files the diagnostics read, newest first.
+*/
 export function readLogSummaries(codexHome: string): SessionLogFileSummary[] {
   const candidates = [
     path.join(codexHome, "run"),
@@ -239,7 +249,9 @@ export function readLogSummaries(codexHome: string): SessionLogFileSummary[] {
     .sort((a, b) => COLLATOR.compare(b.modified, a.modified));
 }
 
-/** The bridge-log lines that report a problem worth surfacing. */
+/**
+The bridge-log lines that report a problem worth surfacing.
+*/
 export function readBridgeLogAlerts(
   codexHome: string
 ): SessionBridgeLogAlert[] {
@@ -396,7 +408,9 @@ function readProviderFailuresSummary(
   return rows;
 }
 
-/** The persisted router state, read beside the live one. */
+/**
+The persisted router state, read beside the live one.
+*/
 export function buildEfficiencySummary(
   codexHome: string,
   status: RouterStatusBody | null
@@ -409,42 +423,48 @@ export function buildEfficiencySummary(
   return {
     disabledProviders,
     nullRoleModels,
-    ...(providerLastFailures.length > 0 ? { providerLastFailures } : {}),
-    ...(workspaces.length > 0 ? { workspaces } : {})
+    ...((providerLastFailures.length > 0) && { providerLastFailures }),
+    ...((workspaces.length > 0) && { workspaces })
   };
 }
 
-/** How the live context should be read. */
+/**
+How the live context should be read.
+*/
 export interface LiveDiagnosticsOptions {
   readonly codexHome: string;
-  /** Skip everything that reads live state. */
+  /**
+  Skip everything that reads live state.
+  */
   readonly offline: boolean;
   readonly repoRoot?: string | null | undefined;
   /**
-   * The router's live status, read by the owner of the router.
-   *
-   * The Control API passes the router's own status in-process, so it does not
-   * have to call itself over loopback; the CLI passes a reader for the
-   * router's endpoint. Either may be absent, and then the router's live state
-   * was not observed.
-   */
+  The router's live status, read by the owner of the router.
+  
+  The Control API passes the router's own status in-process, so it does not
+  have to call itself over loopback; the CLI passes a reader for the
+  router's endpoint. Either may be absent, and then the router's live state
+  was not observed.
+  */
   readonly routerStatus?: (() => unknown | Promise<unknown>) | undefined;
 }
 
-/** The live context, and the router status it was read from. */
+/**
+The live context, and the router status it was read from.
+*/
 export interface LiveDiagnosticsResult {
   readonly live: SessionLiveReport | null;
   readonly status: RouterStatusBody | null;
 }
 
 /**
- * The router's live status, read through the owner of the router.
- *
- * Data does not reach out to the router: the Runtime owns that service, and it
- * hands the status in -- in-process for the Control API, over the router's own
- * endpoint for the CLI. A reader that cannot reach the router reports it as
- * unreachable rather than guessing.
- */
+The router's live status, read through the owner of the router.
+
+Data does not reach out to the router: the Runtime owns that service, and it
+hands the status in -- in-process for the Control API, over the router's own
+endpoint for the CLI. A reader that cannot reach the router reports it as
+unreachable rather than guessing.
+*/
 async function readRouterStatus(
   options: LiveDiagnosticsOptions
 ): Promise<RouterStatusBody | null> {
@@ -457,7 +477,9 @@ async function readRouterStatus(
   }
 }
 
-/** Read the live runtime context beside a session's rollouts. */
+/**
+Read the live runtime context beside a session's rollouts.
+*/
 export async function collectLiveDiagnostics(
   options: LiveDiagnosticsOptions
 ): Promise<LiveDiagnosticsResult> {

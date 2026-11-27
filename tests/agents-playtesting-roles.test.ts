@@ -56,11 +56,11 @@ function skillEnabled(
 ): boolean | undefined {
   const skills = role.skills as
     { config?: Array<Record<string, unknown>> } | undefined;
-  const entry = skills?.config?.find((cfg) => cfg.name === skillName);
+  const entry = skills?.config?.find((config) => config.name === skillName);
   return entry?.enabled as boolean | undefined;
 }
 
-function mcpEnvVars(servers: Record<string, unknown>, name: string): string[] {
+function mcpEnvironmentVariables(servers: Record<string, unknown>, name: string): string[] {
   const server = servers[name];
   assert.ok(
     server && typeof server === "object",
@@ -186,7 +186,7 @@ test("playtest-analyst.toml reuses autodev/smart but overrides to read-only, evi
 
   // The playtest MCP server refuses to start unless the analysis kind reaches
   // it, so the allowlist has to carry the whole analyst session context.
-  const playtestEnvVars = mcpEnvVars(servers, "playtest");
+  const playtestEnvironmentVariables = mcpEnvironmentVariables(servers, "playtest");
   for (const required of [
     "AUTODEV_PLAYTEST_ROLE",
     "AUTODEV_PLAYTEST_WORKSPACE_ID",
@@ -199,7 +199,7 @@ test("playtest-analyst.toml reuses autodev/smart but overrides to read-only, evi
     "AUTODEV_PLAYTEST_REPOSITORY_ROOT"
   ]) {
     assert.ok(
-      playtestEnvVars.includes(required),
+      playtestEnvironmentVariables.includes(required),
       `playtest-analyst must forward ${required} to the playtest MCP server`
     );
   }

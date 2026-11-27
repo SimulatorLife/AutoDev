@@ -1,13 +1,13 @@
 /**
- * The visual episode's wall-time budget is one budget with one owner.
- *
- * The browser driver enforces the approved per-episode wall-time ceiling
- * before every observation and every action, and the Smart-direct decision
- * deadline has to be that same ceiling: a decision may not outlive the
- * episode, and an episode that runs out of its approved budget is truncated,
- * not failed. A decision cut off by a shorter, competing cap reports a
- * healthy episode as a runtime failure.
- */
+The visual episode's wall-time budget is one budget with one owner.
+
+The browser driver enforces the approved per-episode wall-time ceiling
+before every observation and every action, and the Smart-direct decision
+deadline has to be that same ceiling: a decision may not outlive the
+episode, and an episode that runs out of its approved budget is truncated,
+not failed. A decision cut off by a shorter, competing cap reports a
+healthy episode as a runtime failure.
+*/
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
@@ -107,10 +107,10 @@ function session(): PlaytestMcpSession {
 }
 
 /**
- * A browser that never launches one. It reports the approved wall-time budget
- * it still has left, hands the episode a real stored frame, and records the
- * actions the episode dispatched.
- */
+A browser that never launches one. It reports the approved wall-time budget
+it still has left, hands the episode a real stored frame, and records the
+actions the episode dispatched.
+*/
 class FakeVisualDriver implements PlaytestVisualEpisodeDriver {
   readonly dispatched: string[] = [];
   private readonly startedAt = Date.now();
@@ -195,7 +195,9 @@ class FakeVisualDriver implements PlaytestVisualEpisodeDriver {
   }
 }
 
-/** A local stand-in for the model Router, so no provider is ever contacted. */
+/**
+A local stand-in for the model Router, so no provider is ever contacted.
+*/
 async function startFakeRouter(
   decision: unknown,
   delayMs: number
@@ -257,9 +259,9 @@ interface EpisodeRun {
 }
 
 /**
- * Runs one autonomous-visual episode against the fake browser and the fake
- * router, and returns the persisted episode.
- */
+Runs one autonomous-visual episode against the fake browser and the fake
+router, and returns the persisted episode.
+*/
 async function runVisualEpisode(options: {
   readonly budgetMs: number;
   readonly decision: unknown;

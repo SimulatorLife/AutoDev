@@ -8,11 +8,11 @@ import { getAutoDevModels } from "@simulatorlife/autodev-data/openlit";
 const REPO_ROOT = join(import.meta.dirname, "..", "..", "..");
 
 /**
- * The provider whose model catalogue names a slug is the provider that serves
- * it, and the price catalogue is what the Usage cost panel looks the model up
- * in. A slug with no price row is not priced at all: the pricing cron skips
- * the span, and the panel reads as if that provider had cost nothing.
- */
+The provider whose model catalogue names a slug is the provider that serves
+it, and the price catalogue is what the Usage cost panel looks the model up
+in. A slug with no price row is not priced at all: the pricing cron skips
+the span, and the panel reads as if that provider had cost nothing.
+*/
 const PROVIDER_CATALOGUES = {
   "antigravity-gemini": "config/catalogs/antigravity-gemini-model-catalog.json",
   "antigravity-argon": "config/catalogs/antigravity-argon-model-catalog.json",
@@ -25,11 +25,11 @@ const PROVIDER_CATALOGUES = {
 } as const;
 
 /**
- * Models the providers served but their routing catalogue does not name --
- * the CLI reports these ids itself. The live store carried them as the
- * `gen_ai.request.model` of real attempts, so a price row is what makes them
- * cost anything at all.
- */
+Models the providers served but their routing catalogue does not name --
+the CLI reports these ids itself. The live store carried them as the
+`gen_ai.request.model` of real attempts, so a price row is what makes them
+cost anything at all.
+*/
 const SERVED_MODEL_IDS: ReadonlyArray<readonly [string, string]> = [
   ["claude", "claude-sonnet-5-5"],
   ["minimax", "MiniMax-M3.1-Flash"],
@@ -72,12 +72,12 @@ test("every model a provider served has a price row", () => {
 });
 
 /**
- * The efforts a family is served at.
- *
- * agy encodes reasoning depth in the model id, so a family is a set of models
- * that differ only by their suffix, and a provider serves every effort of
- * the families it serves.
- */
+The efforts a family is served at.
+
+agy encodes reasoning depth in the model id, so a family is a set of models
+that differ only by their suffix, and a provider serves every effort of
+the families it serves.
+*/
 const EFFORT_SUFFIXES = ["low", "medium", "high"] as const;
 
 test("every effort of a priced family is priced", () => {

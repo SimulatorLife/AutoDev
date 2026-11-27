@@ -1,16 +1,16 @@
 /**
- * Server-only Console provider enablement mutation route.
- *
- * Receives the bounded form submission from a provider row's Disabled toggle,
- * validates its same-origin browser context, and forwards a typed PATCH to
- * Runtime using the server-side Control API credential. The browser never
- * receives that credential and never bypasses Runtime.
- *
- * Only POST is exported. The response redirects back to the Providers page the
- * control was rendered on; any missing/invalid evidence or failed request adds
- * a could-not-be-confirmed notice instead of a success claim, because the
- * refreshed provider state is authoritative.
- */
+Server-only Console provider enablement mutation route.
+
+Receives the bounded form submission from a provider row's Disabled toggle,
+validates its same-origin browser context, and forwards a typed PATCH to
+Runtime using the server-side Control API credential. The browser never
+receives that credential and never bypasses Runtime.
+
+Only POST is exported. The response redirects back to the Providers page the
+control was rendered on; any missing/invalid evidence or failed request adds
+a could-not-be-confirmed notice instead of a success claim, because the
+refreshed provider state is authoritative.
+*/
 
 import type { NextRequest, NextResponse } from "next/server.js";
 

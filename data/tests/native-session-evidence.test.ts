@@ -4,13 +4,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { scanRecentSessions } from "../src/diagnostics/fleet-scan.ts";
 import { readNativeSessionEvidence } from "../src/diagnostics/native-session-evidence.ts";
 import {
   listRecentSessionsResponse,
   rolloutRoots
 } from "../src/diagnostics/rollout-discovery.ts";
 import { buildSessionDiagnosticsReport } from "../src/diagnostics/session-report.ts";
-import { scanRecentSessions } from "../src/diagnostics/fleet-scan.ts";
 
 test("native history joins existing diagnostics without pretending there are rollout metrics", async () => {
   using root = mkdtempDisposableSync(

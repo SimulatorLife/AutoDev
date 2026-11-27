@@ -31,7 +31,7 @@ const context = {
 };
 
 test("same-origin decision route forwards typed owner intent without deployment fields", async () => {
-  const previousFetch = globalThis.fetch;
+  const previousFetch = fetch;
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   process.env.AUTODEV_CONTROL_API_TOKEN = "r".repeat(64);
   let url = "";
@@ -92,7 +92,7 @@ test("same-origin decision route forwards typed owner intent without deployment 
 });
 
 test("decision route rejects cross-origin, duplicate, oversized, and malformed revision requests before Runtime", async () => {
-  const previousFetch = globalThis.fetch;
+  const previousFetch = fetch;
   let calls = 0;
   globalThis.fetch = (async () => {
     calls += 1;

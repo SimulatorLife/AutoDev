@@ -16,9 +16,9 @@ export function isLoopbackAddress(address?: string | null): boolean {
 }
 
 export function resolveRouterAuthToken(
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): string {
-  return env.CODEX_ROUTER_AUTH_TOKEN ?? "";
+  return environment.CODEX_ROUTER_AUTH_TOKEN ?? "";
 }
 
 let configuredRouterAuthToken: string = resolveRouterAuthToken();

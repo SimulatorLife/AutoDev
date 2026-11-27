@@ -21,7 +21,7 @@ export const metadata: Metadata = {
   title: "Prompts"
 };
 
-interface PromptsPageProps {
+interface PromptsPageProperties {
   readonly searchParams?: Promise<
     Record<string, string | readonly string[] | undefined>
   >;
@@ -29,9 +29,9 @@ interface PromptsPageProps {
 
 export default async function PromptsPage({
   searchParams
-}: PromptsPageProps): Promise<React.JSX.Element> {
-  const params = searchParams ? await searchParams : {};
-  const query = readPromptsQuery(params);
+}: PromptsPageProperties): Promise<React.JSX.Element> {
+  const parameters = searchParams ? await searchParams : {};
+  const query = readPromptsQuery(parameters);
   const { section, config } = readNodeContext("/prompts");
   if (!config) {
     return React.createElement(
@@ -56,9 +56,9 @@ export default async function PromptsPage({
   // The catalogue is two independent reads -- the RuleSync command catalogue
   // and the canonical role-prompt directory -- and the response says whether
   // the second one happened.
-  const rolePromptsObserved = result.data.rolePrompts !== null;
+  const isRolePromptsObserved = result.data.rolePrompts !== null;
   // The catalogue is fully observed only when both reads were.
-  const catalogueObserved = result.data.valid === true && rolePromptsObserved;
+  const isCatalogueObserved = result.data.valid === true && isRolePromptsObserved;
   return React.createElement(
     ConsolePageShell,
     {
@@ -71,7 +71,7 @@ export default async function PromptsPage({
       // The entries that arrived are the ones the read that succeeded
       // produced, and their number is exactly right for what arrived and
       // incomplete for what the unread source would have contributed.
-      ...(catalogueObserved ? { counts: { Prompts: catalogue.length } } : {})
+      ...(isCatalogueObserved && { counts: { Prompts: catalogue.length } })
     },
     React.createElement(PromptsView, {
       // The whole catalogue and the query, not the narrowed list: the
@@ -80,7 +80,7 @@ export default async function PromptsPage({
       commands: catalogue,
       query,
       commandSourceValidity: result.data.valid,
-      rolePromptsObserved,
+      rolePromptsObserved: isRolePromptsObserved,
       validationIssues: result.data.issues
     })
   );

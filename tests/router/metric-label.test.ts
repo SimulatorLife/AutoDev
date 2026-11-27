@@ -11,7 +11,7 @@ test("safeMetricLabel bounds and sanitises dimension labels", () => {
   assert.equal(safeMetricLabel("gpt-5"), "gpt-5");
   assert.equal(safeMetricLabel("  spaced  "), "spaced");
   assert.equal(
-    safeMetricLabel("with\u0000null\u001Fcontrol"),
+    safeMetricLabel("with\0null\u{1F}control"),
     "withnullcontrol"
   );
   assert.equal(safeMetricLabel("a".repeat(250)), "a".repeat(100));
@@ -22,11 +22,11 @@ test("safeMetricLabel falls back for values that are not usable labels", () => {
   assert.equal(safeMetricLabel(null), "unknown");
   assert.equal(safeMetricLabel(42), "unknown");
   assert.equal(safeMetricLabel({}), "unknown");
-  assert.equal(safeMetricLabel("   "), "unknown");
+  assert.equal(safeMetricLabel(' '.repeat(3)), "unknown");
   // A string made only of control characters survives the control-character
   // strip as empty, so it must take the fallback rather than emit "".
-  assert.equal(safeMetricLabel("\u0000\u001F"), "unknown");
-  assert.equal(safeMetricLabel("\u0000\u001F", ""), "");
+  assert.equal(safeMetricLabel("\0\u{1F}"), "unknown");
+  assert.equal(safeMetricLabel("\0\u{1F}", ""), "");
   assert.equal(safeMetricLabel(undefined, "unattributed"), "unattributed");
 });
 

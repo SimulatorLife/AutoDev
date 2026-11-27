@@ -17,9 +17,11 @@ function sourceFiles(dir: string): string[] {
   return out;
 }
 
-/** Comments describe this defect, so they must not be able to trip the scan. */
-function stripComments(src: string): string {
-  return src
+/**
+Comments describe this defect, so they must not be able to trip the scan.
+*/
+function stripComments(source: string): string {
+  return source
     .replaceAll(/\/\*[\s\S]*?\*\//gu, "")
     .replaceAll(/(^|[^:])\/\/.*$/gmu, "$1");
 }
@@ -40,12 +42,12 @@ test("no template literal is quoted as a plain string", () => {
     ...sourceFiles(join(ROOT, "src")),
     ...sourceFiles(join(ROOT, "app"))
   ]) {
-    const src = stripComments(readFileSync(file, "utf8"));
+    const source = stripComments(readFileSync(file, "utf8"));
     const at = relative(ROOT, file);
-    src.split("\n").forEach((line, i) => {
+    source.split("\n").forEach((line, index) => {
       // A quote immediately wrapping a backtick-delimited expression.
       if (/"`[^"`]*\$\{/.test(line) || /'`[^'`]*\$\{/.test(line)) {
-        offenders.push(`${at}:${i + 1}  ${line.trim()}`);
+        offenders.push(`${at}:${index + 1}  ${line.trim()}`);
       }
     });
   }

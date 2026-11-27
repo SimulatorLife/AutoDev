@@ -4,13 +4,15 @@ import {
   PHASE_PRODUCTION_SERVER
 } from "next/constants.js";
 
-/** Production output served by the Console LaunchAgent (`next start`). */
+/**
+Production output served by the Console LaunchAgent (`next start`).
+*/
 export const CONSOLE_BUILD_DIST_DIR = ".next";
 /**
- * `next dev` output. Kept separate from the production build so the Runtime
- * installer's `next build` never deletes or overwrites the chunks a running
- * dev server is loading, and a dev server never rewrites the production build.
- */
+`next dev` output. Kept separate from the production build so the Runtime
+installer's `next build` never deletes or overwrites the chunks a running
+dev server is loading, and a dev server never rewrites the production build.
+*/
 export const CONSOLE_DEV_DIST_DIR = ".next-dev";
 
 const STAGING_DIST_DIR_PATTERN = /^\.next-staging-[A-Za-z0-9-]+$/u;

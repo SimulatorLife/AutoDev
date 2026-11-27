@@ -171,17 +171,17 @@ export interface RepoInstallCache {
   schema: string;
   rulesyncInstallFingerprint?: string;
   /**
-   * The fingerprint of the repository generation, recorded after the run that
-   * produced it. The repository runs the whole Rulesync configuration, so one
-   * fingerprint covers the run.
-   */
+  The fingerprint of the repository generation, recorded after the run that
+  produced it. The repository runs the whole Rulesync configuration, so one
+  fingerprint covers the run.
+  */
   rulesyncGenerate?: string;
   [key: string]: unknown;
 }
 
-const memoryRepoInstallCache = new Map<string, RepoInstallCache>();
+const memoryRepositoryInstallCache = new Map<string, RepoInstallCache>();
 
-function repoInstallCachePath(repositoryRoot: string): string | null {
+function repositoryInstallCachePath(repositoryRoot: string): string | null {
   const gitDir = path.join(path.resolve(repositoryRoot), ".git");
   try {
     if (!lstatSync(gitDir).isDirectory()) return null;
@@ -203,60 +203,60 @@ function readDiskInstallCache(
       return {
         ...parsed,
         schema: REPO_INSTALL_CACHE_SCHEMA,
-        ...(typeof parsed.rulesyncInstallFingerprint === "string"
-          ? { rulesyncInstallFingerprint: parsed.rulesyncInstallFingerprint }
-          : {}),
-        ...(typeof parsed.rulesyncGenerate === "string"
-          ? { rulesyncGenerate: parsed.rulesyncGenerate }
-          : {})
+        ...((typeof parsed.rulesyncInstallFingerprint === "string") && { rulesyncInstallFingerprint: parsed.rulesyncInstallFingerprint }),
+        ...((typeof parsed.rulesyncGenerate === "string") && { rulesyncGenerate: parsed.rulesyncGenerate })
       };
     }
   } catch {
-    /* Ignore corrupt cache file and recompute cleanly. */
+    /*
+    Ignore corrupt cache file and recompute cleanly.
+    */
   }
   return null;
 }
 
-/** Reads the cached install-fingerprint record for `repositoryRoot` (memory + `.git` cache). */
+/**
+Reads the cached install-fingerprint record for `repositoryRoot` (memory + `.git` cache).
+*/
 export function readRepoInstallCache(repositoryRoot: string): RepoInstallCache {
   const resolved = path.resolve(repositoryRoot);
-  const disk = readDiskInstallCache(repoInstallCachePath(resolved));
+  const disk = readDiskInstallCache(repositoryInstallCachePath(resolved));
   if (disk) {
-    memoryRepoInstallCache.set(resolved, disk);
+    memoryRepositoryInstallCache.set(resolved, disk);
     return disk;
   }
   return (
-    memoryRepoInstallCache.get(resolved) ?? {
+    memoryRepositoryInstallCache.get(resolved) ?? {
       schema: REPO_INSTALL_CACHE_SCHEMA
     }
   );
 }
 
-/** Persists `cache` in memory and (when `.git` is a directory) to `.git/autodev-install-cache.json`. */
+/**
+Persists `cache` in memory and (when `.git` is a directory) to `.git/autodev-install-cache.json`.
+*/
 export function writeRepoInstallCache(
   repositoryRoot: string,
   cache: RepoInstallCache
 ): void {
   const resolved = path.resolve(repositoryRoot);
-  const cachePath = repoInstallCachePath(resolved);
+  const cachePath = repositoryInstallCachePath(resolved);
   const onDisk = readDiskInstallCache(cachePath);
   const next: RepoInstallCache = {
     ...onDisk,
     ...cache,
     schema: REPO_INSTALL_CACHE_SCHEMA,
-    ...(cache.rulesyncInstallFingerprint === undefined
-      ? {}
-      : { rulesyncInstallFingerprint: cache.rulesyncInstallFingerprint }),
-    ...(cache.rulesyncGenerate === undefined
-      ? {}
-      : { rulesyncGenerate: cache.rulesyncGenerate })
+    ...(cache.rulesyncInstallFingerprint !== undefined && { rulesyncInstallFingerprint: cache.rulesyncInstallFingerprint }),
+    ...(cache.rulesyncGenerate !== undefined && { rulesyncGenerate: cache.rulesyncGenerate })
   };
-  memoryRepoInstallCache.set(resolved, next);
+  memoryRepositoryInstallCache.set(resolved, next);
   if (!cachePath) return;
   try {
     atomicWriteSync(cachePath, `${JSON.stringify(next, null, 2)}\n`);
   } catch {
-    /* Cache persistence failure is non-fatal. */
+    /*
+    Cache persistence failure is non-fatal.
+    */
   }
 }
 
@@ -290,14 +290,18 @@ function hashTreePath(
     }
     return;
   }
-  if (stat.isFile()) {
-    hash.update(`file:${logicalName}:${stat.mode & 0o777}:${stat.size}\0`);
-    hash.update(readFileSync(absolutePath));
-    hash.update("\0");
+  if (!stat.isFile()) {
+    return;
   }
+
+  hash.update(`file:${logicalName}:${stat.mode & 0o777}:${stat.size}\0`);
+  hash.update(readFileSync(absolutePath));
+  hash.update("\0");
 }
 
-/** Computes a deterministic SHA-256 fingerprint across relative repo paths and extra strings. */
+/**
+Computes a deterministic SHA-256 fingerprint across relative repo paths and extra strings.
+*/
 export function computeRepoPathsFingerprint(
   repositoryRoot: string,
   relativePaths: readonly string[],
@@ -316,7 +320,9 @@ export function computeRepoPathsFingerprint(
   return hash.digest("hex");
 }
 
-/** Reads the installed `rulesync` package version for fingerprint invalidation. */
+/**
+Reads the installed `rulesync` package version for fingerprint invalidation.
+*/
 export function readRulesyncPackageVersion(repositoryRoot: string): string {
   const packageJsonPath = path.join(
     repositoryRoot,
@@ -352,17 +358,17 @@ function computeRulesyncInstallFingerprint(repositoryRoot: string): string {
 }
 
 /**
- * Write the repository's generated-output exclusions with stock Rulesync.
- *
- * `rulesync gitignore` reads the repository's `rulesync.jsonc` and derives the
- * paths the configured targets own. The repository routes those entries to
- * `.git/info/exclude` with `"gitignoreDestination": "gitexclude"`, which keeps
- * them out of the tracked `.gitignore` and out of the reach of the tools that
- * refuse to read a gitignored `.agents/skills/` -- Antigravity among them.
- *
- * The command reads the configuration from the working directory and resolves
- * the exclude file through Git, so it has to run from the repository root.
- */
+Write the repository's generated-output exclusions with stock Rulesync.
+
+`rulesync gitignore` reads the repository's `rulesync.jsonc` and derives the
+paths the configured targets own. The repository routes those entries to
+`.git/info/exclude` with `"gitignoreDestination": "gitexclude"`, which keeps
+them out of the tracked `.gitignore` and out of the reach of the tools that
+refuse to read a gitignored `.agents/skills/` -- Antigravity among them.
+
+The command reads the configuration from the working directory and resolves
+the exclude file through Git, so it has to run from the repository root.
+*/
 export function runRulesyncGitignore(repositoryRoot: string): void {
   const normalizedRoot = path.resolve(repositoryRoot);
   const rulesyncBin = path.join(
@@ -475,7 +481,7 @@ export function runRulesyncGenerate(
 
 export function resolveCommandOnPath(
   command: string,
-  envOrPath: string | NodeJS.ProcessEnv | undefined = process.env.PATH
+  environmentOrPath: string | NodeJS.ProcessEnv | undefined = process.env.PATH
 ): string | null {
   if (!command) return null;
   if (command.includes(path.sep)) {
@@ -486,30 +492,32 @@ export function resolveCommandOnPath(
       return null;
     }
   }
-  const envPath = typeof envOrPath === "string" ? envOrPath : envOrPath?.PATH;
-  if (!envPath) return null;
-  for (const rawEntry of envPath.split(path.delimiter)) {
+  const environmentPath = typeof environmentOrPath === "string" ? environmentOrPath : environmentOrPath?.PATH;
+  if (!environmentPath) return null;
+  for (const rawEntry of environmentPath.split(path.delimiter)) {
     const candidate = path.join(rawEntry || ".", command);
     try {
       accessSync(candidate, fsConstants.X_OK);
       if (statSync(candidate).isFile()) return candidate;
     } catch {
-      /* continue searching PATH */
+      /*
+      continue searching PATH
+      */
     }
   }
   return null;
 }
 
 export function runtimeTarget(
-  repoPath: string,
+  repositoryPath: string,
   codexHome: string,
   hooksDir = path.join(codexHome, "hooks")
 ): string {
-  if (repoPath.startsWith("scripts/"))
-    return path.join(hooksDir, repoPath.slice("scripts/".length));
-  const installedPath = repoPath.startsWith("runtime/")
-    ? repoPath.slice("runtime/".length)
-    : repoPath;
+  if (repositoryPath.startsWith("scripts/"))
+    return path.join(hooksDir, repositoryPath.slice("scripts/".length));
+  const installedPath = repositoryPath.startsWith("runtime/")
+    ? repositoryPath.slice("runtime/".length)
+    : repositoryPath;
   return path.join(codexHome, installedPath);
 }
 
@@ -517,7 +525,9 @@ function ensureParent(filePath: string): void {
   mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
 }
 
-/** Atomically materialize a versioned runtime file with its execution mode. */
+/**
+Atomically materialize a versioned runtime file with its execution mode.
+*/
 export function materializeRuntimeFile(
   source: string,
   target: string,
@@ -542,12 +552,12 @@ export function materializeRuntimeFile(
 }
 
 /**
- * Atomically materialize generated Runtime content with its execution mode.
- *
- * The installed tree's package manifest is derived from the workspace package
- * manifest rather than copied, so it is written from memory instead of from a
- * repository file.
- */
+Atomically materialize generated Runtime content with its execution mode.
+
+The installed tree's package manifest is derived from the workspace package
+manifest rather than copied, so it is written from memory instead of from a
+repository file.
+*/
 export function materializeRuntimeContent(
   content: string,
   target: string,
@@ -634,8 +644,8 @@ export function skillLinkMatches(source: string, target: string): boolean {
   try {
     validateSkillSource(source);
     if (!runtimeLinkMatches(source, target)) return false;
-    const skillDoc = lstatSync(`${target}/SKILL.md`);
-    return skillDoc.isFile() && !skillDoc.isSymbolicLink();
+    const skillDocument = lstatSync(`${target}/SKILL.md`);
+    return skillDocument.isFile() && !skillDocument.isSymbolicLink();
   } catch {
     return false;
   }
@@ -658,29 +668,29 @@ function parseMode(value: string | undefined): RuntimeFileMode {
 }
 
 function cli(argv: string[]): number {
-  const [command, ...args] = argv;
-  if (command === "target" && args.length === 3) {
-    writeLine(runtimeTarget(args[2]!, args[0]!, args[1]!));
+  const [command, ...arguments_] = argv;
+  if (command === "target" && arguments_.length === 3) {
+    writeLine(runtimeTarget(arguments_[2]!, arguments_[0]!, arguments_[1]!));
     return 0;
   }
-  if (command === "copy" && args.length === 3) {
-    materializeRuntimeFile(args[1]!, args[2]!, parseMode(args[0]));
+  if (command === "copy" && arguments_.length === 3) {
+    materializeRuntimeFile(arguments_[1]!, arguments_[2]!, parseMode(arguments_[0]));
     return 0;
   }
-  if (command === "check" && args.length === 2)
-    return runtimeFileMatches(args[0]!, args[1]!) ? 0 : 1;
-  if (command === "link" && args.length === 2) {
-    linkRuntimeSource(args[0]!, args[1]!);
+  if (command === "check" && arguments_.length === 2)
+    return runtimeFileMatches(arguments_[0]!, arguments_[1]!) ? 0 : 1;
+  if (command === "link" && arguments_.length === 2) {
+    linkRuntimeSource(arguments_[0]!, arguments_[1]!);
     return 0;
   }
-  if (command === "check-link" && args.length === 2)
-    return runtimeLinkMatches(args[0]!, args[1]!) ? 0 : 1;
-  if (command === "link-skill" && args.length === 2) {
-    linkSkillSource(args[0]!, args[1]!);
+  if (command === "check-link" && arguments_.length === 2)
+    return runtimeLinkMatches(arguments_[0]!, arguments_[1]!) ? 0 : 1;
+  if (command === "link-skill" && arguments_.length === 2) {
+    linkSkillSource(arguments_[0]!, arguments_[1]!);
     return 0;
   }
-  if (command === "check-skill" && args.length === 2)
-    return skillLinkMatches(args[0]!, args[1]!) ? 0 : 1;
+  if (command === "check-skill" && arguments_.length === 2)
+    return skillLinkMatches(arguments_[0]!, arguments_[1]!) ? 0 : 1;
   throw new Error(
     "usage: runtime-files target <codex-home> <hooks-dir> <repo-path> | copy <0644|0755> <source> <target> | check <source> <target> | link <source> <target> | check-link <source> <target> | link-skill <source> <target> | check-skill <source> <target>"
   );

@@ -8,6 +8,8 @@ import {
   type ServerResponse
 } from "node:http";
 
+const DEFAULT_RETIREMENT_DRAIN_TIMEOUT_MS = 30_000;
+
 const HOP_BY_HOP_HEADERS = [
   "connection",
   "proxy-connection",
@@ -20,7 +22,9 @@ const HOP_BY_HOP_HEADERS = [
   "upgrade"
 ];
 
-/** Forward end-to-end headers only, including Connection-nominated fields. */
+/**
+Forward end-to-end headers only, including Connection-nominated fields.
+*/
 function endToEndHeaders(headers: IncomingHttpHeaders): IncomingHttpHeaders {
   const result = { ...headers };
   const connectionTokens = String(headers.connection ?? "")
@@ -31,7 +35,9 @@ function endToEndHeaders(headers: IncomingHttpHeaders): IncomingHttpHeaders {
   return result;
 }
 
-/** A worker's private listener; only the ingress owns the public port. */
+/**
+A worker's private listener; only the ingress owns the public port.
+*/
 export interface RouterGenerationEndpoint {
   id: string;
   host: string;
@@ -41,6 +47,11 @@ export interface RouterGenerationEndpoint {
 export type RouterIngressEvent =
   | { phase: "generation_activated"; generationId: string }
   | { phase: "generation_retired"; generationId: string }
+  | {
+      phase: "generation_drain_deadline_expired";
+      generationId: string;
+      inFlight: number;
+    }
   | { phase: "successor_readiness_failed"; generationId: string }
   | { phase: "client_disconnected"; generationId: string; requestId: string }
   | {
@@ -52,32 +63,44 @@ export type RouterIngressEvent =
 interface Generation {
   endpoint: RouterGenerationEndpoint;
   state: "active" | "retiring" | "retired";
-  inFlight: number;
+  requests: Set<AbortController>;
+  drainTimer?: NodeJS.Timeout;
   retired: Promise<void>;
   resolveRetired: () => void;
 }
 
 export interface RouterIngressOptions {
   readinessTimeoutMs?: number;
+  retirementDrainTimeoutMs?: number;
   onEvent?: (event: RouterIngressEvent) => void;
 }
 
 /**
- * Stable public HTTP listener. Each request captures its backend at admission,
- * so replacing the active generation cannot move an established SSE stream.
- * The worker remains independently responsible for authentication, routing,
- * request handling, Control API authorization and provider telemetry.
- */
+Stable public HTTP listener. Each request captures its backend at admission,
+so replacing the active generation cannot move an established SSE stream.
+The worker remains independently responsible for authentication, routing,
+request handling, Control API authorization and provider telemetry.
+*/
 export class RouterIngress {
   readonly server: Server;
   private readonly generations = new Map<string, Generation>();
   private active: Generation | null = null;
   private activationQueue: Promise<void> = Promise.resolve();
   private readonly readinessTimeoutMs: number;
+  private readonly retirementDrainTimeoutMs: number;
   private readonly onEvent: (event: RouterIngressEvent) => void;
 
   constructor(options: RouterIngressOptions = {}) {
     this.readinessTimeoutMs = options.readinessTimeoutMs ?? 5000;
+    this.retirementDrainTimeoutMs =
+      options.retirementDrainTimeoutMs ?? DEFAULT_RETIREMENT_DRAIN_TIMEOUT_MS;
+    if (
+      !Number.isInteger(this.retirementDrainTimeoutMs) ||
+      this.retirementDrainTimeoutMs < 1 ||
+      this.retirementDrainTimeoutMs > 2_147_483_647
+    ) {
+      throw new Error("Invalid ingress retirement drain timeout");
+    }
     this.onEvent = options.onEvent ?? (() => undefined);
     this.server = createServer((request, response) =>
       this.forward(request, response)
@@ -126,12 +149,14 @@ export class RouterIngress {
       generations: Array.from(this.generations.values(), (generation) => ({
         id: generation.endpoint.id,
         state: generation.state,
-        inFlight: generation.inFlight
+        inFlight: generation.requests.size
       }))
     };
   }
 
-  /** Verify first, switch atomically, then permit the previous worker to retire. */
+  /**
+  Verify first, switch atomically, then permit the previous worker to retire.
+  */
   activateGeneration(
     endpoint: RouterGenerationEndpoint
   ): Promise<string | null> {
@@ -161,17 +186,14 @@ export class RouterIngress {
       const generation: Generation = {
         endpoint: { ...endpoint },
         state: "active",
-        inFlight: 0,
+        requests: new Set(),
         retired,
         resolveRetired
       };
       this.generations.set(endpoint.id, generation);
       this.active = generation;
       this.emit({ phase: "generation_activated", generationId: endpoint.id });
-      if (previous) {
-        previous.state = "retiring";
-        this.finishRetirement(previous);
-      }
+      if (previous) this.beginRetirement(previous);
       return previous?.endpoint.id ?? null;
     });
     this.activationQueue = operation.then(
@@ -181,7 +203,9 @@ export class RouterIngress {
     return operation;
   }
 
-  /** Resolves only after every admitted request on this worker has ended. */
+  /**
+  Resolves after all admitted requests finish or are cancelled at the deadline.
+  */
   async waitForRetirement(generationId: string): Promise<void> {
     const generation = this.generations.get(generationId);
     if (!generation)
@@ -193,8 +217,26 @@ export class RouterIngress {
     await generation.retired;
   }
 
+  private beginRetirement(generation: Generation): void {
+    generation.state = "retiring";
+    if (generation.requests.size > 0) {
+      generation.drainTimer = setTimeout(() => {
+        this.emit({
+          phase: "generation_drain_deadline_expired",
+          generationId: generation.endpoint.id,
+          inFlight: generation.requests.size
+        });
+        for (const request of generation.requests) request.abort();
+      }, this.retirementDrainTimeoutMs);
+      generation.drainTimer.unref();
+    }
+    this.finishRetirement(generation);
+  }
+
   private finishRetirement(generation: Generation): void {
-    if (generation.state !== "retiring" || generation.inFlight !== 0) return;
+    if (generation.state !== "retiring" || generation.requests.size > 0)
+      return;
+    clearTimeout(generation.drainTimer);
     generation.state = "retired";
     generation.resolveRetired();
     this.emit({
@@ -207,7 +249,9 @@ export class RouterIngress {
     try {
       this.onEvent(event);
     } catch {
-      /* telemetry must not break traffic */
+      /*
+      telemetry must not break traffic
+      */
     }
   }
 
@@ -291,19 +335,16 @@ export class RouterIngress {
       );
       return;
     }
-    generation.inFlight += 1;
     const headers = endToEndHeaders(request.headers);
     const requestIdHeader = headers["x-request-id"];
     const requestId =
       typeof requestIdHeader === "string" ? requestIdHeader : randomUUID();
     headers["x-request-id"] = requestId;
-    let finished = false;
-    let backendCompleted = false;
+    const retirement = new AbortController();
+    let isBackendCompleted = false;
     const finish = () => {
-      if (finished) return;
-      finished = true;
-      generation.inFlight -= 1;
-      this.finishRetirement(generation);
+      if (generation.requests.delete(retirement))
+        this.finishRetirement(generation);
     };
     const backend = httpRequest(
       {
@@ -314,18 +355,37 @@ export class RouterIngress {
         headers
       },
       (upstream) => {
+        if (retirement.signal.aborted) {
+          upstream.destroy();
+          return;
+        }
         const responseHeaders = endToEndHeaders(upstream.headers);
         response.writeHead(upstream.statusCode ?? 502, responseHeaders);
         upstream.pipe(response);
         upstream.once("end", () => {
-          backendCompleted = true;
+          isBackendCompleted = true;
         });
         upstream.once("error", () => response.destroy());
       }
     );
+    retirement.signal.addEventListener(
+      "abort",
+      () => {
+        backend.destroy();
+        // A response already flushed must not close a reused keep-alive socket.
+        if (!response.writableFinished) response.destroy();
+        finish();
+      },
+      { once: true }
+    );
+    generation.requests.add(retirement);
     request.once("aborted", () => backend.destroy());
     response.once("close", () => {
-      if (!response.writableEnded && !backendCompleted)
+      if (
+        !retirement.signal.aborted &&
+        !response.writableEnded &&
+        !isBackendCompleted
+      )
         this.emit({
           phase: "client_disconnected",
           generationId: generation.endpoint.id,
@@ -335,6 +395,7 @@ export class RouterIngress {
       finish();
     });
     backend.once("error", () => {
+      if (retirement.signal.aborted || response.destroyed) return;
       if (response.headersSent) {
         response.destroy();
       } else {

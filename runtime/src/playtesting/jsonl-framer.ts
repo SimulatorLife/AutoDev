@@ -1,4 +1,6 @@
-/** Bounded LF framer for one UTF-8 JSON-RPC message per line. */
+/**
+Bounded LF framer for one UTF-8 JSON-RPC message per line.
+*/
 export class JsonLineFrameError extends Error {
   readonly maximumBytes: number;
 
@@ -12,10 +14,10 @@ export class JsonLineFrameError extends Error {
 }
 
 /**
- * Accumulates partial chunks in a geometrically-grown buffer. This avoids
- * copying the full partial line on every small transport chunk, while
- * retaining a strict byte ceiling before JSON parsing.
- */
+Accumulates partial chunks in a geometrically-grown buffer. This avoids
+copying the full partial line on every small transport chunk, while
+retaining a strict byte ceiling before JSON parsing.
+*/
 export class JsonLineFramer {
   readonly maximumBytes: number;
   private buffer: Buffer;
@@ -35,7 +37,9 @@ export class JsonLineFramer {
     return this.length;
   }
 
-  /** Returns a copy of the unterminated bytes so the caller can preserve them. */
+  /**
+  Returns a copy of the unterminated bytes so the caller can preserve them.
+  */
   pendingLine(): Buffer {
     return Buffer.from(this.buffer.subarray(0, this.length));
   }

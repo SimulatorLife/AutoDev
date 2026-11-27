@@ -114,14 +114,16 @@ function sharedIsolationEnvironment(
     AUTODEV_MCP_WORKSPACE: options.cwd,
     AUTODEV_ROLE_SHELL_ENABLED: contract.shell === false ? "0" : "1",
     AUTODEV_ROLE_HOOKS_ENABLED: contract.hooks === false ? "0" : "1",
-    ...(contract.readOnly === true ? { AUTODEV_MCP_READ_ONLY: "1" } : {}),
+    ...((contract.readOnly === true) && { AUTODEV_MCP_READ_ONLY: "1" }),
     AUTODEV_AGENT_EVENTS_URL:
       options.env?.AUTODEV_AGENT_EVENTS_URL ??
       "http://127.0.0.1:4100/v1/agent-events"
   };
 }
 
-/** The gateway client of the executing Runtime generation. */
+/**
+The gateway client of the executing Runtime generation.
+*/
 function resolveGatewayClientPath(): string {
   return realpathSync(new URL("../mcp/gateway-client.ts", import.meta.url));
 }
@@ -144,14 +146,14 @@ function buildAcpMcpServers(
     session: options.sessionId
   });
   const client = resolveGatewayClientPath();
-  const env = options.env ?? process.env;
-  const home = env.HOME?.trim() || homedir();
+  const environment = options.env ?? process.env;
+  const home = environment.HOME?.trim() || homedir();
   const handedOver = [
     { name: MCP_GRANT_ENV, value: grant },
     { name: "HOME", value: home },
     {
       name: "CODEX_HOME",
-      value: env.CODEX_HOME?.trim() || path.join(home, ".codex")
+      value: environment.CODEX_HOME?.trim() || path.join(home, ".codex")
     }
   ];
   return contract.mcp.map((name) => ({
@@ -174,9 +176,9 @@ export function buildAcpProviderLaunchSpec(
   const skills = Array.isArray(contract.skills)
     ? contract.skills.filter((s): s is string => typeof s === "string")
     : [];
-  const readOnly = contract.readOnly === true;
-  const shell = contract.shell !== false;
-  const hooks = contract.hooks !== false;
+  const isReadOnly = contract.readOnly === true;
+  const isShell = contract.shell !== false;
+  const isHooks = contract.hooks !== false;
   const baseEnvironment = sharedIsolationEnvironment(options, contract);
   const acpMcpServers = buildAcpMcpServers(options, contract);
 
@@ -185,9 +187,9 @@ export function buildAcpProviderLaunchSpec(
     model: options.model,
     cwd: options.cwd,
     systemPrompt: options.systemPrompt,
-    readOnly,
-    shell,
-    hooks,
+    readOnly: isReadOnly,
+    shell: isShell,
+    hooks: isHooks,
     skills,
     mcpServers,
     acpMcpServers,
@@ -316,7 +318,7 @@ export function buildAcpProviderLaunchSpec(
           // reads MCODE_HOME, so the AutoDev-managed profile is handed over
           // here.
           MINIMAX_DATA_DIR: mcodeHome,
-          ...(minimaxApiKey ? { MINIMAX_API_KEY: minimaxApiKey } : {})
+          ...(minimaxApiKey && { MINIMAX_API_KEY: minimaxApiKey })
         },
         isolation: {
           nativeTools: "runtime_permission_guard",

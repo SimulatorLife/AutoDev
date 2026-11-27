@@ -8,9 +8,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ConsoleLoadingPage } from "../src/components/layout/AppShell.ts";
 
 /**
- * The routes that read server-owned data, and therefore have a pending state
- * to show.
- */
+The routes that read server-owned data, and therefore have a pending state
+to show.
+*/
 const DATA_READING_ROUTES = [
   "agents/[id]/page.tsx",
   "agents/page.tsx",

@@ -7,24 +7,24 @@ import {
 } from "./acceptance-helpers.ts";
 
 /**
- * The state proxy's port.
- *
- * The Console reads the Control API through the proxy, and the proxy answers
- * in the state the spec asks for. The port is fixed because the Console is
- * started before the spec runs and its Control API address is part of that
- * start.
- */
+The state proxy's port.
+
+The Console reads the Control API through the proxy, and the proxy answers
+in the state the spec asks for. The port is fixed because the Console is
+started before the spec runs and its Control API address is part of that
+start.
+*/
 const PROXY_PORT = Number(process.env.AUTODEV_STATE_PROXY_PORT ?? 4370);
 const PROXY = `http://127.0.0.1:${String(PROXY_PORT)}`;
 
 /**
- * The routes that read the Control API, and so have a state to answer with.
- *
- * The usage surface reads the OpenLIT usage API rather than the Control API,
- * so its unavailable state belongs to a different service. The Playtesting and
- * Workspaces surfaces read Playtesting-owned state, so a sweep that judged
- * them would be answering for work that is not this one's to judge.
- */
+The routes that read the Control API, and so have a state to answer with.
+
+The usage surface reads the OpenLIT usage API rather than the Control API,
+so its unavailable state belongs to a different service. The Playtesting and
+Workspaces surfaces read Playtesting-owned state, so a sweep that judged
+them would be answering for work that is not this one's to judge.
+*/
 const PROVIDERS_ROUTE = "/providers";
 
 const CONTROL_API_ROUTES: readonly string[] = [
@@ -41,22 +41,22 @@ const CONTROL_API_ROUTES: readonly string[] = [
 ];
 
 /**
- * The detail surfaces of the resources that have one.
- *
- * A detail page reads the same Control API as its list, so it has the same
- * obligation: a read that cannot be answered is an explicit state, not an
- * empty detail view.
- */
+The detail surfaces of the resources that have one.
+
+A detail page reads the same Control API as its list, so it has the same
+obligation: a read that cannot be answered is an explicit state, not an
+empty detail view.
+*/
 const CONTROL_API_DETAIL_ROUTES: readonly string[] = DETAIL_ROUTES.map(
   (route) => route.path
 );
 
 /**
- * Put the Control API into one state.
- *
- * The proxy answers the control route honestly, so a spec that puts the
- * service back is leaving no trace for the next one.
- */
+Put the Control API into one state.
+
+The proxy answers the control route honestly, so a spec that puts the
+service back is leaving no trace for the next one.
+*/
 async function setControlApiState(state: string): Promise<void> {
   const response = await fetch(`${PROXY}/__state`, {
     method: "POST",
@@ -71,19 +71,19 @@ test.afterEach(async () => {
 });
 
 /**
- * The explicit state a page shows when its read could not be answered.
- */
+The explicit state a page shows when its read could not be answered.
+*/
 function unavailableState(page: Page) {
   return page.locator('[data-status="unavailable"]').first();
 }
 
 /**
- * The resource rows a page would render if it had data.
- *
- * A page that cannot read its resource has no rows to show, and a row it
- * invented would be the worst outcome of all: it would read as a measured
- * result.
- */
+The resource rows a page would render if it had data.
+
+A page that cannot read its resource has no rows to show, and a row it
+invented would be the worst outcome of all: it would read as a measured
+result.
+*/
 function resourceRows(page: Page) {
   return page.locator("main table tbody tr");
 }

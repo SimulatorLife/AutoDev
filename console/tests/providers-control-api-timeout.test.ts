@@ -12,12 +12,12 @@ const CONFIG = {
 };
 
 /**
- * A Control API that accepts the request and answers it after `delayMs`.
- *
- * The shape is the one the live Control API produced under load: the service
- * is there, it is holding the connection open, and it answers -- just not
- * inside the Console's generic deadline.
- */
+A Control API that accepts the request and answers it after `delayMs`.
+
+The shape is the one the live Control API produced under load: the service
+is there, it is holding the connection open, and it answers -- just not
+inside the Console's generic deadline.
+*/
 function answerAfter(delayMs: number): typeof globalThis.fetch {
   return ((_input: RequestInfo | URL, init?: RequestInit) =>
     new Promise<Response>((resolve, reject) => {

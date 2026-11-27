@@ -1,20 +1,20 @@
 /**
- * Playtesting-owned typed ClickHouse repository.
- *
- * Reuses resolveOpenLitClickHouseConnection and Data's existing
- * runParameterizedClickHouseStatement transport. Persists workspace-scoped
- * launch intents, batches, episode summary/version rows, findings, reviews,
- * cross-session syntheses and comparisons
- * per docs/playtesting-target-state.md Section 9. Large JSONL/frames never
- * land here; episode rows retain only bounded content-hash manifests/opaque
- * refs into Runtime-owned artifact storage.
- *
- * Every filtered list applies its filters at ClickHouse before pagination;
- * every count is the full matching population, not the loaded page. Every
- * read throws PlaytestSourceUnavailableError on an unreachable, malformed or
- * non-JSON ClickHouse response rather than returning an empty collection or
- * a zero count.
- */
+Playtesting-owned typed ClickHouse repository.
+
+Reuses resolveOpenLitClickHouseConnection and Data's existing
+runParameterizedClickHouseStatement transport. Persists workspace-scoped
+launch intents, batches, episode summary/version rows, findings, reviews,
+cross-session syntheses and comparisons
+per docs/playtesting-target-state.md Section 9. Large JSONL/frames never
+land here; episode rows retain only bounded content-hash manifests/opaque
+refs into Runtime-owned artifact storage.
+
+Every filtered list applies its filters at ClickHouse before pagination;
+every count is the full matching population, not the loaded page. Every
+read throws PlaytestSourceUnavailableError on an unreachable, malformed or
+non-JSON ClickHouse response rather than returning an empty collection or
+a zero count.
+*/
 
 import {
   type HumanPlaytestStudy,
@@ -35,7 +35,7 @@ import {
 } from "@simulatorlife/autodev-core";
 
 import {
-  type ClickHouseParamValue,
+  type ClickHouseParamValue as ClickHouseParameterValue,
   runParameterizedClickHouseStatement
 } from "../clickhouse/clickhouse-client.ts";
 import {
@@ -115,7 +115,9 @@ import type {
   PlaytestReviewSummary
 } from "./types.ts";
 
-/** The most rows one list read will return, whatever the caller asks for. */
+/**
+The most rows one list read will return, whatever the caller asks for.
+*/
 const MAX_PLAYTEST_PAGE_SIZE = 500;
 const DEFAULT_PLAYTEST_PAGE_SIZE = 50;
 const MAX_BATCH_ARTIFACT_HISTORY_ROWS = 128;
@@ -217,7 +219,7 @@ function decodeLaunchIntent(
       ? rawCount
       : typeof rawCount === "string" && COUNT_PATTERN.test(rawCount)
         ? Number(rawCount)
-        : Number.NaN;
+        : NaN;
   const intent: PlaytestLaunchIntent = {
     workspaceId: typeof row.workspace_id === "string" ? row.workspace_id : "",
     actorId: typeof row.actor_id === "string" ? row.actor_id : "",
@@ -241,17 +243,17 @@ function decodeLaunchIntent(
 }
 
 /**
- * Fixed-fragment WHERE clauses for the persisted-review list.
- *
- * Discovery and confirmatory reviews share one table, so the kind filter is
- * a payload-schema predicate. It is applied inside the version fold so that
- * "latest version" is resolved within one kind; the episode filter is
- * applied after the fold, exactly like every other Playtesting list.
- */
+Fixed-fragment WHERE clauses for the persisted-review list.
+
+Discovery and confirmatory reviews share one table, so the kind filter is
+a payload-schema predicate. It is applied inside the version fold so that
+"latest version" is resolved within one kind; the episode filter is
+applied after the fold, exactly like every other Playtesting list.
+*/
 interface ReviewWhereClause {
   readonly innerClauses: readonly string[];
   readonly outerClauses: readonly string[];
-  readonly params: Record<string, ClickHouseParamValue>;
+  readonly params: Record<string, ClickHouseParameterValue>;
 }
 
 function buildReviewWhereClause(
@@ -260,14 +262,14 @@ function buildReviewWhereClause(
   if (filter.workspaceId.trim().length === 0) {
     throw new TypeError("workspaceId is required for every Playtesting query");
   }
-  const params: Record<string, ClickHouseParamValue> = {
+  const parameters: Record<string, ClickHouseParameterValue> = {
     workspaceId: filter.workspaceId
   };
   const innerClauses: string[] = [WORKSPACE_ID_PREDICATE];
   const outerClauses: string[] = [];
   if (filter.episodeId !== undefined) {
     outerClauses.push("episode_id = {episodeId:String}");
-    params.episodeId = filter.episodeId;
+    parameters.episodeId = filter.episodeId;
   }
   if (filter.kind !== undefined) {
     innerClauses.push(
@@ -275,16 +277,16 @@ function buildReviewWhereClause(
         ? "JSONExtractString(payload_json, 'schema') = {discoverySchema:String}"
         : "JSONExtractString(payload_json, 'schema') != {discoverySchema:String}"
     );
-    params.discoverySchema = PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA;
+    parameters.discoverySchema = PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA;
   }
-  return { innerClauses, outerClauses, params };
+  return { innerClauses, outerClauses, params: parameters };
 }
 
 /**
- * Typed ClickHouse repository for Playtesting launch receipts, batches,
- * episodes, findings, reviews and comparisons. One owner of the Playtesting schema and every
- * query/pagination/count path against it.
- */
+Typed ClickHouse repository for Playtesting launch receipts, batches,
+episodes, findings, reviews and comparisons. One owner of the Playtesting schema and every
+query/pagination/count path against it.
+*/
 export class PlaytestRepository {
   private readonly options: OpenLitClickHouseOptions;
   private readonly fetchImpl: typeof fetch;
@@ -294,7 +296,9 @@ export class PlaytestRepository {
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
   }
 
-  /** Idempotently create every Playtesting table. Safe to call repeatedly. */
+  /**
+  Idempotently create every Playtesting table. Safe to call repeatedly.
+  */
   async ensureSchema(): Promise<void> {
     const { endpoint } = resolveOpenLitClickHouseConnection(this.options);
     await ensurePlaytestSchema(endpoint, this.fetchImpl);
@@ -302,10 +306,10 @@ export class PlaytestRepository {
   }
 
   /**
-   * Promote historical episode rows before Runtime exposes reads. This appends
-   * a verified current-schema revision; serving decoders never infer mode or
-   * translate a legacy artifact on demand.
-   */
+  Promote historical episode rows before Runtime exposes reads. This appends
+  a verified current-schema revision; serving decoders never infer mode or
+  translate a legacy artifact on demand.
+  */
   private async migrateLegacyEpisodeSchemas(): Promise<void> {
     for (;;) {
       const rows = parseNdjsonLines(
@@ -342,15 +346,15 @@ export class PlaytestRepository {
 
   private async execute(
     query: string,
-    params: Readonly<Record<string, ClickHouseParamValue>>,
+    parameters: Readonly<Record<string, ClickHouseParameterValue>>,
     body?: string
   ): Promise<string> {
     try {
       return await runParameterizedClickHouseStatement(
         this.resolveEndpoint(),
         query,
-        params,
-        { fetchImpl: this.fetchImpl, ...(body === undefined ? {} : { body }) }
+        parameters,
+        { fetchImpl: this.fetchImpl, ...(body !== undefined && { body }) }
       );
     } catch (error) {
       if (error instanceof PlaytestSourceUnavailableError) throw error;
@@ -455,11 +459,11 @@ export class PlaytestRepository {
   }
 
   /**
-   * Read all bounded revisions for one batch so Runtime can safely decide
-   * whether a local pending packet reference was ever durably published.
-   * Historical references count: an uncertain insert acknowledgement must not
-   * make an earlier committed packet look like an orphan.
-   */
+  Read all bounded revisions for one batch so Runtime can safely decide
+  whether a local pending packet reference was ever durably published.
+  Historical references count: an uncertain insert acknowledgement must not
+  make an earlier committed packet look like an orphan.
+  */
   async getBatchArtifactState(
     workspaceId: string,
     batchId: string
@@ -593,7 +597,9 @@ export class PlaytestRepository {
     );
   }
 
-  /** Deterministically reads the latest revision of one episode, or null. */
+  /**
+  Deterministically reads the latest revision of one episode, or null.
+  */
   async getEpisode(
     workspaceId: string,
     episodeId: string
@@ -611,7 +617,9 @@ export class PlaytestRepository {
     return rows.length > 0 ? decodeEpisode(rows[0]!) : null;
   }
 
-  /** Resolve a bounded set of episode links in indexed, workspace-scoped batches. */
+  /**
+  Resolve a bounded set of episode links in indexed, workspace-scoped batches.
+  */
   async getEpisodesByIds(
     workspaceId: string,
     episodeIds: readonly string[]
@@ -627,10 +635,10 @@ export class PlaytestRepository {
     }
     const ids = [...new Set(episodeIds)];
     if (ids.length === 0) return [];
-    const params: Record<string, string> = { workspaceId };
+    const parameters: Record<string, string> = { workspaceId };
     const placeholders = ids.map((id, index) => {
       const name = "episodeId" + String(index);
-      params[name] = id;
+      parameters[name] = id;
       return `{${name}:String}`;
     });
     const text = await this.execute(
@@ -640,7 +648,7 @@ export class PlaytestRepository {
         WHERE workspace_id = {workspaceId:String} AND episode_id IN (${placeholders.join(",")})
       ) WHERE rn = 1
       FORMAT JSONEachRow`,
-      params
+      parameters
     );
     return parseNdjsonLines(text).map(decodeEpisode);
   }
@@ -748,14 +756,14 @@ export class PlaytestRepository {
   }
 
   /**
-   * Latest revision of the finding with this fingerprint in the given
-   * workspace, or null if none exists. `fingerprint` is a SHA-256
-   * hexadecimal digest produced by Runtime over
-   * `playtestFindingIdentityHashInput(identity)`. The query always binds
-   * `workspaceId` (mandatory scope) and `fingerprint` (validated on
-   * encode/decode) through ClickHouse parameters; the SQL text is fixed
-   * so a caller cannot smuggle a different column.
-   */
+  Latest revision of the finding with this fingerprint in the given
+  workspace, or null if none exists. `fingerprint` is a SHA-256
+  hexadecimal digest produced by Runtime over
+  `playtestFindingIdentityHashInput(identity)`. The query always binds
+  `workspaceId` (mandatory scope) and `fingerprint` (validated on
+  encode/decode) through ClickHouse parameters; the SQL text is fixed
+  so a caller cannot smuggle a different column.
+  */
   async getLatestFindingByFingerprint(
     workspaceId: string,
     fingerprint: string
@@ -888,7 +896,9 @@ export class PlaytestRepository {
     return rows.length > 0 ? decodeReview(rows[0]!) : null;
   }
 
-  /** Latest immutable confirmatory review for one episode, if one exists. */
+  /**
+  Latest immutable confirmatory review for one episode, if one exists.
+  */
 
   async getLatestReviewForEpisode(
     workspaceId: string,
@@ -912,7 +922,9 @@ export class PlaytestRepository {
     return rows.length > 0 ? decodeReview(rows[0]!) : null;
   }
 
-  /** Latest immutable discovery review for one episode, if one exists. */
+  /**
+  Latest immutable discovery review for one episode, if one exists.
+  */
   async getLatestDiscoveryReviewForEpisode(
     workspaceId: string,
     episodeId: string
@@ -936,13 +948,13 @@ export class PlaytestRepository {
   }
 
   /**
-   * List the persisted analyst reviews of one workspace, newest first.
-   *
-   * Every filter is applied at ClickHouse before pagination and the count
-   * is the full matching population, not the loaded page. Only the latest
-   * version of each review is listed: a review is append-only, and a
-   * superseded version is not what the analyst concluded.
-   */
+  List the persisted analyst reviews of one workspace, newest first.
+  
+  Every filter is applied at ClickHouse before pagination and the count
+  is the full matching population, not the loaded page. Only the latest
+  version of each review is listed: a review is append-only, and a
+  superseded version is not what the analyst concluded.
+  */
   async listReviews(
     filter: PlaytestReviewListFilter,
     listOptions: PlaytestListOptions = {}
@@ -995,7 +1007,9 @@ export class PlaytestRepository {
     return { rows, total, nextCursor };
   }
 
-  /** The number of persisted reviews matching a filter, before pagination. */
+  /**
+  The number of persisted reviews matching a filter, before pagination.
+  */
   async countReviews(filter: PlaytestReviewListFilter): Promise<number> {
     const where = buildReviewWhereClause(filter);
     const countQuery = `SELECT count() AS total FROM (

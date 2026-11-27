@@ -5,15 +5,15 @@ import { join, resolve } from "node:path";
 import { reloadExecutionContract } from "@simulatorlife/autodev-runtime/router/subagents";
 
 /**
- * Point the Runtime at a copy of the shipped execution contract in which one
- * provider declares no delegation path.
- *
- * Every shipped provider can delegate -- Codex natively, MiniMax and opencli
- * through Codex's own `exec` tool, the CLI bridges through their spawn shims
- * -- so the "a provider that cannot delegate is not an orchestrator" behaviour
- * is exercised against a contract that says one cannot, rather than by
- * pretending a real provider is incapable. Returns the restore function.
- */
+Point the Runtime at a copy of the shipped execution contract in which one
+provider declares no delegation path.
+
+Every shipped provider can delegate -- Codex natively, MiniMax and opencli
+through Codex's own `exec` tool, the CLI bridges through their spawn shims
+-- so the "a provider that cannot delegate is not an orchestrator" behaviour
+is exercised against a contract that says one cannot, rather than by
+pretending a real provider is incapable. Returns the restore function.
+*/
 export function useNonDelegatingContract(provider: string): () => void {
   const shipped = JSON.parse(
     readFileSync(

@@ -21,7 +21,7 @@ import { readProvidersSurface } from "./providers-reads.ts";
 
 export const dynamic = "force-dynamic";
 
-interface ProvidersPageProps {
+interface ProvidersPageProperties {
   readonly searchParams?: Promise<
     Record<string, string | string[] | undefined>
   >;
@@ -33,7 +33,7 @@ export const metadata: Metadata = {
 
 export default async function ProvidersPage({
   searchParams
-}: ProvidersPageProps): Promise<React.JSX.Element> {
+}: ProvidersPageProperties): Promise<React.JSX.Element> {
   const { section, config } = readNodeContext("/providers");
   if (!config) {
     return React.createElement(

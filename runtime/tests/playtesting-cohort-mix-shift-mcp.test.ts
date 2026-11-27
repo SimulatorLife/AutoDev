@@ -1,20 +1,20 @@
 /**
- * `playtest.cohortMixShift`, driven through the real MCP server.
- *
- * The point of this file is the seam the unit test cannot cross: that the
- * weights the gate judges against are the *approved benchmark's on disk*, and
- * that the refusal a caller sees is a named refusal rather than a padded
- * result. So the checkout, the approval and the benchmark are real files, and
- * the cohort weights come from `playtest.benchmark.json` rather than from
- * anything this test chose. Only the repository (the storage seam) and the
- * sandbox are substituted; Docker is genuinely unavailable here, a file is not.
- *
- * The fixture benchmark weights one cohort (`onboarding`), which is not the
- * two-cohort mix of §10. That is deliberate: if the tool ever stopped reading
- * the benchmark's own weights it could not standardize against `onboarding` at
- * all, and the assertion below would fail rather than quietly passing against a
- * weight this test supplied.
- */
+`playtest.cohortMixShift`, driven through the real MCP server.
+
+The point of this file is the seam the unit test cannot cross: that the
+weights the gate judges against are the *approved benchmark's on disk*, and
+that the refusal a caller sees is a named refusal rather than a padded
+result. So the checkout, the approval and the benchmark are real files, and
+the cohort weights come from `playtest.benchmark.json` rather than from
+anything this test chose. Only the repository (the storage seam) and the
+sandbox are substituted; Docker is genuinely unavailable here, a file is not.
+
+The fixture benchmark weights one cohort (`onboarding`), which is not the
+two-cohort mix of §10. That is deliberate: if the tool ever stopped reading
+the benchmark's own weights it could not standardize against `onboarding` at
+all, and the assertion below would fail rather than quietly passing against a
+weight this test supplied.
+*/
 import assert from "node:assert/strict";
 import {
   copyFileSync,
@@ -59,7 +59,9 @@ const CANDIDATE_BATCH_ID = "batch-mix-candidate";
 const REFERENCE_SHA = "1".repeat(40);
 const CANDIDATE_SHA = "2".repeat(40);
 const CREATED_AT = "2026-10-12T00:00:00.000Z";
-/** The only cohort `playtest.benchmark.json` declares a weight for. */
+/**
+The only cohort `playtest.benchmark.json` declares a weight for.
+*/
 const WEIGHTED_COHORT = "onboarding";
 const METRIC_ID = "legal-action-rejection";
 const SAMPLE_FIXTURE_ROOT = fileURLToPath(
@@ -330,29 +332,31 @@ function episode(
 }
 
 interface Harness {
-  readonly call: (args: unknown) => Promise<MixShiftPayload>;
-  readonly callExpectingRefusal: (args: unknown) => Promise<string>;
+  readonly call: (arguments_: unknown) => Promise<MixShiftPayload>;
+  readonly callExpectingRefusal: (arguments_: unknown) => Promise<string>;
   readonly cleanup: () => void;
 }
 
 async function harness(options: {
   readonly approved: WorkspacePlaytestApproval;
   readonly role?: PlaytestMcpSession["role"];
-  /** Rows the reference batch's episode recorded. */
+  /**
+  Rows the reference batch's episode recorded.
+  */
   readonly referenceRows: readonly PlaytestNumericResult[];
   readonly candidateRows: readonly PlaytestNumericResult[];
 }): Promise<Harness> {
-  const tmpRoot = realpathSync(
+  const temporaryRoot = realpathSync(
     mkdtempSync(path.join(tmpdir(), "playtest-mix-shift-run-"))
   );
-  const artifactsDir = path.join(tmpRoot, "artifacts");
+  const artifactsDir = path.join(temporaryRoot, "artifacts");
   mkdirSync(artifactsDir, { recursive: true });
   const artifacts = new PlaytestArtifactStore({
     workspaceId: WORKSPACE_ID,
     rootDirectory: artifactsDir
   });
-  const approvalRepo = new WorkspacePlaytestApprovalRepository(
-    path.join(tmpRoot, "approvals")
+  const approvalRepository = new WorkspacePlaytestApprovalRepository(
+    path.join(temporaryRoot, "approvals")
   );
 
   const stored = new Map<string, PlaytestBatch>([
@@ -384,8 +388,8 @@ async function harness(options: {
     async getBatch(_workspaceId: string, batchId: string) {
       return stored.get(batchId) ?? null;
     },
-    async listEpisodes(args: { readonly batchId: string }) {
-      const rows = episodesByBatch[args.batchId] ?? [];
+    async listEpisodes(arguments_: { readonly batchId: string }) {
+      const rows = episodesByBatch[arguments_.batchId] ?? [];
       return { rows, total: rows.length, nextCursor: null };
     }
   } as unknown as PlaytestingRepositoryOps;
@@ -395,7 +399,7 @@ async function harness(options: {
     prepareSandboxHandler: preparer.prepare,
     artifactStoreForWorkspace: () => artifacts,
     playtestRepository: repository,
-    approvalRepository: approvalRepo,
+    approvalRepository: approvalRepository,
     readWorkspaceCatalog: () => ({
       status: "valid",
       workspaces: [
@@ -417,13 +421,13 @@ async function harness(options: {
     sessionProvider: { current: () => session },
     artifactStoreForWorkspace: () => artifacts,
     playtestRepository: repository,
-    approvalRepository: approvalRepo,
+    approvalRepository: approvalRepository,
     playtestRunControl,
     prepareSandboxHandler: preparer.prepare
   });
-  approvalRepo.approve(options.approved, null);
+  approvalRepository.approve(options.approved, null);
 
-  const invoke = async (args: unknown) => {
+  const invoke = async (arguments_: unknown) => {
     const tools = (
       server as unknown as {
         _registeredTools: Record<
@@ -432,20 +436,20 @@ async function harness(options: {
         >;
       }
     )._registeredTools;
-    return (await tools["playtest.cohortMixShift"]!.handler(args)) as {
+    return (await tools["playtest.cohortMixShift"]!.handler(arguments_)) as {
       isError?: boolean;
       content: { type: string; text?: string }[];
     };
   };
 
   return {
-    call: async (args: unknown) => {
-      const result = await invoke(args);
+    call: async (arguments_: unknown) => {
+      const result = await invoke(arguments_);
       const text = result.content.find((part) => part.text)?.text ?? "{}";
       return JSON.parse(text) as MixShiftPayload;
     },
-    callExpectingRefusal: async (args: unknown) => {
-      const result = await invoke(args);
+    callExpectingRefusal: async (arguments_: unknown) => {
+      const result = await invoke(arguments_);
       assert.equal(
         result.isError,
         true,
@@ -455,7 +459,7 @@ async function harness(options: {
     },
     cleanup: () => {
       preparer.cleanup();
-      rmSync(tmpRoot, { recursive: true, force: true });
+      rmSync(temporaryRoot, { recursive: true, force: true });
     }
   };
 }
@@ -468,7 +472,9 @@ function closeTo(actual: unknown, expected: number): void {
   );
 }
 
-/** The tool's JSON payload, typed at the fields these tests assert on. */
+/**
+The tool's JSON payload, typed at the fields these tests assert on.
+*/
 interface MixShiftPayload {
   standardized: boolean;
   result: {

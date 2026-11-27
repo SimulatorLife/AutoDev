@@ -1,22 +1,22 @@
 /**
- * `playtest.policyValidity`, driven through the real MCP server.
- *
- * The point of this file is the seam the unit test cannot cross: that the
- * policy versions in the answer come from the *approved benchmark on disk*
- * rather than from anything the derivation assumed, and that the record is
- * built from the frozen coverage manifest the batch actually carries.
- *
- * So the checkout, the approval, the benchmark, the observation contract and
- * the rubric are all real files on disk, and the coverage manifest is computed
- * by Core from the approved rubric. Only the repository (the storage seam) and
- * the sandbox are substituted; Docker is genuinely unavailable here, a file is
- * not.
- *
- * If the tool ever stopped reading the benchmark it could not name the policy
- * version, and the cell would be reported `policy-version-undeclared` instead
- * of producing a record. That is the assertion which makes this a boundary
- * test rather than a restatement of the derivation's own unit test.
- */
+`playtest.policyValidity`, driven through the real MCP server.
+
+The point of this file is the seam the unit test cannot cross: that the
+policy versions in the answer come from the *approved benchmark on disk*
+rather than from anything the derivation assumed, and that the record is
+built from the frozen coverage manifest the batch actually carries.
+
+So the checkout, the approval, the benchmark, the observation contract and
+the rubric are all real files on disk, and the coverage manifest is computed
+by Core from the approved rubric. Only the repository (the storage seam) and
+the sandbox are substituted; Docker is genuinely unavailable here, a file is
+not.
+
+If the tool ever stopped reading the benchmark it could not name the policy
+version, and the cell would be reported `policy-version-undeclared` instead
+of producing a record. That is the assertion which makes this a boundary
+test rather than a restatement of the derivation's own unit test.
+*/
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
@@ -75,7 +75,9 @@ function digest(bytes: Uint8Array | string): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-/** A real checkout whose config is the fixture's, byte for byte. */
+/**
+A real checkout whose config is the fixture's, byte for byte.
+*/
 function setupCheckout(): {
   readonly root: string;
   readonly configBytes: Buffer;
@@ -154,7 +156,9 @@ function approval(
   };
 }
 
-/** The policy and cohort the fixture's own rubric plans coverage for. */
+/**
+The policy and cohort the fixture's own rubric plans coverage for.
+*/
 const ASSIGNMENT: PlaytestBatchAssignment = {
   assignmentId: "a-0001",
   scenarioId: "tutorial",
@@ -236,7 +240,9 @@ function batchFromApproved(
   };
 }
 
-/** A real content-hashed assignment manifest; a cast would hide a field rename. */
+/**
+A real content-hashed assignment manifest; a cast would hide a field rename.
+*/
 function assignmentManifest(): PlaytestAdapterAssignmentManifest {
   const base = {
     schema: PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
@@ -259,9 +265,9 @@ function assignmentManifest(): PlaytestAdapterAssignmentManifest {
 }
 
 /**
- * Coverage computed by Core from the *approved* rubric, so the cells the
- * derivation reads are the ones the approved rubric actually plans.
- */
+Coverage computed by Core from the *approved* rubric, so the cells the
+derivation reads are the ones the approved rubric actually plans.
+*/
 function manifestForApproved(approved: WorkspacePlaytestApproval): {
   readonly manifest: PlaytestCoverageManifest;
   readonly rubricHash: string;
@@ -337,9 +343,11 @@ function episodeFor(opportunities: number): PlaytestCoverageEpisode {
 }
 
 interface Harness {
-  readonly call: (args: unknown) => Promise<Record<string, unknown>>;
-  /** The tool reports refusals as `isError` payloads rather than throwing. */
-  readonly callExpectingRefusal: (args: unknown) => Promise<string>;
+  readonly call: (arguments_: unknown) => Promise<Record<string, unknown>>;
+  /**
+  The tool reports refusals as `isError` payloads rather than throwing.
+  */
+  readonly callExpectingRefusal: (arguments_: unknown) => Promise<string>;
   readonly cleanup: () => void;
 }
 
@@ -347,17 +355,17 @@ async function harness(
   approved: WorkspacePlaytestApproval,
   manifest: PlaytestCoverageManifest | null
 ): Promise<Harness> {
-  const tmpRoot = realpathSync(
+  const temporaryRoot = realpathSync(
     mkdtempSync(path.join(tmpdir(), "playtest-policy-validity-run-"))
   );
-  const artifactsDir = path.join(tmpRoot, "artifacts");
+  const artifactsDir = path.join(temporaryRoot, "artifacts");
   mkdirSync(artifactsDir, { recursive: true });
   const artifacts = new PlaytestArtifactStore({
     workspaceId: WORKSPACE_ID,
     rootDirectory: artifactsDir
   });
-  const approvalRepo = new WorkspacePlaytestApprovalRepository(
-    path.join(tmpRoot, "approvals")
+  const approvalRepository = new WorkspacePlaytestApprovalRepository(
+    path.join(temporaryRoot, "approvals")
   );
   const stored = batchFromApproved(approved, { manifest });
   // Respects the requested id: a stub that returned `stored` unconditionally
@@ -373,7 +381,7 @@ async function harness(
     prepareSandboxHandler: preparer.prepare,
     artifactStoreForWorkspace: () => artifacts,
     playtestRepository: repository,
-    approvalRepository: approvalRepo,
+    approvalRepository: approvalRepository,
     readWorkspaceCatalog: () => ({
       status: "valid",
       workspaces: [
@@ -395,13 +403,13 @@ async function harness(
     sessionProvider: { current: () => session },
     artifactStoreForWorkspace: () => artifacts,
     playtestRepository: repository,
-    approvalRepository: approvalRepo,
+    approvalRepository: approvalRepository,
     playtestRunControl,
     prepareSandboxHandler: preparer.prepare
   });
-  approvalRepo.approve(approved, null);
+  approvalRepository.approve(approved, null);
 
-  const invoke = async (args: unknown) => {
+  const invoke = async (arguments_: unknown) => {
     const tools = (
       server as unknown as {
         _registeredTools: Record<
@@ -410,20 +418,20 @@ async function harness(
         >;
       }
     )._registeredTools;
-    return (await tools["playtest.policyValidity"]!.handler(args)) as {
+    return (await tools["playtest.policyValidity"]!.handler(arguments_)) as {
       isError?: boolean;
       content: { type: string; text?: string }[];
     };
   };
 
   return {
-    call: async (args: unknown) => {
-      const result = await invoke(args);
+    call: async (arguments_: unknown) => {
+      const result = await invoke(arguments_);
       const text = result.content.find((part) => part.text)?.text ?? "{}";
       return JSON.parse(text) as Record<string, unknown>;
     },
-    callExpectingRefusal: async (args: unknown) => {
-      const result = await invoke(args);
+    callExpectingRefusal: async (arguments_: unknown) => {
+      const result = await invoke(arguments_);
       assert.equal(
         result.isError,
         true,
@@ -433,7 +441,7 @@ async function harness(
     },
     cleanup: () => {
       preparer.cleanup();
-      rmSync(tmpRoot, { recursive: true, force: true });
+      rmSync(temporaryRoot, { recursive: true, force: true });
     }
   };
 }

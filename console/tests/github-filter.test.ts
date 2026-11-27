@@ -18,19 +18,19 @@ import {
 import { GithubView } from "../src/features/github/GithubView.ts";
 
 /**
- * The recent-runs table can be narrowed by outcome.
- *
- * Thirty observed runs in the live instance, over two and a half screenfuls,
- * and the page raises the question it cannot answer: the success-rate card
- * reads "N succeeded, N failed, N running" but counts them without showing
- * which, so finding the twelve failures among the thirteen cancellations
- * meant reading the status cell of every row.
- *
- * The categories are the page's own -- the target state's counters over the
- * sampled runs -- and they are the same predicates the Status column renders
- * its badge from, so the count on the card and the rows on the page are the
- * same numbers.
- */
+The recent-runs table can be narrowed by outcome.
+
+Thirty observed runs in the live instance, over two and a half screenfuls,
+and the page raises the question it cannot answer: the success-rate card
+reads "N succeeded, N failed, N running" but counts them without showing
+which, so finding the twelve failures among the thirteen cancellations
+meant reading the status cell of every row.
+
+The categories are the page's own -- the target state's counters over the
+sampled runs -- and they are the same predicates the Status column renders
+its badge from, so the count on the card and the rows on the page are the
+same numbers.
+*/
 
 function run(
   id: number,
@@ -95,7 +95,7 @@ function renderGithub(
         successRate: 0.5
       },
       recentRuns: runs,
-      ...(outcome === undefined ? {} : { outcome: outcome as never })
+      ...(outcome !== undefined && { outcome: outcome as never })
     })
   );
 }
@@ -252,18 +252,18 @@ test("an empty narrowed list says the outcome excluded everything", () => {
 });
 
 /**
- * The workflow-definitions table can be narrowed by state.
- *
- * Nineteen workflows in the live instance, and the page counts two things it
- * will not show: the "Active Workflows" card counts the enabled ones and the
- * "Scheduled Workflows" card counts the ones on a cron, and neither count can
- * be turned into a list. The state is a badge rather than prose, so finding
- * the two disabled workflows among nineteen meant reading a badge of every row.
- *
- * The buckets are the ones the "GitHub Actions State" column renders, so the
- * filter and the column are the same thing -- and the two ways a workflow can
- * be disabled share a bucket, because "is it disabled?" is one question.
- */
+The workflow-definitions table can be narrowed by state.
+
+Nineteen workflows in the live instance, and the page counts two things it
+will not show: the "Active Workflows" card counts the enabled ones and the
+"Scheduled Workflows" card counts the ones on a cron, and neither count can
+be turned into a list. The state is a badge rather than prose, so finding
+the two disabled workflows among nineteen meant reading a badge of every row.
+
+The buckets are the ones the "GitHub Actions State" column renders, so the
+filter and the column are the same thing -- and the two ways a workflow can
+be disabled share a bucket, because "is it disabled?" is one question.
+*/
 
 function workflow(
   id: string,
@@ -275,7 +275,7 @@ function workflow(
     path: `.github/workflows/${id}.yml`,
     events: ["push"],
     schedules: [],
-    ...(actionsState === undefined ? {} : { actionsState })
+    ...(actionsState !== undefined && { actionsState })
   };
 }
 

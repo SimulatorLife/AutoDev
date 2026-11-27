@@ -1,6 +1,8 @@
 "use client";
 
-/** Bounded Console selection and live dispatch to the read-only analyst role. */
+/**
+Bounded Console selection and live dispatch to the read-only analyst role.
+*/
 import {
   type ControlApiPlaytestingAnalysesResponse,
   type ControlApiPlaytestingAnalysisDispatchResponse,
@@ -127,12 +129,12 @@ export function PlaytestingSelectionPanel({
 
   useEffect(() => {
     if (!workspaceId) return () => {};
-    let cancelled = false;
+    let isCancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let delay = ANALYSIS_STATUS_POLL_MS;
     let hasSuccessfulRead = false;
-    let lastKnownActive = false;
-    let keepPolling = true;
+    let isLastKnownActive = false;
+    let isKeepPolling = true;
     const controller = new AbortController();
 
     const poll = async (): Promise<void> => {
@@ -155,7 +157,7 @@ export function PlaytestingSelectionPanel({
         ) {
           throw new Error(responseMessage(payload));
         }
-        if (cancelled) return;
+        if (isCancelled) return;
         hasSuccessfulRead = true;
         const incomingRuns =
           data.runs as ControlApiPlaytestingAnalysesResponse["runs"];
@@ -184,24 +186,26 @@ export function PlaytestingSelectionPanel({
           syntheses: incomingSyntheses
         });
         setStatusState({ workspaceId, stale: missingActiveRuns.length > 0 });
-        lastKnownActive = nextRuns.some((run) => run.status === "running");
-        keepPolling = lastKnownActive;
+        isLastKnownActive = nextRuns.some((run) => run.status === "running");
+        isKeepPolling = isLastKnownActive;
       } catch {
-        if (cancelled) return;
+        if (isCancelled) return;
         setStatusState({ workspaceId, stale: true });
         // Keep retrying after a failed read if the last known list was active;
         // an initial failure also gets bounded retries until one source read works.
-        keepPolling = !hasSuccessfulRead || lastKnownActive;
+        isKeepPolling = !hasSuccessfulRead || isLastKnownActive;
       }
-      if (!cancelled && keepPolling) {
-        timer = setTimeout(() => void poll(), delay);
-        delay = Math.min(ANALYSIS_STATUS_MAX_POLL_MS, delay * 2);
+      if (isCancelled || !isKeepPolling) {
+        return;
       }
+
+      timer = setTimeout(() => void poll(), delay);
+      delay = Math.min(ANALYSIS_STATUS_MAX_POLL_MS, delay * 2);
     };
 
     void poll();
     return () => {
-      cancelled = true;
+      isCancelled = true;
       controller.abort();
       if (timer) clearTimeout(timer);
     };

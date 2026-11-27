@@ -3,12 +3,16 @@ import test from "node:test";
 
 import { isClickHouseUnavailable } from "./clickhouse-availability.ts";
 
-/** The shape undici raises when a single address refused the connection. */
+/**
+The shape undici raises when a single address refused the connection.
+*/
 function fetchFailed(cause: unknown): TypeError {
   return Object.assign(new TypeError("fetch failed"), { cause });
 }
 
-/** The shape undici raises when it tried several addresses at once. */
+/**
+The shape undici raises when it tried several addresses at once.
+*/
 function aggregateFetchFailed(code: string): TypeError {
   return Object.assign(new TypeError("fetch failed"), {
     cause: new AggregateError(

@@ -1,4 +1,6 @@
-/** Server-only, typed Playtesting batch request; Runtime owns approval and execution. */
+/**
+Server-only, typed Playtesting batch request; Runtime owns approval and execution.
+*/
 import {
   assertWorkspaceVisualPlaytestLimits,
   hasControlCharacters,
@@ -99,10 +101,10 @@ function parseVisualLaunchRequest(
 const ALLOWED_FIELDS = new Set(["launchRequest"]);
 
 /**
- * Workspace-scoped live batch reads for the active-runs view. This is a read
- * of the same typed run owner that starts and cancels runs; the Console never
- * derives batch state from anywhere else.
- */
+Workspace-scoped live batch reads for the active-runs view. This is a read
+of the same typed run owner that starts and cancels runs; the Console never
+derives batch state from anywhere else.
+*/
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const workspaceId =
     request.nextUrl.searchParams.get("workspaceId")?.trim() ?? "";
@@ -167,8 +169,8 @@ function parseAssignment(value: unknown): PlaytestLaunchAssignment | null {
     scenario,
     policy,
     seed,
-    ...(goal === null ? {} : { goal }),
-    ...(maxSteps === undefined ? {} : { maxSteps: maxSteps as number })
+    ...(goal !== null && { goal }),
+    ...(maxSteps !== undefined && { maxSteps: maxSteps as number })
   };
 }
 
@@ -190,11 +192,11 @@ function parseAssignments(value: unknown): PlaytestLaunchAssignment[] | null {
 }
 
 /**
- * Bound and shape-check the versioned launch request. Runtime's
- * PlaytestRunControl owner remains the authoritative validator for every
- * mode, approval, budget and capability; the Console never substitutes a
- * different mode when Runtime refuses one.
- */
+Bound and shape-check the versioned launch request. Runtime's
+PlaytestRunControl owner remains the authoritative validator for every
+mode, approval, budget and capability; the Console never substitutes a
+different mode when Runtime refuses one.
+*/
 function parseLaunchRequest(raw: string): PlaytestLaunchRequest | null {
   if (Buffer.byteLength(raw, "utf8") > MAX_LAUNCH_JSON_BYTES) return null;
   let parsed: unknown;

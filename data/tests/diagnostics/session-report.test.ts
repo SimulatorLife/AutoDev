@@ -203,7 +203,7 @@ test("the session aggregates sum each thread's skill reads and keep its prompt m
           rolloutLine("2026-09-18T21:20:00.000Z", "session_meta", {
             id,
             session_id: ROOT,
-            ...(id === CHILD ? { parent_thread_id: ROOT } : {}),
+            ...((id === CHILD) && { parent_thread_id: ROOT }),
             cwd: "/tmp/repo"
           }),
           ...lines

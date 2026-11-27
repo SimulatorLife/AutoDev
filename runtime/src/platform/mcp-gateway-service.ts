@@ -34,7 +34,6 @@ import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-
 import {
   writeErrorLine,
   writeLine
@@ -71,15 +70,14 @@ import {
   externalMcpBackend,
   hasExternalMcpProfile
 } from "../mcp/chatgpt-filesystem-sandbox.ts";
+import { readBridgeMcpCatalogue } from "../mcp/filesystem-server.ts";
 import {
   createGatewayAdmission,
   ensureLocalAdmission,
   localAdmissionPaths,
-  MCP_GATEWAY_DIRECTORY,
   mcpGatewayDirectory,
   readLocalAdmission
 } from "../mcp/gateway-admission.ts";
-import { readBridgeMcpCatalogue } from "../mcp/filesystem-server.ts";
 import { isEntryPoint } from "../shared/entry-point.ts";
 import { runtimeBinDirectory } from "../shared/executables.ts";
 import {
@@ -628,19 +626,15 @@ async function discoverServerTools(
             headers: resolveRemoteMcpHeaders(
               {
                 url: String(descriptor.url),
-                ...(typeof descriptor.bearer_token_env_var === "string"
-                  ? { bearer_token_env_var: descriptor.bearer_token_env_var }
-                  : {}),
+                ...((typeof descriptor.bearer_token_env_var === "string") && { bearer_token_env_var: descriptor.bearer_token_env_var }),
                 ...(descriptor.http_headers &&
                 typeof descriptor.http_headers === "object" &&
-                !Array.isArray(descriptor.http_headers)
-                  ? {
+                !Array.isArray(descriptor.http_headers) && {
                       http_headers: descriptor.http_headers as Record<
                         string,
                         string
                       >
-                    }
-                  : {})
+                    })
               },
               server,
               environment
@@ -1579,7 +1573,7 @@ export async function runMcpGatewayDaemon(
         // A failed or concurrent install may already have repointed src;
         // dynamic backends must use the same generation as this daemon.
         runtimeSource: path.resolve(import.meta.dirname, ".."),
-        ...(dependencies.backend ? { backend: dependencies.backend } : {})
+        ...(dependencies.backend && { backend: dependencies.backend })
       })
     }
   );

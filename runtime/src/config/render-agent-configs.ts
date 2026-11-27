@@ -15,7 +15,7 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/role-prompts";
 import { parse } from "smol-toml";
 
-import { parseArgs, requiredArg } from "./cli-args.ts";
+import { parseArgs as parseArguments, requiredArg as requiredArgument } from "./cli-args.ts";
 import {
   ConfigError,
   parseTomlFile,
@@ -63,16 +63,16 @@ export function validateMcpServers(config: TomlTable, source: string): void {
   for (const [name, server] of Object.entries(servers)) {
     if (!isTable(server))
       throw new ConfigError(`${source}: mcp_servers.${name} must be a table`);
-    const stdio =
+    const isStdio =
       typeof server.command === "string" &&
       !!server.command &&
       Array.isArray(server.args) &&
       server.args.length > 0;
-    const http =
+    const isHttp =
       typeof server.url === "string" &&
       HTTP_URL_PATTERN.test(server.url) &&
       server.transport === "streamable_http";
-    if (!stdio && !http)
+    if (!isStdio && !isHttp)
       throw new ConfigError(
         `${source}: mcp_servers.${name} has neither a valid stdio transport (command + args) nor a valid streamable HTTP transport (url + transport = "streamable_http")`
       );
@@ -83,7 +83,9 @@ function isTable(value: TomlValue | undefined): value is TomlTable {
   return isRecord(value) && !(value instanceof Date);
 }
 
-/** Merge launch metadata into the parsed role; never interpret prompt text as TOML. */
+/**
+Merge launch metadata into the parsed role; never interpret prompt text as TOML.
+*/
 function fillLaunchKeys(
   config: TomlTable,
   servers: TomlTable,
@@ -152,7 +154,7 @@ export function renderRole(
   ]);
   // A single replacement pass keeps dollar sequences, backslashes, TOML
   // examples and literal marker examples in Markdown exactly as authored.
-  config.developer_instructions = template.replace(PROMPT_MARKER, (marker) => {
+  config.developer_instructions = template.replaceAll(PROMPT_MARKER, (marker) => {
     const replacement = prompts.get(marker);
     if (replacement === undefined) {
       throw new ConfigError(`unknown prompt marker ${marker} in ${source}`);
@@ -223,15 +225,15 @@ export function renderAgentDirectory(
 
 if (isEntryPoint(import.meta.url)) {
   try {
-    const { values } = parseArgs(process.argv.slice(2));
+    const { values } = parseArguments(process.argv.slice(2));
     const rendered = renderAgentDirectory(
-      requiredArg(values, "source-dir"),
-      requiredArg(values, "prompt-dir"),
-      requiredArg(values, "output-dir"),
-      requiredArg(values, "mcp-source")
+      requiredArgument(values, "source-dir"),
+      requiredArgument(values, "prompt-dir"),
+      requiredArgument(values, "output-dir"),
+      requiredArgument(values, "mcp-source")
     );
     writeLine(
-      `rendered ${rendered.length} native role configs into ${requiredArg(values, "output-dir")}`
+      `rendered ${rendered.length} native role configs into ${requiredArgument(values, "output-dir")}`
     );
   } catch (error) {
     writeErrorLine(`render-agent-configs: ${errorMessage(error)}`);

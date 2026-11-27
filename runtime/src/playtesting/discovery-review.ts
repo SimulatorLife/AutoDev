@@ -100,14 +100,14 @@ function readTrace(input: {
 }
 
 /**
- * The bounded visible state of one step.
- *
- * The recorded observation is the trace's full record; the analyst's packet
- * carries a bounded projection of it. Every visible control keeps its
- * identity, its role, its enabled state and its accessible name (capped),
- * the on-screen geometry is not carried -- the captured frame is the record
- * of the layout -- and the projection records what it condensed.
- */
+The bounded visible state of one step.
+
+The recorded observation is the trace's full record; the analyst's packet
+carries a bounded projection of it. Every visible control keeps its
+identity, its role, its enabled state and its accessible name (capped),
+the on-screen geometry is not carried -- the captured frame is the record
+of the layout -- and the projection records what it condensed.
+*/
 function boundedVisibleState(input: {
   readonly observation: Record<string, unknown>;
   readonly selectedActionId: string | null;
@@ -160,12 +160,12 @@ function boundedVisibleState(input: {
   let truncatedNameCount = 0;
   const controls = carried.map((control) => {
     const name = control.name as string;
-    const truncated = name.length > PLAYTESTS_DISCOVERY_CONTROL_NAME_MAX_LENGTH;
-    if (truncated) truncatedNameCount += 1;
+    const isTruncated = name.length > PLAYTESTS_DISCOVERY_CONTROL_NAME_MAX_LENGTH;
+    if (isTruncated) truncatedNameCount += 1;
     return {
       controlId: control.controlId as string,
       role: control.role as string,
-      name: truncated
+      name: isTruncated
         ? name.slice(0, PLAYTESTS_DISCOVERY_CONTROL_NAME_MAX_LENGTH - 1) + "…"
         : name,
       enabled: control.enabled as boolean
@@ -205,14 +205,18 @@ interface StepOutcomeParts {
   readonly observationId: string | null;
 }
 
-/** The string entries of a recorded list, in the order the trace stored them. */
+/**
+The string entries of a recorded list, in the order the trace stored them.
+*/
 function readStringArray(value: unknown): readonly string[] {
   return Array.isArray(value)
     ? value.filter((entry): entry is string => typeof entry === "string")
     : [];
 }
 
-/** The prediction the player recorded before acting, when it is well formed. */
+/**
+The prediction the player recorded before acting, when it is well formed.
+*/
 function readPrediction(
   rawPrediction: unknown
 ): PlaytestDiscoveryStepEvidence["preActionPrediction"] {
@@ -229,7 +233,9 @@ function readPrediction(
   };
 }
 
-/** The phase the trace recorded, falling back to the visible observation. */
+/**
+The phase the trace recorded, falling back to the visible observation.
+*/
 function readPhaseId(
   row: TraceRow,
   visibleObservation: Record<string, unknown>
@@ -241,7 +247,9 @@ function readPhaseId(
       : null;
 }
 
-/** The authoritative outcome the driver recorded for one step. */
+/**
+The authoritative outcome the driver recorded for one step.
+*/
 function readStepOutcome(row: TraceRow): StepOutcomeParts {
   const outcome = isRecord(row.authoritativeOutcome)
     ? row.authoritativeOutcome
@@ -269,7 +277,9 @@ function readStepOutcome(row: TraceRow): StepOutcomeParts {
   };
 }
 
-/** When the input was received: the dispatch, then the receipt, then the frame. */
+/**
+When the input was received: the dispatch, then the receipt, then the frame.
+*/
 function readReceivedAt(
   outcome: Record<string, unknown> | null,
   fallbackCapturedAt: unknown
@@ -283,14 +293,18 @@ function readReceivedAt(
         : null;
 }
 
-/** How the driver carried out the action, as the analyst sees it. */
+/**
+How the driver carried out the action, as the analyst sees it.
+*/
 function readInputKind(
   driverActionKind: string
 ): PlaytestDiscoveryActionReceipt["inputKind"] {
   return DRIVER_ACTION_INPUT_KINDS.get(driverActionKind) ?? "no-input";
 }
 
-/** The receipt of one admitted input, as the analyst reads it. */
+/**
+The receipt of one admitted input, as the analyst reads it.
+*/
 function buildActionReceipt(input: {
   readonly episodeId: string;
   readonly step: number;
@@ -371,11 +385,12 @@ function makeStepEvidence(input: {
       visibleObservation.capturedAt
     );
     const actionReceipt =
-      outcome.driverActionKind !== null &&
-      outcome.receiptStatus !== null &&
-      outcome.observationId !== null &&
-      receivedAt !== null
-        ? buildActionReceipt({
+      outcome.driverActionKind === null ||
+      outcome.receiptStatus === null ||
+      outcome.observationId === null ||
+      receivedAt === null
+        ? null
+        : buildActionReceipt({
             episodeId: input.episode.episodeId,
             step,
             actionId,
@@ -386,8 +401,7 @@ function makeStepEvidence(input: {
             receiptStatus: outcome.receiptStatus,
             observationId: outcome.observationId,
             receivedAt
-          })
-        : null;
+          });
     const observationNotes = warnings.map((warning, index) => ({
       noteId:
         input.episode.episodeId +
@@ -419,7 +433,9 @@ function makeStepEvidence(input: {
   });
 }
 
-/** The frames one episode recorded, and the frames it could not carry. */
+/**
+The frames one episode recorded, and the frames it could not carry.
+*/
 interface FrameEvidence {
   readonly frames: PlaytestDiscoveryEvidenceFrame[];
   readonly frameHashes: Record<string, string>;
@@ -432,10 +448,14 @@ interface FrameEvidence {
   readonly omittedArtifacts: PlaytestEvidenceOmittedArtifact[];
 }
 
-/** The reasons a single frame can be dropped from the packet. */
+/**
+The reasons a single frame can be dropped from the packet.
+*/
 type FrameOmitReason = "missing" | "invalid-reference" | "unsupported-media";
 
-/** The bytes behind one frame locator, or why the frame cannot be carried. */
+/**
+The bytes behind one frame locator, or why the frame cannot be carried.
+*/
 function readFrameArtifact(
   artifacts: PlaytestArtifactStore,
   reference: PlaytestArtifactReference | null
@@ -463,7 +483,9 @@ function readFrameArtifact(
   return { bytes, omitReason };
 }
 
-/** The visible observation the trace recorded for one step. */
+/**
+The visible observation the trace recorded for one step.
+*/
 function readVisibleObservation(
   traceRow: TraceRow | undefined
 ): Record<string, unknown> | null {
@@ -472,7 +494,9 @@ function readVisibleObservation(
     : null;
 }
 
-/** The viewport the trace recorded for one step. */
+/**
+The viewport the trace recorded for one step.
+*/
 function readViewport(
   visibleObservation: Record<string, unknown> | null
 ): Record<string, unknown> | null {
@@ -481,7 +505,9 @@ function readViewport(
     : null;
 }
 
-/** The capture timestamp the trace recorded for one step. */
+/**
+The capture timestamp the trace recorded for one step.
+*/
 function readCapturedAt(
   visibleObservation: Record<string, unknown> | null
 ): string | null {
@@ -490,7 +516,9 @@ function readCapturedAt(
     : null;
 }
 
-/** Whether the recorded frame carries a redacted surface. */
+/**
+Whether the recorded frame carries a redacted surface.
+*/
 function readFramePrivacy(observation: Record<string, unknown>): {
   readonly reason: PlaytestDiscoveryEvidenceFrame["reason"];
   readonly redactedSurfaces: readonly string[];
@@ -500,7 +528,9 @@ function readFramePrivacy(observation: Record<string, unknown>): {
     : { reason: "captured", redactedSurfaces: [] };
 }
 
-/** Every frame the episode recorded, in the order the episode recorded them. */
+/**
+Every frame the episode recorded, in the order the episode recorded them.
+*/
 function collectFrameEvidence(input: {
   readonly episode: PlaytestEpisode;
   readonly artifacts: PlaytestArtifactStore;
@@ -580,7 +610,9 @@ function collectFrameEvidence(input: {
   };
 }
 
-/** Only one terminal, persisted visual session can be reviewed. */
+/**
+Only one terminal, persisted visual session can be reviewed.
+*/
 function assertTerminalVisualSession(input: {
   readonly workspaceId: string;
   readonly episode: PlaytestEpisode;
@@ -627,13 +659,11 @@ export function preparePlaytestDiscoveryEvidencePacket(input: {
   }
   const trace = readTrace({ episode, artifacts });
   const traceRowsByStep = new Map(trace.rows.map((row) => [row.step, row]));
-  const frameEvidence = collectFrameEvidence({
+  const {frames, frameHashes, frameIdsByStep, omittedFrames, omittedArtifacts} = collectFrameEvidence({
     episode,
     artifacts,
     traceRowsByStep
   });
-  const { frames, frameHashes, frameIdsByStep } = frameEvidence;
-  const { omittedFrames, omittedArtifacts } = frameEvidence;
   const stepEvidence = makeStepEvidence({
     episode,
     rows: trace.rows,

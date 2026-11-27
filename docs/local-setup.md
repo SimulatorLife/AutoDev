@@ -89,6 +89,10 @@ therefore live only after the next install.
 
 Provider-specific `ensure-*` and `run-*` scripts are intentionally separate so a machine can enable only the providers it has credentials for. Use environment variables documented in each script to override local binary paths and project roots; do not add machine secrets or generated logs to this repository.
 
+### Router ingress retirement (source-only until generation deployment cutover)
+
+The current installer still runs the standalone Router; the generation ingress is not yet deployed. For the future ingress entrypoint, `AUTODEV_ROUTER_INGRESS_DRAIN_MS` defaults to `30000` (30 seconds) and starts when a ready successor takes over. At expiry, only unfinished requests on the retiring generation are disconnected; the ingress does not retry or migrate them. A normally drained generation proceeds immediately to graceful worker shutdown. `AUTODEV_ROUTER_INGRESS_WORKER_SHUTDOWN_MS` defaults to `60000` (60 seconds) and starts when the supervisor sends `SIGTERM`. The supervisor sends `SIGKILL` if the worker still has not exited at the end of this grace. Both settings must be positive integer milliseconds within the native Node timer limit (2,147,483,647). Keep the worker shutdown grace longer than the worker's own `CODEX_ROUTER_SHUTDOWN_DRAIN_MS` plus cleanup time. The authenticated Unix-socket retirement endpoint reports HTTP `202` until both traffic retirement and process exit have been observed, then `200`; the ingress status's `retired` state describes traffic retirement alone. See the [migration tracker](autodev-console-migration.md#zero-downtime-router-generation-deployment--pending) for outstanding cutover requirements.
+
 ### Typed CLI commands
 
 `pnpm autodev -- --help` lists every command family and the values each one

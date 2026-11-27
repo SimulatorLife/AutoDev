@@ -2,16 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  copilotOrchestratorDenyToolArgs,
+  copilotOrchestratorDenyToolArgs as copilotOrchestratorDenyToolArguments,
   evaluateOrchestratorToolCall,
   GIT_HISTORY_SUBCOMMANDS,
   isRootOrchestratorModel
 } from "../src/agents/orchestrator-policy.ts";
 
-const shell = (cmd: unknown) =>
+const shell = (command: unknown) =>
   evaluateOrchestratorToolCall({
     toolName: "exec_command",
-    toolInput: { cmd }
+    toolInput: { cmd: command }
   });
 
 test("only the explicit AutoDev root alias identifies root model policy", () => {
@@ -36,7 +36,7 @@ test("only the explicit AutoDev root alias identifies root model policy", () => 
 test("every history subcommand is refused, however the command is wrapped", () => {
   for (const subcommand of GIT_HISTORY_SUBCOMMANDS)
     assert.equal(shell(`git ${subcommand}`).allowed, false, subcommand);
-  for (const cmd of [
+  for (const command of [
     "/usr/bin/git log",
     "git --no-pager log -p",
     "env GIT_PAGER=cat git show HEAD",
@@ -45,11 +45,11 @@ test("every history subcommand is refused, however the command is wrapped", () =
     'zsh -lc "git blame a.ts"',
     "ls; git rev-list --count HEAD"
   ])
-    assert.equal(shell(cmd).allowed, false, cmd);
+    assert.equal(shell(command).allowed, false, command);
 });
 
 test("current-state git, other commands, and unreadable input run", () => {
-  for (const cmd of [
+  for (const command of [
     "git status",
     "git diff",
     "git diff --stat",
@@ -60,7 +60,7 @@ test("current-state git, other commands, and unreadable input run", () => {
     "rg 'git show' docs",
     "pnpm lint"
   ])
-    assert.equal(shell(cmd).allowed, true, cmd);
+    assert.equal(shell(command).allowed, true, command);
   assert.equal(shell(undefined).allowed, true);
   assert.equal(
     evaluateOrchestratorToolCall({
@@ -73,7 +73,7 @@ test("current-state git, other commands, and unreadable input run", () => {
 
 test("Copilot deny rules name the same history subcommands", () => {
   assert.deepEqual(
-    copilotOrchestratorDenyToolArgs(),
+    copilotOrchestratorDenyToolArguments(),
     GIT_HISTORY_SUBCOMMANDS.map((s) => `--deny-tool=shell(git ${s})`)
   );
 });

@@ -17,10 +17,10 @@ import {
 } from "../../src/files/path-containment.ts";
 
 /**
- * The one owner of "this path stays beneath that root". Workspaces approvals,
- * playtest artifact stores, sandboxes, approved configurations and memory
- * capture each used to spell this check for itself.
- */
+The one owner of "this path stays beneath that root". Workspaces approvals,
+playtest artifact stores, sandboxes, approved configurations and memory
+capture each used to spell this check for itself.
+*/
 test("the root itself and its descendants are within the root", () => {
   assert.equal(isPathWithin("/a/b", "/a/b"), true);
   assert.equal(isPathWithin("/a/b", "/a/b/"), true);

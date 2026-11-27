@@ -1,31 +1,31 @@
 /**
- * Loopback pooled MCP backend host for Supergateway Streamable HTTP ingress.
- *
- * External clients such as ChatGPT often open a fresh Streamable HTTP session
- * (`initialize` -> `notifications/initialized` -> single `tools/call`) for
- * every tool invocation without ever reusing `Mcp-Session-Id` or sending
- * `DELETE`. Letting Supergateway spawn a fresh stdio tree per session × per
- * backend multiplies Node/Python processes linearly with every tool call and
- * exhausts host memory.
- *
- * This host sits strictly on loopback (`127.0.0.1:<ephemeral>`, per-generation
- * Bearer token) behind Supergateway's native `streamableHttp` combined
- * upstreams:
- * - Supergateway retains Streamable HTTP transport, `Mcp-Session-Id` isolation,
- *   external Bearer auth, `/readyz`, `toolPrefix` namespacing, combining, and
- *   session expiry.
- * - Each configured backend runs at most ONE confined local process (or one
- *   remote Streamable HTTP transport), started lazily on demand with
- *   single-flight coalescing, idle-reaped when unused, and cleaned up by full
- *   POSIX process group so wrapper launchers never orphan grandchildren.
- * - `initialize` and `tools/list` answers are cached per backend (invalidated
- *   on `notifications/tools/list_changed` or backend exit), so repeated
- *   one-shot sessions complete handshakes in milliseconds without waking idle
- *   backends.
- * - Role allowlists, capability filtering, truthful tool annotations,
- *   per-request deadlines, secret isolation, and lazy OpenTelemetry spans are
- *   enforced uniformly at this boundary.
- */
+Loopback pooled MCP backend host for Supergateway Streamable HTTP ingress.
+
+External clients such as ChatGPT often open a fresh Streamable HTTP session
+(`initialize` -> `notifications/initialized` -> single `tools/call`) for
+every tool invocation without ever reusing `Mcp-Session-Id` or sending
+`DELETE`. Letting Supergateway spawn a fresh stdio tree per session × per
+backend multiplies Node/Python processes linearly with every tool call and
+exhausts host memory.
+
+This host sits strictly on loopback (`127.0.0.1:<ephemeral>`, per-generation
+Bearer token) behind Supergateway's native `streamableHttp` combined
+upstreams:
+- Supergateway retains Streamable HTTP transport, `Mcp-Session-Id` isolation,
+  external Bearer auth, `/readyz`, `toolPrefix` namespacing, combining, and
+  session expiry.
+- Each configured backend runs at most ONE confined local process (or one
+  remote Streamable HTTP transport), started lazily on demand with
+  single-flight coalescing, idle-reaped when unused, and cleaned up by full
+  POSIX process group so wrapper launchers never orphan grandchildren.
+- `initialize` and `tools/list` answers are cached per backend (invalidated
+  on `notifications/tools/list_changed` or backend exit), so repeated
+  one-shot sessions complete handshakes in milliseconds without waking idle
+  backends.
+- Role allowlists, capability filtering, truthful tool annotations,
+  per-request deadlines, secret isolation, and lazy OpenTelemetry spans are
+  enforced uniformly at this boundary.
+*/
 
 import { type ChildProcess, spawn } from "node:child_process";
 import {
@@ -76,12 +76,12 @@ import type {
   McpToolCallCorrelation,
   ToolCallOutcome
 } from "./mcp-telemetry.ts";
-import { SESSION_GRANT_META_KEY, verifySessionGrant } from "./session-grant.ts";
 import {
   createRemoteMcpTransport,
   publicRemoteMcpMessage,
   remoteTransportErrorMessage
 } from "./remote-transport.ts";
+import { SESSION_GRANT_META_KEY, verifySessionGrant } from "./session-grant.ts";
 
 type JsonRecord = Record<string, unknown>;
 type JsonRpcId = string | number;
@@ -103,7 +103,7 @@ const MAX_SESSIONS_PER_SERVER = 256;
 // Limit gateway lifetime bookkeeping, not the backend's own task store.
 const MAX_PINNED_TASKS = 256;
 const MAX_TIMER_MS = 2_147_483_647;
-const PROCESS_KILL_GRACE_MS = 5_000;
+const PROCESS_KILL_GRACE_MS = 5000;
 
 const CLIENT_METHODS = new Set([
   "initialize",
@@ -122,20 +122,20 @@ const pooledLocalBackendSchema = z
   .object({
     kind: z.literal("stdio"),
     /**
-     * The canonical MCP server this backend serves. The pool key may be
-     * role-qualified, but the server identity decides the confinement and
-     * sandbox rules the backend runs under.
-     */
+    The canonical MCP server this backend serves. The pool key may be
+    role-qualified, but the server identity decides the confinement and
+    sandbox rules the backend runs under.
+    */
     server: z.string().min(1),
     command: z.string().min(1),
     args: z.array(z.string()),
     cwd: z.string().min(1),
     tools: z.array(toolIdentifier).min(1),
     /**
-     * Role-scoped environment for this backend. It is applied on top of the
-     * shared gateway environment so one pooled backend per role can enforce
-     * that role's own permissions.
-     */
+    Role-scoped environment for this backend. It is applied on top of the
+    shared gateway environment so one pooled backend per role can enforce
+    that role's own permissions.
+    */
     env: z.record(z.string(), z.string()).optional(),
     /**
     The `env` variable that carries this backend's coordinator identity.
@@ -209,30 +209,48 @@ export type ChatgptBackendPoolConfig = z.infer<
 >;
 
 export interface ChatgptBackendPoolOptions {
-  /** Base clean environment inherited by local backends (never contains tunnel/remote secrets). */
+  /**
+  Base clean environment inherited by local backends (never contains tunnel/remote secrets).
+  */
   readonly gatewayEnv: Record<string, string>;
-  /** Host environment used solely for resolving per-remote-server credentials in memory. */
+  /**
+  Host environment used solely for resolving per-remote-server credentials in memory.
+  */
   readonly secretEnv?: NodeJS.ProcessEnv;
-  /** Optional pre-generated Bearer token; defaults to a freshly minted 256-bit token. */
+  /**
+  Optional pre-generated Bearer token; defaults to a freshly minted 256-bit token.
+  */
   readonly token?: string;
-  /** Idle duration before an unused local backend process is gracefully reaped. */
+  /**
+  Idle duration before an unused local backend process is gracefully reaped.
+  */
   readonly idleTimeoutMs?: number;
-  /** Maximum duration for an individual `tools/call` before timing out. */
+  /**
+  Maximum duration for an individual `tools/call` before timing out.
+  */
   readonly toolCallTimeoutMs?: number;
-  /** Maximum duration for initialize/list/ping requests. */
+  /**
+  Maximum duration for initialize/list/ping requests.
+  */
   readonly requestTimeoutMs?: number;
   /**
   Most concurrently retained conversations per conversation-scoped backend.
   */
   readonly maxConversations?: number;
-  /** Admits locally granted sessions to `admitted` servers. */
+  /**
+  Admits locally granted sessions to `admitted` servers.
+  */
   readonly admission?: GatewayAdmission;
 }
 
 export interface GatewayAdmission {
-  /** The private secret session grants are signed with. */
+  /**
+  The private secret session grants are signed with.
+  */
   readonly secret: string;
-  /** Reviewed workspace for discovery-only backends; never a client execution grant. */
+  /**
+  Reviewed workspace for discovery-only backends; never a client execution grant.
+  */
   readonly catalogueWorkspace: string;
   /**
   The confined launch of one role's server in an admitted workspace. A
@@ -256,7 +274,9 @@ export interface ChatgptBackendPoolHandle {
   readonly port: number;
   readonly token: string;
   readonly server: Server;
-  /** Active backend process/transport metrics for diagnostics and tests. */
+  /**
+  Active backend process/transport metrics for diagnostics and tests.
+  */
   stats(): Record<
     string,
     {
@@ -332,13 +352,15 @@ function timingSafeBearerMatch(
 ): boolean {
   if (!header) return false;
   const expected = `Bearer ${expectedToken}`;
-  const actualBuf = Buffer.from(header, "utf8");
-  const expectedBuf = Buffer.from(expected, "utf8");
-  if (actualBuf.length !== expectedBuf.length) return false;
-  return timingSafeEqual(actualBuf, expectedBuf);
+  const actualBuffer = Buffer.from(header, "utf8");
+  const expectedBuffer = Buffer.from(expected, "utf8");
+  if (actualBuffer.length !== expectedBuffer.length) return false;
+  return timingSafeEqual(actualBuffer, expectedBuffer);
 }
 
-/** Terminate a spawned process and its entire POSIX process group so wrappers never orphan children. */
+/**
+Terminate a spawned process and its entire POSIX process group so wrappers never orphan children.
+*/
 function signalProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
   if (child.exitCode !== null || child.signalCode !== null) return;
   if (process.platform !== "win32" && typeof child.pid === "number") {
@@ -346,13 +368,17 @@ function signalProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
       process.kill(-child.pid, signal);
       return;
     } catch {
-      /* Fall back to direct child signal if group already exited or differs. */
+      /*
+      Fall back to direct child signal if group already exited or differs.
+      */
     }
   }
   try {
     child.kill(signal);
   } catch {
-    /* Already exited. */
+    /*
+    Already exited.
+    */
   }
 }
 
@@ -369,29 +395,33 @@ async function stopProcessTree(
       timer.unref();
     })
   ]);
-  if (!exited && child.exitCode === null && child.signalCode === null) {
-    signalProcessTree(child, "SIGKILL");
-    await Promise.race([
-      once(child, "exit").catch(() => {}),
-      new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, 1000);
-        timer.unref();
-      })
-    ]);
+  if (exited || child.exitCode !== null || child.signalCode !== null) {
+    return;
   }
+
+  signalProcessTree(child, "SIGKILL");
+  await Promise.race([
+    once(child, "exit").catch(() => {}),
+    new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 1000);
+      timer.unref();
+    })
+  ]);
 }
 
-/** Check whether a live host CocoIndex daemon is already listening on its Unix socket. */
+/**
+Check whether a live host CocoIndex daemon is already listening on its Unix socket.
+*/
 async function isUnixSocketListening(
   socketPath: string,
   timeoutMs = 250
 ): Promise<boolean> {
   if (!existsSync(socketPath)) return false;
   return new Promise<boolean>((resolve) => {
-    let settled = false;
+    let isSettled = false;
     const finish = (ok: boolean): void => {
-      if (settled) return;
-      settled = true;
+      if (isSettled) return;
+      isSettled = true;
       clearTimeout(timer);
       socket.destroy();
       resolve(ok);
@@ -410,18 +440,20 @@ let sharedTelemetryPromise: Promise<
 
 function loadSharedTelemetry(): Promise<typeof import("./mcp-telemetry.ts")> {
   if (!sharedTelemetryPromise) {
-    sharedTelemetryPromise = import("./mcp-telemetry.ts").then((mod) => {
+    sharedTelemetryPromise = import("./mcp-telemetry.ts").then((module_) => {
       const token = readRuntimeSecret("OPENLIT_OTLP_API_KEY");
       try {
-        mod.configureExternalMcpTelemetry(
+        module_.configureExternalMcpTelemetry(
           "pooled",
           "http://127.0.0.1:4318/v1/traces",
           token ? { Authorization: `Bearer ${token}` } : {}
         );
       } catch {
-        /* Telemetry may already be initialized in the same process (e.g. tests). */
+        /*
+        Telemetry may already be initialized in the same process (e.g. tests).
+        */
       }
-      return mod;
+      return module_;
     });
   }
   return sharedTelemetryPromise;
@@ -482,7 +514,9 @@ class PooledBackendController {
     }
   }
 
-  /** Include task execution and result retention, not just pending RPCs. */
+  /**
+  Include task execution and result retention, not just pending RPCs.
+  */
   busy(): boolean {
     this.pruneTaskPins();
     return (
@@ -595,7 +629,7 @@ class PooledBackendController {
         tasks: tasks.filter(
           (task) => this.taskPins.get(task.taskId)?.owner === owner
         ),
-        ...(nextCursor !== undefined ? { nextCursor } : {})
+        ...((nextCursor !== undefined) && { nextCursor })
       }
     };
   }
@@ -643,7 +677,9 @@ class PooledBackendController {
       try {
         session.sse.end();
       } catch {
-        /* ignore closed socket */
+        /*
+        ignore closed socket
+        */
       }
     }
   }
@@ -653,7 +689,9 @@ class PooledBackendController {
       try {
         session.sse.end();
       } catch {
-        /* replace prior stream */
+        /*
+        replace prior stream
+        */
       }
     }
     session.sse = res;
@@ -686,9 +724,9 @@ class PooledBackendController {
   }
 
   /**
-   * A progress token is request-scoped, not a globally unique client ID.
-   * Only forward progress for a still-pending request on this backend.
-   */
+  A progress token is request-scoped, not a globally unique client ID.
+  Only forward progress for a still-pending request on this backend.
+  */
   private routeProgress(backend: LiveBackend, message: JsonRecord): void {
     if (message.jsonrpc !== "2.0") return;
     const parsed = ProgressNotificationSchema.safeParse(message);
@@ -718,10 +756,12 @@ class PooledBackendController {
   }
 
   private clearIdleTimer(): void {
-    if (this.idleTimer) {
-      clearTimeout(this.idleTimer);
-      this.idleTimer = null;
+    if (!this.idleTimer) {
+      return;
     }
+
+    clearTimeout(this.idleTimer);
+    this.idleTimer = null;
   }
 
   private armIdleTimer(): void {
@@ -740,8 +780,7 @@ class PooledBackendController {
     if (this.taskPins.size > 0) {
       // A terminal task still owns its advertised result-retention window.
       // Active/unobserved tasks never expire merely because of elapsed time.
-      const deadlines = [...this.taskPins.values()]
-        .map((pin) => pin.expiresAt)
+      const deadlines = Array.from(this.taskPins.values(), (pin) => pin.expiresAt)
         .filter((deadline): deadline is number => deadline !== null);
       if (deadlines.length > 0) {
         this.idleTimer = setTimeout(
@@ -838,41 +877,37 @@ class PooledBackendController {
 
   private async buildLocalChildEnv(): Promise<NodeJS.ProcessEnv> {
     if (this.spec.kind !== "stdio") return {};
-    const sandboxed = this.spec.command === "/usr/bin/sandbox-exec";
+    const isSandboxed = this.spec.command === "/usr/bin/sandbox-exec";
     const server = this.spec.server;
-    if (sandboxed && server === MCP_SERVER_FILESYSTEM) {
+    if (isSandboxed && server === MCP_SERVER_FILESYSTEM) {
       return {
         HOME: this.spec.cwd,
         PATH: "/usr/bin:/bin",
         LANG: "en_US.UTF-8",
-        ...(this.spec.env ?? {})
+        ...this.spec.env
       };
     }
-    let cocoindexSupervised = false;
-    if (sandboxed && server === MCP_SERVER_COCOINDEX) {
+    let isCocoindexSupervised = false;
+    if (isSandboxed && server === MCP_SERVER_COCOINDEX) {
       const homeDir = this.gatewayEnv.HOME;
       if (homeDir) {
         const daemonSock = path.join(homeDir, ".cocoindex_code", "daemon.sock");
         // Never allow a Seatbelt-jailed `ccc mcp` to hijack or duplicate an
         // already-running host `ccc run-daemon` (each daemon loads a ~1.4 GB
         // embedding worker and a jailed daemon fails other workspaces with EPERM).
-        cocoindexSupervised = await isUnixSocketListening(daemonSock);
+        isCocoindexSupervised = await isUnixSocketListening(daemonSock);
       }
     }
-    const childEnv: NodeJS.ProcessEnv = {
-      ...(sandboxed && server === MCP_SERVER_COCOINDEX
-        ? {
+    const childEnvironment: NodeJS.ProcessEnv = {
+      ...(isSandboxed && server === MCP_SERVER_COCOINDEX && {
             HF_HUB_OFFLINE: "1",
             TRANSFORMERS_OFFLINE: "1",
-            ...(cocoindexSupervised
-              ? { COCOINDEX_CODE_DAEMON_SUPERVISED: "1" }
-              : {})
-          }
-        : {}),
+            ...(isCocoindexSupervised && { COCOINDEX_CODE_DAEMON_SUPERVISED: "1" })
+          }),
       ...this.gatewayEnv,
       // The role-scoped environment is applied last so one role's identity and
       // coordinator always win over the gateway's shared defaults.
-      ...(this.spec.env ?? {})
+      ...this.spec.env
     };
     for (const secretName of [
       ...KEYCHAIN_SECRET_NAMES,
@@ -881,9 +916,9 @@ class PooledBackendController {
       CHATGPT_MCP_POOL_TOKEN_ENV,
       CHATGPT_MCP_POOL_PORT_ENV
     ]) {
-      delete childEnv[secretName];
+      delete childEnvironment[secretName];
     }
-    return childEnv;
+    return childEnvironment;
   }
 
   private async spawnLiveBackend(): Promise<LiveBackend> {
@@ -894,16 +929,16 @@ class PooledBackendController {
         this.name,
         this.secretEnv
       );
-      let closed = false;
+      let isClosed = false;
       let sendChain: Promise<void> = Promise.resolve();
       const live: LiveBackend = {
         setProtocolVersion: (version) => {
           transport.setProtocolVersion(version);
         },
         send: (message) => {
-          if (closed) return;
+          if (isClosed) return;
           sendChain = sendChain.then(async () => {
-            if (closed) return;
+            if (isClosed) return;
             try {
               await transport.send(message as unknown as JSONRPCMessage);
             } catch (error) {
@@ -929,8 +964,8 @@ class PooledBackendController {
           });
         },
         close: async () => {
-          if (closed) return;
-          closed = true;
+          if (isClosed) return;
+          isClosed = true;
           await Promise.race([
             transport.terminateSession().catch(() => {}),
             new Promise((resolve) => setTimeout(resolve, 300).unref())
@@ -948,40 +983,44 @@ class PooledBackendController {
         );
       };
       transport.onerror = () => {
-        /* Surface errors through pending requests rather than leaking URLs/headers. */
+        /*
+        Surface errors through pending requests rather than leaking URLs/headers.
+        */
       };
-      transport.onclose = () => {
-        if (!closed) {
-          closed = true;
-          this.handleBackendExit(live, `Remote MCP "${this.name}" closed`);
+      transport.addEventListener('close', () => {
+        if (isClosed) {
+          return;
         }
-      };
+
+        isClosed = true;
+        this.handleBackendExit(live, `Remote MCP "${this.name}" closed`);
+      });
       return live;
     }
 
-    const childEnv = await this.buildLocalChildEnv();
+    const childEnvironment = await this.buildLocalChildEnv();
     const child = spawn(this.spec.command, this.spec.args, {
       cwd: this.spec.cwd,
-      env: childEnv,
+      env: childEnvironment,
       detached: process.platform !== "win32",
       stdio: ["pipe", "pipe", "pipe"]
     });
     const lines: Interface = createInterface({ input: child.stdout! });
-    let closed = false;
+    let isClosed = false;
     const live: LiveBackend = {
       send: (message) => {
-        if (closed || !child.stdin || child.stdin.destroyed) return;
+        if (isClosed || !child.stdin || child.stdin.destroyed) return;
         child.stdin.write(`${JSON.stringify(message)}\n`);
       },
       close: async () => {
-        if (closed) return;
-        closed = true;
+        if (isClosed) return;
+        isClosed = true;
         lines.close();
         await stopProcessTree(child);
       },
       kill: () => {
-        if (closed) return;
-        closed = true;
+        if (isClosed) return;
+        isClosed = true;
         lines.close();
         signalProcessTree(child, "SIGKILL");
       }
@@ -992,24 +1031,28 @@ class PooledBackendController {
     // Drain stderr without unbounded buffering so chatty servers never block on a full pipe.
     child.stderr?.resume();
     child.once("error", () => {
-      if (!closed) {
-        closed = true;
-        lines.close();
-        this.handleBackendExit(
-          live,
-          `External MCP backend "${this.name}" failed to start`
-        );
+      if (isClosed) {
+        return;
       }
+
+      isClosed = true;
+      lines.close();
+      this.handleBackendExit(
+        live,
+        `External MCP backend "${this.name}" failed to start`
+      );
     });
     child.once("close", (code, signal) => {
-      if (!closed) {
-        closed = true;
-        lines.close();
-        this.handleBackendExit(
-          live,
-          `External MCP backend "${this.name}" exited (code=${code}, signal=${signal})`
-        );
+      if (isClosed) {
+        return;
       }
+
+      isClosed = true;
+      lines.close();
+      this.handleBackendExit(
+        live,
+        `External MCP backend "${this.name}" exited (code=${code}, signal=${signal})`
+      );
     });
     return live;
   }
@@ -1017,31 +1060,31 @@ class PooledBackendController {
   private sendRawRequest(
     backend: LiveBackend,
     method: string,
-    params: unknown,
+    parameters: unknown,
     clientId: JsonRpcId,
     sessionId: string | null,
     timeoutMs: number,
     taskOwner: string | null = null
   ): Promise<JsonRecord> {
     const createsTask =
-      method === "tools/call" && isRecord(params) && params.task !== undefined;
+      method === "tools/call" && isRecord(parameters) && parameters.task !== undefined;
     if (createsTask && !this.canCreateTask()) {
       return Promise.resolve(
         errorResponse(clientId, "Backend task retention capacity unavailable")
       );
     }
     const taskId =
-      isRecord(params) && typeof params.taskId === "string"
-        ? params.taskId
+      isRecord(parameters) && typeof parameters.taskId === "string"
+        ? parameters.taskId
         : undefined;
     const internalId = `pool:${++this.nextInternalId}`;
     const meta =
-      isRecord(params) && isRecord(params._meta) ? params._meta : null;
+      isRecord(parameters) && isRecord(parameters._meta) ? parameters._meta : null;
     const progressToken = ProgressTokenSchema.safeParse(meta?.progressToken);
-    const forwardedParams =
-      progressToken.success && isRecord(params)
-        ? { ...params, _meta: { ...meta, progressToken: internalId } }
-        : params;
+    const forwardedParameters =
+      progressToken.success && isRecord(parameters)
+        ? { ...parameters, _meta: { ...meta, progressToken: internalId } }
+        : parameters;
     return new Promise<JsonRecord>((resolve, reject) => {
       const timer = setTimeout(() => {
         const entry = this.pending.get(internalId);
@@ -1059,17 +1102,17 @@ class PooledBackendController {
         // If no other calls are active, recycle a backend that timed out so a
         // wedged server does not poison subsequent requests.
         this.pruneTaskPins();
-        if (
-          this.live === backend &&
-          this.pending.size === 0 &&
-          this.taskPins.size === 0 &&
-          this.uncertainTaskBackend === null
-        ) {
-          this.live = null;
-          this.cachedInitialize = null;
-          this.cachedTools = null;
-          void backend.close().catch(() => {});
+        if (this.live !== backend ||
+          this.pending.size > 0 ||
+          this.taskPins.size > 0 ||
+          this.uncertainTaskBackend !== null) {
+          return;
         }
+
+        this.live = null;
+        this.cachedInitialize = null;
+        this.cachedTools = null;
+        void backend.close().catch(() => {});
       }, timeoutMs);
       timer.unref();
       this.pending.set(internalId, {
@@ -1079,9 +1122,9 @@ class PooledBackendController {
         sessionId,
         method,
         createsTask,
-        ...(taskId !== undefined ? { taskId } : {}),
+        ...((taskId !== undefined) && { taskId }),
         taskOwner,
-        ...(progressToken.success ? { progressToken: progressToken.data } : {}),
+        ...(progressToken.success && { progressToken: progressToken.data }),
         timer,
         cancelled: false,
         resolve,
@@ -1091,7 +1134,7 @@ class PooledBackendController {
         jsonrpc: "2.0",
         id: internalId,
         method,
-        ...(forwardedParams !== undefined ? { params: forwardedParams } : {})
+        ...((forwardedParameters !== undefined) && { params: forwardedParameters })
       });
     });
   }
@@ -1142,7 +1185,7 @@ class PooledBackendController {
           },
           capabilities: {
             tools: isRecord(rawCaps.tools) ? rawCaps.tools : {},
-            ...(isRecord(rawCaps.tasks) ? { tasks: rawCaps.tasks } : {})
+            ...(isRecord(rawCaps.tasks) && { tasks: rawCaps.tasks })
           }
         };
         backend.send({
@@ -1340,12 +1383,12 @@ class PooledBackendController {
 
     const owner = ownerOverride ?? taskOwner(message.params, sessionId);
     if (method === "tools/call") {
-      const params = isRecord(message.params) ? message.params : null;
-      const toolName = params?.name;
+      const parameters = isRecord(message.params) ? message.params : null;
+      const toolName = parameters?.name;
       if (typeof toolName !== "string" || !this.allowed.has(toolName)) {
         return errorResponse(id, "Tool is not enabled for this role");
       }
-      if (params?.task !== undefined && owner === null) {
+      if (parameters?.task !== undefined && owner === null) {
         return errorResponse(id, TASK_OWNER_REQUIRED);
       }
       this.activeCalls += 1;
@@ -1359,15 +1402,15 @@ class PooledBackendController {
           const response = await this.sendRawRequest(
             backend,
             "tools/call",
-            params,
+            parameters,
             id,
             sessionId,
             this.toolCallTimeoutMs,
             owner
           );
-          const resultObj = isRecord(response.result) ? response.result : null;
+          const resultObject = isRecord(response.result) ? response.result : null;
           const outcome: ToolCallOutcome =
-            response.error || resultObj?.isError === true
+            response.error || resultObject?.isError === true
               ? { status: "error", errorType: "tool_error" }
               : { status: "ok" };
           return { response, outcome };
@@ -1384,7 +1427,7 @@ class PooledBackendController {
                 callResult = response;
                 return outcome;
               },
-              params?._meta,
+              parameters?._meta,
               correlation
             );
           } else {
@@ -1462,10 +1505,12 @@ class PooledBackendController {
     }
     const backend = this.live;
     this.live = null;
-    if (backend) {
-      this.forgetBackendTasks(backend);
-      await backend.close().catch(() => {});
+    if (!backend) {
+      return;
     }
+
+    this.forgetBackendTasks(backend);
+    await backend.close().catch(() => {});
   }
 }
 
@@ -1477,9 +1522,9 @@ const TASK_OWNER_REQUIRED =
 Who owns the tasks a request creates or names: the ChatGPT conversation when
 the platform supplies one, otherwise the MCP session the request arrived on.
 */
-function taskOwner(params: unknown, sessionId: string | null): string | null {
-  const conversation = isRecord(params)
-    ? chatgptConversationKey(params._meta)
+function taskOwner(parameters: unknown, sessionId: string | null): string | null {
+  const conversation = isRecord(parameters)
+    ? chatgptConversationKey(parameters._meta)
     : null;
   if (conversation) return `conversation:${conversation}`;
   return sessionId ? `session:${sessionId}` : null;
@@ -1524,15 +1569,16 @@ to start that scope's backend, who owns the tasks it creates, and the request
 as the backend should see it. A string is the refusal sent instead.
 */
 type ScopeResolution =
-  | {
+  string | {
       readonly key: string;
       readonly spec: () => PooledBackendSpec;
       readonly owner?: string;
-      /** The verified admission facts the call's span carries. */
+      /**
+      The verified admission facts the call's span carries.
+      */
       readonly correlation?: McpToolCallCorrelation;
       readonly message: JsonRecord;
-    }
-  | string;
+    };
 
 /**
 A server whose tool calls and MCP task requests each run in a backend of
@@ -1741,8 +1787,8 @@ function admitted(
     name,
     provisioned(admission.catalogueWorkspace),
     (message) => {
-      const params = isRecord(message.params) ? message.params : {};
-      const meta = isRecord(params._meta) ? params._meta : {};
+      const parameters = isRecord(message.params) ? message.params : {};
+      const meta = isRecord(parameters._meta) ? parameters._meta : {};
       const claims = verifySessionGrant(
         admission.secret,
         meta[SESSION_GRANT_META_KEY]
@@ -1753,16 +1799,16 @@ function admitted(
         return `This session's grant is for the ${claims.role} role, not ${spec.role}.`;
       // The grant never reaches the backend.
       const { [SESSION_GRANT_META_KEY]: _grant, ...forwardedMeta } = meta;
-      const perSession = spec.server === MCP_SERVER_XACPX;
+      const isPerSession = spec.server === MCP_SERVER_XACPX;
       return {
         key: JSON.stringify([
           claims.workspace,
-          perSession ? claims.session : null
+          isPerSession ? claims.session : null
         ]),
         spec: () =>
           provisioned(
             claims.workspace,
-            perSession ? claims.session : undefined
+            isPerSession ? claims.session : undefined
           ),
         owner: `grant:${claims.session}`,
         correlation: {
@@ -1772,7 +1818,7 @@ function admitted(
           workspace: path.basename(claims.workspace),
           sessionId: claims.runtimeSession ? claims.session : null
         },
-        message: { ...message, params: { ...params, _meta: forwardedMeta } }
+        message: { ...message, params: { ...parameters, _meta: forwardedMeta } }
       };
     },
     options
@@ -1792,25 +1838,25 @@ function backendRoute(
     : new PooledBackendController(name, spec, options);
 }
 
-async function readBody(req: IncomingMessage): Promise<string> {
+async function readBody(request: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = [];
   let total = 0;
-  for await (const chunk of req) {
-    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    total += buf.length;
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += buffer.length;
     if (total > MAX_BODY_BYTES) {
       throw new Error("Request body exceeds limit");
     }
-    chunks.push(buf);
+    chunks.push(buffer);
   }
   return Buffer.concat(chunks).toString("utf8");
 }
 
 /**
- * Start the loopback pooled MCP backend HTTP server consumed by Supergateway.
- * Each configured server is mounted at `/mcp/<serverName>` and authenticated
- * with a freshly minted 256-bit Bearer token.
- */
+Start the loopback pooled MCP backend HTTP server consumed by Supergateway.
+Each configured server is mounted at `/mcp/<serverName>` and authenticated
+with a freshly minted 256-bit Bearer token.
+*/
 export async function startChatgptBackendPool(
   rawConfig: ChatgptBackendPoolConfig,
   options: ChatgptBackendPoolOptions
@@ -1822,9 +1868,9 @@ export async function startChatgptBackendPool(
     controllers.set(name, backendRoute(name, spec, options));
   }
 
-  const server = createServer((req, res) => {
+  const server = createServer((request, res) => {
     void (async () => {
-      if (!timingSafeBearerMatch(req.headers.authorization, token)) {
+      if (!timingSafeBearerMatch(request.headers.authorization, token)) {
         res.writeHead(401, { "content-type": "application/json" }).end(
           JSON.stringify({
             jsonrpc: "2.0",
@@ -1835,8 +1881,8 @@ export async function startChatgptBackendPool(
         return;
       }
 
-      const parsedUrl = new URL(req.url ?? "/", "http://127.0.0.1");
-      if (parsedUrl.pathname === "/readyz" && req.method === "GET") {
+      const parsedUrl = new URL(request.url ?? "/", "http://127.0.0.1");
+      if (parsedUrl.pathname === "/readyz" && request.method === "GET") {
         res.writeHead(200, { "content-type": "text/plain" }).end("ok\n");
         return;
       }
@@ -1854,19 +1900,19 @@ export async function startChatgptBackendPool(
         return;
       }
 
-      const rawSessionId = req.headers["mcp-session-id"];
+      const rawSessionId = request.headers["mcp-session-id"];
       const sessionIdHeader =
         typeof rawSessionId === "string" && rawSessionId.trim()
           ? rawSessionId.trim()
           : null;
 
-      if (req.method === "DELETE") {
+      if (request.method === "DELETE") {
         if (sessionIdHeader) controller.deleteSession(sessionIdHeader);
         res.writeHead(204).end();
         return;
       }
 
-      if (req.method === "GET") {
+      if (request.method === "GET") {
         if (!sessionIdHeader) {
           res.writeHead(400).end("Missing Mcp-Session-Id");
           return;
@@ -1880,14 +1926,14 @@ export async function startChatgptBackendPool(
         return;
       }
 
-      if (req.method !== "POST") {
+      if (request.method !== "POST") {
         res.writeHead(405).end("Method not allowed");
         return;
       }
 
       let payload: unknown;
       try {
-        const text = await readBody(req);
+        const text = await readBody(request);
         payload = JSON.parse(text);
       } catch {
         res.writeHead(400, { "content-type": "application/json" }).end(
@@ -1916,7 +1962,7 @@ export async function startChatgptBackendPool(
       }
       const messages: JsonRecord[] = rawMessages;
 
-      const hasInitialize = messages.some((msg) => msg.method === "initialize");
+      const hasInitialize = messages.some((message) => message.method === "initialize");
       let session: LogicalSession | undefined;
       if (sessionIdHeader) {
         session = controller.getSession(sessionIdHeader);
@@ -1944,15 +1990,15 @@ export async function startChatgptBackendPool(
       }
 
       const responses: JsonRecord[] = [];
-      for (const msg of messages) {
+      for (const message of messages) {
         // Sequential per-POST message ordering matches JSON-RPC batch semantics.
         // eslint-disable-next-line no-await-in-loop -- preserve message order within one POST batch
-        const reply = await controller.handleRequest(msg, session.id);
+        const reply = await controller.handleRequest(message, session.id);
         if (reply) responses.push(reply);
       }
 
       // If initialization failed, do not retain an uninitialized session entry.
-      if (hasInitialize && responses.some((reply) => Boolean(reply.error))) {
+      if (hasInitialize && responses.some((reply) => reply.error)) {
         controller.deleteSession(session.id);
       }
 
@@ -1995,7 +2041,7 @@ export async function startChatgptBackendPool(
     server,
     stats: () =>
       Object.fromEntries(
-        [...controllers.entries()].map(([name, ctrl]) => [name, ctrl.stats()])
+        Array.from(controllers, ([name, ctrl]) => [name, ctrl.stats()])
       ),
     close: async () => {
       const serverClosed = new Promise<void>((resolve) =>
@@ -2004,14 +2050,14 @@ export async function startChatgptBackendPool(
       server.closeAllConnections();
       await serverClosed;
       await Promise.all(
-        [...controllers.values()].map((controller) => controller.close())
+        Array.from(controllers.values(), (controller) => controller.close())
       );
       if (sharedTelemetryPromise) {
         await Promise.race([
           sharedTelemetryPromise.then(
             // The pool does not own the process's telemetry: deliver its
             // spans, leaving the provider to whatever outlives the pool.
-            (mod) => mod.flushTelemetry(),
+            (module_) => module_.flushTelemetry(),
             () => {}
           ),
           new Promise<void>((resolve) => setTimeout(resolve, 400).unref())

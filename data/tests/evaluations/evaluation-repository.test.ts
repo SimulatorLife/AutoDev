@@ -7,7 +7,7 @@ import {
 } from "../../src/evaluations/evaluation-repository.ts";
 
 test("EvaluationRepository.parseEvaluationRows parses valid ClickHouse evaluation rows", () => {
-  const repo = new EvaluationRepository();
+  const repository = new EvaluationRepository();
   const rawJson = [
     JSON.stringify({
       id: "9b3c5a7f-1234-4567-89ab-cdef01234567",
@@ -43,7 +43,7 @@ test("EvaluationRepository.parseEvaluationRows parses valid ClickHouse evaluatio
     })
   ].join("\n");
 
-  const results = repo.parseEvaluationRows(rawJson);
+  const results = repository.parseEvaluationRows(rawJson);
   assert.equal(results.length, 2);
 
   const first = results[0]!;
@@ -82,15 +82,15 @@ test("EvaluationRepository.parseEvaluationRows parses valid ClickHouse evaluatio
 });
 
 test("EvaluationRepository distinguishes empty history from malformed rows", () => {
-  const repo = new EvaluationRepository();
-  assert.deepEqual(repo.parseEvaluationRows("\n  \n"), []);
+  const repository = new EvaluationRepository();
+  assert.deepEqual(repository.parseEvaluationRows("\n  \n"), []);
   assert.throws(
-    () => repo.parseEvaluationRows("not-valid-json"),
+    () => repository.parseEvaluationRows("not-valid-json"),
     EvaluationSourceUnavailableError
   );
   assert.throws(
     () =>
-      repo.parseEvaluationRows(
+      repository.parseEvaluationRows(
         [
           JSON.stringify({ id: "valid-row", created_at: "2026-10-04" }),
           "not-valid-json"
@@ -99,12 +99,12 @@ test("EvaluationRepository distinguishes empty history from malformed rows", () 
     EvaluationSourceUnavailableError
   );
   assert.throws(
-    () => repo.parseEvaluationRows(JSON.stringify({ id: "missing-time" })),
+    () => repository.parseEvaluationRows(JSON.stringify({ id: "missing-time" })),
     EvaluationSourceUnavailableError
   );
   assert.throws(
     () =>
-      repo.parseEvaluationRows(
+      repository.parseEvaluationRows(
         JSON.stringify({
           id: "invalid-meta",
           created_at: "2026-10-04",
@@ -115,7 +115,7 @@ test("EvaluationRepository distinguishes empty history from malformed rows", () 
   );
   assert.throws(
     () =>
-      repo.parseEvaluationRows(
+      repository.parseEvaluationRows(
         JSON.stringify({
           id: "invalid-span-id",
           created_at: "2026-10-04",
@@ -126,7 +126,7 @@ test("EvaluationRepository distinguishes empty history from malformed rows", () 
   );
   assert.throws(
     () =>
-      repo.parseEvaluationRows(
+      repository.parseEvaluationRows(
         JSON.stringify({
           id: "oversized-span-id",
           created_at: "2026-10-04",
@@ -138,8 +138,8 @@ test("EvaluationRepository distinguishes empty history from malformed rows", () 
 });
 
 test("EvaluationRepository does not infer verdicts from scores or missing metrics", () => {
-  const repo = new EvaluationRepository();
-  const results = repo.parseEvaluationRows(
+  const repository = new EvaluationRepository();
+  const results = repository.parseEvaluationRows(
     [
       JSON.stringify({
         id: "score-without-verdict",
@@ -160,7 +160,7 @@ test("EvaluationRepository does not infer verdicts from scores or missing metric
 });
 
 test("EvaluationRepository reads the documented verdict vocabulary", () => {
-  const repo = new EvaluationRepository();
+  const repository = new EvaluationRepository();
   const rowWithVerdict = (verdict: string) =>
     JSON.stringify({
       id: "verdict-row",
@@ -188,7 +188,7 @@ test("EvaluationRepository reads the documented verdict vocabulary", () => {
     ["", null]
   ] as const) {
     const label = JSON.stringify(verdict);
-    const [result] = repo.parseEvaluationRows(rowWithVerdict(verdict));
+    const [result] = repository.parseEvaluationRows(rowWithVerdict(verdict));
     assert.equal(result?.metrics[0]?.pass, expected, `verdict ${label}`);
     assert.equal(result?.passed, expected, `row passed for ${label}`);
   }
@@ -222,8 +222,8 @@ test("EvaluationRepository.listEvaluations returns parsed rows with custom fetch
     return new Response(sampleRow, { status: 200 });
   };
 
-  const repo = new EvaluationRepository({ fetchImpl: mockFetch });
-  const page = await repo.listEvaluations(50);
+  const repository = new EvaluationRepository({ fetchImpl: mockFetch });
+  const page = await repository.listEvaluations(50);
   assert.equal(page.results.length, 1);
   assert.equal(page.total, 1);
   assert.equal(page.results[0]?.id, "uuid-123");
@@ -256,8 +256,8 @@ test("EvaluationRepository reports the table's own size, not the size of the win
     return new Response(rows, { status: 200 });
   };
 
-  const repo = new EvaluationRepository({ fetchImpl: mockFetch });
-  const page = await repo.listEvaluations(2);
+  const repository = new EvaluationRepository({ fetchImpl: mockFetch });
+  const page = await repository.listEvaluations(2);
   assert.equal(page.results.length, 2);
   assert.equal(page.total, 5000);
 });
@@ -279,9 +279,9 @@ test("EvaluationRepository fails the read rather than reporting an unreadable co
       }
       return new Response("", { status: 200 });
     };
-    const repo = new EvaluationRepository({ fetchImpl: mockFetch });
+    const repository = new EvaluationRepository({ fetchImpl: mockFetch });
     await assert.rejects(
-      repo.listEvaluations(),
+      repository.listEvaluations(),
       EvaluationSourceUnavailableError,
       `count body ${JSON.stringify(body)} must not read as a total`
     );
@@ -306,8 +306,8 @@ test("EvaluationRepository never reports a total below the rows it returned", as
     return new Response(rows, { status: 200 });
   };
 
-  const repo = new EvaluationRepository({ fetchImpl: mockFetch });
-  const page = await repo.listEvaluations();
+  const repository = new EvaluationRepository({ fetchImpl: mockFetch });
+  const page = await repository.listEvaluations();
   assert.equal(page.results.length, 1);
   assert.equal(page.total, 1);
 });
@@ -319,9 +319,9 @@ test("EvaluationRepository reports fetch failure and non-ok response as unavaila
     });
   };
 
-  const repoError = new EvaluationRepository({ fetchImpl: errorFetch });
+  const repositoryError = new EvaluationRepository({ fetchImpl: errorFetch });
   await assert.rejects(
-    repoError.listEvaluations(),
+    repositoryError.listEvaluations(),
     EvaluationSourceUnavailableError
   );
 
@@ -329,8 +329,8 @@ test("EvaluationRepository reports fetch failure and non-ok response as unavaila
     throw new Error("ECONNREFUSED");
   };
 
-  const repoThrowing = new EvaluationRepository({ fetchImpl: throwingFetch });
-  await assert.rejects(repoThrowing.listEvaluations(), (error: unknown) => {
+  const repositoryThrowing = new EvaluationRepository({ fetchImpl: throwingFetch });
+  await assert.rejects(repositoryThrowing.listEvaluations(), (error: unknown) => {
     assert.ok(error instanceof EvaluationSourceUnavailableError);
     assert.doesNotMatch(error.message, /ECONNREFUSED/u);
     return true;
@@ -350,7 +350,7 @@ test("EvaluationRepository refuses a score that is not a finite number", () => {
   // Without these, deleting the guard is invisible: every other test feeds a
   // well-formed score, so a repository that passed NaN, Infinity and "0.9"
   // straight through to a metric cell would pass the file.
-  const repo = new EvaluationRepository();
+  const repository = new EvaluationRepository();
   // Written by hand rather than through `JSON.stringify`: `JSON.stringify`
   // turns Infinity into null and NaN into null, so serialising the very values
   // under test would produce a fixture that does not contain them.
@@ -366,7 +366,7 @@ test("EvaluationRepository refuses a score that is not a finite number", () => {
 
   // The positive control first, so a version that refuses everything cannot
   // pass this file by accident.
-  const accepted = repo.parseEvaluationRows(rowWithScore("0.9"));
+  const accepted = repository.parseEvaluationRows(rowWithScore("0.9"));
   assert.equal(accepted.length, 1);
   assert.deepEqual(accepted[0]?.metrics[0], {
     name: "quality",
@@ -383,7 +383,7 @@ test("EvaluationRepository refuses a score that is not a finite number", () => {
     ["null", "null"]
   ] as const) {
     assert.throws(
-      () => repo.parseEvaluationRows(rowWithScore(literal)),
+      () => repository.parseEvaluationRows(rowWithScore(literal)),
       EvaluationSourceUnavailableError,
       `${label} is refused rather than becoming a metric cell`
     );
@@ -392,7 +392,7 @@ test("EvaluationRepository refuses a score that is not a finite number", () => {
   // And the reason the message must not leak the value: it is the only place
   // an operator learns the read failed rather than that a score was zero.
   assert.throws(
-    () => repo.parseEvaluationRows(rowWithScore("1e400")),
+    () => repository.parseEvaluationRows(rowWithScore("1e400")),
     (error: unknown) => {
       assert.ok(error instanceof EvaluationSourceUnavailableError);
       assert.doesNotMatch(error.message, /1e400/u);
@@ -414,12 +414,12 @@ test("EvaluationRepository aborts hung ClickHouse queries after timeoutMs", asyn
     });
   };
 
-  const repo = new EvaluationRepository({
+  const repository = new EvaluationRepository({
     timeoutMs: 25,
     fetchImpl: stallingFetch
   });
   await assert.rejects(
-    repo.listEvaluations(),
+    repository.listEvaluations(),
     EvaluationSourceUnavailableError
   );
   assert.ok(observedSignals.length > 0);

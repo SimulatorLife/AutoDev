@@ -1,4 +1,6 @@
-/** Deterministic, strict JSON encoding for hashes of Playtesting manifests. */
+/**
+Deterministic, strict JSON encoding for hashes of Playtesting manifests.
+*/
 
 export function canonicalPlaytestJson(value: unknown): string {
   return encode(value, new Set());

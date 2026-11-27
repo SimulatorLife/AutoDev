@@ -19,7 +19,6 @@ import { InMemorySpanExporter } from "@opentelemetry/sdk-trace";
 
 import { startChatgptBackendPool } from "../src/mcp/chatgpt-backend-pool.ts";
 import { probeSupergateway } from "../src/mcp/chatgpt-supergateway-probe.ts";
-import { withGrant } from "../src/mcp/gateway-client.ts";
 import {
   createGatewayAdmission,
   ensureLocalAdmission,
@@ -27,6 +26,7 @@ import {
   localSurfaceUrl,
   readLocalAdmission
 } from "../src/mcp/gateway-admission.ts";
+import { withGrant } from "../src/mcp/gateway-client.ts";
 import {
   getFinishedSpans,
   resetTelemetryForTest,
@@ -98,7 +98,7 @@ test("local gateway URLs require private state and literal role/server identifie
   const codexHome = path.join(root.path, ".codex");
   ensureLocalAdmission(codexHome);
   const state = path.join(codexHome, "mcp-gateway", "gateway.json");
-  for (const mcpPort of [0, -1, 65536, "1234", 1.5]) {
+  for (const mcpPort of [0, -1, 65_536, "1234", 1.5]) {
     writeFileSync(state, JSON.stringify({ mcpPort }), { mode: 0o600 });
     assert.equal(localSurfaceUrl(codexHome, "worker", "commands"), null);
   }
@@ -168,7 +168,7 @@ test("lazy admission remains pinned to its Runtime source generation after insta
     runtimeSource: current,
     backend: (
       _server,
-      _repo,
+      _repository,
       _workspace,
       _node,
       _home,
@@ -453,11 +453,11 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       const status = async (token: string) =>
         JSON.parse((await call(token, 43, "status")).result.content[0].text);
       const waitForStatus = async (token: string, expected: string[]) => {
-        for (let i = 0; i < 100; i += 1) {
-          // eslint-disable-next-line no-await-in-loop -- wait for the backend to receive the held calls
+        for (let index = 0; index < 100; index += 1) {
+           
           const actual = await status(token);
           if (JSON.stringify(actual) === JSON.stringify(expected)) return;
-          // eslint-disable-next-line no-await-in-loop -- bounded fixture polling
+           
           await delay(20);
         }
         assert.fail("fixture never reached expected pending state");

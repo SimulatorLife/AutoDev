@@ -28,7 +28,9 @@ import { MCP_SERVER_CODEGRAPHCONTEXT } from "@simulatorlife/autodev-runtime/shar
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const mcpLauncherHook = join(repositoryRoot, "scripts", "run-autodev-mcp.sh");
 
-/** A `ccc` stand-in whose `init` writes the project marker the real one writes. */
+/**
+A `ccc` stand-in whose `init` writes the project marker the real one writes.
+*/
 const MOCK_CCC_INIT =
   'if [ "$1" = "init" ]; then mkdir -p .cocoindex_code && touch .cocoindex_code/settings.yml; fi\n';
 
@@ -38,17 +40,17 @@ function createIsolatedTempDir(prefix: string): string {
     if (!existsSync(candidate)) continue;
     const base = realpathSync(candidate);
     let current = resolve(base);
-    let containsProject = false;
+    let isContainsProject = false;
     for (;;) {
       if (existsSync(join(current, ".cocoindex_code"))) {
-        containsProject = true;
+        isContainsProject = true;
         break;
       }
       const parent = dirname(current);
       if (parent === current) break;
       current = parent;
     }
-    if (!containsProject) {
+    if (!isContainsProject) {
       try {
         return mkdtempSync(join(base, prefix));
       } catch {
@@ -62,7 +64,9 @@ function createIsolatedTempDir(prefix: string): string {
 }
 
 const RUNTIME_SOURCE = join(import.meta.dirname, "..", "..", "runtime", "src");
-/** pnpm's virtual store: every package the Runtime's node_modules links to. */
+/**
+pnpm's virtual store: every package the Runtime's node_modules links to.
+*/
 const DEPENDENCY_STORE = realpathSync(
   join(import.meta.dirname, "..", "..", "node_modules", ".pnpm")
 );
@@ -120,16 +124,18 @@ test("Runtime-owned MCP servers run beside the launcher, whatever root the calle
   // An inherited AUTODEV_REPO_ROOT used to choose which tree the Commands and
   // Playtest servers ran from, so a caller could point the installed launcher
   // at an editable checkout. The servers are the launcher's sibling modules.
-  const env = { AUTODEV_REPO_ROOT: "/elsewhere" };
-  assert.deepEqual(resolveMcpCommand("playtest", env).args, [
+  const environment = { AUTODEV_REPO_ROOT: "/elsewhere" };
+  assert.deepEqual(resolveMcpCommand("playtest", environment).args, [
     join(RUNTIME_SOURCE, "playtesting", "mcp-main.ts")
   ]);
-  assert.deepEqual(resolveMcpCommand("commands", env).args, [
+  assert.deepEqual(resolveMcpCommand("commands", environment).args, [
     join(RUNTIME_SOURCE, "mcp", "commands-main.ts")
   ]);
 });
 
-/** A copy of the launcher hook at `<root>/<directory>/`, as the installer places it. */
+/**
+A copy of the launcher hook at `<root>/<directory>/`, as the installer places it.
+*/
 function installHook(root: string, directory: string): string {
   const hook = join(root, directory, "run-autodev-mcp.sh");
   mkdirSync(dirname(hook), { recursive: true });
@@ -315,16 +321,16 @@ test("the launcher resolves installed tools from the home the server runs with",
       writeFileSync(join(bin, name), "#!/usr/bin/env bash\nexit 0\n");
       chmodSync(join(bin, name), 0o755);
     }
-    const env = {
+    const environment = {
       HOME: toolHome,
       PATH: "/usr/bin:/bin"
     };
-    assert.deepEqual(resolveMcpCommand("cocoindex-code", env), {
+    assert.deepEqual(resolveMcpCommand("cocoindex-code", environment), {
       binary: join(bin, "ccc"),
       args: ["mcp"],
       pathPrepend: []
     });
-    assert.deepEqual(resolveMcpCommand(MCP_SERVER_CODEGRAPHCONTEXT, env), {
+    assert.deepEqual(resolveMcpCommand(MCP_SERVER_CODEGRAPHCONTEXT, environment), {
       binary: join(bin, "codegraphcontext"),
       args: ["mcp", "start"],
       pathPrepend: []
@@ -362,7 +368,7 @@ test("MCP launcher rejects unknown tools", () => {
 
 test("runMcp auto-initializes cocoindex-code if .cocoindex_code is absent", () => {
   const tempDir = createIsolatedTempDir("autodev-mcp-launcher-");
-  const prevCwd = process.cwd();
+  const previousCwd = process.cwd();
   try {
     const mockBin = join(tempDir, "mock-ccc");
     writeFileSync(mockBin, `#!/usr/bin/env bash\n${MOCK_CCC_INIT}exit 0\n`);
@@ -378,7 +384,7 @@ test("runMcp auto-initializes cocoindex-code if .cocoindex_code is absent", () =
     assert.equal(status, 0);
     assert.equal(findCocoindexProjectRoot(tempDir), tempDir);
   } finally {
-    process.chdir(prevCwd);
+    process.chdir(previousCwd);
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
@@ -420,22 +426,22 @@ test("resolveMcpWorkspace reports why a declared workspace is unusable", () => {
 });
 
 test("findCocoindexProjectRoot agrees with the ancestor walk ccc performs", () => {
-  const repo = createIsolatedTempDir("autodev-cocoindex-root-");
+  const repository = createIsolatedTempDir("autodev-cocoindex-root-");
   try {
-    const nested = join(repo, "runtime", "src", "mcp");
+    const nested = join(repository, "runtime", "src", "mcp");
     mkdirSync(nested, { recursive: true });
     assert.equal(findCocoindexProjectRoot(nested), null);
 
-    mkdirSync(join(repo, ".cocoindex_code"));
+    mkdirSync(join(repository, ".cocoindex_code"));
     // A bare settings directory is ccc's user-level home, not a project.
-    writeFileSync(join(repo, ".cocoindex_code", "global_settings.yml"), "");
+    writeFileSync(join(repository, ".cocoindex_code", "global_settings.yml"), "");
     assert.equal(findCocoindexProjectRoot(nested), null);
 
-    writeFileSync(join(repo, ".cocoindex_code", "settings.yml"), "");
-    assert.equal(findCocoindexProjectRoot(nested), repo);
-    assert.equal(findCocoindexProjectRoot(repo), repo);
+    writeFileSync(join(repository, ".cocoindex_code", "settings.yml"), "");
+    assert.equal(findCocoindexProjectRoot(nested), repository);
+    assert.equal(findCocoindexProjectRoot(repository), repository);
   } finally {
-    rmSync(repo, { recursive: true, force: true });
+    rmSync(repository, { recursive: true, force: true });
   }
 });
 
@@ -445,15 +451,15 @@ test("resolveCocoindexInitRoot initializes where ccc init would, and never the h
     mkdirSync(join(home, ".cocoindex_code"));
     writeFileSync(join(home, ".cocoindex_code", "global_settings.yml"), "");
     const plain = join(home, "notes");
-    const repo = join(home, "repo");
-    const nested = join(repo, "packages", "app");
+    const repository = join(home, "repo");
+    const nested = join(repository, "packages", "app");
     mkdirSync(plain);
-    mkdirSync(join(repo, ".git"), { recursive: true });
+    mkdirSync(join(repository, ".git"), { recursive: true });
     mkdirSync(nested, { recursive: true });
 
     assert.equal(resolveCocoindexInitRoot(plain, home), plain);
-    assert.equal(resolveCocoindexInitRoot(nested, home), repo);
-    assert.equal(resolveCocoindexInitRoot(repo, home), repo);
+    assert.equal(resolveCocoindexInitRoot(nested, home), repository);
+    assert.equal(resolveCocoindexInitRoot(repository, home), repository);
     for (const covering of [home, dirname(home), "/"])
       assert.throws(
         () => resolveCocoindexInitRoot(covering, home),
@@ -469,7 +475,7 @@ test("resolveCocoindexInitRoot initializes where ccc init would, and never the h
     try {
       symlinkSync(home, alias);
       assert.equal(resolveCocoindexInitRoot(join(alias, "notes"), home), plain);
-      assert.equal(resolveCocoindexInitRoot(nested, alias), repo);
+      assert.equal(resolveCocoindexInitRoot(nested, alias), repository);
       assert.throws(
         () => resolveCocoindexInitRoot(alias, home),
         /will not index/
@@ -491,13 +497,13 @@ test("runMcp initializes a repository under a home that holds ccc's user setting
   // skipped initialization for every workspace under the home directory, and
   // `ccc mcp` then exited with "Not in an initialized project directory".
   const home = realpathSync(createIsolatedTempDir("autodev-mcp-home-"));
-  const prevCwd = process.cwd();
+  const previousCwd = process.cwd();
   try {
     mkdirSync(join(home, ".cocoindex_code"));
     writeFileSync(join(home, ".cocoindex_code", "global_settings.yml"), "");
-    const repo = join(home, "repo");
-    const workspace = join(repo, "packages", "app");
-    mkdirSync(join(repo, ".git"), { recursive: true });
+    const repository = join(home, "repo");
+    const workspace = join(repository, "packages", "app");
+    mkdirSync(join(repository, ".git"), { recursive: true });
     mkdirSync(workspace, { recursive: true });
     const mockBin = join(home, "mock-ccc");
     const seenCwd = join(home, "seen-cwd");
@@ -514,7 +520,7 @@ test("runMcp initializes a repository under a home that holds ccc's user setting
       AUTODEV_COCOINDEX_BIN: mockBin
     });
     assert.equal(status, 0);
-    assert.equal(findCocoindexProjectRoot(workspace), repo);
+    assert.equal(findCocoindexProjectRoot(workspace), repository);
     assert.equal(
       existsSync(join(home, ".cocoindex_code", "settings.yml")),
       false
@@ -536,7 +542,7 @@ test("runMcp initializes a repository under a home that holds ccc's user setting
       false
     );
   } finally {
-    process.chdir(prevCwd);
+    process.chdir(previousCwd);
     rmSync(home, { recursive: true, force: true });
   }
 });
@@ -547,7 +553,7 @@ test("runMcp serves cocoindex-code from the declared workspace, not the caller's
   // "Not in an initialized project directory".
   const root = createIsolatedTempDir("autodev-mcp-declared-");
   const elsewhere = createIsolatedTempDir("autodev-mcp-caller-");
-  const prevCwd = process.cwd();
+  const previousCwd = process.cwd();
   try {
     const workspace = join(root, "workspace");
     mkdirSync(workspace);
@@ -572,7 +578,7 @@ test("runMcp serves cocoindex-code from the declared workspace, not the caller's
     assert.equal(findCocoindexProjectRoot(workspace), workspace);
     assert.equal(existsSync(join(elsewhere, ".cocoindex_code")), false);
   } finally {
-    process.chdir(prevCwd);
+    process.chdir(previousCwd);
     rmSync(root, { recursive: true, force: true });
     rmSync(elsewhere, { recursive: true, force: true });
   }
@@ -580,7 +586,7 @@ test("runMcp serves cocoindex-code from the declared workspace, not the caller's
 
 test("runMcp refuses a workspace it cannot initialize instead of serving the wrong project", () => {
   const root = createIsolatedTempDir("autodev-mcp-uninitializable-");
-  const prevCwd = process.cwd();
+  const previousCwd = process.cwd();
   try {
     const workspace = join(root, "workspace");
     mkdirSync(workspace);
@@ -599,7 +605,7 @@ test("runMcp refuses a workspace it cannot initialize instead of serving the wro
       /AutoDev cocoindex-code has no project under .*workspace/
     );
   } finally {
-    process.chdir(prevCwd);
+    process.chdir(previousCwd);
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -621,7 +627,7 @@ test("the LSP server finds the language servers AutoDev pins, whatever PATH Code
     }
   );
   assert.equal(result.status, 0, result.stderr);
-  const [node, languageServer] = result.stdout.trim().split("\n");
+  const [node, languageServer] = result.stdout.trim().split("\n", 2);
   assert.equal(realpathSync(node!), realpathSync(process.execPath));
   assert.equal(
     languageServer,

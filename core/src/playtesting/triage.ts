@@ -1,20 +1,20 @@
 /**
- * Explainable finding priority ordering and triage (§9).
- * Normative design in docs/playtesting-measurement-contract.md §9 and
- * docs/playtesting-target-state.md §1 & §4.
- *
- * Rules:
- * 1. Catastrophic/data-loss/access-blocking harm first;
- * 2. Major progress/experience harm second;
- * 3. Minor friction third;
- * 4. Informational fourth.
- * Within a class:
- * - Corroborated/verified impact and human-confirmed severity outrank
- *   unconfirmed or purely cosmetic findings.
- * - Exposure/recurrence and breadth sort within class.
- * - Operator overrides are tracked with author and reason.
- * - Never compute an opaque weighted LLM priority score.
- */
+Explainable finding priority ordering and triage (§9).
+Normative design in docs/playtesting-measurement-contract.md §9 and
+docs/playtesting-target-state.md §1 & §4.
+
+Rules:
+1. Catastrophic/data-loss/access-blocking harm first;
+2. Major progress/experience harm second;
+3. Minor friction third;
+4. Informational fourth.
+Within a class:
+- Corroborated/verified impact and human-confirmed severity outrank
+  unconfirmed or purely cosmetic findings.
+- Exposure/recurrence and breadth sort within class.
+- Operator overrides are tracked with author and reason.
+- Never compute an opaque weighted LLM priority score.
+*/
 
 import type { PlaytestFinding, PlaytestSeverity } from "./types.ts";
 
@@ -49,16 +49,16 @@ const EVIDENCE_ORDER: Record<string, number> = {
 };
 
 /**
- * Exposure rate, or null when no denominator was recorded.
- *
- * This returned `0` when neither opportunity nor episode counts were
- * available, and `0` is a claim: it says the finding was rarely exposed. A
- * finding whose exposure nobody measured is not rarely exposed, it is
- * unmeasured, and the old zero also leaked into `priorityScoreKey` as a
- * fabricated `1.0000` -- the worst-looking possible score for a finding whose
- * exposure was simply never observed. No test asserted that key, which is how
- * it survived.
- */
+Exposure rate, or null when no denominator was recorded.
+
+This returned `0` when neither opportunity nor episode counts were
+available, and `0` is a claim: it says the finding was rarely exposed. A
+finding whose exposure nobody measured is not rarely exposed, it is
+unmeasured, and the old zero also leaked into `priorityScoreKey` as a
+fabricated `1.0000` -- the worst-looking possible score for a finding whose
+exposure was simply never observed. No test asserted that key, which is how
+it survived.
+*/
 function getExposureRate(finding: PlaytestFinding): number | null {
   if (
     finding.affectedOpportunities !== null &&
@@ -78,9 +78,9 @@ function getExposureRate(finding: PlaytestFinding): number | null {
 }
 
 /**
- * Compare two findings for explainable triage order.
- * Returns negative if a outranks b (comes first), positive if b outranks a.
- */
+Compare two findings for explainable triage order.
+Returns negative if a outranks b (comes first), positive if b outranks a.
+*/
 export function comparePlaytestFindings(
   a: PlaytestFinding,
   b: PlaytestFinding,
@@ -97,9 +97,9 @@ export function comparePlaytestFindings(
 
   // Within the same severity class:
   // Verified / corroborated evidence comes before unverified hypothesis
-  const evA = EVIDENCE_ORDER[a.evidenceStatus] ?? 3;
-  const evB = EVIDENCE_ORDER[b.evidenceStatus] ?? 3;
-  if (evA !== evB) return evA - evB;
+  const eventA = EVIDENCE_ORDER[a.evidenceStatus] ?? 3;
+  const eventB = EVIDENCE_ORDER[b.evidenceStatus] ?? 3;
+  if (eventA !== eventB) return eventA - eventB;
 
   // Higher exposure rate when exposed comes first. An unmeasured rate is not
   // zero: ordering it as zero would assert the finding was rarely exposed,
@@ -129,8 +129,8 @@ export function comparePlaytestFindings(
 }
 
 /**
- * Triages an array of findings into an explainable ranked order.
- */
+Triages an array of findings into an explainable ranked order.
+*/
 export function triagePlaytestFindings(
   findings: readonly PlaytestFinding[],
   overrides?: readonly PlaytestFindingTriageOverride[]

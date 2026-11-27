@@ -1,7 +1,9 @@
 import { hasControlCharacters } from "../shared/control-characters.ts";
 import { isRecord } from "../shared/object-guards.ts";
 
-/** Workspaces-owned approval for one rendered game target. */
+/**
+Workspaces-owned approval for one rendered game target.
+*/
 export const WORKSPACE_VISUAL_PLAYTEST_TARGET_SCHEMA =
   "autodev-workspace-visual-playtest-target-v1" as const;
 
@@ -44,42 +46,42 @@ export interface WorkspaceVisualPlaytestLimits {
 }
 
 /**
- * How long the game may go without advancing before the episode says so.
- *
- * These are the operator's thresholds, because the operator knows whether
- * their game advances slowly or not at all. The Runtime measures the run
- * against them; it does not decide on its own that a game is stuck.
- *
- * An approval that carries no policy of its own carries no thresholds: the
- * Runtime measures the run either way and tells the decision backend what it
- * measured, but it does not end a run for not advancing unless the operator
- * asked it to.
- */
+How long the game may go without advancing before the episode says so.
+
+These are the operator's thresholds, because the operator knows whether
+their game advances slowly or not at all. The Runtime measures the run
+against them; it does not decide on its own that a game is stuck.
+
+An approval that carries no policy of its own carries no thresholds: the
+Runtime measures the run either way and tells the decision backend what it
+measured, but it does not end a run for not advancing unless the operator
+asked it to.
+*/
 export interface WorkspaceVisualPlaytestProgressPolicy {
   /**
-   * Consecutive decisions that may pass without the game advancing.
-   *
-   * The episode counts the decisions whose observation showed the player
-   * exactly what the previous one showed. A page that reports that it is
-   * still loading is not one of them: the game has not had the chance to
-   * advance.
-   */
+  Consecutive decisions that may pass without the game advancing.
+  
+  The episode counts the decisions whose observation showed the player
+  exactly what the previous one showed. A page that reports that it is
+  still loading is not one of them: the game has not had the chance to
+  advance.
+  */
   readonly maxUnchangedDecisions: number;
   /**
-   * Milliseconds the game may go without advancing.
-   *
-   * The episode counts the time it spent observing a screen that did not
-   * change. The time a page spent loading is not counted: a game that was
-   * still starting up had not had the chance to advance.
-   */
+  Milliseconds the game may go without advancing.
+  
+  The episode counts the time it spent observing a screen that did not
+  change. The time a page spent loading is not counted: a game that was
+  still starting up had not had the chance to advance.
+  */
   readonly maxUnchangedMs: number;
 }
 
 /**
- * Operator-authored authorization for a single browser game entry point.
- * This is deliberately separate from the adapter/checkout approval: it grants
- * bounded browser input and capture, never repository or shell access.
- */
+Operator-authored authorization for a single browser game entry point.
+This is deliberately separate from the adapter/checkout approval: it grants
+bounded browser input and capture, never repository or shell access.
+*/
 export interface WorkspaceVisualPlaytestTargetApproval {
   readonly schema: typeof WORKSPACE_VISUAL_PLAYTEST_TARGET_SCHEMA;
   readonly workspaceId: string;
@@ -87,9 +89,13 @@ export interface WorkspaceVisualPlaytestTargetApproval {
   readonly revision: number;
   readonly approvalId: string;
   readonly name: string;
-  /** Canonical HTTP(S) entry URL without credentials, query, or fragment. */
+  /**
+  Canonical HTTP(S) entry URL without credentials, query, or fragment.
+  */
   readonly entryUrl: string;
-  /** Exact origins only; wildcards, paths, and implicit redirects are forbidden. */
+  /**
+  Exact origins only; wildcards, paths, and implicit redirects are forbidden.
+  */
   readonly allowedOrigins: readonly string[];
   readonly inputCapabilities: readonly WorkspaceVisualPlaytestInput[];
   readonly controlTimingClass: WorkspaceVisualPlaytestTimingClass;
@@ -98,10 +104,10 @@ export interface WorkspaceVisualPlaytestTargetApproval {
   readonly capturePolicy: "screenshots-only-redact-or-refuse";
   readonly limits: WorkspaceVisualPlaytestLimits;
   /**
-   * The no-progress thresholds for this target, when the operator set them.
-   *
-   * An approval that carries none is measured against the defaults.
-   */
+  The no-progress thresholds for this target, when the operator set them.
+  
+  An approval that carries none is measured against the defaults.
+  */
   readonly progressPolicy?: WorkspaceVisualPlaytestProgressPolicy;
   readonly approvedAt: string;
   readonly approvedBy: string;
@@ -265,18 +271,18 @@ function assertVisualPlaytestProgressPolicy(
 }
 
 /**
- * The no-progress thresholds an approval is measured against.
- *
- * An approval that carries no policy of its own carries no thresholds: the
- * Runtime measures the run either way and tells the decision backend what it
- * measured, but it does not end a run for not advancing unless the operator
- * asked it to. Such an approval therefore behaves exactly as it did before the
- * thresholds existed.
- *
- * A configured policy is used as the operator wrote it. The episode's budgets
- * still bound the run: a threshold the episode can never reach simply never
- * fires, and the episode ends on the budget that did.
- */
+The no-progress thresholds an approval is measured against.
+
+An approval that carries no policy of its own carries no thresholds: the
+Runtime measures the run either way and tells the decision backend what it
+measured, but it does not end a run for not advancing unless the operator
+asked it to. Such an approval therefore behaves exactly as it did before the
+thresholds existed.
+
+A configured policy is used as the operator wrote it. The episode's budgets
+still bound the run: a threshold the episode can never reach simply never
+fires, and the episode ends on the budget that did.
+*/
 export function playtestVisualProgressPolicy(
   approval: WorkspaceVisualPlaytestTargetApproval
 ): WorkspaceVisualPlaytestProgressPolicy | null {
@@ -314,7 +320,9 @@ function assertRevocation(
   }
 }
 
-/** Validate a visual target grant before Runtime may open a browser session. */
+/**
+Validate a visual target grant before Runtime may open a browser session.
+*/
 export function assertWorkspaceVisualPlaytestTargetApproval(
   value: unknown
 ): asserts value is WorkspaceVisualPlaytestTargetApproval {
@@ -377,7 +385,7 @@ export function assertWorkspaceVisualPlaytestTargetApproval(
     value.allowedOrigins.length === 0 ||
     value.allowedOrigins.length > 16 ||
     new Set(value.allowedOrigins).size !== value.allowedOrigins.length ||
-    !value.allowedOrigins.every((origin) => parseApprovedOrigin(origin)) ||
+    value.allowedOrigins.some((origin) => !parseApprovedOrigin(origin)) ||
     !value.allowedOrigins.includes(new URL(value.entryUrl).origin)
   ) {
     throw new TypeError(

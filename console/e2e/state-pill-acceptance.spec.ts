@@ -3,21 +3,21 @@ import { expect, test } from "@playwright/test";
 import { waitForPageContent } from "./acceptance-helpers.ts";
 
 /**
- * A control that shows a state names that state.
- *
- * The agent and model enablement pills wear the item's current value and
- * activate the opposite, so one control carries both facts. The accessible
- * name has to carry them too: `aria-label` overrides the button's content, so
- * a name that carried only the action left the state reachable by sight alone.
- *
- * Read out of the accessibility tree, every agent row's pill used to announce
- * "Disable browser-tester" -- and nothing said whether any of them was
- * currently enabled. The visible word was the state, and it never reached
- * assistive technology.
- *
- * This is a rendering claim, so it is measured where it happens: the browser's
- * own accessible name for the control, against the word the control shows.
- */
+A control that shows a state names that state.
+
+The agent and model enablement pills wear the item's current value and
+activate the opposite, so one control carries both facts. The accessible
+name has to carry them too: `aria-label` overrides the button's content, so
+a name that carried only the action left the state reachable by sight alone.
+
+Read out of the accessibility tree, every agent row's pill used to announce
+"Disable browser-tester" -- and nothing said whether any of them was
+currently enabled. The visible word was the state, and it never reached
+assistive technology.
+
+This is a rendering claim, so it is measured where it happens: the browser's
+own accessible name for the control, against the word the control shows.
+*/
 test("the agent enablement pill names the state it shows", async ({ page }) => {
   await page.goto("/agents");
   await waitForPageContent(page);

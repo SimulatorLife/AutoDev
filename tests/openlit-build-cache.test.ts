@@ -37,10 +37,10 @@ function patchSetHash(): string {
 }
 
 test("build-local reuses only a locked image matching current source, patches, tag and platform", () => {
-  const temp = mkdtempSync(join(tmpdir(), "autodev-openlit-build-cache-"));
-  const binDirectory = join(temp, "bin");
-  const codexHome = join(temp, "codex-home");
-  const dockerLog = join(temp, "docker.log");
+  const temporary = mkdtempSync(join(tmpdir(), "autodev-openlit-build-cache-"));
+  const binDirectory = join(temporary, "bin");
+  const codexHome = join(temporary, "codex-home");
+  const dockerLog = join(temporary, "docker.log");
   const lockFile = join(codexHome, "openlit-patched.lock");
   mkdirSync(binDirectory, { recursive: true });
   mkdirSync(codexHome, { recursive: true });
@@ -89,30 +89,30 @@ test("build-local reuses only a locked image matching current source, patches, t
     assert.doesNotMatch(dockerCalls, /build/u);
     assert.doesNotMatch(result.stdout, /Applying the local patch set/u);
   } finally {
-    rmSync(temp, { recursive: true, force: true });
+    rmSync(temporary, { recursive: true, force: true });
   }
 });
 
 test("build-local rebuilds when the cached patch set is stale", () => {
-  const temp = mkdtempSync(join(tmpdir(), "autodev-openlit-build-stale-"));
-  const repo = join(temp, "repo");
-  const binDirectory = join(temp, "bin");
-  const codexHome = join(temp, "codex-home");
-  const tempPatchesDirectory = join(repo, "patches", "openlit");
-  const runnerDirectory = join(repo, "scripts", "openlit");
-  const dockerLog = join(temp, "docker.log");
+  const temporary = mkdtempSync(join(tmpdir(), "autodev-openlit-build-stale-"));
+  const repository = join(temporary, "repo");
+  const binDirectory = join(temporary, "bin");
+  const codexHome = join(temporary, "codex-home");
+  const temporaryPatchesDirectory = join(repository, "patches", "openlit");
+  const runnerDirectory = join(repository, "scripts", "openlit");
+  const dockerLog = join(temporary, "docker.log");
   const lockFile = join(codexHome, "openlit-patched.lock");
-  mkdirSync(tempPatchesDirectory, { recursive: true });
+  mkdirSync(temporaryPatchesDirectory, { recursive: true });
   mkdirSync(runnerDirectory, { recursive: true });
   mkdirSync(binDirectory, { recursive: true });
   mkdirSync(codexHome, { recursive: true });
 
   writeFileSync(
-    join(tempPatchesDirectory, "01-current.patch"),
+    join(temporaryPatchesDirectory, "01-current.patch"),
     "current patch\n"
   );
   const currentPatchHash = createHash("sha256")
-    .update(readFileSync(join(tempPatchesDirectory, "01-current.patch")))
+    .update(readFileSync(join(temporaryPatchesDirectory, "01-current.patch")))
     .digest("hex")
     .slice(0, 16);
   const applyScript = join(runnerDirectory, "apply-patches.sh");
@@ -146,10 +146,10 @@ test("build-local rebuilds when the cached patch set is stale", () => {
       env: {
         ...process.env,
         PATH: `${binDirectory}:${process.env.PATH ?? ""}`,
-        REPO_ROOT: repo,
+        REPO_ROOT: repository,
         CODEX_HOME: codexHome,
         AUTODEV_OPENLIT_LOCK_FILE: lockFile,
-        AUTODEV_OPENLIT_PATCHES_DIR: tempPatchesDirectory,
+        AUTODEV_OPENLIT_PATCHES_DIR: temporaryPatchesDirectory,
         DOCKER_CALL_LOG: dockerLog
       }
     });
@@ -161,6 +161,6 @@ test("build-local rebuilds when the cached patch set is stale", () => {
       new RegExp(`AUTODEV_OPENLIT_PATCH_SET_HASH=${currentPatchHash}`, "u")
     );
   } finally {
-    rmSync(temp, { recursive: true, force: true });
+    rmSync(temporary, { recursive: true, force: true });
   }
 });

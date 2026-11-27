@@ -37,15 +37,15 @@ export interface OpencliEnsureDeps {
 }
 
 export function resolveOpencliEnsureOptions(
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): OpencliEnsureOptions {
-  const home = env.HOME?.trim() || homedir();
-  const codexHome = env.CODEX_HOME?.trim() || path.join(home, ".codex");
+  const home = environment.HOME?.trim() || homedir();
+  const codexHome = environment.CODEX_HOME?.trim() || path.join(home, ".codex");
   const uid = typeof process.getuid === "function" ? process.getuid() : 0;
   return {
-    host: env.CODEX_OPENCLI_PROXY_HOST?.trim() || "127.0.0.1",
+    host: environment.CODEX_OPENCLI_PROXY_HOST?.trim() || "127.0.0.1",
     port: parseNonNegativeInteger(
-      env.CODEX_OPENCLI_PROXY_PORT,
+      environment.CODEX_OPENCLI_PROXY_PORT,
       OPENCLI_PROXY_PORT
     ),
     label: OPENCLI_PROXY_LABEL,
@@ -57,9 +57,9 @@ export function resolveOpencliEnsureOptions(
       `${OPENCLI_PROXY_LABEL}.plist`
     ),
     launcher: path.join(codexHome, "hooks", "run-autodev-opencli-proxy.sh"),
-    available: findOpencliCommand(env) !== null,
+    available: findOpencliCommand(environment) !== null,
     readyTimeoutMs: parseNonNegativeInteger(
-      env.CODEX_OPENCLI_READY_TIMEOUT_MS,
+      environment.CODEX_OPENCLI_READY_TIMEOUT_MS,
       DEFAULT_TIMEOUT_MS
     ),
     logPath: path.join(codexHome, "run", "codex-opencli-proxy.fallback.log")
@@ -89,35 +89,40 @@ export function defaultOpencliEnsureDeps(
   };
 }
 
-/** Best-effort: opencli serves `github-worker` web automation tasks. */
+/**
+Best-effort: opencli serves `github-worker` web automation tasks.
+*/
 export async function ensureOpencliProxy(
   options: OpencliEnsureOptions = resolveOpencliEnsureOptions(),
-  deps: OpencliEnsureDeps = defaultOpencliEnsureDeps(options)
+  dependencies: OpencliEnsureDeps = defaultOpencliEnsureDeps(options)
 ): Promise<boolean> {
-  if (await deps.probe()) return true;
-  if (!options.available) return true;
+  if ((await dependencies.probe()) || !options.available) return true;
 
-  if (deps.launchd.isLoaded(options.label)) {
+  if (dependencies.launchd.isLoaded(options.label)) {
     try {
-      deps.launchd.kickstart(options.label);
+      dependencies.launchd.kickstart(options.label);
     } catch {
-      /* best effort */
+      /*
+      best effort
+      */
     }
-    return waitForProbe(deps, options.readyTimeoutMs);
+    return waitForProbe(dependencies, options.readyTimeoutMs);
   }
 
   if (existsSync(options.plist)) {
     try {
-      deps.launchd.bootstrap(options.plist);
-      if (await waitForProbe(deps, options.readyTimeoutMs)) return true;
+      dependencies.launchd.bootstrap(options.plist);
+      if (await waitForProbe(dependencies, options.readyTimeoutMs)) return true;
     } catch {
-      /* fall through to the sandbox fallback */
+      /*
+      fall through to the sandbox fallback
+      */
     }
   }
 
   if (existsSync(options.launcher)) {
-    deps.startFallback(options.launcher, options.logPath);
-    return waitForProbe(deps, options.readyTimeoutMs);
+    dependencies.startFallback(options.launcher, options.logPath);
+    return waitForProbe(dependencies, options.readyTimeoutMs);
   }
   return false;
 }

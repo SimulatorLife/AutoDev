@@ -68,18 +68,22 @@ const DEFAULT_CONFIG_SCHEMA = {
   }
 };
 
-/** The opencli providers, one per signed-in web chat. */
+/**
+The opencli providers, one per signed-in web chat.
+*/
 const OPENCLI_CHATGPT = "opencli-chatgpt";
 const OPENCLI_GEMINI = "opencli-gemini";
 
-/** The Antigravity providers, one per agy subscription quota. */
+/**
+The Antigravity providers, one per agy subscription quota.
+*/
 const ANTIGRAVITY_GEMINI = "antigravity-gemini";
 const ANTIGRAVITY_ARGON = "antigravity-argon";
 const ANTIGRAVITY_CLAUDE_GPT = "antigravity-claude-gpt";
 
 /**
- * Canonical AutoDev providers to register into OpenLIT.
- */
+Canonical AutoDev providers to register into OpenLIT.
+*/
 export function getAutoDevProviders(): ProviderCatalogEntry[] {
   return [
     {
@@ -170,8 +174,8 @@ export function getAutoDevProviders(): ProviderCatalogEntry[] {
 }
 
 /**
- * Canonical AutoDev models and pricing to register into OpenLIT.
- */
+Canonical AutoDev models and pricing to register into OpenLIT.
+*/
 export function getAutoDevModels(): ModelCatalogEntry[] {
   return [
     // Claude (Anthropic)
@@ -850,13 +854,13 @@ interface ExistingModelRow {
 }
 
 /**
- * The provider and model tables have a protocol of their own: they are read as
- * `FORMAT JSONEachRow` and written as `application/x-ndjson` with no trailing
- * newline, which is what those tables expect. The request itself -- the URL,
- * the content type, the ceiling on how long it may wait, and the error raised
- * when ClickHouse says no -- still belongs to the shared client, so this
- * adapter supplies the query and the rows and nothing else.
- */
+The provider and model tables have a protocol of their own: they are read as
+`FORMAT JSONEachRow` and written as `application/x-ndjson` with no trailing
+newline, which is what those tables expect. The request itself -- the URL,
+the content type, the ceiling on how long it may wait, and the error raised
+when ClickHouse says no -- still belongs to the shared client, so this
+adapter supplies the query and the rows and nothing else.
+*/
 const PROVIDER_METADATA_TABLE = "openlit.openlit_provider_metadata";
 const PROVIDER_MODELS_TABLE = "openlit.openlit_provider_models";
 const NDJSON_CONTENT_TYPE = "application/x-ndjson";
@@ -1000,15 +1004,15 @@ export async function syncModelCatalogue(
       modelsToInsert.push(m);
       modelsInserted.push(key);
     } else if (
-      existing.input_price_per_m_token !== m.inputPricePerMToken ||
-      existing.output_price_per_m_token !== m.outputPricePerMToken ||
-      existing.context_window !== m.contextWindow
+      existing.input_price_per_m_token === m.inputPricePerMToken &&
+      existing.output_price_per_m_token === m.outputPricePerMToken &&
+      existing.context_window === m.contextWindow
     ) {
+      modelsUnchanged.push(key);
+    } else {
       // ClickHouse ReplacingMergeTree or re-insert with latest pricing
       modelsToInsert.push(m);
       modelsUpdated.push(key);
-    } else {
-      modelsUnchanged.push(key);
     }
   }
 

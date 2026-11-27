@@ -7,7 +7,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { PermissionsView } from "../src/features/permissions/index.ts";
 
-/** Read-only permission-policy presentation and effective role evidence. */
+/**
+Read-only permission-policy presentation and effective role evidence.
+*/
 
 const REVISION = "a".repeat(64);
 

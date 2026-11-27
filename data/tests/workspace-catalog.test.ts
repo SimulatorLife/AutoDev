@@ -40,12 +40,12 @@ interface Workspace {
   agentRoles: string[] | null;
 }
 
-function runCli(args: string[]): {
+function runCli(arguments_: string[]): {
   status: number;
   stdout: string;
   stderr: string;
 } {
-  const result = spawnSync(process.execPath, [ownerPath, ...args], {
+  const result = spawnSync(process.execPath, [ownerPath, ...arguments_], {
     encoding: "utf8"
   });
   if (result.error) {

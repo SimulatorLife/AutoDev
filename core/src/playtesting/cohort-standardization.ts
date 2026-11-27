@@ -1,63 +1,63 @@
 /**
- * Cohort-mix standardization gate for measurement-contract §11's
- * three-build changing cohort-mix fixture.
- *
- * Given a single frozen {@link PlaytestBenchmark} (whose `cohortWeights`
- * vector is the §10 fixed-weight basis) and per-build per-cohort
- * numerator, denominator and explicit missing counts, the function
- * separates the **raw sample-weighted observed rate** from the
- * **fixed-weight benchmark-standardized rate** for every build. The
- * fixture at the end of §10 ("three-build changing cohort mix" in §11)
- * relies on exactly this separation: build A's raw 70% and fixed-weight
- * 70% coincide on a 50/50 sample mix, build B's raw 85% hides a 65%
- * fixed-weight rate on the same 50/50 frozen weights (and therefore the
- * apparent gain is a regression), and build C's raw 86% returns to a
- * 70% fixed-weight rate that matches A but does not exceed it.
- *
- * The function is intentionally non-inferential:
- *
- * - It never imputes missing counts. A benchmark stratum with zero
- *   denominator, or a stratum that is entirely unobserved in a build,
- *   makes the standardized rate honestly `null` for that build rather
- *   than being silently dropped or zero-filled.
- * - It never computes a confidence interval or other homegrown
- *   inference; inference is the responsibility of an external
- *   statistics library that is bound by `PlaytestNumericInterval`. This
- *   module intentionally has no interval plumbing.
- * - It never produces a composite score, never rolls multiple builds
- *   into one number, and never composes a synthetic 0–4 category or a
- *   human-label proxy. The two rates per build stand on their own.
- *
- * Validation rules (every rule is a hard rejection; no synthetic
- * fallback exists):
- *
- * - The benchmark must already carry the frozen `cohortWeights` vector
- *   declared on `PlaytestBenchmark`. The standardizer re-validates the
- *   vector defensively (unique non-empty cohort keys, finite positive
- *   weights summing to 1.0 within the canonical hash tolerance) so it
- *   cannot be tricked by an unverified benchmark, but the canonical
- *   ownership boundary is `assertPlaytestBenchmark`.
- * - Each `cohortObservations` map declares exactly the benchmark
- *   cohorts (no unknown and no missing keys); cohort keys inside a map
- *   are also unique.
- * - `numerator`, `denominator` and `missing` are non-negative safe
- *   integers; `numerator` cannot exceed `denominator` and must be zero
- *   when `denominator` is zero.
- *
- * Output:
- *
- * - `PlaytestCohortStandardizationResult` includes one
- *   `PlaytestBuildCohortStandardization` per build with separate
- *   `rawObservedRate`, `standardizedRate`, `sourceCoverage` and an
- *   explicit closed-vocabulary `PlaytestCohortStandardizationState`.
- * - Each per-cohort row carries the inputs that fed it (numerator,
- *   denominator, missing, eligible) plus the derived observed rate,
- *   sample-mix proportion, benchmark weight and per-cohort coverage,
- *   so an independent audit can replay the math from the artifact.
- * - The result carries the benchmark `contentHash` so a downstream
- *   consumer can prove the standardized rates were computed against
- *   the exact frozen benchmark that produced the comparison.
- */
+Cohort-mix standardization gate for measurement-contract §11's
+three-build changing cohort-mix fixture.
+
+Given a single frozen {@link PlaytestBenchmark} (whose `cohortWeights`
+vector is the §10 fixed-weight basis) and per-build per-cohort
+numerator, denominator and explicit missing counts, the function
+separates the **raw sample-weighted observed rate** from the
+**fixed-weight benchmark-standardized rate** for every build. The
+fixture at the end of §10 ("three-build changing cohort mix" in §11)
+relies on exactly this separation: build A's raw 70% and fixed-weight
+70% coincide on a 50/50 sample mix, build B's raw 85% hides a 65%
+fixed-weight rate on the same 50/50 frozen weights (and therefore the
+apparent gain is a regression), and build C's raw 86% returns to a
+70% fixed-weight rate that matches A but does not exceed it.
+
+The function is intentionally non-inferential:
+
+- It never imputes missing counts. A benchmark stratum with zero
+  denominator, or a stratum that is entirely unobserved in a build,
+  makes the standardized rate honestly `null` for that build rather
+  than being silently dropped or zero-filled.
+- It never computes a confidence interval or other homegrown
+  inference; inference is the responsibility of an external
+  statistics library that is bound by `PlaytestNumericInterval`. This
+  module intentionally has no interval plumbing.
+- It never produces a composite score, never rolls multiple builds
+  into one number, and never composes a synthetic 0–4 category or a
+  human-label proxy. The two rates per build stand on their own.
+
+Validation rules (every rule is a hard rejection; no synthetic
+fallback exists):
+
+- The benchmark must already carry the frozen `cohortWeights` vector
+  declared on `PlaytestBenchmark`. The standardizer re-validates the
+  vector defensively (unique non-empty cohort keys, finite positive
+  weights summing to 1.0 within the canonical hash tolerance) so it
+  cannot be tricked by an unverified benchmark, but the canonical
+  ownership boundary is `assertPlaytestBenchmark`.
+- Each `cohortObservations` map declares exactly the benchmark
+  cohorts (no unknown and no missing keys); cohort keys inside a map
+  are also unique.
+- `numerator`, `denominator` and `missing` are non-negative safe
+  integers; `numerator` cannot exceed `denominator` and must be zero
+  when `denominator` is zero.
+
+Output:
+
+- `PlaytestCohortStandardizationResult` includes one
+  `PlaytestBuildCohortStandardization` per build with separate
+  `rawObservedRate`, `standardizedRate`, `sourceCoverage` and an
+  explicit closed-vocabulary `PlaytestCohortStandardizationState`.
+- Each per-cohort row carries the inputs that fed it (numerator,
+  denominator, missing, eligible) plus the derived observed rate,
+  sample-mix proportion, benchmark weight and per-cohort coverage,
+  so an independent audit can replay the math from the artifact.
+- The result carries the benchmark `contentHash` so a downstream
+  consumer can prove the standardized rates were computed against
+  the exact frozen benchmark that produced the comparison.
+*/
 
 import { isRecord } from "../shared/object-guards.ts";
 import type { PlaytestBenchmark } from "./artifacts.ts";
@@ -67,23 +67,23 @@ export const PLAYTESTS_COHORT_STANDARDIZATION_SCHEMA =
   "autodev-playtest-cohort-standardization-v1" as const;
 
 /**
- * Shared non-inferential state literals reused by both the
- * standardization and raw-observed state vocabularies below, and by
- * their classification logic in `standardizeBuild`. Declaring them
- * once avoids duplicating the same literal string across both state
- * arrays and every branch that assigns or compares them.
- */
+Shared non-inferential state literals reused by both the
+standardization and raw-observed state vocabularies below, and by
+their classification logic in `standardizeBuild`. Declaring them
+once avoids duplicating the same literal string across both state
+arrays and every branch that assigns or compares them.
+*/
 const STATE_UNKNOWN_INCOMPLETE_SOURCE_COVERAGE =
   "unknown-incomplete-source-coverage" as const;
 const STATE_UNKNOWN_ZERO_DENOMINATOR_STRATUM =
   "unknown-zero-denominator-stratum" as const;
 
 /**
- * Closed vocabulary for the non-inferential verdict on a build's
- * standardization. The state is reported verbatim in
- * `PlaytestBuildCohortStandardization.standardizationState` so a
- * consumer never has to guess why the fixed-weight rate is null.
- */
+Closed vocabulary for the non-inferential verdict on a build's
+standardization. The state is reported verbatim in
+`PlaytestBuildCohortStandardization.standardizationState` so a
+consumer never has to guess why the fixed-weight rate is null.
+*/
 export const PLAYTESTS_COHORT_STANDARDIZATION_STATES = [
   "standardized",
   STATE_UNKNOWN_INCOMPLETE_SOURCE_COVERAGE,
@@ -94,11 +94,11 @@ export type PlaytestCohortStandardizationState =
   (typeof PLAYTESTS_COHORT_STANDARDIZATION_STATES)[number];
 
 /**
- * A single closed-vocabulary verdict for one build's sample-mix
- * weighted observed rate. Mirrors the standardization state because
- * the two rates share the same data dependency: every condition that
- * nulls the standardized rate also nulls the raw observed rate.
- */
+A single closed-vocabulary verdict for one build's sample-mix
+weighted observed rate. Mirrors the standardization state because
+the two rates share the same data dependency: every condition that
+nulls the standardized rate also nulls the raw observed rate.
+*/
 export const PLAYTESTS_COHORT_OBSERVED_STATES = [
   "observed",
   STATE_UNKNOWN_INCOMPLETE_SOURCE_COVERAGE,
@@ -109,19 +109,21 @@ export type PlaytestCohortObservedState =
   (typeof PLAYTESTS_COHORT_OBSERVED_STATES)[number];
 
 /**
- * Raw per-cohort counts for one build. `numerator` is the count of
- * successful / favourable observations under the metric's polarity;
- * `denominator` is the count of observed eligible opportunities;
- * `missing` is the count of eligible opportunities that the source
- * could not observe for any of the §3 `PlaytestMissingReason`s.
- */
+Raw per-cohort counts for one build. `numerator` is the count of
+successful / favourable observations under the metric's polarity;
+`denominator` is the count of observed eligible opportunities;
+`missing` is the count of eligible opportunities that the source
+could not observe for any of the §3 `PlaytestMissingReason`s.
+*/
 export interface PlaytestCohortObservation {
   readonly numerator: number;
   readonly denominator: number;
   readonly missing: number;
 }
 
-/** Per-build cohort observations keyed by benchmark cohort. */
+/**
+Per-build cohort observations keyed by benchmark cohort.
+*/
 export interface PlaytestBuildCohortObservations {
   readonly buildId: string;
   readonly cohortObservations: Readonly<
@@ -130,19 +132,19 @@ export interface PlaytestBuildCohortObservations {
 }
 
 /**
- * Full input envelope: the frozen benchmark that owns the cohort
- * weights, plus one or more builds.
- */
+Full input envelope: the frozen benchmark that owns the cohort
+weights, plus one or more builds.
+*/
 export interface PlaytestCohortStandardizationInput {
   readonly benchmark: PlaytestBenchmark;
   readonly builds: readonly PlaytestBuildCohortObservations[];
 }
 
 /**
- * Per-cohort row inside a build's standardization breakdown. Surfacing
- * the inputs alongside the derived numbers preserves an auditable link
- * back to the raw observation counts.
- */
+Per-cohort row inside a build's standardization breakdown. Surfacing
+the inputs alongside the derived numbers preserves an auditable link
+back to the raw observation counts.
+*/
 export interface PlaytestCohortStandardizationRow {
   readonly cohortKey: string;
   readonly benchmarkWeight: number;
@@ -150,32 +152,44 @@ export interface PlaytestCohortStandardizationRow {
   readonly denominator: number;
   readonly missing: number;
   readonly eligible: number;
-  /** `numerator / denominator`; null when `denominator === 0`. */
+  /**
+  `numerator / denominator`; null when `denominator === 0`.
+  */
   readonly observedRate: number | null;
-  /** `denominator / totalObserved`; null when this cohort or the build was unobserved. */
+  /**
+  `denominator / totalObserved`; null when this cohort or the build was unobserved.
+  */
   readonly sampleProportion: number | null;
-  /** `denominator / (denominator + missing)`; null when no eligibility reported. */
+  /**
+  `denominator / (denominator + missing)`; null when no eligibility reported.
+  */
   readonly cohortCoverage: number | null;
 }
 
 /**
- * Per-build standardization row with explicit non-inferential state.
- * The raw and standardized rates intentionally travel as separate
- * fields; combining them into a single composite would be a band-aid
- * that violates §10's "no composite score" rule.
- */
+Per-build standardization row with explicit non-inferential state.
+The raw and standardized rates intentionally travel as separate
+fields; combining them into a single composite would be a band-aid
+that violates §10's "no composite score" rule.
+*/
 export interface PlaytestBuildCohortStandardization {
   readonly schema: typeof PLAYTESTS_COHORT_STANDARDIZATION_SCHEMA;
   readonly benchmarkId: string;
   readonly benchmarkVersion: number;
   readonly buildId: string;
-  /** Weighted by the actual sample mix (denominator_c / totalObserved). */
+  /**
+  Weighted by the actual sample mix (denominator_c / totalObserved).
+  */
   readonly rawObservedRate: number | null;
   readonly rawObservedState: PlaytestCohortObservedState;
-  /** Weighted by the frozen benchmark weights; null on incomplete source coverage or zero-denominator stratum. */
+  /**
+  Weighted by the frozen benchmark weights; null on incomplete source coverage or zero-denominator stratum.
+  */
   readonly standardizedRate: number | null;
   readonly standardizationState: PlaytestCohortStandardizationState;
-  /** `totalObserved / (totalObserved + totalMissing)`; null when no eligibility reported. */
+  /**
+  `totalObserved / (totalObserved + totalMissing)`; null when no eligibility reported.
+  */
   readonly sourceCoverage: number | null;
   readonly totalObserved: number;
   readonly totalMissing: number;
@@ -183,7 +197,9 @@ export interface PlaytestBuildCohortStandardization {
   readonly cohorts: readonly PlaytestCohortStandardizationRow[];
 }
 
-/** Full envelope returned by `standardizePlaytestCohortRates`. */
+/**
+Full envelope returned by `standardizePlaytestCohortRates`.
+*/
 export interface PlaytestCohortStandardizationResult {
   readonly schema: typeof PLAYTESTS_COHORT_STANDARDIZATION_SCHEMA;
   readonly benchmarkId: string;
@@ -192,7 +208,9 @@ export interface PlaytestCohortStandardizationResult {
   readonly builds: readonly PlaytestBuildCohortStandardization[];
 }
 
-/** ---------- internal validation helpers (typed `unknown` -> assertion) ---------- */
+/**
+---------- internal validation helpers (typed `unknown` -> assertion) ----------
+*/
 
 function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
@@ -350,7 +368,9 @@ function assertPlaytestCohortStandardizationInput(
   }
 }
 
-/** ---------- internal computation helpers ---------- */
+/**
+---------- internal computation helpers ----------
+*/
 
 function observedRateOf(observation: PlaytestCohortObservation): number | null {
   if (observation.denominator === 0) return null;
@@ -366,19 +386,19 @@ function cohortCoverageOf(
 }
 
 /**
- * Standardize per-build cohort observations against the frozen cohort
- * weight vector that lives on the {@link PlaytestBenchmark} artifact.
- * The function is a pure and total function over its inputs: any
- * failure in the strict validation rules above throws a `TypeError`;
- * any build whose source coverage is incomplete produces a `null`
- * standardized rate with an explicit closed-vocabulary state.
- *
- * The function never accepts an interval, never computes a confidence
- * interval or p-value, and never produces a composite score; integration
- * with an external statistics library is the responsibility of an
- * upstream consumer that wraps the returned rates in
- * `PlaytestNumericInterval`.
- */
+Standardize per-build cohort observations against the frozen cohort
+weight vector that lives on the {@link PlaytestBenchmark} artifact.
+The function is a pure and total function over its inputs: any
+failure in the strict validation rules above throws a `TypeError`;
+any build whose source coverage is incomplete produces a `null`
+standardized rate with an explicit closed-vocabulary state.
+
+The function never accepts an interval, never computes a confidence
+interval or p-value, and never produces a composite score; integration
+with an external statistics library is the responsibility of an
+upstream consumer that wraps the returned rates in
+`PlaytestNumericInterval`.
+*/
 export function standardizePlaytestCohortRates(
   input: PlaytestCohortStandardizationInput
 ): PlaytestCohortStandardizationResult {
@@ -465,9 +485,9 @@ function standardizeBuild(
 }
 
 /**
- * Step 1 helper: sums each benchmark cohort's observed denominator and
- * explicit missing count across the build's `cohortObservations` map.
- */
+Step 1 helper: sums each benchmark cohort's observed denominator and
+explicit missing count across the build's `cohortObservations` map.
+*/
 function aggregateObservationTotals(
   build: PlaytestBuildCohortObservations,
   benchmarkKeys: readonly string[]
@@ -490,11 +510,11 @@ function aggregateObservationTotals(
 }
 
 /**
- * Step 2 helper: classifies the build's non-inferential standardization
- * verdict. A benchmark cohort absent from the build's observations, or
- * present with a zero denominator, makes the fixed-weight rate honestly
- * unknown rather than silently dropped or zero-filled.
- */
+Step 2 helper: classifies the build's non-inferential standardization
+verdict. A benchmark cohort absent from the build's observations, or
+present with a zero denominator, makes the fixed-weight rate honestly
+unknown rather than silently dropped or zero-filled.
+*/
 function classifyStandardizationState(
   build: PlaytestBuildCohortObservations,
   benchmarkKeys: readonly string[]
@@ -512,10 +532,10 @@ function classifyStandardizationState(
 }
 
 /**
- * Step 2 helper: computes the fixed-weight benchmark-standardized rate
- * when every benchmark cohort was observed with a non-zero denominator;
- * `null` otherwise.
- */
+Step 2 helper: computes the fixed-weight benchmark-standardized rate
+when every benchmark cohort was observed with a non-zero denominator;
+`null` otherwise.
+*/
 function computeStandardizedRate(
   standardizationState: PlaytestCohortStandardizationState,
   build: PlaytestBuildCohortObservations,
@@ -541,12 +561,12 @@ function computeStandardizedRate(
 }
 
 /**
- * Step 3 helper: classifies the raw sample-mix weighted verdict. The
- * precedence mirrors the standardized state's dependency on the same
- * underlying coverage gaps: no observations at all takes priority,
- * followed by a zero-denominator stratum, followed by incomplete source
- * coverage.
- */
+Step 3 helper: classifies the raw sample-mix weighted verdict. The
+precedence mirrors the standardized state's dependency on the same
+underlying coverage gaps: no observations at all takes priority,
+followed by a zero-denominator stratum, followed by incomplete source
+coverage.
+*/
 function classifyRawObservedState(
   standardizationState: PlaytestCohortStandardizationState,
   totalObserved: number
@@ -564,9 +584,9 @@ function classifyRawObservedState(
 }
 
 /**
- * Step 3 helper: computes the sample-mix weighted observed rate when the
- * raw observed state is `"observed"`; `null` otherwise.
- */
+Step 3 helper: computes the sample-mix weighted observed rate when the
+raw observed state is `"observed"`; `null` otherwise.
+*/
 function computeRawObservedRate(
   rawObservedState: PlaytestCohortObservedState,
   build: PlaytestBuildCohortObservations,
@@ -592,10 +612,10 @@ function computeRawObservedRate(
 }
 
 /**
- * Step 4 helper: builds the per-cohort auditability rows, including the
- * raw inputs that fed each derived number so an independent audit can
- * replay the math from the artifact.
- */
+Step 4 helper: builds the per-cohort auditability rows, including the
+raw inputs that fed each derived number so an independent audit can
+replay the math from the artifact.
+*/
 function buildCohortRows(
   build: PlaytestBuildCohortObservations,
   benchmarkKeys: readonly string[],

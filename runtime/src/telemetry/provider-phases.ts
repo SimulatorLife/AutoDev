@@ -1,25 +1,33 @@
 /**
- * Where a provider bridge's turn spent its time, reported on the response it
- * returns so the router -- the one owner of AutoDev's OpenTelemetry -- can
- * record it on the attempt it already measures.
- *
- * A web-chat bridge's turn is mostly two waits: for a free browser tab, and
- * for the site to answer. The router sees only their sum, so without this the
- * Usage view cannot tell tab contention from a slow model. Bridges own no
- * telemetry SDK; this field is the whole contract between them and the router.
- */
+Where a provider bridge's turn spent its time, reported on the response it
+returns so the router -- the one owner of AutoDev's OpenTelemetry -- can
+record it on the attempt it already measures.
 
-/** The response field a bridge writes and the router reads. */
+A web-chat bridge's turn is mostly two waits: for a free browser tab, and
+for the site to answer. The router sees only their sum, so without this the
+Usage view cannot tell tab contention from a slow model. Bridges own no
+telemetry SDK; this field is the whole contract between them and the router.
+*/
+
+/**
+The response field a bridge writes and the router reads.
+*/
 export const PROVIDER_PHASES_FIELD = "autodev_phases";
 
 export interface ProviderPhaseTiming {
-  /** Time the turn waited for the provider to take it (a free tab). */
+  /**
+  Time the turn waited for the provider to take it (a free tab).
+  */
   queuedMs: number;
-  /** Time the provider spent on the turn once it had it. */
+  /**
+  Time the provider spent on the turn once it had it.
+  */
   onSiteMs: number;
 }
 
-/** The wire form a bridge puts on its response object. */
+/**
+The wire form a bridge puts on its response object.
+*/
 export function providerPhasesField(
   timing: ProviderPhaseTiming
 ): Record<
@@ -41,9 +49,9 @@ function durationMs(value: unknown): number | null {
 }
 
 /**
- * The phases a response reports, or null when it reports none or a malformed
- * value. An unreported phase stays unknown rather than becoming zero.
- */
+The phases a response reports, or null when it reports none or a malformed
+value. An unreported phase stays unknown rather than becoming zero.
+*/
 export function providerPhasesFromResponse(
   response: unknown
 ): ProviderPhaseTiming | null {

@@ -28,13 +28,13 @@ const platformRoot = path.join("runtime", "src", "platform");
 const deepPlatformImport =
   /from\s+["']@simulatorlife\/autodev-runtime\/platform\//u;
 /**
- * The same coupling written as a relative path.
- *
- * The package form is only one of the two ways a module inside the Runtime
- * can name a platform implementation file, and the guard that watched only
- * the package form let the other one through: the CLI named four platform
- * modules relatively, and the Control API named a fifth.
- */
+The same coupling written as a relative path.
+
+The package form is only one of the two ways a module inside the Runtime
+can name a platform implementation file, and the guard that watched only
+the package form let the other one through: the CLI named four platform
+modules relatively, and the Control API named a fifth.
+*/
 const relativePlatformImport = /from\s+["'](?:\.\.\/)+platform\/[^"']+["']/u;
 const platformEntry =
   /from\s+["']@simulatorlife\/autodev-runtime\/platform["']/u;

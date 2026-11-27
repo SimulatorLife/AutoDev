@@ -1,4 +1,6 @@
-/** Same-origin, server-bound view of the Data-owned Playtesting schema readiness. */
+/**
+Same-origin, server-bound view of the Data-owned Playtesting schema readiness.
+*/
 import { type NextRequest, NextResponse } from "next/server.js";
 
 import { jsonErrorResponse } from "../../../../src/lib/server/api-response.ts";

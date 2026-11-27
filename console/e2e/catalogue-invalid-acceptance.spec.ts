@@ -1,22 +1,22 @@
 import { expect, type Page, test } from "@playwright/test";
 
 /**
- * The state proxy's port.
- *
- * The Console reads the Control API through the proxy, and the proxy answers
- * in the state the spec asks for. The port is fixed because the Console is
- * started before the spec runs and its Control API address is part of that
- * start.
- */
+The state proxy's port.
+
+The Console reads the Control API through the proxy, and the proxy answers
+in the state the spec asks for. The port is fixed because the Console is
+started before the spec runs and its Control API address is part of that
+start.
+*/
 const PROXY_PORT = Number(process.env.AUTODEV_STATE_PROXY_PORT ?? 4370);
 const PROXY = `http://127.0.0.1:${String(PROXY_PORT)}`;
 
 /**
- * Put the Control API into one state.
- *
- * The proxy answers the control route honestly, so a spec that puts the
- * service back is leaving no trace for the next one.
- */
+Put the Control API into one state.
+
+The proxy answers the control route honestly, so a spec that puts the
+service back is leaving no trace for the next one.
+*/
 async function setControlApiState(state: string): Promise<void> {
   const response = await fetch(`${PROXY}/__state`, {
     method: "POST",
@@ -31,8 +31,8 @@ test.afterEach(async () => {
 });
 
 /**
- * The explicit state a page shows when it could not read its resource.
- */
+The explicit state a page shows when it could not read its resource.
+*/
 function unavailableState(page: Page) {
   return page.locator('[data-status="unavailable"]').first();
 }

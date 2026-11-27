@@ -9,7 +9,9 @@ import * as ts from "typescript";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 
-/** The workspaces of the monorepo, and the source roots each one owns. */
+/**
+The workspaces of the monorepo, and the source roots each one owns.
+*/
 const WORKSPACES: readonly {
   readonly directory: string;
   readonly roots: readonly string[];
@@ -21,7 +23,9 @@ const WORKSPACES: readonly {
   { directory: "", roots: ["tests"] }
 ];
 
-/** Directories that are never a workspace's own source. */
+/**
+Directories that are never a workspace's own source.
+*/
 const IGNORED_DIRECTORIES = new Set([
   ".git",
   ".next",
@@ -30,18 +34,28 @@ const IGNORED_DIRECTORIES = new Set([
   "tmp"
 ]);
 
-/** Paths the playtesting area owns; another session works on them. */
+/**
+Paths the playtesting area owns; another session works on them.
+*/
 const PLAYTESTING = /(^|[\\/])playtesting([\\/]|-)/u;
 
-/** One import, named the way the operator would name it. */
+/**
+One import, named the way the operator would name it.
+*/
 interface Import {
-  /** The importing file, relative to the repository root. */
+  /**
+  The importing file, relative to the repository root.
+  */
   readonly file: string;
-  /** The module specifier the import names. */
+  /**
+  The module specifier the import names.
+  */
   readonly specifier: string;
 }
 
-/** The workspace packages, so a cross-workspace import can be checked. */
+/**
+The workspace packages, so a cross-workspace import can be checked.
+*/
 interface WorkspaceManifest {
   readonly name: string;
   readonly declared: ReadonlySet<string>;
@@ -88,7 +102,9 @@ function sourceFiles(directory: string): string[] {
   return found.sort();
 }
 
-/** The files a workspace owns, relative to the repository root. */
+/**
+The files a workspace owns, relative to the repository root.
+*/
 function workspaceFiles(workspace: {
   readonly directory: string;
   readonly roots: readonly string[];
@@ -107,15 +123,15 @@ function workspaceFiles(workspace: {
 }
 
 /**
- * The module specifiers a file really imports.
- *
- * The specifiers are read out of the syntax tree rather than out of the text,
- * because a `require` inside a template literal is not an import: the OpenLIT
- * workspace sync *builds* a script that requires `@prisma/client` inside the
- * OpenLIT container, where that package is a dependency of the container and
- * not of this workspace. A text scan would report that generated script as a
- * missing dependency of Data.
- */
+The module specifiers a file really imports.
+
+The specifiers are read out of the syntax tree rather than out of the text,
+because a `require` inside a template literal is not an import: the OpenLIT
+workspace sync *builds* a script that requires `@prisma/client` inside the
+OpenLIT container, where that package is a dependency of the container and
+not of this workspace. A text scan would report that generated script as a
+missing dependency of Data.
+*/
 function moduleSpecifiers(file: string): string[] {
   const source = readFileSync(path.join(repositoryRoot, file), "utf8");
   const parsed = ts.createSourceFile(
@@ -154,7 +170,9 @@ function moduleSpecifiers(file: string): string[] {
   return specifiers;
 }
 
-/** Find relative imports whose resolved target belongs to another workspace. */
+/**
+Find relative imports whose resolved target belongs to another workspace.
+*/
 function crossWorkspaceRelativeImports(
   imports: readonly Import[],
   workspaceRoots: readonly {
@@ -203,7 +221,9 @@ const NODE_BUILTINS = new Set([
   ...builtinModules.map((name) => `node:${name}`)
 ]);
 
-/** The package a specifier names, and the subpath it reaches for. */
+/**
+The package a specifier names, and the subpath it reaches for.
+*/
 function packageOf(specifier: string): {
   readonly name: string;
   readonly subpath: string;
@@ -215,7 +235,9 @@ function packageOf(specifier: string): {
   return { name, subpath: specifier.slice(name.length) };
 }
 
-/** Every import a workspace makes that names a package rather than a path. */
+/**
+Every import a workspace makes that names a package rather than a path.
+*/
 function bareImports(workspace: {
   readonly directory: string;
   readonly roots: readonly string[];
@@ -244,8 +266,7 @@ test("every import a workspace makes is a dependency its manifest declares", () 
     const manifest = readManifest(workspace.directory);
     for (const { file, specifier } of bareImports(workspace)) {
       const { name } = packageOf(specifier);
-      if (manifest.declared.has(name)) continue;
-      if (name === manifest.name) continue;
+      if (manifest.declared.has(name) || (name === manifest.name)) continue;
       offenders.push(`${file} imports ${specifier}`);
     }
   }

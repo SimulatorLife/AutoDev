@@ -31,7 +31,6 @@ import {
   hookAppliedUnavailableNotice,
   type HooksAppliedUnavailable
 } from "./applied.ts";
-
 import { hookOriginLabel } from "./declaration.ts";
 import { HookActionsView } from "./HookActionsView.ts";
 import { hookEventPath } from "./paths.ts";
@@ -40,49 +39,49 @@ export interface HooksViewProps {
   readonly hooks: readonly HookDefinition[];
   readonly sourceValidity?: boolean | null | undefined;
   /**
-   * Why the source is invalid.
-   *
-   * Required rather than defaulted to `[]`: a caller that has the validity flag
-   * but not the reasons can only render "invalid", which is the state this
-   * section exists to replace. The Runtime has already located the fault.
-   */
+  Why the source is invalid.
+  
+  Required rather than defaulted to `[]`: a caller that has the validity flag
+  but not the reasons can only render "invalid", which is the state this
+  section exists to replace. The Runtime has already located the fault.
+  */
   readonly validationIssues: readonly ControlApiValidationIssue[];
   /**
-   * The revision of the canonical declaration.
-   *
-   * `null` means the declaration could not be read, so there is no revision to
-   * name. The revision identifies the exact source this page describes, and it
-   * is the same revision the event's own page names.
-   */
+  The revision of the canonical declaration.
+  
+  `null` means the declaration could not be read, so there is no revision to
+  name. The revision identifies the exact source this page describes, and it
+  is the same revision the event's own page names.
+  */
   readonly revision: string | null;
   /**
-   * The canonical declaration's exact text, or null when it was not read.
-   *
-   * It is the source the events above were read with, so the two views of the
-   * declaration are one read rather than two that can straddle a change.
-   */
+  The canonical declaration's exact text, or null when it was not read.
+  
+  It is the source the events above were read with, so the two views of the
+  declaration are one read rather than two that can straddle a change.
+  */
   readonly sourceText: string | null;
   /**
-   * The hook projection the Runtime published.
-   *
-   * `null` means the applied read could not be read at all, which is a
-   * different state from a projection that holds no hooks.
-   */
+  The hook projection the Runtime published.
+  
+  `null` means the applied read could not be read at all, which is a
+  different state from a projection that holds no hooks.
+  */
   readonly applied: ControlApiHooksAppliedResponse | null;
   /**
-   * Why the applied projection could not be read, when it could not be read.
-   */
+  Why the applied projection could not be read, when it could not be read.
+  */
   readonly appliedUnavailable?: HooksAppliedUnavailable | null | undefined;
 }
 
 /**
- * The hook configuration the Runtime applied.
- *
- * The declaration says what the operator asked for and the applied projection
- * says what the Runtime published; the two are different readings, and the
- * reconciliation between them is the Runtime's own verdict. The Console
- * renders it rather than deriving one.
- */
+The hook configuration the Runtime applied.
+
+The declaration says what the operator asked for and the applied projection
+says what the Runtime published; the two are different readings, and the
+reconciliation between them is the Runtime's own verdict. The Console
+renders it rather than deriving one.
+*/
 function appliedPanel(
   applied: ControlApiHooksAppliedResponse | null,
   unavailable: HooksAppliedUnavailable | null
@@ -102,8 +101,8 @@ function appliedPanel(
 }
 
 /**
- * What the Runtime published, and the events it published.
- */
+What the Runtime published, and the events it published.
+*/
 function appliedSummary(
   applied: ControlApiHooksAppliedResponse
 ): React.JSX.Element {
@@ -131,24 +130,24 @@ function appliedSummary(
 }
 
 /**
- * What the source's validity reads as.
- *
- * An unobserved source is not a valid one, so it says so in its own words
- * rather than borrowing the word for a source that was read and found sound.
- */
+What the source's validity reads as.
+
+An unobserved source is not a valid one, so it says so in its own words
+rather than borrowing the word for a source that was read and found sound.
+*/
 function sourceValidityLabel(sourceValidity: boolean | null): string {
   if (sourceValidity === null) return NOT_OBSERVED_LABEL;
   return sourceValidity ? "Valid" : "Invalid";
 }
 
 /**
- * A count over the declared source, or the reason it is not a number.
- *
- * A count is a number only when everything it counts was observed. An invalid
- * source was read and found broken, and an unreadable one was never read;
- * neither publishes a count, because "the source declares nothing" and
- * "nobody read the source" are different claims.
- */
+A count over the declared source, or the reason it is not a number.
+
+A count is a number only when everything it counts was observed. An invalid
+source was read and found broken, and an unreadable one was never read;
+neither publishes a count, because "the source declares nothing" and
+"nobody read the source" are different claims.
+*/
 function sourceValidityCount(
   sourceValidity: boolean | null,
   count: number
@@ -158,12 +157,12 @@ function sourceValidityCount(
 }
 
 /**
- * The declared events, or the reason there are none to show.
- *
- * An invalid source shows none of its events: the first fault is why the rest
- * of the document was never examined, and a partial list would read as the
- * whole declaration.
- */
+The declared events, or the reason there are none to show.
+
+An invalid source shows none of its events: the first fault is why the rest
+of the document was never examined, and a partial list would read as the
+whole declaration.
+*/
 function declaredEvents(
   hooks: readonly HookDefinition[],
   sourceValidity: boolean | null,
@@ -199,8 +198,8 @@ function declaredEvents(
 }
 
 /**
- * One event and its declaration.
- */
+One event and its declaration.
+*/
 function hookEventPanel(hook: HookDefinition): React.JSX.Element {
   return React.createElement(
     "div",
@@ -245,7 +244,7 @@ export function HooksView({
   applied,
   appliedUnavailable = null
 }: HooksViewProps): React.JSX.Element {
-  const totalActions = hooks.reduce((acc, h) => acc + h.actions.length, 0);
+  const totalActions = hooks.reduce((accumulator, h) => accumulator + h.actions.length, 0);
   // The declaration's own counts. An invalid or unreadable source publishes
   // an empty list of events, and the two cards above the table counted it as
   // a target that declares nothing -- a claim about the read rather than

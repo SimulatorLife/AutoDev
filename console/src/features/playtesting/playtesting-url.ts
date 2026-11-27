@@ -1,4 +1,6 @@
-/** Shareable, workspace-scoped address state for Playtesting lists and replay. */
+/**
+Shareable, workspace-scoped address state for Playtesting lists and replay.
+*/
 import {
   type ControlApiPlaytestingResource,
   hasControlCharacters,
@@ -80,7 +82,9 @@ function orderedPresentFilterKeys(source: object): PlaytestingFilterKey[] {
   return result;
 }
 
-/** Query keys accepted by each server-filtered Data resource. */
+/**
+Query keys accepted by each server-filtered Data resource.
+*/
 export const PLAYTESTING_FILTERS_BY_RESOURCE = {
   batches: ["buildSha", "status"],
   episodes: [
@@ -114,15 +118,25 @@ export interface PlaytestingScope {
   readonly limit: number;
   readonly cursor: string | null;
   readonly step: number | null;
-  /** Finding to restore focus to when the inspector returns to its source list. */
+  /**
+  Finding to restore focus to when the inspector returns to its source list.
+  */
   readonly returnFindingId: string | null;
-  /** The analyst review whose detail is open in the Findings view. */
+  /**
+  The analyst review whose detail is open in the Findings view.
+  */
   readonly selectedReviewId: string | null;
-  /** The finding whose detail is open in the Findings view. */
+  /**
+  The finding whose detail is open in the Findings view.
+  */
   readonly selectedFindingId: string | null;
-  /** Focused batch in the live view; bounded so it stays shareable. */
+  /**
+  Focused batch in the live view; bounded so it stays shareable.
+  */
   readonly liveBatchId: string | null;
-  /** Explicit analysis selection; bounded by the same limit Runtime enforces. */
+  /**
+  Explicit analysis selection; bounded by the same limit Runtime enforces.
+  */
   readonly selectedEpisodeIds: readonly string[];
   readonly invalidSelection: boolean;
   readonly invalidQuery: boolean;
@@ -136,26 +150,30 @@ const POSITIVE_INTEGER_PATTERN = /^[1-9]\d{0,2}$/u;
 const STEP_PATTERN = /^(0|[1-9]\d{0,5})$/u;
 const FINDING_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 /**
- * The shape of a finding id that the Console will ask the Control API for.
- *
- * The loose pattern above is right for a reference that is only carried
- * around -- a "return to this finding" marker. A finding the Console is going
- * to *open* is looked up by id, and the API resolves the canonical id only:
- * the `finding-` prefix and the fingerprint. An address that names anything
- * else would resolve to nothing, so the address refuses to carry it.
- */
+The shape of a finding id that the Console will ask the Control API for.
+
+The loose pattern above is right for a reference that is only carried
+around -- a "return to this finding" marker. A finding the Console is going
+to *open* is looked up by id, and the API resolves the canonical id only:
+the `finding-` prefix and the fingerprint. An address that names anything
+else would resolve to nothing, so the address refuses to carry it.
+*/
 const SELECTED_FINDING_ID_PATTERN = /^finding-[a-f\d]{64}$/u;
-/** Review ids are bounded so the Findings view's address state stays shareable. */
+/**
+Review ids are bounded so the Findings view's address state stays shareable.
+*/
 const REVIEW_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
-/** Batch ids are bounded so the live view's address state stays shareable. */
+/**
+Batch ids are bounded so the live view's address state stays shareable.
+*/
 const BATCH_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const SESSION_ID_PATTERN = /^[A-Za-z0-9._:-]{1,256}$/u;
 
 /**
- * The analysis selection is explicit and bounded. An empty, oversized or
- * malformed value is refused rather than silently trimmed, so a shared link
- * either reproduces the operator's selection exactly or says it was invalid.
- */
+The analysis selection is explicit and bounded. An empty, oversized or
+malformed value is refused rather than silently trimmed, so a shared link
+either reproduces the operator's selection exactly or says it was invalid.
+*/
 function parseSessionSelection(value: string | undefined): {
   readonly episodeIds: readonly string[];
   readonly invalid: boolean;
@@ -170,8 +188,7 @@ function parseSessionSelection(value: string | undefined): {
   const parts = value.split(",");
   const episodeIds: string[] = [];
   for (const part of parts) {
-    if (part.length === 0) return { episodeIds: [], invalid: true };
-    if (!SESSION_ID_PATTERN.test(part))
+    if ((part.length === 0) || !SESSION_ID_PATTERN.test(part))
       return { episodeIds: [], invalid: true };
     if (!episodeIds.includes(part)) episodeIds.push(part);
   }
@@ -210,31 +227,31 @@ function normalizedFilters(
 } {
   const filters: Partial<Record<PlaytestingFilterKey, string>> = {};
   const supported = FILTERS_BY_VIEW[view];
-  let invalid = false;
+  let isInvalid = false;
   for (const key of orderedPresentFilterKeys(input)) {
     const raw = input[key];
     const candidate = singleValue(raw);
-    if (hasRepeatedValues(raw)) invalid = true;
+    if (hasRepeatedValues(raw)) isInvalid = true;
     if (!candidate) continue;
     const value = candidate.trim();
     if (value.length === 0 || value.length > 256) {
-      invalid = true;
+      isInvalid = true;
       continue;
     }
     if (
       (key === "buildSha" || key === "referenceBuildSha") &&
       !HASH_PATTERN.test(value)
     ) {
-      invalid = true;
+      isInvalid = true;
       continue;
     }
     if (!supported.has(key)) {
-      invalid = true;
+      isInvalid = true;
       continue;
     }
     filters[key] = value;
   }
-  return { filters, invalid };
+  return { filters, invalid: isInvalid };
 }
 
 function parseLimit(value: string | undefined): {
@@ -278,7 +295,7 @@ export function parsePlaytestingScope(
   const rawSelection = singleValue(input.sessions);
   const view = isView(rawView) ? rawView : "overview";
   const layout = rawLayout === "grid" ? "grid" : "list";
-  const layoutInvalid =
+  const isLayoutInvalid =
     rawLayout !== undefined && rawLayout !== "list" && rawLayout !== "grid";
   const parsedFilters = normalizedFilters(input, view);
   const parsedLimit = parseLimit(rawLimit);
@@ -295,21 +312,21 @@ export function parsePlaytestingScope(
     candidateReviewId && REVIEW_ID_PATTERN.test(candidateReviewId)
       ? candidateReviewId
       : null;
-  const reviewInvalid = candidateReviewId !== null && selectedReviewId === null;
+  const isReviewInvalid = candidateReviewId !== null && selectedReviewId === null;
   const candidateSelectedFindingId = rawFinding?.trim() || null;
   const selectedFindingId =
     candidateSelectedFindingId &&
     SELECTED_FINDING_ID_PATTERN.test(candidateSelectedFindingId)
       ? candidateSelectedFindingId
       : null;
-  const selectedFindingInvalid =
+  const isSelectedFindingInvalid =
     candidateSelectedFindingId !== null && selectedFindingId === null;
   const candidateLiveBatchId = rawLiveBatch?.trim() || null;
   const liveBatchId =
     candidateLiveBatchId && BATCH_ID_PATTERN.test(candidateLiveBatchId)
       ? candidateLiveBatchId
       : null;
-  const liveBatchInvalid =
+  const isLiveBatchInvalid =
     candidateLiveBatchId !== null && liveBatchId === null;
   const selection = parseSessionSelection(rawSelection);
   const selectionInvalid =
@@ -317,8 +334,8 @@ export function parsePlaytestingScope(
   const workspaceInvalid =
     workspaceId !== null &&
     (workspaceId.length > 256 || hasControlCharacters(workspaceId));
-  const cursorInvalid = cursor !== null && cursor.length > 2048;
-  const findingInvalid =
+  const isCursorInvalid = cursor !== null && cursor.length > 2048;
+  const isFindingInvalid =
     candidateFindingId !== null && returnFindingId === null;
 
   return {
@@ -338,7 +355,7 @@ export function parsePlaytestingScope(
     invalidQuery:
       hasRepeatedValues(input.view) ||
       hasRepeatedValues(input.layout) ||
-      layoutInvalid ||
+      isLayoutInvalid ||
       (rawView !== undefined && !isView(rawView)) ||
       hasRepeatedValues(input.workspaceId) ||
       hasRepeatedValues(input.limit) ||
@@ -353,72 +370,76 @@ export function parsePlaytestingScope(
       parsedLimit.invalid ||
       parsedStep.invalid ||
       workspaceInvalid ||
-      cursorInvalid ||
-      findingInvalid ||
-      selectedFindingInvalid ||
-      reviewInvalid ||
-      liveBatchInvalid
+      isCursorInvalid ||
+      isFindingInvalid ||
+      isSelectedFindingInvalid ||
+      isReviewInvalid ||
+      isLiveBatchInvalid
   };
 }
 
-function paramsForScope(
+function parametersForScope(
   scope: PlaytestingScope,
   options: {
     readonly includeCursor?: boolean;
     readonly includeStep?: boolean;
   } = {}
 ): URLSearchParams {
-  const params = new URLSearchParams();
-  if (scope.view !== "overview") params.set("view", scope.view);
-  if (scope.layout !== "list") params.set("layout", scope.layout);
-  if (scope.workspaceId) params.set("workspaceId", scope.workspaceId);
+  const parameters = new URLSearchParams();
+  if (scope.view !== "overview") parameters.set("view", scope.view);
+  if (scope.layout !== "list") parameters.set("layout", scope.layout);
+  if (scope.workspaceId) parameters.set("workspaceId", scope.workspaceId);
   for (const key of orderedPresentFilterKeys(scope.filters)) {
     const value = scope.filters[key];
-    if (value) params.set(key, value);
+    if (value) parameters.set(key, value);
   }
   if (scope.limit !== DEFAULT_PLAYTESTING_PAGE_SIZE) {
-    params.set("limit", String(scope.limit));
+    parameters.set("limit", String(scope.limit));
   }
   if (options.includeCursor !== false && scope.cursor) {
-    params.set("cursor", scope.cursor);
+    parameters.set("cursor", scope.cursor);
   }
   if (options.includeStep !== false && scope.step !== null) {
-    params.set("step", String(scope.step));
+    parameters.set("step", String(scope.step));
   }
   // The focused live batch is address state, so a refresh or Back returns the
   // operator to the batch they were watching rather than a bare list.
-  if (scope.liveBatchId) params.set("liveBatch", scope.liveBatchId);
+  if (scope.liveBatchId) parameters.set("liveBatch", scope.liveBatchId);
   // The open review is address state too: a shared link, a refresh or Back
   // returns to the same analyst hypothesis rather than a closed list. It only
   // means something in the view that shows reviews.
   if (scope.selectedReviewId && scope.view === "findings") {
-    params.set("review", scope.selectedReviewId);
+    parameters.set("review", scope.selectedReviewId);
   }
   // The open finding is address state for the same reason the open review is:
   // a shared link, a refresh or Back returns to the same finding rather than
   // to a bare list. It only means something in the view that shows findings.
   if (scope.selectedFindingId && scope.view === "findings") {
-    params.set("finding", scope.selectedFindingId);
+    parameters.set("finding", scope.selectedFindingId);
   }
   // The selection is address state so a shared link, a refresh or Back
   // reproduces the same set of sessions.
   if (scope.selectedEpisodeIds.length > 0) {
-    params.set("sessions", scope.selectedEpisodeIds.join(","));
+    parameters.set("sessions", scope.selectedEpisodeIds.join(","));
   }
-  return params;
+  return parameters;
 }
 
-function withQuery(path: string, params: URLSearchParams): string {
-  const query = params.toString();
+function withQuery(path: string, parameters: URLSearchParams): string {
+  const query = parameters.toString();
   return query ? `${path}?${query}` : path;
 }
 
-/** Current view with all active filters and cursor state. */
+/**
+Current view with all active filters and cursor state.
+*/
 export function playtestingListHref(scope: PlaytestingScope): string {
-  return withQuery(PLAYTESTING_ROUTE, paramsForScope(scope));
+  return withQuery(PLAYTESTING_ROUTE, parametersForScope(scope));
 }
 
-/** Switching views retains shared filters but resets its independent keyset cursor. */
+/**
+Switching views retains shared filters but resets its independent keyset cursor.
+*/
 export function playtestingViewHref(
   scope: PlaytestingScope,
   view: PlaytestingView
@@ -443,24 +464,28 @@ export function playtestingViewHref(
   };
   return withQuery(
     PLAYTESTING_ROUTE,
-    paramsForScope(next, { includeCursor: false, includeStep: false })
+    parametersForScope(next, { includeCursor: false, includeStep: false })
   );
 }
 
-/** A keyset page link for the active list; filters remain exactly as selected. */
+/**
+A keyset page link for the active list; filters remain exactly as selected.
+*/
 export function playtestingPageHref(
   scope: PlaytestingScope,
   cursor: string
 ): string {
-  const params = paramsForScope(scope, {
+  const parameters = parametersForScope(scope, {
     includeCursor: false,
     includeStep: false
   });
-  if (cursor) params.set("cursor", cursor);
-  return withQuery(PLAYTESTING_ROUTE, params);
+  if (cursor) parameters.set("cursor", cursor);
+  return withQuery(PLAYTESTING_ROUTE, parameters);
 }
 
-/** Sessions view with exactly this episode preselected for optional analysis. */
+/**
+Sessions view with exactly this episode preselected for optional analysis.
+*/
 export function playtestingAnalyzeEpisodeHref(
   scope: PlaytestingScope,
   episodeId: string
@@ -472,19 +497,19 @@ export function playtestingAnalyzeEpisodeHref(
 }
 
 /**
- * The arrival anchor for an open analyst review.
- *
- * The link that opens a review names it, so the browser lands on the panel
- * rather than at the top of a document whose list is fifteen rows long.
- */
+The arrival anchor for an open analyst review.
+
+The link that opens a review names it, so the browser lands on the panel
+rather than at the top of a document whose list is fifteen rows long.
+*/
 export const PLAYTESTING_REVIEW_DETAIL_ANCHOR_ID = "playtesting-review-detail";
 
 /**
- * The Findings view with one analyst review's detail open.
- *
- * The detail is address state, so the link is shareable and Back returns to
- * the list with the same review open rather than closing it.
- */
+The Findings view with one analyst review's detail open.
+
+The detail is address state, so the link is shareable and Back returns to
+the list with the same review open rather than closing it.
+*/
 export function playtestingReviewHref(
   scope: PlaytestingScope,
   reviewId: string
@@ -502,35 +527,37 @@ export function playtestingReviewHref(
   return (
     withQuery(
       PLAYTESTING_ROUTE,
-      paramsForScope(next, { includeCursor: false, includeStep: false })
+      parametersForScope(next, { includeCursor: false, includeStep: false })
     ) + `#${PLAYTESTING_REVIEW_DETAIL_ANCHOR_ID}`
   );
 }
 
-/** The Findings view with the review detail closed and the filters unchanged. */
+/**
+The Findings view with the review detail closed and the filters unchanged.
+*/
 export function playtestingReviewCloseHref(scope: PlaytestingScope): string {
   const next: PlaytestingScope = { ...scope, selectedReviewId: null };
   return withQuery(
     PLAYTESTING_ROUTE,
-    paramsForScope(next, { includeCursor: false, includeStep: false })
+    parametersForScope(next, { includeCursor: false, includeStep: false })
   );
 }
 
 /**
- * The arrival anchor for an open finding.
- *
- * The link that opens a finding names it, so the browser lands on the panel
- * rather than at the top of a document whose list is many rows long.
- */
+The arrival anchor for an open finding.
+
+The link that opens a finding names it, so the browser lands on the panel
+rather than at the top of a document whose list is many rows long.
+*/
 export const PLAYTESTING_FINDING_DETAIL_ANCHOR_ID =
   "playtesting-finding-detail";
 
 /**
- * The Findings view with one finding's detail open.
- *
- * The detail is address state, so the link is shareable and Back returns to
- * the list with the same finding open rather than closing it.
- */
+The Findings view with one finding's detail open.
+
+The detail is address state, so the link is shareable and Back returns to
+the list with the same finding open rather than closing it.
+*/
 export function playtestingFindingHref(
   scope: PlaytestingScope,
   findingId: string
@@ -552,41 +579,47 @@ export function playtestingFindingHref(
   return (
     withQuery(
       PLAYTESTING_ROUTE,
-      paramsForScope(next, { includeCursor: false, includeStep: false })
+      parametersForScope(next, { includeCursor: false, includeStep: false })
     ) + `#${PLAYTESTING_FINDING_DETAIL_ANCHOR_ID}`
   );
 }
 
-/** The Findings view with the finding detail closed and the filters unchanged. */
+/**
+The Findings view with the finding detail closed and the filters unchanged.
+*/
 export function playtestingFindingCloseHref(scope: PlaytestingScope): string {
   const next: PlaytestingScope = { ...scope, selectedFindingId: null };
   return withQuery(
     PLAYTESTING_ROUTE,
-    paramsForScope(next, { includeCursor: false, includeStep: false })
+    parametersForScope(next, { includeCursor: false, includeStep: false })
   );
 }
 
-/** Full-page episode route preserving the originating list and exact step. */
+/**
+Full-page episode route preserving the originating list and exact step.
+*/
 export function playtestingEpisodeHref(
   scope: PlaytestingScope,
   episodeId: string,
   step: number | null = null,
   returnFindingId?: string
 ): string {
-  const params = paramsForScope(
+  const parameters = parametersForScope(
     { ...scope, step },
     { includeCursor: true, includeStep: step !== null }
   );
   if (returnFindingId && FINDING_ID_PATTERN.test(returnFindingId)) {
-    params.set("returnFinding", returnFindingId);
+    parameters.set("returnFinding", returnFindingId);
   }
   return withQuery(
     `${PLAYTESTING_ROUTE}/sessions/${encodeURIComponent(episodeId)}`,
-    params
+    parameters
   );
 }
 
-/** Return to the exact source list and restore the cited finding anchor. */
+/**
+Return to the exact source list and restore the cited finding anchor.
+*/
 export function playtestingInspectorBackHref(scope: PlaytestingScope): string {
   const href = playtestingListHref({ ...scope, step: null });
   return scope.returnFindingId
@@ -594,7 +627,9 @@ export function playtestingInspectorBackHref(scope: PlaytestingScope): string {
     : href;
 }
 
-/** Replace all list filters and reset pagination in one URL transition. */
+/**
+Replace all list filters and reset pagination in one URL transition.
+*/
 export function playtestingFilterHref(
   scope: PlaytestingScope,
   updates: Partial<Record<PlaytestingFilterKey, string | null>> & {
@@ -624,14 +659,14 @@ export function playtestingFilterHref(
 }
 
 /**
- * The scope a form must carry so that submitting it does not quietly undo
- * what the operator has already chosen.
- *
- * A GET form rebuilds the query string from its own controls, so anything the
- * form does not represent is lost when it is submitted. `except` names the
- * filters the form owns: they are carried by the form's own controls, and
- * carrying them a second time would submit the same name twice.
- */
+The scope a form must carry so that submitting it does not quietly undo
+what the operator has already chosen.
+
+A GET form rebuilds the query string from its own controls, so anything the
+form does not represent is lost when it is submitted. `except` names the
+filters the form owns: they are carried by the form's own controls, and
+carrying them a second time would submit the same name twice.
+*/
 export function playtestingPreservedFields(
   scope: PlaytestingScope,
   except: readonly PlaytestingFilterKey[]

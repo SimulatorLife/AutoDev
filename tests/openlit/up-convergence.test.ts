@@ -21,25 +21,27 @@ const IMAGE_ID =
   "sha256:92b0ff83ef1cd99278da42deccec15fb0797620e11a931ced5fa0fae0bcf575b";
 
 /**
- * The failure Docker Desktop's API proxy produces when the Engine does not
- * answer within its 10-second deadline, and the message Compose derives from
- * it. The version in the message is the one Compose asked with, and the Engine
- * serves it: the Engine simply did not answer in time.
- */
+The failure Docker Desktop's API proxy produces when the Engine does not
+answer within its 10-second deadline, and the message Compose derives from
+it. The version in the message is the one Compose asked with, and the Engine
+serves it: the Engine simply did not answer in time.
+*/
 const ENGINE_TIMEOUT_COMPOSE_ERROR = [
   "dependency failed to start: request returned 500 Internal Server Error for API route and version http://%2FUsers%2Fhenrykirk%2F.docker%2Frun%2Fdocker.sock/v1.51/containers/c98f3e577bcf249a7bcb1e3b20b65921eeefe0f017fdf8ff191d7e05e1f267ae/json, check if the server supports the requested API version"
 ].join("\n");
 
-/** A Compose failure that no retry can fix. */
+/**
+A Compose failure that no retry can fix.
+*/
 const DETERMINISTIC_COMPOSE_ERROR = [
   "validating config/openlit/docker-compose.yml: services.clickhouse.environment must be a mapping"
 ].join("\n");
 
 /**
- * The health-gate failure a starved Engine produces: the health check cannot
- * start inside the container, so the container is recorded unhealthy and
- * Compose refuses to start the service that depends on it.
- */
+The health-gate failure a starved Engine produces: the health check cannot
+start inside the container, so the container is recorded unhealthy and
+Compose refuses to start the service that depends on it.
+*/
 const UNHEALTHY_DEPENDENCY_COMPOSE_ERROR = [
   "dependency failed to start: container openlit-clickhouse is unhealthy"
 ].join("\n");
@@ -57,10 +59,10 @@ function writeExecutable(path: string, content: string): void {
 }
 
 /**
- * A throwaway repository root with stubbed `docker`, `curl`, and `pnpm` on the
- * PATH, so the real `up.sh` runs end to end without a Docker Engine, a
- * ClickHouse, or a network.
- */
+A throwaway repository root with stubbed `docker`, `curl`, and `pnpm` on the
+PATH, so the real `up.sh` runs end to end without a Docker Engine, a
+ClickHouse, or a network.
+*/
 function createFixture(): Fixture {
   const root = mkdtempSync(join(tmpdir(), "autodev-openlit-up-"));
   const codexHome = mkdtempSync(join(tmpdir(), "autodev-openlit-codex-"));
@@ -245,27 +247,43 @@ exit 0
 }
 
 interface RunOptions {
-  /** How many `compose up` calls fail with the Engine's 500. */
+  /**
+  How many `compose up` calls fail with the Engine's 500.
+  */
   readonly composeFailures?: number;
-  /** The message the failing `compose up` prints. */
+  /**
+  The message the failing `compose up` prints.
+  */
   readonly composeError?: string;
-  /** Whether the Docker Engine answers `docker info`. */
+  /**
+  Whether the Docker Engine answers `docker info`.
+  */
   readonly engineResponsive?: boolean;
-  /** Whether the stubbed stack reports itself ready. */
+  /**
+  Whether the stubbed stack reports itself ready.
+  */
   readonly readiness?: boolean;
-  /** Whether the published ClickHouse port is unreachable. */
+  /**
+  Whether the published ClickHouse port is unreachable.
+  */
   readonly publishedPortUnreachable?: boolean;
-  /** Whether the stubbed openlit container starts out unhealthy. */
+  /**
+  Whether the stubbed openlit container starts out unhealthy.
+  */
   readonly unhealthyOpenlit?: boolean;
   /**
-   * The ClickHouse configuration the runner reads. It defaults to a
-   * configuration that states one retention window; a configuration that
-   * states none, or two, is the case the runner has to refuse.
-   */
+  The ClickHouse configuration the runner reads. It defaults to a
+  configuration that states one retention window; a configuration that
+  states none, or two, is the case the runner has to refuse.
+  */
   readonly clickhouseConfiguration?: string;
-  /** Optional TSV rows returned for ClickHouse system log discovery. */
+  /**
+  Optional TSV rows returned for ClickHouse system log discovery.
+  */
   readonly systemLogRows?: string;
-  /** Optional bash snippet run instead of usage-contract.ts. */
+  /**
+  Optional bash snippet run instead of usage-contract.ts.
+  */
   readonly verifyScript?: string;
 }
 
@@ -309,12 +327,8 @@ function runUp(fixture: Fixture, options: RunOptions = {}) {
         STUB_COMPOSE_FAILURES: String(options.composeFailures ?? 0),
         STUB_COMPOSE_ERROR:
           options.composeError ?? ENGINE_TIMEOUT_COMPOSE_ERROR,
-        ...(options.systemLogRows === undefined
-          ? {}
-          : { STUB_SYSTEM_LOG_ROWS: options.systemLogRows }),
-        ...(options.verifyScript === undefined
-          ? {}
-          : {
+        ...(options.systemLogRows !== undefined && { STUB_SYSTEM_LOG_ROWS: options.systemLogRows }),
+        ...(options.verifyScript !== undefined && {
               STUB_VERIFY_SCRIPT: join(fixture.state, "verify-stub.sh")
             }),
         AUTODEV_OPENLIT_COMPOSE_ATTEMPTS: "3",
@@ -495,7 +509,7 @@ test("the OpenLIT runner bounds the retention of every diagnostic log it finds",
 });
 
 test("the ClickHouse configuration states one retention window for the diagnostic logs", () => {
-  const configuration = readFileSync(
+  const config = readFileSync(
     join(
       repositoryRoot,
       "config",
@@ -507,7 +521,7 @@ test("the ClickHouse configuration states one retention window for the diagnosti
   );
   const windows = new Set(
     Array.from(
-      configuration.matchAll(/<table_ttl>(\d+)<\/table_ttl>/gu),
+      config.matchAll(/<table_ttl>(\d+)<\/table_ttl>/gu),
       (match) => match[1]
     )
   );

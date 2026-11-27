@@ -17,11 +17,11 @@ const SERVICE_TOKEN = "m".repeat(64);
 const OPERATOR_ACTOR = "mcp-applied-operator";
 
 /**
- * The canonical declaration the test applies.
- *
- * Two servers, one stdio and one http, so the comparison has to read both
- * shapes of launch configuration rather than one shape it happens to know.
- */
+The canonical declaration the test applies.
+
+Two servers, one stdio and one http, so the comparison has to read both
+shapes of launch configuration rather than one shape it happens to know.
+*/
 const DECLARATION = `{
   "mcpServers": {
     "lsp": {
@@ -47,7 +47,9 @@ const DECLARATION = `{
   }
 }`;
 
-/** The catalogue the installer writes from that declaration. */
+/**
+The catalogue the installer writes from that declaration.
+*/
 const APPLIED = {
   lsp: { command: "bash", args: ["-lc", "exec lsp"] },
   docs: {
@@ -69,12 +71,12 @@ function request(method: string, url: string): IncomingMessage {
 }
 
 /**
- * A repository root and a Codex home, with the canonical declaration written
- * and the applied catalogue written from `catalogue`.
- *
- * `catalogue` of `null` writes no catalogue at all, which is the state of a
- * machine that has never had the MCP configuration applied.
- */
+A repository root and a Codex home, with the canonical declaration written
+and the applied catalogue written from `catalogue`.
+
+`catalogue` of `null` writes no catalogue at all, which is the state of a
+machine that has never had the MCP configuration applied.
+*/
 function fixture(catalogue: unknown): {
   readonly repositoryRoot: string;
   readonly codexHome: string;
@@ -100,9 +102,9 @@ function fixture(catalogue: unknown): {
 }
 
 /**
- * The credential the Control API requires, installed for the duration of the
- * read and removed again afterwards.
- */
+The credential the Control API requires, installed for the duration of the
+read and removed again afterwards.
+*/
 function withControlApiCredential<T>(run: () => Promise<T>): Promise<T> {
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   const previousOperators = process.env.AUTODEV_CONTROL_OPERATORS;

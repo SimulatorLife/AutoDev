@@ -11,7 +11,7 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/output";
 import { SERVICE_TEMPORARY_FAILURE_EXIT_CODE } from "@simulatorlife/autodev-runtime/shared/service-lifecycle";
 
-import { readDevControlApiConfig } from "./dev.ts";
+import { readDevControlApiConfig as readDevelopmentControlApiConfig } from "./dev.ts";
 
 // When launchd starts or restarts `com.codex.model-router` and
 // `com.codex.autodev-console` together, the Console preflight can run before
@@ -26,8 +26,8 @@ const startupWaitMs = parseNonNegativeInteger(
 
 try {
   await verifyControlApiCompatibility(
-    readDevControlApiConfig(),
-    globalThis.fetch,
+    readDevelopmentControlApiConfig(),
+    fetch,
     { timeoutMs: startupWaitMs }
   );
   writeLine("[console] AutoDev Control API compatibility verified.");

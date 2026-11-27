@@ -1,16 +1,16 @@
 /**
- * Fixed-fragment WHERE-clause builders for the Playtesting repository.
- *
- * Every fragment here is a constant string keyed to one named filter; the
- * only thing that varies per call is the *value* bound through
- * runParameterizedClickHouseStatement's params, never the SQL text itself.
- * A caller cannot inject a new column or operator -- only choose which of
- * these fixed, pre-written clauses to include.
- */
+Fixed-fragment WHERE-clause builders for the Playtesting repository.
+
+Every fragment here is a constant string keyed to one named filter; the
+only thing that varies per call is the *value* bound through
+runParameterizedClickHouseStatement's params, never the SQL text itself.
+A caller cannot inject a new column or operator -- only choose which of
+these fixed, pre-written clauses to include.
+*/
 
 import { SHA256_PATTERN } from "@simulatorlife/autodev-core";
 
-import type { ClickHouseParamValue } from "../clickhouse/clickhouse-client.ts";
+import type { ClickHouseParamValue as ClickHouseParameterValue } from "../clickhouse/clickhouse-client.ts";
 import type { PlaytestKeysetCursor } from "./cursor.ts";
 import type {
   PlaytestBatchFilter,
@@ -22,15 +22,19 @@ import type {
   PlaytestHumanStudyFilter
 } from "./types.ts";
 
-/** A finding's public id: the `finding-` prefix and its SHA-256 fingerprint. */
+/**
+A finding's public id: the `finding-` prefix and its SHA-256 fingerprint.
+*/
 const FINDING_ID_PATTERN = /^finding-[a-f\d]{64}$/u;
 
 export interface BoundWhereClause {
   readonly clauses: readonly string[];
-  readonly params: Record<string, ClickHouseParamValue>;
+  readonly params: Record<string, ClickHouseParameterValue>;
 }
 
-/** workspace_id is required on every query; never optional. */
+/**
+workspace_id is required on every query; never optional.
+*/
 function requireWorkspace(workspaceId: string): BoundWhereClause {
   if (workspaceId.trim().length === 0) {
     throw new TypeError("workspaceId is required for every Playtesting query");
@@ -46,7 +50,7 @@ export function buildEpisodeWhereClause(
 ): BoundWhereClause {
   const base = requireWorkspace(filter.workspaceId);
   const clauses = [...base.clauses];
-  const params: Record<string, ClickHouseParamValue> = { ...base.params };
+  const parameters: Record<string, ClickHouseParameterValue> = { ...base.params };
 
   if (filter.query !== undefined) {
     // The search is a substring match over the columns that identify the
@@ -60,35 +64,35 @@ export function buildEpisodeWhereClause(
         "positionCaseInsensitive(policy, {query:String}) > 0 OR " +
         "positionCaseInsensitive(cohort, {query:String}) > 0)"
     );
-    params.query = filter.query;
+    parameters.query = filter.query;
   }
   if (filter.batchId !== undefined) {
     clauses.push("batch_id = {batchId:String}");
-    params.batchId = filter.batchId;
+    parameters.batchId = filter.batchId;
   }
   if (filter.buildSha !== undefined) {
     clauses.push("build_sha = {buildSha:String}");
-    params.buildSha = filter.buildSha;
+    parameters.buildSha = filter.buildSha;
   }
   if (filter.scenario !== undefined) {
     clauses.push("scenario = {scenario:String}");
-    params.scenario = filter.scenario;
+    parameters.scenario = filter.scenario;
   }
   if (filter.policy !== undefined) {
     clauses.push("policy = {policy:String}");
-    params.policy = filter.policy;
+    parameters.policy = filter.policy;
   }
   if (filter.cohort !== undefined) {
     clauses.push("cohort = {cohort:String}");
-    params.cohort = filter.cohort;
+    parameters.cohort = filter.cohort;
   }
   if (filter.status !== undefined) {
     clauses.push("status = {status:String}");
-    params.status = filter.status;
+    parameters.status = filter.status;
   }
   if (filter.gameOutcome !== undefined) {
     clauses.push("game_outcome = {gameOutcome:String}");
-    params.gameOutcome = filter.gameOutcome;
+    parameters.gameOutcome = filter.gameOutcome;
   }
   if (filter.reviewStatus !== undefined) {
     clauses.push(
@@ -99,13 +103,13 @@ export function buildEpisodeWhereClause(
   }
   if (filter.startedAtFrom !== undefined) {
     clauses.push("started_at >= {startedAtFrom:DateTime64(3)}");
-    params.startedAtFrom = filter.startedAtFrom;
+    parameters.startedAtFrom = filter.startedAtFrom;
   }
   if (filter.startedAtTo !== undefined) {
     clauses.push("started_at <= {startedAtTo:DateTime64(3)}");
-    params.startedAtTo = filter.startedAtTo;
+    parameters.startedAtTo = filter.startedAtTo;
   }
-  return { clauses, params };
+  return { clauses, params: parameters };
 }
 
 export function buildFindingWhereClause(
@@ -113,7 +117,7 @@ export function buildFindingWhereClause(
 ): BoundWhereClause {
   const base = requireWorkspace(filter.workspaceId);
   const clauses = [...base.clauses];
-  const params: Record<string, ClickHouseParamValue> = { ...base.params };
+  const parameters: Record<string, ClickHouseParameterValue> = { ...base.params };
 
   if (filter.fingerprint !== undefined) {
     if (
@@ -125,7 +129,7 @@ export function buildFindingWhereClause(
       );
     }
     clauses.push("fingerprint = {fingerprint:String}");
-    params.fingerprint = filter.fingerprint;
+    parameters.fingerprint = filter.fingerprint;
   }
   if (filter.findingId !== undefined) {
     if (
@@ -137,25 +141,25 @@ export function buildFindingWhereClause(
       );
     }
     clauses.push("finding_id = {findingId:String}");
-    params.findingId = filter.findingId;
+    parameters.findingId = filter.findingId;
   }
   if (filter.severity !== undefined) {
     clauses.push("severity = {severity:String}");
-    params.severity = filter.severity;
+    parameters.severity = filter.severity;
   }
   if (filter.status !== undefined) {
     clauses.push("status = {status:String}");
-    params.status = filter.status;
+    parameters.status = filter.status;
   }
   if (filter.verificationStage !== undefined) {
     clauses.push("verification_stage = {verificationStage:String}");
-    params.verificationStage = filter.verificationStage;
+    parameters.verificationStage = filter.verificationStage;
   }
   if (filter.evidenceStatus !== undefined) {
     clauses.push("evidence_status = {evidenceStatus:String}");
-    params.evidenceStatus = filter.evidenceStatus;
+    parameters.evidenceStatus = filter.evidenceStatus;
   }
-  return { clauses, params };
+  return { clauses, params: parameters };
 }
 
 export function buildBatchWhereClause(
@@ -163,17 +167,17 @@ export function buildBatchWhereClause(
 ): BoundWhereClause {
   const base = requireWorkspace(filter.workspaceId);
   const clauses = [...base.clauses];
-  const params: Record<string, ClickHouseParamValue> = { ...base.params };
+  const parameters: Record<string, ClickHouseParameterValue> = { ...base.params };
 
   if (filter.buildSha !== undefined) {
     clauses.push("build_sha = {buildSha:String}");
-    params.buildSha = filter.buildSha;
+    parameters.buildSha = filter.buildSha;
   }
   if (filter.status !== undefined) {
     clauses.push("status = {status:String}");
-    params.status = filter.status;
+    parameters.status = filter.status;
   }
-  return { clauses, params };
+  return { clauses, params: parameters };
 }
 
 export function buildComparisonWhereClause(
@@ -181,21 +185,21 @@ export function buildComparisonWhereClause(
 ): BoundWhereClause {
   const base = requireWorkspace(filter.workspaceId);
   const clauses = [...base.clauses];
-  const params: Record<string, ClickHouseParamValue> = { ...base.params };
+  const parameters: Record<string, ClickHouseParameterValue> = { ...base.params };
 
   if (filter.benchmarkId !== undefined) {
     clauses.push("benchmark_id = {benchmarkId:String}");
-    params.benchmarkId = filter.benchmarkId;
+    parameters.benchmarkId = filter.benchmarkId;
   }
   if (filter.experimentId !== undefined) {
     clauses.push("experiment_id = {experimentId:String}");
-    params.experimentId = filter.experimentId;
+    parameters.experimentId = filter.experimentId;
   }
   if (filter.decision !== undefined) {
     clauses.push("decision = {decision:String}");
-    params.decision = filter.decision;
+    parameters.decision = filter.decision;
   }
-  return { clauses, params };
+  return { clauses, params: parameters };
 }
 
 export function buildBenchmarkWhereClause(
@@ -203,17 +207,17 @@ export function buildBenchmarkWhereClause(
 ): BoundWhereClause {
   const base = requireWorkspace(filter.workspaceId);
   const clauses = [...base.clauses];
-  const params: Record<string, ClickHouseParamValue> = { ...base.params };
+  const parameters: Record<string, ClickHouseParameterValue> = { ...base.params };
 
   if (filter.referenceBuildSha !== undefined) {
     clauses.push("reference_build_sha = {referenceBuildSha:String}");
-    params.referenceBuildSha = filter.referenceBuildSha;
+    parameters.referenceBuildSha = filter.referenceBuildSha;
   }
   if (filter.measurementVersion !== undefined) {
     clauses.push("measurement_version = {measurementVersion:String}");
-    params.measurementVersion = filter.measurementVersion;
+    parameters.measurementVersion = filter.measurementVersion;
   }
-  return { clauses, params };
+  return { clauses, params: parameters };
 }
 
 export function buildExperimentWhereClause(
@@ -221,17 +225,17 @@ export function buildExperimentWhereClause(
 ): BoundWhereClause {
   const base = requireWorkspace(filter.workspaceId);
   const clauses = [...base.clauses];
-  const params: Record<string, ClickHouseParamValue> = { ...base.params };
+  const parameters: Record<string, ClickHouseParameterValue> = { ...base.params };
 
   if (filter.benchmarkId !== undefined) {
     clauses.push("benchmark_id = {benchmarkId:String}");
-    params.benchmarkId = filter.benchmarkId;
+    parameters.benchmarkId = filter.benchmarkId;
   }
   if (filter.state !== undefined) {
     clauses.push("state = {state:String}");
-    params.state = filter.state;
+    parameters.state = filter.state;
   }
-  return { clauses, params };
+  return { clauses, params: parameters };
 }
 
 export function buildHumanStudyWhereClause(
@@ -239,27 +243,27 @@ export function buildHumanStudyWhereClause(
 ): BoundWhereClause {
   const base = requireWorkspace(filter.workspaceId);
   const clauses = [...base.clauses];
-  const params: Record<string, ClickHouseParamValue> = { ...base.params };
+  const parameters: Record<string, ClickHouseParameterValue> = { ...base.params };
 
   if (filter.benchmarkId !== undefined) {
     clauses.push("benchmark_id = {benchmarkId:String}");
-    params.benchmarkId = filter.benchmarkId;
+    parameters.benchmarkId = filter.benchmarkId;
   }
   if (filter.instrument !== undefined) {
     clauses.push("instrument = {instrument:String}");
-    params.instrument = filter.instrument;
+    parameters.instrument = filter.instrument;
   }
   if (filter.approved !== undefined) {
     clauses.push("approved = {approved:UInt8}");
-    params.approved = filter.approved ? 1 : 0;
+    parameters.approved = filter.approved ? 1 : 0;
   }
-  return { clauses, params };
+  return { clauses, params: parameters };
 }
 
 /**
- * Append the fixed keyset-pagination clause for "rows ordered by
- * (orderedAt DESC, id DESC), strictly before this cursor".
- */
+Append the fixed keyset-pagination clause for "rows ordered by
+(orderedAt DESC, id DESC), strictly before this cursor".
+*/
 export function appendCursorClause(
   base: BoundWhereClause,
   cursor: PlaytestKeysetCursor | null,

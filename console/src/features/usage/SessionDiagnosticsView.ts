@@ -1,18 +1,18 @@
 /**
- * The session-scoped Usage view.
- *
- * A session id in the top filter bar scopes the whole `/usage` page to one
- * session: its rollouts, its router requests, its failures and its spans. The
- * five tabs are the same report read five ways, and every one of them is
- * server-rendered from the Control API's diagnostics routes -- there is no
- * browser-side telemetry request and no second copy of the diagnostics logic.
- *
- * The page is a server component on purpose. The previous session lookup was a
- * client island that posted to a browser proxy route and could only ever show
- * a fixed 200-span sample of one metric source; a session's evidence lives in
- * the rollouts, the router logs and the span store together, and it has to be
- * read server-side to be read at all.
- */
+The session-scoped Usage view.
+
+A session id in the top filter bar scopes the whole `/usage` page to one
+session: its rollouts, its router requests, its failures and its spans. The
+five tabs are the same report read five ways, and every one of them is
+server-rendered from the Control API's diagnostics routes -- there is no
+browser-side telemetry request and no second copy of the diagnostics logic.
+
+The page is a server component on purpose. The previous session lookup was a
+client island that posted to a browser proxy route and could only ever show
+a fixed 200-span sample of one metric source; a session's evidence lives in
+the rollouts, the router logs and the span store together, and it has to be
+read server-side to be read at all.
+*/
 
 import {
   formatClientSurface,
@@ -54,7 +54,7 @@ import { Tag } from "../../components/status/Tag.ts";
 import {
   DataTable,
   type DataTableFeatures,
-  type DataTableProps
+  type DataTableProps as DataTableProperties
 } from "../../components/tables/DataTable.ts";
 import { TabNav } from "../../components/tabs/Tabs.ts";
 import { InlineDisplayToggle } from "../../components/ui/InlineDisplayToggle.ts";
@@ -69,7 +69,9 @@ import {
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
 
-/** The tabs the session-scoped page offers. */
+/**
+The tabs the session-scoped page offers.
+*/
 const SESSION_TABS = [
   { id: "overview", label: "Overview" },
   { id: "threads", label: "Threads & Turns" },
@@ -79,18 +81,22 @@ const SESSION_TABS = [
 ] as const;
 
 /**
- * A panel's own stack: the blocks inside one panel, at the tighter rhythm.
- *
- * The page's top-level sections use the shared section stack; the content
- * inside a panel is a tighter column, so it gets its own name rather than
- * repeating the same class string.
- */
+A panel's own stack: the blocks inside one panel, at the tighter rhythm.
+
+The page's top-level sections use the shared section stack; the content
+inside a panel is a tighter column, so it gets its own name rather than
+repeating the same class string.
+*/
 const PANEL_CONTENT_STACK_CLASS = "flex flex-col gap-3";
 
-/** The column header every time-carrying table uses. */
+/**
+The column header every time-carrying table uses.
+*/
 const TIME_UTC_HEADER = "Time";
 
-/** The session-scoped page's own state. */
+/**
+The session-scoped page's own state.
+*/
 export interface SessionDiagnosticsViewState {
   readonly sessionId: string;
   readonly range: string;
@@ -106,7 +112,9 @@ export interface SessionDiagnosticsViewState {
   readonly failureCategory: ToolFailureCategory | undefined;
 }
 
-/** A read that did not produce evidence, and why. */
+/**
+A read that did not produce evidence, and why.
+*/
 export interface SessionDiagnosticsFailure {
   readonly code: string;
   readonly message: string;
@@ -153,7 +161,9 @@ function count(value: number | null): string {
   return value === null ? NOT_OBSERVED_LABEL : COUNT_FORMATTER.format(value);
 }
 
-/** The units the initial developer prompt can be read in. */
+/**
+The units the initial developer prompt can be read in.
+*/
 function promptSizeUnits(
   prompt: SessionThreadPromptOverhead | undefined
 ): ReturnType<typeof measureRepresentations> {
@@ -174,7 +184,9 @@ function promptSizeUnits(
   return measureRepresentations(units);
 }
 
-/** One skill a thread read, with its read count when the engine supplies it. */
+/**
+One skill a thread read, with its read count when the engine supplies it.
+*/
 interface ThreadSkillRead {
   readonly skill: string;
   readonly reads: number | null;
@@ -188,14 +200,18 @@ function threadSkillReads(thread: SessionThreadTrace): ThreadSkillRead[] {
   }));
 }
 
-/** "skill", or "skill ×N" when the count was observed. */
+/**
+"skill", or "skill ×N" when the count was observed.
+*/
 function skillReadLabel(read: ThreadSkillRead): string {
   return read.reads === null ? read.skill : read.skill + " ×" + read.reads;
 }
 
 const SKILL_NAME_COLLATOR = new Intl.Collator("en-US");
 
-/** One skill read in the session and the threads that read it. */
+/**
+One skill read in the session and the threads that read it.
+*/
 interface SessionSkillUsage {
   readonly skill: string;
   readonly threads: readonly SessionThreadTrace[];
@@ -217,7 +233,7 @@ function sessionSkillUsage(
       bySkill.set(read.skill, entry);
     }
   }
-  return Array.from(bySkill.entries(), ([skill, entry]) => ({
+  return Array.from(bySkill, ([skill, entry]) => ({
     skill,
     ...entry
   })).sort(
@@ -296,17 +312,17 @@ function chartData(
 }
 
 /**
- * The URL of one view of the session.
- *
- * Every control in the session view is a link to another URL rather than a
- * browser-side state change, so the page stays addressable, bookmarkable and
- * reachable by the back button -- and every tab keeps the session scope.
- */
+The URL of one view of the session.
+
+Every control in the session view is a link to another URL rather than a
+browser-side state change, so the page stays addressable, bookmarkable and
+reachable by the back button -- and every tab keeps the session scope.
+*/
 function sessionViewHref(
   state: SessionDiagnosticsViewState,
   changes: Readonly<Record<string, string | number | undefined>>
 ): string {
-  const params = new URLSearchParams({
+  const parameters = new URLSearchParams({
     range: state.range,
     sessionId: state.sessionId,
     tab: state.tab
@@ -318,9 +334,9 @@ function sessionViewHref(
   };
   for (const [key, value] of Object.entries(merged)) {
     if (value === undefined || value === "") continue;
-    params.set(key, String(value));
+    parameters.set(key, String(value));
   }
-  return `/usage?${params.toString()}`;
+  return `/usage?${parameters.toString()}`;
 }
 
 function panel(title: string, children: React.ReactNode): React.JSX.Element {
@@ -332,9 +348,15 @@ function panel(title: string, children: React.ReactNode): React.JSX.Element {
   );
 }
 
-/* ------------------------------------------------------------------ */
-/* The session context header.                                         */
-/* ------------------------------------------------------------------ */
+/*
+------------------------------------------------------------------
+*/
+/*
+The session context header.
+*/
+/*
+------------------------------------------------------------------
+*/
 
 function renderContextHeader(
   report: SessionDiagnosticsReport
@@ -399,13 +421,9 @@ function renderContextHeader(
     React.createElement(
       DetailValue,
       { label: "Live" },
-      native
-        ? React.createElement(Tag, {
+      React.createElement(Tag, native ? {
             children: native.endedAt ? "End observed" : NOT_OBSERVED_LABEL
-          })
-        : openThread === true
-          ? React.createElement(Tag, { children: "Open turn" })
-          : React.createElement(Tag, { children: "Not running" })
+          } : ({ children: openThread === true ? "Open turn" : "Not running" }))
     ),
     React.createElement(
       DetailValue,
@@ -466,9 +484,15 @@ function renderAlerts(report: SessionDiagnosticsReport): React.JSX.Element[] {
   return alerts;
 }
 
-/* ------------------------------------------------------------------ */
-/* Overview.                                                           */
-/* ------------------------------------------------------------------ */
+/*
+------------------------------------------------------------------
+*/
+/*
+Overview.
+*/
+/*
+------------------------------------------------------------------
+*/
 
 function threadColumns(
   state: SessionDiagnosticsViewState,
@@ -596,10 +620,10 @@ function routerProviderLabel(
 }
 
 /**
- * The upstream model(s) that served a thread. The thread's own model is the
- * alias Codex requested (`autodev/orchestrator`); the router knows the real
- * one, so it is used whenever the router saw the thread.
- */
+The upstream model(s) that served a thread. The thread's own model is the
+alias Codex requested (`autodev/orchestrator`); the router knows the real
+one, so it is used whenever the router saw the thread.
+*/
 function threadModelLabel(
   thread: SessionThreadTrace,
   summary: SessionRouterSummary | undefined
@@ -778,7 +802,7 @@ function renderOverview(
         : React.createElement("div"),
       panel(
         "Threads",
-        React.createElement<DataTableProps<SessionThreadTrace>>(DataTable, {
+        React.createElement<DataTableProperties<SessionThreadTrace>>(DataTable, {
           data: report.threads,
           columns: threadColumns(state, report.router),
           keyExtractor: (thread) => thread.id,
@@ -788,7 +812,7 @@ function renderOverview(
       ),
       panel(
         "Skill usage",
-        React.createElement<DataTableProps<SessionSkillUsage>>(DataTable, {
+        React.createElement<DataTableProperties<SessionSkillUsage>>(DataTable, {
           data: sessionSkillUsage(report),
           columns: skillUsageColumns(state),
           keyExtractor: (usage) => usage.skill,
@@ -800,9 +824,15 @@ function renderOverview(
   ];
 }
 
-/* ------------------------------------------------------------------ */
-/* Threads & Turns.                                                    */
-/* ------------------------------------------------------------------ */
+/*
+------------------------------------------------------------------
+*/
+/*
+Threads & Turns.
+*/
+/*
+------------------------------------------------------------------
+*/
 
 function turnColumns(): readonly ColumnDef<
   DataTableFeatures,
@@ -1064,7 +1094,7 @@ function renderThreads(
           panel(
             "Turns",
             React.createElement<
-              DataTableProps<SessionThreadTrace["turns"][number]>
+              DataTableProperties<SessionThreadTrace["turns"][number]>
             >(DataTable, {
               data: thread.turns,
               columns: turnColumns(),
@@ -1077,7 +1107,7 @@ function renderThreads(
           panel(
             "Silences of a minute or more",
             React.createElement<
-              DataTableProps<SessionThreadTrace["gaps"][number]>
+              DataTableProperties<SessionThreadTrace["gaps"][number]>
             >(DataTable, {
               data: thread.gaps,
               columns: gapColumns(),
@@ -1093,7 +1123,7 @@ function renderThreads(
                 React.createElement(
                   "div",
                   { className: PANEL_CONTENT_STACK_CLASS },
-                  React.createElement<DataTableProps<SessionThreadItem>>(
+                  React.createElement<DataTableProperties<SessionThreadItem>>(
                     DataTable,
                     {
                       data: report.itemsPage.items,
@@ -1118,9 +1148,15 @@ function renderThreads(
   );
 }
 
-/* ------------------------------------------------------------------ */
-/* Failures & Hooks.                                                   */
-/* ------------------------------------------------------------------ */
+/*
+------------------------------------------------------------------
+*/
+/*
+Failures & Hooks.
+*/
+/*
+------------------------------------------------------------------
+*/
 
 interface RouterFailureRow {
   readonly key: string;
@@ -1267,7 +1303,7 @@ function renderFailures(
     ),
     panel(
       "Tool failures",
-      React.createElement<DataTableProps<FailureRow>>(DataTable, {
+      React.createElement<DataTableProperties<FailureRow>>(DataTable, {
         data: rows,
         columns: failureColumns(),
         keyExtractor: (row) => row.key,
@@ -1277,7 +1313,7 @@ function renderFailures(
     ),
     panel(
       "Router failures",
-      React.createElement<DataTableProps<RouterFailureRow>>(DataTable, {
+      React.createElement<DataTableProperties<RouterFailureRow>>(DataTable, {
         data: routerFailures,
         columns: [
           {
@@ -1358,9 +1394,15 @@ function renderFailures(
   );
 }
 
-/* ------------------------------------------------------------------ */
-/* Router Requests.                                                    */
-/* ------------------------------------------------------------------ */
+/*
+------------------------------------------------------------------
+*/
+/*
+Router Requests.
+*/
+/*
+------------------------------------------------------------------
+*/
 
 function renderRequests(
   report: SessionDiagnosticsReport,
@@ -1371,7 +1413,7 @@ function renderRequests(
     { className: PAGE_SECTION_STACK_CLASS },
     panel(
       "Per-thread router summary",
-      React.createElement<DataTableProps<SessionRouterSummary>>(DataTable, {
+      React.createElement<DataTableProperties<SessionRouterSummary>>(DataTable, {
         data: report.router,
         columns: [
           {
@@ -1445,7 +1487,7 @@ function renderRequests(
       React.createElement(
         "div",
         { className: PANEL_CONTENT_STACK_CLASS },
-        React.createElement<DataTableProps<SessionRouterEventRow>>(DataTable, {
+        React.createElement<DataTableProperties<SessionRouterEventRow>>(DataTable, {
           data: report.eventsPage.items,
           columns: [
             {
@@ -1513,9 +1555,15 @@ function renderRequests(
   );
 }
 
-/* ------------------------------------------------------------------ */
-/* OTel Spans.                                                         */
-/* ------------------------------------------------------------------ */
+/*
+------------------------------------------------------------------
+*/
+/*
+OTel Spans.
+*/
+/*
+------------------------------------------------------------------
+*/
 
 function spanColumns(): readonly ColumnDef<
   DataTableFeatures,
@@ -1646,7 +1694,7 @@ function renderSpans(
     React.createElement(
       "div",
       { className: LIST_PANEL_CLASS },
-      React.createElement<DataTableProps<UsageSessionSpanSummary>>(DataTable, {
+      React.createElement<DataTableProperties<UsageSessionSpanSummary>>(DataTable, {
         data: spans.spans,
         columns: spanColumns(),
         keyExtractor: (span) => span.spanId,
@@ -1664,9 +1712,15 @@ function renderSpans(
   );
 }
 
-/* ------------------------------------------------------------------ */
-/* The view.                                                           */
-/* ------------------------------------------------------------------ */
+/*
+------------------------------------------------------------------
+*/
+/*
+The view.
+*/
+/*
+------------------------------------------------------------------
+*/
 
 export function SessionDiagnosticsView({
   state,

@@ -7,38 +7,38 @@ import { fileURLToPath } from "node:url";
 import { compile } from "tailwindcss";
 
 /**
- * The Console's styling layer, checked against the stylesheet it actually
- * produces.
- *
- * The Console styles itself with Tailwind utilities and one semantic token set
- * in `app/globals.css`. A utility is therefore a claim about the theme: it says
- * "this element takes the Console's accent", and the theme answers by emitting
- * a rule for it. Three things can go wrong with that claim, and none of them
- * announce themselves -- the page still renders, it just renders differently
- * from what the source says:
- *
- * 1. The utility names something the theme does not have. `bg-surface-muted`
- *    and `text-muted-foreground` were such utilities: no token carried those
- *    names, so Tailwind emitted no rule for them at all and the element wore no
- *    background and no colour of their own. The hover state that used one of
- *    them simply never happened.
- *
- * 2. Two utilities in one class string set the same CSS property. The
- *    stylesheet decides the winner by its own order, not by the order they
- *    were written in, so one of them is dead and the author never learns which.
- *    `text-sm` beside `text-xs` is that case, and so is a muted colour beside
- *    a status colour: the muted one loses, and the status the operator is
- *    supposed to read never reaches the page.
- *
- * 3. A utility names a raw Tailwind palette value. The Console has one dark
- *    theme with one token per meaning; `border-l-amber-500` is a palette entry
- *    pretending to be a product decision, and it is invisible to the contrast
- *    assertions that check the theme's own tokens.
- *
- * These are checked against the compiled stylesheet rather than against a
- * hand-written list of utility names, so a utility the theme does know about is
- * never reported, and one it does not know about always is.
- */
+The Console's styling layer, checked against the stylesheet it actually
+produces.
+
+The Console styles itself with Tailwind utilities and one semantic token set
+in `app/globals.css`. A utility is therefore a claim about the theme: it says
+"this element takes the Console's accent", and the theme answers by emitting
+a rule for it. Three things can go wrong with that claim, and none of them
+announce themselves -- the page still renders, it just renders differently
+from what the source says:
+
+1. The utility names something the theme does not have. `bg-surface-muted`
+   and `text-muted-foreground` were such utilities: no token carried those
+   names, so Tailwind emitted no rule for them at all and the element wore no
+   background and no colour of their own. The hover state that used one of
+   them simply never happened.
+
+2. Two utilities in one class string set the same CSS property. The
+   stylesheet decides the winner by its own order, not by the order they
+   were written in, so one of them is dead and the author never learns which.
+   `text-sm` beside `text-xs` is that case, and so is a muted colour beside
+   a status colour: the muted one loses, and the status the operator is
+   supposed to read never reaches the page.
+
+3. A utility names a raw Tailwind palette value. The Console has one dark
+   theme with one token per meaning; `border-l-amber-500` is a palette entry
+   pretending to be a product decision, and it is invisible to the contrast
+   assertions that check the theme's own tokens.
+
+These are checked against the compiled stylesheet rather than against a
+hand-written list of utility names, so a utility the theme does know about is
+never reported, and one it does not know about always is.
+*/
 
 const consoleRoot = fileURLToPath(new URL("..", import.meta.url));
 const globalsCssPath = path.join(consoleRoot, "app", "globals.css");
@@ -63,51 +63,53 @@ interface ClassUsage {
   readonly file: string;
   readonly line: number;
   readonly text: string;
-  /** Whether the class string was written as a template literal. */
+  /**
+  Whether the class string was written as a template literal.
+  */
   readonly template: boolean;
 }
 
 /**
- * A `className` attribute and the class string it holds.
- *
- * The leading whitespace and the optional brace are one quantifier rather than
- * two: two separate `\\s*` runs around an optional `{` can match the same
- * space in two ways, which is a backtracking trap for no gain.
- */
+A `className` attribute and the class string it holds.
+
+The leading whitespace and the optional brace are one quantifier rather than
+two: two separate `\\s*` runs around an optional `{` can match the same
+space in two ways, which is a backtracking trap for no gain.
+*/
 const CLASS_NAME_PATTERN =
   /className\s*[:=][\s{]*(?:"([^"]*)"|`([\s\S]*?)`| '([^']*)')/gu;
 
 /**
- * A shared constant and the class string it holds.
- */
+A shared constant and the class string it holds.
+*/
 const CONSTANT_PATTERN =
   /(?:export )?const (\w+)\s*[:=]\s*([`"'])([\s\S]*?)\2/gu;
 
 /**
- * A whole class string written as a string literal.
- */
+A whole class string written as a string literal.
+*/
 const STRING_LITERAL_PATTERN = /^(?:"([^"]*)"|'([^']*)')$/u;
 
 /**
- * A class inside a selector.
- */
+A class inside a selector.
+*/
 const CLASS_SELECTOR_PATTERN = /\.((?:\\.|[A-Za-z0-9_-])+)/gu;
 
 /**
- * A separator between two parts of a selector list, but not one inside an
- * escaped class name -- `grid-cols-[minmax(0,7rem)_...]` holds a comma of its
- * own, and splitting on it would cut the name in half.
- */
+A separator between two parts of a selector list, but not one inside an
+escaped class name -- `grid-cols-[minmax(0,7rem)_...]` holds a comma of its
+own, and splitting on it would cut the name in half.
+*/
 const SELECTOR_SEPARATOR_PATTERN = /(?<!\\),/u;
 
 /**
- * Every class string the Console's own source writes.
- *
- * A template literal counts: the Console composes its classes out of shared
- * constants, and the composition is what reaches the browser. The quote style
- * is kept because it decides what the string means: only a template literal
- * interpolates.
- */
+Every class string the Console's own source writes.
+
+A template literal counts: the Console composes its classes out of shared
+constants, and the composition is what reaches the browser. The quote style
+is kept because it decides what the string means: only a template literal
+interpolates.
+*/
 function classUsages(): ClassUsage[] {
   const usages: ClassUsage[] = [];
   for (const file of sourceFiles) {
@@ -127,17 +129,19 @@ function classUsages(): ClassUsage[] {
 }
 
 /**
- * A shared constant and the class string it holds.
- */
+A shared constant and the class string it holds.
+*/
 interface SharedConstant {
   readonly value: string;
-  /** Whether the constant was written as a template literal. */
+  /**
+  Whether the constant was written as a template literal.
+  */
   readonly template: boolean;
 }
 
 /**
- * The shared constants the source composes its classes out of, by name.
- */
+The shared constants the source composes its classes out of, by name.
+*/
 function sharedConstants(): Map<string, SharedConstant> {
   const constants = new Map<string, SharedConstant>();
   for (const file of sourceFiles) {
@@ -145,8 +149,7 @@ function sharedConstants(): Map<string, SharedConstant> {
     for (const match of source.matchAll(CONSTANT_PATTERN)) {
       const name = match[1];
       const value = match[3];
-      if (name === undefined || value === undefined) continue;
-      if (constants.has(name)) continue;
+      if (name === undefined || value === undefined || constants.has(name)) continue;
       constants.set(name, { value, template: match[2] === "`" });
     }
   }
@@ -154,11 +157,11 @@ function sharedConstants(): Map<string, SharedConstant> {
 }
 
 /**
- * The index of the `}` that closes the expression opened just before `start`.
- *
- * A nested template literal inside the expression is skipped whole, braces and
- * all, so a `}` inside it cannot close the expression early.
- */
+The index of the `}` that closes the expression opened just before `start`.
+
+A nested template literal inside the expression is skipped whole, braces and
+all, so a `}` inside it cannot close the expression early.
+*/
 function scanExpression(content: string, start: number): number {
   let depth = 1;
   let cursor = start;
@@ -179,8 +182,8 @@ function scanExpression(content: string, start: number): number {
 }
 
 /**
- * The index just past the closing backtick of the template literal at `start`.
- */
+The index just past the closing backtick of the template literal at `start`.
+*/
 function scanNestedTemplate(content: string, start: number): number {
   let cursor = start + 1;
   while (cursor < content.length) {
@@ -200,13 +203,13 @@ function scanNestedTemplate(content: string, start: number): number {
 }
 
 /**
- * A template literal's literal chunks and the expressions between them.
- *
- * The expressions are read with a scan rather than a pattern, because an
- * expression can hold a nested template literal of its own --
- * `${className === undefined ? "" : ` ${className}`}` -- and a pattern that
- * stopped at the first `}` would read half an expression as a class name.
- */
+A template literal's literal chunks and the expressions between them.
+
+The expressions are read with a scan rather than a pattern, because an
+expression can hold a nested template literal of its own --
+`${className === undefined ? "" : ` ${className}`}` -- and a pattern that
+stopped at the first `}` would read half an expression as a class name.
+*/
 function templateParts(content: string): {
   readonly chunks: string[];
   readonly expressions: string[];
@@ -237,12 +240,12 @@ function templateParts(content: string): {
 }
 
 /**
- * The expression with its quoted text blanked out.
- *
- * A quoted `:` is punctuation inside a class string, not the branch of a
- * choice, and the blanking keeps the same length as the original so that an
- * index into one is an index into the other.
- */
+The expression with its quoted text blanked out.
+
+A quoted `:` is punctuation inside a class string, not the branch of a
+choice, and the blanking keeps the same length as the original so that an
+index into one is an index into the other.
+*/
 function withoutQuotedText(expression: string): string {
   let result = "";
   let quote: string | null = null;
@@ -263,9 +266,9 @@ function withoutQuotedText(expression: string): string {
 }
 
 /**
- * Where the `?` and the `:` of a choice between two values sit, when the
- * expression is such a choice.
- */
+Where the `?` and the `:` of a choice between two values sit, when the
+expression is such a choice.
+*/
 function topLevelTernaryPositions(expression: string): [number, number] | null {
   const bare = withoutQuotedText(expression);
   let depth = 0;
@@ -294,9 +297,9 @@ function topLevelTernaryPositions(expression: string): [number, number] | null {
 }
 
 /**
- * The two class strings an expression chooses between, or `null` when the
- * expression is not a choice between class strings.
- */
+The two class strings an expression chooses between, or `null` when the
+expression is not a choice between class strings.
+*/
 function ternaryBranches(expression: string): string[] | null {
   const positions = topLevelTernaryPositions(expression);
   if (positions === null) return null;
@@ -313,12 +316,12 @@ function ternaryBranches(expression: string): string[] | null {
 }
 
 /**
- * The class strings one expression can contribute.
- *
- * `null` means the expression is not something the Console can be asked about
- * -- a call, a member expression, a condition -- so the class string that
- * holds it cannot be resolved and the caller skips it rather than guess.
- */
+The class strings one expression can contribute.
+
+`null` means the expression is not something the Console can be asked about
+-- a call, a member expression, a condition -- so the class string that
+holds it cannot be resolved and the caller skips it rather than guess.
+*/
 function expressionValues(
   expression: string,
   constants: Map<string, SharedConstant>,
@@ -341,18 +344,18 @@ function expressionValues(
 }
 
 /**
- * The class strings one `className` value can render.
- *
- * A shared constant is expanded in place, because that is what the browser
- * receives. An expression that chooses between class strings is kept as the
- * alternatives it chooses between: `cond ? "a" : "b"` renders one of them,
- * never both, so they are two renderings rather than one class string that
- * happens to name two colours.
- *
- * Only a template literal interpolates. A plain string is taken literally,
- * which is what makes an interpolation written inside one visible here
- * instead of being quietly expanded.
- */
+The class strings one `className` value can render.
+
+A shared constant is expanded in place, because that is what the browser
+receives. An expression that chooses between class strings is kept as the
+alternatives it chooses between: `cond ? "a" : "b"` renders one of them,
+never both, so they are two renderings rather than one class string that
+happens to name two colours.
+
+Only a template literal interpolates. A plain string is taken literally,
+which is what makes an interpolation written inside one visible here
+instead of being quietly expanded.
+*/
 function renderedClassStrings(
   raw: string,
   constants: Map<string, SharedConstant>,
@@ -384,8 +387,8 @@ interface RenderedClass {
 }
 
 /**
- * Every class string the Console renders, with the classes of each rendering.
- */
+Every class string the Console renders, with the classes of each rendering.
+*/
 function renderedClasses(): RenderedClass[] {
   const constants = sharedConstants();
   const rendered: RenderedClass[] = [];
@@ -406,14 +409,14 @@ function renderedClasses(): RenderedClass[] {
 }
 
 /**
- * The declarations a rule body makes at its own level.
- *
- * A rule body can hold a nested at-rule -- Tailwind wraps its colour-mixed
- * borders in an `@supports` -- and the prelude of that nested rule is not a
- * declaration of the outer rule. Reading the body flat would take `color`
- * out of `@supports (color: ...)` and call it a property the border utility
- * sets.
- */
+The declarations a rule body makes at its own level.
+
+A rule body can hold a nested at-rule -- Tailwind wraps its colour-mixed
+borders in an `@supports` -- and the prelude of that nested rule is not a
+declaration of the outer rule. Reading the body flat would take `color`
+out of `@supports (color: ...)` and call it a property the border utility
+sets.
+*/
 function ownDeclarations(body: string): string[] {
   const declarations: string[] = [];
   let depth = 0;
@@ -444,8 +447,8 @@ function ownDeclarations(body: string): string[] {
 }
 
 /**
- * The property each declaration sets, and the value it sets it to.
- */
+The property each declaration sets, and the value it sets it to.
+*/
 function declarationMap(body: string): Map<string, string> {
   const declarations = new Map<string, string>();
   for (const declaration of ownDeclarations(body)) {
@@ -453,17 +456,20 @@ function declarationMap(body: string): Map<string, string> {
     if (colon === -1) continue;
     const property = declaration.slice(0, colon).trim();
     const value = declaration.slice(colon + 1).trim();
-    if (property === "" || property.includes("(")) continue;
-    if (declarations.has(property)) continue;
+    if (property === "" || property.includes("(") || declarations.has(property)) continue;
     declarations.set(property, value);
   }
   return declarations;
 }
 
 interface CompiledUtility {
-  /** The selector the utility applies to, with its own class removed. */
+  /**
+  The selector the utility applies to, with its own class removed.
+  */
   readonly shape: string;
-  /** The property each declaration sets, with the value it sets it to. */
+  /**
+  The property each declaration sets, with the value it sets it to.
+  */
   readonly declarations: Map<string, string>;
 }
 
@@ -473,8 +479,8 @@ interface CssBlock {
 }
 
 /**
- * The index of the `}` that closes the block opened at `open`.
- */
+The index of the `}` that closes the block opened at `open`.
+*/
 function matchingBrace(text: string, open: number): number {
   let depth = 1;
   let cursor = open + 1;
@@ -487,8 +493,8 @@ function matchingBrace(text: string, open: number): number {
 }
 
 /**
- * The stylesheet's blocks, one layer at a time.
- */
+The stylesheet's blocks, one layer at a time.
+*/
 function cssBlocks(text: string): CssBlock[] {
   const blocks: CssBlock[] = [];
   let index = 0;
@@ -507,12 +513,12 @@ function cssBlocks(text: string): CssBlock[] {
 }
 
 /**
- * Record one class and what it declares.
- *
- * A class can be declared by more than one rule -- a utility and its variant
- * share a name -- so the declarations of the rules that meet are merged, with
- * the first rule that names a property holding it.
- */
+Record one class and what it declares.
+
+A class can be declared by more than one rule -- a utility and its variant
+share a name -- so the declarations of the rules that meet are merged, with
+the first rule that names a property holding it.
+*/
 function recordUtility(
   utilities: Map<string, CompiledUtility>,
   escaped: string,
@@ -534,19 +540,19 @@ function recordUtility(
 }
 
 /**
- * Every class in a stylesheet, with what it declares.
- *
- * The stylesheet is walked rather than pattern-matched: the utilities live
- * inside `@layer` blocks, and a rule's body can hold a nested at-rule of its
- * own. A class can also sit inside a `:where(...)` wrapper -- Tailwind writes
- * `space-y-2` as `:where(.space-y-2 > :not(:last-child))` -- so the classes
- * are read out of the selector rather than off the front of it.
- *
- * The shape is what tells two utilities that set the same property apart when
- * they set it on different things: `placeholder-fg-muted` and `text-fg-muted`
- * both set a colour, but one of them colours the placeholder and the other
- * colours the text.
- */
+Every class in a stylesheet, with what it declares.
+
+The stylesheet is walked rather than pattern-matched: the utilities live
+inside `@layer` blocks, and a rule's body can hold a nested at-rule of its
+own. A class can also sit inside a `:where(...)` wrapper -- Tailwind writes
+`space-y-2` as `:where(.space-y-2 > :not(:last-child))` -- so the classes
+are read out of the selector rather than off the front of it.
+
+The shape is what tells two utilities that set the same property apart when
+they set it on different things: `placeholder-fg-muted` and `text-fg-muted`
+both set a colour, but one of them colours the placeholder and the other
+colours the text.
+*/
 function classRules(css: string): Map<string, CompiledUtility> {
   const utilities = new Map<string, CompiledUtility>();
   collectClassRules(utilities, css);
@@ -572,12 +578,12 @@ function collectClassRules(
 }
 
 /**
- * The Tailwind package's own stylesheet, which `app/globals.css` imports.
- *
- * The Console's stylesheet opens with `@import "tailwindcss"`, so compiling it
- * means resolving that import: the package's `index.css` sits next to its
- * module entry point.
- */
+The Tailwind package's own stylesheet, which `app/globals.css` imports.
+
+The Console's stylesheet opens with `@import "tailwindcss"`, so compiling it
+means resolving that import: the package's `index.css` sits next to its
+module entry point.
+*/
 const tailwindPackageRoot = path.dirname(
   path.dirname(fileURLToPath(import.meta.resolve("tailwindcss")))
 );
@@ -618,14 +624,14 @@ async function compiledUtilities(
 }
 
 /**
- * The properties two utilities fight over when they set the same one.
- *
- * These are the Console's *type and colour* treatments: a font size, a text
- * colour, a background, a border, a cursor, a weight. Layout properties are
- * not here on purpose -- a caller overriding the padding of a shared control
- * chrome is a normal thing to do, and the stylesheet resolves it in the
- * caller's favour by the order the scale is written in.
- */
+The properties two utilities fight over when they set the same one.
+
+These are the Console's *type and colour* treatments: a font size, a text
+colour, a background, a border, a cursor, a weight. Layout properties are
+not here on purpose -- a caller overriding the padding of a shared control
+chrome is a normal thing to do, and the stylesheet resolves it in the
+caller's favour by the order the scale is written in.
+*/
 const CONTESTED_PROPERTIES = new Set([
   "font-size",
   "color",
@@ -640,8 +646,8 @@ const CONTESTED_PROPERTIES = new Set([
 ]);
 
 /**
- * The colour-utility prefixes a raw palette entry can hide behind.
- */
+The colour-utility prefixes a raw palette entry can hide behind.
+*/
 const PALETTE_PREFIXES = [
   "accent",
   "bg",
@@ -662,8 +668,8 @@ const PALETTE_PREFIXES = [
 ];
 
 /**
- * The palette entries themselves: the names Tailwind ships with a number.
- */
+The palette entries themselves: the names Tailwind ships with a number.
+*/
 const PALETTE_NAMES = [
   "amber",
   "blue",
@@ -690,34 +696,34 @@ const PALETTE_NAMES = [
 ];
 
 /**
- * The side modifiers a directional utility carries.
- */
+The side modifiers a directional utility carries.
+*/
 const PALETTE_DIRECTIONS = ["b", "e", "l", "r", "s", "t", "x", "y"];
 
 /**
- * A raw palette utility, in the plain form.
- *
- * `bg-amber-500` is a palette entry pretending to be a product decision.
- */
+A raw palette utility, in the plain form.
+
+`bg-amber-500` is a palette entry pretending to be a product decision.
+*/
 const RAW_PALETTE_PATTERN = new RegExp(
   String.raw`(?:${PALETTE_PREFIXES.join("|")})-(?:${PALETTE_NAMES.join("|")})-[0-9]{2,3}\b`,
   "u"
 );
 
 /**
- * A raw palette utility, in the directional form.
- *
- * `border-l-amber-500` is the same palette entry as `border-amber-500`, and
- * the directional form is what a left accent bar is written as.
- */
+A raw palette utility, in the directional form.
+
+`border-l-amber-500` is the same palette entry as `border-amber-500`, and
+the directional form is what a left accent bar is written as.
+*/
 const RAW_PALETTE_DIRECTIONAL_PATTERN = new RegExp(
   String.raw`(?:${PALETTE_PREFIXES.join("|")})-(?:${PALETTE_DIRECTIONS.join("|")})-(?:${PALETTE_NAMES.join("|")})-[0-9]{2,3}\b`,
   "u"
 );
 
 /**
- * Whether a class names a raw Tailwind palette entry.
- */
+Whether a class names a raw Tailwind palette entry.
+*/
 function isRawPaletteUtility(token: string): boolean {
   return (
     RAW_PALETTE_PATTERN.test(token) ||
@@ -726,11 +732,11 @@ function isRawPaletteUtility(token: string): boolean {
 }
 
 /**
- * Whether a class is a `group`/`peer` marker rather than a utility.
- *
- * A marker names the element a `group-*` variant reads, and no rule is ever
- * emitted for it.
- */
+Whether a class is a `group`/`peer` marker rather than a utility.
+
+A marker names the element a `group-*` variant reads, and no rule is ever
+emitted for it.
+*/
 function isMarker(token: string): boolean {
   const slash = token.indexOf("/");
   const name = slash === -1 ? token : token.slice(0, slash);
@@ -747,9 +753,7 @@ test("every utility the Console writes is one the theme knows", () => {
   const unknown: string[] = [];
   for (const rendering of renderings) {
     for (const token of rendering.tokens) {
-      if (token === "" || token.includes(":")) continue;
-      if (token.includes("${")) continue;
-      if (isMarker(token)) continue;
+      if (token === "" || token.includes(":") || token.includes("${") || isMarker(token)) continue;
       if (!compiled.has(token)) {
         unknown.push(
           `${rendering.usage.file}:${String(rendering.usage.line)} ${token}`
@@ -789,16 +793,16 @@ test("no class string carries a literal interpolation", () => {
 });
 
 /**
- * The conflict one class introduces, if it introduces one.
- *
- * Two utilities fight over a property when they set the *same* one, on the
- * *same* thing, to a *different* value. The stylesheet then decides the
- * winner by its own order rather than by the order they were written in, so
- * one of them is dead and the author never learns which. `text-sm` beside
- * `text-xs` is that case, and so is a muted colour beside a status colour:
- * the muted one loses, and the status the operator is supposed to read never
- * reaches the page.
- */
+The conflict one class introduces, if it introduces one.
+
+Two utilities fight over a property when they set the *same* one, on the
+*same* thing, to a *different* value. The stylesheet then decides the
+winner by its own order rather than by the order they were written in, so
+one of them is dead and the author never learns which. `text-sm` beside
+`text-xs` is that case, and so is a muted colour beside a status colour:
+the muted one loses, and the status the operator is supposed to read never
+reaches the page.
+*/
 function conflictsForToken(
   rendering: RenderedClass,
   token: string,
@@ -849,8 +853,7 @@ test("the Console writes no raw Tailwind palette utility", () => {
   const offenders: string[] = [];
   for (const rendering of renderings) {
     for (const token of rendering.tokens) {
-      if (token === "") continue;
-      if (!isRawPaletteUtility(token)) continue;
+      if ((token === "") || !isRawPaletteUtility(token)) continue;
       offenders.push(
         `${rendering.usage.file}:${String(rendering.usage.line)} ${token}`
       );

@@ -6,7 +6,9 @@ import { isChoice, unsupportedChoice } from "./command-choice.ts";
 import { fetchRouterStatus } from "./router-status-client.ts";
 import { UnmigratedRuntimeError } from "./runtime.ts";
 
-/** The router vocabulary, owned here and consumed by validation, help, and errors. */
+/**
+The router vocabulary, owned here and consumed by validation, help, and errors.
+*/
 export const ROUTER_COMMANDS = ["run", "ensure", "status"] as const;
 
 export interface RouterCommandBackend {

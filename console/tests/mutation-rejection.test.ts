@@ -8,17 +8,19 @@ import {
 } from "../src/lib/server/mutation-rejection.ts";
 
 /**
- * The Console's own answer to a mutation it turned away.
- *
- * Every mutation route refused a submission the same way: a redirect back to
- * the page the change was made on, carrying the bounded notice that the
- * change did not land, and a log line naming the route that refused it. The
- * routes now share one owner for that answer, so these tests hold the owner
- * to the contract the routes used to keep separately: the status, the
- * location, and the refusal the log line records.
- */
+The Console's own answer to a mutation it turned away.
 
-/** The stderr lines written while the callback runs. */
+Every mutation route refused a submission the same way: a redirect back to
+the page the change was made on, carrying the bounded notice that the
+change did not land, and a log line naming the route that refused it. The
+routes now share one owner for that answer, so these tests hold the owner
+to the contract the routes used to keep separately: the status, the
+location, and the refusal the log line records.
+*/
+
+/**
+The stderr lines written while the callback runs.
+*/
 function captureStderr(run: () => void): string[] {
   const lines: string[] = [];
   const original = process.stderr.write.bind(process.stderr);

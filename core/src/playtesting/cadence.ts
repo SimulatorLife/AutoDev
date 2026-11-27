@@ -1,11 +1,11 @@
 /**
- * Cadence, tier budgets, retry semantics, and judge calibration (§6 & §10).
- * Normative design in docs/playtesting-measurement-contract.md §6, §10 and
- * docs/playtesting-target-state.md.
- */
+Cadence, tier budgets, retry semantics, and judge calibration (§6 & §10).
+Normative design in docs/playtesting-measurement-contract.md §6, §10 and
+docs/playtesting-target-state.md.
+*/
 
 import type {
-  PlaytestCadenceConfiguration,
+  PlaytestCadenceConfiguration as PlaytestCadenceConfig,
   PlaytestJudgeValidation
 } from "./artifacts.ts";
 
@@ -46,7 +46,7 @@ export interface PlaytestJudgeCalibrationCheckResult {
 }
 
 export function validatePlaytestCadenceConfig(
-  config: PlaytestCadenceConfiguration
+  config: PlaytestCadenceConfig
 ): void {
   if (!config.workspaceId || typeof config.workspaceId !== "string") {
     throw new TypeError("workspaceId must be a non-empty string.");
@@ -82,8 +82,8 @@ export function validatePlaytestCadenceConfig(
 }
 
 /**
- * Deduplicate triggers by (workspaceId, buildSha, benchmarkId, tier, event).
- */
+Deduplicate triggers by (workspaceId, buildSha, benchmarkId, tier, event).
+*/
 export function deduplicateCadenceTriggers(
   triggers: readonly PlaytestCadenceTriggerEvent[]
 ): readonly PlaytestCadenceTriggerEvent[] {
@@ -92,10 +92,12 @@ export function deduplicateCadenceTriggers(
 
   for (const t of triggers) {
     const key = `${t.workspaceId}:${t.buildSha}:${t.benchmarkId}:${t.tier}:${t.event}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      result.push(t);
+    if (seen.has(key)) {
+      continue;
     }
+
+    seen.add(key);
+    result.push(t);
   }
 
   return result;
@@ -109,11 +111,11 @@ const WORK_KIND_PRIORITY: Record<PlaytestCadenceWorkItemKind, number> = {
 const WORK_ITEM_ID_COLLATOR = new Intl.Collator();
 
 /**
- * Prioritizes cadence work items:
- * 1. Reproducible regressions first;
- * 2. Uncovered critical cells second;
- * 3. Rotating discovery third.
- */
+Prioritizes cadence work items:
+1. Reproducible regressions first;
+2. Uncovered critical cells second;
+3. Rotating discovery third.
+*/
 export function prioritizeCadenceWork(
   items: readonly PlaytestCadenceWorkItem[]
 ): readonly PlaytestCadenceWorkItem[] {
@@ -125,14 +127,14 @@ export function prioritizeCadenceWork(
 }
 
 /**
- * Evaluates whether an execution attempt should be retried under cadence rules.
- * Infrastructure failures can be retried at most twice;
- * Game failures (normal loss, engine crash) are observations, never retried!
- */
+Evaluates whether an execution attempt should be retried under cadence rules.
+Infrastructure failures can be retried at most twice;
+Game failures (normal loss, engine crash) are observations, never retried!
+*/
 export function evaluateCadenceRetry(
   attemptCount: number,
   failureClass: "infrastructure" | "game-failure",
-  config: PlaytestCadenceConfiguration
+  config: PlaytestCadenceConfig
 ): { readonly shouldRetry: boolean; readonly reason: string } {
   if (failureClass === "game-failure") {
     return {
@@ -156,9 +158,9 @@ export function evaluateCadenceRetry(
 }
 
 /**
- * Evaluates periodic / trigger-based judge calibration against predeclared tolerances (§6/§10).
- * Quarantines affected claim types on failure so stale/unvalidated judges do not masquerade as fresh.
- */
+Evaluates periodic / trigger-based judge calibration against predeclared tolerances (§6/§10).
+Quarantines affected claim types on failure so stale/unvalidated judges do not masquerade as fresh.
+*/
 export function evaluateJudgeCalibration(
   validation: PlaytestJudgeValidation,
   tolerances: PlaytestJudgeCalibrationTolerances,
@@ -240,8 +242,8 @@ export function evaluateJudgeCalibration(
   // and that unvalidated cohorts must disable human-proxy comparisons rather
   // than leave an authoritative claim with a footnote — which is why an
   // insufficient result quarantines the same claim types a failure does.
-  const unmeasured = measuredMetrics === 0;
-  if (unmeasured) {
+  const isUnmeasured = measuredMetrics === 0;
+  if (isUnmeasured) {
     failures.push(
       "No calibration metric was measured, so this judge is unvalidated rather than calibrated."
     );
@@ -249,26 +251,26 @@ export function evaluateJudgeCalibration(
 
   // A record the caller already marked insufficient or stale cannot be
   // upgraded to `passed` by this check, however it was recorded.
-  const recordedUnusable =
+  const isRecordedUnusable =
     validation.status === "insufficient" || validation.status === "stale";
-  if (recordedUnusable && failures.length === 0) {
+  if (isRecordedUnusable && failures.length === 0) {
     failures.push(
       `The recorded status "${validation.status}" is not a passing state, so no calibration conclusion can be drawn from it.`
     );
   }
 
-  const passed = failures.length === 0 && !unmeasured && !recordedUnusable;
+  const isPassed = failures.length === 0 && !isUnmeasured && !isRecordedUnusable;
 
   return {
-    passed,
+    passed: isPassed,
     validationId: validation.validationId,
     status:
-      unmeasured || recordedUnusable
+      isUnmeasured || isRecordedUnusable
         ? "insufficient"
-        : passed
+        : isPassed
           ? "passed"
           : "failed",
     failures,
-    quarantinedClaimTypes: passed ? [] : claimTypesToQuarantineOnFailure
+    quarantinedClaimTypes: isPassed ? [] : claimTypesToQuarantineOnFailure
   };
 }

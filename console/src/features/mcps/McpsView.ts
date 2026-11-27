@@ -21,42 +21,42 @@ import { chipList, StatusChip } from "../../components/tables/Chips.ts";
 import {
   DataTable,
   type DataTableFeatures,
-  type DataTableProps
+  type DataTableProps as DataTableProperties
 } from "../../components/tables/DataTable.ts";
 import { MONO_ID_LINK_CLASS } from "../../components/ui/text-classes.ts";
 import { McpConnectionBadge } from "./runtime-evidence.ts";
 
 /**
- * MCP servers resource view.
- *
- * This view composes two reads that stay separate on purpose. The catalog
- * says what each server *is* -- the canonical RuleSync declaration and the
- * generated role projection. The Runtime's observation says what it has
- * *reached*. A server the Runtime has never seen says "Not observed", and a
- * declared server is never presented as a connected one.
- */
+MCP servers resource view.
+
+This view composes two reads that stay separate on purpose. The catalog
+says what each server *is* -- the canonical RuleSync declaration and the
+generated role projection. The Runtime's observation says what it has
+*reached*. A server the Runtime has never seen says "Not observed", and a
+declared server is never presented as a connected one.
+*/
 
 export interface McpsViewProps {
   readonly servers: readonly McpServerResource[];
   /**
-   * What the Runtime has observed of the MCP servers it has seen.
-   *
-   * `null` means the observation read was unavailable, which is a different
-   * state from an observation of nothing: the first says the evidence could
-   * not be read, the second says the Runtime has seen no MCP server at all.
-   * The Runtime's own summary carries the same distinction in its nullable
-   * counts, so the page never has to infer one from the other.
-   */
+  What the Runtime has observed of the MCP servers it has seen.
+  
+  `null` means the observation read was unavailable, which is a different
+  state from an observation of nothing: the first says the evidence could
+  not be read, the second says the Runtime has seen no MCP server at all.
+  The Runtime's own summary carries the same distinction in its nullable
+  counts, so the page never has to infer one from the other.
+  */
   readonly runtime: ControlApiMcpRuntimeResponse | null;
   readonly sourceValidity: boolean | null;
   /**
-   * Why the source is invalid.
-   *
-   * Required rather than defaulted to `[]`: the page renders an empty server
-   * list on an invalid source, so without the reasons it says "no servers" for
-   * a file that declares some and could not be applied. The loader has already
-   * located the fault.
-   */
+  Why the source is invalid.
+  
+  Required rather than defaulted to `[]`: the page renders an empty server
+  list on an invalid source, so without the reasons it says "no servers" for
+  a file that declares some and could not be applied. The loader has already
+  located the fault.
+  */
   readonly validationIssues: readonly RuleSyncValidationIssue[];
 }
 
@@ -226,9 +226,7 @@ export function McpsView({
           "span",
           {
             "data-mcp-connection-observed": observation ? "true" : "false",
-            ...(observation
-              ? { "data-mcp-runtime-health": observation.health }
-              : {})
+            ...(observation && { "data-mcp-runtime-health": observation.health })
           },
           React.createElement(McpConnectionBadge, {
             evidence: observation ?? null
@@ -335,7 +333,7 @@ export function McpsView({
             "RuleSync `.rulesync/mcp.jsonc` is invalid; no MCP configuration was projected."
           )
         : null,
-      React.createElement<DataTableProps<McpServerResource>>(DataTable, {
+      React.createElement<DataTableProperties<McpServerResource>>(DataTable, {
         data: servers,
         columns,
         keyExtractor: (server: McpServerResource) => server.name,

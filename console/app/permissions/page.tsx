@@ -62,9 +62,7 @@ export default async function PermissionsPage(): Promise<React.JSX.Element> {
       // The badge counts the role matrices, and the matrices are the execution
       // contract's roles. A contract nobody read leaves no matrices, and a
       // badge reading 0 would claim the contract declares no role.
-      ...(executionContractObserved
-        ? { counts: { Permissions: roleMatrices.length } }
-        : {})
+      ...(executionContractObserved && { counts: { Permissions: roleMatrices.length } })
     },
     React.createElement(PermissionsView, {
       policy,

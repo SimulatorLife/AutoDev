@@ -73,15 +73,15 @@ function runScenario(name: string, scenario: JsonRecord): void {
       scenario.expectedStreaks.length,
       `${name}: ladder setup length must match expected streak length`
     );
-    for (let i = 0; i < scenario.setup.length; i += 1) {
-      const step = scenario.setup[i];
-      const expected = scenario.expectedStreaks[i];
+    for (let index = 0; index < scenario.setup.length; index += 1) {
+      const step = scenario.setup[index];
+      const expected = scenario.expectedStreaks[index];
       cleanState();
       // Replay the preceding setup steps so the per-provider streak counter
       // is at the right rung, then call cooldownProvider once with step i's
       // args and assert the return shape matches the expected streak.
-      for (let j = 0; j < i; j += 1) {
-        const inner = scenario.setup[j];
+      for (let index_ = 0; index_ < index; index_ += 1) {
+        const inner = scenario.setup[index_];
         cooldowns.cooldownProvider(inner.provider, {
           now: NOW,
           ...inner.args
@@ -99,17 +99,17 @@ function runScenario(name: string, scenario: JsonRecord): void {
       assert.equal(
         final.kind,
         expected.kind,
-        `${name}: ladder step ${i + 1} kind`
+        `${name}: ladder step ${index + 1} kind`
       );
       assert.equal(
         final.streak,
         expected.streak,
-        `${name}: ladder step ${i + 1} streak`
+        `${name}: ladder step ${index + 1} streak`
       );
       assert.equal(
         final.durationMs,
         expected.durationMs,
-        `${name}: ladder step ${i + 1} durationMs`
+        `${name}: ladder step ${index + 1} durationMs`
       );
     }
     return;
@@ -221,12 +221,12 @@ describe("cooldown behavior", () => {
   test("cooldownProvider return shape covers config/probe/transient/hard", () => {
     try {
       cleanState();
-      const cfg = cooldowns.cooldownProvider("claude", {
+      const config = cooldowns.cooldownProvider("claude", {
         now: NOW,
         failureClass: "authentication"
       });
       assert.deepEqual(
-        Object.keys(cfg).sort(),
+        Object.keys(config).sort(),
         [
           "cooldownUntil",
           "durationMs",
@@ -236,12 +236,12 @@ describe("cooldown behavior", () => {
           "streak"
         ].sort()
       );
-      assert.equal(cfg.provider, "claude");
-      assert.equal(cfg.kind, "config");
-      assert.equal(cfg.streak, 0);
-      assert.equal(cfg.durationMs, contract.constants.providerCooldownMs);
-      assert.equal(cfg.cooldownUntil, NOW + cfg.durationMs);
-      assert.equal(cfg.resetsAt, null);
+      assert.equal(config.provider, "claude");
+      assert.equal(config.kind, "config");
+      assert.equal(config.streak, 0);
+      assert.equal(config.durationMs, contract.constants.providerCooldownMs);
+      assert.equal(config.cooldownUntil, NOW + config.durationMs);
+      assert.equal(config.resetsAt, null);
 
       cleanState();
       const probe = cooldowns.cooldownProvider("antigravity-gemini", {
@@ -363,7 +363,7 @@ describe("cooldown behavior", () => {
         const statedReset =
           typeof last.args.resetsAt === "string"
             ? Date.parse(last.args.resetsAt)
-            : Number.NaN;
+            : NaN;
         if (
           last.args.structured === true &&
           Number.isFinite(statedReset) &&

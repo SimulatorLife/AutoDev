@@ -1,17 +1,17 @@
 /**
- * A complete episode through the real adapter entrypoint.
- *
- * The other generic-adapter tests inject a game object directly. That proves
- * dispatch, but it skips everything a game actually depends on: the binding is
- * read from the integration directory, the entry module is imported by URL, and
- * the protocol is served by AutoDev's process rather than a test harness.
- *
- * Here a real game module is written to disk, `main()` is invoked exactly as
- * the adapter image invokes it, and the production `PlaytestAdapterClient`
- * drives a full episode over the same stdio transport the Docker sandbox uses.
- * The only substitution is the process boundary: pipes stand in for the
- * container's streams, because a Docker socket is not available in CI.
- */
+A complete episode through the real adapter entrypoint.
+
+The other generic-adapter tests inject a game object directly. That proves
+dispatch, but it skips everything a game actually depends on: the binding is
+read from the integration directory, the entry module is imported by URL, and
+the protocol is served by AutoDev's process rather than a test harness.
+
+Here a real game module is written to disk, `main()` is invoked exactly as
+the adapter image invokes it, and the production `PlaytestAdapterClient`
+drives a full episode over the same stdio transport the Docker sandbox uses.
+The only substitution is the process boundary: pipes stand in for the
+container's streams, because a Docker socket is not available in CI.
+*/
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import {
@@ -54,12 +54,12 @@ const GAME_OBSERVATION_SCHEMA = {
 };
 
 /**
- * The sandbox request for a prepared run, without touching a real checkout.
- *
- * `buildDockerRunArguments` validates its inputs before it builds argv, so the
- * mount target is decided by the prepared request rather than by the host
- * filesystem.
- */
+The sandbox request for a prepared run, without touching a real checkout.
+
+`buildDockerRunArguments` validates its inputs before it builds argv, so the
+mount target is decided by the prepared request rather than by the host
+filesystem.
+*/
 function preparedFor(command: readonly string[]): PreparedPlaytestSandbox {
   return {
     workspaceId: "fixture/game",
@@ -99,11 +99,11 @@ const ADAPTER_ENTRYPOINT = new URL(
 ).pathname;
 
 /**
- * A game with no protocol code: six plain functions and a counter.
- *
- * The revision advances on every step, which is what the protocol requires and
- * what a hand-written adapter most often got wrong.
- */
+A game with no protocol code: six plain functions and a counter.
+
+The revision advances on every step, which is what the protocol requires and
+what a hand-written adapter most often got wrong.
+*/
 const GAME_MODULE = `
 export function createGame() {
   let revision = 0;
@@ -200,12 +200,12 @@ function observationContract(): PlaytestObservationContract {
 }
 
 /**
- * A checkout holding exactly what a game checks in: the integration directory
- * plus the entry module its binding names.
- *
- * `workingDirectory` is the game's own subdirectory, which is the case that
- * breaks a working-directory-relative integration lookup.
- */
+A checkout holding exactly what a game checks in: the integration directory
+plus the entry module its binding names.
+
+`workingDirectory` is the game's own subdirectory, which is the case that
+breaks a working-directory-relative integration lookup.
+*/
 function checkout(workingDirectory: string): {
   readonly root: string;
   readonly cleanup: () => void;
@@ -451,17 +451,17 @@ test("the mount the sandbox builds is the path the adapter resolves against", as
   // available here. The subject is the mount the arguments carry, so a local
   // socket is stood up for the builder to accept.
   await withLocalSocket(async (socket) => {
-    const containerArgs = buildDockerRunArguments(
+    const containerArguments = buildDockerRunArguments(
       preparedFor(PLAYTESTS_GENERIC_ADAPTER_COMMAND),
       "run-paired-paths",
       realpathSync(tmpdir()),
       socket
     );
     assert.ok(
-      containerArgs.includes("AUTODEV_PLAYTEST_ENGINE_BUILD=fixture-engine-v1"),
+      containerArguments.includes("AUTODEV_PLAYTEST_ENGINE_BUILD=fixture-engine-v1"),
       "the generic adapter must receive the exact approved game-build identity"
     );
-    const mounted = containerArgs.find((arg) => arg.startsWith("type=bind,"));
+    const mounted = containerArguments.find((argument) => argument.startsWith("type=bind,"));
     assert.ok(
       mounted?.includes(`target=${PLAYTESTS_ADAPTER_CHECKOUT_ROOT},readonly`),
       `the checkout must be mounted where the adapter looks: ${String(mounted)}`
@@ -480,15 +480,15 @@ test("the mount the sandbox builds is the path the adapter resolves against", as
 });
 
 /**
- * Acceptance: a second, mechanically different game joins by configuration.
- *
- * This game is deliberately unlike the first one in every dimension the runtime
- * could have accidentally special-cased: its code lives in its own source tree
- * rather than beside the binding, it is CommonJS rather than ESM, its factory
- * returns a nested namespace reached by a dotted binding path, its episode runs
- * a different shape of state, and it declares a named seeded RNG version plus two optional
- * methods the first game did not. AutoDev's infrastructure is unchanged.
- */
+Acceptance: a second, mechanically different game joins by configuration.
+
+This game is deliberately unlike the first one in every dimension the runtime
+could have accidentally special-cased: its code lives in its own source tree
+rather than beside the binding, it is CommonJS rather than ESM, its factory
+returns a nested namespace reached by a dotted binding path, its episode runs
+a different shape of state, and it declares a named seeded RNG version plus two optional
+methods the first game did not. AutoDev's infrastructure is unchanged.
+*/
 const SECOND_GAME_MODULE = `
 const state = { revision: 0, room: "cellar" };
 exports.makeGame = function makeGame() {

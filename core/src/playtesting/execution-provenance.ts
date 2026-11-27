@@ -67,7 +67,9 @@ export const PLAYTEST_EXECUTION_ACTION_SOURCES = [
 export type PlaytestExecutionActionSource =
   (typeof PLAYTEST_EXECUTION_ACTION_SOURCES)[number];
 
-/** Exact execution mode and the evidence supporting its source/build identity. */
+/**
+Exact execution mode and the evidence supporting its source/build identity.
+*/
 export interface PlaytestExecutionProvenance {
   readonly mode: PlaytestEpisodeExecutionMode;
   readonly source: {
@@ -224,7 +226,9 @@ function assertDerivedFrom(value: unknown): void {
   }
 }
 
-/** Validate source facts without inferring a mode from the game outcome. */
+/**
+Validate source facts without inferring a mode from the game outcome.
+*/
 export function assertPlaytestExecutionProvenance(
   value: unknown
 ): asserts value is PlaytestExecutionProvenance {
@@ -283,10 +287,10 @@ export function assertPlaytestExecutionProvenance(
 }
 
 /**
- * Validate source/build identity according to the frozen execution mode.
- * Visual URL sessions may carry null build/engine facts; adapter sessions may
- * not downgrade those exact replay requirements to unknown.
- */
+Validate source/build identity according to the frozen execution mode.
+Visual URL sessions may carry null build/engine facts; adapter sessions may
+not downgrade those exact replay requirements to unknown.
+*/
 export function assertPlaytestEpisodeIdentityForMode(
   identity: unknown,
   provenance: PlaytestExecutionProvenance
@@ -402,7 +406,9 @@ function assertVisualIdentity(
   }
 }
 
-/** Validate mode-specific scenario-family/cohort facts outside EpisodeIdentity. */
+/**
+Validate mode-specific scenario-family/cohort facts outside EpisodeIdentity.
+*/
 export function assertPlaytestEpisodeModeFacts(input: {
   readonly executionProvenance: PlaytestEpisode["executionProvenance"];
   readonly identity: Pick<PlaytestEpisodeIdentity, "policyId">;
@@ -446,7 +452,9 @@ export function assertPlaytestEpisodeModeFacts(input: {
   }
 }
 
-/** Narrow an episode to facts that the adapter measurement path requires. */
+/**
+Narrow an episode to facts that the adapter measurement path requires.
+*/
 export function assertPlaytestAdapterEpisode(
   episode: PlaytestEpisode
 ): asserts episode is PlaytestAdapterEpisode {
@@ -458,7 +466,9 @@ export function assertPlaytestAdapterEpisode(
   }
 }
 
-/** Narrow an episode to facts the discovery evidence contract requires. */
+/**
+Narrow an episode to facts the discovery evidence contract requires.
+*/
 export function assertPlaytestVisualEpisode(
   episode: PlaytestEpisode
 ): asserts episode is PlaytestVisualEpisode {
@@ -472,9 +482,9 @@ export function assertPlaytestVisualEpisode(
 }
 
 /**
- * Assign historical provenance only when the old episode itself proves the
- * adapter protocol. Other historical modes remain explicitly unknown.
- */
+Assign historical provenance only when the old episode itself proves the
+adapter protocol. Other historical modes remain explicitly unknown.
+*/
 export function legacyPlaytestExecutionProvenance(input: {
   readonly identity: PlaytestEpisodeIdentity;
   readonly branchLineage: PlaytestBranchLineage | null;

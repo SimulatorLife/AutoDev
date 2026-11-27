@@ -31,7 +31,9 @@ export function executionSourceSummary(
   return `${source.kind}${repository}${target} · ${buildLabel(source)}`;
 }
 
-/** Render an absent engine scenario honestly for URL-driven visual episodes. */
+/**
+Render an absent engine scenario honestly for URL-driven visual episodes.
+*/
 export function episodeScenarioLabel(
   episode: Pick<PlaytestEpisode, "identity" | "executionProvenance">
 ): string {
@@ -42,27 +44,27 @@ export function episodeScenarioLabel(
 }
 
 /**
- * A recorded duration, in the unit the product uses.
- *
- * The measurement arrives as a float with sub-millisecond precision, and
- * "38412.29625000013 ms" is not a number a reader can use: it is the
- * measurement's own precision printed without restraint. A duration is
- * rounded to the millisecond it was measured in and grouped, so that
- * 109,429 ms reads as the hundred and nine seconds it is, and an
- * unmeasured duration says so rather than showing a zero.
- */
+A recorded duration, in the unit the product uses.
+
+The measurement arrives as a float with sub-millisecond precision, and
+"38412.29625000013 ms" is not a number a reader can use: it is the
+measurement's own precision printed without restraint. A duration is
+rounded to the millisecond it was measured in and grouped, so that
+109,429 ms reads as the hundred and nine seconds it is, and an
+unmeasured duration says so rather than showing a zero.
+*/
 export function durationLabel(milliseconds: number | null): string {
   if (milliseconds === null) return NOT_OBSERVED_LABEL;
   return `${Math.round(milliseconds).toLocaleString("en-US")} ms`;
 }
 
 /**
- * Execution disposition and the game's outcome remain separate dimensions.
- *
- * The termination reason is part of the badge because the episode state
- * alone cannot say which limit cut a truncated episode short, nor that the
- * runtime refused the episode's action.
- */
+Execution disposition and the game's outcome remain separate dimensions.
+
+The termination reason is part of the badge because the episode state
+alone cannot say which limit cut a truncated episode short, nor that the
+runtime refused the episode's action.
+*/
 export function executionStatusBadge(
   status: PlaytestEpisode["status"],
   terminationReason?: string | null
@@ -90,12 +92,12 @@ export function gameOutcomeBadge(
 }
 
 /**
- * The metadata line under a session row.
- *
- * The fields here are the ones that tell one session from another: the
- * execution mode, the decision backend, how much of the episode ran, the
- * persona, and the build the session actually ran against.
- */
+The metadata line under a session row.
+
+The fields here are the ones that tell one session from another: the
+execution mode, the decision backend, how much of the episode ran, the
+persona, and the build the session actually ran against.
+*/
 export function sessionMetaLine(
   episode: Pick<
     PlaytestEpisode,
@@ -113,13 +115,13 @@ export function sessionMetaLine(
 }
 
 /**
- * What the analyst recorded about one session.
- *
- * A session row that cannot say whether the analyst looked at it forces the
- * reader to open every one of them to find out. The counts are the review's
- * own: how many claims the analyst asserted, how many observations it made,
- * and how many findings it raised.
- */
+What the analyst recorded about one session.
+
+A session row that cannot say whether the analyst looked at it forces the
+reader to open every one of them to find out. The counts are the review's
+own: how many claims the analyst asserted, how many observations it made,
+and how many findings it raised.
+*/
 export interface SessionAnalysis {
   readonly hypotheses: number;
   readonly observations: number;
@@ -127,11 +129,11 @@ export interface SessionAnalysis {
 }
 
 /**
- * The analysis line under a session row.
- *
- * Null when the workspace's reviews could not be read: a row must not say
- * "no analyst review" when nobody looked.
- */
+The analysis line under a session row.
+
+Null when the workspace's reviews could not be read: a row must not say
+"no analyst review" when nobody looked.
+*/
 export function sessionAnalysisLine(
   analysis: SessionAnalysis | null
 ): string | null {
@@ -143,15 +145,17 @@ export function sessionAnalysisLine(
 }
 
 /**
- * The line a session with no analyst review of its own shows.
- *
- * It is only true when every review in the workspace was read. A review that
- * exists but was outside the read is a different fact, and saying "no
- * analyst review" there would be wrong.
- */
+The line a session with no analyst review of its own shows.
+
+It is only true when every review in the workspace was read. A review that
+exists but was outside the read is a different fact, and saying "no
+analyst review" there would be wrong.
+*/
 export const NO_ANALYSIS_LABEL = "No analyst review recorded";
 
-/** Prefer the decision that stopped an incomplete episode over its first step. */
+/**
+Prefer the decision that stopped an incomplete episode over its first step.
+*/
 export function defaultEpisodeInspectionStep(
   episode: Pick<PlaytestEpisode, "status" | "stepCount" | "termination">
 ): number | null {
@@ -166,7 +170,9 @@ export function defaultEpisodeInspectionStep(
     : null;
 }
 
-/** The loop guard's unexecuted decision is recorded just beyond stepCount. */
+/**
+The loop guard's unexecuted decision is recorded just beyond stepCount.
+*/
 function episodeTraceContainsStep(
   episode: Pick<PlaytestEpisode, "stepCount" | "termination">,
   step: number
@@ -190,7 +196,9 @@ export type PlaytestingEpisodeTraceWindowPlan =
       readonly endStep: number;
     };
 
-/** Include the loop-guard's unexecuted decision just beyond executed stepCount. */
+/**
+Include the loop-guard's unexecuted decision just beyond executed stepCount.
+*/
 export function planEpisodeTraceWindow(
   episode: Pick<PlaytestEpisode, "trace" | "stepCount" | "termination">,
   requestedStep: number

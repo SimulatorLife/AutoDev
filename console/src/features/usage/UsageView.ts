@@ -43,7 +43,7 @@ import { chipList } from "../../components/tables/Chips.ts";
 import {
   DataTable,
   type DataTableFeatures,
-  type DataTableProps
+  type DataTableProps as DataTableProperties
 } from "../../components/tables/DataTable.ts";
 import { TraceStatus } from "../../components/traces/TraceStatus.ts";
 import {
@@ -63,16 +63,16 @@ import {
 } from "../../components/ui/text-classes.ts";
 
 /**
- * Observability Usage view.
- *
- * The Usage dashboard renders only fixed, source-confirmed OpenLIT widgets.
- * Cost is explicitly an estimate from OpenLIT's pricing attribute; missing or
- * malformed observations remain unknown rather than becoming synthetic zeroes.
- *
- * Filter selections are GET form state in the URL. The server page uses that
- * state to query OpenLIT; this component never performs browser-side telemetry
- * requests or infers filter values.
- */
+Observability Usage view.
+
+The Usage dashboard renders only fixed, source-confirmed OpenLIT widgets.
+Cost is explicitly an estimate from OpenLIT's pricing attribute; missing or
+malformed observations remain unknown rather than becoming synthetic zeroes.
+
+Filter selections are GET form state in the URL. The server page uses that
+state to query OpenLIT; this component never performs browser-side telemetry
+requests or infers filter values.
+*/
 
 export interface UsageViewProps {
   readonly metrics?: UsageMetricsData | undefined;
@@ -81,18 +81,18 @@ export interface UsageViewProps {
   readonly traceLookup?: UsageTraceLookup | undefined;
   readonly selection?: UsageFilterSelection | undefined;
   /**
-   * Live Runtime evidence for the `ACTIVE_SESSIONS` scope.
-   *
-   * `undefined` means the scope could not be read at all — the page renders
-   * that as unavailable rather than as an empty scope.
-   */
+  Live Runtime evidence for the `ACTIVE_SESSIONS` scope.
+  
+  `undefined` means the scope could not be read at all — the page renders
+  that as unavailable rather than as an empty scope.
+  */
   readonly activeSessions?: UsageActiveSessions | undefined;
   /**
-   * The session scope the page is narrowed to, when the operator typed one.
-   *
-   * `sessionId` is the validated identity; `invalid` says the typed value was
-   * not one, which is a different fact from "no session was typed".
-   */
+  The session scope the page is narrowed to, when the operator typed one.
+  
+  `sessionId` is the validated identity; `invalid` says the typed value was
+  not one, which is a different fact from "no session was typed".
+  */
   readonly sessionScope?:
     | {
         readonly sessionId: string | null;
@@ -100,16 +100,20 @@ export interface UsageViewProps {
         readonly rawSessionId: string;
       }
     | undefined;
-  /** The session-scoped body, rendered instead of the fleet body. */
+  /**
+  The session-scoped body, rendered instead of the fleet body.
+  */
   readonly sessionView?: React.ReactNode | undefined;
-  /** The unscoped fleet diagnostics view, rendered above the historical body. */
+  /**
+  The unscoped fleet diagnostics view, rendered above the historical body.
+  */
   readonly fleetView?: React.ReactNode | undefined;
   /**
-   * Control API MCP server inventory and Runtime usage observations.
-   *
-   * Absent or `kind: "unavailable"` renders an explicit unavailable state
-   * rather than an empty server list.
-   */
+  Control API MCP server inventory and Runtime usage observations.
+  
+  Absent or `kind: "unavailable"` renders an explicit unavailable state
+  rather than an empty server list.
+  */
   readonly mcpInventory?: UsageMcpInventory | undefined;
 }
 
@@ -170,15 +174,15 @@ const PROVIDER_HOP_EMPTY_MESSAGE =
 const NOT_APPLICABLE_STATUS = "not-applicable" as const;
 
 /**
- * The chart palette, named once.
- *
- * Every breakdown on this page draws its bars with one of these series
- * colours and its values with the matching text colour. The pairs live here
- * instead of at every chart because a colour is a property of the page, not
- * of one breakdown: the third series on the page is the same colour whether
- * it is the third chart of one section or the third chart of another, and a
- * reader who learns that once should not have to re-learn it from a literal.
- */
+The chart palette, named once.
+
+Every breakdown on this page draws its bars with one of these series
+colours and its values with the matching text colour. The pairs live here
+instead of at every chart because a colour is a property of the page, not
+of one breakdown: the third series on the page is the same colour whether
+it is the third chart of one section or the third chart of another, and a
+reader who learns that once should not have to re-learn it from a literal.
+*/
 const CHART_PALETTE = {
   series1: { bar: "bg-chart-1", value: "text-chart-1" },
   series2: { bar: "bg-chart-2", value: "text-chart-2" },
@@ -223,14 +227,14 @@ function formatLifecycle(
 }
 
 /**
- * Render the `ACTIVE_SESSIONS` scope.
- *
- * Every value here comes from the Runtime's live projection. When that read
- * failed, the panel says so and shows no counters at all: rendering the
- * historical widgets instead would leave the previous window's numbers sitting
- * under a heading that promises live sessions, and rendering zeros would report
- * an idle Runtime that was never actually observed.
- */
+Render the `ACTIVE_SESSIONS` scope.
+
+Every value here comes from the Runtime's live projection. When that read
+failed, the panel says so and shows no counters at all: rendering the
+historical widgets instead would leave the previous window's numbers sitting
+under a heading that promises live sessions, and rendering zeros would report
+an idle Runtime that was never actually observed.
+*/
 type UsageActiveSessionIdentity = NonNullable<
   UsageActiveSessions["sessionIdentities"]
 >[number];
@@ -249,13 +253,13 @@ function redactedSessionLabel(sessionId: string): string {
 }
 
 /**
- * The live session rows link straight into the session-scoped Usage view.
- *
- * The link carries the session id in the URL, so the target page can read the
- * whole session's diagnostics without a second click. The label stays
- * redacted: the id is in the link, and a link's own href is not the same as a
- * table cell that prints an identity in full.
- */
+The live session rows link straight into the session-scoped Usage view.
+
+The link carries the session id in the URL, so the target page can read the
+whole session's diagnostics without a second click. The label stays
+redacted: the id is in the link, and a link's own href is not the same as a
+table cell that prints an identity in full.
+*/
 const LIVE_SESSION_COLUMNS: readonly ColumnDef<
   DataTableFeatures,
   UsageActiveSessionIdentity
@@ -440,22 +444,22 @@ function formatDimension(value: string): string {
 }
 
 /**
- * The word a panel or card uses when the signal cannot answer the selection.
- *
- * "Not observed" is the Console's word for "the source reported nothing".
- * A signal that cannot answer the selected filter is a different fact: the
- * source reported it, and the selection is what rules it out. Giving both
- * the same word sends the reader looking for a capture that is there, and
- * hides the one thing that explains the missing panel.
- */
+The word a panel or card uses when the signal cannot answer the selection.
+
+"Not observed" is the Console's word for "the source reported nothing".
+A signal that cannot answer the selected filter is a different fact: the
+source reported it, and the selection is what rules it out. Giving both
+the same word sends the reader looking for a capture that is there, and
+hides the one thing that explains the missing panel.
+*/
 const NOT_APPLICABLE_LABEL = "Not applicable";
 
 /**
- * A counted value, or why it is not counted.
- *
- * `unsupportedFilters` names the selected filters the signal does not
- * carry. An empty list means the signal simply was not observed.
- */
+A counted value, or why it is not counted.
+
+`unsupportedFilters` names the selected filters the signal does not
+carry. An empty list means the signal simply was not observed.
+*/
 function formatSignalCount(
   value: number | null,
   unsupportedFilters: readonly string[]
@@ -467,13 +471,13 @@ function formatSignalCount(
 }
 
 /**
- * The message a panel shows when it has nothing to draw.
- *
- * A signal that cannot answer the selected filter is not a signal that was
- * not observed, so the panel says which of the two it is. The subject is
- * the panel's own name, so the message names what is missing rather than
- * repeating the section's explanation on every panel.
- */
+The message a panel shows when it has nothing to draw.
+
+A signal that cannot answer the selected filter is not a signal that was
+not observed, so the panel says which of the two it is. The subject is
+the panel's own name, so the message names what is missing rather than
+repeating the section's explanation on every panel.
+*/
 function panelUnavailableMessage(
   subject: string,
   unsupportedFilters: readonly string[]
@@ -558,11 +562,11 @@ function renderFilterSelect(
 }
 
 /**
- * Render the non-Active-Sessions scope controls: the custom-date disclosure
- * when the scope's own meta line otherwise. Split out of `UsageView` so the
- * scope ternary's internal branching (open state, date bounds) does not add
- * to that function's cognitive complexity.
- */
+Render the non-Active-Sessions scope controls: the custom-date disclosure
+when the scope's own meta line otherwise. Split out of `UsageView` so the
+scope ternary's internal branching (open state, date bounds) does not add
+to that function's cognitive complexity.
+*/
 function renderScopeMeta(
   selection: UsageFilterSelection,
   isActiveSessions: boolean,
@@ -623,11 +627,11 @@ function renderScopeMeta(
 }
 
 /**
- * Render the historical filter controls (workspace/provider/model/agent/skill)
- * or the Active-Sessions explainer in their place. Split out of `UsageView`
- * so the five `renderFilterSelect` call sites do not add to that function's
- * cognitive complexity.
- */
+Render the historical filter controls (workspace/provider/model/agent/skill)
+or the Active-Sessions explainer in their place. Split out of `UsageView`
+so the five `renderFilterSelect` call sites do not add to that function's
+cognitive complexity.
+*/
 function renderFilterControls(
   isActiveSessions: boolean,
   filterOptions: UsageFilterOptions,
@@ -681,16 +685,16 @@ function renderFilterControls(
 }
 
 function usageHref(selection: UsageFilterSelection, spanId?: string): string {
-  const params = new URLSearchParams({ range: selection.range });
+  const parameters = new URLSearchParams({ range: selection.range });
   for (const id of USAGE_VARIABLE_IDS) {
-    for (const value of selection.values[id] ?? []) params.append(id, value);
+    for (const value of selection.values[id] ?? []) parameters.append(id, value);
   }
   if (selection.customRange) {
-    params.set("startDate", selection.customRange.startDate);
-    params.set("endDate", selection.customRange.endDate);
+    parameters.set("startDate", selection.customRange.startDate);
+    parameters.set("endDate", selection.customRange.endDate);
   }
-  if (spanId) params.set("spanId", spanId);
-  return `/usage?${params.toString()}`;
+  if (spanId) parameters.set("spanId", spanId);
+  return `/usage?${parameters.toString()}`;
 }
 
 function formatTraceDuration(durationNs: number): string {
@@ -799,9 +803,7 @@ function traceSpanColumns(
             href: usageHref(selection, span.spanId),
             className: `font-mono text-xs ${ACTION_LINK_CLASS}`,
             "aria-label": `Inspect span ${span.spanId}${span.spanId === selectedSpanId ? ", selected" : ""}`,
-            ...(span.spanId === selectedSpanId
-              ? { "aria-current": "true", "data-trace-selected": "true" }
-              : {})
+            ...((span.spanId === selectedSpanId) && { "aria-current": "true", "data-trace-selected": "true" })
           },
           span.spanId
         ),
@@ -915,7 +917,7 @@ function renderRecentAttempts(
             "This list is partial; older matching attempts are outside the bounded recent read."
           )
         : null,
-      React.createElement<DataTableProps<UsageTraceAttempt>>(DataTable, {
+      React.createElement<DataTableProperties<UsageTraceAttempt>>(DataTable, {
         data: traceList.attempts,
         columns: traceAttemptColumns(selection),
         keyExtractor: (attempt) => attempt.spanId,
@@ -1059,7 +1061,7 @@ function renderTraceLookup(
           )
         : null
     ),
-    React.createElement<DataTableProps<UsageTraceSpan>>(DataTable, {
+    React.createElement<DataTableProperties<UsageTraceSpan>>(DataTable, {
       data: detail.spans,
       columns: traceSpanColumns(selection, detail.selectedSpanId),
       keyExtractor: (span) => span.spanId,
@@ -1069,11 +1071,11 @@ function renderTraceLookup(
 }
 
 /**
- * Render the historical (non-Active-Sessions) metrics widgets. Split out of
- * `UsageView` so this scope's `null`/`undefined` BarChart-data checks do not
- * add to that function's cognitive complexity; `UsageView` only decides
- * *whether* to call this, never *what* it renders.
- */
+Render the historical (non-Active-Sessions) metrics widgets. Split out of
+`UsageView` so this scope's `null`/`undefined` BarChart-data checks do not
+add to that function's cognitive complexity; `UsageView` only decides
+*whether* to call this, never *what* it renders.
+*/
 function renderGitChangeMetrics(
   metrics: UsageGitChangeMetrics
 ): React.JSX.Element {
@@ -1246,14 +1248,14 @@ function renderGitChangeMetrics(
 }
 
 /**
- * The provider-hop section of the Usage page.
- *
- * A hop is a fact about one request: that request changed the provider
- * serving an agent. It is its own section because it is its own story --
- * which pair of providers the agent moved between, why it moved, and where
- * it moved -- and because none of the page's other history (requests,
- * reliability, skills) can explain a change of provider.
- */
+The provider-hop section of the Usage page.
+
+A hop is a fact about one request: that request changed the provider
+serving an agent. It is its own section because it is its own story --
+which pair of providers the agent moved between, why it moved, and where
+it moved -- and because none of the page's other history (requests,
+reliability, skills) can explain a change of provider.
+*/
 function renderProviderHopMetrics(
   metrics: UsageMetricsData
 ): React.JSX.Element {
@@ -1513,7 +1515,7 @@ function buildUsageMcpRows(
   servers: readonly McpServerResource[],
   runtime: ControlApiMcpRuntimeResponse | null
 ): readonly UsageMcpServerRow[] {
-  const runtimeObserved = runtime !== null && runtime.observedServers !== null;
+  const isRuntimeObserved = runtime !== null && runtime.observedServers !== null;
   const observationsByName = new Map(
     (runtime?.servers ?? []).map((server) => [server.name, server] as const)
   );
@@ -1521,7 +1523,7 @@ function buildUsageMcpRows(
 
   const rows: UsageMcpServerRow[] = servers.map((server) => {
     const observation = observationsByName.get(server.name);
-    if (!runtimeObserved) {
+    if (!isRuntimeObserved) {
       return {
         name: server.name,
         configured: true,
@@ -1555,7 +1557,7 @@ function buildUsageMcpRows(
     };
   });
 
-  if (runtimeObserved) {
+  if (isRuntimeObserved) {
     for (const observed of runtime.servers) {
       if (configuredNames.has(observed.name)) continue;
       rows.push({
@@ -1659,7 +1661,7 @@ function renderMcpServersPanel(
     );
   }
 
-  const runtimeObserved =
+  const isRuntimeObserved =
     mcpInventory.runtime !== null &&
     mcpInventory.runtime.observedServers !== null;
   const rows = buildUsageMcpRows(mcpInventory.servers, mcpInventory.runtime);
@@ -1740,7 +1742,7 @@ function renderMcpServersPanel(
     }
   ];
 
-  const tableProps: DataTableProps<UsageMcpServerRow> = {
+  const tableProperties: DataTableProperties<UsageMcpServerRow> = {
     data: rows,
     columns,
     keyExtractor: (row) => row.name,
@@ -1752,7 +1754,7 @@ function renderMcpServersPanel(
     "div",
     {
       className: LIST_PANEL_CLASS,
-      "data-mcp-inventory-status": runtimeObserved
+      "data-mcp-inventory-status": isRuntimeObserved
         ? "observed"
         : "runtime-unavailable"
     },
@@ -1774,7 +1776,7 @@ function renderMcpServersPanel(
           })
         )
       : null,
-    runtimeObserved
+    isRuntimeObserved
       ? React.createElement(
           "p",
           { className: `${MUTED_BODY_CLASS} mb-3` },
@@ -1787,7 +1789,7 @@ function renderMcpServersPanel(
             ? "Runtime MCP observations are not attached; calls and failures are shown as Not observed."
             : `Runtime MCP observations are unavailable (${mcpInventory.runtimeFailure.code}): ${mcpInventory.runtimeFailure.message} Calls and failures are shown as Not observed.`
         ),
-    React.createElement(DataTable<UsageMcpServerRow>, tableProps)
+    React.createElement(DataTable<UsageMcpServerRow>, tableProperties)
   );
 }
 
@@ -2321,7 +2323,9 @@ function renderHistoricalMetrics(
   );
 }
 
-/** OpenLIT time-series buckets are UTC wall-clock labels, not local times. */
+/**
+OpenLIT time-series buckets are UTC wall-clock labels, not local times.
+*/
 function timeBucketInstant(bucket: string): string | null {
   if (
     (bucket.length !== 16 && bucket.length !== 19) ||
@@ -2425,7 +2429,7 @@ export function UsageView({
   // anything here. Rendering them would offer an operator a control that cannot
   // affect the reading in front of them.
   const isActiveSessions = selection.range === "ACTIVE_SESSIONS";
-  const observed = usageMetricsObserved(metrics);
+  const isObserved = usageMetricsObserved(metrics);
   // A session scope replaces the fleet body entirely: the page is about one
   // session, and the fleet-wide metrics would be a different question answered
   // beside it.
@@ -2439,7 +2443,7 @@ export function UsageView({
     {
       feature: "usage",
       attributes: {
-        "data-usage-observed": observed ? "true" : "false",
+        "data-usage-observed": isObserved ? "true" : "false",
         "data-usage-session-scoped": isSessionScoped ? "true" : "false"
       }
     },

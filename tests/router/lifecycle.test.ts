@@ -83,13 +83,13 @@ test("RouterLifecycle transitions to draining and drains requests during shutdow
   const controller = new AbortController();
   lifecycle.registerActiveRequest(controller);
 
-  let persisted = false;
-  let closed = false;
+  let isPersisted = false;
+  let isClosed = false;
 
   const server = {
-    close(cb: (err?: Error) => void) {
-      closed = true;
-      cb();
+    close(callback: (error?: Error) => void) {
+      isClosed = true;
+      callback();
     }
   };
 
@@ -100,7 +100,7 @@ test("RouterLifecycle transitions to draining and drains requests during shutdow
     server,
     drainTimeoutMs,
     persistState: async () => {
-      persisted = true;
+      isPersisted = true;
     }
   });
 
@@ -118,8 +118,8 @@ test("RouterLifecycle transitions to draining and drains requests during shutdow
 
   await shutdownPromise;
 
-  assert.equal(persisted, true);
-  assert.equal(closed, true);
+  assert.equal(isPersisted, true);
+  assert.equal(isClosed, true);
   assert.equal(controller.signal.aborted, false); // completed before timeout, so not aborted
 });
 
@@ -138,22 +138,22 @@ test("shutdown force-closes lingering connections once the drain window ends", a
   const lifecycle = new RouterLifecycle({ routerInstanceId: "test-instance" });
   const kill = t.mock.method(process, "kill", () => true);
   let closeCallback: (() => void) | null = null;
-  let connectionsClosed = false;
+  let isConnectionsClosed = false;
   await lifecycle.beginShutdown({
     signal: "SIGTERM",
     drainTimeoutMs: 0,
     server: {
       // A keep-alive client keeps close() pending until its socket goes away.
-      close(cb) {
-        closeCallback = cb;
+      close(callback) {
+        closeCallback = callback;
       },
       closeAllConnections() {
-        connectionsClosed = true;
+        isConnectionsClosed = true;
         closeCallback?.();
       }
     }
   });
-  assert.equal(connectionsClosed, true);
+  assert.equal(isConnectionsClosed, true);
   assert.equal(
     kill.mock.callCount(),
     0,
@@ -164,17 +164,17 @@ test("shutdown force-closes lingering connections once the drain window ends", a
 test("the router process exits on SIGTERM with a request still in flight, and persists its state", async () => {
   const codexHome = await mkdtemp(join(tmpdir(), "autodev-router-exit-"));
   const port = await freePort();
-  const env: NodeJS.ProcessEnv = {
+  const environment: NodeJS.ProcessEnv = {
     ...process.env,
     CODEX_HOME: codexHome,
     CODEX_MODEL_ROUTER_PORT: String(port),
     CODEX_ROUTER_SHUTDOWN_DRAIN_MS: "500",
     QUOTA_AXI_SNAPSHOT
   };
-  delete env.CODEX_ROUTER_STATE_FILE;
-  delete env.CODEX_ROUTER_AUTH_TOKEN;
+  delete environment.CODEX_ROUTER_STATE_FILE;
+  delete environment.CODEX_ROUTER_AUTH_TOKEN;
   const child = spawn(process.execPath, [ROUTER_SERVER], {
-    env,
+    env: environment,
     stdio: ["ignore", "ignore", "pipe"]
   });
   let stderr = "";

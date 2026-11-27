@@ -28,7 +28,9 @@ const h = React.createElement;
 const FACT_GRID_CLASS =
   "grid list-none grid-cols-2 gap-3 p-0 m-0 sm:grid-cols-3 xl:grid-cols-6";
 
-/** An observed count, or the unobserved label: never a defaulted zero. */
+/**
+An observed count, or the unobserved label: never a defaulted zero.
+*/
 function count(value: number | null | undefined): string {
   return value === null || value === undefined
     ? NOT_OBSERVED_LABEL
@@ -55,7 +57,9 @@ function facts(items: readonly React.JSX.Element[]): React.JSX.Element {
   return h("dl", { className: FACT_GRID_CLASS }, items);
 }
 
-/** Why a source has nothing to show; distinct from an observed zero. */
+/**
+Why a source has nothing to show; distinct from an observed zero.
+*/
 function sourceNotice(
   read: Exclude<OverviewRead<unknown>, { readonly status: "ok" }>
 ): React.JSX.Element {
@@ -267,7 +271,9 @@ function sourceBody<T>(
   return value.status === "ok" ? body(value.data) : sourceNotice(value);
 }
 
-/** The Overview's live signals: one section per authoritative source. */
+/**
+The Overview's live signals: one section per authoritative source.
+*/
 export function OverviewSignals({
   data
 }: {

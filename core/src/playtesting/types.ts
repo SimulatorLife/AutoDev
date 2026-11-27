@@ -1,18 +1,18 @@
 /**
- * Versioned, game-independent TypeScript contracts for AutoDev playtesting.
- *
- * The contracts here are the Core-owned portion of the playtesting target
- * state. They are deliberately infrastructure-free: no imports from runtime,
- * data, console, the network, or any framework. Every artifact carries
- * provenance, units, denominators, coverage, missingness reasons and a
- * `measurementVersion` so a downstream consumer (Runtime runner, Data
- * projector, Console renderer) cannot silently rewrite history or fabricate a
- * result that the upstream evidence never supported.
- *
- * This module only declares types and small `is*` predicates; the heavy
- * schema/registry/measurement/sampling/comparison/evidence logic lives in
- * its own files and is consumed through `./index.ts`.
- */
+Versioned, game-independent TypeScript contracts for AutoDev playtesting.
+
+The contracts here are the Core-owned portion of the playtesting target
+state. They are deliberately infrastructure-free: no imports from runtime,
+data, console, the network, or any framework. Every artifact carries
+provenance, units, denominators, coverage, missingness reasons and a
+`measurementVersion` so a downstream consumer (Runtime runner, Data
+projector, Console renderer) cannot silently rewrite history or fabricate a
+result that the upstream evidence never supported.
+
+This module only declares types and small `is*` predicates; the heavy
+schema/registry/measurement/sampling/comparison/evidence logic lives in
+its own files and is consumed through `./index.ts`.
+*/
 
 import type { AgentRole } from "../agents/types.ts";
 import type { WorkspaceVisualPlaytestLimits } from "../workspaces/visual-playtesting.ts";
@@ -23,18 +23,28 @@ import type {
 } from "./protocol-types.ts";
 import type { PlaytestVisualPolicyId } from "./visual-decision.ts";
 
-/** Current Core schema version for the playtesting artifact family. */
+/**
+Current Core schema version for the playtesting artifact family.
+*/
 export const PLAYTESTS_SCHEMA_VERSION = 1 as const;
-/** Version of the normative measurement rules applied to new artifacts. */
+/**
+Version of the normative measurement rules applied to new artifacts.
+*/
 export const PLAYTESTS_MEASUREMENT_VERSION =
   "playtesting-measurement-v2" as const;
 
-/** Version negotiated by `game.capabilities` before any episode reset. */
+/**
+Version negotiated by `game.capabilities` before any episode reset.
+*/
 export const PLAYTESTS_PROTOCOL_VERSION = 1 as const;
-/** Exact RNG-coupling semantics implemented by the v1 branch runner. */
+/**
+Exact RNG-coupling semantics implemented by the v1 branch runner.
+*/
 export const PLAYTESTS_RNG_POLICY_VERSION = "same-stream-state-v1" as const;
 
-/** Hard v1 JSON-RPC transport ceilings; adapters may advertise lower limits. */
+/**
+Hard v1 JSON-RPC transport ceilings; adapters may advertise lower limits.
+*/
 export const PLAYTESTS_ADAPTER_DEFAULT_QUOTAS = {
   maxMessageBytes: 1_048_576,
   maxQueuedRequests: 32,
@@ -43,15 +53,21 @@ export const PLAYTESTS_ADAPTER_DEFAULT_QUOTAS = {
   cancelGraceMs: 2000
 } as const;
 
-/** Identifier for the v2 metric-registry family with content-hashed evaluators. */
+/**
+Identifier for the v2 metric-registry family with content-hashed evaluators.
+*/
 export const PLAYTESTS_REGISTRY_SCHEMA =
   "autodev-playtest-registry-v2" as const;
 
-/** Identifier for the v1 per-batch critique selection contract. */
+/**
+Identifier for the v1 per-batch critique selection contract.
+*/
 export const PLAYTESTS_REVIEW_SELECTION_SCHEMA =
   "autodev-playtest-review-selection-v1" as const;
 
-/** Mode-bound assignment manifests; v4 adds execution-mode identity. */
+/**
+Mode-bound assignment manifests; v4 adds execution-mode identity.
+*/
 export const PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA =
   "autodev-playtest-assignment-manifest-v4" as const;
 export const PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V3 =
@@ -63,10 +79,14 @@ export const PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V2 =
 export const PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V1 =
   "autodev-playtest-assignment-manifest-v1" as const;
 
-/** Content-addressed, rubric-owned batch coverage matrix. */
+/**
+Content-addressed, rubric-owned batch coverage matrix.
+*/
 export const PLAYTESTS_COVERAGE_MANIFEST_SCHEMA =
   "autodev-playtest-coverage-manifest-v1" as const;
-/** Bounded, evidence-linked analyst input artifact. */
+/**
+Bounded, evidence-linked analyst input artifact.
+*/
 export const PLAYTESTS_EVIDENCE_PACKET_SCHEMA =
   "autodev-playtest-evidence-packet-v4" as const;
 export const PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V3 =
@@ -77,61 +97,65 @@ export const PLAYTESTS_EVIDENCE_PACKET_SCHEMA_V1 =
   "autodev-playtest-evidence-packet-v1" as const;
 
 /**
- * Bounded, read-only analyst input artifact for autonomous-visual discovery
- * sessions. Carries only player-visible observations, actual input
- * receipts, pre-action predictions, missingness/quality and frame
- * locators -- never rubric scores, metrics, coverage cells or
- * engine-invariant claims. A discovery packet is refused by every
- * scored/confirmatory review path and a confirmatory packet is refused by
- * the discovery review path.
- */
+Bounded, read-only analyst input artifact for autonomous-visual discovery
+sessions. Carries only player-visible observations, actual input
+receipts, pre-action predictions, missingness/quality and frame
+locators -- never rubric scores, metrics, coverage cells or
+engine-invariant claims. A discovery packet is refused by every
+scored/confirmatory review path and a confirmatory packet is refused by
+the discovery review path.
+*/
 export const PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA =
   "autodev-playtest-discovery-evidence-packet-v1" as const;
 /**
- * v2 of the discovery evidence packet. v2 is the only version a Core
- * builder may emit: it persists the episode's exact `PlayerDebriefV1`
- * as `playerSelfReport` context, so an analyst can read what the
- * autonomous player reported without mistaking the player-authored
- * self-report for analyst evidence. The field is reference data, never
- * an evidence citation; analyst citations remain bound to the packet's
- * step evidence, frame locators and supplied artifacts. v1 packets
- * remain valid and readable for historical artifacts and are never
- * silently upgraded.
- */
+v2 of the discovery evidence packet. v2 is the only version a Core
+builder may emit: it persists the episode's exact `PlayerDebriefV1`
+as `playerSelfReport` context, so an analyst can read what the
+autonomous player reported without mistaking the player-authored
+self-report for analyst evidence. The field is reference data, never
+an evidence citation; analyst citations remain bound to the packet's
+step evidence, frame locators and supplied artifacts. v1 packets
+remain valid and readable for historical artifacts and are never
+silently upgraded.
+*/
 export const PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA_V2 =
   "autodev-playtest-discovery-evidence-packet-v2" as const;
 /**
- * v3 of the discovery evidence packet. v3 is the only version a Core
- * builder may emit.
- *
- * v3 fixes the packet's two unbounded carriers, so that a session of a real
- * game fits the analyst's byte budget instead of being refused:
- *
- * - The per-step visible state is a bounded projection: every visible
- *   control keeps its identity, role, enabled state and accessible name
- *   (capped), the on-screen geometry is not carried (the captured frame is
- *   the record of the layout), and the number of controls carried per step
- *   is capped. The projection records what it condensed.
- * - The step records cover the *selected* steps -- the steps the packet's
- *   windows cite -- instead of every persisted step, so the packet's own
- *   byte budget can shed ordinary-sample steps instead of failing. The
- *   steps left out stay recorded in the packet's omitted windows.
- *
- * The redundant per-control affordance notes are gone: the visible state
- * already indexes the affordances by control id, and the note ids were
- * never citable. v1 and v2 packets remain valid and readable for historical
- * artifacts and are never silently upgraded.
- */
+v3 of the discovery evidence packet. v3 is the only version a Core
+builder may emit.
+
+v3 fixes the packet's two unbounded carriers, so that a session of a real
+game fits the analyst's byte budget instead of being refused:
+
+- The per-step visible state is a bounded projection: every visible
+  control keeps its identity, role, enabled state and accessible name
+  (capped), the on-screen geometry is not carried (the captured frame is
+  the record of the layout), and the number of controls carried per step
+  is capped. The projection records what it condensed.
+- The step records cover the *selected* steps -- the steps the packet's
+  windows cite -- instead of every persisted step, so the packet's own
+  byte budget can shed ordinary-sample steps instead of failing. The
+  steps left out stay recorded in the packet's omitted windows.
+
+The redundant per-control affordance notes are gone: the visible state
+already indexes the affordances by control id, and the note ids were
+never citable. v1 and v2 packets remain valid and readable for historical
+artifacts and are never silently upgraded.
+*/
 export const PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_SCHEMA_V3 =
   "autodev-playtest-discovery-evidence-packet-v3" as const;
 
-/** Identifier for the v2 comparison contract with attributable owner decisions. */
+/**
+Identifier for the v2 comparison contract with attributable owner decisions.
+*/
 export const PLAYTESTS_COMPARISON_SCHEMA =
   "autodev-playtest-comparison-v2" as const;
 export const PLAYTESTS_COMPARISON_SCHEMA_V1 =
   "autodev-playtest-comparison-v1" as const;
 
-/** Identifier for the v1 human-study import contract. */
+/**
+Identifier for the v1 human-study import contract.
+*/
 export const PLAYTESTS_HUMAN_STUDY_SCHEMA =
   "autodev-playtest-human-study-v1" as const;
 
@@ -157,7 +181,9 @@ export const PLAYTESTS_EPISODE_SCHEMA_V1 =
 export const PLAYTESTS_EXPERIMENT_SCHEMA =
   "autodev-playtest-experiment-v1" as const;
 
-/** Runtime-owned reason an episode stopped, separate from its execution state. */
+/**
+Runtime-owned reason an episode stopped, separate from its execution state.
+*/
 export const PLAYTESTS_EPISODE_TERMINATION_REASONS = [
   "game-terminal",
   "step-limit",
@@ -185,7 +211,9 @@ export const PLAYTESTS_SESSION_REVIEW_SCHEMA_V2 =
   "autodev-playtest-session-review-v2" as const;
 export const PLAYTESTS_SESSION_REVIEW_SCHEMA_V1 =
   "autodev-playtest-session-review-v1" as const;
-/** Unscored, packet-grounded analyst output for autonomous visual discovery. */
+/**
+Unscored, packet-grounded analyst output for autonomous visual discovery.
+*/
 export const PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA =
   "autodev-playtest-discovery-session-review-v1" as const;
 export const PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA =
@@ -195,7 +223,9 @@ export const PLAYTESTS_CROSS_SESSION_SYNTHESIS_SCHEMA_V1 =
 export const PLAYTESTS_CROSS_SESSION_METRIC_AGGREGATION_SCHEMA =
   "autodev-playtest-cross-session-metric-aggregation-v1" as const;
 
-/** Standard JSON-RPC error codes are preserved verbatim. */
+/**
+Standard JSON-RPC error codes are preserved verbatim.
+*/
 export const PLAYTESTS_JSON_RPC_STANDARD_ERROR_CODES = {
   parseError: -32_700,
   invalidRequest: -32_600,
@@ -204,7 +234,9 @@ export const PLAYTESTS_JSON_RPC_STANDARD_ERROR_CODES = {
   internalError: -32_603
 } as const;
 
-/** Version-1 game-adapter application errors and their specified codes. */
+/**
+Version-1 game-adapter application errors and their specified codes.
+*/
 export const PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES = {
   unsupportedScenario: -32_001,
   staleRevision: -32_002,
@@ -215,7 +247,9 @@ export const PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES = {
   engineFailure: -32_007
 } as const;
 
-/** Single source of truth for every permitted JSON-RPC error code. */
+/**
+Single source of truth for every permitted JSON-RPC error code.
+*/
 export const PLAYTESTS_ADAPTER_ERROR_CODES = [
   ...Object.values(PLAYTESTS_JSON_RPC_STANDARD_ERROR_CODES),
   ...Object.values(PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES)
@@ -224,7 +258,9 @@ export const PLAYTESTS_ADAPTER_ERROR_CODES = [
 export type PlaytestAdapterErrorCode =
   (typeof PLAYTESTS_ADAPTER_ERROR_CODES)[number];
 
-/** Game modes explicitly supported by a negotiated adapter. */
+/**
+Game modes explicitly supported by a negotiated adapter.
+*/
 export const PLAYTESTS_GAME_MODES = [
   "headless",
   "browser",
@@ -241,7 +277,9 @@ export const PLAYTESTS_COVERAGE_MODALITIES = [
 export type PlaytestCoverageModality =
   (typeof PLAYTESTS_COVERAGE_MODALITIES)[number];
 
-/** JSON-RPC methods in the documented game-adapter protocol v1. */
+/**
+JSON-RPC methods in the documented game-adapter protocol v1.
+*/
 export const PLAYTESTS_ADAPTER_METHODS = [
   "game.capabilities",
   "game.reset",
@@ -260,7 +298,9 @@ export const PLAYTESTS_ADAPTER_METHODS = [
 
 export type PlaytestAdapterMethod = (typeof PLAYTESTS_ADAPTER_METHODS)[number];
 
-/** Notifications have params but deliberately have no JSON-RPC response id. */
+/**
+Notifications have params but deliberately have no JSON-RPC response id.
+*/
 export const PLAYTESTS_ADAPTER_NOTIFICATIONS = [
   "game.event",
   "game.progress"
@@ -269,7 +309,9 @@ export const PLAYTESTS_ADAPTER_NOTIFICATIONS = [
 export type PlaytestAdapterNotification =
   (typeof PLAYTESTS_ADAPTER_NOTIFICATIONS)[number];
 
-/** Optional methods are advertised only when the target adapter implements them. */
+/**
+Optional methods are advertised only when the target adapter implements them.
+*/
 export const PLAYTESTS_OPTIONAL_ADAPTER_METHODS = [
   "game.invariants",
   "game.snapshot",
@@ -279,7 +321,9 @@ export const PLAYTESTS_OPTIONAL_ADAPTER_METHODS = [
   "game.captureFrame"
 ] as const satisfies readonly PlaytestAdapterMethod[];
 
-/** Polarity of a metric: lower is better, higher is better, or descriptive. */
+/**
+Polarity of a metric: lower is better, higher is better, or descriptive.
+*/
 export const PLAYTESTS_POLARITIES = [
   "lower",
   "higher",
@@ -289,7 +333,9 @@ export const PLAYTESTS_POLARITIES = [
 
 export type PlaytestPolarity = (typeof PLAYTESTS_POLARITIES)[number];
 
-/** Allowed evidence locator kinds; closed vocabulary. */
+/**
+Allowed evidence locator kinds; closed vocabulary.
+*/
 export const PLAYTESTS_LOCATOR_KINDS = [
   "episode",
   "event",
@@ -299,17 +345,19 @@ export const PLAYTESTS_LOCATOR_KINDS = [
   "finding",
   "comparison",
   /**
-   * A `PlayerPolicyValidity` record. Without this, `competenceReportRefs` --
-   * the field that exists to attest that a policy may stand in for a player --
-   * had no way to name one, and the only expressible citations were an episode
-   * or a review, neither of which is a competence report.
-   */
+  A `PlayerPolicyValidity` record. Without this, `competenceReportRefs` --
+  the field that exists to attest that a policy may stand in for a player --
+  had no way to name one, and the only expressible citations were an episode
+  or a review, neither of which is a competence report.
+  */
   "policy-validity"
 ] as const;
 
 export type PlaytestLocatorKind = (typeof PLAYTESTS_LOCATOR_KINDS)[number];
 
-/** Allowed missing-reason vocabulary; preserved verbatim on artifacts. */
+/**
+Allowed missing-reason vocabulary; preserved verbatim on artifacts.
+*/
 export const PLAYTESTS_MISSING_REASONS = [
   "no-consent",
   "withdrawn",
@@ -334,7 +382,9 @@ export const PLAYTESTS_MISSING_REASONS = [
 
 export type PlaytestMissingReason = (typeof PLAYTESTS_MISSING_REASONS)[number];
 
-/** Execution states for a single assigned episode; review/eligibility are counters, not outcomes. */
+/**
+Execution states for a single assigned episode; review/eligibility are counters, not outcomes.
+*/
 export const PLAYTESTS_EPISODE_STATES = [
   "assigned",
   "started",
@@ -347,13 +397,17 @@ export const PLAYTESTS_EPISODE_STATES = [
 
 export type PlaytestEpisodeState = (typeof PLAYTESTS_EPISODE_STATES)[number];
 
-/** Terminal disposition for an assignment without a persisted game episode. */
+/**
+Terminal disposition for an assignment without a persisted game episode.
+*/
 export type PlaytestAssignmentTerminalState = Exclude<
   PlaytestEpisodeState,
   "assigned" | "started"
 >;
 
-/** Assignment outcome retained when no episode row can carry the disposition. */
+/**
+Assignment outcome retained when no episode row can carry the disposition.
+*/
 export interface PlaytestAssignmentOutcome {
   readonly assignmentId: string;
   readonly episodeId: string | null;
@@ -362,10 +416,14 @@ export interface PlaytestAssignmentOutcome {
   readonly eligible: boolean;
 }
 
-/** One incompatible semantic quantity disables every statistical delta rule. */
+/**
+One incompatible semantic quantity disables every statistical delta rule.
+*/
 export const PLAYTESTS_NOT_COMPARABLE_MODE = "not-comparable" as const;
 
-/** Compatibility classification for a metric within a comparison. */
+/**
+Compatibility classification for a metric within a comparison.
+*/
 export const PLAYTESTS_COMPATIBILITY_MODES = [
   "paired-initial-condition",
   "paired-counterfactual",
@@ -377,7 +435,9 @@ export const PLAYTESTS_COMPATIBILITY_MODES = [
 export type PlaytestCompatibilityMode =
   (typeof PLAYTESTS_COMPATIBILITY_MODES)[number];
 
-/** Classification of a single metric delta within a comparison. */
+/**
+Classification of a single metric delta within a comparison.
+*/
 export const PLAYTESTS_DELTA_CLASSIFICATIONS = [
   "improved",
   "regressed",
@@ -391,7 +451,9 @@ export const PLAYTESTS_DELTA_CLASSIFICATIONS = [
 export type PlaytestDeltaClassification =
   (typeof PLAYTESTS_DELTA_CLASSIFICATIONS)[number];
 
-/** Decision the developer-owner applies on top of per-metric classifications. */
+/**
+Decision the developer-owner applies on top of per-metric classifications.
+*/
 export const PLAYTESTS_DECISION_STATUSES = [
   "eligible-for-owner-promotion",
   "hold-regression",
@@ -404,7 +466,9 @@ export const PLAYTESTS_DECISION_STATUSES = [
 export type PlaytestDecisionStatus =
   (typeof PLAYTESTS_DECISION_STATUSES)[number];
 
-/** Lifecycle states of a versioned experiment. */
+/**
+Lifecycle states of a versioned experiment.
+*/
 export const PLAYTESTS_EXPERIMENT_STATES = [
   "draft",
   "approved",
@@ -421,7 +485,9 @@ export const PLAYTESTS_EXPERIMENT_STATES = [
 export type PlaytestExperimentState =
   (typeof PLAYTESTS_EXPERIMENT_STATES)[number];
 
-/** Verification stages a finding may progress through. */
+/**
+Verification stages a finding may progress through.
+*/
 export const PLAYTESTS_VERIFICATION_STAGES = [
   "not-yet-validated",
   "fixed-on-reproduced-case",
@@ -433,7 +499,9 @@ export const PLAYTESTS_VERIFICATION_STAGES = [
 export type PlaytestVerificationStage =
   (typeof PLAYTESTS_VERIFICATION_STAGES)[number];
 
-/** Severity classes a finding may belong to. */
+/**
+Severity classes a finding may belong to.
+*/
 export const PLAYTESTS_SEVERITIES = [
   "catastrophic",
   "major",
@@ -443,7 +511,9 @@ export const PLAYTESTS_SEVERITIES = [
 
 export type PlaytestSeverity = (typeof PLAYTESTS_SEVERITIES)[number];
 
-/** Fix-lineage lifecycle states; shared by validators, Data and Control API. */
+/**
+Fix-lineage lifecycle states; shared by validators, Data and Control API.
+*/
 export const PLAYTESTS_FINDING_STATUSES = [
   "open",
   "fixed",
@@ -453,14 +523,20 @@ export const PLAYTESTS_FINDING_STATUSES = [
 ] as const;
 export type PlaytestFindingStatus = (typeof PLAYTESTS_FINDING_STATUSES)[number];
 
-/** Schema-allowed change-detection answer sources. */
+/**
+Schema-allowed change-detection answer sources.
+*/
 export type PlaytestPreferenceAnswer = "A" | "B" | "tie" | "unable-to-judge";
 
-/** Native Likert item range for miniPXI ENJ: -3 to +3 inclusive. */
+/**
+Native Likert item range for miniPXI ENJ: -3 to +3 inclusive.
+*/
 export const PLAYTESTS_MINIPXI_ENJ_MIN = -3;
 export const PLAYTESTS_MINIPXI_ENJ_MAX = 3;
 
-/** The 11 official miniPXI item codes; ENJ remains a distinct construct. */
+/**
+The 11 official miniPXI item codes; ENJ remains a distinct construct.
+*/
 export const PLAYTESTS_MINIPXI_ITEMS = [
   "AA",
   "CH",
@@ -477,31 +553,39 @@ export const PLAYTESTS_MINIPXI_ITEMS = [
 
 export type PlaytestMiniPxiItem = (typeof PLAYTESTS_MINIPXI_ITEMS)[number];
 
-/** Native -3..+3 Likert response categories; no display recoding is implied. */
+/**
+Native -3..+3 Likert response categories; no display recoding is implied.
+*/
 export const PLAYTESTS_MINIPXI_CATEGORIES = [-3, -2, -1, 0, 1, 2, 3] as const;
 
 export type PlaytestMiniPxiCategory =
   (typeof PLAYTESTS_MINIPXI_CATEGORIES)[number];
 
-/** Closed vocabulary of permitted agent roles for analysis/policy work. */
+/**
+Closed vocabulary of permitted agent roles for analysis/policy work.
+*/
 export type PlaytestAnalysisRole = Extract<
   AgentRole,
   "playtester" | "playtest-analyst" | "validator"
 >;
 
 /**
- * A versioned identifier pair. The Core layer never silently rewrites the
- * version: any change creates a fresh identifier and an explicit
- * "not-comparable" verdict in `PlaytestComparison`.
- */
+A versioned identifier pair. The Core layer never silently rewrites the
+version: any change creates a fresh identifier and an explicit
+"not-comparable" verdict in `PlaytestComparison`.
+*/
 export interface PlaytestVersionedRef {
   readonly id: string;
   readonly version: number | string;
-  /** Optional content hash; recorded so a comparison can detect drift. */
+  /**
+  Optional content hash; recorded so a comparison can detect drift.
+  */
   readonly contentHash?: string;
 }
 
-/** A bounded provenance reference; carries enough to replay or audit. */
+/**
+A bounded provenance reference; carries enough to replay or audit.
+*/
 export interface PlaytestProvenance {
   readonly workspaceId: string;
   readonly buildSha?: string;
@@ -512,24 +596,32 @@ export interface PlaytestProvenance {
   readonly generatedAt: string;
 }
 
-/** A single evidence locator; the only way a finding/review can point at data. */
+/**
+A single evidence locator; the only way a finding/review can point at data.
+*/
 export interface PlaytestEvidenceLocator {
   readonly kind: PlaytestLocatorKind;
   readonly id: string;
-  /** Optional sub-range; episode and event locators include these. */
+  /**
+  Optional sub-range; episode and event locators include these.
+  */
   readonly step?: number;
   readonly revision?: number;
   readonly frameIndex?: number;
   readonly phaseId?: string;
 }
 
-/** One observed or interpreted review claim with its own packet citations. */
+/**
+One observed or interpreted review claim with its own packet citations.
+*/
 export interface PlaytestReviewClaim {
   readonly text: string;
   readonly evidenceRefs: readonly PlaytestEvidenceLocator[];
 }
 
-/** Explicitly accounts for review sections that may otherwise disappear silently. */
+/**
+Explicitly accounts for review sections that may otherwise disappear silently.
+*/
 export interface PlaytestReviewCompleteness {
   readonly crossSessionContext:
     | {
@@ -565,27 +657,31 @@ export interface PlaytestReviewCompleteness {
 }
 
 /**
- * The status of one section of a review's completeness account.
- *
- * The four completeness sections do not share one status vocabulary -- the
- * cross-session context can be available, the alternatives can be provided,
- * the experiments can be proposed -- so the union is taken from the interface
- * rather than written out. A consumer can therefore look up a word for every
- * status the contract admits, exhaustively: a status added to the interface
- * without a word of its own is a typecheck failure there, rather than a
- * machine code printed on a page.
- */
+The status of one section of a review's completeness account.
+
+The four completeness sections do not share one status vocabulary -- the
+cross-session context can be available, the alternatives can be provided,
+the experiments can be proposed -- so the union is taken from the interface
+rather than written out. A consumer can therefore look up a word for every
+status the contract admits, exhaustively: a status added to the interface
+without a word of its own is a typecheck failure there, rather than a
+machine code printed on a page.
+*/
 export type PlaytestReviewSectionStatus =
   | PlaytestReviewCompleteness["crossSessionContext"]["status"]
   | PlaytestReviewCompleteness["alternatives"]["status"]
   | PlaytestReviewCompleteness["experiments"]["status"]
   | PlaytestReviewCompleteness["followUp"]["status"];
 
-/** What a review records as a deterministic fact-support verdict. */
+/**
+What a review records as a deterministic fact-support verdict.
+*/
 export type PlaytestEvidenceVerdict =
   "supported" | "contradicted" | "insufficient";
 
-/** Required raw inputs of one dimension rubric evaluation. */
+/**
+Required raw inputs of one dimension rubric evaluation.
+*/
 export interface PlaytestDimensionAnchor {
   readonly dimensionId: string;
   readonly version: number;
@@ -595,14 +691,20 @@ export interface PlaytestDimensionAnchor {
   readonly counterexampleId?: string;
   readonly evidenceChecklist: readonly string[];
   readonly evidenceRefs: readonly PlaytestEvidenceLocator[];
-  /** Independent units contributing evidence; null -> null score. */
+  /**
+  Independent units contributing evidence; null -> null score.
+  */
   readonly independentUnits: number | null;
-  /** Eligible opportunities contributing evidence; null -> null score. */
+  /**
+  Eligible opportunities contributing evidence; null -> null score.
+  */
   readonly eligibleOpportunities: number | null;
   readonly insufficientReason?: PlaytestMissingReason;
 }
 
-/** Boundary object for one score band on a 0-4 rubric. */
+/**
+Boundary object for one score band on a 0-4 rubric.
+*/
 export interface PlaytestScoreBand {
   readonly score: 0 | 1 | 2 | 3 | 4;
   readonly equals?: number;
@@ -612,7 +714,9 @@ export interface PlaytestScoreBand {
   readonly lessThan?: number;
 }
 
-/** Dimension rubric carried by the registry; consumed by anchor scoring. */
+/**
+Dimension rubric carried by the registry; consumed by anchor scoring.
+*/
 export interface PlaytestDimensionRubric {
   readonly dimensionId: string;
   readonly version: number;
@@ -629,7 +733,9 @@ export interface PlaytestDimensionRubric {
   readonly humanOutcomeMapping: string | null;
 }
 
-/** Counters for one stratum inside the sampling budget. */
+/**
+Counters for one stratum inside the sampling budget.
+*/
 export interface PlaytestStratumAllocation {
   readonly stratumKey: string;
   readonly population: number;
@@ -637,7 +743,9 @@ export interface PlaytestStratumAllocation {
   readonly inclusionProbability: number;
 }
 
-/** Result of a deterministic surveillance sample. */
+/**
+Result of a deterministic surveillance sample.
+*/
 export interface PlaytestSurveillanceSample {
   readonly budget: number;
   readonly seed: string;
@@ -647,7 +755,9 @@ export interface PlaytestSurveillanceSample {
   readonly totalAllocated: number;
 }
 
-/** Result of a deterministic discovery sample selection. */
+/**
+Result of a deterministic discovery sample selection.
+*/
 export interface PlaytestDiscoverySample {
   readonly budget: number;
   readonly seed: string;
@@ -656,26 +766,36 @@ export interface PlaytestDiscoverySample {
   readonly tieBreakerSeed: string;
 }
 
-/** Strata are fixed by the measurement contract: policy x scenario x outcome. */
+/**
+Strata are fixed by the measurement contract: policy x scenario x outcome.
+*/
 export const PLAYTESTS_REVIEW_STRATIFICATION =
   "policy-scenario-outcome-v1" as const;
 
-/** Game-owned deterministic evaluator signal used to rank discovery reviews. */
+/**
+Game-owned deterministic evaluator signal used to rank discovery reviews.
+*/
 export interface PlaytestDiscoverySignal {
   readonly metricId: string;
   readonly version: number;
   readonly direction: "higher-first" | "lower-first";
 }
 
-/** One frozen session selected for complete-session critique. */
+/**
+One frozen session selected for complete-session critique.
+*/
 export interface PlaytestSelectedReviewSession {
   readonly assignmentId: string;
   readonly episodeId: string;
   readonly stream: "surveillance" | "discovery";
   readonly stratumKey: string;
-  /** n_h / N_h for surveillance units; null for targeted discovery units. */
+  /**
+  n_h / N_h for surveillance units; null for targeted discovery units.
+  */
   readonly inclusionProbability: number | null;
-  /** 1-based discovery rank and evaluator value; null for surveillance. */
+  /**
+  1-based discovery rank and evaluator value; null for surveillance.
+  */
   readonly discoveryRank: number | null;
   readonly signalValue: number | null;
 }
@@ -711,9 +831,9 @@ export type PlaytestDiscoverySelection =
     };
 
 /**
- * Frozen per-batch critique selection. Surveillance alone supports weighted
- * population estimates; discovery reviews are reported separately.
- */
+Frozen per-batch critique selection. Surveillance alone supports weighted
+population estimates; discovery reviews are reported separately.
+*/
 export interface PlaytestReviewSelection {
   readonly schema: typeof PLAYTESTS_REVIEW_SELECTION_SCHEMA;
   readonly status: "selected";
@@ -722,7 +842,9 @@ export interface PlaytestReviewSelection {
   readonly stratification: typeof PLAYTESTS_REVIEW_STRATIFICATION;
   readonly maxReviewedSessions: number;
   readonly critiqueBudget: number;
-  /** min(maxReviewedSessions, critiqueBudget); never exceeded by distinct reviews. */
+  /**
+  min(maxReviewedSessions, critiqueBudget); never exceeded by distinct reviews.
+  */
   readonly reviewCap: number;
   readonly reviewablePopulation: number;
   readonly unreviewableAssignments: number;
@@ -732,7 +854,9 @@ export interface PlaytestReviewSelection {
   readonly selectedAt: string;
 }
 
-/** Explicit selection state; no fabricated selection for incomplete history. */
+/**
+Explicit selection state; no fabricated selection for incomplete history.
+*/
 export type PlaytestBatchReviewSelection =
   | PlaytestReviewSelection
   | { readonly status: "pending" }
@@ -744,12 +868,16 @@ export type PlaytestBatchReviewSelection =
         | "visual-discovery-session-level";
     };
 
-/** Verified source and exact intervention frozen into a branch assignment. */
+/**
+Verified source and exact intervention frozen into a branch assignment.
+*/
 export interface PlaytestAssignmentBranch {
   readonly parentEpisodeId: string;
   readonly parentEpisodeRevision: number;
   readonly parentBatchId: string;
-  /** Zero-based, pre-action decision step. */
+  /**
+  Zero-based, pre-action decision step.
+  */
   readonly branchStep: number;
   readonly parentTrace: PlaytestArtifactReference;
   readonly parentCheckpoint: PlaytestCheckpointDigest;
@@ -758,27 +886,35 @@ export interface PlaytestAssignmentBranch {
   readonly rngPolicyVersion: string;
 }
 
-/** Frozen assignment-to-episode identity used by live Watch links. */
+/**
+Frozen assignment-to-episode identity used by live Watch links.
+*/
 export interface PlaytestSessionReference {
   readonly assignmentId: string;
   readonly episodeId: string;
 }
 
-/** One frozen batch-local run assignment; the episode links back by ID. */
+/**
+One frozen batch-local run assignment; the episode links back by ID.
+*/
 export interface PlaytestBatchAssignment {
   readonly assignmentId: string;
   readonly scenarioId: string;
   readonly scenarioFamily: string;
   readonly policyId: string;
   readonly policyVersion: string;
-  /** Null only in one-way migrated assignment history predating coverage plans. */
+  /**
+  Null only in one-way migrated assignment history predating coverage plans.
+  */
   readonly cohort: string | null;
   readonly seed: string;
   readonly maxSteps: number;
   readonly branch?: PlaytestAssignmentBranch;
 }
 
-/** Complete, content-hashed adapter inventory reserved before any launch. */
+/**
+Complete, content-hashed adapter inventory reserved before any launch.
+*/
 export interface PlaytestAdapterAssignmentManifest {
   readonly schema: typeof PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA;
   readonly mode: "adapter-accelerated";
@@ -793,19 +929,23 @@ export interface PlaytestAdapterAssignmentManifest {
   readonly contentHash: string;
 }
 
-/** Visual assignments carry no fabricated scenario, seed, or repository facts. */
+/**
+Visual assignments carry no fabricated scenario, seed, or repository facts.
+*/
 export interface PlaytestVisualBatchAssignment {
   readonly assignmentId: string;
-  /** Zero-based position in the immutable visual session batch. */
+  /**
+  Zero-based position in the immutable visual session batch.
+  */
   readonly ordinal: number;
   readonly maxSteps: number;
 }
 
 /**
- * Canonical launch inventory for autonomous visual sessions. The grant is
- * bound by target approval identity/revision and origin only; the entry URL
- * path, engine scenario and RNG seed are deliberately not copied into it.
- */
+Canonical launch inventory for autonomous visual sessions. The grant is
+bound by target approval identity/revision and origin only; the entry URL
+path, engine scenario and RNG seed are deliberately not copied into it.
+*/
 export interface PlaytestVisualAssignmentManifest {
   readonly schema: typeof PLAYTESTS_VISUAL_ASSIGNMENT_MANIFEST_SCHEMA;
   readonly mode: "autonomous-visual";
@@ -817,7 +957,9 @@ export interface PlaytestVisualAssignmentManifest {
   readonly targetOrigin: string;
   readonly policyId: PlaytestVisualPolicyId;
   readonly policyVersion: string;
-  /** Null until a validated player persona/cohort is explicitly assigned. */
+  /**
+  Null until a validated player persona/cohort is explicitly assigned.
+  */
   readonly cohortId: string | null;
   readonly areasOfFocus: string | null;
   readonly limits: WorkspaceVisualPlaytestLimits;
@@ -832,12 +974,16 @@ export type PlaytestAssignmentManifestDraft =
   | Omit<PlaytestAdapterAssignmentManifest, "contentHash">
   | Omit<PlaytestVisualAssignmentManifest, "contentHash">;
 
-/** Durable critique slot; reservations survive review/batch write failures. */
+/**
+Durable critique slot; reservations survive review/batch write failures.
+*/
 export interface PlaytestReviewReceipt {
   readonly reviewId: string;
   readonly assignmentId: string;
   readonly episodeId: string;
-  /** Null only for migrated review history predating evidence packets. */
+  /**
+  Null only for migrated review history predating evidence packets.
+  */
   readonly packetId: string | null;
   readonly status: "reserved" | "persisted";
 }
@@ -855,7 +1001,9 @@ export const PLAYTESTS_REVIEW_PACKET_FAILURE_REASONS = [
 export type PlaytestReviewPacketFailureReason =
   (typeof PLAYTESTS_REVIEW_PACKET_FAILURE_REASONS)[number];
 
-/** Packet preparation is durable before analyst inference and may fail explicitly. */
+/**
+Packet preparation is durable before analyst inference and may fail explicitly.
+*/
 export type PlaytestReviewPacketReceipt =
   | {
       readonly status: "prepared";
@@ -876,7 +1024,9 @@ export type PlaytestReviewPacketReceipt =
       readonly createdAt: string;
     };
 
-/** Mode-specific frozen inventory embedded in a durable batch revision. */
+/**
+Mode-specific frozen inventory embedded in a durable batch revision.
+*/
 export type PlaytestAssignmentInventory =
   | {
       readonly status: "frozen";
@@ -891,7 +1041,9 @@ export type PlaytestAssignmentInventory =
       readonly reason: "recorded-before-assignment-manifests";
     };
 
-/** Aggregate coverage/cohort breakdown used by comparisons and reviews. */
+/**
+Aggregate coverage/cohort breakdown used by comparisons and reviews.
+*/
 export interface PlaytestCompletionCounts {
   readonly assigned: number;
   readonly started: number;
@@ -904,7 +1056,9 @@ export interface PlaytestCompletionCounts {
   readonly eligible: number;
 }
 
-/** Single per-arm measurement summary required by comparisons. */
+/**
+Single per-arm measurement summary required by comparisons.
+*/
 export interface PlaytestMetricArmSummary {
   readonly arm: "baseline" | "candidate";
   readonly assigned: number;
@@ -919,7 +1073,9 @@ export interface PlaytestMetricArmSummary {
 
 export type PlaytestMeasurementSource = "deterministic" | "critic" | "human";
 
-/** Frozen identity of the quantity, measurement source and independent unit. */
+/**
+Frozen identity of the quantity, measurement source and independent unit.
+*/
 export interface PlaytestMetricSemantics {
   readonly metricId: string;
   readonly metricVersion: number | string;
@@ -930,7 +1086,9 @@ export interface PlaytestMetricSemantics {
   readonly independentUnit: string;
 }
 
-/** Numeric interval returned by an external statistics library. */
+/**
+Numeric interval returned by an external statistics library.
+*/
 export interface PlaytestNumericInterval {
   readonly lower: number;
   readonly upper: number;
@@ -941,7 +1099,9 @@ export interface PlaytestNumericInterval {
   readonly seed: string | null;
 }
 
-/** Single per-metric comparison verdict. */
+/**
+Single per-metric comparison verdict.
+*/
 export interface PlaytestMetricComparison {
   readonly metricId: string;
   readonly metricVersion: number | string;
@@ -953,7 +1113,9 @@ export interface PlaytestMetricComparison {
   readonly baseline: PlaytestMetricArmSummary;
   readonly candidate: PlaytestMetricArmSummary;
   readonly interval: PlaytestNumericInterval | null;
-  /** Direct descriptive classification has null source identity; durable comparison builders populate both arms. */
+  /**
+  Direct descriptive classification has null source identity; durable comparison builders populate both arms.
+  */
   readonly sourceSemantics: {
     readonly baseline: PlaytestMetricSemantics;
     readonly candidate: PlaytestMetricSemantics;
@@ -963,7 +1125,9 @@ export interface PlaytestMetricComparison {
   readonly notes: string;
 }
 
-/** Shared comparison result fields across persisted comparison versions. */
+/**
+Shared comparison result fields across persisted comparison versions.
+*/
 export interface PlaytestComparisonFields {
   readonly comparisonId: string;
   readonly version: number;
@@ -975,7 +1139,9 @@ export interface PlaytestComparisonFields {
   readonly pairing: {
     readonly mode: PlaytestCompatibilityMode;
     readonly pairMap: Readonly<Record<string, string>>;
-    /** Hash of the frozen assignment plan; identical seed text is not proof of a pair. */
+    /**
+    Hash of the frozen assignment plan; identical seed text is not proof of a pair.
+    */
     readonly allocationPlanHash: string | null;
     readonly rngAlgorithm: string | null;
     readonly rngStreamVersion: string | null;
@@ -997,25 +1163,35 @@ export interface PlaytestComparisonFields {
   readonly notes: string;
 }
 
-/** Read-only history before owner-decision authorship/disposition was stored. */
+/**
+Read-only history before owner-decision authorship/disposition was stored.
+*/
 export interface PlaytestComparisonV1 extends PlaytestComparisonFields {
   readonly schema: typeof PLAYTESTS_COMPARISON_SCHEMA_V1;
 }
 
 export type PlaytestOwnerDisposition = "promote" | "hold" | "not-recorded";
 
-/** Current comparison contract with an attributable owner decision record. */
+/**
+Current comparison contract with an attributable owner decision record.
+*/
 export interface PlaytestComparison extends PlaytestComparisonFields {
   readonly schema: typeof PLAYTESTS_COMPARISON_SCHEMA;
   readonly ownerDecisionBy: string | null;
   readonly ownerDisposition: PlaytestOwnerDisposition | null;
 }
 
-/** A finding is a testable, evidence-linked design or defect claim. */
+/**
+A finding is a testable, evidence-linked design or defect claim.
+*/
 export interface PlaytestFinding {
-  /** Stable workspace/game/mechanic identity shared across builds and policies. */
+  /**
+  Stable workspace/game/mechanic identity shared across builds and policies.
+  */
   readonly identity: PlaytestFindingIdentity;
-  /** SHA-256 of `identity`; Runtime generates it and Data verifies it. */
+  /**
+  SHA-256 of `identity`; Runtime generates it and Data verifies it.
+  */
   readonly fingerprint: string;
   readonly findingId: string;
   readonly version: number;
@@ -1038,7 +1214,9 @@ export interface PlaytestFinding {
   readonly nextReviewAt: string | null;
 }
 
-/** JSON-RPC v1 request envelope; protocol request IDs are unique strings. */
+/**
+JSON-RPC v1 request envelope; protocol request IDs are unique strings.
+*/
 export interface PlaytestJsonRpcRequest {
   readonly jsonrpc: "2.0";
   readonly id: string;
@@ -1046,14 +1224,18 @@ export interface PlaytestJsonRpcRequest {
   readonly params: Readonly<Record<string, unknown>>;
 }
 
-/** JSON-RPC notification; no `id` means no response may be emitted. */
+/**
+JSON-RPC notification; no `id` means no response may be emitted.
+*/
 export interface PlaytestJsonRpcNotification {
   readonly jsonrpc: "2.0";
   readonly method: PlaytestAdapterNotification;
   readonly params: Readonly<Record<string, unknown>>;
 }
 
-/** JSON-RPC v1 success response envelope. */
+/**
+JSON-RPC v1 success response envelope.
+*/
 export interface PlaytestJsonRpcSuccess {
   readonly jsonrpc: "2.0";
   readonly id: string;
@@ -1066,7 +1248,9 @@ export interface PlaytestAdapterErrorData {
   readonly episodeDisposition: "unchanged" | "aborted" | "unknown";
 }
 
-/** JSON-RPC v1 error response envelope. */
+/**
+JSON-RPC v1 error response envelope.
+*/
 export interface PlaytestJsonRpcError {
   readonly jsonrpc: "2.0";
   readonly id: string | null;
@@ -1080,7 +1264,9 @@ export interface PlaytestJsonRpcError {
 export type PlaytestJsonRpcResponse =
   PlaytestJsonRpcSuccess | PlaytestJsonRpcError;
 
-/** Adapter quotas are negotiated before reset and may not exceed v1 defaults. */
+/**
+Adapter quotas are negotiated before reset and may not exceed v1 defaults.
+*/
 export interface PlaytestAdapterQuotas {
   readonly maxMessageBytes: number;
   readonly maxQueuedRequests: number;
@@ -1088,7 +1274,9 @@ export interface PlaytestAdapterQuotas {
   readonly resetReplayTimeoutMs: number;
 }
 
-/** Capability advertisement returned by the first `game.capabilities` call. */
+/**
+Capability advertisement returned by the first `game.capabilities` call.
+*/
 export type PlaytestJsonSchema = Readonly<Record<string, unknown>>;
 
 export interface PlaytestCapabilityAdvertisement {
@@ -1112,7 +1300,9 @@ export interface PlaytestCapabilityAdvertisement {
   };
 }
 
-/** Action request issued by Runtime; bound to the lowest-Revision call. */
+/**
+Action request issued by Runtime; bound to the lowest-Revision call.
+*/
 export interface PlaytestActionRequest {
   readonly requestId: string;
   readonly expectedRevision: number;
@@ -1122,14 +1312,18 @@ export interface PlaytestActionRequest {
   readonly deadlineAt: string;
 }
 
-/** Bare-bones numeric scoring result; common denominator across evaluators. */
+/**
+Bare-bones numeric scoring result; common denominator across evaluators.
+*/
 export interface PlaytestNumericResult {
   readonly metricId: string;
   readonly metricVersion: number | string;
   readonly phaseId: string | null;
   readonly numerator: number;
   readonly denominator: number;
-  /** All evaluator opportunities, including excluded/missing opportunities. */
+  /**
+  All evaluator opportunities, including excluded/missing opportunities.
+  */
   readonly opportunityCount: number | null;
   readonly coverage: number;
   readonly unit: string;
@@ -1141,7 +1335,9 @@ export interface PlaytestNumericResult {
   readonly notes: string;
 }
 
-/** MiniPXI ENJ aggregation result; preserves units/native scale. */
+/**
+MiniPXI ENJ aggregation result; preserves units/native scale.
+*/
 export interface PlaytestMiniPxiEnjAggregation {
   readonly metricId: "reported-enjoyment";
   readonly metricVersion: number | string;
@@ -1155,11 +1351,15 @@ export interface PlaytestMiniPxiEnjAggregation {
   readonly provenance: PlaytestProvenance;
 }
 
-/** Compatibility verdict between two measurement versions. */
+/**
+Compatibility verdict between two measurement versions.
+*/
 export type PlaytestCompatibilityVerdict =
   "compatible" | "compatible-with-bridge" | "not-comparable";
 
-/** Single compatibility verdict entry. */
+/**
+Single compatibility verdict entry.
+*/
 export interface PlaytestCompatibilityEntry {
   readonly metricId: string;
   readonly verdict: PlaytestCompatibilityVerdict;

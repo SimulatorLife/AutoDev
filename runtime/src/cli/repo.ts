@@ -5,24 +5,26 @@ import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/
 
 import { unsupportedChoice } from "./command-choice.ts";
 
-/** The repo vocabulary, owned here and consumed by validation and errors. */
+/**
+The repo vocabulary, owned here and consumed by validation and errors.
+*/
 export const REPO_SUBCOMMANDS = ["bootstrap"] as const;
 
 export interface RepoCommandBackend {
-  bootstrap(args?: readonly string[]): number;
+  bootstrap(arguments_?: readonly string[]): number;
 }
 
-const repoRoot = path.resolve(resolveRuntimeSourceRoot(import.meta.dirname));
+const repositoryRoot = path.resolve(resolveRuntimeSourceRoot(import.meta.dirname));
 
-const defaultRepoBackend: RepoCommandBackend = {
-  bootstrap: (args = []) => {
+const defaultRepositoryBackend: RepoCommandBackend = {
+  bootstrap: (arguments_ = []) => {
     const script = path.join(
-      repoRoot,
+      repositoryRoot,
       "scripts",
       "bootstrap-repo-exclusions.sh"
     );
     try {
-      execFileSync(script, args, { stdio: "inherit" });
+      execFileSync(script, arguments_, { stdio: "inherit" });
       return 0;
     } catch (error: unknown) {
       if (
@@ -40,12 +42,12 @@ const defaultRepoBackend: RepoCommandBackend = {
 
 export function dispatchRepoCommand(
   subcommand: string,
-  args: readonly string[] = [],
-  backend: RepoCommandBackend = defaultRepoBackend
+  arguments_: readonly string[] = [],
+  backend: RepoCommandBackend = defaultRepositoryBackend
 ): number {
   // One arm, so a `switch` would only trip `sonarjs/no-small-switch`; the
   // rejection below is still the family's single place an unusable subcommand is
   // reported.
-  if (subcommand === "bootstrap") return backend.bootstrap(args);
+  if (subcommand === "bootstrap") return backend.bootstrap(arguments_);
   throw unsupportedChoice("repo subcommand", subcommand, REPO_SUBCOMMANDS);
 }

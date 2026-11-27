@@ -15,18 +15,18 @@ export interface OpencliBrowserInstallOptions {
 export interface OpencliBrowserInstallDeps {
   readonly run: (
     command: string,
-    args: readonly string[],
-    env: NodeJS.ProcessEnv
+    arguments_: readonly string[],
+    environment: NodeJS.ProcessEnv
   ) => number;
   readonly fileExists: (filePath: string) => boolean;
   readonly createDirectory: (directory: string) => void;
   readonly readFile?: (filePath: string) => string;
 }
 
-function defaultDeps(): OpencliBrowserInstallDeps {
+function defaultDependencies(): OpencliBrowserInstallDeps {
   return {
-    run: (command, args, env) =>
-      spawnSync(command, [...args], { env, stdio: "inherit" }).status ?? 1,
+    run: (command, arguments_, environment) =>
+      spawnSync(command, [...arguments_], { env: environment, stdio: "inherit" }).status ?? 1,
     fileExists: existsSync,
     createDirectory: (directory) =>
       mkdirSync(directory, { recursive: true, mode: 0o700 }),
@@ -45,11 +45,11 @@ interface PlaywrightBrowsersManifest {
 function isPinnedChromiumInstalled(
   playwrightRoot: string,
   browserCache: string,
-  deps: OpencliBrowserInstallDeps
+  dependencies: OpencliBrowserInstallDeps
 ): boolean {
   const manifestPath = path.join(playwrightRoot, "browsers.json");
   const readFile =
-    deps.readFile ?? ((filePath: string) => readFileSync(filePath, "utf8"));
+    dependencies.readFile ?? ((filePath: string) => readFileSync(filePath, "utf8"));
   let parsed: PlaywrightBrowsersManifest;
   try {
     parsed = JSON.parse(readFile(manifestPath)) as PlaywrightBrowsersManifest;
@@ -65,7 +65,7 @@ function isPinnedChromiumInstalled(
   ) {
     return false;
   }
-  const requiredDirs = [`chromium-${chromium.revision}`];
+  const requiredDirectories = [`chromium-${chromium.revision}`];
   const ffmpeg = browsers.find((entry) => entry.name === "ffmpeg");
   if (ffmpeg) {
     if (
@@ -75,18 +75,20 @@ function isPinnedChromiumInstalled(
     ) {
       return false;
     }
-    requiredDirs.push(`ffmpeg-${ffmpeg.revision}`);
+    requiredDirectories.push(`ffmpeg-${ffmpeg.revision}`);
   }
-  return requiredDirs.every((directory) =>
-    deps.fileExists(path.join(browserCache, directory, "INSTALLATION_COMPLETE"))
+  return requiredDirectories.every((directory) =>
+    dependencies.fileExists(path.join(browserCache, directory, "INSTALLATION_COMPLETE"))
   );
 }
 
-/** Install the Chromium version pinned by Runtime's Playwright dependency. */
+/**
+Install the Chromium version pinned by Runtime's Playwright dependency.
+*/
 export function installOpencliBrowser(
   options: OpencliBrowserInstallOptions,
-  deps: OpencliBrowserInstallDeps = defaultDeps(),
-  env: NodeJS.ProcessEnv = process.env
+  dependencies: OpencliBrowserInstallDeps = defaultDependencies(),
+  environment: NodeJS.ProcessEnv = process.env
 ): number {
   const playwrightRoot = path.join(
     options.repositoryRoot,
@@ -95,7 +97,7 @@ export function installOpencliBrowser(
     "playwright-core"
   );
   const playwrightCli = path.join(playwrightRoot, "cli.js");
-  if (!deps.fileExists(playwrightCli)) {
+  if (!dependencies.fileExists(playwrightCli)) {
     writeErrorLine(
       `missing Runtime Playwright CLI at ${playwrightCli}; run pnpm install --frozen-lockfile`
     );
@@ -108,16 +110,16 @@ export function installOpencliBrowser(
     "opencli",
     "browsers"
   );
-  if (isPinnedChromiumInstalled(playwrightRoot, browserCache, deps)) {
+  if (isPinnedChromiumInstalled(playwrightRoot, browserCache, dependencies)) {
     return 0;
   }
-  deps.createDirectory(browserCache);
+  dependencies.createDirectory(browserCache);
   writeLine("installing AutoDev's pinned opencli Chromium browser");
-  const status = deps.run(
+  const status = dependencies.run(
     process.execPath,
     [playwrightCli, "install", "chromium", "--no-shell"],
     {
-      ...env,
+      ...environment,
       CODEX_HOME: options.codexHome,
       PLAYWRIGHT_BROWSERS_PATH: browserCache
     }

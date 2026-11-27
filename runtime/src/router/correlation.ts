@@ -16,11 +16,11 @@ import {
 } from "./usage.ts";
 
 /**
- * The attributes a bridge report carries.
- *
- * The values are untrusted -- they arrive over the wire from a bridge -- so
- * every read of one goes through a guard rather than a cast.
- */
+The attributes a bridge report carries.
+
+The values are untrusted -- they arrive over the wire from a bridge -- so
+every read of one goes through a guard rather than a cast.
+*/
 export type AttributeMap = Record<string, unknown>;
 
 export const MCP_OBSERVATION_TTL_MS = Number.parseInt(
@@ -65,9 +65,9 @@ export interface ContextDimensions {
 }
 
 /**
- * The dimensions a context is counted under, and the context field each one
- * takes its value from.
- */
+The dimensions a context is counted under, and the context field each one
+takes its value from.
+*/
 const CONTEXT_DIMENSION_FIELDS = [
   ["byRole", "role"],
   ["byWorkspace", "workspace"],
@@ -166,22 +166,22 @@ export interface BridgeEventsState {
 }
 
 /**
- * The router's live correlation with the agents it serves.
- *
- * Everything here is observed by the router itself, from the requests it
- * routes and the reports its bridges send back. The historical aggregation
- * the router used to build from an OTLP receiver is gone: OpenLIT is the
- * system of record for history, and the router keeps only what it must answer
- * a live control question from.
- */
+The router's live correlation with the agents it serves.
+
+Everything here is observed by the router itself, from the requests it
+routes and the reports its bridges send back. The historical aggregation
+the router used to build from an OTLP receiver is gone: OpenLIT is the
+system of record for history, and the router keeps only what it must answer
+a live control question from.
+*/
 /**
- * The schema of the persisted live correlation.
- *
- * It is deliberately not the receiver's version. The historical aggregation
- * the router used to build from an OTLP receiver is gone -- OpenLIT is the
- * system of record for history -- so a snapshot an older router wrote
- * describes a shape this one does not have and must not be read as one.
- */
+The schema of the persisted live correlation.
+
+It is deliberately not the receiver's version. The historical aggregation
+the router used to build from an OTLP receiver is gone -- OpenLIT is the
+system of record for history -- so a snapshot an older router wrote
+describes a shape this one does not have and must not be read as one.
+*/
 export const TELEMETRY_CORRELATION_SCHEMA_VERSION = 7;
 
 export interface CorrelationState {
@@ -200,7 +200,9 @@ export interface CorrelationContext {
   role: string;
   model: string;
   agent: string;
-  /** Exact router identity for bounded active-session correlation only. */
+  /**
+  Exact router identity for bounded active-session correlation only.
+  */
   activeAgent?: string | null;
   agentKind: string;
   timestamp: string;
@@ -257,11 +259,13 @@ export interface BridgeObservationEventInput {
   turn_id?: unknown;
   call_id?: unknown;
   /**
-   * How a skill operation failed: `unavailable` for a read that never
-   * happened (denied or cancelled) and `error` for one that ran and failed.
-   */
+  How a skill operation failed: `unavailable` for a read that never
+  happened (denied or cancelled) and `error` for one that ran and failed.
+  */
   outcome?: unknown;
-  /** How long the call took, when the bridge measured it. */
+  /**
+  How long the call took, when the bridge measured it.
+  */
   durationMs?: unknown;
 }
 
@@ -271,14 +275,14 @@ export interface BridgeObservationContextInput {
 }
 
 /**
- * The outcome of a failed skill operation, or null when the report does not
- * name one.
- *
- * The vocabulary is closed: `unavailable` is a read that never happened and
- * `error` is one that ran and failed. A report naming anything else is not a
- * failure the router can name, so it is refused rather than rounded to one of
- * them.
- */
+The outcome of a failed skill operation, or null when the report does not
+name one.
+
+The vocabulary is closed: `unavailable` is a read that never happened and
+`error` is one that ran and failed. A report naming anything else is not a
+failure the router can name, so it is refused rather than rounded to one of
+them.
+*/
 function skillFailureOutcome(value: unknown): "unavailable" | "error" | null {
   if (typeof value !== "string") return null;
   const outcome = value.trim();
@@ -411,13 +415,13 @@ interface BridgeEventsStatusView {
 }
 
 /**
- * The router's live correlation, as the router's status publishes it.
- *
- * Every field is something the router observed itself. The historical
- * aggregation the router used to build from an OTLP receiver is not here:
- * OpenLIT is the system of record for history, and a status that carried a
- * second, stale copy of it was a second answer to a question that has one.
- */
+The router's live correlation, as the router's status publishes it.
+
+Every field is something the router observed itself. The historical
+aggregation the router used to build from an OTLP receiver is not here:
+OpenLIT is the system of record for history, and a status that carried a
+second, stale copy of it was a second answer to a question that has one.
+*/
 function timestampNotOlder(
   next: string | null | undefined,
   previous: string | null | undefined
@@ -464,7 +468,7 @@ function formatMcpDimensionBuckets(
     Object.entries(dimensions ?? {}).map(([key, bucket]) => {
       const lastSeenMs = bucket.lastSeenAt
         ? Date.parse(bucket.lastSeenAt)
-        : Number.NaN;
+        : NaN;
       const health =
         Number.isFinite(lastSeenMs) && now - lastSeenMs <= healthTtlMs
           ? bucket.lastStatus
@@ -682,9 +686,9 @@ function bucketHealth(
 ): string {
   const lastSeenMs = bucket.lastSeenAt
     ? Date.parse(bucket.lastSeenAt)
-    : Number.NaN;
-  const fresh = Number.isFinite(lastSeenMs) && now - lastSeenMs <= healthTtlMs;
-  return fresh ? bucket.lastStatus : "stale";
+    : NaN;
+  const isFresh = Number.isFinite(lastSeenMs) && now - lastSeenMs <= healthTtlMs;
+  return isFresh ? bucket.lastStatus : "stale";
 }
 
 function mergeBucketSummary(
@@ -748,11 +752,11 @@ export class CorrelationTracker {
   readonly telemetry: CorrelationState;
 
   /**
-   * The dedupe keys of the skill failures this tracker has already counted.
-   *
-   * A bridge reports a step's outcome as it settles, so the same call is
-   * reported once; a retry is a different call and is a different key.
-   */
+  The dedupe keys of the skill failures this tracker has already counted.
+  
+  A bridge reports a step's outcome as it settles, so the same call is
+  reported once; a retry is a different call and is a different key.
+  */
   private readonly skillFailureKeys = new Set<string>();
 
   constructor(options: CorrelationTrackerOptions = {}) {
@@ -799,18 +803,18 @@ export class CorrelationTracker {
   }
 
   /**
-   * The workspace an observation belongs to, and the record of how it was
-   * decided.
-   *
-   * The router attributes every observation it is given, so the attribution
-   * diagnostic counts one decision per observation: an observation that
-   * resolved to a workspace is attributed, and one that did not is counted
-   * with the reason it did not.
-   */
+  The workspace an observation belongs to, and the record of how it was
+  decided.
+  
+  The router attributes every observation it is given, so the attribution
+  diagnostic counts one decision per observation: an observation that
+  resolved to a workspace is attributed, and one that did not is counted
+  with the reason it did not.
+  */
   private resolveWorkspaceDimension(
     attributes: AttributeMap,
     resourceAttributes: AttributeMap,
-    reqContext: RequestContext | null,
+    requestContext: RequestContext | null,
     thread: RequestContext | null
   ): string | null {
     const dpWs = extractWorkspaceIdWithAmbiguity(attributes);
@@ -838,9 +842,9 @@ export class CorrelationTracker {
     ]);
     if (directWs)
       return this.attributedWorkspace(safePrivacyWorkspace(directWs));
-    if (reqContext?.workspace)
+    if (requestContext?.workspace)
       return this.attributedWorkspace(
-        safePrivacyWorkspace(reqContext.workspace)
+        safePrivacyWorkspace(requestContext.workspace)
       );
     if (thread) {
       const key =
@@ -886,7 +890,7 @@ export class CorrelationTracker {
   private resolveRoleDimension(
     attributes: AttributeMap,
     resourceAttributes: AttributeMap,
-    reqContext: RequestContext | null,
+    requestContext: RequestContext | null,
     thread: RequestContext | null
   ): string | null {
     const direct = firstString([
@@ -895,7 +899,7 @@ export class CorrelationTracker {
       attributes?.["agent.role"]
     ]);
     if (direct) return safeMetricLabel(direct);
-    if (reqContext?.role) return safeMetricLabel(reqContext.role);
+    if (requestContext?.role) return safeMetricLabel(requestContext.role);
     const threadRole =
       (thread as RequestContext | null)?.agentRole ??
       (thread as RequestContext | null)?.role;
@@ -914,7 +918,7 @@ export class CorrelationTracker {
   private resolveModelDimension(
     attributes: AttributeMap,
     resourceAttributes: AttributeMap,
-    reqContext: RequestContext | null,
+    requestContext: RequestContext | null,
     thread: RequestContext | null
   ): string | null {
     const direct = firstString([
@@ -925,8 +929,8 @@ export class CorrelationTracker {
       attributes?.["model.slug"]
     ]);
     if (direct) return safeMetricLabel(direct);
-    if (reqContext?.model ?? reqContext?.requestedModel) {
-      return safeMetricLabel(reqContext.model ?? reqContext.requestedModel);
+    if (requestContext?.model ?? requestContext?.requestedModel) {
+      return safeMetricLabel(requestContext.model ?? requestContext.requestedModel);
     }
     const threadModel = (thread as RequestContext | null)?.model;
     if (threadModel) return safeMetricLabel(threadModel);
@@ -942,7 +946,7 @@ export class CorrelationTracker {
   private resolveAgentDimension(
     attributes: AttributeMap,
     resourceAttributes: AttributeMap,
-    reqContext: RequestContext | null,
+    requestContext: RequestContext | null,
     thread: RequestContext | null,
     conversationId: string | null
   ): string | null {
@@ -957,9 +961,9 @@ export class CorrelationTracker {
       attributes?.agentName
     ]);
     if (direct) return safeAgentIdentity(direct);
-    if (reqContext?.childId ?? reqContext?.agentId ?? reqContext?.agent) {
+    if (requestContext?.childId ?? requestContext?.agentId ?? requestContext?.agent) {
       return safeAgentIdentity(
-        reqContext.childId ?? reqContext.agentId ?? reqContext.agent
+        requestContext.childId ?? requestContext.agentId ?? requestContext.agent
       );
     }
     const threadAgent =
@@ -983,7 +987,7 @@ export class CorrelationTracker {
   private resolveAgentKindDimension(
     attributes: AttributeMap,
     resourceAttributes: AttributeMap,
-    reqContext: RequestContext | null,
+    requestContext: RequestContext | null,
     thread: RequestContext | null
   ): string | null {
     const direct = firstString([
@@ -992,7 +996,7 @@ export class CorrelationTracker {
       attributes?.["agent.kind"]
     ]);
     if (direct) return safeMetricLabel(direct);
-    if (reqContext?.agentKind) return safeMetricLabel(reqContext.agentKind);
+    if (requestContext?.agentKind) return safeMetricLabel(requestContext.agentKind);
     const sessionSource = firstString([
       attributes?.session_source,
       resourceAttributes?.session_source,
@@ -1000,7 +1004,7 @@ export class CorrelationTracker {
       (thread as RequestContext | null)?.source
     ]);
     if (sessionSource) {
-      return sessionSource.trim().startsWith("subagent_thread_spawn_")
+      return sessionSource.trimStart().startsWith("subagent_thread_spawn_")
         ? "subagent"
         : "root";
     }
@@ -1037,11 +1041,11 @@ export class CorrelationTracker {
   }
 
   /**
-   * The conversation a report belongs to.
-   *
-   * The router correlates its own live threads by this id, so it reads the
-   * attribute names the bridges and the router write it under.
-   */
+  The conversation a report belongs to.
+  
+  The router correlates its own live threads by this id, so it reads the
+  attribute names the bridges and the router write it under.
+  */
   private telemetryConversationId(
     attributes: AttributeMap = {},
     resourceAttributes: AttributeMap = {},
@@ -1063,7 +1067,7 @@ export class CorrelationTracker {
     resourceAttributes: AttributeMap = {},
     options: ResolveCorrelationContextOptions = {}
   ): CorrelationContext {
-    const reqContext = this.resolveRequestContext(attributes, options);
+    const requestContext = this.resolveRequestContext(attributes, options);
     const conversationId = this.telemetryConversationId(
       attributes,
       resourceAttributes,
@@ -1076,33 +1080,33 @@ export class CorrelationTracker {
       this.resolveWorkspaceDimension(
         attributes,
         resourceAttributes,
-        reqContext,
+        requestContext,
         thread
       ) || UNATTRIBUTED_DIMENSION;
     const role =
       this.resolveRoleDimension(
         attributes,
         resourceAttributes,
-        reqContext,
+        requestContext,
         thread
       ) || UNATTRIBUTED_DIMENSION;
     const model =
       this.resolveModelDimension(
         attributes,
         resourceAttributes,
-        reqContext,
+        requestContext,
         thread
       ) || UNATTRIBUTED_DIMENSION;
     const agent =
       this.resolveAgentDimension(
         attributes,
         resourceAttributes,
-        reqContext,
+        requestContext,
         thread,
         conversationId
       ) || UNATTRIBUTED_DIMENSION;
-    const activeAgent = reqContext?.activitySubject
-      ? safeAgentIdentity(reqContext.activitySubject)
+    const activeAgent = requestContext?.activitySubject
+      ? safeAgentIdentity(requestContext.activitySubject)
       : agent === UNATTRIBUTED_DIMENSION
         ? null
         : agent;
@@ -1110,7 +1114,7 @@ export class CorrelationTracker {
       this.resolveAgentKindDimension(
         attributes,
         resourceAttributes,
-        reqContext,
+        requestContext,
         thread
       ) || UNATTRIBUTED_DIMENSION;
     const { timestamp, timestampSource } = this.resolveTelemetryTimestamp(
@@ -1199,14 +1203,14 @@ export class CorrelationTracker {
     };
     bucket.observed = 1;
     const nextStatus = status ?? bucket.lastStatus;
-    const replace =
+    const isReplace =
       !existing ||
       !bucket.lastSeenAt ||
       (nextStatus === "configured"
         ? bucket.lastStatus === "configured"
         : bucket.lastStatus === "configured" ||
           timestampNotOlder(context.timestamp, bucket.lastSeenAt));
-    if (replace) {
+    if (isReplace) {
       bucket.lastSeenAt = context.timestamp;
       bucket.lastStatus = nextStatus;
     }
@@ -1224,7 +1228,7 @@ export class CorrelationTracker {
     const bucket = buckets[key] ?? {
       count: 0,
       lastSeenAt: null,
-      ...(dimension === "byAgent" ? { agentKind: context.agentKind } : {})
+      ...((dimension === "byAgent") && { agentKind: context.agentKind })
     };
     bucket.count += count;
     if (
@@ -1409,22 +1413,22 @@ export class CorrelationTracker {
   }
 
   /**
-   * What the router saw of one MCP server, from a bridge's report of a call
-   * against it.
-   *
-   * A call that ran and came back is the server being reachable, so it is the
-   * evidence the server's health is read from. A call that was refused before
-   * it ran says nothing about the server -- the refusal was the router's --
-   * so it leaves the server's own observation alone.
-   */
+  What the router saw of one MCP server, from a bridge's report of a call
+  against it.
+  
+  A call that ran and came back is the server being reachable, so it is the
+  evidence the server's health is read from. A call that was refused before
+  it ran says nothing about the server -- the refusal was the router's --
+  so it leaves the server's own observation alone.
+  */
   private noteMcpServerObservation(
     mcp: McpServerEntry,
-    ctx: CorrelationContext,
+    context: CorrelationContext,
     event: BridgeObservationEventInput,
     status: string
   ): void {
     if (event.type === "tool_unavailable") return;
-    const observedAt = ctx.timestamp;
+    const observedAt = context.timestamp;
     if (!mcp.lastSeenAt || observedAt >= mcp.lastSeenAt)
       mcp.lastSeenAt = observedAt;
     if (event.type !== "tool_executed") return;
@@ -1437,37 +1441,39 @@ export class CorrelationTracker {
       mcp.lastStatus = "ready";
       return;
     }
-    if (status === "error") {
-      mcp.lastStatus = "error";
-      mcp.failures += 1;
+    if (status !== "error") {
+      return;
     }
+
+    mcp.lastStatus = "error";
+    mcp.failures += 1;
   }
 
   private noteBridgeToolMcpObservation(
     server: string,
-    ctx: CorrelationContext,
+    context: CorrelationContext,
     eventType: unknown,
     event: BridgeObservationEventInput,
     status: string
   ): void {
     const mcp = this.mcpServer(server);
-    this.noteMcpServerObservation(mcp, ctx, event, status);
+    this.noteMcpServerObservation(mcp, context, event, status);
     // The dimension buckets carry the same verdict the server carries: a call
     // that ran and came back is the evidence that the server was ready, and a
     // role that made that call saw it.
     const verdict =
       status === "ok" ? "ready" : status === "error" ? "error" : "observed";
-    this.noteMcpDimension(mcp, "byRole", ctx.role, ctx, verdict);
-    this.noteMcpDimension(mcp, "byWorkspace", ctx.workspace, ctx, verdict);
-    this.noteMcpDimension(mcp, "byModel", ctx.model, ctx, verdict);
-    this.noteMcpDimension(mcp, "byAgent", ctx.agent, ctx, verdict);
+    this.noteMcpDimension(mcp, "byRole", context.role, context, verdict);
+    this.noteMcpDimension(mcp, "byWorkspace", context.workspace, context, verdict);
+    this.noteMcpDimension(mcp, "byModel", context.model, context, verdict);
+    this.noteMcpDimension(mcp, "byAgent", context.agent, context, verdict);
     if (
-      ctx.workspace !== UNATTRIBUTED_DIMENSION &&
+      context.workspace !== UNATTRIBUTED_DIMENSION &&
       eventType === "tool_executed"
     ) {
       const wsBucket = this.usageTracker.workspaceBucket(
         this.usageTracker.usageTelemetry.byWorkspace,
-        ctx.workspace
+        context.workspace
       );
       wsBucket.mcpCapable = true;
       wsBucket.byMcp[server] = (wsBucket.byMcp[server] ?? 0) + 1;
@@ -1500,10 +1506,10 @@ export class CorrelationTracker {
     const status = this.bridgeToolObservationStatus(event);
     const bucket = this.bridgeToolBucketFor(event.type);
     bucket.total += 1;
-    const ctx = this.resolveCorrelationContext(eventMap, {}, { context });
-    this.noteContextDimension("bridge", ctx);
+    const context_ = this.resolveCorrelationContext(eventMap, {}, { context });
+    this.noteContextDimension("bridge", context_);
     if (server) {
-      this.noteBridgeToolMcpObservation(server, ctx, event.type, event, status);
+      this.noteBridgeToolMcpObservation(server, context_, event.type, event, status);
     }
     const toolBucketKey = callId ? `${tool}::${callId}` : tool;
     this.incrementBridgeToolRow(
@@ -1772,12 +1778,12 @@ export class CorrelationTracker {
       const first = store.seenKeys.values().next().value;
       if (first !== undefined) store.seenKeys.delete(first);
     }
-    const ctx = this.resolveCorrelationContext(eventMap, {}, { context });
-    const timestamp = ctx.timestamp;
-    if (ctx.workspace !== UNATTRIBUTED_DIMENSION) {
+    const context_ = this.resolveCorrelationContext(eventMap, {}, { context });
+    const timestamp = context_.timestamp;
+    if (context_.workspace !== UNATTRIBUTED_DIMENSION) {
       this.usageTracker.workspaceBucket(
         this.usageTracker.usageTelemetry.byWorkspace,
-        ctx.workspace
+        context_.workspace
       ).skillsCapable = true;
     }
     store.total += 1;
@@ -1789,37 +1795,37 @@ export class CorrelationTracker {
     };
     skillRow.count += 1;
     store.bySkill.set(skill, skillRow);
-    const wsRow = store.byWorkspace.get(ctx.workspace) ?? {
-      workspaceKey: ctx.workspace,
+    const wsRow = store.byWorkspace.get(context_.workspace) ?? {
+      workspaceKey: context_.workspace,
       count: 0,
       bySkill: new Map()
     };
     wsRow.count += 1;
     wsRow.bySkill.set(skill, (wsRow.bySkill.get(skill) ?? 0) + 1);
-    store.byWorkspace.set(ctx.workspace, wsRow);
-    this.recordSkillUse(skill, ctx, 1, timestamp);
+    store.byWorkspace.set(context_.workspace, wsRow);
+    this.recordSkillUse(skill, context_, 1, timestamp);
     recordSkillObservation({
       event: "used",
       skill,
       source,
       role: typeof context.role === "string" ? context.role : null,
       workspace:
-        ctx.workspace === UNATTRIBUTED_DIMENSION ? null : { key: ctx.workspace }
+        context_.workspace === UNATTRIBUTED_DIMENSION ? null : { key: context_.workspace }
     });
     return true;
   }
 
   /**
-   * Record a skill operation that did not succeed.
-   *
-   * The bridge saw the read itself: it was refused or cancelled, or it ran and
-   * failed. Both are facts about the skill, and neither is a use -- which is
-   * why they are counted beside the uses instead of becoming one.
-   *
-   * Without this the skill's row says it was exposed and never used, which is
-   * a claim about a use that did not happen rather than about the failure that
-   * did, and the Console renders a broken skill as an unused one.
-   */
+  Record a skill operation that did not succeed.
+  
+  The bridge saw the read itself: it was refused or cancelled, or it ran and
+  failed. Both are facts about the skill, and neither is a use -- which is
+  why they are counted beside the uses instead of becoming one.
+  
+  Without this the skill's row says it was exposed and never used, which is
+  a claim about a use that did not happen rather than about the failure that
+  did, and the Console renders a broken skill as an unused one.
+  */
   recordBridgeSkillFailed({
     event,
     context
@@ -1869,11 +1875,11 @@ export class CorrelationTracker {
       const first = this.skillFailureKeys.values().next().value;
       if (first !== undefined) this.skillFailureKeys.delete(first);
     }
-    const ctx = this.resolveCorrelationContext(eventMap, {}, { context });
-    if (ctx.workspace !== UNATTRIBUTED_DIMENSION) {
+    const context_ = this.resolveCorrelationContext(eventMap, {}, { context });
+    if (context_.workspace !== UNATTRIBUTED_DIMENSION) {
       const workspaceBucket = this.usageTracker.workspaceBucket(
         this.usageTracker.usageTelemetry.byWorkspace,
-        ctx.workspace
+        context_.workspace
       );
       workspaceBucket.skillsCapable = true;
       const wsSkill = this.usageTracker.workspaceSkillBucket(
@@ -1888,7 +1894,7 @@ export class CorrelationTracker {
       source,
       role: typeof context.role === "string" ? context.role : null,
       workspace:
-        ctx.workspace === UNATTRIBUTED_DIMENSION ? null : { key: ctx.workspace }
+        context_.workspace === UNATTRIBUTED_DIMENSION ? null : { key: context_.workspace }
     });
     return true;
   }
@@ -1914,12 +1920,12 @@ export class CorrelationTracker {
       (server) => {
         const lastSeenMs = server.lastSeenAt
           ? Date.parse(server.lastSeenAt)
-          : Number.NaN;
-        const fresh =
+          : NaN;
+        const isFresh =
           Number.isFinite(lastSeenMs) && now - lastSeenMs <= this.healthTtlMs;
         return {
           ...server,
-          health: fresh ? server.lastStatus : "stale",
+          health: isFresh ? server.lastStatus : "stale",
           averageDurationMs: server.durationCount
             ? Math.round(server.durationMs / server.durationCount)
             : 0,
@@ -2175,11 +2181,9 @@ export class CorrelationTracker {
       count: isFiniteNonnegative(bucket.count) ? bucket.count : 0,
       lastSeenAt:
         typeof bucket.lastSeenAt === "string" ? bucket.lastSeenAt : null,
-      ...(dimension === "byAgent"
-        ? {
+      ...((dimension === "byAgent") && {
             agentKind: safeMetricLabel(bucket.agentKind, UNATTRIBUTED_DIMENSION)
-          }
-        : {})
+          })
     };
   }
 
@@ -2474,13 +2478,13 @@ export function correlationStatus(now: number = Date.now()): CorrelationStatus {
 }
 
 /**
- * The Runtime's health verdict for an MCP server, in the Control API's
- * vocabulary.
- *
- * The telemetry records a free-form status; the contract publishes the five
- * words the Runtime actually uses. Anything else is reported as `stale`: an
- * unrecognized verdict is not a readiness claim.
- */
+The Runtime's health verdict for an MCP server, in the Control API's
+vocabulary.
+
+The telemetry records a free-form status; the contract publishes the five
+words the Runtime actually uses. Anything else is reported as `stale`: an
+unrecognized verdict is not a readiness claim.
+*/
 function mcpHealthVerdict(value: string): ControlApiMcpRuntimeHealth {
   if (
     value === "ready" ||
@@ -2493,25 +2497,27 @@ function mcpHealthVerdict(value: string): ControlApiMcpRuntimeHealth {
   return "stale";
 }
 
-/** Sorts the observed role and tool names the same way every read does. */
+/**
+Sorts the observed role and tool names the same way every read does.
+*/
 const MCP_OBSERVATION_COLLATOR = new Intl.Collator();
 
 /**
- * What the Runtime has observed of each MCP server.
- *
- * The telemetry already tracks every MCP server the Runtime has seen: the
- * initialization and tool-discovery attempts, the failures, the call
- * durations, the roles the server was used from, and the tools it was observed
- * calling. This projects that per-server view into the shape the Control API
- * publishes, so the page can show the Runtime's own evidence next to the
- * canonical declaration instead of a placeholder.
- *
- * A server the Runtime has never observed has no evidence at all, which is a
- * distinct state from a server it observed and counted zero: the first means
- * "nothing has been seen", the second would mean "something was seen and it
- * did nothing". The projection therefore carries only the servers the Runtime
- * actually saw.
- */
+What the Runtime has observed of each MCP server.
+
+The telemetry already tracks every MCP server the Runtime has seen: the
+initialization and tool-discovery attempts, the failures, the call
+durations, the roles the server was used from, and the tools it was observed
+calling. This projects that per-server view into the shape the Control API
+publishes, so the page can show the Runtime's own evidence next to the
+canonical declaration instead of a placeholder.
+
+A server the Runtime has never observed has no evidence at all, which is a
+distinct state from a server it observed and counted zero: the first means
+"nothing has been seen", the second would mean "something was seen and it
+did nothing". The projection therefore carries only the servers the Runtime
+actually saw.
+*/
 export function mcpServerObservations(): ControlApiMcpRuntimeServer[] {
   const telemetry = correlationStatus();
   // The observed tool calls are the ones the bridges reported executing. The

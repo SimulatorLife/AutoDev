@@ -33,7 +33,9 @@ const JOB_PID_PATTERN = /^\tpid = (\d+)$/mu;
 const JOB_LAST_EXIT_PATTERN = /^\tlast exit code = (\d+)/mu;
 const JOB_STDERR_PATTERN = /^\tstderr path = (.+)$/mu;
 const LINE_SPLIT_PATTERN = /\r?\n/u;
-/** `lsof -Fn` prefixes each field's value with its field name. */
+/**
+`lsof -Fn` prefixes each field's value with its field name.
+*/
 const LSOF_NAME_PREFIX = "n";
 
 export const LABEL_MODEL_ROUTER = "com.codex.model-router";
@@ -94,40 +96,44 @@ export interface ServiceRestartDeps {
   ) => readonly string[];
   readonly commandAvailable: (command: string) => boolean;
   readonly buildConsole: () => void;
-  /** GET the URL, or POST `jsonBody` as JSON when one is given. */
+  /**
+  GET the URL, or POST `jsonBody` as JSON when one is given.
+  */
   readonly probe: (url: string, jsonBody?: string) => Promise<boolean>;
   readonly sleep: (ms: number) => Promise<void>;
   readonly run: (
     command: string,
-    args: readonly string[],
+    arguments_: readonly string[],
     input?: string,
-    env?: NodeJS.ProcessEnv
+    environment?: NodeJS.ProcessEnv
   ) => number;
   readonly listeningPids: (port: number) => readonly number[] | null;
   readonly commandLine: (pid: number) => string | null;
-  /** The process's current working directory, when it can be read. */
+  /**
+  The process's current working directory, when it can be read.
+  */
   readonly workingDirectory: (pid: number) => string | null;
   readonly kill: (pid: number, signal: KillSignal) => void;
   /**
-   * Bring the Usage stack up and prove it is serving.
-   *
-   * The Console's launcher refuses to serve a Usage backend that cannot
-   * satisfy the checked-out contract, so the stack has to be serving before
-   * the Console's job is bootstrapped -- otherwise the launcher exits before
-   * it ever execs Next.js and the job crash-loops on a backend that was
-   * merely starting.
-   */
+  Bring the Usage stack up and prove it is serving.
+  
+  The Console's launcher refuses to serve a Usage backend that cannot
+  satisfy the checked-out contract, so the stack has to be serving before
+  the Console's job is bootstrapped -- otherwise the launcher exits before
+  it ever execs Next.js and the job crash-loops on a backend that was
+  merely starting.
+  */
   readonly ensureUsageStack: () => Promise<boolean>;
 }
 
 /**
- * The supervised Console answers only after Next.js has booted, which takes
- * tens of seconds on a loaded machine, and it starts booting only once the
- * Model Router's Control API answers. The readiness budget therefore has to
- * cover the slowest supervised service's own startup: a shorter budget makes
- * the installer report a failed restart for a service that is about to come
- * up, while the service itself keeps starting.
- */
+The supervised Console answers only after Next.js has booted, which takes
+tens of seconds on a loaded machine, and it starts booting only once the
+Model Router's Control API answers. The readiness budget therefore has to
+cover the slowest supervised service's own startup: a shorter budget makes
+the installer report a failed restart for a service that is about to come
+up, while the service itself keeps starting.
+*/
 const DEFAULT_ATTEMPTS = 400;
 const DEFAULT_DELAY_MS = 250;
 // An unmanaged process gets the same graceful budget launchd gives the router
@@ -142,7 +148,9 @@ interface ServiceSpec {
   readonly label: ManagedServiceLabel;
   readonly probe: string;
   readonly jsonBody?: string;
-  /** Only set where the launcher execs the server, so the job pid is the listener. */
+  /**
+  Only set where the launcher execs the server, so the job pid is the listener.
+  */
   readonly ownedPort: number | null;
   readonly required: boolean;
 }
@@ -188,17 +196,17 @@ function serviceSpecs(options: ServiceRestartOptions): readonly ServiceSpec[] {
 }
 
 /**
- * Which service has to be serving before another one may be reloaded.
- *
- * The Console reads the Model Router's private Control API when it starts and
- * refuses to serve traffic without it, so the Router has to be answering
- * before the Console's job is bootstrapped. Reloading the two back to back
- * races that dependency: the Console starts while the Router is still
- * binding its ports, spends its own startup budget waiting, exits, and only
- * comes back after launchd's throttle interval — long after the installer's
- * readiness budget is gone, so the install reports a failure for a stack that
- * is in fact healthy.
- */
+Which service has to be serving before another one may be reloaded.
+
+The Console reads the Model Router's private Control API when it starts and
+refuses to serve traffic without it, so the Router has to be answering
+before the Console's job is bootstrapped. Reloading the two back to back
+races that dependency: the Console starts while the Router is still
+binding its ports, spends its own startup budget waiting, exits, and only
+comes back after launchd's throttle interval — long after the installer's
+readiness budget is gone, so the install reports a failure for a stack that
+is in fact healthy.
+*/
 const SERVICE_DEPENDENCIES: Partial<
   Record<ManagedServiceLabel, ManagedServiceLabel>
 > = {
@@ -206,20 +214,20 @@ const SERVICE_DEPENDENCIES: Partial<
 };
 
 export function resolveServiceRestartOptions(
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): ServiceRestartOptions {
-  const home = env.HOME?.trim() || homedir();
+  const home = environment.HOME?.trim() || homedir();
   return {
-    repositoryRoot: env.AUTODEV_REPO_ROOT?.trim() || process.cwd(),
+    repositoryRoot: environment.AUTODEV_REPO_ROOT?.trim() || process.cwd(),
     home,
-    codexHome: env.CODEX_HOME?.trim() || path.join(home, ".codex"),
-    consolePort: resolveConsolePort(env.AUTODEV_CONSOLE_PORT),
+    codexHome: environment.CODEX_HOME?.trim() || path.join(home, ".codex"),
+    consolePort: resolveConsolePort(environment.AUTODEV_CONSOLE_PORT),
     readyAttempts: parseNonNegativeInteger(
-      env.AUTODEV_SERVICE_READY_ATTEMPTS,
+      environment.AUTODEV_SERVICE_READY_ATTEMPTS,
       DEFAULT_ATTEMPTS
     ),
     readyDelayMs: parseNonNegativeInteger(
-      env.AUTODEV_SERVICE_READY_DELAY_MS,
+      environment.AUTODEV_SERVICE_READY_DELAY_MS,
       DEFAULT_DELAY_MS
     )
   };
@@ -229,10 +237,10 @@ const PLIST_STDERR_PATTERN =
   /<key>StandardErrorPath<\/key>\s*<string>([^<]+)<\/string>/u;
 
 function readPlistStderrPath(
-  deps: ServiceRestartDeps,
+  dependencies: ServiceRestartDeps,
   plistFilePath: string
 ): string | null {
-  const content = deps.readFile(plistFilePath);
+  const content = dependencies.readFile(plistFilePath);
   const match = PLIST_STDERR_PATTERN.exec(content);
   return match?.[1]?.trim() || null;
 }
@@ -267,7 +275,7 @@ function readLogTail(
   }
 }
 
-function defaultDeps(options: ServiceRestartOptions): ServiceRestartDeps {
+function defaultDependencies(options: ServiceRestartOptions): ServiceRestartDeps {
   return {
     launchd: new LaunchdClient(),
     fileExists: existsSync,
@@ -292,9 +300,7 @@ function defaultDeps(options: ServiceRestartOptions): ServiceRestartDeps {
     probe: async (url, jsonBody) => {
       try {
         const response = await fetch(url, {
-          ...(jsonBody === undefined
-            ? {}
-            : {
+          ...(jsonBody !== undefined && {
                 method: "POST",
                 headers: { "content-type": "application/json" },
                 body: jsonBody
@@ -307,13 +313,13 @@ function defaultDeps(options: ServiceRestartOptions): ServiceRestartDeps {
       }
     },
     sleep,
-    run: (command, args, input, env) => {
+    run: (command, arguments_, input, environment) => {
       const stdio: "inherit" | ["pipe", "inherit", "inherit"] =
         input === undefined ? "inherit" : ["pipe", "inherit", "inherit"];
       return (
-        spawnSync(command, [...args], {
+        spawnSync(command, [...arguments_], {
           input,
-          env: { ...process.env, ...env },
+          env: { ...process.env, ...environment },
           stdio
         }).status ?? 1
       );
@@ -374,7 +380,9 @@ function defaultDeps(options: ServiceRestartOptions): ServiceRestartDeps {
       try {
         process.kill(pid, signal);
       } catch {
-        /* process exited */
+        /*
+        process exited
+        */
       }
     },
     ensureUsageStack: async () => {
@@ -417,22 +425,26 @@ function servicePaths(
 }
 
 interface ServiceOwnership {
-  /** Path fragments that identify the process in its command line. */
+  /**
+  Path fragments that identify the process in its command line.
+  */
   readonly commandLinePaths: readonly string[];
-  /** The directory the service runs in, when it pins one. */
+  /**
+  The directory the service runs in, when it pins one.
+  */
   readonly workingDirectory: string | null;
 }
 
 /**
- * How a port holder is recognized as a process this runtime runs for a
- * label.
- *
- * The Console matches its whole installation root rather than the launcher's
- * entry script alone: a dev session reaches Next.js through pnpm's bin shim
- * (`console/node_modules/.bin/../..`), so the launcher's exact path never
- * appears in its command line, and the Console would then look foreign to
- * every reaper and refuse to converge.
- */
+How a port holder is recognized as a process this runtime runs for a
+label.
+
+The Console matches its whole installation root rather than the launcher's
+entry script alone: a dev session reaches Next.js through pnpm's bin shim
+(`console/node_modules/.bin/../..`), so the launcher's exact path never
+appears in its command line, and the Console would then look foreign to
+every reaper and refuse to converge.
+*/
 function serviceOwnership(
   options: ServiceRestartOptions,
   label: ManagedServiceLabel
@@ -453,21 +465,21 @@ function serviceOwnership(
 }
 
 /**
- * Whether a port holder is a process this runtime runs for the label.
- *
- * The command line is the primary signal, but the process list is not
- * readable in every environment (sandboxes deny `ps`), so a service that
- * pins a working directory is recognized by that too. A holder that matches
- * neither signal belongs to someone else and is never stopped.
- */
+Whether a port holder is a process this runtime runs for the label.
+
+The command line is the primary signal, but the process list is not
+readable in every environment (sandboxes deny `ps`), so a service that
+pins a working directory is recognized by that too. A holder that matches
+neither signal belongs to someone else and is never stopped.
+*/
 function isOwnedServiceProcess(
   options: ServiceRestartOptions,
   label: ManagedServiceLabel,
   pid: number,
-  deps: ServiceRestartDeps
+  dependencies: ServiceRestartDeps
 ): boolean {
   const ownership = serviceOwnership(options, label);
-  const commandLine = deps.commandLine(pid);
+  const commandLine = dependencies.commandLine(pid);
   if (
     commandLine &&
     ownership.commandLinePaths.some((ownedPath) =>
@@ -476,16 +488,16 @@ function isOwnedServiceProcess(
   )
     return true;
   if (ownership.workingDirectory === null) return false;
-  return deps.workingDirectory(pid) === ownership.workingDirectory;
+  return dependencies.workingDirectory(pid) === ownership.workingDirectory;
 }
 
 function plistOwner(
   options: ServiceRestartOptions,
-  deps: ServiceRestartDeps
+  dependencies: ServiceRestartDeps
 ): string | null {
   const filePath = plistPath(options, LABEL_MODEL_ROUTER);
-  if (!deps.fileExists(filePath)) return null;
-  const match = AUTH_TOKEN_PATTERN.exec(deps.readFile(filePath));
+  if (!dependencies.fileExists(filePath)) return null;
+  const match = AUTH_TOKEN_PATTERN.exec(dependencies.readFile(filePath));
   return match?.[1] ?? null;
 }
 
@@ -494,62 +506,62 @@ function errorText(error: unknown): string {
 }
 
 async function waitForPortRelease(
-  deps: ServiceRestartDeps,
+  dependencies: ServiceRestartDeps,
   port: number,
   pid: number,
   attempts: number
 ): Promise<boolean> {
-  if (!(deps.listeningPids(port) ?? []).includes(pid)) return true;
+  if (!(dependencies.listeningPids(port) ?? []).includes(pid)) return true;
   if (attempts <= 0) return false;
-  await deps.sleep(REAP_DELAY_MS);
-  return waitForPortRelease(deps, port, pid, attempts - 1);
+  await dependencies.sleep(REAP_DELAY_MS);
+  return waitForPortRelease(dependencies, port, pid, attempts - 1);
 }
 
 /**
- * Stop a process this CODEX_HOME's hook runs outside launchd, and wait until
- * it has let go of the port: bootstrapping while it still listens starts a
- * KeepAlive EADDRINUSE crash loop.
- */
+Stop a process this CODEX_HOME's hook runs outside launchd, and wait until
+it has let go of the port: bootstrapping while it still listens starts a
+KeepAlive EADDRINUSE crash loop.
+*/
 async function reapUnmanaged(
   options: ServiceRestartOptions,
   label: ManagedServiceLabel,
-  deps: ServiceRestartDeps,
-  pids: readonly number[] = deps.listeningPids(servicePort(options, label)) ??
+  dependencies: ServiceRestartDeps,
+  pids: readonly number[] = dependencies.listeningPids(servicePort(options, label)) ??
     []
 ): Promise<boolean> {
   const [pid, ...rest] = pids;
   if (pid === undefined) return true;
   const port = servicePort(options, label);
-  if (!isOwnedServiceProcess(options, label, pid, deps)) {
+  if (!isOwnedServiceProcess(options, label, pid, dependencies)) {
     writeErrorLine(
       `port ${port} held by a process this installer does not own (pid ${pid}); ${label} not started`
     );
     return false;
   }
   writeErrorLine(`reaping unmanaged ${label} on port ${port} (pid ${pid})`);
-  deps.kill(pid, "SIGTERM");
-  if (!(await waitForPortRelease(deps, port, pid, REAP_TERM_ATTEMPTS))) {
-    deps.kill(pid, "SIGKILL");
-    if (!(await waitForPortRelease(deps, port, pid, REAP_KILL_ATTEMPTS))) {
+  dependencies.kill(pid, "SIGTERM");
+  if (!(await waitForPortRelease(dependencies, port, pid, REAP_TERM_ATTEMPTS))) {
+    dependencies.kill(pid, "SIGKILL");
+    if (!(await waitForPortRelease(dependencies, port, pid, REAP_KILL_ATTEMPTS))) {
       writeErrorLine(
         `pid ${pid} still holds port ${port}; ${label} not started`
       );
       return false;
     }
   }
-  return reapUnmanaged(options, label, deps, rest);
+  return reapUnmanaged(options, label, dependencies, rest);
 }
 
 async function runDirectEnsures(
   options: ServiceRestartOptions,
-  deps: ServiceRestartDeps
+  dependencies: ServiceRestartDeps
 ): Promise<number> {
   await Promise.resolve();
   const run = (
     script: string,
     input?: string,
-    env?: NodeJS.ProcessEnv
-  ): number => deps.run("/bin/bash", [script], input, env);
+    environment?: NodeJS.ProcessEnv
+  ): number => dependencies.run("/bin/bash", [script], input, environment);
   if (
     run(
       path.join(
@@ -616,29 +628,28 @@ type ServiceCheck =
 const JOB_STATE_EVERY_ATTEMPTS = 8;
 
 /**
- * Why a job that never became ready is still trying.
- *
- * A job that exits with the temporary-failure status is waiting for a
- * backend, and the report says so: the operator needs to know that the
- * service is not broken but late, and that the backend is what is missing.
- */
+Why a job that never became ready is still trying.
+
+A job that exits with the temporary-failure status is waiting for a
+backend, and the report says so: the operator needs to know that the
+service is not broken but late, and that the backend is what is missing.
+*/
 function retryingReason(job: JobState): string {
   if (job.lastExitCode !== SERVICE_TEMPORARY_FAILURE_EXIT_CODE) return "";
   return " (its last attempt stopped because a backend it reads did not answer)";
 }
 
 /**
- * A job that exited, and why it is not a crash loop.
- *
- * A service that stops because a backend it reads has not come up yet exits
- * with the temporary-failure status, and launchd restarts it -- the job is on
- * its way up, not broken. Any exit with status 0 or another non-zero code in a
- * KeepAlive service means the process stopped immediately instead of serving,
- * and waiting out the readiness budget on it only delays the report.
- */
+A job that exited, and why it is not a crash loop.
+
+A service that stops because a backend it reads has not come up yet exits
+with the temporary-failure status, and launchd restarts it -- the job is on
+its way up, not broken. Any exit with status 0 or another non-zero code in a
+KeepAlive service means the process stopped immediately instead of serving,
+and waiting out the readiness budget on it only delays the report.
+*/
 function crashLoop(job: JobState): ServiceCheck | null {
-  if (job.lastExitCode === null) return null;
-  if (job.lastExitCode === SERVICE_TEMPORARY_FAILURE_EXIT_CODE) return null;
+  if ((job.lastExitCode === null) || (job.lastExitCode === SERVICE_TEMPORARY_FAILURE_EXIT_CODE)) return null;
   return {
     ready: false,
     reason:
@@ -650,12 +661,12 @@ function crashLoop(job: JobState): ServiceCheck | null {
 }
 
 function confirmOwner(
-  deps: ServiceRestartDeps,
+  dependencies: ServiceRestartDeps,
   spec: ServiceSpec
 ): ServiceCheck {
   if (spec.ownedPort === null) return { ready: true };
-  const job = parseJobState(readLaunchdJobDump(deps, spec.label));
-  const listeners = deps.listeningPids(spec.ownedPort) ?? [];
+  const job = parseJobState(readLaunchdJobDump(dependencies, spec.label));
+  const listeners = dependencies.listeningPids(spec.ownedPort) ?? [];
   if (job.pid !== null && listeners.includes(job.pid)) return { ready: true };
   return {
     ready: false,
@@ -665,44 +676,46 @@ function confirmOwner(
 }
 
 /**
- * A freshly bootstrapped job has never exited, so any recorded exit code means
- * it is crash-looping under KeepAlive: report that as soon as it is seen
- * instead of waiting out the readiness budget on a process that will never
- * answer.
- */
+A freshly bootstrapped job has never exited, so any recorded exit code means
+it is crash-looping under KeepAlive: report that as soon as it is seen
+instead of waiting out the readiness budget on a process that will never
+answer.
+*/
 async function checkService(
-  deps: ServiceRestartDeps,
+  dependencies: ServiceRestartDeps,
   options: ServiceRestartOptions,
   spec: ServiceSpec,
   attempt = 0
 ): Promise<ServiceCheck> {
-  if (await deps.probe(spec.probe, spec.jsonBody))
-    return confirmOwner(deps, spec);
-  const lastAttempt = attempt + 1 >= options.readyAttempts;
-  if (attempt % JOB_STATE_EVERY_ATTEMPTS === 0 || lastAttempt) {
-    const job = parseJobState(readLaunchdJobDump(deps, spec.label));
+  if (await dependencies.probe(spec.probe, spec.jsonBody))
+    return confirmOwner(dependencies, spec);
+  const isLastAttempt = attempt + 1 >= options.readyAttempts;
+  if (attempt % JOB_STATE_EVERY_ATTEMPTS === 0 || isLastAttempt) {
+    const job = parseJobState(readLaunchdJobDump(dependencies, spec.label));
     const crashed = crashLoop(job);
     if (crashed) return crashed;
-    if (lastAttempt)
+    if (isLastAttempt)
       return {
         ready: false,
         reason: `did not become ready within ${options.readyAttempts * options.readyDelayMs}ms${retryingReason(job)}`,
         stderrPath: job.stderrPath
       };
   }
-  await deps.sleep(options.readyDelayMs);
-  return checkService(deps, options, spec, attempt + 1);
+  await dependencies.sleep(options.readyDelayMs);
+  return checkService(dependencies, options, spec, attempt + 1);
 }
 
-/** Confirm every supervised service is up and owned by its launchd job. */
+/**
+Confirm every supervised service is up and owned by its launchd job.
+*/
 async function verifySupervisedServices(
-  deps: ServiceRestartDeps,
+  dependencies: ServiceRestartDeps,
   options: ServiceRestartOptions,
   logOffsets: ReadonlyMap<ManagedServiceLabel, number> = new Map()
 ): Promise<number> {
   const specs = serviceSpecs(options);
   const checks = await Promise.all(
-    specs.map((spec) => checkService(deps, options, spec))
+    specs.map((spec) => checkService(dependencies, options, spec))
   );
   let status = 0;
   for (const [index, check] of checks.entries()) {
@@ -714,7 +727,7 @@ async function verifySupervisedServices(
     if (check.stderrPath) {
       writeErrorLine(`  log: ${check.stderrPath}`);
       const afterByte = logOffsets.get(spec.label);
-      const lines = deps.logTail(
+      const lines = dependencies.logTail(
         check.stderrPath,
         FAILURE_LOG_LINES,
         afterByte
@@ -746,13 +759,15 @@ function foreignOwnedHookResult(
 }
 
 function readLaunchdJobDump(
-  deps: ServiceRestartDeps,
+  dependencies: ServiceRestartDeps,
   label: ManagedServiceLabel
 ): string {
   try {
-    return deps.launchd.print(label);
+    return dependencies.launchd.print(label);
   } catch {
-    /* treat as unavailable */
+    /*
+    treat as unavailable
+    */
   }
   return "";
 }
@@ -760,29 +775,29 @@ function readLaunchdJobDump(
 type ReloadResult = "ok" | "no-plist" | "failed" | "blocked" | "build-failed";
 
 function foreignLabels(
-  deps: ServiceRestartDeps,
+  dependencies: ServiceRestartDeps,
   options: ServiceRestartOptions
 ): ManagedServiceLabel[] {
   return MANAGED_SERVICE_LABELS.filter(
     (label) =>
-      deps.launchd.isLoaded(label) &&
-      !isOwnedService(options, label, readLaunchdJobDump(deps, label))
+      dependencies.launchd.isLoaded(label) &&
+      !isOwnedService(options, label, readLaunchdJobDump(dependencies, label))
   );
 }
 
 /**
- * The production build is published over the console port, so that port has
- * to belong to this runtime: free, held by the managed LaunchAgent, or held
- * by a Console process this runtime owns — a previous install's console, or
- * a dev session — which the reload path stops before it bootstraps the
- * managed job. A holder this runtime does not own is a hard stop, because
- * neither the build nor the restart may take its port.
- */
+The production build is published over the console port, so that port has
+to belong to this runtime: free, held by the managed LaunchAgent, or held
+by a Console process this runtime owns — a previous install's console, or
+a dev session — which the reload path stops before it bootstraps the
+managed job. A holder this runtime does not own is a hard stop, because
+neither the build nor the restart may take its port.
+*/
 function consolePortIsSafeToPublish(
   options: ServiceRestartOptions,
-  deps: ServiceRestartDeps
+  dependencies: ServiceRestartDeps
 ): boolean {
-  const listeners = deps.listeningPids(options.consolePort);
+  const listeners = dependencies.listeningPids(options.consolePort);
   if (listeners === null) {
     writeErrorLine(
       `could not verify Console port ${options.consolePort}; refusing to replace its production build.`
@@ -791,12 +806,12 @@ function consolePortIsSafeToPublish(
   }
   if (listeners.length === 0) return true;
 
-  if (deps.launchd.isLoaded(CONSOLE_SERVICE_LABEL)) {
-    const job = parseJobState(readLaunchdJobDump(deps, CONSOLE_SERVICE_LABEL));
+  if (dependencies.launchd.isLoaded(CONSOLE_SERVICE_LABEL)) {
+    const job = parseJobState(readLaunchdJobDump(dependencies, CONSOLE_SERVICE_LABEL));
     const foreign = listeners.filter(
       (pid) =>
         pid !== job.pid &&
-        !isOwnedServiceProcess(options, CONSOLE_SERVICE_LABEL, pid, deps)
+        !isOwnedServiceProcess(options, CONSOLE_SERVICE_LABEL, pid, dependencies)
     );
     if (foreign.length > 0) {
       writeErrorLine(
@@ -808,7 +823,7 @@ function consolePortIsSafeToPublish(
   }
 
   const foreign = listeners.filter(
-    (pid) => !isOwnedServiceProcess(options, CONSOLE_SERVICE_LABEL, pid, deps)
+    (pid) => !isOwnedServiceProcess(options, CONSOLE_SERVICE_LABEL, pid, dependencies)
   );
   if (foreign.length > 0) {
     writeErrorLine(
@@ -820,36 +835,36 @@ function consolePortIsSafeToPublish(
 }
 
 /**
- * Replace a label's job: unload the old one, clear stray listeners, then
- * bootstrap. Every managed plist sets RunAtLoad, so bootstrap starts the
- * service; a following `kickstart -k` would kill that fresh instance
- * mid-startup and stall for launchd's ThrottleInterval before respawning it.
- */
+Replace a label's job: unload the old one, clear stray listeners, then
+bootstrap. Every managed plist sets RunAtLoad, so bootstrap starts the
+service; a following `kickstart -k` would kill that fresh instance
+mid-startup and stall for launchd's ThrottleInterval before respawning it.
+*/
 async function reloadOneLabel(
-  deps: ServiceRestartDeps,
+  dependencies: ServiceRestartDeps,
   options: ServiceRestartOptions,
   label: ManagedServiceLabel,
   logOffsets?: Map<ManagedServiceLabel, number>
 ): Promise<ReloadResult> {
   const plist = plistPath(options, label);
-  if (!deps.fileExists(plist)) return "no-plist";
+  if (!dependencies.fileExists(plist)) return "no-plist";
   try {
-    deps.launchd.bootout(label);
+    dependencies.launchd.bootout(label);
   } catch (error) {
     writeErrorLine(`could not unload ${label}: ${errorText(error)}`);
     return "failed";
   }
-  if (!(await reapUnmanaged(options, label, deps))) return "failed";
-  if (logOffsets && deps.fileSize) {
-    const stderrPath = readPlistStderrPath(deps, plist);
+  if (!(await reapUnmanaged(options, label, dependencies))) return "failed";
+  if (logOffsets && dependencies.fileSize) {
+    const stderrPath = readPlistStderrPath(dependencies, plist);
     if (stderrPath) {
-      const size = deps.fileSize(stderrPath);
+      const size = dependencies.fileSize(stderrPath);
       logOffsets.set(label, size ?? 0);
     }
   }
   try {
-    deps.launchd.enable(label);
-    deps.launchd.bootstrap(plist);
+    dependencies.launchd.enable(label);
+    dependencies.launchd.bootstrap(plist);
     return "ok";
   } catch (error) {
     writeErrorLine(`could not load ${label}: ${errorText(error)}`);
@@ -858,21 +873,21 @@ async function reloadOneLabel(
 }
 
 /**
- * Wait for the service another one depends on to be serving, so a dependent
- * is never bootstrapped against an API that is not there yet.
- *
- * The Console has two dependencies. The Model Router serves the Control API
- * the Console reads, and the OpenLIT + ClickHouse stack serves the Usage
- * contract the Console's launcher verifies before it serves a single page.
- * Both are checked here, because a dependency that is not there yet is a
- * reason to wait, not a reason to start the dependent and let it fail.
- */
+Wait for the service another one depends on to be serving, so a dependent
+is never bootstrapped against an API that is not there yet.
+
+The Console has two dependencies. The Model Router serves the Control API
+the Console reads, and the OpenLIT + ClickHouse stack serves the Usage
+contract the Console's launcher verifies before it serves a single page.
+Both are checked here, because a dependency that is not there yet is a
+reason to wait, not a reason to start the dependent and let it fail.
+*/
 async function awaitDependency(
-  deps: ServiceRestartDeps,
+  dependencies: ServiceRestartDeps,
   options: ServiceRestartOptions,
   label: ManagedServiceLabel
 ): Promise<ServiceCheck> {
-  if (label === CONSOLE_SERVICE_LABEL && !(await deps.ensureUsageStack())) {
+  if (label === CONSOLE_SERVICE_LABEL && !(await dependencies.ensureUsageStack())) {
     return {
       ready: false,
       reason: "the OpenLIT and ClickHouse Usage services are not serving",
@@ -885,7 +900,7 @@ async function awaitDependency(
     (candidate) => candidate.label === dependency
   );
   if (spec === undefined) return { ready: true };
-  const check = await checkService(deps, options, spec);
+  const check = await checkService(dependencies, options, spec);
   if (!check.ready) {
     writeErrorLine(
       `${dependency} is not running: ${check.reason}; ${label} was not reloaded because it reads the Model Router's Control API`
@@ -895,7 +910,7 @@ async function awaitDependency(
 }
 
 function ensureConsoleBuildBeforeLaunch(
-  deps: ServiceRestartDeps,
+  dependencies: ServiceRestartDeps,
   options: ServiceRestartOptions
 ): boolean {
   const buildIdPath = path.join(
@@ -904,19 +919,19 @@ function ensureConsoleBuildBeforeLaunch(
     ".next",
     "BUILD_ID"
   );
-  if (deps.fileExists(buildIdPath)) return true;
+  if (dependencies.fileExists(buildIdPath)) return true;
   writeErrorLine(
     `Console build artifact missing at ${buildIdPath}; building staged Console artifact before launch.`
   );
   try {
-    deps.buildConsole();
+    dependencies.buildConsole();
   } catch (error) {
     writeErrorLine(
       `Console production build failed before launch: ${errorText(error)}`
     );
     return false;
   }
-  if (!deps.fileExists(buildIdPath)) {
+  if (!dependencies.fileExists(buildIdPath)) {
     writeErrorLine(
       `Console build completed without producing ${buildIdPath}; ${CONSOLE_SERVICE_LABEL} was not reloaded.`
     );
@@ -926,7 +941,7 @@ function ensureConsoleBuildBeforeLaunch(
 }
 
 async function reloadLabels(
-  deps: ServiceRestartDeps,
+  dependencies: ServiceRestartDeps,
   options: ServiceRestartOptions,
   index = 0,
   results: ReloadResult[] = [],
@@ -934,7 +949,7 @@ async function reloadLabels(
 ): Promise<ReloadResult[]> {
   const label = MANAGED_SERVICE_LABELS[index];
   if (label === undefined) return results;
-  const dependency = await awaitDependency(deps, options, label);
+  const dependency = await awaitDependency(dependencies, options, label);
   if (!dependency.ready) {
     writeErrorLine(`${label} was not reloaded: ${dependency.reason}.`);
     results.push("blocked");
@@ -942,35 +957,35 @@ async function reloadLabels(
   }
   if (
     label === CONSOLE_SERVICE_LABEL &&
-    !ensureConsoleBuildBeforeLaunch(deps, options)
+    !ensureConsoleBuildBeforeLaunch(dependencies, options)
   ) {
     results.push("build-failed");
     return results;
   }
-  results.push(await reloadOneLabel(deps, options, label, logOffsets));
-  return reloadLabels(deps, options, index + 1, results, logOffsets);
+  results.push(await reloadOneLabel(dependencies, options, label, logOffsets));
+  return reloadLabels(dependencies, options, index + 1, results, logOffsets);
 }
 
 export async function restartServices(
   options: ServiceRestartOptions = resolveServiceRestartOptions(),
-  deps: ServiceRestartDeps = defaultDeps(options)
+  dependencies: ServiceRestartDeps = defaultDependencies(options)
 ): Promise<number> {
-  const owner = plistOwner(options, deps);
+  const owner = plistOwner(options, dependencies);
   const foreignOwnerResult = foreignOwnedHookResult(options, owner);
   if (foreignOwnerResult !== null) return foreignOwnerResult;
 
-  if (!deps.commandAvailable("launchctl")) {
+  if (!dependencies.commandAvailable("launchctl")) {
     writeErrorLine(
       "launchctl unavailable (sandbox?); starting bridges through the direct ensure-hook path."
     );
-    const status = await runDirectEnsures(options, deps);
+    const status = await runDirectEnsures(options, dependencies);
     if (status !== 0) return status;
     writeErrorLine(
       "the Console service cannot be safely restarted without launchd; start its managed LaunchAgent before serving traffic."
     );
     return 1;
   }
-  const foreign = foreignLabels(deps, options);
+  const foreign = foreignLabels(dependencies, options);
   if (foreign.length > 0) {
     for (const label of foreign)
       writeErrorLine(
@@ -983,15 +998,15 @@ export async function restartServices(
   }
   const consolePlist = plistPath(options, CONSOLE_SERVICE_LABEL);
   const consoleLauncher = servicePaths(options, CONSOLE_SERVICE_LABEL).launcher;
-  if (!deps.fileExists(consolePlist) || !deps.fileExists(consoleLauncher)) {
+  if (!dependencies.fileExists(consolePlist) || !dependencies.fileExists(consoleLauncher)) {
     writeErrorLine(
       "the managed Console LaunchAgent and launcher must be materialized before publishing a production build."
     );
     return 1;
   }
-  if (!consolePortIsSafeToPublish(options, deps)) return 1;
+  if (!consolePortIsSafeToPublish(options, dependencies)) return 1;
   try {
-    deps.buildConsole();
+    dependencies.buildConsole();
   } catch (error) {
     writeErrorLine(
       `Console production build failed; the currently served build was preserved: ${errorText(error)}`
@@ -999,7 +1014,7 @@ export async function restartServices(
     return 1;
   }
   const logOffsets = new Map<ManagedServiceLabel, number>();
-  const results = await reloadLabels(deps, options, 0, [], logOffsets);
+  const results = await reloadLabels(dependencies, options, 0, [], logOffsets);
   if (results.includes("build-failed")) return 1;
   const blockedLabels = MANAGED_SERVICE_LABELS.filter(
     (_label, index) => results[index] === "blocked"
@@ -1017,7 +1032,7 @@ export async function restartServices(
     writeErrorLine(
       `launchd could not load ${failedLabels.join(", ")}; starting bridges through the direct ensure-hook path.`
     );
-    const status = await runDirectEnsures(options, deps);
+    const status = await runDirectEnsures(options, dependencies);
     if (status !== 0) return status;
     if (failedLabels.includes(CONSOLE_SERVICE_LABEL)) return 1;
     return status;
@@ -1025,7 +1040,7 @@ export async function restartServices(
   writeErrorLine(
     "Runtime services supervised by launchd (KeepAlive; survive restart/crash/sleep)."
   );
-  return verifySupervisedServices(deps, options, logOffsets);
+  return verifySupervisedServices(dependencies, options, logOffsets);
 }
 
 if (isEntryPoint(import.meta.url)) {

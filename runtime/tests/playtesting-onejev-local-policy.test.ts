@@ -26,11 +26,17 @@ import {
 const WORKSPACE_ID = "fixture/racing-game";
 const ORIGIN = "http://127.0.0.1:5173";
 const FRAME_BYTES = new TextEncoder().encode("bounded fixture frame bytes");
-/** The model the upstream serves, named by its literal id in the contract. */
+/**
+The model the upstream serves, named by its literal id in the contract.
+*/
 const UPSTREAM_MODEL_ID = "Qwen/Qwen3.5-2B";
-/** The model the upstream reports in its answer. */
+/**
+The model the upstream reports in its answer.
+*/
 const UPSTREAM_ANSWER_MODEL = "veyra-qwen3.5-2b";
-/** The model revision the upstream's backbone is pinned to. */
+/**
+The model revision the upstream's backbone is pinned to.
+*/
 const UPSTREAM_MODEL_REVISION = "15852e8c16360a2fea060d615a32b45270f8a8fc";
 
 // The upstream reads the frame from a directory it was started with, so the
@@ -178,12 +184,12 @@ interface CapturedRequest {
 }
 
 /**
- * The upstream's own answer, in the shape it publishes.
- *
- * The upstream reports whether it stood behind its own winner, so the answer
- * carries the abstention; a response that leaves it out is not the upstream's
- * response and is refused.
- */
+The upstream's own answer, in the shape it publishes.
+
+The upstream reports whether it stood behind its own winner, so the answer
+carries the abstention; a response that leaves it out is not the upstream's
+response and is refused.
+*/
 function systemOneResponse(
   options: {
     readonly choice?: string;
@@ -785,7 +791,7 @@ test("OneJev-local refuses an endpoint that is not the local OneJev server", asy
   assert.throws(
     () =>
       new OneJevLocalVisualPolicy(target(), {
-        endpoint: "http://example.com:8000",
+        endpoint: "https://example.com:8000",
         imageRoot: IMAGE_ROOT,
         fetchImpl: forbiddenFetch
       }),

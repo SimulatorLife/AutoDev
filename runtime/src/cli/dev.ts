@@ -29,7 +29,9 @@ export const repoRoot = path.resolve(
 
 const NEWLINE_SPLIT_REGEX = /\r?\n/u;
 
-/** A Playtesting runner token is a 64-character lowercase hex digest. */
+/**
+A Playtesting runner token is a 64-character lowercase hex digest.
+*/
 const PLAYTEST_RUNNER_TOKEN_PATTERN = /^[0-9a-f]{64}$/u;
 
 function parseToken(filePath: string, key: string): string | null {
@@ -54,7 +56,7 @@ function parseToken(filePath: string, key: string): string | null {
 }
 
 export function ensureConsoleSecrets(root = repoRoot): void {
-  const consoleEnv = path.join(root, "console", ".env.local");
+  const consoleEnvironment = path.join(root, "console", ".env.local");
   const codexHome =
     process.env.CODEX_HOME?.trim() ||
     path.join(process.env.HOME || homedir(), ".codex");
@@ -65,7 +67,7 @@ export function ensureConsoleSecrets(root = repoRoot): void {
   const script = path.join(root, "scripts", "openlit", "bootstrap-secrets.sh");
   if (!existsSync(script)) return;
 
-  if (!existsSync(canonicalSecrets) || !existsSync(consoleEnv)) {
+  if (!existsSync(canonicalSecrets) || !existsSync(consoleEnvironment)) {
     writeLine("[dev] Initializing console secrets (console/.env.local)...");
     const result = spawnSync("bash", [script], {
       stdio: "inherit",
@@ -94,15 +96,15 @@ export function ensureConsoleSecrets(root = repoRoot): void {
     "AUTODEV_PLAYTEST_CONTROL_API_TOKEN"
   );
   const consoleControlToken = parseToken(
-    consoleEnv,
+    consoleEnvironment,
     "AUTODEV_CONTROL_API_TOKEN"
   );
   const consoleUsageToken = parseToken(
-    consoleEnv,
+    consoleEnvironment,
     "AUTODEV_OPENLIT_USAGE_TOKEN"
   );
   const consolePlaytestRunnerToken = parseToken(
-    consoleEnv,
+    consoleEnvironment,
     "AUTODEV_PLAYTEST_CONTROL_API_TOKEN"
   );
 
@@ -148,7 +150,7 @@ export interface DevOpenLITUsageConfig {
   readonly serviceToken: string;
 }
 
-function controlApiBaseUrlFromEnvFile(value: string | null): string | null {
+function controlApiBaseUrlFromEnvironmentFile(value: string | null): string | null {
   if (!value) return null;
   const defaultExpression = CONTROL_API_BASE_URL_DEFAULT_PATTERN.exec(value);
   return (defaultExpression?.[1] ?? value).trim();
@@ -156,12 +158,12 @@ function controlApiBaseUrlFromEnvFile(value: string | null): string | null {
 
 export function readDevControlApiConfig(
   root = repoRoot,
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): DevControlApiConfig {
-  const consoleEnv = path.join(root, "console", ".env.local");
+  const consoleEnvironment = path.join(root, "console", ".env.local");
   const serviceToken =
-    env.AUTODEV_CONTROL_API_TOKEN?.trim() ||
-    parseToken(consoleEnv, "AUTODEV_CONTROL_API_TOKEN");
+    environment.AUTODEV_CONTROL_API_TOKEN?.trim() ||
+    parseToken(consoleEnvironment, "AUTODEV_CONTROL_API_TOKEN");
   if (!serviceToken) {
     throw new Error(
       "Console Control API credentials are missing. Run the Console secret bootstrap before starting the dev server."
@@ -169,23 +171,25 @@ export function readDevControlApiConfig(
   }
 
   const baseUrl =
-    env.AUTODEV_CONTROL_API_BASE_URL?.trim() ||
-    controlApiBaseUrlFromEnvFile(
-      parseToken(consoleEnv, "AUTODEV_CONTROL_API_BASE_URL")
+    environment.AUTODEV_CONTROL_API_BASE_URL?.trim() ||
+    controlApiBaseUrlFromEnvironmentFile(
+      parseToken(consoleEnvironment, "AUTODEV_CONTROL_API_BASE_URL")
     ) ||
     DEFAULT_CONTROL_API_BASE_URL;
   return { baseUrl: baseUrl.replace(TRAILING_SLASHES, ""), serviceToken };
 }
 
-/** Read the same server-only Usage credential and URL used by the Console. */
+/**
+Read the same server-only Usage credential and URL used by the Console.
+*/
 export function readDevOpenLITUsageConfig(
   root = repoRoot,
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): DevOpenLITUsageConfig {
-  const consoleEnv = path.join(root, "console", ".env.local");
+  const consoleEnvironment = path.join(root, "console", ".env.local");
   const serviceToken =
-    env.AUTODEV_OPENLIT_USAGE_TOKEN?.trim() ||
-    parseToken(consoleEnv, "AUTODEV_OPENLIT_USAGE_TOKEN");
+    environment.AUTODEV_OPENLIT_USAGE_TOKEN?.trim() ||
+    parseToken(consoleEnvironment, "AUTODEV_OPENLIT_USAGE_TOKEN");
   if (!serviceToken) {
     throw new Error(
       "OpenLIT Usage credentials are missing. Run the Console secret bootstrap before starting the dev server."
@@ -193,8 +197,8 @@ export function readDevOpenLITUsageConfig(
   }
 
   const configuredBaseUrl =
-    env.AUTODEV_OPENLIT_USAGE_URL?.trim() ||
-    parseToken(consoleEnv, "AUTODEV_OPENLIT_USAGE_URL");
+    environment.AUTODEV_OPENLIT_USAGE_URL?.trim() ||
+    parseToken(consoleEnvironment, "AUTODEV_OPENLIT_USAGE_URL");
   const defaultExpression = configuredBaseUrl
     ? OPENLIT_USAGE_BASE_URL_DEFAULT_PATTERN.exec(configuredBaseUrl)
     : null;
@@ -217,13 +221,15 @@ export interface DevCommandResult {
   readonly error?: Error | undefined;
 }
 
-/** Injectable process/readiness boundary for the root development lifecycle. */
+/**
+Injectable process/readiness boundary for the root development lifecycle.
+*/
 export interface DevBackendDependencies {
   readonly platform: NodeJS.Platform;
   readonly repoRoot: string;
   readonly runCommand: (
     command: string,
-    args: readonly string[],
+    arguments_: readonly string[],
     options: DevCommandOptions
   ) => DevCommandResult;
   readonly isPortListening: (port: number) => Promise<boolean>;
@@ -233,12 +239,12 @@ export interface DevBackendDependencies {
   readonly writeLine: (message: string) => void;
 }
 
-function runDevCommand(
+function runDevelopmentCommand(
   command: string,
-  args: readonly string[],
+  arguments_: readonly string[],
   options: DevCommandOptions
 ): DevCommandResult {
-  const result = spawnSync(command, [...args], {
+  const result = spawnSync(command, [...arguments_], {
     cwd: options.cwd,
     stdio: options.stdio,
     timeout: options.timeoutMs,
@@ -251,7 +257,7 @@ function defaultBackendDependencies(): DevBackendDependencies {
   return {
     platform: process.platform,
     repoRoot,
-    runCommand: runDevCommand,
+    runCommand: runDevelopmentCommand,
     isPortListening: (port) => isPortListening(port),
     isOpenlitHttpReady: openlitHttpReady,
     openlitUsageConfig: () => readDevOpenLITUsageConfig(),
@@ -261,10 +267,10 @@ function defaultBackendDependencies(): DevBackendDependencies {
 }
 
 /**
- * Ensure the dependencies the Console's server-side Usage adapter requires.
- * A known-unreachable Usage service is a startup failure, not an optional
- * backend warning followed by a broken Console.
- */
+Ensure the dependencies the Console's server-side Usage adapter requires.
+A known-unreachable Usage service is a startup failure, not an optional
+backend warning followed by a broken Console.
+*/
 export async function ensureBackends(
   overrides: Partial<DevBackendDependencies> = {}
 ): Promise<{ telemetryActive: true; routerActive: boolean }> {
@@ -309,11 +315,11 @@ export interface DevRouterDependencies {
   readonly isPortListening: (port: number) => Promise<boolean>;
   readonly runCommand: (
     command: string,
-    args: readonly string[],
+    arguments_: readonly string[],
     options: DevCommandOptions
   ) => DevCommandResult;
   readonly sleep: (ms: number) => Promise<void>;
-  readonly writeLine: (msg: string) => void;
+  readonly writeLine: (message: string) => void;
   readonly platform: NodeJS.Platform;
   readonly forceRestart?: boolean;
 }
@@ -321,90 +327,90 @@ export interface DevRouterDependencies {
 export async function ensureModelRouter(
   overrides: Partial<DevRouterDependencies> = {}
 ): Promise<boolean> {
-  const deps: DevRouterDependencies = {
+  const dependencies: DevRouterDependencies = {
     repoRoot,
     isPortListening: (port) => isPortListening(port),
-    runCommand: runDevCommand,
+    runCommand: runDevelopmentCommand,
     sleep,
     writeLine,
     platform: process.platform,
     ...overrides
   };
 
-  if (deps.forceRestart) {
-    deps.writeLine(
+  if (dependencies.forceRestart) {
+    dependencies.writeLine(
       "[dev] Reconciling AutoDev Model Router integration and restarting..."
     );
   } else {
     const isListening =
-      (await deps.isPortListening(4100)) && (await deps.isPortListening(4101));
+      (await dependencies.isPortListening(4100)) && (await dependencies.isPortListening(4101));
     if (isListening) {
-      deps.writeLine(
+      dependencies.writeLine(
         "[dev] ✔ AutoDev Model Router is active (ports 4100, 4101)."
       );
       return true;
     }
 
-    deps.writeLine(
+    dependencies.writeLine(
       "[dev] AutoDev Model Router is not listening; preparing runtime integration..."
     );
   }
 
   const materializeScript = path.join(
-    deps.repoRoot,
+    dependencies.repoRoot,
     "runtime",
     "src",
     "cli",
     "install.ts"
   );
-  deps.runCommand("node", [materializeScript, "--materialize-only"], {
-    cwd: deps.repoRoot,
+  dependencies.runCommand("node", [materializeScript, "--materialize-only"], {
+    cwd: dependencies.repoRoot,
     stdio: "inherit"
   });
 
-  if (deps.platform === "darwin") {
+  if (dependencies.platform === "darwin") {
     const uid = typeof process.getuid === "function" ? process.getuid() : 0;
-    const printResult = deps.runCommand(
+    const printResult = dependencies.runCommand(
       "launchctl",
       ["print", `gui/${uid}/com.codex.model-router`],
-      { cwd: deps.repoRoot, stdio: "ignore" }
+      { cwd: dependencies.repoRoot, stdio: "ignore" }
     );
     if (printResult.status === 0) {
-      deps.writeLine(
+      dependencies.writeLine(
         "[dev] Restarting com.codex.model-router via launchctl kickstart..."
       );
-      deps.runCommand(
+      dependencies.runCommand(
         "launchctl",
         ["kickstart", "-k", `gui/${uid}/com.codex.model-router`],
-        { cwd: deps.repoRoot, stdio: "ignore" }
+        { cwd: dependencies.repoRoot, stdio: "ignore" }
       );
     } else {
-      deps.writeLine(
+      dependencies.writeLine(
         "[dev] Starting AutoDev Model Router via router-ensure..."
       );
       const ensureScript = path.join(
-        deps.repoRoot,
+        dependencies.repoRoot,
         "runtime",
         "src",
         "platform",
         "router-ensure.ts"
       );
-      deps.runCommand("node", [ensureScript], {
-        cwd: deps.repoRoot,
+      dependencies.runCommand("node", [ensureScript], {
+        cwd: dependencies.repoRoot,
         stdio: "inherit"
       });
     }
   } else {
-    deps.writeLine("[dev] Starting AutoDev Model Router via router-ensure...");
+    dependencies.writeLine("[dev] Starting AutoDev Model Router via router-ensure...");
     const ensureScript = path.join(
-      deps.repoRoot,
+      dependencies.repoRoot,
       "runtime",
       "src",
       "platform",
       "router-ensure.ts"
     );
-    deps.runCommand("node", [ensureScript], {
-      cwd: deps.repoRoot,
+    dependencies.runCommand("node", [ensureScript], {
+      cwd: dependencies.repoRoot,
       stdio: "inherit"
     });
   }
@@ -413,21 +419,21 @@ export async function ensureModelRouter(
     {
       probe: async () => {
         const [p4100, p4101] = await Promise.all([
-          deps.isPortListening(4100),
-          deps.isPortListening(4101)
+          dependencies.isPortListening(4100),
+          dependencies.isPortListening(4101)
         ]);
         return p4100 && p4101;
       },
-      sleep: deps.sleep
+      sleep: dependencies.sleep
     },
     15_000
   );
   if (ready) {
-    deps.writeLine("[dev] ✔ AutoDev Model Router is ready (ports 4100, 4101).");
+    dependencies.writeLine("[dev] ✔ AutoDev Model Router is ready (ports 4100, 4101).");
     return true;
   }
 
-  deps.writeLine(
+  dependencies.writeLine(
     "[dev] ⚠️ AutoDev Model Router did not answer on ports 4100/4101 within 15 seconds."
   );
   return false;
@@ -437,11 +443,11 @@ export interface DevConsolePortDependencies {
   readonly isPortListening: (port: number) => Promise<boolean>;
   readonly runCommand: (
     command: string,
-    args: readonly string[],
+    arguments_: readonly string[],
     options: DevCommandOptions
   ) => DevCommandResult;
   readonly sleep: (ms: number) => Promise<void>;
-  readonly writeLine: (msg: string) => void;
+  readonly writeLine: (message: string) => void;
   readonly platform: NodeJS.Platform;
   readonly repoRoot: string;
 }
@@ -450,9 +456,9 @@ export async function ensureConsolePortAvailable(
   port = 3300,
   overrides: Partial<DevConsolePortDependencies> = {}
 ): Promise<void> {
-  const deps: DevConsolePortDependencies = {
+  const dependencies: DevConsolePortDependencies = {
     isPortListening: (p) => isPortListening(p),
-    runCommand: runDevCommand,
+    runCommand: runDevelopmentCommand,
     sleep,
     writeLine,
     platform: process.platform,
@@ -460,44 +466,44 @@ export async function ensureConsolePortAvailable(
     ...overrides
   };
 
-  const listening = await deps.isPortListening(port);
+  const listening = await dependencies.isPortListening(port);
   if (!listening) return;
 
-  if (deps.platform === "darwin") {
+  if (dependencies.platform === "darwin") {
     const uid = typeof process.getuid === "function" ? process.getuid() : 0;
-    const printResult = deps.runCommand(
+    const printResult = dependencies.runCommand(
       "launchctl",
       ["print", `gui/${uid}/com.codex.autodev-console`],
-      { cwd: deps.repoRoot, stdio: "ignore" }
+      { cwd: dependencies.repoRoot, stdio: "ignore" }
     );
     if (printResult.status === 0) {
-      deps.writeLine(
+      dependencies.writeLine(
         `[dev] Stopping conflicting LaunchAgent com.codex.autodev-console on port ${port}...`
       );
-      deps.runCommand(
+      dependencies.runCommand(
         "launchctl",
         ["bootout", `gui/${uid}/com.codex.autodev-console`],
-        { cwd: deps.repoRoot, stdio: "ignore" }
+        { cwd: dependencies.repoRoot, stdio: "ignore" }
       );
       const cleared = await waitForProbe(
         {
           probe: async () => {
-            const isListening = await deps.isPortListening(port);
+            const isListening = await dependencies.isPortListening(port);
             return !isListening;
           },
-          sleep: deps.sleep
+          sleep: dependencies.sleep
         },
         3000
       );
       if (cleared) {
-        deps.writeLine(`[dev] ✔ Port ${port} is now available.`);
+        dependencies.writeLine(`[dev] ✔ Port ${port} is now available.`);
         return;
       }
     }
   }
 
-  if (await deps.isPortListening(port)) {
-    deps.writeLine(
+  if (await dependencies.isPortListening(port)) {
+    dependencies.writeLine(
       `[dev] ⚠️ Port ${port} is currently in use. If starting the dev server fails, stop the conflicting process or set AUTODEV_CONSOLE_PORT.`
     );
   }
@@ -523,11 +529,11 @@ export async function startDev(): Promise<void> {
         }
       );
     } catch (probeError) {
-      const probeMsg =
+      const probeMessage =
         probeError instanceof Error ? probeError.message : String(probeError);
       if (
-        probeMsg.includes("is not compatible with this Console checkout") ||
-        probeMsg.includes("Control API contract revision is missing or stale")
+        probeMessage.includes("is not compatible with this Console checkout") ||
+        probeMessage.includes("Control API contract revision is missing or stale")
       ) {
         writeLine(
           "[dev] Incompatible Control API contract detected; refreshing runtime integration and restarting router..."
@@ -559,7 +565,7 @@ export async function startDev(): Promise<void> {
   );
 
   const pnpmBin = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-  const extraArgs = process.argv.slice(2);
+  const extraArguments = process.argv.slice(2);
   const child = spawn(
     pnpmBin,
     [
@@ -568,7 +574,7 @@ export async function startDev(): Promise<void> {
       "dev:next",
       "-H",
       "127.0.0.1",
-      ...extraArgs
+      ...extraArguments
     ],
     {
       cwd: repoRoot,

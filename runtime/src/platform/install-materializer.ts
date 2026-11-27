@@ -68,12 +68,12 @@ import {
   runtimeDependencyClosure
 } from "./runtime-dependency-closure.ts";
 import {
-  computeRepoPathsFingerprint,
+  computeRepoPathsFingerprint as computeRepositoryPathsFingerprint,
   linkRuntimeSource,
   linkSkillSource,
   materializeRuntimeContent,
   materializeRuntimeFile,
-  readRepoInstallCache,
+  readRepoInstallCache as readRepositoryInstallCache,
   readRulesyncPackageVersion,
   resolveCommandOnPath,
   runRulesyncGenerate,
@@ -81,7 +81,7 @@ import {
   runRulesyncInstallFrozen,
   runtimeTarget,
   skillLinkMatches,
-  writeRepoInstallCache
+  writeRepoInstallCache as writeRepositoryInstallCache
 } from "./runtime-files.ts";
 import {
   readRuntimePackageManifest,
@@ -463,7 +463,7 @@ export function syncHookTrust(
     // gone; its trust entry is stale state about a hook Codex will not run.
     if (
       key.startsWith(`${userHooksJson}:`) &&
-      !entries.some((entry) => key === `${userHooksJson}:${entry.key}`)
+      entries.every((entry) => key !== `${userHooksJson}:${entry.key}`)
     )
       delete stateTable[key];
   }
@@ -515,8 +515,8 @@ export function checkHookTrust(
         { trusted_hash?: string } | undefined;
       if (userEntry?.trusted_hash !== entry.hash) return false;
     }
-    return !Object.keys(stateTable).some((key) =>
-      key.startsWith(`${projectHooksJson}:`)
+    return Object.keys(stateTable).every((key) =>
+      !key.startsWith(`${projectHooksJson}:`)
     );
   } catch {
     return false;
@@ -583,17 +583,17 @@ const LINE_SPLIT_PATTERN = /\r?\n/u;
 const MD_EXTENSION_PATTERN = /\.md$/u;
 const IGNORE_DIRS_LINE_PATTERN = /^\s*IGNORE_DIRS\s*=/iu;
 
-function extractIgnoreDirs(line: string): string[] {
-  const eqIdx = line.indexOf("=");
-  if (eqIdx === -1) return [];
-  let val = line.slice(eqIdx + 1).trim();
+function extractIgnoreDirectories(line: string): string[] {
+  const eqIndex = line.indexOf("=");
+  if (eqIndex === -1) return [];
+  let value = line.slice(eqIndex + 1).trim();
   if (
-    (val.startsWith('"') && val.endsWith('"')) ||
-    (val.startsWith("'") && val.endsWith("'"))
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
   ) {
-    val = val.slice(1, -1);
+    value = value.slice(1, -1);
   }
-  return val ? val.split(",") : [];
+  return value ? value.split(",") : [];
 }
 
 const REPOMIX_CONFIG_CANDIDATES = [
@@ -606,7 +606,7 @@ const REPOMIX_CONFIG_CANDIDATES = [
   "repomix.config.cjs"
 ] as const;
 
-function repoNeedsBootstrapExclusionsRun(options: MaterializeOptions): boolean {
+function repositoryNeedsBootstrapExclusionsRun(options: MaterializeOptions): boolean {
   if (process.env.CGC_MODE === "per_repo") {
     return true;
   }
@@ -652,7 +652,7 @@ function ensureBootstrapScript(options: MaterializeOptions): void {
   );
   chmodSync(scriptPath, 0o755);
   linkRuntimeSource(scriptPath, target);
-  if (!repoNeedsBootstrapExclusionsRun(options)) {
+  if (!repositoryNeedsBootstrapExclusionsRun(options)) {
     return;
   }
   try {
@@ -919,9 +919,9 @@ function insertAfterDefaultIgnorePatterns(
   content: string,
   addition: string
 ): string {
-  const idx = content.indexOf("DEFAULT_IGNORE_PATTERNS = [");
-  if (idx === -1) return content;
-  const insertPos = content.indexOf("\n", idx) + 1;
+  const index = content.indexOf("DEFAULT_IGNORE_PATTERNS = [");
+  if (index === -1) return content;
+  const insertPos = content.indexOf("\n", index) + 1;
   return `${content.slice(0, insertPos)}${addition}${content.slice(insertPos)}`;
 }
 
@@ -960,14 +960,14 @@ function patchCodeGraphContextIgnore(cgcDir: string): void {
 }
 
 export function patchCodeGraphContextFalkorDb(cgcDir: string): void {
-  const dbFalkorFile = path.join(cgcDir, "core", "database_falkordb.py");
-  if (exists(dbFalkorFile)) {
-    const original = readFileSync(dbFalkorFile, "utf8");
+  const databaseFalkorFile = path.join(cgcDir, "core", "database_falkordb.py");
+  if (exists(databaseFalkorFile)) {
+    const original = readFileSync(databaseFalkorFile, "utf8");
     const updated = original.replace(
       "atexit.register(self.shutdown)",
       "atexit.register(self.close_driver)"
     );
-    if (updated !== original) writeFileSync(dbFalkorFile, updated, "utf8");
+    if (updated !== original) writeFileSync(databaseFalkorFile, updated, "utf8");
   }
   const workerFile = path.join(cgcDir, "core", "falkor_worker.py");
   if (exists(workerFile)) {
@@ -1056,31 +1056,31 @@ function ensureCodeGraphContextPackagePatches(home: string): void {
 function ensureGlobalCodeGraphContext(options: MaterializeOptions): void {
   const cgcDir = path.join(options.home, ".codegraphcontext");
   mkdirSync(cgcDir, { recursive: true });
-  const envFile = path.join(cgcDir, ".env");
-  const existingEnv = exists(envFile) ? readFileSync(envFile, "utf8") : "";
-  const envLines = existingEnv.split(LINE_SPLIT_PATTERN);
-  let found = false;
-  const requiredDirs = CGC_IGNORE_DIRS.split(",");
-  const updatedLines = envLines.map((line) => {
+  const environmentFile = path.join(cgcDir, ".env");
+  const existingEnvironment = exists(environmentFile) ? readFileSync(environmentFile, "utf8") : "";
+  const environmentLines = existingEnvironment.split(LINE_SPLIT_PATTERN);
+  let isFound = false;
+  const requiredDirectories = CGC_IGNORE_DIRS.split(",");
+  const updatedLines = environmentLines.map((line) => {
     if (IGNORE_DIRS_LINE_PATTERN.test(line)) {
-      found = true;
-      const existingDirs = extractIgnoreDirs(line);
-      const set = new Set(existingDirs.map((d) => d.trim()).filter(Boolean));
-      for (const d of requiredDirs) set.add(d.trim());
+      isFound = true;
+      const existingDirectories = extractIgnoreDirectories(line);
+      const set = new Set(existingDirectories.map((d) => d.trim()).filter(Boolean));
+      for (const d of requiredDirectories) set.add(d.trim());
       return `IGNORE_DIRS="${Array.from(set).join(",")}"`;
     }
     return line;
   });
-  if (!found) {
+  if (!isFound) {
     if (updatedLines.length > 0 && updatedLines.at(-1) !== "") {
       updatedLines.push("");
     }
     updatedLines.push(`IGNORE_DIRS="${CGC_IGNORE_DIRS}"`);
   }
   const lastLine = updatedLines.at(-1);
-  const nextEnv = `${updatedLines.join("\n")}${lastLine === "" ? "" : "\n"}`;
-  if (nextEnv !== existingEnv) {
-    writeFileSync(envFile, nextEnv);
+  const nextEnvironment = `${updatedLines.join("\n")}${lastLine === "" ? "" : "\n"}`;
+  if (nextEnvironment !== existingEnvironment) {
+    writeFileSync(environmentFile, nextEnvironment);
   }
 
   const cgcIgnore = path.join(cgcDir, ".cgcignore");
@@ -1406,14 +1406,14 @@ installed at all.
 The layout of the user's skills directory is this module's to answer, so the
 Control API asks it rather than repeating the path.
 */
-export function installedSkillMatches(args: {
+export function installedSkillMatches(arguments_: {
   readonly repositoryRoot: string;
   readonly home: string;
   readonly name: string;
 }): boolean {
   return skillLinkMatches(
-    path.join(args.repositoryRoot, ".rulesync", "skills", args.name),
-    path.join(args.home, ".agents", "skills", args.name)
+    path.join(arguments_.repositoryRoot, ".rulesync", "skills", arguments_.name),
+    path.join(arguments_.home, ".agents", "skills", arguments_.name)
   );
 }
 
@@ -1552,7 +1552,7 @@ const REPOSITORY_RULESYNC_FINGERPRINT_PATHS = [
 ] as const;
 
 function computeRepositoryRulesyncFingerprint(repositoryRoot: string): string {
-  return computeRepoPathsFingerprint(
+  return computeRepositoryPathsFingerprint(
     repositoryRoot,
     REPOSITORY_RULESYNC_FINGERPRINT_PATHS,
     [`rulesync:${readRulesyncPackageVersion(repositoryRoot)}`]
@@ -1581,9 +1581,9 @@ export function generateRepositoryRulesync(
   } = {}
 ): void {
   const configPath = path.join(repositoryRoot, "rulesync.jsonc");
-  const forceRulesync = process.env.AUTODEV_FORCE_RULESYNC === "1";
-  if (!forceRulesync) {
-    const cache = readRepoInstallCache(repositoryRoot);
+  const isForceRulesync = process.env.AUTODEV_FORCE_RULESYNC === "1";
+  if (!isForceRulesync) {
+    const cache = readRepositoryInstallCache(repositoryRoot);
     const generateFingerprint = cache.rulesyncGenerate;
     if (
       generateFingerprint !== undefined &&
@@ -1605,8 +1605,8 @@ export function generateRepositoryRulesync(
     silent: true
   });
   const postFingerprint = computeRepositoryRulesyncFingerprint(repositoryRoot);
-  const latestCache = readRepoInstallCache(repositoryRoot);
-  writeRepoInstallCache(repositoryRoot, {
+  const latestCache = readRepositoryInstallCache(repositoryRoot);
+  writeRepositoryInstallCache(repositoryRoot, {
     ...latestCache,
     rulesyncGenerate: postFingerprint
   });
@@ -1904,7 +1904,7 @@ export function reconcileStaleOrchestratorState(codexHome: string): boolean {
     Array.isArray(assignments)
   )
     return false;
-  let changed = false;
+  let isChanged = false;
   const record = assignments as Record<string, Record<string, unknown>>;
   for (const [provider, rule] of Object.entries(STALE_ORCHESTRATOR_DEFAULTS)) {
     const providerEntry = record[provider];
@@ -1918,9 +1918,9 @@ export function reconcileStaleOrchestratorState(codexHome: string): boolean {
     const current = orchestrator as Record<string, unknown>;
     if (!rule.applies(current)) continue;
     providerEntry.orchestrator = { ...current, ...rule.patch };
-    changed = true;
+    isChanged = true;
   }
-  if (!changed) return false;
+  if (!isChanged) return false;
   atomicWriteSync(statePath, JSON.stringify(parsed, null, 2) + "\n", {
     mode: 0o644,
     skipUnchanged: true
@@ -2141,8 +2141,7 @@ function readCodexAppCacheEntry(configPath: string): {
       unknown
     >;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    if (error instanceof SyntaxError) return null;
+    if (((error as NodeJS.ErrnoException).code === "ENOENT") || (error instanceof SyntaxError)) return null;
     throw error;
   }
   const servers = document.mcpServers;
@@ -2164,13 +2163,13 @@ function assertCodexAppCacheVersion(
   if (!found) return null;
   const { document, server } = found;
 
-  const observedEnabled = server.enabled === true;
+  const isObservedEnabled = server.enabled === true;
   const observedTools = Array.isArray(server.enabled_tools)
     ? (server.enabled_tools as unknown[]).filter(
         (tool): tool is string => typeof tool === "string"
       )
     : null;
-  const toolsMatch =
+  const isToolsMatch =
     observedTools?.length === CODEX_APP_ENABLED_TOOLS.length &&
     CODEX_APP_ENABLED_TOOLS.every(
       (tool, index) => observedTools[index] === tool
@@ -2178,8 +2177,8 @@ function assertCodexAppCacheVersion(
 
   // Re-assert unconditionally: Codex Desktop regenerates this cache on
   // startup, so "it was correct last install" is not evidence about now.
-  const rewrotePluginCache = !observedEnabled || !toolsMatch;
-  if (rewrotePluginCache) {
+  const isRewrotePluginCache = !isObservedEnabled || !isToolsMatch;
+  if (isRewrotePluginCache) {
     server.enabled = true;
     server.enabled_tools = [...CODEX_APP_ENABLED_TOOLS];
     writeFileSync(configPath, JSON.stringify(document, null, 2) + "\n", "utf8");
@@ -2187,9 +2186,9 @@ function assertCodexAppCacheVersion(
 
   return {
     lastAssertedAt: now,
-    observedEnabled,
+    observedEnabled: isObservedEnabled,
     observedTools,
-    rewrotePluginCache
+    rewrotePluginCache: isRewrotePluginCache
   };
 }
 
@@ -2238,7 +2237,7 @@ export function ensureCodexAppMcpServerEnabled(codexHome: string): void {
   const sentinel = loadCodexAppSentinel(sentinelPath);
   const now = new Date().toISOString();
 
-  let repairedDrift = false;
+  let isRepairedDrift = false;
   for (const version of versions) {
     const state = assertCodexAppCacheVersion(
       path.join(cacheRoot, version, ".mcp.json"),
@@ -2246,13 +2245,13 @@ export function ensureCodexAppMcpServerEnabled(codexHome: string): void {
     );
     if (!state) continue;
     sentinel.versions[version] = state;
-    repairedDrift ||= state.rewrotePluginCache;
+    isRepairedDrift ||= state.rewrotePluginCache;
   }
 
   // Written on every install, including clean ones, so the next install can
   // tell "Codex rewrote the cache again" from "nothing touched it".
   sentinel.lastAssertedAt = now;
-  sentinel.lastInstallRepairedDrift = repairedDrift;
+  sentinel.lastInstallRepairedDrift = isRepairedDrift;
   mkdirSync(path.dirname(sentinelPath), { recursive: true, mode: 0o700 });
   writeFileSync(sentinelPath, JSON.stringify(sentinel, null, 2) + "\n", "utf8");
 }
@@ -2420,19 +2419,19 @@ function isSymlink(filePath: string): boolean {
 
 if (isEntryPoint(import.meta.url)) {
   try {
-    const env = process.env;
+    const environment = process.env;
     const repositoryRoot =
-      env.AUTODEV_REPO_ROOT ??
+      environment.AUTODEV_REPO_ROOT ??
       path.resolve(resolveRuntimeSourceRoot(import.meta.dirname));
-    const home = env.HOME ?? homedir();
-    const codexHome = env.CODEX_HOME ?? path.join(home, ".codex");
-    const mcp = env.AUTODEV_CODEX_MCP_SOURCE;
+    const home = environment.HOME ?? homedir();
+    const codexHome = environment.CODEX_HOME ?? path.join(home, ".codex");
+    const mcp = environment.AUTODEV_CODEX_MCP_SOURCE;
     if (!mcp) throw new Error("AUTODEV_CODEX_MCP_SOURCE is required");
     materializeInstallation({
       repositoryRoot,
       home,
       codexHome,
-      materializeOnly: env.AUTODEV_MATERIALIZE_ONLY === "1",
+      materializeOnly: environment.AUTODEV_MATERIALIZE_ONLY === "1",
       codexMcpSource: mcp
     });
   } catch (error) {

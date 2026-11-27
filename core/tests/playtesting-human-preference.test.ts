@@ -305,7 +305,7 @@ function study(
       { id: "build-A", version: "1", contentHash: "b".repeat(64) },
       { id: "build-B", version: "1", contentHash: "c".repeat(64) }
     ],
-    ...(preferencePlan ? { preferencePlan } : {}),
+    ...(preferencePlan && { preferencePlan }),
     pxiItemConstructMappingHash: null,
     instrument: "miniPXI",
     instrumentVersion: "miniPXI-v1",

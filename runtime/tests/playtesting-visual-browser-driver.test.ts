@@ -30,7 +30,9 @@ interface RunningServer {
   close(): Promise<void>;
 }
 
-/** Wait for a condition the page reports, without assuming how long it takes. */
+/**
+Wait for a condition the page reports, without assuming how long it takes.
+*/
 async function waitFor(
   ready: () => boolean,
   timeoutMs: number
@@ -143,10 +145,8 @@ async function openDriver(input: {
     viewport: { width: 640, height: 480, deviceScaleFactor: 1 },
     actionTimeoutMs: input.actionTimeoutMs ?? 3000,
     maxSteps: 8,
-    ...(input.now === undefined ? {} : { now: input.now }),
-    ...(input.browserType === undefined
-      ? {}
-      : { browserType: input.browserType })
+    ...(input.now !== undefined && { now: input.now }),
+    ...(input.browserType !== undefined && { browserType: input.browserType })
   });
 }
 
@@ -574,11 +574,11 @@ test("visual browser dispatches a control that moved after the observation", asy
   // still reach it: the page is read again before the input is dispatched,
   // and a control that is the same control wherever it now sits is still
   // dispatched.
-  let shiftRequested = false;
+  let isShiftRequested = false;
   let shiftedAcknowledged = 0;
   const source = await listen((requestPath) => {
     if (requestPath === "/shift") {
-      return shiftRequested ? "shift" : "hold";
+      return isShiftRequested ? "shift" : "hold";
     }
     if (requestPath === "/shifted") {
       shiftedAcknowledged += 1;
@@ -616,7 +616,7 @@ test("visual browser dispatches a control that moved after the observation", asy
       (control) => control.name === "Start race"
     );
     assert.ok(start, "the observation offered the button the action names");
-    shiftRequested = true;
+    isShiftRequested = true;
     assert.ok(
       await waitFor(() => shiftedAcknowledged >= 1, 10_000),
       "the page was asked to move its layout and said it had"
@@ -646,11 +646,11 @@ test("visual browser refuses coordinate input when the captured canvas frame cha
   // The frame has to change after the observation and before the action.
   // The test asks the page to change and waits for the page to say it did,
   // so the refusal is never a race against a loaded machine.
-  let repaintRequested = false;
+  let isRepaintRequested = false;
   let repaintsAcknowledged = 0;
   const source = await listen((requestPath) => {
     if (requestPath === "/phase") {
-      if (!repaintRequested) return "hold";
+      if (!isRepaintRequested) return "hold";
       repaintsAcknowledged += 1;
       return "repaint";
     }
@@ -684,7 +684,7 @@ test("visual browser refuses coordinate input when the captured canvas frame cha
     const captured = await driver.observe();
     assert.equal(captured.status, "observed");
     if (captured.status !== "observed") return;
-    repaintRequested = true;
+    isRepaintRequested = true;
     assert.ok(
       await waitFor(() => repaintsAcknowledged >= 2, 10_000),
       "the page was asked to repaint and said it had"

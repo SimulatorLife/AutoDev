@@ -1,4 +1,6 @@
-/** Server-only, same-origin cancellation request for an active Playtesting run. */
+/**
+Server-only, same-origin cancellation request for an active Playtesting run.
+*/
 import { type NextRequest, NextResponse } from "next/server.js";
 
 import { jsonErrorResponse } from "../../../../../../src/lib/server/api-response.ts";

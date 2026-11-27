@@ -18,22 +18,18 @@ import {
   runCompose,
   runModelCatalog
 } from "@simulatorlife/autodev-runtime/config";
-import { listBundledPlugins } from "@simulatorlife/autodev-runtime/shared/bundled-plugins";
 import { autodevHome } from "@simulatorlife/autodev-runtime/shared/autodev-home";
-import {
-  commandCatalogueApproval,
-  pendingCommandCatalogueMessage
-} from "./command-catalogue-approval.ts";
+import { listBundledPlugins } from "@simulatorlife/autodev-runtime/shared/bundled-plugins";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import {
   writeErrorLine,
   writeLine
 } from "@simulatorlife/autodev-runtime/shared/output";
+import { keychainAvailable } from "@simulatorlife/autodev-runtime/shared/runtime-secrets";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 
-import { keychainAvailable } from "@simulatorlife/autodev-runtime/shared/runtime-secrets";
-
+import { resolveRuntimeSourcePath } from "../shared/runtime-source-root.ts";
 import {
   antigravitySkillsStatus,
   missingAntigravityPermissions
@@ -43,21 +39,18 @@ import {
   claudeCodeTelemetryDrift
 } from "./claude-code-telemetry.ts";
 import { checkCodeGraphDatabase } from "./code-graph-ensure.ts";
-import { resolveRuntimeSourcePath } from "../shared/runtime-source-root.ts";
 import { createCodexMcpSource } from "./codex-mcp-source.ts";
 import { createCodexPermissionsSource } from "./codex-permissions-source.ts";
-import { reconcileMcodeProfiles } from "./mcode-profile.ts";
+import {
+  commandCatalogueApproval,
+  pendingCommandCatalogueMessage
+} from "./command-catalogue-approval.ts";
 import {
   checkCocoIndex,
   checkCodeGraphContext,
   checkPythonLanguageServer,
   resolveDependencyOptions
 } from "./dependencies.ts";
-import {
-  checkRequiredKeychainSecrets,
-  findPlaintextKeychainSecrets,
-  REQUIRED_INSTALL_KEYCHAIN_SECRETS
-} from "./install-state.ts";
 import {
   CATALOGS,
   checkHookTrust,
@@ -82,9 +75,15 @@ import {
   staleUserSkillLinks
 } from "./install-materializer.ts";
 import {
+  checkRequiredKeychainSecrets,
+  findPlaintextKeychainSecrets,
+  REQUIRED_INSTALL_KEYCHAIN_SECRETS
+} from "./install-state.ts";
+import {
   launchAgentMatches,
   resolveLaunchAgentValues
 } from "./macos/launchagent.ts";
+import { reconcileMcodeProfiles } from "./mcode-profile.ts";
 import {
   resolveCommandOnPath,
   runRulesyncGenerate,
@@ -121,10 +120,7 @@ function privateOpenlitSecretsReady(codexHome: string): boolean {
   const secretPath = path.join(codexHome, "openlit-secrets.env");
   const producerKeyPath = path.join(codexHome, "openlit-otlp-api-key");
   try {
-    if (lstatSync(secretPath).isSymbolicLink()) return false;
-    if (lstatSync(producerKeyPath).isSymbolicLink()) return false;
-    if ((statSync(secretPath).mode & 0o077) !== 0) return false;
-    if ((statSync(producerKeyPath).mode & 0o077) !== 0) return false;
+    if (lstatSync(secretPath).isSymbolicLink() || lstatSync(producerKeyPath).isSymbolicLink() || ((statSync(secretPath).mode & 0o077) !== 0) || ((statSync(producerKeyPath).mode & 0o077) !== 0)) return false;
     const values = new Map<string, string>();
     for (const line of readFileSync(secretPath, "utf8").split(
       LINE_SPLIT_PATTERN
@@ -234,7 +230,7 @@ function checkAuth(
   options: { codexHome: string },
   failures: { value: number }
 ): void {
-  const envFile =
+  const environmentFile =
     process.env.CODEX_ENV_FILE?.trim() || path.join(options.codexHome, ".env");
   if (keychainAvailable(process.env)) {
     for (const secretName of checkRequiredKeychainSecrets(
@@ -244,21 +240,21 @@ function checkAuth(
       writeLine(`missing-keychain-secret ${secretName} in macOS Keychain`);
       failures.value = 1;
     }
-    for (const secretName of findPlaintextKeychainSecrets(envFile)) {
+    for (const secretName of findPlaintextKeychainSecrets(environmentFile)) {
       writeLine(
-        `stale-plaintext-secret ${secretName} in ${envFile} (store in macOS Keychain and remove plaintext entry from ${envFile})`
+        `stale-plaintext-secret ${secretName} in ${environmentFile} (store in macOS Keychain and remove plaintext entry from ${environmentFile})`
       );
       failures.value = 1;
     }
   }
-  if (!existsSync(envFile)) {
+  if (!existsSync(environmentFile)) {
     writeLine(
       "router auth token not staged (use --enable-router-auth during a planned restart)"
     );
     return;
   }
   const token =
-    readFileSync(envFile, "utf8")
+    readFileSync(environmentFile, "utf8")
       .match(CODEX_ROUTER_AUTH_TOKEN_PATTERN)?.[1]
       ?.trim() ?? "";
   if (!token) {
@@ -298,7 +294,9 @@ function checkAuth(
         { encoding: "utf8" }
       ).trim();
     } catch {
-      /* unavailable */
+      /*
+      unavailable
+      */
     }
     if (!launchd) {
       writeLine(
@@ -408,7 +406,7 @@ export function findStaleCodexPids(
 ): string[] {
   const pids = inspector.listCodexPids();
   if (pids.length === 0) return [];
-  const expectedEnvEntry = `CODEX_ROUTER_AUTH_TOKEN=${token}`;
+  const expectedEnvironmentEntry = `CODEX_ROUTER_AUTH_TOKEN=${token}`;
   const authenticatedPids = new Set<string>();
   const unauthenticatedPids: string[] = [];
 
@@ -423,7 +421,7 @@ export function findStaleCodexPids(
     const hasCurrentToken = command
       .split(" ")
       .map((entry) => entry.trim())
-      .includes(expectedEnvEntry);
+      .includes(expectedEnvironmentEntry);
     if (hasCurrentToken) {
       authenticatedPids.add(pid);
     } else {
@@ -501,10 +499,10 @@ function checkRulesAndSkills(
 }
 
 /**
- * Verify that the installed Runtime source generation is the content-addressed
- * tree this checkout expects, and that its package manifest and `node_modules`
- * link inside the generation match.
- */
+Verify that the installed Runtime source generation is the content-addressed
+tree this checkout expects, and that its package manifest and `node_modules`
+link inside the generation match.
+*/
 export function checkRuntimeSourceGeneration(
   codexHome: string,
   tree: RuntimeSourceTree
@@ -513,7 +511,7 @@ export function checkRuntimeSourceGeneration(
   readonly manifest: boolean;
   readonly nodeModules: boolean;
 } {
-  const generation =
+  const isGeneration =
     currentRuntimeSourceGeneration(codexHome) ===
     runtimeSourceGenerationName(tree);
   const manifestPath = path.join(
@@ -522,16 +520,16 @@ export function checkRuntimeSourceGeneration(
     "package.json"
   );
   const expectedManifest = tree.files.get("package.json");
-  let manifest = false;
+  let isManifest = false;
   if (expectedManifest !== undefined) {
     try {
       const stat = lstatSync(manifestPath);
-      manifest =
+      isManifest =
         stat.isFile() &&
         !stat.isSymbolicLink() &&
         readFileSync(manifestPath).equals(Buffer.from(expectedManifest));
     } catch {
-      manifest = false;
+      isManifest = false;
     }
   }
   const nodeModules =
@@ -539,7 +537,7 @@ export function checkRuntimeSourceGeneration(
       tree.nodeModules,
       path.join(codexHome, RUNTIME_SOURCE_LINK, "node_modules")
     ) && existsSync(tree.nodeModules);
-  return { generation, manifest, nodeModules };
+  return { generation: isGeneration, manifest: isManifest, nodeModules };
 }
 
 function checkRuntimeAndOt(
@@ -904,10 +902,10 @@ function checkUserConfigAndAgents(
 }
 
 /**
- * Codex loads `$CODEX_HOME/hooks.json` and the project's `.codex/hooks.json`;
- * the user-level file must match a fresh render and the repository must not
- * carry a second copy that would run every hook twice.
- */
+Codex loads `$CODEX_HOME/hooks.json` and the project's `.codex/hooks.json`;
+the user-level file must match a fresh render and the repository must not
+carry a second copy that would run every hook twice.
+*/
 function codexUserHooksCurrent(paths: RunInstallPaths): boolean {
   const installed = path.join(paths.codexHome, "hooks.json");
   try {
@@ -983,10 +981,10 @@ function checkOtelIngress(
 }
 
 /**
- * Claude Code's native exporter in the operator's user settings. Missing
- * managed keys are drift; an operator's own differing value is reported, not
- * failed, because the installer deliberately leaves it in place.
- */
+Claude Code's native exporter in the operator's user settings. Missing
+managed keys are drift; an operator's own differing value is reported, not
+failed, because the installer deliberately leaves it in place.
+*/
 function checkClaudeCodeTelemetry(
   paths: RunInstallPaths,
   failures: { value: number }
@@ -1085,16 +1083,16 @@ function checkAntigravityCli(
 }
 
 /**
- * The AutoDev-managed MiniMax Code profile has to hold the artifacts
- * MiniMax Code discovers natively, generated from the canonical RuleSync
- * sources. A profile that drifted from the canonical sources is a provider
- * running stale instructions, hooks or permissions.
- */
+The AutoDev-managed MiniMax Code profile has to hold the artifacts
+MiniMax Code discovers natively, generated from the canonical RuleSync
+sources. A profile that drifted from the canonical sources is a provider
+running stale instructions, hooks or permissions.
+*/
 /**
- * The Commands MCP serves only the operator-approved catalogue. A checkout
- * that proposes another revision is pending approval, not drift the installer
- * may silently repair.
- */
+The Commands MCP serves only the operator-approved catalogue. A checkout
+that proposes another revision is pending approval, not drift the installer
+may silently repair.
+*/
 function checkCommandCatalogueApproval(
   paths: RunInstallPaths,
   failures: { value: number }
@@ -1260,15 +1258,15 @@ function checkGlobalExcludes(
 
   try {
     const cgcDir = path.join(paths.home, ".codegraphcontext");
-    const cgcEnv = path.join(cgcDir, ".env");
+    const cgcEnvironment = path.join(cgcDir, ".env");
     const cgcIgnore = path.join(cgcDir, ".cgcignore");
-    const envOk =
-      lstatSafe(cgcEnv) && readFileSync(cgcEnv, "utf8").includes("repomix");
+    const environmentOk =
+      lstatSafe(cgcEnvironment) && readFileSync(cgcEnvironment, "utf8").includes("repomix");
     const ignoreOk =
       lstatSafe(cgcIgnore) &&
       readFileSync(cgcIgnore, "utf8").includes("repomix-output.*") &&
       readFileSync(cgcIgnore, "utf8").includes("CGC_REPORT.md");
-    check("global CodeGraphContext configuration", envOk && ignoreOk, failures);
+    check("global CodeGraphContext configuration", environmentOk && ignoreOk, failures);
   } catch {
     check("global CodeGraphContext configuration", false, failures);
   }

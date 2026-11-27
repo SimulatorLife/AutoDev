@@ -10,15 +10,14 @@ import { setTimeout as delay } from "node:timers/promises";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
-import { isEntryPoint } from "../shared/entry-point.ts";
-import { MCP_SERVER_XACPX } from "../shared/tool-names.ts";
 import {
   localPoolServerKey,
   qualifiedToolNames,
   supergatewayConfigSchema
 } from "../config/render-chatgpt-supergateway.ts";
+import { isEntryPoint } from "../shared/entry-point.ts";
+import { MCP_SERVER_XACPX } from "../shared/tool-names.ts";
 import { XacpxSessionManager } from "../xacpx/manager.ts";
-import { createGatewayAdmission } from "./gateway-admission.ts";
 import {
   startXacpxOrchestrationIpcServer,
   type XacpxOrchestrationIpcHandle
@@ -30,6 +29,7 @@ import {
   type ChatgptBackendPoolHandle,
   startChatgptBackendPool
 } from "./chatgpt-backend-pool.ts";
+import { createGatewayAdmission } from "./gateway-admission.ts";
 
 function isUnixSocketReachable(socketPath: string): Promise<boolean> {
   if (!socketPath || !existsSync(socketPath)) return Promise.resolve(false);
@@ -88,8 +88,8 @@ function assertApprovedCapabilities(client: Client): void {
   }
 }
 
-function requiredEnv(env: Record<string, string>, name: string): string {
-  const value = env[name];
+function requiredEnvironment(environment: Record<string, string>, name: string): string {
+  const value = environment[name];
   if (!value) throw new Error(`The gateway probe needs ${name}`);
   return value;
 }
@@ -112,7 +112,7 @@ async function probeLocalSurface(
       method: "POST",
       headers: {
         "content-type": "application/json",
-        ...(presented ? { authorization: `Bearer ${presented}` } : {})
+        ...(presented && { authorization: `Bearer ${presented}` })
       },
       body: JSON.stringify({
         jsonrpc: "2.0",
@@ -150,11 +150,13 @@ async function probeLocalSurface(
   }
 }
 
-/** A real Streamable HTTP MCP round trip using the official SDK across independent sessions. */
+/**
+A real Streamable HTTP MCP round trip using the official SDK across independent sessions.
+*/
 export async function probeSupergateway(
   executable: string,
   configFile: string,
-  env: Record<string, string> = Object.fromEntries(
+  environment: Record<string, string> = Object.fromEntries(
     Object.entries(process.env).filter(
       (entry): entry is [string, string] => entry[1] !== undefined
     )
@@ -172,10 +174,10 @@ export async function probeSupergateway(
   const localSurfaces = Object.values(config.mcpServers).flatMap((surface) =>
     "mcpServers" in surface ? [] : [surface]
   );
-  if (!surfaces.length)
+  if (surfaces.length === 0)
     throw new Error("Supergateway publishes no role surface");
   const apiKeyFile = surfaces[0]![1].apiKeyFile.replaceAll("$$", "$");
-  const token = readFileSync(apiKeyFile, "utf8").split("\n")[0]?.trim();
+  const token = readFileSync(apiKeyFile, "utf8").split("\n", 1)[0]?.trim();
   if (!token) throw new Error("Supergateway API key file is empty");
 
   const probePort = await allocateLoopbackPort();
@@ -185,12 +187,12 @@ export async function probeSupergateway(
   );
   reportPhase("prepare XACPX discovery coordinator");
   let probeXacpxIpc: XacpxOrchestrationIpcHandle | undefined;
-  let effectiveEnv = env;
+  let effectiveEnvironment = environment;
   if (
     surfaces.some(([, surface]) =>
-      Object.prototype.hasOwnProperty.call(surface.mcpServers, MCP_SERVER_XACPX)
+      Object.hasOwn(surface.mcpServers, MCP_SERVER_XACPX)
     ) &&
-    !(await isUnixSocketReachable(env.XACPX_ORCHESTRATION_SOCKET ?? ""))
+    !(await isUnixSocketReachable(environment.XACPX_ORCHESTRATION_SOCKET ?? ""))
   ) {
     const probeSocket = path.join(
       "/tmp",
@@ -199,11 +201,11 @@ export async function probeSupergateway(
     probeXacpxIpc = await startXacpxOrchestrationIpcServer({
       socketPath: probeSocket,
       manager: new XacpxSessionManager(),
-      authorizedWorkspaceRoot: env.AUTODEV_XACPX_WORKSPACE || process.cwd(),
-      repositoryRoot: env.AUTODEV_REPO_ROOT || process.cwd()
+      authorizedWorkspaceRoot: environment.AUTODEV_XACPX_WORKSPACE || process.cwd(),
+      repositoryRoot: environment.AUTODEV_REPO_ROOT || process.cwd()
     });
-    effectiveEnv = {
-      ...env,
+    effectiveEnvironment = {
+      ...environment,
       XACPX_ORCHESTRATION_SOCKET: probeSocket,
       AUTODEV_XACPX_COORDINATOR_SESSION: "chatgpt:policy-probe"
     };
@@ -217,24 +219,22 @@ export async function probeSupergateway(
   const pool: ChatgptBackendPoolHandle = await startChatgptBackendPool(
     poolConfig,
     {
-      gatewayEnv: effectiveEnv,
-      secretEnv: env,
-      ...(localSurfaces.length > 0
-        ? {
+      gatewayEnv: effectiveEnvironment,
+      secretEnv: environment,
+      ...((localSurfaces.length > 0) && {
             admission: createGatewayAdmission({
-              repositoryRoot: requiredEnv(env, "AUTODEV_REPO_ROOT"),
-              node: requiredEnv(env, "AUTODEV_NODE_BIN"),
-              home: requiredEnv(env, "HOME"),
-              codexHome: requiredEnv(env, "CODEX_HOME"),
-              catalogueWorkspace: requiredEnv(env, "AUTODEV_MCP_WORKSPACE"),
+              repositoryRoot: requiredEnvironment(environment, "AUTODEV_REPO_ROOT"),
+              node: requiredEnvironment(environment, "AUTODEV_NODE_BIN"),
+              home: requiredEnvironment(environment, "HOME"),
+              codexHome: requiredEnvironment(environment, "CODEX_HOME"),
+              catalogueWorkspace: requiredEnvironment(environment, "AUTODEV_MCP_WORKSPACE"),
               runtimeSource: path.resolve(import.meta.dirname, "..")
             })
-          }
-        : {})
+          })
     }
   );
-  const gatewayEnv = {
-    ...effectiveEnv,
+  const gatewayEnvironment = {
+    ...effectiveEnvironment,
     [CHATGPT_MCP_POOL_PORT_ENV]: String(pool.port),
     [CHATGPT_MCP_POOL_TOKEN_ENV]: pool.token
   };
@@ -243,12 +243,12 @@ export async function probeSupergateway(
     executable,
     ["--config", configFile, "--port", String(probePort)],
     {
-      env: gatewayEnv,
+      env: gatewayEnvironment,
       stdio: ["pipe", "ignore", "inherit"]
     }
   );
   try {
-    let ready = false;
+    let isReady = false;
     for (let attempt = 0; attempt < 150; attempt++) {
       if (child.exitCode !== null || child.signalCode !== null) {
         throw new Error(
@@ -260,15 +260,17 @@ export async function probeSupergateway(
           signal: AbortSignal.timeout(1000)
         });
         if (response.ok) {
-          ready = true;
+          isReady = true;
           break;
         }
       } catch {
-        /* waiting for Supergateway HTTP listener */
+        /*
+        waiting for Supergateway HTTP listener
+        */
       }
       await delay(200);
     }
-    if (!ready) throw new Error("Supergateway probe did not become ready");
+    if (!isReady) throw new Error("Supergateway probe did not become ready");
 
     for (const [role, surface] of surfaces) {
       const label = /^[a-z0-9-]+$/u.test(role) ? role : "unknown";
@@ -355,7 +357,7 @@ export async function probeSupergateway(
     const queue = localSurfaces.values();
     // The reported phase names the failure, so once a surface fails the other
     // workers stop reporting and that surface's phase is the one that stands.
-    let failed = false;
+    let isFailed = false;
     const probeNext = async (): Promise<void> => {
       for (const surface of queue) {
         const label = /^\/local\/[a-z0-9-]+\/[a-zA-Z0-9_.-]+$/u.test(
@@ -378,15 +380,15 @@ export async function probeSupergateway(
             ]?.tools ?? [],
             (phase) => {
               current = `${label}: ${phase}`;
-              if (!failed) reportPhase(current);
+              if (!isFailed) reportPhase(current);
             }
           );
         } catch (error) {
-          if (!failed) reportPhase(current);
-          failed = true;
+          if (!isFailed) reportPhase(current);
+          isFailed = true;
           throw error;
         }
-        if (failed) return;
+        if (isFailed) return;
       }
     };
     await Promise.all(

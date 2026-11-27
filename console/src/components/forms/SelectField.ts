@@ -8,23 +8,23 @@ import {
 } from "./SelectChevron.ts";
 
 /**
- * The Console's single select control.
- *
- * Selects stay native elements so keyboard behaviour, form submission, and
- * platform picker behaviour remain correct, but every one of them is styled
- * here. Native `appearance` is dropped so the closed control cannot fall back
- * to the platform's light widget, which is how a light select ended up inside
- * a dark-only product; the chevron is drawn from the shared icon set instead.
- *
- * The dropdown list itself is themed by the document-level
- * `color-scheme: dark` in `app/globals.css`, so the opened list matches the
- * closed control.
- *
- * The control chrome itself lives in `ui/field-classes.ts`, because it is shared
- * with the controls that have no component -- a text input, a date input. What
- * the select adds to that shared chrome is its cursor: a select is a target, so
- * it shows the pointer, while a text field shows the caret.
- */
+The Console's single select control.
+
+Selects stay native elements so keyboard behaviour, form submission, and
+platform picker behaviour remain correct, but every one of them is styled
+here. Native `appearance` is dropped so the closed control cannot fall back
+to the platform's light widget, which is how a light select ended up inside
+a dark-only product; the chevron is drawn from the shared icon set instead.
+
+The dropdown list itself is themed by the document-level
+`color-scheme: dark` in `app/globals.css`, so the opened list matches the
+closed control.
+
+The control chrome itself lives in `ui/field-classes.ts`, because it is shared
+with the controls that have no component -- a text input, a date input. What
+the select adds to that shared chrome is its cursor: a select is a target, so
+it shows the pointer, while a text field shows the caret.
+*/
 
 const CONTROL_CLASS = SELECT_CONTROL_CLASS;
 
@@ -37,77 +37,89 @@ interface SelectOption {
 export interface SelectFieldProps {
   readonly name: string;
   /**
-   * DOM id for the control, when one control repeats on a page.
-   *
-   * The id is what a `<label for>` points at, so two controls sharing an id
-   * leave every label ambiguous: the screen reader announces whichever one the
-   * DOM happens to resolve, and clicking either label focuses the first. `name`
-   * cannot be used for this, because the name is the wire contract with the
-   * route and several role controls legitimately submit `priority` from
-   * different forms on the same page.
-   */
+  DOM id for the control, when one control repeats on a page.
+  
+  The id is what a `<label for>` points at, so two controls sharing an id
+  leave every label ambiguous: the screen reader announces whichever one the
+  DOM happens to resolve, and clicking either label focuses the first. `name`
+  cannot be used for this, because the name is the wire contract with the
+  route and several role controls legitimately submit `priority` from
+  different forms on the same page.
+  */
   readonly id?: string | undefined;
-  /** Accessible label rendered before the control. */
+  /**
+  Accessible label rendered before the control.
+  */
   readonly label: string;
   /**
-   * Render `label` for assistive technology only.
-   *
-   * A dense grid row already names its control in visible text beside it -- the
-   * role name next to that role's priority and model selects, for instance --
-   * so repeating the label in front of every control doubles the words without
-   * adding any. The label still reaches a screen reader, which is the point: it
-   * is removed from the *visual* layout, not from the accessible name.
-   * `aria-label` would be wrong here because it would replace the name rather
-   * than reuse the same string the reader can see on the row, which is what
-   * lets the two be checked against each other.
-   */
+  Render `label` for assistive technology only.
+  
+  A dense grid row already names its control in visible text beside it -- the
+  role name next to that role's priority and model selects, for instance --
+  so repeating the label in front of every control doubles the words without
+  adding any. The label still reaches a screen reader, which is the point: it
+  is removed from the *visual* layout, not from the accessible name.
+  `aria-label` would be wrong here because it would replace the name rather
+  than reuse the same string the reader can see on the row, which is what
+  lets the two be checked against each other.
+  */
   readonly hideLabel?: boolean | undefined;
   readonly options: readonly SelectOption[];
-  /** One value, or several when the control is a `multiple` select. */
+  /**
+  One value, or several when the control is a `multiple` select.
+  */
   readonly defaultValue?: string | readonly string[] | undefined;
   /**
-   * The selected value, for a control whose owner decides what it shows.
-   *
-   * With `value` the control is controlled: it shows what its owner says and
-   * nothing else, so a page re-read after a write shows what the server
-   * holds. A `defaultValue` is read once, when the control mounts, and a
-   * changed one is ignored after that.
-   */
+  The selected value, for a control whose owner decides what it shows.
+  
+  With `value` the control is controlled: it shows what its owner says and
+  nothing else, so a page re-read after a write shows what the server
+  holds. A `defaultValue` is read once, when the control mounts, and a
+  changed one is ignored after that.
+  */
   readonly value?: string | undefined;
   readonly disabled?: boolean | undefined;
-  /** An additive semantic color treatment; it never replaces the shared chrome. */
+  /**
+  An additive semantic color treatment; it never replaces the shared chrome.
+  */
   readonly tone?: "warning" | undefined;
   /**
-   * Why the control is disabled, in one sentence.
-   *
-   * The target state is explicit: an unobserved or immutable control stays in
-   * place, disabled, "with the reason available". Staying disabled without the
-   * reason is the failure -- a filter the reader cannot use, beside three they
-   * can, with nothing to say whether it is broken, not yet populated, or
-   * permanently fixed. It is a separate prop rather than a convention because a
-   * convention is exactly what let four `/usage` selects ship with no reason at
-   * all: the visible label already said "Not observed", so each site looked
-   * complete.
-   *
-   * Rendered twice on purpose, to the two audiences that need it: `title` for a
-   * pointer, and a visually hidden description referenced by `aria-describedby`
-   * for a screen reader. `aria-label` is deliberately not used -- it would
-   * replace the visible "Workspace:" label instead of adding to it.
-   */
+  Why the control is disabled, in one sentence.
+  
+  The target state is explicit: an unobserved or immutable control stays in
+  place, disabled, "with the reason available". Staying disabled without the
+  reason is the failure -- a filter the reader cannot use, beside three they
+  can, with nothing to say whether it is broken, not yet populated, or
+  permanently fixed. It is a separate prop rather than a convention because a
+  convention is exactly what let four `/usage` selects ship with no reason at
+  all: the visible label already said "Not observed", so each site looked
+  complete.
+  
+  Rendered twice on purpose, to the two audiences that need it: `title` for a
+  pointer, and a visually hidden description referenced by `aria-describedby`
+  for a screen reader. `aria-label` is deliberately not used -- it would
+  replace the visible "Workspace:" label instead of adding to it.
+  */
   readonly disabledReason?: string | undefined;
   /**
-   * Allow selecting several values while the control stays one row tall.
-   * Callers that submit a plain GET form pair this with their own hidden
-   * inputs, because a `multiple` select serializes as repeated names.
-   */
+  Allow selecting several values while the control stays one row tall.
+  Callers that submit a plain GET form pair this with their own hidden
+  inputs, because a `multiple` select serializes as repeated names.
+  */
   readonly multiple?: boolean | undefined;
-  /** Called when a single selection changes in a client-rendered form. */
+  /**
+  Called when a single selection changes in a client-rendered form.
+  */
   readonly onChange?:
     ((event: React.ChangeEvent<HTMLSelectElement>) => void) | undefined;
   readonly className?: string | undefined;
-  /** Marks the control for tests and stable browser assertions. */
+  /**
+  Marks the control for tests and stable browser assertions.
+  */
   readonly testId?: string | undefined;
-  /** Extra data-* state flags. Visual styling belongs to `tone` or the shared control class. */
+  /**
+  Extra data-* state flags. Visual styling belongs to `tone` or the shared control class.
+  */
   readonly dataAttributes?:
     Readonly<Record<`data-${string}`, string>> | undefined;
 }
@@ -171,17 +183,13 @@ export function SelectField({
               ? {}
               : { defaultValue }
             : { value }),
-          ...(disabled === undefined ? {} : { disabled }),
-          ...(describedBy === undefined
-            ? {}
-            : { "aria-describedby": describedBy }),
-          ...(disabled === true && disabledReason !== undefined
-            ? { title: disabledReason }
-            : {}),
+          ...(disabled !== undefined && { disabled }),
+          ...(describedBy !== undefined && { "aria-describedby": describedBy }),
+          ...(disabled === true && disabledReason !== undefined && { title: disabledReason }),
           // A multi-select collapses to a single row so it reads like a
           // dropdown while still accepting several values.
-          ...(multiple === true ? { multiple: true, size: 1 } : {}),
-          ...(onChange === undefined ? {} : { onChange }),
+          ...((multiple === true) && { multiple: true, size: 1 }),
+          ...(onChange !== undefined && { onChange }),
           // `tone` only adds color variants; the shared border, dimensions,
           // padding, chevron space and disabled behavior remain on every select.
           className: `${CONTROL_CLASS}${
@@ -189,9 +197,9 @@ export function SelectField({
               ? " data-[tone=warning]:border-warning/50 data-[tone=warning]:bg-warning/15 data-[tone=warning]:text-warning"
               : ""
           }`,
-          ...(testId === undefined ? {} : { "data-select": testId }),
+          ...(testId !== undefined && { "data-select": testId }),
           ...dataAttributes,
-          ...(tone === undefined ? {} : { "data-tone": tone })
+          ...(tone !== undefined && { "data-tone": tone })
         },
         ...options.map((option) =>
           React.createElement(
@@ -199,9 +207,7 @@ export function SelectField({
             {
               key: option.value,
               value: option.value,
-              ...(option.disabled === undefined
-                ? {}
-                : { disabled: option.disabled })
+              ...(option.disabled !== undefined && { disabled: option.disabled })
             },
             option.label
           )

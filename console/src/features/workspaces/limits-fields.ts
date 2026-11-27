@@ -1,16 +1,16 @@
 import type { WorkspacePlaytestLimits } from "@simulatorlife/autodev-core";
 
 /**
- * The nine resource-limit fields Workspaces owns on an exact playtesting
- * approval, in the one order the approve form and its parsing route both
- * read them in.
- *
- * Core's `assertWorkspacePlaytestApproval` is the authoritative bound on each
- * field; this table only has to agree with Core on *which* fields exist and
- * whether a field is a float (`cpuCores`) or an integer. Restating the exact
- * numeric bounds here would drift the day Core's changed and still pass,
- * because the Runtime -- not the Console -- is what actually enforces them.
- */
+The nine resource-limit fields Workspaces owns on an exact playtesting
+approval, in the one order the approve form and its parsing route both
+read them in.
+
+Core's `assertWorkspacePlaytestApproval` is the authoritative bound on each
+field; this table only has to agree with Core on *which* fields exist and
+whether a field is a float (`cpuCores`) or an integer. Restating the exact
+numeric bounds here would drift the day Core's changed and still pass,
+because the Runtime -- not the Console -- is what actually enforces them.
+*/
 export interface WorkspacePlaytestLimitField {
   readonly name: keyof WorkspacePlaytestLimits;
   readonly label: string;
@@ -34,7 +34,9 @@ export const WORKSPACE_PLAYTEST_LIMIT_FIELDS: readonly WorkspacePlaytestLimitFie
     { name: "critiqueCount", label: "Critique count", isFloat: false }
   ];
 
-/** Parse one submitted limit field. `null` means the field was malformed. */
+/**
+Parse one submitted limit field. `null` means the field was malformed.
+*/
 export function parseWorkspacePlaytestLimitValue(
   field: WorkspacePlaytestLimitField,
   raw: string | null

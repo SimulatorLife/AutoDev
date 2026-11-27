@@ -12,26 +12,26 @@ import type {
 import { RuleSyncRepository } from "./rulesync-repository.ts";
 
 /**
- * Tools catalog repository.
- *
- * This module owns the authoritative reading of Tool catalog entries from
- * RuleSync MCP declarations plus the execution-contract role projection. It
- * never fabricates availability: missing or invalid sources render as
- * `not-observed`/`invalid` with no entries. The coverage of the composite
- * belongs to whoever merges this projection with the contract's.
- *
- * The Tools composite catalog is built by:
- *   1. Reading every RuleSync MCP server declaration whose target projection
- *      enumerates an explicit `enabled_tools` list (canonical authority).
- *   2. Joining the execution-contract role projection so role exposure is
- *      reflected per tool.
- *   3. Mapping `codex_app` (plugin) vs every other MCP server so the UI
- *      surfaces the originating owner.
- *
- * Native Codex/bridge tools (e.g. `web_search`, `web_fetch`, `exec`) are
- * registered through the execution contract and the dedicated
- * codex-native entrypoints below.
- */
+Tools catalog repository.
+
+This module owns the authoritative reading of Tool catalog entries from
+RuleSync MCP declarations plus the execution-contract role projection. It
+never fabricates availability: missing or invalid sources render as
+`not-observed`/`invalid` with no entries. The coverage of the composite
+belongs to whoever merges this projection with the contract's.
+
+The Tools composite catalog is built by:
+  1. Reading every RuleSync MCP server declaration whose target projection
+     enumerates an explicit `enabled_tools` list (canonical authority).
+  2. Joining the execution-contract role projection so role exposure is
+     reflected per tool.
+  3. Mapping `codex_app` (plugin) vs every other MCP server so the UI
+     surfaces the originating owner.
+
+Native Codex/bridge tools (e.g. `web_search`, `web_fetch`, `exec`) are
+registered through the execution contract and the dedicated
+codex-native entrypoints below.
+*/
 
 const PLUGIN_MCP_SERVERS = new Set(["codex_app"]);
 const RULESYNC_MCP_AUTHORITY = "rulesync-mcp" as const;
@@ -52,17 +52,17 @@ export interface ToolCatalogAdapterConfig {
 }
 
 /**
- * What the adapter read.
- *
- * The adapter publishes the source's state and the entries it produced, and
- * nothing else: the catalogue's coverage belongs to whoever owns the
- * composite. The Runtime merges this projection with the execution contract's
- * role projection, and the coverage it publishes describes that composite --
- * which is a different question from the one this projection can answer. A
- * second derivation of the same word, over a narrower scope, is how the two
- * drift apart: this one called an invalid source "unavailable" while the
- * composite called it "unknown".
- */
+What the adapter read.
+
+The adapter publishes the source's state and the entries it produced, and
+nothing else: the catalogue's coverage belongs to whoever owns the
+composite. The Runtime merges this projection with the execution contract's
+role projection, and the coverage it publishes describes that composite --
+which is a different question from the one this projection can answer. A
+second derivation of the same word, over a narrower scope, is how the two
+drift apart: this one called an invalid source "unavailable" while the
+composite called it "unknown".
+*/
 export interface ToolCatalogAdapterResult {
   readonly validity: ToolCatalogValidity;
   readonly source: string;
@@ -83,11 +83,11 @@ export class ToolCatalogAdapter {
   }
 
   /**
-   * Build the composite catalog straight from a parsed RuleSync MCP state
-   * plus the execution-contract role projection. This is the lower-level
-   * entry point used by the Console `/control/tools` adapter and the
-   * targeted tests that want to drive the catalog with synthetic state.
-   */
+  Build the composite catalog straight from a parsed RuleSync MCP state
+  plus the execution-contract role projection. This is the lower-level
+  entry point used by the Console `/control/tools` adapter and the
+  targeted tests that want to drive the catalog with synthetic state.
+  */
   fromMcpState(
     mcpState: RuleSyncMcpState,
     executionContract: Readonly<
@@ -326,15 +326,13 @@ function projectNativeItem(name: string, entry: RoleEntry): ToolCatalogItem {
     sourceAuthority: entry.sourceAuthority,
     exposedRoles: Array.from(entry.roles).sort(COLLATOR.compare),
     availability: CODEX_NATIVE_TOOLS.has(name) ? "configured" : "not-observed",
-    ...(entry.sourceAuthority === CODEX_NATIVE_AUTHORITY
-      ? {
+    ...((entry.sourceAuthority === CODEX_NATIVE_AUTHORITY) && {
           canonicalEditSurface: {
             section: "agents",
             identifier: "any",
             label: "Provider role exposure"
           }
-        }
-      : {})
+        })
   };
 }
 
@@ -370,7 +368,7 @@ function projectCatalogItems(
   declaredByName: Map<string, DeclaredServer>
 ): readonly ToolCatalogItem[] {
   const items: ToolCatalogItem[] = [];
-  for (const [key, entry] of roleByTool.entries()) {
+  for (const [key, entry] of roleByTool) {
     const parts = key.split("::");
     if (parts.length === 2) {
       const [, name] = parts;

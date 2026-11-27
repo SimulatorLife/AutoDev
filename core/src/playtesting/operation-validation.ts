@@ -94,13 +94,13 @@ function stringArray(
   }
 }
 
-function assertRevisionParams(
-  params: unknown,
+function assertRevisionParameters(
+  parameters: unknown,
   extraKeys: readonly string[],
   field: string
 ): Readonly<Record<string, unknown>> {
   const fields = ["episodeId", "expectedRevision", ...extraKeys];
-  const value = objectWithKeys(params, fields, field);
+  const value = objectWithKeys(parameters, fields, field);
   nonEmptyString(value.episodeId, field + ".episodeId");
   nonNegativeInteger(value.expectedRevision, field + ".expectedRevision");
   return value;
@@ -110,22 +110,22 @@ function assertArtifactReference(
   value: unknown,
   field: string
 ): asserts value is PlaytestArtifactReference {
-  const ref = objectWithKeys(
+  const reference = objectWithKeys(
     value,
     ["artifactId", "sha256", "bytes", "mediaType", "revision"],
     field
   );
-  nonEmptyString(ref.artifactId, field + ".artifactId");
-  if (typeof ref.sha256 !== "string" || !SHA256_PATTERN.test(ref.sha256)) {
+  nonEmptyString(reference.artifactId, field + ".artifactId");
+  if (typeof reference.sha256 !== "string" || !SHA256_PATTERN.test(reference.sha256)) {
     throw new TypeError(field + ".sha256 must be a SHA-256 digest.");
   }
-  nonNegativeInteger(ref.bytes, field + ".bytes");
-  if ((ref.bytes as number) > MAX_ARTIFACT_BYTES) {
+  nonNegativeInteger(reference.bytes, field + ".bytes");
+  if ((reference.bytes as number) > MAX_ARTIFACT_BYTES) {
     throw new TypeError(field + ".bytes exceeds the artifact storage bound.");
   }
-  nonEmptyString(ref.mediaType, field + ".mediaType");
-  if (ref.revision !== undefined)
-    nonNegativeInteger(ref.revision, field + ".revision");
+  nonEmptyString(reference.mediaType, field + ".mediaType");
+  if (reference.revision !== undefined)
+    nonNegativeInteger(reference.revision, field + ".revision");
 }
 
 function assertGameEvent(
@@ -147,9 +147,9 @@ function assertGameEvent(
     throw new TypeError(field + ".fields must be an object.");
 }
 
-function assertRevisionBoundParams(
+function assertRevisionBoundParameters(
   method: PlaytestAdapterMethod,
-  params: Readonly<Record<string, unknown>>
+  parameters: Readonly<Record<string, unknown>>
 ): void {
   const extraKeys =
     method === GAME_METHOD.step
@@ -159,7 +159,7 @@ function assertRevisionBoundParams(
         : CAPTURE_RANGE_METHODS.has(method)
           ? ["startStep", "endStep"]
           : [];
-  const value = assertRevisionParams(params, extraKeys, method);
+  const value = assertRevisionParameters(parameters, extraKeys, method);
   if (method === GAME_METHOD.step) {
     nonEmptyString(value.actionId, "game.step.actionId");
   }
@@ -177,13 +177,13 @@ function assertRevisionBoundParams(
   }
 }
 
-function assertNonRevisionBoundParams(
+function assertNonRevisionBoundParameters(
   method: PlaytestAdapterMethod,
-  params: Readonly<Record<string, unknown>>
+  parameters: Readonly<Record<string, unknown>>
 ): void {
   switch (method) {
     case GAME_METHOD.capabilities: {
-      const value = objectWithKeys(params, ["protocolVersion"], method);
+      const value = objectWithKeys(parameters, ["protocolVersion"], method);
       if (value.protocolVersion !== 1) {
         throw new TypeError("game.capabilities requires protocolVersion 1.");
       }
@@ -191,7 +191,7 @@ function assertNonRevisionBoundParams(
     }
     case GAME_METHOD.reset: {
       const value = objectWithKeys(
-        params,
+        parameters,
         ["seed", "scenarioId", "approvedVariantHash"],
         method
       );
@@ -205,7 +205,7 @@ function assertNonRevisionBoundParams(
     }
     case GAME_METHOD.replay: {
       const value = objectWithKeys(
-        params,
+        parameters,
         ["trace", "expectedBuildSha", "throughStep"],
         method
       );
@@ -228,7 +228,7 @@ function assertNonRevisionBoundParams(
     }
     case GAME_METHOD.fork: {
       const value = objectWithKeys(
-        params,
+        parameters,
         ["snapshot", "alternativeActionId", "rngPolicy", "rngPolicyVersion"],
         method
       );
@@ -248,7 +248,7 @@ function assertNonRevisionBoundParams(
       return;
     }
     case GAME_METHOD.cancel: {
-      const value = objectWithKeys(params, ["requestId"], method);
+      const value = objectWithKeys(parameters, ["requestId"], method);
       nonEmptyString(value.requestId, "game.cancel.requestId");
       return;
     }
@@ -258,16 +258,18 @@ function assertNonRevisionBoundParams(
   }
 }
 
-/** Validate method-specific outbound params beyond the generic JSON-RPC envelope. */
+/**
+Validate method-specific outbound params beyond the generic JSON-RPC envelope.
+*/
 export function assertPlaytestAdapterParams(
   method: PlaytestAdapterMethod,
-  params: Readonly<Record<string, unknown>>
+  parameters: Readonly<Record<string, unknown>>
 ): void {
   if (REVISION_BOUND_METHODS.has(method)) {
-    assertRevisionBoundParams(method, params);
+    assertRevisionBoundParameters(method, parameters);
     return;
   }
-  assertNonRevisionBoundParams(method, params);
+  assertNonRevisionBoundParameters(method, parameters);
 }
 
 function assertResetResult(result: unknown): void {
@@ -319,7 +321,7 @@ function assertRngCheckpoint(value: unknown, field: string): void {
 }
 
 function assertObserveResult(
-  params: Readonly<Record<string, unknown>>,
+  parameters: Readonly<Record<string, unknown>>,
   result: unknown
 ): void {
   const value = objectWithKeys(
@@ -327,7 +329,7 @@ function assertObserveResult(
     ["episodeId", "revision", "observation", "turnContext", "frame"],
     GAME_METHOD.observe
   );
-  assertEpisodeRevision(value, params, GAME_METHOD.observe);
+  assertEpisodeRevision(value, parameters, GAME_METHOD.observe);
   if (
     !isJsonValue(value.observation) ||
     (value.turnContext !== null && !isJsonValue(value.turnContext))
@@ -341,7 +343,7 @@ function assertObserveResult(
 }
 
 function assertLegalActionsResult(
-  params: Readonly<Record<string, unknown>>,
+  parameters: Readonly<Record<string, unknown>>,
   result: unknown
 ): void {
   const value = objectWithKeys(
@@ -349,7 +351,7 @@ function assertLegalActionsResult(
     ["episodeId", "revision", "actions"],
     GAME_METHOD.legalActions
   );
-  assertEpisodeRevision(value, params, GAME_METHOD.legalActions);
+  assertEpisodeRevision(value, parameters, GAME_METHOD.legalActions);
   if (!Array.isArray(value.actions))
     throw new TypeError("game.legalActions actions must be an array.");
   const ids = new Set<string>();
@@ -380,7 +382,7 @@ function assertLegalActionsResult(
 }
 
 function assertStepResult(
-  params: Readonly<Record<string, unknown>>,
+  parameters: Readonly<Record<string, unknown>>,
   result: unknown
 ): void {
   const value = objectWithKeys(
@@ -388,14 +390,14 @@ function assertStepResult(
     ["episodeId", "revision", "acceptedActionId", "eventIds", "terminal"],
     GAME_METHOD.step
   );
-  assertEpisodeId(value, params, GAME_METHOD.step);
+  assertEpisodeId(value, parameters, GAME_METHOD.step);
   nonNegativeInteger(value.revision, "game.step.revision");
-  if (value.revision <= (params.expectedRevision as number)) {
+  if (value.revision <= (parameters.expectedRevision as number)) {
     throw new TypeError(
       "game.step result revision must advance past expectedRevision."
     );
   }
-  if (value.acceptedActionId !== params.actionId) {
+  if (value.acceptedActionId !== parameters.actionId) {
     throw new TypeError(
       "game.step acceptedActionId must equal the requested legal action."
     );
@@ -479,7 +481,7 @@ function assertGameMetricEvaluation(
 }
 
 function assertOutcomeResult(
-  params: Readonly<Record<string, unknown>>,
+  parameters: Readonly<Record<string, unknown>>,
   result: unknown
 ): void {
   const value = objectWithKeys(
@@ -495,7 +497,7 @@ function assertOutcomeResult(
     ],
     GAME_METHOD.outcome
   );
-  assertEpisodeRevision(value, params, GAME_METHOD.outcome);
+  assertEpisodeRevision(value, parameters, GAME_METHOD.outcome);
   if (value.state !== "terminal" && value.state !== "partial") {
     throw new TypeError("game.outcome state must be terminal or partial.");
   }
@@ -534,7 +536,7 @@ function assertOutcomeResult(
 }
 
 function assertInvariantsResult(
-  params: Readonly<Record<string, unknown>>,
+  parameters: Readonly<Record<string, unknown>>,
   result: unknown
 ): void {
   const value = objectWithKeys(
@@ -542,7 +544,7 @@ function assertInvariantsResult(
     ["episodeId", "revision", "witnesses"],
     GAME_METHOD.invariants
   );
-  assertEpisodeRevision(value, params, GAME_METHOD.invariants);
+  assertEpisodeRevision(value, parameters, GAME_METHOD.invariants);
   if (!Array.isArray(value.witnesses))
     throw new TypeError("game.invariants witnesses must be an array.");
   const ids = new Set<string>();
@@ -571,7 +573,7 @@ function assertInvariantsResult(
 }
 
 function assertSnapshotResult(
-  params: Readonly<Record<string, unknown>>,
+  parameters: Readonly<Record<string, unknown>>,
   result: unknown
 ): void {
   const value = objectWithKeys(
@@ -586,7 +588,7 @@ function assertSnapshotResult(
     ],
     GAME_METHOD.snapshot
   );
-  assertEpisodeRevision(value, params, GAME_METHOD.snapshot);
+  assertEpisodeRevision(value, parameters, GAME_METHOD.snapshot);
   if (
     typeof value.stateHash !== "string" ||
     !SHA256_PATTERN.test(value.stateHash)
@@ -594,7 +596,7 @@ function assertSnapshotResult(
     throw new TypeError("game.snapshot stateHash must be SHA-256.");
   }
   assertRngCheckpoint(value.rngCheckpoint, "game.snapshot.rngCheckpoint");
-  if (params.includeArtifact === true) {
+  if (parameters.includeArtifact === true) {
     assertArtifactReference(value.snapshot, "game.snapshot.snapshot");
     if (
       typeof value.integrityHash !== "string" ||
@@ -692,7 +694,7 @@ function assertForkResult(result: unknown): void {
 }
 
 function assertCaptureEventsResult(
-  params: Readonly<Record<string, unknown>>,
+  parameters: Readonly<Record<string, unknown>>,
   result: unknown
 ): void {
   const value = objectWithKeys(
@@ -700,7 +702,7 @@ function assertCaptureEventsResult(
     ["episodeId", "revision", "events", "omittedCount"],
     GAME_METHOD.captureEvents
   );
-  assertEpisodeRevision(value, params, GAME_METHOD.captureEvents);
+  assertEpisodeRevision(value, parameters, GAME_METHOD.captureEvents);
   if (!Array.isArray(value.events))
     throw new TypeError("game.captureEvents events must be an array.");
   nonNegativeInteger(value.omittedCount, "game.captureEvents.omittedCount");
@@ -709,7 +711,7 @@ function assertCaptureEventsResult(
 }
 
 function assertCaptureFrameResult(
-  params: Readonly<Record<string, unknown>>,
+  parameters: Readonly<Record<string, unknown>>,
   result: unknown
 ): void {
   const value = objectWithKeys(
@@ -717,14 +719,14 @@ function assertCaptureFrameResult(
     ["episodeId", "revision", "step", "capturedAt", "artifact"],
     GAME_METHOD.captureFrame
   );
-  assertEpisodeRevision(value, params, GAME_METHOD.captureFrame);
+  assertEpisodeRevision(value, parameters, GAME_METHOD.captureFrame);
   nonNegativeInteger(value.step, "game.captureFrame.step");
   nonEmptyString(value.capturedAt, "game.captureFrame.capturedAt");
   assertArtifactReference(value.artifact, "game.captureFrame.artifact");
 }
 
 function assertCancelResult(
-  params: Readonly<Record<string, unknown>>,
+  parameters: Readonly<Record<string, unknown>>,
   result: unknown
 ): void {
   const value = objectWithKeys(
@@ -732,7 +734,7 @@ function assertCancelResult(
     ["requestId", "acknowledged", "episodeDisposition"],
     GAME_METHOD.cancel
   );
-  if (value.requestId !== params.requestId)
+  if (value.requestId !== parameters.requestId)
     throw new TypeError(
       "game.cancel result requestId must match the canceled request."
     );
@@ -747,10 +749,12 @@ function assertCancelResult(
   }
 }
 
-/** Validate a successful result against its method request. */
+/**
+Validate a successful result against its method request.
+*/
 export function assertPlaytestAdapterResult(
   method: PlaytestAdapterMethod,
-  params: Readonly<Record<string, unknown>>,
+  parameters: Readonly<Record<string, unknown>>,
   result: unknown
 ): void {
   switch (method) {
@@ -763,32 +767,32 @@ export function assertPlaytestAdapterResult(
       return;
     }
     case GAME_METHOD.observe: {
-      assertObserveResult(params, result);
+      assertObserveResult(parameters, result);
       return;
     }
     case GAME_METHOD.legalActions: {
-      assertLegalActionsResult(params, result);
+      assertLegalActionsResult(parameters, result);
       return;
     }
     case GAME_METHOD.step: {
-      assertStepResult(params, result);
+      assertStepResult(parameters, result);
       return;
     }
     case GAME_METHOD.outcome: {
-      assertOutcomeResult(params, result);
+      assertOutcomeResult(parameters, result);
       return;
     }
     case GAME_METHOD.invariants: {
-      assertInvariantsResult(params, result);
+      assertInvariantsResult(parameters, result);
       return;
     }
     case GAME_METHOD.snapshot: {
-      assertSnapshotResult(params, result);
+      assertSnapshotResult(parameters, result);
       return;
     }
     case GAME_METHOD.replay: {
       assertReplayResult(result);
-      const request = params as Readonly<Record<string, unknown>>;
+      const request = parameters as Readonly<Record<string, unknown>>;
       const response = result as Readonly<Record<string, unknown>>;
       if (response.replayedThroughStep !== request.throughStep) {
         throw new TypeError(
@@ -802,15 +806,15 @@ export function assertPlaytestAdapterResult(
       return;
     }
     case GAME_METHOD.captureEvents: {
-      assertCaptureEventsResult(params, result);
+      assertCaptureEventsResult(parameters, result);
       return;
     }
     case GAME_METHOD.captureFrame: {
-      assertCaptureFrameResult(params, result);
+      assertCaptureFrameResult(parameters, result);
       return;
     }
     case GAME_METHOD.cancel: {
-      assertCancelResult(params, result);
+      assertCancelResult(parameters, result);
       return;
     }
     default: {
@@ -824,11 +828,11 @@ export function assertPlaytestAdapterResult(
 
 function assertEpisodeId(
   result: Readonly<Record<string, unknown>>,
-  params: Readonly<Record<string, unknown>>,
+  parameters: Readonly<Record<string, unknown>>,
   method: string
 ): void {
   nonEmptyString(result.episodeId, method + ".result.episodeId");
-  if (result.episodeId !== params.episodeId)
+  if (result.episodeId !== parameters.episodeId)
     throw new TypeError(
       method + " result episodeId does not match the request."
     );
@@ -836,12 +840,12 @@ function assertEpisodeId(
 
 function assertEpisodeRevision(
   result: Readonly<Record<string, unknown>>,
-  params: Readonly<Record<string, unknown>>,
+  parameters: Readonly<Record<string, unknown>>,
   method: string
 ): void {
-  assertEpisodeId(result, params, method);
+  assertEpisodeId(result, parameters, method);
   nonNegativeInteger(result.revision, method + ".result.revision");
-  if (result.revision !== params.expectedRevision) {
+  if (result.revision !== parameters.expectedRevision) {
     throw new TypeError(
       method + " result revision does not match expectedRevision."
     );

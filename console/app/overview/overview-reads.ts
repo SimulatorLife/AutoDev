@@ -1,12 +1,12 @@
 /**
- * The Overview's reads: one bounded read per authoritative source, in parallel.
- *
- * Server-only. Every source keeps its own outcome -- observed, not configured,
- * or unavailable -- so a failed read is never presented as an empty list or a
- * zero, and one failing source does not hide the others. Verdicts and quota
- * exhaustion come from the same projections the Providers page uses; nothing
- * here derives readiness from raw health values.
- */
+The Overview's reads: one bounded read per authoritative source, in parallel.
+
+Server-only. Every source keeps its own outcome -- observed, not configured,
+or unavailable -- so a failed read is never presented as an empty list or a
+zero, and one failing source does not hide the others. Verdicts and quota
+exhaustion come from the same projections the Providers page uses; nothing
+here derives readiness from raw health values.
+*/
 
 import type {
   ControlApiProvidersResponse,
@@ -38,16 +38,22 @@ import type { ConsoleUsageResult } from "../../src/lib/server/openlit-usage.ts";
 import { activeSessionsFromRuntime } from "../../src/lib/server/usage-active-sessions.ts";
 import { readUsageTelemetry } from "../../src/lib/server/usage-telemetry.ts";
 
-/** The fixed telemetry window; the shared telemetry cache may be up to 5 minutes old. */
+/**
+The fixed telemetry window; the shared telemetry cache may be up to 5 minutes old.
+*/
 const OVERVIEW_TELEMETRY_SELECTION: UsageFilterSelection = {
   range: "24H",
   values: {}
 };
 
-/** How many of the newest sessions the failure scan reads. */
+/**
+How many of the newest sessions the failure scan reads.
+*/
 const OVERVIEW_FLEET_SCAN_LIMIT = 10;
 
-/** How many failing sessions the Overview lists. */
+/**
+How many failing sessions the Overview lists.
+*/
 const OVERVIEW_FAILING_SESSION_LIMIT = 5;
 
 const NOT_CONFIGURED_CODE = "autodev_control_api_disabled";
@@ -70,7 +76,9 @@ function notConfigured(): OverviewRead<never> {
   };
 }
 
-/** A read that threw is an unavailable source, never an empty one. */
+/**
+A read that threw is an unavailable source, never an empty one.
+*/
 async function settle<T>(read: () => Promise<OverviewRead<T>>) {
   try {
     return await read();
@@ -83,7 +91,9 @@ async function settle<T>(read: () => Promise<OverviewRead<T>>) {
   }
 }
 
-/** Fold providers into verdict counts using the Providers page's own verdict. */
+/**
+Fold providers into verdict counts using the Providers page's own verdict.
+*/
 export function countProviderVerdicts(
   response: Pick<ControlApiProvidersResponse, "quotaAxi" | "providers">
 ): OverviewProviderVerdicts {
@@ -155,7 +165,9 @@ function telemetryRead(
   );
 }
 
-/** The four source readers; production uses the Console's existing APIs. */
+/**
+The four source readers; production uses the Console's existing APIs.
+*/
 export interface OverviewReaders {
   readonly runtime: typeof fetchRuntime;
   readonly providers: typeof fetchProviders;
@@ -170,7 +182,9 @@ const DEFAULT_OVERVIEW_READERS: OverviewReaders = {
   telemetry: readUsageTelemetry
 };
 
-/** Read every Overview source once, in parallel. */
+/**
+Read every Overview source once, in parallel.
+*/
 export async function readOverview(
   config: ControlApiConfig | null,
   readers: OverviewReaders = DEFAULT_OVERVIEW_READERS

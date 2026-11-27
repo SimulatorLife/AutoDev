@@ -1,11 +1,11 @@
 /**
- * Executable lookup shared by the MCP launcher and platform lifecycle code,
- * so every caller resolves a tool's binary the same way.
- *
- * The Codex CLI follows one rule here, because a machine usually holds more
- * than one copy of it: an explicit `CODEX_BIN` wins, and otherwise the
- * newest CLI installed is the one every surface runs.
- */
+Executable lookup shared by the MCP launcher and platform lifecycle code,
+so every caller resolves a tool's binary the same way.
+
+The Codex CLI follows one rule here, because a machine usually holds more
+than one copy of it: an explicit `CODEX_BIN` wins, and otherwise the
+newest CLI installed is the one every surface runs.
+*/
 
 import { execFileSync } from "node:child_process";
 import {
@@ -48,16 +48,16 @@ export function findExecutable(
 }
 
 /**
- * Find a CLI installed globally by pnpm even under launchd's minimal PATH.
- * PNPM_HOME can override the platform default without depending on a shell profile.
- */
+Find a CLI installed globally by pnpm even under launchd's minimal PATH.
+PNPM_HOME can override the platform default without depending on a shell profile.
+*/
 export function findPnpmGlobalBinary(
   name: string,
   home = homedir(),
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): string | null {
   const pnpmHome =
-    env.PNPM_HOME?.trim() ||
+    environment.PNPM_HOME?.trim() ||
     path.join(
       home,
       process.platform === "darwin" ? "Library/pnpm" : ".local/share/pnpm"
@@ -68,7 +68,9 @@ export function findPnpmGlobalBinary(
 
 const CODEX_VERSION_PATTERN = /(\d+)\.(\d+)\.(\d+)/u;
 
-/** The versions this process has read, keyed by the binary they came from. */
+/**
+The versions this process has read, keyed by the binary they came from.
+*/
 const codexVersionCache = new Map<
   string,
   {
@@ -80,9 +82,9 @@ const codexVersionCache = new Map<
 
 function defaultCodexVersionRunner(
   file: string,
-  args: readonly string[]
+  arguments_: readonly string[]
 ): string {
-  return execFileSync(file, [...args], {
+  return execFileSync(file, [...arguments_], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
     timeout: 5000
@@ -91,7 +93,7 @@ function defaultCodexVersionRunner(
 
 function probeCodexCliVersion(
   binary: string,
-  run: (file: string, args: readonly string[]) => string
+  run: (file: string, arguments_: readonly string[]) => string
 ): string | null {
   let output: string;
   try {
@@ -103,21 +105,23 @@ function probeCodexCliVersion(
 }
 
 /**
- * The version a Codex CLI reports, or null when it does not report one.
- *
- * The reading is cached against the binary's size and modification time, so
- * the cost is paid once per install rather than once per lookup.
- */
+The version a Codex CLI reports, or null when it does not report one.
+
+The reading is cached against the binary's size and modification time, so
+the cost is paid once per install rather than once per lookup.
+*/
 export function codexCliVersion(
   binary: string,
-  run?: (file: string, args: readonly string[]) => string
+  run?: (file: string, arguments_: readonly string[]) => string
 ): string | null {
   if (run) return probeCodexCliVersion(binary, run);
   let stat: { mtimeMs: number; size: number } | null = null;
   try {
     stat = statSync(binary);
   } catch {
-    /* unavailable */
+    /*
+    unavailable
+    */
   }
   const cached = stat ? codexVersionCache.get(binary) : undefined;
   if (
@@ -140,11 +144,11 @@ export function codexCliVersion(
 }
 
 /**
- * Order two Codex versions, newest first.
- *
- * A version that could not be read is the oldest one: a CLI that does not say
- * which release it is cannot claim to be newer than one that does.
- */
+Order two Codex versions, newest first.
+
+A version that could not be read is the oldest one: a CLI that does not say
+which release it is cannot claim to be newer than one that does.
+*/
 function compareCodexVersions(
   left: string | null,
   right: string | null
@@ -161,19 +165,19 @@ function compareCodexVersions(
 }
 
 /**
- * The Codex CLI installs this machine has.
- *
- * Three places hold one: the standalone install under the local bin
- * directory, the first `codex` on PATH, and pnpm's global bin directory,
- * which is the one a launchd service's minimal PATH still names.
- */
-function codexCandidates(env: NodeJS.ProcessEnv, home: string): string[] {
+The Codex CLI installs this machine has.
+
+Three places hold one: the standalone install under the local bin
+directory, the first `codex` on PATH, and pnpm's global bin directory,
+which is the one a launchd service's minimal PATH still names.
+*/
+function codexCandidates(environment: NodeJS.ProcessEnv, home: string): string[] {
   return [
     ...new Set(
       [
         path.join(home, ".local", "bin", "codex"),
-        findExecutable("codex", env.PATH ?? ""),
-        findPnpmGlobalBinary("codex", home, env)
+        findExecutable("codex", environment.PATH ?? ""),
+        findPnpmGlobalBinary("codex", home, environment)
       ].filter(
         (candidate): candidate is string =>
           candidate !== null && isExecutable(candidate)
@@ -183,32 +187,32 @@ function codexCandidates(env: NodeJS.ProcessEnv, home: string): string[] {
 }
 
 /**
- * The Codex CLI to use: the operator's explicit setting, else the newest CLI
- * this machine has.
- *
- * The newest CLI wins because the first one on PATH is often the wrong one:
- * a stale install under the system bin directory predates the subcommands the
- * role bridge and the command rules depend on, and a CLI that rejects them
- * breaks both at once. An explicit `CODEX_BIN` is the operator's decision
- * and always wins.
- *
- * The answer is null when this machine has no Codex CLI at all. A
- * `CODEX_BIN` that names something unusable is a misconfiguration rather
- * than an absence, and is reported as one instead of being quietly ignored.
- */
+The Codex CLI to use: the operator's explicit setting, else the newest CLI
+this machine has.
+
+The newest CLI wins because the first one on PATH is often the wrong one:
+a stale install under the system bin directory predates the subcommands the
+role bridge and the command rules depend on, and a CLI that rejects them
+breaks both at once. An explicit `CODEX_BIN` is the operator's decision
+and always wins.
+
+The answer is null when this machine has no Codex CLI at all. A
+`CODEX_BIN` that names something unusable is a misconfiguration rather
+than an absence, and is reported as one instead of being quietly ignored.
+*/
 export function findCodexBinary(
-  env: NodeJS.ProcessEnv = process.env,
-  home = env.HOME?.trim() || homedir()
+  environment: NodeJS.ProcessEnv = process.env,
+  home = environment.HOME?.trim() || homedir()
 ): string | null {
-  const configured = env.CODEX_BIN?.trim();
+  const configured = environment.CODEX_BIN?.trim();
   if (configured) {
     const resolved = configured.includes(path.sep)
       ? configured
-      : findExecutable(configured, env.PATH ?? "");
+      : findExecutable(configured, environment.PATH ?? "");
     if (resolved && isExecutable(resolved)) return resolved;
     throw new Error(`Codex CLI is not executable: ${configured}`);
   }
-  const candidates = codexCandidates(env, home);
+  const candidates = codexCandidates(environment, home);
   if (candidates.length === 0) return null;
   const ranked = candidates
     .map((candidate) => ({ candidate, version: codexCliVersion(candidate) }))
@@ -217,14 +221,14 @@ export function findCodexBinary(
 }
 
 /**
- * The same lookup, reported as a failure: where the Codex CLI is, or why it
- * is not usable.
- */
+The same lookup, reported as a failure: where the Codex CLI is, or why it
+is not usable.
+*/
 export function resolveCodexBinary(
-  env: NodeJS.ProcessEnv = process.env,
-  home = env.HOME?.trim() || homedir()
+  environment: NodeJS.ProcessEnv = process.env,
+  home = environment.HOME?.trim() || homedir()
 ): string {
-  const binary = findCodexBinary(env, home);
+  const binary = findCodexBinary(environment, home);
   if (binary) return binary;
   throw new Error(
     "Codex CLI not found; set CODEX_BIN to the current codex executable."
@@ -232,30 +236,30 @@ export function resolveCodexBinary(
 }
 
 /**
- * The Copilot CLI: `COPILOT_BIN` as given, else the first executable on PATH,
- * else the pnpm global bin directory.
- *
- * A launchd bridge may lack PNPM_HOME in PATH, so the pnpm-managed global
- * executable is checked explicitly after the requested PATH.
- */
+The Copilot CLI: `COPILOT_BIN` as given, else the first executable on PATH,
+else the pnpm global bin directory.
+
+A launchd bridge may lack PNPM_HOME in PATH, so the pnpm-managed global
+executable is checked explicitly after the requested PATH.
+*/
 export function resolveCopilotBinary(
-  env: NodeJS.ProcessEnv = process.env,
-  home = env.HOME?.trim() || homedir()
+  environment: NodeJS.ProcessEnv = process.env,
+  home = environment.HOME?.trim() || homedir()
 ): string {
-  const configured = env.COPILOT_BIN?.trim();
+  const configured = environment.COPILOT_BIN?.trim();
   if (configured) {
     // `COPILOT_BIN` named a command, not only a path, so a bare name is
     // still resolved against PATH before it is called missing.
     const resolved = configured.includes(path.sep)
       ? configured
-      : findExecutable(configured, env.PATH ?? "");
+      : findExecutable(configured, environment.PATH ?? "");
     if (resolved && isExecutable(resolved)) return resolved;
     throw new Error(`Copilot CLI is not executable: ${configured}`);
   }
-  const fromPath = findExecutable("copilot", env.PATH ?? "");
+  const fromPath = findExecutable("copilot", environment.PATH ?? "");
   if (fromPath) return fromPath;
 
-  const fromPnpm = findPnpmGlobalBinary("copilot", home, env);
+  const fromPnpm = findPnpmGlobalBinary("copilot", home, environment);
   if (fromPnpm) return fromPnpm;
   const local = path.join(home, ".local", "bin", "copilot");
   if (isExecutable(local)) return local;
@@ -265,51 +269,51 @@ export function resolveCopilotBinary(
 }
 
 /**
- * The same lookup without the failure: where the Copilot CLI is, or null when
- * it is not installed. The callers that only need to know whether it exists
- * ask this, so "is the Copilot CLI installed" has one answer everywhere.
- */
+The same lookup without the failure: where the Copilot CLI is, or null when
+it is not installed. The callers that only need to know whether it exists
+ask this, so "is the Copilot CLI installed" has one answer everywhere.
+*/
 export function findCopilotBinary(
-  env: NodeJS.ProcessEnv = process.env,
-  home = env.HOME?.trim() || homedir()
+  environment: NodeJS.ProcessEnv = process.env,
+  home = environment.HOME?.trim() || homedir()
 ): string | null {
   try {
-    return resolveCopilotBinary(env, home);
+    return resolveCopilotBinary(environment, home);
   } catch {
     return null;
   }
 }
 
 /**
- * How to run opencli: `OPENCLI_BIN` as given, else the `@jackwener/opencli`
- * entry point this Runtime depends on, run with the current Node.
- *
- * opencli is a package dependency of the Runtime rather than a global install,
- * so the bridge and the installer resolve the exact version the lockfile pins.
- * Its daemon is shared machine-wide on one port, and a second opencli version
- * started beside it reports the daemon as stale; pinning one version keeps the
- * bridge's CLI and the daemon it talks to in step. The launchd PATH names no
- * version manager's bin directory, so resolving through the module graph is
- * also what keeps the supervised bridge from depending on the login shell.
- *
- * The package is found by walking the `node_modules` directories above this
- * module on every call, not through `import.meta.resolve`: Node's ESM resolver
- * caches what it resolved, so a long-lived bridge would keep launching the
- * pre-install version after `pnpm install` swaps the package symlink.
- */
+How to run opencli: `OPENCLI_BIN` as given, else the `@jackwener/opencli`
+entry point this Runtime depends on, run with the current Node.
+
+opencli is a package dependency of the Runtime rather than a global install,
+so the bridge and the installer resolve the exact version the lockfile pins.
+Its daemon is shared machine-wide on one port, and a second opencli version
+started beside it reports the daemon as stale; pinning one version keeps the
+bridge's CLI and the daemon it talks to in step. The launchd PATH names no
+version manager's bin directory, so resolving through the module graph is
+also what keeps the supervised bridge from depending on the login shell.
+
+The package is found by walking the `node_modules` directories above this
+module on every call, not through `import.meta.resolve`: Node's ESM resolver
+caches what it resolved, so a long-lived bridge would keep launching the
+pre-install version after `pnpm install` swaps the package symlink.
+*/
 export interface OpencliCommand {
   readonly command: string;
   readonly args: readonly string[];
 }
 
 export function resolveOpencliCommand(
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): OpencliCommand {
-  const configured = env.OPENCLI_BIN?.trim();
+  const configured = environment.OPENCLI_BIN?.trim();
   if (configured) {
     const resolved = configured.includes(path.sep)
       ? configured
-      : findExecutable(configured, env.PATH ?? "");
+      : findExecutable(configured, environment.PATH ?? "");
     if (resolved && isExecutable(resolved))
       return { command: resolved, args: [] };
     throw new Error(`opencli is not executable: ${configured}`);
@@ -324,22 +328,24 @@ export function resolveOpencliCommand(
   return { command: process.execPath, args: [entry] };
 }
 
-/** The package's `opencli` bin, read from the installed manifest as it is now. */
+/**
+The package's `opencli` bin, read from the installed manifest as it is now.
+*/
 function findOpencliPackageEntry(): string | null {
   return findRuntimePackageBin(OPENCLI_PACKAGE, "opencli");
 }
 
 /**
- * The directory of a package this Runtime depends on, as the `node_modules`
- * walk-up from this module reaches it (`<node_modules>/<packageName>`, not its
- * realpath).
- *
- * Resolution starts at the Runtime's own module and never at a configured
- * repository root. An installed Runtime therefore resolves the protected
- * dependency closure its source generation links to, and no environment value
- * -- `AUTODEV_REPO_ROOT` included -- can redirect a Runtime-launched tool into
- * an editable checkout.
- */
+The directory of a package this Runtime depends on, as the `node_modules`
+walk-up from this module reaches it (`<node_modules>/<packageName>`, not its
+realpath).
+
+Resolution starts at the Runtime's own module and never at a configured
+repository root. An installed Runtime therefore resolves the protected
+dependency closure its source generation links to, and no environment value
+-- `AUTODEV_REPO_ROOT` included -- can redirect a Runtime-launched tool into
+an editable checkout.
+*/
 export function findRuntimePackageDirectory(
   packageName: string,
   moduleDirectory: string = path.dirname(fileURLToPath(import.meta.url))
@@ -356,12 +362,12 @@ export function findRuntimePackageDirectory(
 }
 
 /**
- * The physical entry script of a Runtime dependency's bin, read from its
- * installed manifest as it is now. Callers run it with the current Node, so no
- * package-manager shim or caller PATH entry chooses what executes. A declared
- * entry that was not built is returned as declared, so callers can report it
- * apart from a package that is not installed.
- */
+The physical entry script of a Runtime dependency's bin, read from its
+installed manifest as it is now. Callers run it with the current Node, so no
+package-manager shim or caller PATH entry chooses what executes. A declared
+entry that was not built is returned as declared, so callers can report it
+apart from a package that is not installed.
+*/
 export function findRuntimePackageBin(
   packageName: string,
   binName: string,
@@ -386,7 +392,9 @@ export function findRuntimePackageBin(
   }
 }
 
-/** {@link findRuntimePackageBin}, failing with the package that is missing. */
+/**
+{@link findRuntimePackageBin}, failing with the package that is missing.
+*/
 export function resolveRuntimePackageBin(
   packageName: string,
   binName: string,
@@ -403,9 +411,9 @@ export function resolveRuntimePackageBin(
 }
 
 /**
- * The `node_modules/.bin` directory of the dependency tree that holds
- * `packageName`, for a tool that spawns a sibling executable by bare name.
- */
+The `node_modules/.bin` directory of the dependency tree that holds
+`packageName`, for a tool that spawns a sibling executable by bare name.
+*/
 export function runtimeBinDirectory(
   packageName: string,
   moduleDirectory?: string
@@ -422,12 +430,14 @@ export function runtimeBinDirectory(
   return path.join(nodeModules, ".bin");
 }
 
-/** The same lookup without the failure, for callers that only ask whether it exists. */
+/**
+The same lookup without the failure, for callers that only ask whether it exists.
+*/
 export function findOpencliCommand(
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): OpencliCommand | null {
   try {
-    return resolveOpencliCommand(env);
+    return resolveOpencliCommand(environment);
   } catch {
     return null;
   }
@@ -440,77 +450,81 @@ export interface CodexAppMcpServer {
 }
 
 /**
- * The Claude Code CLI: `CLAUDE_BIN` as given, else the install under
- * `~/.local/bin`.
- *
- * The bridge that spawns it and the Runtime's reading of its version must
- * name the same file, so both resolve it here. A version read from a
- * different installation than the one serving turns would be a number the
- * operator cannot act on.
- */
+The Claude Code CLI: `CLAUDE_BIN` as given, else the install under
+`~/.local/bin`.
+
+The bridge that spawns it and the Runtime's reading of its version must
+name the same file, so both resolve it here. A version read from a
+different installation than the one serving turns would be a number the
+operator cannot act on.
+*/
 export function resolveClaudeBinary(
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): string {
-  const configured = env.CLAUDE_BIN?.trim();
+  const configured = environment.CLAUDE_BIN?.trim();
   if (configured) return configured;
-  return path.join(env.HOME ?? homedir(), ".local", "bin", "claude");
+  return path.join(environment.HOME ?? homedir(), ".local", "bin", "claude");
 }
 
-/** The same lookup without the failure: where the CLI is, or null when it is not there. */
+/**
+The same lookup without the failure: where the CLI is, or null when it is not there.
+*/
 export function findClaudeBinary(
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): string | null {
-  const resolved = resolveClaudeBinary(env);
+  const resolved = resolveClaudeBinary(environment);
   return isExecutable(resolved) ? resolved : null;
 }
 
 /**
- * The Antigravity CLI (`agy`): `AGY_CLI_PATH` as given, else the install under
- * `~/.local/bin`.
- *
- * Resolved here for the same reason as the Claude CLI: the bridge that
- * spawns it and the reading of its version have to name the same file.
- */
-export function resolveAgyBinary(env: NodeJS.ProcessEnv = process.env): string {
-  const configured = env.AGY_CLI_PATH?.trim();
+The Antigravity CLI (`agy`): `AGY_CLI_PATH` as given, else the install under
+`~/.local/bin`.
+
+Resolved here for the same reason as the Claude CLI: the bridge that
+spawns it and the reading of its version have to name the same file.
+*/
+export function resolveAgyBinary(environment: NodeJS.ProcessEnv = process.env): string {
+  const configured = environment.AGY_CLI_PATH?.trim();
   if (configured) return configured;
-  return `${env.HOME ?? process.cwd()}/.local/bin/agy`;
+  return `${environment.HOME ?? process.cwd()}/.local/bin/agy`;
 }
 
-/** The same lookup without the failure: where the CLI is, or null when it is not there. */
+/**
+The same lookup without the failure: where the CLI is, or null when it is not there.
+*/
 export function findAgyBinary(
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): string | null {
-  const resolved = resolveAgyBinary(env);
+  const resolved = resolveAgyBinary(environment);
   return isExecutable(resolved) ? resolved : null;
 }
 
 /**
- * The MiniMax CLI (`mmx`): the first executable on PATH, else the install
- * under `~/.local/bin`. The CLI version check uses this to inspect the same
- * executable a login shell would find, including the local-bin fallback.
- *
- * Every branch reads the environment it was handed, and the lookup answers
- * about *that* environment: a caller that asks about a machine with no CLI
- * installed must not be handed a path on this one. The last branch is the
- * one that could break that rule -- the Node that runs this process keeps its
- * own bin directory, and `mmx` installed beside it is found there -- so it is
- * consulted only for this machine's home, and never for another one.
- */
+The MiniMax CLI (`mmx`): the first executable on PATH, else the install
+under `~/.local/bin`. The CLI version check uses this to inspect the same
+executable a login shell would find, including the local-bin fallback.
+
+Every branch reads the environment it was handed, and the lookup answers
+about *that* environment: a caller that asks about a machine with no CLI
+installed must not be handed a path on this one. The last branch is the
+one that could break that rule -- the Node that runs this process keeps its
+own bin directory, and `mmx` installed beside it is found there -- so it is
+consulted only for this machine's home, and never for another one.
+*/
 export function findMcodeBinary(
-  env: NodeJS.ProcessEnv = process.env,
-  home = env.HOME?.trim() || homedir()
+  environment: NodeJS.ProcessEnv = process.env,
+  home = environment.HOME?.trim() || homedir()
 ): string | null {
-  const configured = env.MCODE_BIN?.trim() || env.MINIMAX_BIN?.trim();
+  const configured = environment.MCODE_BIN?.trim() || environment.MINIMAX_BIN?.trim();
   if (configured) {
     const resolved = configured.includes(path.sep)
       ? configured
-      : findExecutable(configured, env.PATH ?? "");
+      : findExecutable(configured, environment.PATH ?? "");
     if (resolved && isExecutable(resolved)) return resolved;
   }
-  const fromPath = findExecutable("mcode", env.PATH ?? "");
+  const fromPath = findExecutable("mcode", environment.PATH ?? "");
   if (fromPath) return fromPath;
-  const fromPnpm = findPnpmGlobalBinary("mcode", home, env);
+  const fromPnpm = findPnpmGlobalBinary("mcode", home, environment);
   if (fromPnpm) return fromPnpm;
   if (home === homedir()) {
     const nodeDirCandidate = path.join(path.dirname(process.execPath), "mcode");
@@ -521,14 +535,14 @@ export function findMcodeBinary(
 }
 
 /**
- * The Codex App tools plugin, without depending on a version that Codex
- * Desktop may replace on its next startup.
- */
+The Codex App tools plugin, without depending on a version that Codex
+Desktop may replace on its next startup.
+*/
 export function findCodexAppMcpServer(
-  env: NodeJS.ProcessEnv = process.env,
-  home = env.HOME?.trim() || homedir()
+  environment: NodeJS.ProcessEnv = process.env,
+  home = environment.HOME?.trim() || homedir()
 ): CodexAppMcpServer | null {
-  const codeHome = env.CODEX_HOME?.trim() || path.join(home, ".codex");
+  const codeHome = environment.CODEX_HOME?.trim() || path.join(home, ".codex");
   const cacheRoot = path.join(
     codeHome,
     "plugins",
@@ -552,36 +566,36 @@ export function findCodexAppMcpServer(
 }
 
 /**
- * The CodeGraphContext CLI: `AUTODEV_CODEGRAPHCONTEXT_BIN` as given, else the
- * first executable on PATH, else pipx's `~/.local/bin` install.
- */
+The CodeGraphContext CLI: `AUTODEV_CODEGRAPHCONTEXT_BIN` as given, else the
+first executable on PATH, else pipx's `~/.local/bin` install.
+*/
 export function resolveCodeGraphContextBinary(
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): string | null {
-  const configured = env.AUTODEV_CODEGRAPHCONTEXT_BIN;
+  const configured = environment.AUTODEV_CODEGRAPHCONTEXT_BIN;
   if (configured) return configured;
   const candidate =
-    findExecutable("codegraphcontext", env.PATH) ??
-    (env.HOME ? path.join(env.HOME, ".local/bin/codegraphcontext") : null);
+    findExecutable("codegraphcontext", environment.PATH) ??
+    (environment.HOME ? path.join(environment.HOME, ".local/bin/codegraphcontext") : null);
   return candidate && isExecutable(candidate) ? candidate : null;
 }
 
 /**
- * The CocoIndex Code CLI (`ccc`): `AUTODEV_COCOINDEX_BIN` as given, else
- * pipx's `~/.local/bin` install, else the first executable on PATH.
- *
- * The install is looked for before PATH because pipx's is the copy AutoDev
- * installed, and it is looked for at all because the home it lives in is not
- * necessarily the process's own. Under a home that holds no install that path
- * names a file that is not there, and answering with it would report an
- * installed tool as missing while a working copy sits on PATH.
- */
+The CocoIndex Code CLI (`ccc`): `AUTODEV_COCOINDEX_BIN` as given, else
+pipx's `~/.local/bin` install, else the first executable on PATH.
+
+The install is looked for before PATH because pipx's is the copy AutoDev
+installed, and it is looked for at all because the home it lives in is not
+necessarily the process's own. Under a home that holds no install that path
+names a file that is not there, and answering with it would report an
+installed tool as missing while a working copy sits on PATH.
+*/
 export function resolveCocoIndexBinary(
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): string | null {
-  const configured = env.AUTODEV_COCOINDEX_BIN;
+  const configured = environment.AUTODEV_COCOINDEX_BIN;
   if (configured) return configured;
-  const installed = env.HOME ? path.join(env.HOME, ".local/bin/ccc") : null;
+  const installed = environment.HOME ? path.join(environment.HOME, ".local/bin/ccc") : null;
   if (installed && isExecutable(installed)) return installed;
-  return findExecutable("ccc", env.PATH);
+  return findExecutable("ccc", environment.PATH);
 }

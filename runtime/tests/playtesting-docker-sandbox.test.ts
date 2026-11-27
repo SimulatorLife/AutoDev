@@ -45,7 +45,9 @@ import {
 import { playtestManifestHash } from "../src/playtesting/hash-chain.ts";
 import { withLocalSocket } from "./support/local-socket.ts";
 
-/** Runtime snapshot root, isolated from the operator's CODEX_HOME. */
+/**
+Runtime snapshot root, isolated from the operator's CODEX_HOME.
+*/
 const SNAPSHOT_ROOT = realpathSync(
   mkdtempSync(path.join(tmpdir(), "autodev-playtest-snapshots-"))
 );
@@ -57,7 +59,7 @@ function prepare(
 ): ReturnType<typeof preparePlaytestSandbox> {
   return preparePlaytestSandbox(approved, {
     snapshotRoot: SNAPSHOT_ROOT,
-    ...(now === undefined ? {} : { now })
+    ...(now !== undefined && { now })
   });
 }
 
@@ -574,36 +576,36 @@ test("Docker argv enforces a local, read-only, networkless container with hard q
   try {
     const prepared = prepare(approval(fixture.root));
     await withLocalSocket(async (socket) => {
-      const args = buildDockerRunArguments(
+      const arguments_ = buildDockerRunArguments(
         prepared,
         "run-42",
         fixture.root,
         socket
       );
-      const joined = args.join(" ");
-      assert.equal(args[0], "--host");
-      assert.equal(args[1], `unix://${socket}`);
-      assert.ok(args.includes("--pull=never"));
-      assert.ok(args.includes("--network=none"));
-      assert.ok(args.includes("--read-only"));
-      assert.ok(args.includes("--cap-drop=ALL"));
-      assert.ok(args.includes("--security-opt=no-new-privileges"));
-      assert.ok(args.includes("--log-driver=none"));
-      assert.ok(args.includes("--pids-limit"));
-      assert.ok(args.includes("--memory-swap"));
-      assert.ok(args.includes("--cpus"));
+      const joined = arguments_.join(" ");
+      assert.equal(arguments_[0], "--host");
+      assert.equal(arguments_[1], `unix://${socket}`);
+      assert.ok(arguments_.includes("--pull=never"));
+      assert.ok(arguments_.includes("--network=none"));
+      assert.ok(arguments_.includes("--read-only"));
+      assert.ok(arguments_.includes("--cap-drop=ALL"));
+      assert.ok(arguments_.includes("--security-opt=no-new-privileges"));
+      assert.ok(arguments_.includes("--log-driver=none"));
+      assert.ok(arguments_.includes("--pids-limit"));
+      assert.ok(arguments_.includes("--memory-swap"));
+      assert.ok(arguments_.includes("--cpus"));
       assert.ok(joined.includes("type=bind,source=" + prepared.checkoutRoot));
       assert.ok(joined.includes("target=/workspace,readonly"));
       assert.ok(joined.includes("/artifacts:rw,noexec,nosuid,nodev"));
       assert.ok(joined.includes("ghcr.io/fixture/game@sha256:"));
-      const entrypointIndex = args.indexOf("--entrypoint");
+      const entrypointIndex = arguments_.indexOf("--entrypoint");
       assert.notEqual(entrypointIndex, -1);
       assert.equal(
-        args[entrypointIndex + 1],
+        arguments_[entrypointIndex + 1],
         PLAYTESTS_GENERIC_ADAPTER_COMMAND[0]
       );
       assert.ok(
-        args.includes(
+        arguments_.includes(
           "AUTODEV_PLAYTEST_ENGINE_BUILD=" + prepared.build.gameBuild
         )
       );
@@ -627,7 +629,7 @@ test("branch traces enter through a SHA-addressed read-only mount and are remove
       bytes: bytes.byteLength,
       mediaType: "application/x-ndjson"
     };
-    let capturedArgs: readonly string[] = [];
+    let capturedArguments: readonly string[] = [];
     let inputDirectory: string | null = null;
 
     await withLocalSocket(async (socket) => {
@@ -636,12 +638,12 @@ test("branch traces enter through a SHA-addressed read-only mount and are remove
         socket,
         inspectImage: () => true,
         inputArtifacts: [{ reference, bytes }],
-        spawn: (_command, args) => {
-          capturedArgs = args;
-          const mount = args.find(
-            (arg) =>
-              arg.startsWith("type=bind,source=") &&
-              arg.includes("target=/run/autodev-playtest-input")
+        spawn: (_command, arguments_) => {
+          capturedArguments = arguments_;
+          const mount = arguments_.find(
+            (argument) =>
+              argument.startsWith("type=bind,source=") &&
+              argument.includes("target=/run/autodev-playtest-input")
           );
           assert.ok(mount);
           const targetSeparator = ",target=";
@@ -657,17 +659,17 @@ test("branch traces enter through a SHA-addressed read-only mount and are remove
         execFile: () => ""
       });
       await sandbox.result;
-      const mount = capturedArgs.find((arg) =>
-        arg.includes("target=/run/autodev-playtest-input")
+      const mount = capturedArguments.find((argument) =>
+        argument.includes("target=/run/autodev-playtest-input")
       );
       assert.match(mount ?? "", /,readonly$/u);
       assert.ok(
-        capturedArgs.includes(
+        capturedArguments.includes(
           "AUTODEV_PLAYTEST_INPUT_DIR=/run/autodev-playtest-input"
         )
       );
       assert.ok(
-        capturedArgs.includes("AUTODEV_PLAYTEST_OUTPUT_DIR=/artifacts")
+        capturedArguments.includes("AUTODEV_PLAYTEST_OUTPUT_DIR=/artifacts")
       );
       await sandbox.cleanup();
       assert.ok(inputDirectory);
@@ -675,21 +677,21 @@ test("branch traces enter through a SHA-addressed read-only mount and are remove
     });
 
     await withLocalSocket(async (socket) => {
-      let launched = false;
+      let isLaunched = false;
       await assert.rejects(
         launchPlaytestSandbox(prepared, {
           socket,
           inputArtifacts: [{ reference, bytes: Buffer.from("tampered") }],
           inspectImage: () => true,
           spawn: () => {
-            launched = true;
+            isLaunched = true;
             return new MockChildProcess() as unknown as ChildProcess;
           },
           execFile: () => ""
         }),
         PlaytestSandboxApprovalError
       );
-      assert.equal(launched, false);
+      assert.equal(isLaunched, false);
     });
   } finally {
     fixture.cleanup();
@@ -750,13 +752,13 @@ test("adversarial: pinned-image enforcement prevents execution without local ima
           inspectImage: () => false
         });
       }, /not locally available without pulling/u);
-      const args = buildDockerRunArguments(
+      const arguments_ = buildDockerRunArguments(
         prepared,
         "run-check",
         fixture.root,
         socket
       );
-      assert.ok(args.includes("--pull=never"));
+      assert.ok(arguments_.includes("--pull=never"));
     });
   } finally {
     fixture.cleanup();
@@ -778,7 +780,7 @@ test("adversarial: Docker never uses a shell when serializing argv", async () =>
     const prepared = { ...approved, command: unescapedCommand };
 
     let capturedCommand = "";
-    let capturedArgs: readonly string[] = [];
+    let capturedArguments: readonly string[] = [];
     let capturedOptions: SpawnOptions | undefined;
 
     await withLocalSocket(async (socket) => {
@@ -786,9 +788,9 @@ test("adversarial: Docker never uses a shell when serializing argv", async () =>
       const sandbox = await launchPlaytestSandbox(prepared, {
         socket,
         inspectImage: () => true,
-        spawn: (cmd, args, options) => {
-          capturedCommand = cmd;
-          capturedArgs = args;
+        spawn: (command, arguments_, options) => {
+          capturedCommand = command;
+          capturedArguments = arguments_;
           capturedOptions = options;
           mockChild.simulateExit(0);
           return mockChild as unknown as ChildProcess;
@@ -801,14 +803,14 @@ test("adversarial: Docker never uses a shell when serializing argv", async () =>
       assert.equal(capturedCommand, "docker");
       assert.equal(capturedOptions?.shell, false);
 
-      const entrypointIndex = capturedArgs.indexOf("--entrypoint");
+      const entrypointIndex = capturedArguments.indexOf("--entrypoint");
       assert.notEqual(entrypointIndex, -1);
-      assert.equal(capturedArgs[entrypointIndex + 1], "/bin/bash");
+      assert.equal(capturedArguments[entrypointIndex + 1], "/bin/bash");
       assert.equal(
-        capturedArgs.at(-2),
+        capturedArguments.at(-2),
         "echo 'hello $WORLD' > /artifacts/out.txt; rm -rf /"
       );
-      assert.equal(capturedArgs.at(-1), "arg with spaces & pipes |");
+      assert.equal(capturedArguments.at(-1), "arg with spaces & pipes |");
     });
   } finally {
     fixture.cleanup();
@@ -829,8 +831,8 @@ test("adversarial: cancellation kills child process and forces container removal
         socket,
         inspectImage: () => true,
         spawn: () => mockChild as unknown as ChildProcess,
-        execFile: (_file, args) => {
-          dockerCommands.push([...args]);
+        execFile: (_file, arguments_) => {
+          dockerCommands.push([...arguments_]);
           return "";
         }
       });
@@ -885,8 +887,8 @@ test("adversarial: wall-time timeout terminates container and preserves partial 
         socket,
         inspectImage: () => true,
         spawn: () => mockChild as unknown as ChildProcess,
-        execFile: (_file, args) => {
-          dockerCommands.push([...args]);
+        execFile: (_file, arguments_) => {
+          dockerCommands.push([...arguments_]);
           return "";
         }
       });
@@ -1044,9 +1046,9 @@ test("adversarial: artifact symlink rejection, byte quota, and staging cleanup",
           mockSymlink.simulateExit(0);
           return mockSymlink as unknown as ChildProcess;
         },
-        execFile: (_file, args) => {
-          if (args.includes("cp")) {
-            const stagingDir = args.at(-1);
+        execFile: (_file, arguments_) => {
+          if (arguments_.includes("cp")) {
+            const stagingDir = arguments_.at(-1);
             if (stagingDir) {
               symlinkSync("/etc/passwd", path.join(stagingDir, "escape.link"));
             }
@@ -1077,9 +1079,9 @@ test("adversarial: artifact symlink rejection, byte quota, and staging cleanup",
           mockSize.simulateExit(0);
           return mockSize as unknown as ChildProcess;
         },
-        execFile: (_file, args) => {
-          if (args.includes("cp")) {
-            const stagingDir = args.at(-1);
+        execFile: (_file, arguments_) => {
+          if (arguments_.includes("cp")) {
+            const stagingDir = arguments_.at(-1);
             if (stagingDir) {
               writeFileSync(
                 path.join(stagingDir, "oversized.bin"),
@@ -1112,9 +1114,9 @@ test("adversarial: artifact symlink rejection, byte quota, and staging cleanup",
           mockPreserve.simulateExit(1);
           return mockPreserve as unknown as ChildProcess;
         },
-        execFile: (_file, args) => {
-          if (args.includes("cp")) {
-            const stagingDir = args.at(-1);
+        execFile: (_file, arguments_) => {
+          if (arguments_.includes("cp")) {
+            const stagingDir = arguments_.at(-1);
             if (stagingDir) {
               writeFileSync(
                 path.join(stagingDir, "metrics.json"),
@@ -1150,7 +1152,7 @@ test("adversarial: artifact symlink rejection, byte quota, and staging cleanup",
 
 test("adversarial: sanitized environment strips host credentials and disallows GPU", async () => {
   const fixture = repository();
-  const originalEnv = { ...process.env };
+  const originalEnvironment = { ...process.env };
   try {
     process.env.OPENAI_API_KEY = "sk-adversarial-secret";
     process.env.GITHUB_TOKEN = "ghp-adversarial-token";
@@ -1159,17 +1161,17 @@ test("adversarial: sanitized environment strips host credentials and disallows G
 
     const prepared = prepare(approval(fixture.root));
 
-    let spawnedEnv: NodeJS.ProcessEnv | undefined;
-    let spawnedArgs: readonly string[] = [];
+    let spawnedEnvironment: NodeJS.ProcessEnv | undefined;
+    let spawnedArguments: readonly string[] = [];
 
     await withLocalSocket(async (socket) => {
       const mockChild = new MockChildProcess();
       const sandbox = await launchPlaytestSandbox(prepared, {
         socket,
         inspectImage: () => true,
-        spawn: (_cmd, args, options) => {
-          spawnedArgs = args;
-          spawnedEnv = options.env;
+        spawn: (_command, arguments_, options) => {
+          spawnedArguments = arguments_;
+          spawnedEnvironment = options.env;
           mockChild.simulateExit(0);
           return mockChild as unknown as ChildProcess;
         },
@@ -1178,24 +1180,24 @@ test("adversarial: sanitized environment strips host credentials and disallows G
 
       await sandbox.result;
 
-      assert.ok(spawnedEnv);
-      assert.equal(spawnedEnv.OPENAI_API_KEY, undefined);
-      assert.equal(spawnedEnv.GITHUB_TOKEN, undefined);
-      assert.equal(spawnedEnv.AWS_SECRET_ACCESS_KEY, undefined);
-      assert.equal(spawnedEnv.DOCKER_AUTH, undefined);
-      assert.ok(spawnedEnv.HOME);
-      assert.ok(spawnedEnv.DOCKER_CONFIG);
-      assert.equal(spawnedEnv.HOME, spawnedEnv.DOCKER_CONFIG);
+      assert.ok(spawnedEnvironment);
+      assert.equal(spawnedEnvironment.OPENAI_API_KEY, undefined);
+      assert.equal(spawnedEnvironment.GITHUB_TOKEN, undefined);
+      assert.equal(spawnedEnvironment.AWS_SECRET_ACCESS_KEY, undefined);
+      assert.equal(spawnedEnvironment.DOCKER_AUTH, undefined);
+      assert.ok(spawnedEnvironment.HOME);
+      assert.ok(spawnedEnvironment.DOCKER_CONFIG);
+      assert.equal(spawnedEnvironment.HOME, spawnedEnvironment.DOCKER_CONFIG);
 
-      const joinedArgs = spawnedArgs.join(" ");
-      assert.doesNotMatch(joinedArgs, /--gpus/u);
+      const joinedArguments = spawnedArguments.join(" ");
+      assert.doesNotMatch(joinedArguments, /--gpus/u);
       assert.doesNotMatch(
-        joinedArgs,
+        joinedArguments,
         /sk-adversarial|ghp-adversarial|aws-adversarial/u
       );
     });
   } finally {
-    process.env = originalEnv;
+    process.env = originalEnvironment;
     fixture.cleanup();
   }
 });

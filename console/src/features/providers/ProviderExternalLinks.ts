@@ -15,10 +15,10 @@ const LINK_LABELS: Readonly<
 };
 
 /**
- * The provider's own external Usage and Documentation pages, as the Runtime
- * reports them from the routing config. The Console owns no URL list: a
- * provider without a configured page simply has no link for it.
- */
+The provider's own external Usage and Documentation pages, as the Runtime
+reports them from the routing config. The Console owns no URL list: a
+provider without a configured page simply has no link for it.
+*/
 export function ProviderExternalLinks({
   provider,
   links

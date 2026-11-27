@@ -135,7 +135,7 @@ test("visual target approval is operator-only, separate, revisioned, and revocab
     path.join(tmpdir(), "visual-target-control-api-")
   );
   const root = realpathSync(rawRoot);
-  const env = environment(root);
+  const environment_ = environment(root);
   const repository = new WorkspaceVisualPlaytestTargetRepository(
     path.join(root, "visual-target-approvals")
   );
@@ -233,7 +233,7 @@ test("visual target approval is operator-only, separate, revisioned, and revocab
       3
     );
   } finally {
-    env.restore();
+    environment_.restore();
     rmSync(rawRoot, { recursive: true, force: true });
   }
 });
@@ -243,7 +243,7 @@ test("visual target approval binds workspace scope and refuses unsafe URLs and u
     path.join(tmpdir(), "visual-target-invalid-api-")
   );
   const root = realpathSync(rawRoot);
-  const env = environment(root);
+  const environment_ = environment(root);
   const repository = new WorkspaceVisualPlaytestTargetRepository(
     path.join(root, "visual-target-approvals")
   );
@@ -282,7 +282,7 @@ test("visual target approval binds workspace scope and refuses unsafe URLs and u
     assert.deepEqual(repository.list(WORKSPACE_ID), []);
 
     writeFileSync(
-      env.catalogPath,
+      environment_.catalogPath,
       JSON.stringify({
         schema: "autodev-workspaces-v1",
         workspaces: [
@@ -306,7 +306,7 @@ test("visual target approval binds workspace scope and refuses unsafe URLs and u
     );
     assert.equal(disabled.status, 409);
   } finally {
-    env.restore();
+    environment_.restore();
     rmSync(rawRoot, { recursive: true, force: true });
   }
 });

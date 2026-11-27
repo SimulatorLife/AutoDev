@@ -35,53 +35,53 @@ import type { ToolsListFilters } from "./tools-list-filters.ts";
 import { toolsListHref, toolsRoleHref } from "./tools-list-url.ts";
 
 /**
- * Tools catalog detail view.
- *
- * The detail page is read-only. It surfaces source authority, role exposure,
- * availability, and the canonical edit surface so the operator can pivot to
- * the authoritative edit owner without the Tools catalog ever offering a
- * mutation affordance of its own.
- *
- * Historical use/error evidence comes from the dedicated read-only Usage
- * telemetry path. The Tools catalog itself never invents counts: when the
- * Usage path is unconfigured or returns no per-tool match, the view renders
- * the value as `Not observed` rather than zero.
- */
+Tools catalog detail view.
+
+The detail page is read-only. It surfaces source authority, role exposure,
+availability, and the canonical edit surface so the operator can pivot to
+the authoritative edit owner without the Tools catalog ever offering a
+mutation affordance of its own.
+
+Historical use/error evidence comes from the dedicated read-only Usage
+telemetry path. The Tools catalog itself never invents counts: when the
+Usage path is unconfigured or returns no per-tool match, the view renders
+the value as `Not observed` rather than zero.
+*/
 
 export interface ToolDetailViewProps {
   readonly tool: ToolCatalogItem;
   readonly coverage: ToolCatalogCoverage;
   readonly validity: ToolCatalogValidity;
   /**
-   * Whether the execution contract was read.
-   *
-   * The role exposure of a tool comes from the contract's role projection. The
-   * accessor that reads the contract falls back to an empty contract when the
-   * read fails, so an empty contract and a contract nobody read look the same
-   * to a caller, and they are not the same claim: the first says no role
-   * reaches this tool, the second says nobody looked.
-   */
+  Whether the execution contract was read.
+  
+  The role exposure of a tool comes from the contract's role projection. The
+  accessor that reads the contract falls back to an empty contract when the
+  read fails, so an empty contract and a contract nobody read look the same
+  to a caller, and they are not the same claim: the first says no role
+  reaches this tool, the second says nobody looked.
+  */
   readonly executionContractObserved: boolean;
   /**
-   * The tool's historical use evidence.
-   *
-   * The evidence is a panel of its own rather than three props on this
-   * view, because it is read in the browser after the page has rendered:
-   * the usage telemetry read is the most expensive read the Console makes,
-   * and a page that waited for it would wait for it on every navigation. The
-   * panel renders the evidence, or says that it has not arrived yet.
-   */
+  The tool's historical use evidence.
+  
+  The evidence is a panel of its own rather than three props on this
+  view, because it is read in the browser after the page has rendered:
+  the usage telemetry read is the most expensive read the Console makes,
+  and a page that waited for it would wait for it on every navigation. The
+  panel renders the evidence, or says that it has not arrived yet.
+  */
   readonly usagePanel: React.ReactNode;
   /**
-   * The list state the operator arrived with.
-   *
-   * The detail route is a path, so the list's narrowing travels beside it as a
-   * query. Without it the breadcrumb returned the operator to the whole
-   * catalogue, and a search they had just run had to be typed a second time.
-   *
-   * Optional, because a detail page opened directly has no list behind it: the
-   * breadcrumb then points at the whole catalogue, which is the honest answer.
-   */
+  The list state the operator arrived with.
+  
+  The detail route is a path, so the list's narrowing travels beside it as a
+  query. Without it the breadcrumb returned the operator to the whole
+  catalogue, and a search they had just run had to be typed a second time.
+  
+  Optional, because a detail page opened directly has no list behind it: the
+  breadcrumb then points at the whole catalogue, which is the honest answer.
+  */
   readonly listFilters?: ToolsListFilters | undefined;
 }
 

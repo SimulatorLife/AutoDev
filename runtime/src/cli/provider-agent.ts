@@ -49,9 +49,9 @@ const CODEX_CONFIG_FILE = "config.toml";
 const BROWSER_TESTER_ROLE = "browser-tester";
 const PLAYTESTER_ROLE = "playtester";
 const PLAYTEST_ANALYST_ROLE = "playtest-analyst";
-const SUPPORTED_ROLES: readonly string[] = declaredRoleNames().filter(
+const SUPPORTED_ROLES: ReadonlySet<string> = new Set(declaredRoleNames().filter(
   (role) => roleContract(role).kind !== "orchestrator"
-);
+));
 const LINE_BREAK = /\r?\n/u;
 const TOML_BARE_KEY_PATTERN = /^[A-Za-z0-9_-]+$/u;
 export type ProviderAgentRole = string;
@@ -78,7 +78,7 @@ export interface ProviderAgentDeps {
   readonly ensureRouter?: (environment: NodeJS.ProcessEnv) => Promise<void>;
   readonly runCodex?: (
     binary: string,
-    args: string[],
+    arguments_: string[],
     environment: NodeJS.ProcessEnv,
     checkOnly: boolean
   ) => number | Promise<number>;
@@ -100,7 +100,7 @@ Options:
 }
 
 function isRole(value: string): value is ProviderAgentRole {
-  return hasRoleContract(value) && SUPPORTED_ROLES.includes(value);
+  return hasRoleContract(value) && SUPPORTED_ROLES.has(value);
 }
 
 function stringValue(value: TomlValue | undefined): string {
@@ -197,7 +197,9 @@ function copyRegularFileIfPresent(
   copyFileSync(source, destination);
 }
 
-/** Copy a managed model catalog through a symlink only when it stays trusted. */
+/**
+Copy a managed model catalog through a symlink only when it stays trusted.
+*/
 function copyAnalystModelCatalog(
   sourceCodexHome: string,
   destinationCodexHome: string,
@@ -316,13 +318,13 @@ function prepareAnalystCodexHome(
 
 export function parseProviderAgentArgs(
   argv: readonly string[],
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): ProviderAgentOptions {
   let role = "default";
-  let workspace = env.AUTODEV_REPO_ROOT?.trim() || repositoryRoot;
+  let workspace = environment.AUTODEV_REPO_ROOT?.trim() || repositoryRoot;
   let prompt = "";
   let promptFile = "";
-  let checkOnly = false;
+  let isCheckOnly = false;
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     switch (argument) {
@@ -344,7 +346,7 @@ export function parseProviderAgentArgs(
         break;
       }
       case "--check": {
-        checkOnly = true;
+        isCheckOnly = true;
         break;
       }
       case "--help":
@@ -366,19 +368,19 @@ export function parseProviderAgentArgs(
   if (!workspace || !existsSync(workspace))
     throw new Error(`Workspace is not a directory: ${workspace}`);
   const normalizedWorkspace = path.resolve(workspace);
-  const analystDispatch = env.AUTODEV_PLAYTEST_ANALYSIS_MODE === "1";
+  const isAnalystDispatch = environment.AUTODEV_PLAYTEST_ANALYSIS_MODE === "1";
   const sourceHome =
-    env.AUTODEV_PLAYTEST_ANALYST_SOURCE_HOME?.trim() ||
-    env.HOME?.trim() ||
+    environment.AUTODEV_PLAYTEST_ANALYST_SOURCE_HOME?.trim() ||
+    environment.HOME?.trim() ||
     homedir();
-  const home = analystDispatch
-    ? env.AUTODEV_PLAYTEST_ANALYST_HOME?.trim() || ""
+  const home = isAnalystDispatch
+    ? environment.AUTODEV_PLAYTEST_ANALYST_HOME?.trim() || ""
     : sourceHome;
-  const codexHome = analystDispatch
-    ? env.AUTODEV_PLAYTEST_ANALYST_CODEX_HOME?.trim() || ""
-    : env.CODEX_HOME?.trim() || path.join(home, ".codex");
+  const codexHome = isAnalystDispatch
+    ? environment.AUTODEV_PLAYTEST_ANALYST_CODEX_HOME?.trim() || ""
+    : environment.CODEX_HOME?.trim() || path.join(home, ".codex");
   if (
-    analystDispatch &&
+    isAnalystDispatch &&
     (!path.isAbsolute(home) || !path.isAbsolute(codexHome))
   ) {
     throw new Error(
@@ -392,10 +394,10 @@ export function parseProviderAgentArgs(
     role,
     workspace: normalizedWorkspace,
     prompt,
-    checkOnly,
-    repositoryRoot: env.AUTODEV_REPO_ROOT?.trim() || repositoryRoot,
+    checkOnly: isCheckOnly,
+    repositoryRoot: environment.AUTODEV_REPO_ROOT?.trim() || repositoryRoot,
     codexHome,
-    codexBinary: resolveCodexBinary(env, sourceHome),
+    codexBinary: resolveCodexBinary(environment, sourceHome),
     roleFile
   };
 }
@@ -525,15 +527,15 @@ function analystCodexOverrides(
     typeof installedPlaytestServer.command === "string"
       ? installedPlaytestServer.command
       : "bash";
-  const installedPlaytestArgs = stringArray(installedPlaytestServer.args);
-  const playtestLaunchArgs =
-    installedPlaytestArgs.length > 0
-      ? installedPlaytestArgs
+  const installedPlaytestArguments = stringArray(installedPlaytestServer.args);
+  const playtestLaunchArguments =
+    installedPlaytestArguments.length > 0
+      ? installedPlaytestArguments
       : [
           "-lc",
           'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" playtest'
         ];
-  const args = [
+  const arguments_ = [
     "features.shell_tool=false",
     "features.multi_agent=false",
     "features.multi_agent_v2=false",
@@ -542,12 +544,12 @@ function analystCodexOverrides(
     'shell_environment_policy.inherit="none"'
   ];
   for (const name of configuredServers) {
-    args.push(`mcp_servers.${configKey(name)}.enabled=false`);
+    arguments_.push(`mcp_servers.${configKey(name)}.enabled=false`);
   }
-  args.push(
+  arguments_.push(
     "mcp_servers.playtest.enabled=true",
     `mcp_servers.playtest.command=${JSON.stringify(installedPlaytestCommand)}`,
-    `mcp_servers.playtest.args=${JSON.stringify(playtestLaunchArgs)}`,
+    `mcp_servers.playtest.args=${JSON.stringify(playtestLaunchArguments)}`,
     'mcp_servers.playtest.default_tools_approval_mode="approve"',
     // The trusted Playtesting MCP server loads the Runtime's playtesting,
     // core and data modules and opens the artifact, approval and OpenLIT
@@ -578,23 +580,23 @@ function analystCodexOverrides(
     ]);
     for (const plugin of [...pluginNames].sort()) {
       const rolePlugin = tomlRecord(rolePlugins[plugin]);
-      args.push(
+      arguments_.push(
         `plugins.${configKey(plugin)}.enabled=${rolePlugin?.enabled === true}`
       );
     }
   }
   const roleSkills = tomlRecord(role.skills);
   if (typeof roleSkills.include_instructions === "boolean") {
-    args.push(`skills.include_instructions=${roleSkills.include_instructions}`);
+    arguments_.push(`skills.include_instructions=${roleSkills.include_instructions}`);
   }
   const bundledSkills = tomlRecord(roleSkills.bundled);
   if (typeof bundledSkills.enabled === "boolean") {
-    args.push(`skills.bundled.enabled=${bundledSkills.enabled}`);
+    arguments_.push(`skills.bundled.enabled=${bundledSkills.enabled}`);
   }
   if (roleSkills.config !== undefined) {
-    args.push(roleSkillsConfigOverride(roleSkills.config, "playtest analyst"));
+    arguments_.push(roleSkillsConfigOverride(roleSkills.config, "playtest analyst"));
   }
-  return args;
+  return arguments_;
 }
 
 const PLAYTEST_ANALYST_ENVIRONMENT_KEYS = [
@@ -715,7 +717,9 @@ function bindPlaytesterMcpContext(
   return boundEnvironment;
 }
 
-/** The sanitized process environment for an isolated Browser Tester run. */
+/**
+The sanitized process environment for an isolated Browser Tester run.
+*/
 function browserTesterEnvironment(
   options: ProviderAgentOptions,
   providerEnvironment: NodeJS.ProcessEnv,
@@ -830,16 +834,16 @@ const PLAYTESTER_MCP_ENVIRONMENT_VARIABLES: readonly string[] =
   roleContract(PLAYTESTER_ROLE).mcpEnvVars?.playtest ?? [];
 
 /**
- * The bounded playtester role gets the local, trusted Playtesting MCP
- * transport only. This mirrors the analyst's defense-in-depth re-assertion:
- * the role file (playtester.toml) already declares the exact bounded runner
- * tool set, read-only sandbox, disabled shell, and the trusted
- * session/credential environment allowlist, but Codex's own strict-config
- * command-line overrides win regardless of file drift, and every other
- * configured MCP server is explicitly disabled rather than assumed off.
- * Playtest MCP enablement never happens globally; it is only ever injected
- * for this one role's own Codex invocation.
- */
+The bounded playtester role gets the local, trusted Playtesting MCP
+transport only. This mirrors the analyst's defense-in-depth re-assertion:
+the role file (playtester.toml) already declares the exact bounded runner
+tool set, read-only sandbox, disabled shell, and the trusted
+session/credential environment allowlist, but Codex's own strict-config
+command-line overrides win regardless of file drift, and every other
+configured MCP server is explicitly disabled rather than assumed off.
+Playtest MCP enablement never happens globally; it is only ever injected
+for this one role's own Codex invocation.
+*/
 function browserTesterCodexOverrides(
   options: ProviderAgentOptions
 ): readonly string[] {
@@ -848,8 +852,8 @@ function browserTesterCodexOverrides(
   const playwrightServer = tomlRecord(roleMcpServers.playwright);
   const enabledTools = stringArray(playwrightServer.enabled_tools);
   const expectedTools = new Set<string>(BROWSER_TESTER_ENABLED_TOOLS);
-  const envVars = stringArray(playwrightServer.env_vars);
-  const expectedEnvVars = new Set<string>(
+  const environmentVariables = stringArray(playwrightServer.env_vars);
+  const expectedEnvironmentVariables = new Set<string>(
     BROWSER_TESTER_MCP_ENVIRONMENT_VARIABLES
   );
   const features = tomlRecord(role.features);
@@ -872,10 +876,10 @@ function browserTesterCodexOverrides(
     ) ||
     enabledTools.length !== expectedTools.size ||
     new Set(enabledTools).size !== enabledTools.length ||
-    !enabledTools.every((tool) => expectedTools.has(tool)) ||
-    envVars.length !== expectedEnvVars.size ||
-    new Set(envVars).size !== envVars.length ||
-    !envVars.every((name) => expectedEnvVars.has(name))
+    enabledTools.some((tool) => !expectedTools.has(tool)) ||
+    environmentVariables.length !== expectedEnvironmentVariables.size ||
+    new Set(environmentVariables).size !== environmentVariables.length ||
+    environmentVariables.some((name) => !expectedEnvironmentVariables.has(name))
   ) {
     throw new Error(
       "The browser-tester role must be read-only, shell-disabled, and allowlist only its exact Playwright tools and environment."
@@ -898,7 +902,7 @@ function browserTesterCodexOverrides(
     options.repositoryRoot,
     "mcp/launcher.ts"
   );
-  const args = [
+  const arguments_ = [
     "features.shell_tool=false",
     "features.multi_agent=false",
     "features.multi_agent_v2=false",
@@ -908,9 +912,9 @@ function browserTesterCodexOverrides(
     'shell_environment_policy.inherit="none"'
   ];
   for (const name of configuredServers) {
-    args.push(`mcp_servers.${configKey(name)}.enabled=false`);
+    arguments_.push(`mcp_servers.${configKey(name)}.enabled=false`);
   }
-  args.push(
+  arguments_.push(
     "mcp_servers.playwright.enabled=true",
     `mcp_servers.playwright.command=${JSON.stringify(process.execPath)}`,
     `mcp_servers.playwright.args=${JSON.stringify([mcpEntry, "playwright"])}`,
@@ -926,22 +930,22 @@ function browserTesterCodexOverrides(
   ]);
   for (const name of [...configuredPlugins].sort()) {
     const rolePlugin = tomlRecord(rolePlugins[name]);
-    args.push(
+    arguments_.push(
       `plugins.${configKey(name)}.enabled=${rolePlugin?.enabled === true}`
     );
   }
   const roleSkills = tomlRecord(role.skills);
   if (typeof roleSkills.include_instructions === "boolean") {
-    args.push(`skills.include_instructions=${roleSkills.include_instructions}`);
+    arguments_.push(`skills.include_instructions=${roleSkills.include_instructions}`);
   }
   const bundledSkills = tomlRecord(roleSkills.bundled);
   if (typeof bundledSkills.enabled === "boolean") {
-    args.push(`skills.bundled.enabled=${bundledSkills.enabled}`);
+    arguments_.push(`skills.bundled.enabled=${bundledSkills.enabled}`);
   }
   if (roleSkills.config !== undefined) {
-    args.push(roleSkillsConfigOverride(roleSkills.config, BROWSER_TESTER_ROLE));
+    arguments_.push(roleSkillsConfigOverride(roleSkills.config, BROWSER_TESTER_ROLE));
   }
-  return args;
+  return arguments_;
 }
 
 function playtesterCodexOverrides(
@@ -972,18 +976,18 @@ function playtesterCodexOverrides(
     ) ||
     enabledTools.length !== expectedTools.size ||
     new Set(enabledTools).size !== enabledTools.length ||
-    !enabledTools.every((tool) => expectedTools.has(tool))
+    enabledTools.some((tool) => !expectedTools.has(tool))
   ) {
     throw new Error(
       "The playtester role must be read-only, shell-disabled, and allowlist only the exact approved runner Playtesting tools."
     );
   }
-  const envVars = stringArray(playtestServer.env_vars);
-  const expectedEnvVars = new Set<string>(PLAYTESTER_MCP_ENVIRONMENT_VARIABLES);
+  const environmentVariables = stringArray(playtestServer.env_vars);
+  const expectedEnvironmentVariables = new Set<string>(PLAYTESTER_MCP_ENVIRONMENT_VARIABLES);
   if (
-    envVars.length !== expectedEnvVars.size ||
-    new Set(envVars).size !== envVars.length ||
-    !envVars.every((name) => expectedEnvVars.has(name))
+    environmentVariables.length !== expectedEnvironmentVariables.size ||
+    new Set(environmentVariables).size !== environmentVariables.length ||
+    environmentVariables.some((name) => !expectedEnvironmentVariables.has(name))
   ) {
     throw new Error(
       "The playtester role must declare the exact trusted Playtesting MCP environment allowlist."
@@ -1012,15 +1016,15 @@ function playtesterCodexOverrides(
     typeof installedPlaytestServer.command === "string"
       ? installedPlaytestServer.command
       : "bash";
-  const installedPlaytestArgs = stringArray(installedPlaytestServer.args);
-  const playtestLaunchArgs =
-    installedPlaytestArgs.length > 0
-      ? installedPlaytestArgs
+  const installedPlaytestArguments = stringArray(installedPlaytestServer.args);
+  const playtestLaunchArguments =
+    installedPlaytestArguments.length > 0
+      ? installedPlaytestArguments
       : [
           "-lc",
           'exec "${CODEX_HOME:-$HOME/.codex}/hooks/run-autodev-mcp.sh" playtest'
         ];
-  const args = [
+  const arguments_ = [
     "features.shell_tool=false",
     "features.multi_agent=false",
     "features.multi_agent_v2=false",
@@ -1030,12 +1034,12 @@ function playtesterCodexOverrides(
     'shell_environment_policy.inherit="none"'
   ];
   for (const name of configuredServers) {
-    args.push(`mcp_servers.${configKey(name)}.enabled=false`);
+    arguments_.push(`mcp_servers.${configKey(name)}.enabled=false`);
   }
-  args.push(
+  arguments_.push(
     "mcp_servers.playtest.enabled=true",
     `mcp_servers.playtest.command=${JSON.stringify(installedPlaytestCommand)}`,
-    `mcp_servers.playtest.args=${JSON.stringify(playtestLaunchArgs)}`,
+    `mcp_servers.playtest.args=${JSON.stringify(playtestLaunchArguments)}`,
     'mcp_servers.playtest.default_tools_approval_mode="approve"',
     "mcp_servers.playtest.startup_timeout_sec=60",
     `mcp_servers.playtest.enabled_tools=${JSON.stringify(PLAYTESTER_ENABLED_TOOLS)}`,
@@ -1047,22 +1051,22 @@ function playtesterCodexOverrides(
   ]);
   for (const name of [...configuredPlugins].sort()) {
     const rolePlugin = tomlRecord(rolePlugins[name]);
-    args.push(
+    arguments_.push(
       `plugins.${configKey(name)}.enabled=${rolePlugin?.enabled === true}`
     );
   }
   const roleSkills = tomlRecord(role.skills);
   if (typeof roleSkills.include_instructions === "boolean") {
-    args.push(`skills.include_instructions=${roleSkills.include_instructions}`);
+    arguments_.push(`skills.include_instructions=${roleSkills.include_instructions}`);
   }
   const bundledSkills = tomlRecord(roleSkills.bundled);
   if (typeof bundledSkills.enabled === "boolean") {
-    args.push(`skills.bundled.enabled=${bundledSkills.enabled}`);
+    arguments_.push(`skills.bundled.enabled=${bundledSkills.enabled}`);
   }
   if (roleSkills.config !== undefined) {
-    args.push(roleSkillsConfigOverride(roleSkills.config, PLAYTESTER_ROLE));
+    arguments_.push(roleSkillsConfigOverride(roleSkills.config, PLAYTESTER_ROLE));
   }
-  return args;
+  return arguments_;
 }
 
 function providerCodexArguments(
@@ -1071,12 +1075,12 @@ function providerCodexArguments(
   analystDispatch: boolean,
   executionEnvironment: NodeJS.ProcessEnv
 ): string[] {
-  const args = ["--strict-config", "-C", options.workspace];
+  const arguments_ = ["--strict-config", "-C", options.workspace];
   if (settings.reasoningEffort) {
-    args.push("-c", `model_reasoning_effort=${settings.reasoningEffort}`);
+    arguments_.push("-c", `model_reasoning_effort=${settings.reasoningEffort}`);
   }
   if (settings.reasoningSummary) {
-    args.push("-c", `model_reasoning_summary=${settings.reasoningSummary}`);
+    arguments_.push("-c", `model_reasoning_summary=${settings.reasoningSummary}`);
   }
   if (analystDispatch) {
     const sourceCodexHome =
@@ -1087,14 +1091,14 @@ function providerCodexArguments(
           homedir(),
         ".codex"
       );
-    args.push(
+    arguments_.push(
       ...analystCodexOverrides(options.roleFile, sourceCodexHome).flatMap(
         (override) => ["-c", override]
       )
     );
   }
   if (options.role === BROWSER_TESTER_ROLE) {
-    args.push(
+    arguments_.push(
       ...browserTesterCodexOverrides(options).flatMap((override) => [
         "-c",
         override
@@ -1102,14 +1106,14 @@ function providerCodexArguments(
     );
   }
   if (options.role === PLAYTESTER_ROLE) {
-    args.push(
+    arguments_.push(
       ...playtesterCodexOverrides(options).flatMap((override) => [
         "-c",
         override
       ])
     );
   }
-  args.push(
+  arguments_.push(
     "exec",
     "--model",
     `autodev/${options.role}`,
@@ -1118,7 +1122,7 @@ function providerCodexArguments(
     "--skip-git-repo-check",
     buildProviderPrompt(options.prompt, settings)
   );
-  return args;
+  return arguments_;
 }
 
 async function checkProviderAgentRole(
@@ -1175,30 +1179,30 @@ export function buildProviderPrompt(
 
 export function runCodex(
   binary: string,
-  args: string[],
+  arguments_: string[],
   environment: NodeJS.ProcessEnv,
   checkOnly: boolean
 ): Promise<number> {
   if (checkOnly) {
     return Promise.resolve(
-      spawnSync(binary, args, {
+      spawnSync(binary, arguments_, {
         stdio: "ignore",
         env: environment
       }).status ?? 1
     );
   }
   return new Promise<number>((resolve, reject) => {
-    const child = spawn(binary, args, {
+    const child = spawn(binary, arguments_, {
       stdio: ["ignore", "inherit", "inherit"],
       env: environment
     });
     let interruptedBy: NodeJS.Signals | null = null;
     let forceKill: NodeJS.Timeout | undefined;
-    let settled = false;
+    let isSettled = false;
     const handlers = new Map<NodeJS.Signals, () => void>();
     const finish = (exitCode: number | null): void => {
-      if (settled) return;
-      settled = true;
+      if (isSettled) return;
+      isSettled = true;
       if (forceKill) clearTimeout(forceKill);
       for (const [signal, handler] of handlers) {
         process.removeListener(signal, handler);
@@ -1228,11 +1232,13 @@ export function runCodex(
       for (const [signal, handler] of handlers) {
         process.removeListener(signal, handler);
       }
-      if (!settled) {
-        settled = true;
-        if (forceKill) clearTimeout(forceKill);
-        reject(new Error("Codex role process could not be started."));
+      if (isSettled) {
+        return;
       }
+
+      isSettled = true;
+      if (forceKill) clearTimeout(forceKill);
+      reject(new Error("Codex role process could not be started."));
     });
     child.once("close", (exitCode) => finish(exitCode));
   });
@@ -1309,26 +1315,26 @@ function providerAgentRuntimeEnvironment(
 
 export async function runProviderAgent(
   argv: readonly string[] = process.argv.slice(2),
-  env: NodeJS.ProcessEnv = process.env,
-  deps: ProviderAgentDeps = {}
+  environment: NodeJS.ProcessEnv = process.env,
+  dependencies: ProviderAgentDeps = {}
 ): Promise<number> {
   if (argv.some((argument) => argument === "--help" || argument === "-h")) {
     process.stdout.write(`${usage()}\n`);
     return 0;
   }
   const requestedRole = requestedProviderAgentRole(argv);
-  const analystDispatch = requestedRole === PLAYTEST_ANALYST_ROLE;
-  if (env.AUTODEV_PLAYTEST_ANALYSIS_MODE === "1" && !analystDispatch) {
+  const isAnalystDispatch = requestedRole === PLAYTEST_ANALYST_ROLE;
+  if (environment.AUTODEV_PLAYTEST_ANALYSIS_MODE === "1" && !isAnalystDispatch) {
     throw new Error(
       "The isolated Playtesting analysis context is analyst-only."
     );
   }
   const runtimeEnvironment = providerAgentRuntimeEnvironment(
-    analystDispatch ? { ...env, AUTODEV_PLAYTEST_ANALYSIS_MODE: "1" } : env
+    isAnalystDispatch ? { ...environment, AUTODEV_PLAYTEST_ANALYSIS_MODE: "1" } : environment
   );
   const options = parseProviderAgentArgs(argv, runtimeEnvironment.execution);
-  await (deps.ensureRouter ?? ensureRouter)(runtimeEnvironment.router);
-  const execute = deps.runCodex ?? runCodex;
+  await (dependencies.ensureRouter ?? ensureRouter)(runtimeEnvironment.router);
+  const execute = dependencies.runCodex ?? runCodex;
   if (options.checkOnly) {
     return checkProviderAgentRole(
       options,
@@ -1345,18 +1351,18 @@ export async function runProviderAgent(
   if (runtimeEnvironment.analystDispatch && !settings.readOnly) {
     throw new Error("Playtest analyst dispatch requires a read-only role.");
   }
-  const providerEnv = providerCodexEnvironment(
+  const providerEnvironment = providerCodexEnvironment(
     options,
     runtimeEnvironment.execution,
     runtimeEnvironment.analystDispatch
   );
-  const args = providerCodexArguments(
+  const arguments_ = providerCodexArguments(
     options,
     settings,
     runtimeEnvironment.analystDispatch,
     runtimeEnvironment.execution
   );
-  return execute(options.codexBinary, args, providerEnv, false);
+  return execute(options.codexBinary, arguments_, providerEnvironment, false);
 }
 
 if (isEntryPoint(import.meta.url)) {

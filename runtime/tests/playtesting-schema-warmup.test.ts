@@ -54,7 +54,7 @@ test(
   "router startup warms the shared Playtesting schema without blocking other routes",
   { timeout: 10_000 },
   async () => {
-    const env = {
+    const environment = {
       CLICKHOUSE_URL: process.env.CLICKHOUSE_URL,
       AUTODEV_CONTROL_API_TOKEN: process.env.AUTODEV_CONTROL_API_TOKEN,
       AUTODEV_CONTROL_VIEWERS: process.env.AUTODEV_CONTROL_VIEWERS,
@@ -64,13 +64,13 @@ test(
       AUTODEV_CONTROL_API_LISTEN_PORT:
         process.env.AUTODEV_CONTROL_API_LISTEN_PORT
     };
-    const nativeFetch = globalThis.fetch;
+    const nativeFetch = fetch;
     const nativeStderrWrite = process.stderr.write;
     const stderrChunks: string[] = [];
     const clickhouseQueries: string[] = [];
     let releaseSchema!: () => void;
     let signalFirstQuery!: () => void;
-    let schemaReleased = false;
+    let isSchemaReleased = false;
     const schemaGate = new Promise<void>((resolve) => {
       releaseSchema = resolve;
     });
@@ -92,7 +92,7 @@ test(
           : new URL(typeof input === "string" ? input : input.url);
       if (url.hostname === "clickhouse.test") {
         const query = url.searchParams.get("query") ?? "";
-        const schemaSucceeds = schemaReleased;
+        const schemaSucceeds = isSchemaReleased;
         clickhouseQueries.push(query);
         if (clickhouseQueries.length === 1) signalFirstQuery();
         if (!schemaSucceeds) {
@@ -211,7 +211,7 @@ test(
         "the pending-read response must not start duplicate schema work"
       );
 
-      schemaReleased = true;
+      isSchemaReleased = true;
       releaseSchema();
       await startupInitialization.catch(() => undefined);
 
@@ -337,7 +337,7 @@ test(
       assert.match(startupLog, /Playtesting schema startup warmup failed/u);
       assert.doesNotMatch(startupLog, /sensitive ClickHouse response details/u);
     } finally {
-      if (!schemaReleased) releaseSchema();
+      if (!isSchemaReleased) releaseSchema();
       if (router?.listening) {
         const closed = once(router, "close");
         router.close();
@@ -345,7 +345,7 @@ test(
       }
       globalThis.fetch = nativeFetch;
       process.stderr.write = nativeStderrWrite;
-      for (const [key, value] of Object.entries(env)) {
+      for (const [key, value] of Object.entries(environment)) {
         if (value === undefined) delete process.env[key];
         else process.env[key] = value;
       }

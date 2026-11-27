@@ -17,23 +17,23 @@ const NOT_OBSERVED = "Not observed";
 const CONNECTED_CLAIM = /^Connected$/u;
 
 /**
- * The endpoint the canonical declaration gives the `codexcli` target, and the
- * one the Runtime published before it had observed that declaration.
- *
- * They differ on purpose: the Runtime is behind the declaration here, so the
- * edit surface can only be showing the declaration if the two are not the
- * same string.
- */
+The endpoint the canonical declaration gives the `codexcli` target, and the
+one the Runtime published before it had observed that declaration.
+
+They differ on purpose: the Runtime is behind the declaration here, so the
+edit surface can only be showing the declaration if the two are not the
+same string.
+*/
 const DECLARED_DOCS_URL = "https://docs.example.test/mcp";
 const PUBLISHED_DOCS_URL = "https://developers.openai.com/mcp";
 const EDITED_DOCS_URL = "https://developers.openai.com/edited-mcp";
 const MOVED_DOCS_URL = "https://moved.example.test/openaiDeveloperDocs";
 
 /**
- * The tab set the target state mandates for MCP detail, in the order it
- * mandates. The detail page is the only place these nine appear, so the
- * order is part of what the page promises.
- */
+The tab set the target state mandates for MCP detail, in the order it
+mandates. The detail page is the only place these nine appear, so the
+order is part of what the page promises.
+*/
 const MCP_DETAIL_TAB_IDS = [
   "overview",
   "configuration",
@@ -47,21 +47,21 @@ const MCP_DETAIL_TAB_IDS = [
 ] as const;
 
 /**
- * The label of the column that reports what a target override says about a
- * server. The MCP table says "Enabled" in two different columns -- the
- * default state and a target override -- so a cell's position is the only
- * thing that tells the two claims apart.
- */
+The label of the column that reports what a target override says about a
+server. The MCP table says "Enabled" in two different columns -- the
+default state and a target override -- so a cell's position is the only
+thing that tells the two claims apart.
+*/
 const DEFAULT_STATE_COLUMN = "Default State";
 const CONNECTION_COLUMN = "Connection";
 const OVERRIDES_COLUMN = "Overrides";
 
 /**
- * One row of the MCP table, found by the server's own link.
- *
- * The table has no row identity of its own, and a server name is the row's
- * primary key, so the link that carries the name is what identifies the row.
- */
+One row of the MCP table, found by the server's own link.
+
+The table has no row identity of its own, and a server name is the row's
+primary key, so the link that carries the name is what identifies the row.
+*/
 function serverRow(page: Page, name: string): Locator {
   return page.locator("tbody tr").filter({
     has: page.getByRole("link", { name, exact: true })
@@ -69,12 +69,12 @@ function serverRow(page: Page, name: string): Locator {
 }
 
 /**
- * One cell of one table row, found by the column's own header label.
- *
- * Reading the header's own label keeps the assertion tied to the column's
- * name rather than to its position, so a column that is reordered or
- * inserted does not silently turn one claim into another.
- */
+One cell of one table row, found by the column's own header label.
+
+Reading the header's own label keeps the assertion tied to the column's
+name rather than to its position, so a column that is reordered or
+inserted does not silently turn one claim into another.
+*/
 async function cellInRow(
   page: Page,
   row: Locator,
@@ -91,19 +91,21 @@ async function cellInRow(
 }
 
 /**
- * The value of one labelled field, found by the field's own label.
- *
- * A configuration field is a `<dt>`/`<dd>` pair, and the label is the only
- * thing that names which fact the value is: the same word appears as a table
- * header, as a tab and as a value elsewhere on these pages.
- */
+The value of one labelled field, found by the field's own label.
+
+A configuration field is a `<dt>`/`<dd>` pair, and the label is the only
+thing that names which fact the value is: the same word appears as a table
+header, as a tab and as a value elsewhere on these pages.
+*/
 function fieldValue(page: Page, label: string): Locator {
   return page
     .locator(`dt:text-is("${label}")`)
     .locator("xpath=following-sibling::dd[1]");
 }
 
-/** The tab navigation of one MCP detail page. */
+/**
+The tab navigation of one MCP detail page.
+*/
 function detailTabs(page: Page, server: string): Locator {
   return page.getByRole("navigation", { name: `${server} detail sections` });
 }
@@ -122,9 +124,9 @@ async function assertConnectionIsUnobserved(
 }
 
 /**
- * One row whose connection the Runtime has observed, with the health it
- * reported. The claim is the Runtime's, and the row says which.
- */
+One row whose connection the Runtime has observed, with the health it
+reported. The claim is the Runtime's, and the row says which.
+*/
 async function assertConnectionIsObserved(
   page: Page,
   server: string,
@@ -140,9 +142,9 @@ async function assertConnectionIsObserved(
 }
 
 /**
- * One tab that cannot be answered without a live session, and the badge that
- * says so.
- */
+One tab that cannot be answered without a live session, and the badge that
+says so.
+*/
 async function assertTabIsUnobserved(
   page: Page,
   server: string,
@@ -161,12 +163,12 @@ async function assertFitsViewport(page: Page, width: number): Promise<void> {
 }
 
 /**
- * Puts the canonical MCP declaration back the way the fixture declares it.
- *
- * The write is real, so the declaration a spec leaves behind is the
- * declaration the next spec would load. Resetting it keeps a spec that fails
- * halfway from deciding what the next one measures.
- */
+Puts the canonical MCP declaration back the way the fixture declares it.
+
+The write is real, so the declaration a spec leaves behind is the
+declaration the next spec would load. Resetting it keeps a spec that fails
+halfway from deciding what the next one measures.
+*/
 async function resetMcpDeclaration(request: APIRequestContext): Promise<void> {
   const response = await request.post(`${FIXTURE_BASE_URL}/fixture/mcp/reset`);
   expect(response.ok()).toBe(true);
@@ -468,9 +470,9 @@ test("the MCP detail tabs navigate in place without remounting the document", as
 });
 
 /**
- * One tab click, and the two things it has to keep true: the URL says which
- * tab is open, and the document was not remounted to get there.
- */
+One tab click, and the two things it has to keep true: the URL says which
+tab is open, and the document was not remounted to get there.
+*/
 async function assertTabNavigationKeepsTheDocument(
   page: Page,
   readMountToken: () => Promise<string | undefined>,

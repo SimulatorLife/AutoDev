@@ -1,12 +1,12 @@
 /**
- * The rollout fixtures the diagnostics engine tests read.
- *
- * The shapes are the ones Codex actually writes: a `session_meta` head, a
- * `turn_context`, `event_msg` turn boundaries, `response_item` calls and
- * `token_count` usage records. The engine reads untrusted JSON, so the
- * fixtures are deliberately allowed to be malformed in the places where the
- * engine has to survive them.
- */
+The rollout fixtures the diagnostics engine tests read.
+
+The shapes are the ones Codex actually writes: a `session_meta` head, a
+`turn_context`, `event_msg` turn boundaries, `response_item` calls and
+`token_count` usage records. The engine reads untrusted JSON, so the
+fixtures are deliberately allowed to be malformed in the places where the
+engine has to survive them.
+*/
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,7 +16,9 @@ export const ROOT = "01a0b662-0000-7000-8000-000000000001";
 export const CHILD = "01a0b664-0000-7000-8000-000000000002";
 export const OTHER = "01a0b699-0000-7000-8000-000000000003";
 
-/** One rollout line, in the shape Codex writes it. */
+/**
+One rollout line, in the shape Codex writes it.
+*/
 export function rolloutLine(
   timestamp: string,
   type: string,
@@ -25,7 +27,9 @@ export function rolloutLine(
   return JSON.stringify({ timestamp, type, payload });
 }
 
-/** One router event line, in the shape the router writes it. */
+/**
+One router event line, in the shape the router writes it.
+*/
 export function routerEvent(
   timestamp: string,
   fields: Record<string, unknown>
@@ -37,7 +41,9 @@ export function routerEvent(
   });
 }
 
-/** One hook-log line, in the shape the hooks runtime writes it. */
+/**
+One hook-log line, in the shape the hooks runtime writes it.
+*/
 export function hookLine(fields: Record<string, unknown>): string {
   return JSON.stringify(fields);
 }
@@ -51,8 +57,8 @@ export interface Fixture {
 }
 
 /**
- * A codex home with one session of three threads, a router log and a hook log.
- */
+A codex home with one session of three threads, a router log and a hook log.
+*/
 export function fixture(): Fixture {
   const home = mkdtempSync(path.join(tmpdir(), "autodev-diagnostics-"));
   const day = path.join(home, "sessions", "2026", "09", "18");

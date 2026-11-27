@@ -21,7 +21,7 @@ import {
   runRouterEnsure
 } from "@simulatorlife/autodev-runtime/platform/router-ensure";
 
-function withTempHome<T>(callback: (home: string) => T): T {
+function withTemporaryHome<T>(callback: (home: string) => T): T {
   const previous = process.env.CODEX_HOME;
   const home = mkdtempSync(join(tmpdir(), "autodev-router-ensure-"));
   process.env.CODEX_HOME = home;
@@ -88,10 +88,10 @@ interface FakeLaunchd {
 function fakeLaunchdClient(fake: FakeLaunchd): LaunchdClient {
   const runner = (
     command: string,
-    args: string[]
+    arguments_: string[]
   ): { stdout: string; stderr: string; status: number | null } => {
-    fake.calls.push(args);
-    if (args[0] === "print" && args[1]) {
+    fake.calls.push(arguments_);
+    if (arguments_[0] === "print" && arguments_[1]) {
       if (fake.throwOnPrint) return { stdout: "", stderr: "denied", status: 1 };
       return {
         stdout: fake.printOutput,
@@ -99,12 +99,12 @@ function fakeLaunchdClient(fake: FakeLaunchd): LaunchdClient {
         status: fake.loaded ? 0 : 1
       };
     }
-    if (args[0] === "kickstart" && fake.throwOnKickstart)
+    if (arguments_[0] === "kickstart" && fake.throwOnKickstart)
       return { stdout: "", stderr: "kickstart failed", status: 1 };
-    if (args[0] === "bootstrap" && fake.throwOnBootstrap)
+    if (arguments_[0] === "bootstrap" && fake.throwOnBootstrap)
       return { stdout: "", stderr: "bootstrap failed", status: 1 };
-    if (args[0] === "bootstrap") fake.loaded = true;
-    if (args[0] === "kickstart") fake.loaded = true;
+    if (arguments_[0] === "bootstrap") fake.loaded = true;
+    if (arguments_[0] === "kickstart") fake.loaded = true;
     return { stdout: "", stderr: "", status: 0 };
   };
   return new LaunchdClient({ runner, uid: 501 });
@@ -114,7 +114,9 @@ type FileState =
   { kind: "dir" } | { kind: "file"; data: string } | { kind: "symlink" };
 
 class FakeFs {
-  /** The fake filesystem's contents; tests seed and inspect them directly. */
+  /**
+  The fake filesystem's contents; tests seed and inspect them directly.
+  */
   readonly files = new Map<string, FileState>();
   readonly calls: { name: string; args: unknown[] }[] = [];
 
@@ -179,10 +181,12 @@ class FakeFs {
     this.calls.push({ name: "rename", args: [from, to] });
     if (!this.files.has(from)) throw new Error(`ENOENT: ${from}`);
     const v = this.files.get(from);
-    if (v !== undefined) {
-      this.files.delete(from);
-      this.files.set(to, v);
+    if (v === undefined) {
+      return;
     }
+
+    this.files.delete(from);
+    this.files.set(to, v);
   }
 
   async stat(path: string): Promise<{ size: number } | null> {
@@ -193,7 +197,7 @@ class FakeFs {
   }
 }
 
-interface MakeDepsOptions {
+interface MakeDependenciesOptions {
   home: string;
   fake: FakeLaunchd;
   fs: FakeFs;
@@ -207,7 +211,7 @@ interface MakeDepsOptions {
   launcherAppends?: string[];
 }
 
-interface MakeDepsOptions {
+interface MakeDependenciesOptions {
   home: string;
   fake: FakeLaunchd;
   fs: FakeFs;
@@ -221,59 +225,63 @@ interface MakeDepsOptions {
   launcherAppends?: string[];
 }
 
-function makeDeps(
-  opts: MakeDepsOptions
+function makeDependencies(
+  options: MakeDependenciesOptions
 ): RouterEnsureDeps & { fake: FakeLaunchd; fs: FakeFs } {
-  const probeFn: RouterEnsureDeps["probe"] = async () => {
-    const value = opts.probeResult;
+  const probeFunction: RouterEnsureDeps["probe"] = async () => {
+    const value = options.probeResult;
     if (typeof value === "function") return Boolean(value());
     return value ?? false;
   };
   const startLauncher: RouterEnsureDeps["startLauncher"] =
-    opts.startLauncher ??
-    ((_cmd, _args, logPath) => {
-      const pid = opts.nextLauncherPid
-        ? opts.nextLauncherPid()
-        : (opts.nextLauncherPids?.shift() ?? 8888);
-      if (opts.launcherAppends) {
-        const current = opts.fs.files.get(logPath);
+    options.startLauncher ??
+    ((_command, _arguments, logPath) => {
+      const pid = options.nextLauncherPid
+        ? options.nextLauncherPid()
+        : (options.nextLauncherPids?.shift() ?? 8888);
+      if (options.launcherAppends) {
+        const current = options.fs.files.get(logPath);
         const base = current && current.kind === "file" ? current.data : "";
         const next =
           base +
           (base.endsWith("\n") || base === "" ? "" : "\n") +
-          opts.launcherAppends.join("\n") +
+          options.launcherAppends.join("\n") +
           "\n";
-        opts.fs.files.set(logPath, { kind: "file", data: next });
+        options.fs.files.set(logPath, { kind: "file", data: next });
       }
       return { pid };
     });
   return {
-    launchd: fakeLaunchdClient(opts.fake),
-    fake: opts.fake,
-    fs: opts.fs,
-    probe: probeFn,
-    pidExists: opts.pidExists ?? ((pid) => pid > 0),
-    pidCommandLine: opts.pidCommandLine ?? (() => ""),
-    listenerPid: opts.listenerPid ?? (() => null),
+    launchd: fakeLaunchdClient(options.fake),
+    fake: options.fake,
+    fs: options.fs,
+    probe: probeFunction,
+    pidExists: options.pidExists ?? ((pid) => pid > 0),
+    pidCommandLine: options.pidCommandLine ?? (() => ""),
+    listenerPid: options.listenerPid ?? (() => null),
     startLauncher,
     signalPid: (pid, signal) => {
-      opts.fs.calls.push({ name: `signal-${signal}`, args: [pid] });
+      options.fs.calls.push({ name: `signal-${signal}`, args: [pid] });
       return true;
     },
     sleep: async () => {
-      /* no-op */
+      /*
+      no-op
+      */
     },
     now: () => Date.now(),
-    mkdir: (path, o) => opts.fs.mkdir(path, o),
-    chmod: (path, mode) => opts.fs.chmod(path, mode),
-    lstat: (path) => opts.fs.lstat(path),
-    writeFile: (path, data) => opts.fs.writeFile(path, data),
-    readFile: (path) => opts.fs.readFile(path),
-    unlink: (path) => opts.fs.unlink(path),
-    rename: (from, to) => opts.fs.rename(from, to),
-    stat: (path) => opts.fs.stat(path),
+    mkdir: (path, o) => options.fs.mkdir(path, o),
+    chmod: (path, mode) => options.fs.chmod(path, mode),
+    lstat: (path) => options.fs.lstat(path),
+    writeFile: (path, data) => options.fs.writeFile(path, data),
+    readFile: (path) => options.fs.readFile(path),
+    unlink: (path) => options.fs.unlink(path),
+    rename: (from, to) => options.fs.rename(from, to),
+    stat: (path) => options.fs.stat(path),
     setExitHandler: () => () => {
-      /* no-op for tests */
+      /*
+      no-op for tests
+      */
     }
   };
 }
@@ -289,15 +297,15 @@ test("parses launchd pid output ignoring label and surrounding whitespace", () =
 });
 
 test("acquireLock succeeds when no lock is held and writes a private pid marker", async () => {
-  await withTempHome(async (home) => {
+  await withTemporaryHome(async (home) => {
     const fs = new FakeFs();
-    const deps = makeDeps({
+    const dependencies = makeDependencies({
       home,
       fake: { calls: [], loaded: false, printOutput: "" },
       fs
     });
     const options = defaultOptions(home);
-    const ok = await __testing.acquireLock(deps, options);
+    const ok = await __testing.acquireLock(dependencies, options);
     assert.equal(ok, true);
     const pidFile = fs.get(`${options.paths.lockDir}/pid`);
     assert.ok(pidFile && pidFile.kind === "file", "pid file is written");
@@ -317,18 +325,18 @@ test("acquireLock succeeds when no lock is held and writes a private pid marker"
 });
 
 test("acquireLock refuses when a live lock is held by another process", async () => {
-  await withTempHome(async (home) => {
+  await withTemporaryHome(async (home) => {
     const fs = new FakeFs();
     const paths = defaultPaths(home);
     fs.files.set(paths.lockDir, { kind: "dir" });
     fs.files.set(`${paths.lockDir}/pid`, { kind: "file", data: "9999" });
-    const deps = makeDeps({
+    const dependencies = makeDependencies({
       home,
       fake: { calls: [], loaded: false, printOutput: "" },
       fs,
       pidExists: (pid) => pid === 9999
     });
-    const ok = await __testing.acquireLock(deps, defaultOptions(home));
+    const ok = await __testing.acquireLock(dependencies, defaultOptions(home));
     assert.equal(ok, false);
     const pidFile = fs.get(`${paths.lockDir}/pid`);
     assert.ok(pidFile && pidFile.kind === "file" && pidFile.data === "9999");
@@ -336,18 +344,18 @@ test("acquireLock refuses when a live lock is held by another process", async ()
 });
 
 test("acquireLock recovers from a stale lock whose owner is no longer alive", async () => {
-  await withTempHome(async (home) => {
+  await withTemporaryHome(async (home) => {
     const fs = new FakeFs();
     const paths = defaultPaths(home);
     fs.files.set(paths.lockDir, { kind: "dir" });
     fs.files.set(`${paths.lockDir}/pid`, { kind: "file", data: "9999" });
-    const deps = makeDeps({
+    const dependencies = makeDependencies({
       home,
       fake: { calls: [], loaded: false, printOutput: "" },
       fs,
       pidExists: (pid) => pid !== 9999
     });
-    const ok = await __testing.acquireLock(deps, defaultOptions(home));
+    const ok = await __testing.acquireLock(dependencies, defaultOptions(home));
     assert.equal(ok, true);
     const pidFile = fs.get(`${paths.lockDir}/pid`);
     assert.ok(pidFile && pidFile.kind === "file");
@@ -359,15 +367,15 @@ test("acquireLock recovers from a stale lock whose owner is no longer alive", as
 });
 
 test("secureLogFile creates an empty log file with mode 0600 when missing", async () => {
-  await withTempHome(async (home) => {
+  await withTemporaryHome(async (home) => {
     const fs = new FakeFs();
-    const deps = makeDeps({
+    const dependencies = makeDependencies({
       home,
       fake: { calls: [], loaded: false, printOutput: "" },
       fs
     });
     const logPath = join(home, "plain.log");
-    await __testing.secureLogFile(deps, logPath);
+    await __testing.secureLogFile(dependencies, logPath);
     const created = fs.get(logPath);
     assert.ok(created && created.kind === "file" && created.data === "");
     const mode = fs.get(`${logPath}__mode`);
@@ -376,17 +384,17 @@ test("secureLogFile creates an empty log file with mode 0600 when missing", asyn
 });
 
 test("secureLogFile refuses to use a symlinked log path", async () => {
-  await withTempHome(async (home) => {
+  await withTemporaryHome(async (home) => {
     const fs = new FakeFs();
     const logPath = join(home, "linked.log");
     fs.files.set(logPath, { kind: "symlink" });
-    const deps = makeDeps({
+    const dependencies = makeDependencies({
       home,
       fake: { calls: [], loaded: false, printOutput: "" },
       fs
     });
     await assert.rejects(
-      async () => __testing.secureLogFile(deps, logPath),
+      async () => __testing.secureLogFile(dependencies, logPath),
       /symlinked/
     );
     assert.equal(fs.has(`${logPath}__mode`), false);
@@ -394,54 +402,54 @@ test("secureLogFile refuses to use a symlinked log path", async () => {
 });
 
 test("fallbackPidOwned matches the launchd launcher or the node entrypoint", () => {
-  const depsA = makeDeps({
+  const dependenciesA = makeDependencies({
     home: "/tmp/x",
     fake: { calls: [], loaded: false, printOutput: "" },
     fs: new FakeFs(),
     pidCommandLine: () =>
       "bash /Users/test/.codex/hooks/run-autodev-model-router.sh"
   });
-  const depsB = makeDeps({
+  const dependenciesB = makeDependencies({
     home: "/tmp/x",
     fake: { calls: [], loaded: false, printOutput: "" },
     fs: new FakeFs(),
     pidCommandLine: () =>
       "/usr/local/bin/node /Users/test/.codex/scripts/codex-model-router.mjs"
   });
-  const depsC = makeDeps({
+  const dependenciesC = makeDependencies({
     home: "/tmp/x",
     fake: { calls: [], loaded: false, printOutput: "" },
     fs: new FakeFs(),
     pidCommandLine: () => "vim"
   });
-  assert.equal(__testing.fallbackPidOwned(depsA, 1), true);
-  assert.equal(__testing.fallbackPidOwned(depsB, 2), true);
-  assert.equal(__testing.fallbackPidOwned(depsC, 3), false);
+  assert.equal(__testing.fallbackPidOwned(dependenciesA, 1), true);
+  assert.equal(__testing.fallbackPidOwned(dependenciesB, 2), true);
+  assert.equal(__testing.fallbackPidOwned(dependenciesC, 3), false);
 });
 
 test("launchdOwnsListener requires both the launchd child pid and the listening pid to match", () => {
-  const deps1 = makeDeps({
+  const dependencies1 = makeDependencies({
     home: "/tmp/x",
     fake: { calls: [], loaded: false, printOutput: "" },
     fs: new FakeFs(),
     listenerPid: () => 4242
   });
-  const deps2 = makeDeps({
+  const dependencies2 = makeDependencies({
     home: "/tmp/x",
     fake: { calls: [], loaded: false, printOutput: "" },
     fs: new FakeFs(),
     listenerPid: () => 9999
   });
-  const opts = defaultOptions("/tmp/x");
-  assert.equal(__testing.launchdOwnsListener(deps1, opts, 4242), true);
-  assert.equal(__testing.launchdOwnsListener(deps2, opts, 4242), false);
-  assert.equal(__testing.launchdOwnsListener(deps1, opts, null), false);
+  const options = defaultOptions("/tmp/x");
+  assert.equal(__testing.launchdOwnsListener(dependencies1, options, 4242), true);
+  assert.equal(__testing.launchdOwnsListener(dependencies2, options, 4242), false);
+  assert.equal(__testing.launchdOwnsListener(dependencies1, options, null), false);
 });
 
 test("ensureViaLaunchd returns 0 when the loaded job owns a healthy listener", async () => {
-  await withTempHome(async (home) => {
+  await withTemporaryHome(async (home) => {
     const fs = new FakeFs();
-    const deps = makeDeps({
+    const dependencies = makeDependencies({
       home,
       fake: {
         calls: [],
@@ -452,15 +460,15 @@ test("ensureViaLaunchd returns 0 when the loaded job owns a healthy listener", a
       probeResult: true,
       listenerPid: () => 4242
     });
-    const result = await __testing.ensureViaLaunchd(deps, defaultOptions(home));
+    const result = await __testing.ensureViaLaunchd(dependencies, defaultOptions(home));
     assert.equal(result, 0);
   });
 });
 
 test("ensureViaLaunchd returns 1 when the loaded job is healthy but does not own the listener", async () => {
-  await withTempHome(async (home) => {
+  await withTemporaryHome(async (home) => {
     const fs = new FakeFs();
-    const deps = makeDeps({
+    const dependencies = makeDependencies({
       home,
       fake: {
         calls: [],
@@ -471,15 +479,15 @@ test("ensureViaLaunchd returns 1 when the loaded job is healthy but does not own
       probeResult: true,
       listenerPid: () => 9999
     });
-    const result = await __testing.ensureViaLaunchd(deps, defaultOptions(home));
+    const result = await __testing.ensureViaLaunchd(dependencies, defaultOptions(home));
     assert.equal(result, 1);
   });
 });
 
 test("ensureViaLaunchd returns 1 when kickstart fails to produce a healthy owner", async () => {
-  await withTempHome(async (home) => {
+  await withTemporaryHome(async (home) => {
     const fs = new FakeFs();
-    const deps = makeDeps({
+    const dependencies = makeDependencies({
       home,
       fake: {
         calls: [],
@@ -491,52 +499,52 @@ test("ensureViaLaunchd returns 1 when kickstart fails to produce a healthy owner
       probeResult: false,
       listenerPid: () => 4242
     });
-    const result = await __testing.ensureViaLaunchd(deps, defaultOptions(home));
+    const result = await __testing.ensureViaLaunchd(dependencies, defaultOptions(home));
     assert.equal(result, 1);
   });
 });
 
 test("ensureViaLaunchd returns 2 when not loaded and no plist exists", async () => {
-  await withTempHome(async (home) => {
+  await withTemporaryHome(async (home) => {
     const fs = new FakeFs();
-    const deps = makeDeps({
+    const dependencies = makeDependencies({
       home,
       fake: { calls: [], loaded: false, printOutput: "" },
       fs,
       probeResult: false
     });
-    const result = await __testing.ensureViaLaunchd(deps, defaultOptions(home));
+    const result = await __testing.ensureViaLaunchd(dependencies, defaultOptions(home));
     assert.equal(result, 2);
   });
 });
 
 test("ensureViaLaunchd returns 2 when not loaded but a healthy untracked port is serving", async () => {
-  await withTempHome(async (home) => {
+  await withTemporaryHome(async (home) => {
     const fs = new FakeFs();
     fs.files.set(defaultPaths(home).plistLink, {
       kind: "file",
       data: "<plist/>"
     });
-    const deps = makeDeps({
+    const dependencies = makeDependencies({
       home,
       fake: { calls: [], loaded: false, printOutput: "" },
       fs,
       probeResult: true
     });
-    const result = await __testing.ensureViaLaunchd(deps, defaultOptions(home));
+    const result = await __testing.ensureViaLaunchd(dependencies, defaultOptions(home));
     assert.equal(result, 2);
   });
 });
 
 test("ensureViaLaunchd bootstraps and returns 0 when the plist exists and the listener is owned", async () => {
-  await withTempHome(async (home) => {
+  await withTemporaryHome(async (home) => {
     const fs = new FakeFs();
     fs.files.set(defaultPaths(home).plistLink, {
       kind: "file",
       data: "<plist/>"
     });
     let probeCalls = 0;
-    const deps = makeDeps({
+    const dependencies = makeDependencies({
       home,
       fake: {
         calls: [],
@@ -550,22 +558,22 @@ test("ensureViaLaunchd bootstraps and returns 0 when the plist exists and the li
       },
       listenerPid: () => 7777
     });
-    const result = await __testing.ensureViaLaunchd(deps, defaultOptions(home));
+    const result = await __testing.ensureViaLaunchd(dependencies, defaultOptions(home));
     assert.equal(result, 0);
     assert.equal(
-      deps.fake.calls.some((c) => c[0] === "bootstrap"),
+      dependencies.fake.calls.some((c) => c[0] === "bootstrap"),
       true
     );
   });
 });
 
 test("ensureViaFallback returns 0 immediately when a tracked, owned pid is still healthy", async () => {
-  await withTempHome(async (home) => {
+  await withTemporaryHome(async (home) => {
     const fs = new FakeFs();
     const paths = defaultPaths(home);
     fs.files.set(paths.fallbackPidFile, { kind: "file", data: "7777" });
     fs.files.set(paths.launcher, { kind: "file", data: "launcher" });
-    const deps = makeDeps({
+    const dependencies = makeDependencies({
       home,
       fake: { calls: [], loaded: false, printOutput: "" },
       fs,
@@ -574,7 +582,7 @@ test("ensureViaFallback returns 0 immediately when a tracked, owned pid is still
         "/bin/bash /Users/test/.codex/hooks/run-autodev-model-router.sh"
     });
     const result = await __testing.ensureViaFallback(
-      deps,
+      dependencies,
       defaultOptions(home)
     );
     assert.equal(result, 0);
@@ -583,18 +591,18 @@ test("ensureViaFallback returns 0 immediately when a tracked, owned pid is still
 });
 
 test("ensureViaFallback refuses to start a duplicate beside an untracked healthy port", async () => {
-  await withTempHome(async (home) => {
+  await withTemporaryHome(async (home) => {
     const fs = new FakeFs();
     const paths = defaultPaths(home);
     fs.files.set(paths.launcher, { kind: "file", data: "launcher" });
-    const deps = makeDeps({
+    const dependencies = makeDependencies({
       home,
       fake: { calls: [], loaded: false, printOutput: "" },
       fs,
       probeResult: true
     });
     const result = await __testing.ensureViaFallback(
-      deps,
+      dependencies,
       defaultOptions(home)
     );
     assert.equal(result, 3);
@@ -602,16 +610,16 @@ test("ensureViaFallback refuses to start a duplicate beside an untracked healthy
 });
 
 test("ensureViaFallback returns 2 when the launcher is missing", async () => {
-  await withTempHome(async (home) => {
+  await withTemporaryHome(async (home) => {
     const fs = new FakeFs();
-    const deps = makeDeps({
+    const dependencies = makeDependencies({
       home,
       fake: { calls: [], loaded: false, printOutput: "" },
       fs,
       probeResult: false
     });
     const result = await __testing.ensureViaFallback(
-      deps,
+      dependencies,
       defaultOptions(home)
     );
     assert.equal(result, 2);
@@ -619,24 +627,24 @@ test("ensureViaFallback returns 2 when the launcher is missing", async () => {
 });
 
 test("ensureViaFallback recycles a tracked but unhealthy pid, starts a launcher, and writes the new pid", async () => {
-  await withTempHome(async (home) => {
+  await withTemporaryHome(async (home) => {
     const fs = new FakeFs();
     const paths = defaultPaths(home);
     fs.files.set(paths.fallbackPidFile, { kind: "file", data: "7777" });
     fs.files.set(paths.launcher, { kind: "file", data: "launcher" });
     const probeStates: boolean[] = [false, false, false, true];
-    let probeIdx = 0;
-    const deps = makeDeps({
+    let probeIndex = 0;
+    const dependencies = makeDependencies({
       home,
       fake: { calls: [], loaded: false, printOutput: "" },
       fs,
-      probeResult: () => probeStates[probeIdx++] ?? false,
+      probeResult: () => probeStates[probeIndex++] ?? false,
       pidCommandLine: () =>
         "/bin/bash /Users/test/.codex/hooks/run-autodev-model-router.sh",
       nextLauncherPids: [8888]
     });
     const result = await __testing.ensureViaFallback(
-      deps,
+      dependencies,
       defaultOptions(home)
     );
     assert.equal(result, 0);
@@ -650,11 +658,11 @@ test("ensureViaFallback recycles a tracked but unhealthy pid, starts a launcher,
 });
 
 test("ensureViaFallback kills the spawned launcher and clears its pid when the probe never comes up", async () => {
-  await withTempHome(async (home) => {
+  await withTemporaryHome(async (home) => {
     const fs = new FakeFs();
     const paths = defaultPaths(home);
     fs.files.set(paths.launcher, { kind: "file", data: "launcher" });
-    const deps = makeDeps({
+    const dependencies = makeDependencies({
       home,
       fake: { calls: [], loaded: false, printOutput: "" },
       fs,
@@ -664,7 +672,7 @@ test("ensureViaFallback kills the spawned launcher and clears its pid when the p
         "/bin/bash /Users/test/.codex/hooks/run-autodev-model-router.sh"
     });
     const result = await __testing.ensureViaFallback(
-      deps,
+      dependencies,
       defaultOptions(home)
     );
     assert.equal(result, 2);
@@ -675,13 +683,13 @@ test("ensureViaFallback kills the spawned launcher and clears its pid when the p
 });
 
 test("ensureViaFallback rotates the fallback log when it exceeds the size budget", async () => {
-  await withTempHome(async (home) => {
+  await withTemporaryHome(async (home) => {
     const fs = new FakeFs();
     const paths = defaultPaths(home);
     const oversized = "x".repeat(64);
     fs.files.set(paths.launcher, { kind: "file", data: "launcher" });
     fs.files.set(paths.fallbackLog, { kind: "file", data: oversized });
-    const deps = makeDeps({
+    const dependencies = makeDependencies({
       home,
       fake: { calls: [], loaded: false, printOutput: "" },
       fs,
@@ -691,7 +699,7 @@ test("ensureViaFallback rotates the fallback log when it exceeds the size budget
         "/bin/bash /Users/test/.codex/hooks/run-autodev-model-router.sh"
     });
     const options = defaultOptions(home, { fallbackLogMaxBytes: 32 });
-    const result = await __testing.ensureViaFallback(deps, options);
+    const result = await __testing.ensureViaFallback(dependencies, options);
     assert.equal(result, 2);
     assert.equal(fs.has(`${paths.fallbackLog}.1`), true);
     const rotated = fs.get(paths.fallbackLog);
@@ -702,32 +710,32 @@ test("ensureViaFallback rotates the fallback log when it exceeds the size budget
 });
 
 test("runRouterEnsure returns lock-contended without touching launchd or the fallback", async () => {
-  await withTempHome(async (home) => {
+  await withTemporaryHome(async (home) => {
     const fs = new FakeFs();
     const paths = defaultPaths(home);
     fs.files.set(paths.lockDir, { kind: "dir" });
     fs.files.set(`${paths.lockDir}/pid`, { kind: "file", data: "9999" });
-    const deps = makeDeps({
+    const dependencies = makeDependencies({
       home,
       fake: { calls: [], loaded: false, printOutput: "" },
       fs,
       pidExists: (pid) => pid === 9999
     });
-    const result = await runRouterEnsure(deps, defaultOptions(home));
+    const result = await runRouterEnsure(dependencies, defaultOptions(home));
     assert.equal(result.status, "lock-contended");
     assert.equal(result.exitCode, 1);
     assert.match(
       result.message ?? "",
       /another ensure invocation is in progress/
     );
-    assert.equal(deps.fake.calls.length, 0);
+    assert.equal(dependencies.fake.calls.length, 0);
   });
 });
 
 test("runRouterEnsure returns healthy-launchd when the loaded job owns the listener", async () => {
-  await withTempHome(async (home) => {
+  await withTemporaryHome(async (home) => {
     const fs = new FakeFs();
-    const deps = makeDeps({
+    const dependencies = makeDependencies({
       home,
       fake: {
         calls: [],
@@ -739,8 +747,8 @@ test("runRouterEnsure returns healthy-launchd when the loaded job owns the liste
       listenerPid: () => 4242
     });
     const bridgeEnsures: string[] = [];
-    const ensureDeps: RouterEnsureDeps = {
-      ...deps,
+    const ensureDependencies: RouterEnsureDeps = {
+      ...dependencies,
       ensureOptionalBridges: [
         async () => {
           bridgeEnsures.push("copilot");
@@ -753,7 +761,7 @@ test("runRouterEnsure returns healthy-launchd when the loaded job owns the liste
       ]
     };
     const result: RouterEnsureResult = await runRouterEnsure(
-      ensureDeps,
+      ensureDependencies,
       defaultOptions(home)
     );
     assert.equal(result.status, "healthy-launchd");
@@ -763,9 +771,9 @@ test("runRouterEnsure returns healthy-launchd when the loaded job owns the liste
 });
 
 test("runRouterEnsure returns launchd-failed when the loaded job is healthy but does not own the listener", async () => {
-  await withTempHome(async (home) => {
+  await withTemporaryHome(async (home) => {
     const fs = new FakeFs();
-    const deps = makeDeps({
+    const dependencies = makeDependencies({
       home,
       fake: {
         calls: [],
@@ -776,7 +784,7 @@ test("runRouterEnsure returns launchd-failed when the loaded job is healthy but 
       probeResult: true,
       listenerPid: () => 9999
     });
-    const result = await runRouterEnsure(deps, defaultOptions(home));
+    const result = await runRouterEnsure(dependencies, defaultOptions(home));
     assert.equal(result.status, "launchd-failed");
     assert.equal(result.exitCode, 1);
     assert.match(result.message ?? "", /failed to start under launchd/);
@@ -784,14 +792,14 @@ test("runRouterEnsure returns launchd-failed when the loaded job is healthy but 
 });
 
 test("launchd-failed reports the launchd error log and its tail", async () => {
-  await withTempHome(async (home) => {
+  await withTemporaryHome(async (home) => {
     const fs = new FakeFs();
     const paths = defaultPaths(home);
     fs.files.set(paths.launchdLogErr, {
       kind: "file",
       data: "Error [ERR_MODULE_NOT_FOUND]: Cannot find module live-feed.ts\n"
     });
-    const deps = makeDeps({
+    const dependencies = makeDependencies({
       home,
       fake: {
         calls: [],
@@ -802,7 +810,7 @@ test("launchd-failed reports the launchd error log and its tail", async () => {
       probeResult: true,
       listenerPid: () => 9999
     });
-    const result = await runRouterEnsure(deps, defaultOptions(home));
+    const result = await runRouterEnsure(dependencies, defaultOptions(home));
     assert.equal(result.status, "launchd-failed");
     assert.match(result.message ?? "", /codex-model-router\.launchd\.err\.log/);
     assert.deepEqual(result.logTail, [
@@ -812,18 +820,18 @@ test("launchd-failed reports the launchd error log and its tail", async () => {
 });
 
 test("acquireLock rotates a launchd log that outgrew the size budget", async () => {
-  await withTempHome(async (home) => {
+  await withTemporaryHome(async (home) => {
     const fs = new FakeFs();
     const paths = defaultPaths(home);
     const oversized = "x".repeat(64);
     fs.files.set(paths.launchdLogErr, { kind: "file", data: oversized });
-    const deps = makeDeps({
+    const dependencies = makeDependencies({
       home,
       fake: { calls: [], loaded: false, printOutput: "" },
       fs
     });
     const options = defaultOptions(home, { fallbackLogMaxBytes: 32 });
-    assert.equal(await __testing.acquireLock(deps, options), true);
+    assert.equal(await __testing.acquireLock(dependencies, options), true);
     assert.equal(fs.has(`${paths.launchdLogErr}.1`), true);
     const current = fs.get(paths.launchdLogErr);
     assert.equal(current && current.kind === "file" ? current.data : null, "");
@@ -831,17 +839,17 @@ test("acquireLock rotates a launchd log that outgrew the size budget", async () 
 });
 
 test("runRouterEnsure returns duplicate-detected when fallback sees an untracked healthy port", async () => {
-  await withTempHome(async (home) => {
+  await withTemporaryHome(async (home) => {
     const fs = new FakeFs();
     const paths = defaultPaths(home);
     fs.files.set(paths.launcher, { kind: "file", data: "launcher" });
-    const deps = makeDeps({
+    const dependencies = makeDependencies({
       home,
       fake: { calls: [], loaded: false, printOutput: "" },
       fs,
       probeResult: true
     });
-    const result = await runRouterEnsure(deps, defaultOptions(home));
+    const result = await runRouterEnsure(dependencies, defaultOptions(home));
     assert.equal(result.status, "duplicate-detected");
     assert.equal(result.exitCode, 1);
     assert.match(result.message ?? "", /untracked process/);
@@ -849,22 +857,22 @@ test("runRouterEnsure returns duplicate-detected when fallback sees an untracked
 });
 
 test("runRouterEnsure returns healthy-fallback when launchd is unavailable and the launcher comes up", async () => {
-  await withTempHome(async (home) => {
+  await withTemporaryHome(async (home) => {
     const fs = new FakeFs();
     const paths = defaultPaths(home);
     fs.files.set(paths.launcher, { kind: "file", data: "launcher" });
     const probeStates: boolean[] = [false, false, true];
-    let probeIdx = 0;
-    const deps = makeDeps({
+    let probeIndex = 0;
+    const dependencies = makeDependencies({
       home,
       fake: { calls: [], loaded: false, printOutput: "" },
       fs,
-      probeResult: () => probeStates[probeIdx++] ?? false,
+      probeResult: () => probeStates[probeIndex++] ?? false,
       nextLauncherPids: [8888],
       pidCommandLine: () =>
         "/bin/bash /Users/test/.codex/hooks/run-autodev-model-router.sh"
     });
-    const result = await runRouterEnsure(deps, defaultOptions(home));
+    const result = await runRouterEnsure(dependencies, defaultOptions(home));
     assert.equal(result.status, "healthy-fallback");
     assert.equal(result.exitCode, 0);
     const pidFile = fs.get(paths.fallbackPidFile);
@@ -875,7 +883,7 @@ test("runRouterEnsure returns healthy-fallback when launchd is unavailable and t
 });
 
 test("runRouterEnsure returns fallback-failed with a log tail when the launcher cannot bind", async () => {
-  await withTempHome(async (home) => {
+  await withTemporaryHome(async (home) => {
     const fs = new FakeFs();
     const paths = defaultPaths(home);
     const logLines = ["starting launcher", "bind failed: EADDRINUSE"];
@@ -884,7 +892,7 @@ test("runRouterEnsure returns fallback-failed with a log tail when the launcher 
       kind: "file",
       data: `${logLines.join("\n")}\n`
     });
-    const deps = makeDeps({
+    const dependencies = makeDependencies({
       home,
       fake: { calls: [], loaded: false, printOutput: "" },
       fs,
@@ -894,7 +902,7 @@ test("runRouterEnsure returns fallback-failed with a log tail when the launcher 
         "/bin/bash /Users/test/.codex/hooks/run-autodev-model-router.sh",
       launcherAppends: logLines
     });
-    const result = await runRouterEnsure(deps, defaultOptions(home));
+    const result = await runRouterEnsure(dependencies, defaultOptions(home));
     assert.equal(result.status, "fallback-failed");
     assert.equal(result.exitCode, 1);
     assert.match(result.message ?? "", /fallback failed to start/);
@@ -903,7 +911,7 @@ test("runRouterEnsure returns fallback-failed with a log tail when the launcher 
 });
 
 test("resolveRouterEnsureOptions reads override env vars and falls back to defaults", () => {
-  const env: NodeJS.ProcessEnv = {
+  const environment: NodeJS.ProcessEnv = {
     CODEX_HOME: "/srv/codex",
     CODEX_MODEL_ROUTER_HOST: "10.0.0.1",
     CODEX_MODEL_ROUTER_PORT: "4200",
@@ -913,7 +921,7 @@ test("resolveRouterEnsureOptions reads override env vars and falls back to defau
     CODEX_MODEL_ROUTER_ENSURE_LOCK: "/srv/codex/run-x/ensure.lock",
     CODEX_MODEL_ROUTER_READY_TIMEOUT_MS: "1234"
   };
-  const options = resolveRouterEnsureOptions(env, 9000);
+  const options = resolveRouterEnsureOptions(environment, 9000);
   assert.equal(options.paths.codexHome, "/srv/codex");
   assert.equal(options.paths.runDir, "/srv/codex/run-x");
   assert.equal(options.paths.launchdRunDir, "/srv/codex/run");
@@ -931,12 +939,12 @@ test("createDefaultRouterEnsureDeps builds a default probe URL against the confi
     routerHost: "10.0.0.5",
     routerPort: 4321
   });
-  const deps = createDefaultRouterEnsureDeps(options);
-  assert.ok(deps.launchd instanceof LaunchdClient);
-  assert.equal(typeof deps.probe, "function");
-  assert.equal(typeof deps.startLauncher, "function");
-  assert.equal(typeof deps.signalPid, "function");
-  assert.equal(typeof deps.setExitHandler, "function");
+  const dependencies = createDefaultRouterEnsureDeps(options);
+  assert.ok(dependencies.launchd instanceof LaunchdClient);
+  assert.equal(typeof dependencies.probe, "function");
+  assert.equal(typeof dependencies.startLauncher, "function");
+  assert.equal(typeof dependencies.signalPid, "function");
+  assert.equal(typeof dependencies.setExitHandler, "function");
 });
 
 test("createDefaultRouterEnsureDeps probe returns false when the configured port is unreachable", async () => {
@@ -944,8 +952,8 @@ test("createDefaultRouterEnsureDeps probe returns false when the configured port
     routerHost: "127.0.0.1",
     routerPort: 1
   });
-  const deps = createDefaultRouterEnsureDeps(options);
-  assert.equal(await deps.probe(), false);
+  const dependencies = createDefaultRouterEnsureDeps(options);
+  assert.equal(await dependencies.probe(), false);
 });
 
 test("lockDirCleanup removes the pid marker and the lock directory when owned", () => {

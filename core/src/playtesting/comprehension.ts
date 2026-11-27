@@ -1,13 +1,13 @@
 /**
- * Human comprehension protocol and ordered diagnostic ladder (§8).
- * Normative design in docs/playtesting-measurement-contract.md §8 and
- * docs/playtesting-target-state.md §1 & §4.
- *
- * Separates model-misunderstood, UI-possibly-ambiguous, and
- * human-confirmed-confusing with eligible exposures and uncertainty.
- * Several LLMs are not several people: human claims strictly require
- * actual consented human cohort evidence.
- */
+Human comprehension protocol and ordered diagnostic ladder (§8).
+Normative design in docs/playtesting-measurement-contract.md §8 and
+docs/playtesting-target-state.md §1 & §4.
+
+Separates model-misunderstood, UI-possibly-ambiguous, and
+human-confirmed-confusing with eligible exposures and uncertainty.
+Several LLMs are not several people: human claims strictly require
+actual consented human cohort evidence.
+*/
 
 import { HUMAN_STUDY_SMALL_CELL_SUPPRESSION_THRESHOLD } from "./human-study-aggregation.ts";
 import type { PlaytestNumericInterval } from "./types.ts";
@@ -76,19 +76,23 @@ export interface EvaluateDiagnosticLadderInput {
   readonly mechanicKey: string;
   readonly stage1UiEquivalenceVerified: boolean;
   /**
-   * Independently initialized observers whose competence was checked.
-   *
-   * This was a bare boolean, which let a caller assert observer competence on
-   * the strength of nothing and proceed to human-confusion conclusions. Naming
-   * the observers makes the rung checkable and gives `PlayerPolicyValidity` its
-   * first consumer; an empty list means unverified, never "verified, none
-   * needed". Each id must be backed by a competence report.
-   */
+  Independently initialized observers whose competence was checked.
+  
+  This was a bare boolean, which let a caller assert observer competence on
+  the strength of nothing and proceed to human-confusion conclusions. Naming
+  the observers makes the rung checkable and gives `PlayerPolicyValidity` its
+  first consumer; an empty list means unverified, never "verified, none
+  needed". Each id must be backed by a competence report.
+  */
   readonly stage2VerifiedObserverIds: readonly string[];
   readonly thresholds: {
-    /** Game-owned threshold below which model-only errors trigger ambiguity review. */
+    /**
+    Game-owned threshold below which model-only errors trigger ambiguity review.
+    */
     readonly modelAmbiguityAccuracy: number;
-    /** Game-owned minimum error rate required for a human-confusion claim. */
+    /**
+    Game-owned minimum error rate required for a human-confusion claim.
+    */
     readonly humanConfusionErrorRate: number;
   };
   readonly stage3Forecasts: readonly PlaytestPreActionForecast[];
@@ -372,9 +376,9 @@ function interventionRiskDifference(
 }
 
 /**
- * Evaluates pre-action comprehension forecasts and human evidence against
- * the ordered 5-stage diagnostic ladder.
- */
+Evaluates pre-action comprehension forecasts and human evidence against
+the ordered 5-stage diagnostic ladder.
+*/
 export function evaluateDiagnosticLadder(
   input: EvaluateDiagnosticLadderInput
 ): PlaytestDiagnosticLadderResult {

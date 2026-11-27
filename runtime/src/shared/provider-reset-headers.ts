@@ -28,11 +28,11 @@ function resetTimeMs(value: unknown): number | null {
 }
 
 /**
- * Normalize a provider-supplied reset time to an ISO-8601 UTC string. Providers
- * state it as epoch seconds, epoch milliseconds, or an ISO string depending on
- * which CLI produced it. Anything unparseable is dropped rather than guessed:
- * a wrong reset time is worse than none, because the router trusts it.
- */
+Normalize a provider-supplied reset time to an ISO-8601 UTC string. Providers
+state it as epoch seconds, epoch milliseconds, or an ISO string depending on
+which CLI produced it. Anything unparseable is dropped rather than guessed:
+a wrong reset time is worse than none, because the router trusts it.
+*/
 export function normalizeResetsAt(value: unknown): string | null {
   const ms = resetTimeMs(value);
   if (ms === null || !Number.isFinite(ms)) return null;
@@ -41,9 +41,9 @@ export function normalizeResetsAt(value: unknown): string | null {
 }
 
 /**
- * Milliseconds in a stated window such as `24m43s` or `14h23m32s`, or null when
- * it names no window.
- */
+Milliseconds in a stated window such as `24m43s` or `14h23m32s`, or null when
+it names no window.
+*/
 function durationMsFromWindow(window: string): number | null {
   let total = 0;
   let components = 0;
@@ -58,9 +58,11 @@ function durationMsFromWindow(window: string): number | null {
   return components > 0 && total > 0 ? total : null;
 }
 
-/** The absolute reset time a stated duration lands on, or null when none is stated. */
+/**
+The absolute reset time a stated duration lands on, or null when none is stated.
+*/
 export function resetsAtFromDuration(text: string, now: number): string | null {
-  const window = text.match(RESETS_IN_DURATION_PATTERN)?.[1];
+  const window = RESETS_IN_DURATION_PATTERN.exec(text)?.[1];
   if (!window) return null;
   const durationMs = durationMsFromWindow(window);
   if (durationMs === null) return null;
@@ -81,7 +83,9 @@ function headerReader(headers: unknown): ((name: string) => unknown) | null {
   };
 }
 
-/** Case-insensitive reader for a single trimmed header value. */
+/**
+Case-insensitive reader for a single trimmed header value.
+*/
 export function headerValue(headers: unknown, name: string): string | null {
   const read = headerReader(headers);
   if (!read) return null;
@@ -140,9 +144,9 @@ function codexWindowReset(
 }
 
 /**
- * Extract the earliest actionable reset timestamp from AutoDev, Codex/ChatGPT,
- * OpenAI, or standard HTTP `Retry-After` response headers.
- */
+Extract the earliest actionable reset timestamp from AutoDev, Codex/ChatGPT,
+OpenAI, or standard HTTP `Retry-After` response headers.
+*/
 export function readResetAtFromHeaders(
   headers: unknown,
   now = Date.now()

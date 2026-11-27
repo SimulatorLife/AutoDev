@@ -17,35 +17,35 @@ import React from "react";
 import { EmptyState } from "../status/EmptyState.ts";
 
 /**
- * How a cell lays out its content inside the column.
- *
- * - `truncate` (default): one line, ellipsis when it does not fit. A truncating
- *   cell always keeps the whole value on its `title`, so the ellipsis never
- *   becomes the only copy -- see `truncatingCellTitle` for why that has to be
- *   derived from the node rather than assumed of the caller's markup.
- * - `tokens`: discrete items (chips, links, badges) that wrap onto new lines
- *   between items, and which claim a larger default width share so a list of
- *   chips does not degrade to one chip per line. A token with no break
- *   opportunity of its own -- a model id, a repository path -- breaks onto a
- *   second line rather than being cut short, because these columns exist to
- *   keep identifiers readable.
- * - `prose`: flowing sentences that wrap on word boundaries.
- * - `path`: a filesystem or repository path, which wraps between its segments
- *   and never inside one. It is a fourth align rather than a special case of
- *   `tokens` because the two disagree about what a break is: `tokens` splits a
- *   token too wide for its cell mid-token on purpose, which is legible for a
- *   model id and wrong for a path, whose segments are already meaningful units.
- *   Render path cells with `PathText`, which supplies the break opportunities.
- */
+How a cell lays out its content inside the column.
+
+- `truncate` (default): one line, ellipsis when it does not fit. A truncating
+  cell always keeps the whole value on its `title`, so the ellipsis never
+  becomes the only copy -- see `truncatingCellTitle` for why that has to be
+  derived from the node rather than assumed of the caller's markup.
+- `tokens`: discrete items (chips, links, badges) that wrap onto new lines
+  between items, and which claim a larger default width share so a list of
+  chips does not degrade to one chip per line. A token with no break
+  opportunity of its own -- a model id, a repository path -- breaks onto a
+  second line rather than being cut short, because these columns exist to
+  keep identifiers readable.
+- `prose`: flowing sentences that wrap on word boundaries.
+- `path`: a filesystem or repository path, which wraps between its segments
+  and never inside one. It is a fourth align rather than a special case of
+  `tokens` because the two disagree about what a break is: `tokens` splits a
+  token too wide for its cell mid-token on purpose, which is legible for a
+  model id and wrong for a path, whose segments are already meaningful units.
+  Render path cells with `PathText`, which supplies the break opportunities.
+*/
 export type ColumnAlign = "truncate" | "tokens" | "prose" | "path";
 
 declare module "@tanstack/react-table" {
   /**
-   * Console presentation metadata for a TanStack column. TanStack owns the
-   * column and row model (id, header, cell); the Console owns how a column is
-   * laid out, so those concerns ride on the public `meta` slot rather than on a
-   * parallel column type.
-   */
+  Console presentation metadata for a TanStack column. TanStack owns the
+  column and row model (id, header, cell); the Console owns how a column is
+  laid out, so those concerns ride on the public `meta` slot rather than on a
+  parallel column type.
+  */
   /* eslint-disable unused-imports/no-unused-vars -- TanStack fixes the type-parameter list of ColumnMeta */
   interface ColumnMeta<
     in out TFeatures extends TableFeatures,
@@ -54,48 +54,52 @@ declare module "@tanstack/react-table" {
   > {
     /* eslint-enable unused-imports/no-unused-vars */
     /**
-     * Optional explanation of what this column is for, rendered as a `?`
-     * affordance beside the header label and carried on the `title` and
-     * `aria-describedby`.
-     *
-     * Opt-in rather than universal because a help affordance on every column
-     * would be decoration; it belongs where a label alone is ambiguous, which is
-     * a property of the column rather than of the table. The text lives here and
-     * in the markup rather than in a hover-only CSS trick so it is reachable by
-     * keyboard and by a screen reader, not only by a pointer.
-     */
+    Optional explanation of what this column is for, rendered as a `?`
+    affordance beside the header label and carried on the `title` and
+    `aria-describedby`.
+    
+    Opt-in rather than universal because a help affordance on every column
+    would be decoration; it belongs where a label alone is ambiguous, which is
+    a property of the column rather than of the table. The text lives here and
+    in the markup rather than in a hover-only CSS trick so it is reachable by
+    keyboard and by a screen reader, not only by a pointer.
+    */
     readonly headerHelp?: string | undefined;
-    /** Render this column's cells as semantic row headers. */
+    /**
+    Render this column's cells as semantic row headers.
+    */
     readonly rowHeader?: boolean | undefined;
     /**
-     * Relative share of the table's width. Weights are resolved to
-     * percentages of the table's own width. Their sum is also the table's
-     * minimum width: below the content budget the table region scrolls rather
-     * than compressing every column and clipping its contents.
-     *
-     * Absolute lengths cannot work here: with `table-layout: fixed` the browser
-     * treats a declared `width` as a hard minimum and grows the table past its
-     * container rather than scaling it down.
-     */
+    Relative share of the table's width. Weights are resolved to
+    percentages of the table's own width. Their sum is also the table's
+    minimum width: below the content budget the table region scrolls rather
+    than compressing every column and clipping its contents.
+    
+    Absolute lengths cannot work here: with `table-layout: fixed` the browser
+    treats a declared `width` as a hard minimum and grows the table past its
+    container rather than scaling it down.
+    */
     readonly weight?: number | undefined;
     readonly align?: ColumnAlign | undefined;
-    /** Clamp `prose` cells to this many lines. Requires `align: "prose"`. */
+    /**
+    Clamp `prose` cells to this many lines. Requires `align: "prose"`.
+    */
     readonly clampLines?: number | undefined;
     /**
-     * The cell's hover text, when what the cell shows is a summary of something
-     * the hover should spell out -- a count whose parts are the useful answer.
-     * `undefined` falls back to the cell's own text, as for every other cell.
-     */
+    The cell's hover text, when what the cell shows is a summary of something
+    the hover should spell out -- a count whose parts are the useful answer.
+    `undefined` falls back to the cell's own text, as for every other cell.
+    */
     readonly cellTitle?: ((row: TData) => string | undefined) | undefined;
   }
 }
 
 /**
- * Hook-free reactivity bindings for a single-render server table.
- *
- * `DataTable` builds a fresh table per render and never mutates or subscribes
- * to state across renders, so atoms hold plain values with no-op subscriptions.
- */
+Hook-free reactivity bindings for a single-render server table.
+
+`DataTable` builds a fresh table per render and never mutates or subscribes
+to state across renders, so atoms hold plain values with no-op subscriptions.
+*/
 const singleRenderReactivity: NonNullable<
   CoreFeatures["coreReactivityFeature"]
 > = {
@@ -103,13 +107,13 @@ const singleRenderReactivity: NonNullable<
   wrapExternalAtoms: false,
   addSubscription: () => undefined,
   unmount: () => undefined,
-  schedule: (fn) => {
-    fn();
+  schedule: (function_) => {
+    function_();
   },
-  batch: (fn) => {
-    fn();
+  batch: (function_) => {
+    function_();
   },
-  untrack: (fn) => fn(),
+  untrack: (function_) => function_(),
   createWritableAtom: <V>(initialValue: V) => {
     let value = initialValue;
     return {
@@ -123,18 +127,18 @@ const singleRenderReactivity: NonNullable<
       subscribe: () => ({ unsubscribe: () => undefined })
     };
   },
-  createReadonlyAtom: <V>(fn: () => V) => ({
-    get: fn,
+  createReadonlyAtom: <V>(function_: () => V) => ({
+    get: function_,
     subscribe: () => ({ unsubscribe: () => undefined })
   })
 };
 
 /**
- * The feature set every Console `DataTable` registers.
- *
- * Only core table/row/column/header/cell behavior is enabled; sorting,
- * filtering and pagination belong to the server and the URL.
- */
+The feature set every Console `DataTable` registers.
+
+Only core table/row/column/header/cell behavior is enabled; sorting,
+filtering and pagination belong to the server and the URL.
+*/
 export const dataTableFeatures = tableFeatures({
   coreReactivityFeature: singleRenderReactivity
 });
@@ -146,29 +150,31 @@ export interface DataTableProps<T extends RowData> {
   readonly columns: readonly ColumnDef<DataTableFeatures, T, unknown>[];
   readonly keyExtractor: (row: T) => string;
   /**
-   * Required, and required for the same reason `EmptyState` never supplies a
-   * message of its own: an empty table has to say *which* resource was looked
-   * for and is absent, and only the caller knows. This prop used to default to
-   * `"No items to display."`, which every one of the seventeen list views
-   * overrode except the two that did not -- so `/agents` and `/permissions`
-   * inherited a sentence that named no resource, and a new list view would have
-   * inherited it silently. Making it required puts the choice back where the
-   * knowledge is, and the typecheck refuses a list view that skips it.
-   */
+  Required, and required for the same reason `EmptyState` never supplies a
+  message of its own: an empty table has to say *which* resource was looked
+  for and is absent, and only the caller knows. This prop used to default to
+  `"No items to display."`, which every one of the seventeen list views
+  overrode except the two that did not -- so `/agents` and `/permissions`
+  inherited a sentence that named no resource, and a new list view would have
+  inherited it silently. Making it required puts the choice back where the
+  knowledge is, and the typecheck refuses a list view that skips it.
+  */
   readonly emptyMessage: string;
   /**
-   * The name of the region the table scrolls in.
-   *
-   * Optional, because the table's own column headers already name it, and a
-   * view that knows a better name than its columns gives it. What the name is
-   * not optional about is that the region has one: a scrollable region is a
-   * landmark, and a landmark an operator cannot name is a landmark they cannot
-   * jump to.
-   */
+  The name of the region the table scrolls in.
+  
+  Optional, because the table's own column headers already name it, and a
+  view that knows a better name than its columns gives it. What the name is
+  not optional about is that the region has one: a scrollable region is a
+  landmark, and a landmark an operator cannot name is a landmark they cannot
+  jump to.
+  */
   readonly label?: string | undefined;
 }
 
-/** The presentation metadata of a column, as the layout helpers read it. */
+/**
+The presentation metadata of a column, as the layout helpers read it.
+*/
 type LayoutMeta =
   | Pick<
       ColumnMeta<DataTableFeatures, Record<string, unknown>, unknown>,
@@ -177,31 +183,31 @@ type LayoutMeta =
   | undefined;
 
 /**
- * Width share granted to a `tokens` column when the view does not declare one.
- * Below roughly this share a list of chips degrades into one chip per line,
- * which turns a dense operator table into a wall of vertical stacks.
- *
- * These defaults are expressed on the same scale the views author weights on
- * (a declared weight is roughly the column's share in pixels). A default that
- * was much smaller would leave every undeclared column as a sliver next to a
- * column that declared a few hundred units.
- */
+Width share granted to a `tokens` column when the view does not declare one.
+Below roughly this share a list of chips degrades into one chip per line,
+which turns a dense operator table into a wall of vertical stacks.
+
+These defaults are expressed on the same scale the views author weights on
+(a declared weight is roughly the column's share in pixels). A default that
+was much smaller would leave every undeclared column as a sliver next to a
+column that declared a few hundred units.
+*/
 const TOKENS_COLUMN_WEIGHT = 170;
 
 /**
- * Weight granted to a column that declares nothing: enough for a short label
- * plus its cell padding.
- */
+Weight granted to a column that declares nothing: enough for a short label
+plus its cell padding.
+*/
 const DEFAULT_COLUMN_WEIGHT = 100;
 
 /**
- * Minimum width for the table, derived from the weights this table declares.
- *
- * The shared Console contract treats declared widths as a content budget, not
- * a preference: when the viewport is narrower than that budget, the table
- * keeps its column proportions and its wrapper scrolls. Capping the sum made
- * controls and values spill across their own cells before scrolling began.
- */
+Minimum width for the table, derived from the weights this table declares.
+
+The shared Console contract treats declared widths as a content budget, not
+a preference: when the viewport is narrower than that budget, the table
+keeps its column proportions and its wrapper scrolls. Capping the sum made
+controls and values spill across their own cells before scrolling began.
+*/
 function tableMinWidthPx<T extends RowData>(
   columns: readonly Column<DataTableFeatures, T, unknown>[]
 ): number {
@@ -239,10 +245,10 @@ function cellClassName(meta: LayoutMeta): string {
 }
 
 /**
- * Clamp classes written out in full rather than interpolated into a class
- * name: Tailwind only emits rules for class strings it can see in the source,
- * so a dynamically built `line-clamp-${n}` would ship without any CSS.
- */
+Clamp classes written out in full rather than interpolated into a class
+name: Tailwind only emits rules for class strings it can see in the source,
+so a dynamically built `line-clamp-${n}` would ship without any CSS.
+*/
 const LINE_CLAMP_CLASSES: Readonly<Record<number, string>> = {
   1: "line-clamp-1",
   2: "line-clamp-2",
@@ -253,28 +259,29 @@ const LINE_CLAMP_CLASSES: Readonly<Record<number, string>> = {
 };
 
 /**
- * Line clamp for a `prose` cell.
- *
- * `-webkit-line-clamp` only takes effect on a box display, so the clamp is
- * applied to a wrapper *inside* the cell rather than to the `<td>` itself: a
- * clamped table cell stops laying out as a table cell and the row height stops
- * tracking the content. Returns `null` when the column is not clamped, or when
- * it asks for a line count this component has no class for.
- *
- * The wrapper leaves the ring its room. A clamp is an `overflow: hidden` box,
- * and a box that hides its overflow clips the focus ring of the control inside
- * it -- the ring is painted four pixels outside the control, and the clamp
- * cuts it off. The padding is the room; the negative margin is what keeps the
- * cell's own layout where it was, because the padding would otherwise push
- * the clamped text in and the row taller.
- */
+Line clamp for a `prose` cell.
+
+`-webkit-line-clamp` only takes effect on a box display, so the clamp is
+applied to a wrapper *inside* the cell rather than to the `<td>` itself: a
+clamped table cell stops laying out as a table cell and the row height stops
+tracking the content. Returns `null` when the column is not clamped, or when
+it asks for a line count this component has no class for.
+
+The wrapper leaves the ring its room. A clamp is an `overflow: hidden` box,
+and a box that hides its overflow clips the focus ring of the control inside
+it -- the ring is painted four pixels outside the control, and the clamp
+cuts it off. The padding is the room; the negative margin is what keeps the
+cell's own layout where it was, because the padding would otherwise push
+the clamped text in and the row taller.
+*/
 function proseClampClass(meta: LayoutMeta): string | null {
-  if ((meta?.align ?? "truncate") !== "prose") return null;
-  if (meta?.clampLines === undefined) return null;
+  if (((meta?.align ?? "truncate") !== "prose") || (meta?.clampLines === undefined)) return null;
   return LINE_CLAMP_CLASSES[Math.trunc(meta.clampLines)] ?? null;
 }
 
-/** Effective width share for a column. */
+/**
+Effective width share for a column.
+*/
 function columnWeight(meta: LayoutMeta): number {
   if (meta?.weight !== undefined && meta.weight > 0) return meta.weight;
   return (meta?.align ?? "truncate") === "tokens"
@@ -283,27 +290,27 @@ function columnWeight(meta: LayoutMeta): number {
 }
 
 /**
- * The hover text for a truncating cell.
- *
- * `truncate` is `white-space: nowrap` plus `overflow: hidden`, so a cell that
- * cannot fit its value shows the first few characters and nothing else. Every
- * such cell therefore has to keep the whole value somewhere, and for a long time
- * this only happened when the cell's content was a plain string. Everything else
- * was assumed to carry its own recovery -- on the reasoning that a chip titles
- * itself and a link holds the value in its destination.
- *
- * Measured against the live router, that assumption was false for the majority of
- * the cells it covered, because most cells are not a chip and not a link. A
- * column of plain `<span>`s (the GitHub cron schedule, cut to "No schedule
- * trig…"), a column of `<div>` chip rows (GitHub trigger events, cut after the
- * first chip), and a column of styled `<a>`s (/tools EDIT, cut to "Provider rol…")
- * all had no title anywhere and no href that carried what was hidden. The
- * ellipsis was the only copy.
- *
- * So the text is read out of the node tree instead of requiring the caller to
- * hand over a string. Flattening is what makes the rule true for every cell
- * rather than for the cells that happened to be simple.
- */
+The hover text for a truncating cell.
+
+`truncate` is `white-space: nowrap` plus `overflow: hidden`, so a cell that
+cannot fit its value shows the first few characters and nothing else. Every
+such cell therefore has to keep the whole value somewhere, and for a long time
+this only happened when the cell's content was a plain string. Everything else
+was assumed to carry its own recovery -- on the reasoning that a chip titles
+itself and a link holds the value in its destination.
+
+Measured against the live router, that assumption was false for the majority of
+the cells it covered, because most cells are not a chip and not a link. A
+column of plain `<span>`s (the GitHub cron schedule, cut to "No schedule
+trig…"), a column of `<div>` chip rows (GitHub trigger events, cut after the
+first chip), and a column of styled `<a>`s (/tools EDIT, cut to "Provider rol…")
+all had no title anywhere and no href that carried what was hidden. The
+ellipsis was the only copy.
+
+So the text is read out of the node tree instead of requiring the caller to
+hand over a string. Flattening is what makes the rule true for every cell
+rather than for the cells that happened to be simple.
+*/
 function truncatingCellTitle(
   meta: LayoutMeta,
   content: React.ReactNode
@@ -312,52 +319,52 @@ function truncatingCellTitle(
   // false about a value that is fully visible. An empty cell needs no title
   // either: `title=""` is a tooltip with nothing in it. Both collapse to the
   // same "no title" answer.
-  const truncates = (meta?.align ?? "truncate") === "truncate";
-  const text = truncates
+  const isTruncates = (meta?.align ?? "truncate") === "truncate";
+  const text = isTruncates
     ? nodeText(content).replaceAll(/\s+/g, " ").trim()
     : "";
   return text === "" ? undefined : text;
 }
 
 /**
- * The text a node will render, without rendering it.
- *
- * Elements contribute their children and nothing else, so a cell's title says
- * what the cell shows rather than describing it. Whitespace runs collapse so a
- * chip row does not become a tooltip full of line breaks.
- *
- * The one exception is an element whose visible text arrives as a `label` prop
- * rather than as children. `StatusBadge` is written that way -- `label` is both
- * the word it renders and the accessible name -- so reading children alone found
- * nothing in a badge cell and the cell got no title at all, which is the same
- * hole this function exists to close, one level deeper. `label` is read
- * specifically rather than scanning every prop: it is the Console's one
- * convention for "this is the text I show", it is the only prop `StatusBadge`
- * and `Chip` use for it, and a general prop scan would eventually pick up a
- * `title` or a `href` and describe a cell with something other than its value.
- */
+The text a node will render, without rendering it.
+
+Elements contribute their children and nothing else, so a cell's title says
+what the cell shows rather than describing it. Whitespace runs collapse so a
+chip row does not become a tooltip full of line breaks.
+
+The one exception is an element whose visible text arrives as a `label` prop
+rather than as children. `StatusBadge` is written that way -- `label` is both
+the word it renders and the accessible name -- so reading children alone found
+nothing in a badge cell and the cell got no title at all, which is the same
+hole this function exists to close, one level deeper. `label` is read
+specifically rather than scanning every prop: it is the Console's one
+convention for "this is the text I show", it is the only prop `StatusBadge`
+and `Chip` use for it, and a general prop scan would eventually pick up a
+`title` or a `href` and describe a cell with something other than its value.
+*/
 function nodeText(node: React.ReactNode): string {
   if (typeof node === "string") return node;
   if (typeof node === "number") return String(node);
   if (Array.isArray(node)) return node.map(nodeText).join(" ");
   if (React.isValidElement(node)) {
-    const props = node.props as {
+    const properties = node.props as {
       children?: React.ReactNode;
       label?: unknown;
     };
-    const children = nodeText(props.children);
+    const children = nodeText(properties.children);
     if (children !== "") return children;
-    return typeof props.label === "string" ? props.label : "";
+    return typeof properties.label === "string" ? properties.label : "";
   }
   return "";
 }
 
 /**
- * Resolve every column to a percentage of the table width. Percentages keep
- * their declared ratios as the table fills wider containers; below the sum of
- * those weights, the wrapper scrolls instead of shrinking columns under their
- * authored content budget.
- */
+Resolve every column to a percentage of the table width. Percentages keep
+their declared ratios as the table fills wider containers; below the sum of
+those weights, the wrapper scrolls instead of shrinking columns under their
+authored content budget.
+*/
 function columnWidths<T extends RowData>(
   columns: readonly Column<DataTableFeatures, T, unknown>[]
 ): string[] {
@@ -378,14 +385,14 @@ function columnWidths<T extends RowData>(
 }
 
 /**
- * Build the TanStack table that owns this table's column and row model.
- *
- * `constructTable` rather than `useTable`: the table is derived data for a
- * single render, there is no state to hold between renders, and `DataTable`
- * must stay hook-free so it renders on the server like every other Console
- * table. Sorting, filtering and pagination are not enabled here -- they belong
- * to the server and the URL -- so only the core feature set is registered.
- */
+Build the TanStack table that owns this table's column and row model.
+
+`constructTable` rather than `useTable`: the table is derived data for a
+single render, there is no state to hold between renders, and `DataTable`
+must stay hook-free so it renders on the server like every other Console
+table. Sorting, filtering and pagination are not enabled here -- they belong
+to the server and the URL -- so only the core feature set is registered.
+*/
 function buildTable<T extends RowData>(
   data: readonly T[],
   columns: readonly ColumnDef<DataTableFeatures, T, unknown>[],
@@ -401,16 +408,16 @@ function buildTable<T extends RowData>(
 }
 
 /**
- * The node a cell renders, resolved from its TanStack column template.
- *
- * `flexRender` mounts a function template as a component element, which keeps
- * the cell's node out of reach until React renders it. A truncating cell has
- * to derive its hover title from that node (see `truncatingCellTitle`), so a
- * function template is evaluated here, with the cell's own context, exactly as
- * the shared table always evaluated a cell. Cells are plain functions of their
- * row, never components with state, so nothing is lost by resolving them
- * eagerly. Every other template (a string) goes through `flexRender`.
- */
+The node a cell renders, resolved from its TanStack column template.
+
+`flexRender` mounts a function template as a component element, which keeps
+the cell's node out of reach until React renders it. A truncating cell has
+to derive its hover title from that node (see `truncatingCellTitle`), so a
+function template is evaluated here, with the cell's own context, exactly as
+the shared table always evaluated a cell. Cells are plain functions of their
+row, never components with state, so nothing is lost by resolving them
+eagerly. Every other template (a string) goes through `flexRender`.
+*/
 function cellContent<T extends RowData>(
   cell: Cell<DataTableFeatures, T, unknown>
 ): React.ReactNode {
@@ -420,7 +427,9 @@ function cellContent<T extends RowData>(
     : flexRender(template, cell.getContext());
 }
 
-/** A header is read as text, so its template has to be a string. */
+/**
+A header is read as text, so its template has to be a string.
+*/
 function headerLabel<T extends RowData>(
   column: Column<DataTableFeatures, T, unknown>
 ): string {
@@ -613,17 +622,17 @@ export function DataTable<T extends RowData>({
             row.getAllCells().map((cell) => {
               const meta = cell.column.columnDef.meta;
               const content = cellContent(cell);
-              const rowHeader = meta?.rowHeader === true;
+              const isRowHeader = meta?.rowHeader === true;
               const clamp = proseClampClass(meta);
               const hover =
                 meta?.cellTitle?.(row.original) ??
                 truncatingCellTitle(meta, content);
               return React.createElement(
-                rowHeader ? "th" : "td",
+                isRowHeader ? "th" : "td",
                 {
                   key: cell.id,
-                  ...(rowHeader ? { scope: "row" as const } : {}),
-                  className: `px-4 py-3 align-top ${cellClassName(meta)}${rowHeader ? " font-medium" : ""}`,
+                  ...(isRowHeader && { scope: "row" as const }),
+                  className: `px-4 py-3 align-top ${cellClassName(meta)}${isRowHeader ? " font-medium" : ""}`,
                   style: { width: widths.get(cell.column.id) },
                   // Truncation removes information, so a truncating cell keeps
                   // the whole value on its hover title. Without this the
@@ -631,7 +640,7 @@ export function DataTable<T extends RowData>({
                   // 20 pixels of it. The text is derived from the cell's own
                   // nodes, so a cell built from spans, chips or links is covered
                   // by the same rule as one holding a bare string.
-                  ...(hover === undefined ? {} : { title: hover })
+                  ...(hover !== undefined && { title: hover })
                 },
                 clamp === null
                   ? content

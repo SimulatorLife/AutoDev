@@ -40,16 +40,22 @@ export interface NormalizedHookContext {
   (a native subagent name) is not an AutoDev role.
   */
   readonly role: string | null;
-  /** The role the Runtime assigned this process; `null` outside `runtime`. */
+  /**
+  The role the Runtime assigned this process; `null` outside `runtime`.
+  */
   readonly runtimeRole: string | null;
-  /** The agent type the host reported, whatever the origin. Data, not authorization. */
+  /**
+  The agent type the host reported, whatever the origin. Data, not authorization.
+  */
   readonly reportedRole: string | null;
   readonly model: string | null;
   readonly provider: string | null;
   readonly cwd: string | null;
 }
 
-/** The model-id namespace the AutoDev model router serves. */
+/**
+The model-id namespace the AutoDev model router serves.
+*/
 const AUTODEV_ROUTED_MODEL_PREFIX = "autodev/";
 
 const TOOL_NAME_KEYS = ["tool_name", "toolName", "name"] as const;

@@ -1,14 +1,14 @@
 /**
- * Server-only Console orchestrator concurrency limit mutation route.
- *
- * Receives the bounded form submission from the concurrency stepper, Unlimited
- * control, or reset button, validates its same-origin browser context, and
- * forwards a typed PATCH to Runtime using the server-side Control API credential.
- *
- * Only POST is exported. The response redirects back to the Agents page or
- * Agent detail page the control was rendered on; any error or conflict attaches
- * a refusal/failure query parameter.
- */
+Server-only Console orchestrator concurrency limit mutation route.
+
+Receives the bounded form submission from the concurrency stepper, Unlimited
+control, or reset button, validates its same-origin browser context, and
+forwards a typed PATCH to Runtime using the server-side Control API credential.
+
+Only POST is exported. The response redirects back to the Agents page or
+Agent detail page the control was rendered on; any error or conflict attaches
+a refusal/failure query parameter.
+*/
 
 import type { NextRequest, NextResponse } from "next/server.js";
 
@@ -75,9 +75,9 @@ function resolvePayload(
     return { maxConcurrentThreadsPerSession: null, ...revisionEntry };
   }
   if (setLimit !== null && CONCURRENCY_LIMIT_PATTERN.test(setLimit)) {
-    const limitNum = Number(setLimit);
-    if (limitNum >= 0 && limitNum <= MAX_CONCURRENCY_LIMIT) {
-      return { maxConcurrentThreadsPerSession: limitNum, ...revisionEntry };
+    const limitNumber = Number(setLimit);
+    if (limitNumber >= 0 && limitNumber <= MAX_CONCURRENCY_LIMIT) {
+      return { maxConcurrentThreadsPerSession: limitNumber, ...revisionEntry };
     }
   }
   return null;

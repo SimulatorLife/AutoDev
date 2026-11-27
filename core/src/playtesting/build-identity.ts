@@ -1,10 +1,12 @@
-/** Compare immutable game-build references across JSON/string boundaries. */
+/**
+Compare immutable game-build references across JSON/string boundaries.
+*/
 
-import type { PlaytestVersionedRef } from "./types.ts";
+import type { PlaytestVersionedRef as PlaytestVersionedReference } from "./types.ts";
 
 export function samePlaytestBuild(
-  left: PlaytestVersionedRef | null | undefined,
-  right: PlaytestVersionedRef | null | undefined
+  left: PlaytestVersionedReference | null | undefined,
+  right: PlaytestVersionedReference | null | undefined
 ): boolean {
   if (!left || !right) return false;
   return (

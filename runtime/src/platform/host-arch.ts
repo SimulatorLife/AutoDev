@@ -14,10 +14,10 @@ const ELF_MACHINE_X86_64 = 0x3e;
 const ELF_MACHINE_AARCH64 = 0xb7;
 
 /**
- * The machine's architecture, not this process's: a Node running under
- * Rosetta reports `x64` on Apple Silicon, and choosing binaries by that picks
- * Intel builds that Rosetta must translate on every cold start.
- */
+The machine's architecture, not this process's: a Node running under
+Rosetta reports `x64` on Apple Silicon, and choosing binaries by that picks
+Intel builds that Rosetta must translate on every cold start.
+*/
 export function hostArch(
   platform: NodeJS.Platform = process.platform,
   arch: string = process.arch,
@@ -42,7 +42,9 @@ function sysctlReportsArm64(): boolean {
   }
 }
 
-/** The architecture a Mach-O or ELF executable was built for, from its header. */
+/**
+The architecture a Mach-O or ELF executable was built for, from its header.
+*/
 export function executableArch(filePath: string): ExecutableArch | null {
   const header = Buffer.alloc(20);
   let fd: number | null = null;
@@ -87,10 +89,10 @@ function isExecutable(filePath: string): boolean {
 }
 
 /**
- * The Node binary launchd services should run on: the first native one among
- * pnpm's managed Node and the installer's own Node. This avoids relying on
- * a login-shell version manager or an unrelated Node on launchd's PATH.
- */
+The Node binary launchd services should run on: the first native one among
+pnpm's managed Node and the installer's own Node. This avoids relying on
+a login-shell version manager or an unrelated Node on launchd's PATH.
+*/
 export function resolveServiceNode(
   home: string,
   host: HostArch = hostArch(),

@@ -4,12 +4,12 @@ const FIXTURE_BASE_URL = `http://127.0.0.1:${process.env.AUTODEV_PLAYTEST_FIXTUR
 const PERMISSIONS_URL = "/permissions";
 
 /**
- * Put the fixture's permission policy back where a test that writes starts.
- *
- * The write is real, so the fixture keeps the policy the last write left
- * behind. This puts it back without touching the rest of the fixture's state,
- * which another session's specs also use.
- */
+Put the fixture's permission policy back where a test that writes starts.
+
+The write is real, so the fixture keeps the policy the last write left
+behind. This puts it back without touching the rest of the fixture's state,
+which another session's specs also use.
+*/
 async function resetPermissionPolicy(
   request: APIRequestContext
 ): Promise<void> {
@@ -20,8 +20,8 @@ async function resetPermissionPolicy(
 }
 
 /**
- * The policy the Runtime currently holds.
- */
+The policy the Runtime currently holds.
+*/
 async function readPermissionPolicy(request: APIRequestContext): Promise<{
   approvalPolicy: string;
   approvalsReviewer: string;
@@ -42,11 +42,11 @@ async function readPermissionPolicy(request: APIRequestContext): Promise<{
 }
 
 /**
- * Leave the fixture the way the rest of the suite finds it.
- *
- * The permission policy is shared state: another spec reads the Permissions
- * page, and this one changes it because that is the write it is making.
- */
+Leave the fixture the way the rest of the suite finds it.
+
+The permission policy is shared state: another spec reads the Permissions
+page, and this one changes it because that is the write it is making.
+*/
 test.afterEach(async ({ request }) => {
   await resetPermissionPolicy(request);
 });

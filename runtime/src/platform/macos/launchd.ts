@@ -5,7 +5,7 @@ export interface CommandResult {
   stderr: string;
   status: number | null;
 }
-export type CommandRunner = (command: string, args: string[]) => CommandResult;
+export type CommandRunner = (command: string, arguments_: string[]) => CommandResult;
 
 export class LaunchdError extends Error {
   readonly result: CommandResult | undefined;
@@ -15,10 +15,10 @@ export class LaunchdError extends Error {
   }
 }
 
-const defaultRunner: CommandRunner = (command, args) => {
+const defaultRunner: CommandRunner = (command, arguments_) => {
   try {
     return {
-      stdout: execFileSync(command, args, {
+      stdout: execFileSync(command, arguments_, {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"]
       }),
@@ -42,7 +42,9 @@ const defaultRunner: CommandRunner = (command, args) => {
 export interface LaunchdClientOptions {
   runner?: CommandRunner;
   uid?: number;
-  /** Bounded wait for `bootout` to finish unloading before the caller re-bootstraps. */
+  /**
+  Bounded wait for `bootout` to finish unloading before the caller re-bootstraps.
+  */
   unloadAttempts?: number;
   unloadDelayMs?: number;
   sleep?: (ms: number) => void;
@@ -53,7 +55,9 @@ export interface LaunchdClientOptions {
 const UNLOAD_ATTEMPTS_DEFAULT = 500;
 const UNLOAD_DELAY_MS_DEFAULT = 100;
 
-/** `launchctl bootout` returns before launchd finishes tearing the job down. */
+/**
+`launchctl bootout` returns before launchd finishes tearing the job down.
+*/
 function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
@@ -89,11 +93,11 @@ export class LaunchdClient {
     this.run(["disable", `${this.domain}/${label}`]);
   }
   /**
-   * Unload a job (a no-op when it is not loaded) and block until launchd has
-   * torn it down. `launchctl bootout` is asynchronous, and bootstrapping the
-   * same label while it is still loaded fails with `Bootstrap failed: 5:
-   * Input/output error`, so a job that outlives the wait is an error.
-   */
+  Unload a job (a no-op when it is not loaded) and block until launchd has
+  torn it down. `launchctl bootout` is asynchronous, and bootstrapping the
+  same label while it is still loaded fails with `Bootstrap failed: 5:
+  Input/output error`, so a job that outlives the wait is an error.
+  */
   bootout(label: string): void {
     if (!this.isLoaded(label)) return;
     this.run(["bootout", `${this.domain}/${label}`]);
@@ -103,7 +107,9 @@ export class LaunchdClient {
       );
   }
 
-  /** True once the label is gone; false when it is still loaded after the bounded wait. */
+  /**
+  True once the label is gone; false when it is still loaded after the bounded wait.
+  */
   waitUntilUnloaded(label: string): boolean {
     for (let attempt = 0; attempt < this.unloadAttempts; attempt += 1) {
       if (!this.isLoaded(label)) return true;
@@ -124,11 +130,11 @@ export class LaunchdClient {
     );
   }
 
-  private run(args: string[]): CommandResult {
-    const result = this.runner("launchctl", args);
+  private run(arguments_: string[]): CommandResult {
+    const result = this.runner("launchctl", arguments_);
     if (result.status !== 0)
       throw new LaunchdError(
-        `launchctl ${args.join(" ")} failed: ${result.stderr || result.stdout}`,
+        `launchctl ${arguments_.join(" ")} failed: ${result.stderr || result.stdout}`,
         result
       );
     return result;

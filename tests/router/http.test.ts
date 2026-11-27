@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { ensureLocalAdmission } from "@simulatorlife/autodev-runtime/mcp/gateway-admission";
 import { setRouterAuthTokenForTests } from "@simulatorlife/autodev-runtime/router/auth";
 import { COOLDOWNS } from "@simulatorlife/autodev-runtime/router/cooldown";
-import { getRecentRouterEvents } from "@simulatorlife/autodev-runtime/router/events";
 import {
   handleRequest,
   ingestAgentEvents,
@@ -15,6 +15,7 @@ import {
   workspaceContextFromRequest,
   workspaceMetadataForSession
 } from "@simulatorlife/autodev-runtime/router/http";
+import type { RoutingPolicy } from "@simulatorlife/autodev-runtime/router/routing";
 import {
   getWorkspaceMetadata,
   noteBridgeRequest,
@@ -22,10 +23,8 @@ import {
   rememberWorkspaceMetadata,
   resetSubagentTelemetry
 } from "@simulatorlife/autodev-runtime/router/subagents";
-import type { RoutingPolicy } from "@simulatorlife/autodev-runtime/router/routing";
 import { didHandleAcpRoute } from "@simulatorlife/autodev-runtime/xacpx/http";
 import { XacpxSessionManager } from "@simulatorlife/autodev-runtime/xacpx/manager";
-import { ensureLocalAdmission } from "@simulatorlife/autodev-runtime/mcp/gateway-admission";
 
 // ACP launches sign their sessions' gateway grants: give the test process's
 // isolated CODEX_HOME the gateway's admission files.
@@ -55,13 +54,13 @@ class FakeRequest extends EventTarget {
   }
 
   // The request lifecycle listeners the router registers on a real request.
-  once(_event: string, _listener: (...args: unknown[]) => void): this {
+  once(_event: string, _listener: (...arguments_: unknown[]) => void): this {
     return this;
   }
 
   removeListener(
     _event: string,
-    _listener: (...args: unknown[]) => void
+    _listener: (...arguments_: unknown[]) => void
   ): this {
     return this;
   }
@@ -297,7 +296,7 @@ test(
 test("agent event ingestion accepts activity only for a router-owned request", () => {
   resetSubagentTelemetry();
   noteBridgeRequest("http-request", {
-    activitySubject: `req:${"http-request"}`,
+    activitySubject: `req:http-request`,
     provider: "claude",
     model: "sonnet",
     role: "worker",

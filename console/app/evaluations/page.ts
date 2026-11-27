@@ -32,7 +32,7 @@ import {
 
 export const dynamic = "force-dynamic";
 
-interface EvaluationsPageProps {
+interface EvaluationsPageProperties {
   readonly searchParams?: Promise<
     Record<string, string | readonly string[] | undefined>
   >;
@@ -67,13 +67,13 @@ function evaluationTraceState(
 }
 
 /**
- * Evaluations resource view.
- *
- * One bounded read of the AutoDev Control API `/control/evaluations` endpoint,
- * then narrowing on the page. Filters, the open section, the open run, and the
- * open trace are all query parameters, so the whole surface is addressable
- * without JavaScript and every link can state what it preserves.
- */
+Evaluations resource view.
+
+One bounded read of the AutoDev Control API `/control/evaluations` endpoint,
+then narrowing on the page. Filters, the open section, the open run, and the
+open trace are all query parameters, so the whole surface is addressable
+without JavaScript and every link can state what it preserves.
+*/
 export const metadata: Metadata = {
   title: "Evaluations"
 };
@@ -92,11 +92,9 @@ function renderEvaluationsFailure(
         : "Evaluations could not be loaded",
       code: controlApiFailureCode(result),
       message: result.message,
-      ...(isTimeout
-        ? {
+      ...(isTimeout && {
             hint: "The Control API accepted the read and did not answer before the Console gave up. Check whether the evaluations query is slow against the telemetry store."
-          }
-        : {})
+          })
     })
   );
 }
@@ -114,14 +112,14 @@ function resolveTraceLookup(
 
 export default async function EvaluationsPage({
   searchParams
-}: EvaluationsPageProps): Promise<React.JSX.Element> {
-  const params = searchParams ? await searchParams : {};
-  const filters = parseEvaluationsFilters(params);
-  const tab = resolveEvaluationsTab(params.tab);
-  const page = resolveEvaluationsPage(params[EVALUATIONS_PAGE_PARAM]);
-  const selectedResult = singleValue(params[EVALUATION_RESULT_PARAM]);
+}: EvaluationsPageProperties): Promise<React.JSX.Element> {
+  const parameters = searchParams ? await searchParams : {};
+  const filters = parseEvaluationsFilters(parameters);
+  const tab = resolveEvaluationsTab(parameters.tab);
+  const page = resolveEvaluationsPage(parameters[EVALUATIONS_PAGE_PARAM]);
+  const selectedResult = singleValue(parameters[EVALUATION_RESULT_PARAM]);
 
-  const spanIdValues = params[EVALUATION_SPAN_PARAM];
+  const spanIdValues = parameters[EVALUATION_SPAN_PARAM];
   const requestedSpanId = singleValue(spanIdValues);
   const hasInvalidSpanSelection =
     spanIdValues !== undefined && !isOpenTelemetrySpanId(requestedSpanId);
@@ -141,9 +139,9 @@ export default async function EvaluationsPage({
   // one of them is reported as a failure that did not happen.
   const result = await fetchEvaluations(config);
   const traceLookupResult =
-    spanIdValues !== undefined && !hasInvalidSpanSelection
-      ? await loadOpenLITTrace(requestedSpanId!)
-      : null;
+    spanIdValues === undefined || hasInvalidSpanSelection
+      ? null
+      : await loadOpenLITTrace(requestedSpanId!);
   if (result.kind !== "ok") {
     return renderEvaluationsFailure(section, result);
   }
@@ -184,19 +182,17 @@ export default async function EvaluationsPage({
       filterOptions: filterOptionsFor(available, filters),
       tab,
       page,
-      ...(placed.unplaceable === 0 ? {} : { unplaceable: placed.unplaceable }),
-      ...(placed.promptless === 0 ? {} : { promptless: placed.promptless }),
-      ...(unread === undefined ? {} : { oldestReadAt: unread.oldestReadAt }),
-      ...(selectedResult === undefined ? {} : { selection: selectedResult }),
+      ...(placed.unplaceable !== 0 && { unplaceable: placed.unplaceable }),
+      ...(placed.promptless !== 0 && { promptless: placed.promptless }),
+      ...(unread !== undefined && { oldestReadAt: unread.oldestReadAt }),
+      ...(selectedResult !== undefined && { selection: selectedResult }),
       // Only a span id the page accepts. A URL can name one that is not a span
       // id, and the trace panel already says so; carrying it into every link
       // would spread a selection the page has declared unreadable across the
       // page, and the one link that must keep it -- the drawer's close -- would
       // then be keeping something meaningless.
-      ...(hasInvalidSpanSelection || requestedSpanId === undefined
-        ? {}
-        : { spanId: requestedSpanId }),
-      ...(traceLookup ? { traceLookup } : {})
+      ...(!hasInvalidSpanSelection && requestedSpanId !== undefined && { spanId: requestedSpanId }),
+      ...(traceLookup && { traceLookup })
     })
   );
 }

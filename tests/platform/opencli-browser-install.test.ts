@@ -14,8 +14,8 @@ function dependencies(
     readonly createDirectory?: (directory: string) => void;
     readonly run?: (
       command: string,
-      args: readonly string[],
-      env: NodeJS.ProcessEnv
+      arguments_: readonly string[],
+      environment: NodeJS.ProcessEnv
     ) => number;
   } = {}
 ) {
@@ -39,8 +39,8 @@ test("installs only the Runtime-pinned headed Chromium into AutoDev's private ca
       createDirectory: (path) => {
         directory = path;
       },
-      run: (command, args, env) => {
-        invocation = { command, args, env };
+      run: (command, arguments_, environment) => {
+        invocation = { command, args: arguments_, env: environment };
         return 0;
       }
     }),
@@ -61,25 +61,25 @@ test("installs only the Runtime-pinned headed Chromium into AutoDev's private ca
 });
 
 test("does not run Playwright when the pinned Runtime CLI is missing", () => {
-  let ran = false;
-  let createdDirectory = false;
+  let isRan = false;
+  let isCreatedDirectory = false;
   const status = installOpencliBrowser(
     { repositoryRoot, codexHome },
     dependencies({
       fileExists: (filePath) => filePath !== playwrightCli,
       createDirectory: () => {
-        createdDirectory = true;
+        isCreatedDirectory = true;
       },
       run: () => {
-        ran = true;
+        isRan = true;
         return 0;
       }
     })
   );
 
   assert.equal(status, 1);
-  assert.equal(ran, false);
-  assert.equal(createdDirectory, false);
+  assert.equal(isRan, false);
+  assert.equal(isCreatedDirectory, false);
 });
 
 test("propagates a failed browser download to the normal installer", () => {
@@ -92,8 +92,8 @@ test("propagates a failed browser download to the normal installer", () => {
 });
 
 test("skips Playwright download when the pinned Chromium and ffmpeg markers already exist", () => {
-  let ran = false;
-  let createdDirectory = false;
+  let isRan = false;
+  let isCreatedDirectory = false;
   const manifestPath = `${repositoryRoot}/runtime/node_modules/playwright-core/browsers.json`;
   const status = installOpencliBrowser(
     { repositoryRoot, codexHome },
@@ -103,7 +103,7 @@ test("skips Playwright download when the pinned Chromium and ffmpeg markers alre
         filePath === `${browserCache}/chromium-1243/INSTALLATION_COMPLETE` ||
         filePath === `${browserCache}/ffmpeg-1011/INSTALLATION_COMPLETE`,
       createDirectory: () => {
-        createdDirectory = true;
+        isCreatedDirectory = true;
       },
       readFile: (filePath) => {
         if (filePath !== manifestPath)
@@ -116,19 +116,19 @@ test("skips Playwright download when the pinned Chromium and ffmpeg markers alre
         });
       },
       run: () => {
-        ran = true;
+        isRan = true;
         return 0;
       }
     }
   );
 
   assert.equal(status, 0);
-  assert.equal(ran, false);
-  assert.equal(createdDirectory, false);
+  assert.equal(isRan, false);
+  assert.equal(isCreatedDirectory, false);
 });
 
 test("reinstalls when the Playwright manifest bumps the pinned Chromium revision", () => {
-  let ran = false;
+  let isRan = false;
   const manifestPath = `${repositoryRoot}/runtime/node_modules/playwright-core/browsers.json`;
   const status = installOpencliBrowser(
     { repositoryRoot, codexHome },
@@ -149,12 +149,12 @@ test("reinstalls when the Playwright manifest bumps the pinned Chromium revision
         });
       },
       run: () => {
-        ran = true;
+        isRan = true;
         return 0;
       }
     }
   );
 
   assert.equal(status, 0);
-  assert.equal(ran, true);
+  assert.equal(isRan, true);
 });

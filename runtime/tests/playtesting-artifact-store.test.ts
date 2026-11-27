@@ -18,7 +18,7 @@ import test from "node:test";
 
 import {
   defaultPlaytestArtifactsRoot,
-  PlaytestArtifactConfigurationError,
+  PlaytestArtifactConfigurationError as PlaytestArtifactConfigError,
   PlaytestArtifactExpiredError,
   PlaytestArtifactFormatError,
   PlaytestArtifactIntegrityError,
@@ -50,7 +50,7 @@ test("PlaytestArtifactStore constructor validates workspace, root, and owner per
           rootDirectory: root,
           workspaceId: "invalid"
         }),
-      PlaytestArtifactConfigurationError
+      PlaytestArtifactConfigError
     );
     assert.throws(
       () =>
@@ -58,7 +58,7 @@ test("PlaytestArtifactStore constructor validates workspace, root, and owner per
           rootDirectory: root,
           workspaceId: "../traversal"
         }),
-      PlaytestArtifactConfigurationError
+      PlaytestArtifactConfigError
     );
     assert.throws(
       () =>
@@ -66,7 +66,7 @@ test("PlaytestArtifactStore constructor validates workspace, root, and owner per
           rootDirectory: root,
           workspaceId: "owner/../escaped"
         }),
-      PlaytestArtifactConfigurationError
+      PlaytestArtifactConfigError
     );
 
     // Rejects non-existent root directory when explicitly supplied
@@ -76,7 +76,7 @@ test("PlaytestArtifactStore constructor validates workspace, root, and owner per
           rootDirectory: path.join(root, "non-existent"),
           workspaceId: "test-owner/test-repo"
         }),
-      PlaytestArtifactConfigurationError
+      PlaytestArtifactConfigError
     );
 
     // Rejects relative rootDirectory
@@ -86,7 +86,7 @@ test("PlaytestArtifactStore constructor validates workspace, root, and owner per
           rootDirectory: "relative/path",
           workspaceId: "test-owner/test-repo"
         }),
-      PlaytestArtifactConfigurationError
+      PlaytestArtifactConfigError
     );
 
     // Valid constructor binds workspace and creates workspace directory with 0o700 mode
@@ -120,7 +120,7 @@ test("PlaytestArtifactStore rejects symlink rootDirectory", () => {
           rootDirectory: symlinkPath,
           workspaceId: "test-owner/test-repo"
         }),
-      PlaytestArtifactConfigurationError
+      PlaytestArtifactConfigError
     );
   } finally {
     cleanup();
@@ -341,44 +341,44 @@ test("duplicate refs sharing blob content and independent deletion", () => {
     });
 
     const bytes = new TextEncoder().encode("shared-content-between-refs");
-    const ref1 = store.writeArtifact({
+    const reference1 = store.writeArtifact({
       artifactId: "ref-alpha",
       mediaType: "application/octet-stream",
       bytes
     }).reference;
 
-    const ref2 = store.writeArtifact({
+    const reference2 = store.writeArtifact({
       artifactId: "ref-beta",
       mediaType: "application/octet-stream",
       bytes
     }).reference;
 
-    assert.equal(ref1.sha256, ref2.sha256);
-    assert.notEqual(ref1.artifactId, ref2.artifactId);
+    assert.equal(reference1.sha256, reference2.sha256);
+    assert.notEqual(reference1.artifactId, reference2.artifactId);
 
     // Both read successfully
-    assert.deepEqual(store.readArtifact(ref1).bytes, bytes);
-    assert.deepEqual(store.readArtifact(ref2).bytes, bytes);
+    assert.deepEqual(store.readArtifact(reference1).bytes, bytes);
+    assert.deepEqual(store.readArtifact(reference2).bytes, bytes);
 
     // Remove ref1: backing blob is preserved because ref2 still points to it
-    const removeResult1 = store.remove(ref1);
+    const removeResult1 = store.remove(reference1);
     assert.equal(removeResult1.removed, true);
-    assert.equal(store.state(ref1), "not-authorized");
-    assert.equal(store.state(ref2), "present");
-    assert.deepEqual(store.readArtifact(ref2).bytes, bytes);
+    assert.equal(store.state(reference1), "not-authorized");
+    assert.equal(store.state(reference2), "present");
+    assert.deepEqual(store.readArtifact(reference2).bytes, bytes);
 
     // Remove ref2: now backing blob is removed
-    const removeResult2 = store.remove(ref2);
+    const removeResult2 = store.remove(reference2);
     assert.equal(removeResult2.removed, true);
-    assert.equal(store.state(ref2), "not-authorized");
+    assert.equal(store.state(reference2), "not-authorized");
 
     const blobFile = path.join(
       root,
       "acme",
       "racing-game",
       "blobs",
-      ref1.sha256.slice(0, 2),
-      ref1.sha256
+      reference1.sha256.slice(0, 2),
+      reference1.sha256
     );
     assert.equal(existsSync(blobFile), false);
   } finally {
@@ -399,36 +399,36 @@ test("workspace isolation enforces authorization boundaries", () => {
     });
 
     const blobPayload = new TextEncoder().encode("org-a-private-trace");
-    const refA = storeA.writeArtifact({
+    const referenceA = storeA.writeArtifact({
       mediaType: "application/octet-stream",
       bytes: blobPayload
     }).reference;
 
-    const windowRefA = storeA.writeWindow({
+    const windowReferenceA = storeA.writeWindow({
       entries: [{ secret: "org-a-step" }]
     }).reference;
 
     // Store B cannot read store A's blob
-    assert.equal(storeB.state(refA), "not-authorized");
+    assert.equal(storeB.state(referenceA), "not-authorized");
     assert.throws(
-      () => storeB.readArtifact(refA),
+      () => storeB.readArtifact(referenceA),
       PlaytestArtifactNotAuthorizedError
     );
 
     // Store B cannot read store A's window
-    assert.equal(storeB.state(windowRefA), "not-authorized");
+    assert.equal(storeB.state(windowReferenceA), "not-authorized");
     assert.throws(
-      () => storeB.readWindow(windowRefA),
+      () => storeB.readWindow(windowReferenceA),
       PlaytestArtifactNotAuthorizedError
     );
 
     // Store B cannot remove store A's artifact
-    const removeResult = storeB.remove(refA);
+    const removeResult = storeB.remove(referenceA);
     assert.equal(removeResult.removed, false);
     assert.equal(removeResult.reason, "not-authorized");
 
     // Store A can still read its own artifact
-    assert.deepEqual(storeA.readArtifact(refA).bytes, blobPayload);
+    assert.deepEqual(storeA.readArtifact(referenceA).bytes, blobPayload);
   } finally {
     cleanup();
   }
@@ -464,15 +464,15 @@ test("path traversal and malicious artifact id rejection", () => {
     );
 
     // Calling readArtifact with traversal artifactId
-    const traversalRef = {
+    const traversalReference = {
       artifactId: "../../etc/shadow",
       sha256: "0".repeat(64),
       bytes: 10,
       mediaType: "text/plain"
     };
-    assert.equal(store.state(traversalRef), "not-authorized");
+    assert.equal(store.state(traversalReference), "not-authorized");
     assert.throws(
-      () => store.readArtifact(traversalRef),
+      () => store.readArtifact(traversalReference),
       PlaytestArtifactNotAuthorizedError
     );
   } finally {
@@ -513,7 +513,7 @@ test("symlink escape prevention on storage files", () => {
     // Reading the symlinked file must fail with configuration error, not leak content
     assert.throws(
       () => store.readArtifact(writeResult.reference),
-      PlaytestArtifactConfigurationError
+      PlaytestArtifactConfigError
     );
   } finally {
     cleanup();
@@ -589,23 +589,23 @@ test("partial evidence preservation on failed window writes", () => {
     // A .tmp scratch file must exist in windows directory containing the first 2 lines
     const windowsDir = path.join(root, "partial", "evidence", "windows");
     assert.ok(existsSync(windowsDir));
-    const tmpFiles = readdirSync(windowsDir).filter((f) => f.includes(".tmp."));
+    const temporaryFiles = readdirSync(windowsDir).filter((f) => f.includes(".tmp."));
     assert.ok(
-      tmpFiles.length > 0,
+      temporaryFiles.length > 0,
       "At least one .tmp scratch file must be preserved"
     );
-    const firstTmp = tmpFiles[0];
-    assert.ok(firstTmp !== undefined);
+    const firstTemporary = temporaryFiles[0];
+    assert.ok(firstTemporary !== undefined);
 
     const scratchContent = readFileSync(
-      path.join(windowsDir, firstTmp),
+      path.join(windowsDir, firstTemporary),
       "utf8"
     );
     assert.ok(scratchContent.includes("valid line 1"));
     assert.ok(scratchContent.includes("valid line 2"));
 
     // Check permissions on the scratch file (0o600)
-    const scratchStat = statSync(path.join(windowsDir, firstTmp));
+    const scratchStat = statSync(path.join(windowsDir, firstTemporary));
     assert.equal(scratchStat.mode & 0o777, 0o600);
   } finally {
     cleanup();
@@ -660,12 +660,12 @@ test("missing and expired states with explicit error classes", () => {
       now: () => now
     });
 
-    const ref = store.writeArtifact({
+    const reference = store.writeArtifact({
       mediaType: "text/plain",
       bytes: new TextEncoder().encode("temporary-item")
     }).reference;
 
-    assert.equal(store.state(ref), "present");
+    assert.equal(store.state(reference), "present");
 
     // Manually delete blob to simulate missing state
     const blobFile = path.join(
@@ -673,18 +673,18 @@ test("missing and expired states with explicit error classes", () => {
       "test",
       "states",
       "blobs",
-      ref.sha256.slice(0, 2),
-      ref.sha256
+      reference.sha256.slice(0, 2),
+      reference.sha256
     );
     unlinkSync(blobFile);
 
-    assert.equal(store.state(ref), "missing");
-    assert.throws(() => store.readArtifact(ref), PlaytestArtifactMissingError);
+    assert.equal(store.state(reference), "missing");
+    assert.throws(() => store.readArtifact(reference), PlaytestArtifactMissingError);
 
     // Advance clock past retention window
     now = 1_060_000;
-    assert.equal(store.state(ref), "expired");
-    assert.throws(() => store.readArtifact(ref), PlaytestArtifactExpiredError);
+    assert.equal(store.state(reference), "expired");
+    assert.throws(() => store.readArtifact(reference), PlaytestArtifactExpiredError);
   } finally {
     cleanup();
   }
@@ -804,20 +804,20 @@ test("cleanup removes expired references, blobs, and windows while preserving ac
     });
 
     // Write item 1 at t=100,000 (expires at t=110,000)
-    const ref1 = store.writeArtifact({
+    const reference1 = store.writeArtifact({
       artifactId: "item-1",
       mediaType: "text/plain",
       bytes: new TextEncoder().encode("item-1-data")
     }).reference;
 
-    const windowRef1 = store.writeWindow({
+    const windowReference1 = store.writeWindow({
       artifactId: "window-1",
       entries: [{ line: "w1" }]
     }).reference;
 
     // Advance time to t=105,000 and write item 2 (expires at t=115,000)
     now = 105_000;
-    const ref2 = store.writeArtifact({
+    const reference2 = store.writeArtifact({
       artifactId: "item-2",
       mediaType: "text/plain",
       bytes: new TextEncoder().encode("item-2-data")
@@ -825,9 +825,9 @@ test("cleanup removes expired references, blobs, and windows while preserving ac
 
     // Advance time to t=112,000 (item-1 and window-1 are expired, item-2 is active)
     now = 112_000;
-    assert.equal(store.state(ref1), "expired");
-    assert.equal(store.state(windowRef1), "expired");
-    assert.equal(store.state(ref2), "present");
+    assert.equal(store.state(reference1), "expired");
+    assert.equal(store.state(windowReference1), "expired");
+    assert.equal(store.state(reference2), "present");
 
     const cleanupResult = store.cleanup(now);
     assert.equal(cleanupResult.removedRefs, 2);
@@ -839,13 +839,13 @@ test("cleanup removes expired references, blobs, and windows while preserving ac
     ]);
 
     // After cleanup, expired items are not-authorized (metadata deleted)
-    assert.equal(store.state(ref1), "not-authorized");
-    assert.equal(store.state(windowRef1), "not-authorized");
+    assert.equal(store.state(reference1), "not-authorized");
+    assert.equal(store.state(windowReference1), "not-authorized");
 
     // Item 2 remains present and readable
-    assert.equal(store.state(ref2), "present");
+    assert.equal(store.state(reference2), "present");
     assert.deepEqual(
-      store.readArtifact(ref2).bytes,
+      store.readArtifact(reference2).bytes,
       new TextEncoder().encode("item-2-data")
     );
   } finally {

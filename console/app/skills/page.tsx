@@ -78,9 +78,7 @@ export default async function SkillsPage({
       // repository holds no skill -- which is a claim about the read, not
       // about the repository. A badge with no number says the count is not
       // known.
-      ...(result.data.valid === true
-        ? { counts: { Skills: skills.length } }
-        : {})
+      ...((result.data.valid === true) && { counts: { Skills: skills.length } })
     },
     React.createElement(SkillsView, {
       skills,

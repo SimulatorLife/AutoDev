@@ -1,23 +1,23 @@
 /**
- * A Control API stand-in that can be put into the states a real service can be
- * in, so the Console's own failure states can be measured in a browser.
- *
- * The Console's pages read the Control API on the server and promise the
- * operator an explicit state when a read cannot be answered: unavailable,
- * unauthorized, or an error. A unit test can prove the mapping from a failed
- * read to a rendered state; it cannot prove that the page an operator opens
- * shows that state rather than an empty table, a zero count, or the last
- * data it managed to load. This proxy is what makes the difference
- * measurable: it sits between the Console and the Control API fixture and
- * answers the way a service answers when it is down, when it refuses, or
- * when it fails.
- *
- * It is deliberately not the fixture. The fixture answers a healthy service
- * with deterministic data, and the fixture's own contract is that its
- * responses are synthetic and complete. This one only ever *degrades* the
- * answer it forwards, and it always answers the control route honestly, so a
- * spec that flips the state and puts it back is leaving no trace.
- */
+A Control API stand-in that can be put into the states a real service can be
+in, so the Console's own failure states can be measured in a browser.
+
+The Console's pages read the Control API on the server and promise the
+operator an explicit state when a read cannot be answered: unavailable,
+unauthorized, or an error. A unit test can prove the mapping from a failed
+read to a rendered state; it cannot prove that the page an operator opens
+shows that state rather than an empty table, a zero count, or the last
+data it managed to load. This proxy is what makes the difference
+measurable: it sits between the Console and the Control API fixture and
+answers the way a service answers when it is down, when it refuses, or
+when it fails.
+
+It is deliberately not the fixture. The fixture answers a healthy service
+with deterministic data, and the fixture's own contract is that its
+responses are synthetic and complete. This one only ever *degrades* the
+answer it forwards, and it always answers the control route honestly, so a
+spec that flips the state and puts it back is leaving no trace.
+*/
 import {
   createServer,
   type IncomingMessage,
@@ -30,7 +30,9 @@ const PORT = Number(process.env.AUTODEV_STATE_PROXY_PORT ?? 4370);
 const UPSTREAM =
   process.env.AUTODEV_STATE_PROXY_UPSTREAM ?? "http://127.0.0.1:4368";
 
-/** The states a service can be in when the Console asks it a question. */
+/**
+The states a service can be in when the Console asks it a question.
+*/
 const STATES = [
   "normal",
   "slow",
@@ -45,15 +47,15 @@ type ProxyState = (typeof STATES)[number];
 const DELAY_MS = Number(process.env.AUTODEV_STATE_PROXY_DELAY_MS ?? 3000);
 
 /**
- * How long the proxy waits for the service it stands in front of.
- *
- * A service that accepts a request and then never answers is a state the
- * Console has to answer for, but the proxy used to wait on it forever: the
- * Console's read then waited on the proxy, and the page an operator opens
- * waited with it. The proxy's own deadline is longer than the Console's
- * five-second one on purpose -- the Console's deadline is the one that
- * should normally fire, and this is the backstop for a read that outlives it.
- */
+How long the proxy waits for the service it stands in front of.
+
+A service that accepts a request and then never answers is a state the
+Console has to answer for, but the proxy used to wait on it forever: the
+Console's read then waited on the proxy, and the page an operator opens
+waited with it. The proxy's own deadline is longer than the Console's
+five-second one on purpose -- the Console's deadline is the one that
+should normally fire, and this is the backstop for a read that outlives it.
+*/
 const UPSTREAM_TIMEOUT_MS = Number(
   process.env.AUTODEV_STATE_PROXY_UPSTREAM_TIMEOUT_MS ?? 10_000
 );
@@ -86,20 +88,20 @@ async function readBody(request: IncomingMessage): Promise<string> {
 }
 
 /**
- * One header value.
- *
- * A header that arrived more than once arrives as an array, and an array is
- * not a header value: the first one is the one the caller meant.
- */
+One header value.
+
+A header that arrived more than once arrives as an array, and an array is
+not a header value: the first one is the one the caller meant.
+*/
 function headerValue(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return value[0] ?? "";
   return value ?? "";
 }
 
 /**
- * The answer a degraded service gives, in the Control API's own error
- * envelope, so the Console reads the code the envelope carries.
- */
+The answer a degraded service gives, in the Control API's own error
+envelope, so the Console reads the code the envelope carries.
+*/
 function degradedAnswer(degraded: ProxyState): {
   readonly status: number;
   readonly body: unknown;
@@ -128,15 +130,15 @@ function degradedAnswer(degraded: ProxyState): {
 }
 
 /**
- * The catalogue reads whose answer this proxy can break.
- *
- * These are the reads that publish a *catalogue* -- a set of declared things
- * -- together with whether that catalogue could be applied. A service that
- * answers them with a broken catalogue is up, and its transport is healthy,
- * and it has told the truth: the declaration is invalid, or nobody read it.
- * That is a state the transport-level degradations above cannot express,
- * because they replace the answer instead of describing it.
- */
+The catalogue reads whose answer this proxy can break.
+
+These are the reads that publish a *catalogue* -- a set of declared things
+-- together with whether that catalogue could be applied. A service that
+answers them with a broken catalogue is up, and its transport is healthy,
+and it has told the truth: the declaration is invalid, or nobody read it.
+That is a state the transport-level degradations above cannot express,
+because they replace the answer instead of describing it.
+*/
 const CATALOGUE_ROUTES: Readonly<Record<string, string>> = {
   "/control/agents": ".rulesync/agents.jsonc",
   "/control/hooks": ".rulesync/hooks.jsonc",
@@ -147,12 +149,12 @@ const CATALOGUE_ROUTES: Readonly<Record<string, string>> = {
 };
 
 /**
- * The catalogue answer a broken declaration produces.
- *
- * The catalogue's own entries are removed with it: a declaration that could
- * not be applied declares nothing that may be shown, and leaving the entries
- * in place would let a page render a thing the Runtime has disowned.
- */
+The catalogue answer a broken declaration produces.
+
+The catalogue's own entries are removed with it: a declaration that could
+not be applied declares nothing that may be shown, and leaving the entries
+in place would let a page render a thing the Runtime has disowned.
+*/
 function brokenCatalogue(pathname: string, body: unknown): unknown {
   if (!isRecord(body)) return body;
   if (pathname === "/control/hooks") {

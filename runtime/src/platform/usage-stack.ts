@@ -1,21 +1,21 @@
 /**
- * The OpenLIT + ClickHouse Usage stack, and the readiness the supervised
- * Console needs before it serves.
- *
- * The Console's launcher refuses to serve a Runtime or Usage backend that
- * cannot satisfy the checked-out contracts, so every path that starts the
- * Console -- the development server and the installer alike -- has to bring
- * this stack up first. This module is that owner: one implementation of "the
- * Usage stack is up and serving", used by both.
- *
- * Readiness alone is not freshness: a healthy container may still be running
- * an older image or a stale bind-mounted configuration. The canonical runner
- * (`scripts/openlit/up.sh`) reuses an unchanged image, lets Compose recreate
- * only the services whose image or configuration fingerprint changed,
- * preserves the durable volumes, and verifies the deployed Usage v5 response
- * contract before it exits. A runner failure is therefore a failure of the
- * stack, not of the caller that invoked it.
- */
+The OpenLIT + ClickHouse Usage stack, and the readiness the supervised
+Console needs before it serves.
+
+The Console's launcher refuses to serve a Runtime or Usage backend that
+cannot satisfy the checked-out contracts, so every path that starts the
+Console -- the development server and the installer alike -- has to bring
+this stack up first. This module is that owner: one implementation of "the
+Usage stack is up and serving", used by both.
+
+Readiness alone is not freshness: a healthy container may still be running
+an older image or a stale bind-mounted configuration. The canonical runner
+(`scripts/openlit/up.sh`) reuses an unchanged image, lets Compose recreate
+only the services whose image or configuration fingerprint changed,
+preserves the durable volumes, and verifies the deployed Usage v5 response
+contract before it exits. A runner failure is therefore a failure of the
+stack, not of the caller that invoked it.
+*/
 
 import { spawnSync } from "node:child_process";
 import { createConnection } from "node:net";
@@ -33,12 +33,14 @@ const DOCKER_READY_TIMEOUT_MS = 120_000;
 const STACK_READY_TIMEOUT_MS = 120_000;
 const DOCKER_PROBE_TIMEOUT_MS = 5000;
 
-/** Whether something is listening on a loopback port. */
 /**
- * OpenLIT's HTTP readiness probe. Its root answers with a redirect to
- * `/dashboard`, which the shared health probe refuses by design, so the probe
- * asks for the page that is actually served.
- */
+Whether something is listening on a loopback port.
+*/
+/**
+OpenLIT's HTTP readiness probe. Its root answers with a redirect to
+`/dashboard`, which the shared health probe refuses by design, so the probe
+asks for the page that is actually served.
+*/
 export const openlitHttpReady = httpHealthProbe(
   `http://127.0.0.1:${OPENLIT_PORT}/dashboard`,
   { cache: "no-store" }
@@ -78,34 +80,40 @@ export interface UsageStackCommandResult {
   readonly error?: Error | undefined;
 }
 
-/** Injectable process boundary for the Usage stack lifecycle. */
+/**
+Injectable process boundary for the Usage stack lifecycle.
+*/
 export interface UsageStackDependencies {
   readonly runCommand: (
     command: string,
-    args: readonly string[],
+    arguments_: readonly string[],
     options: UsageStackCommandOptions
   ) => UsageStackCommandResult;
   readonly isPortListening: (port: number) => Promise<boolean>;
   readonly isOpenlitHttpReady: () => Promise<boolean>;
   readonly sleep: (milliseconds: number) => Promise<void>;
   readonly writeLine: (message: string) => void;
-  /** The environment the canonical runner is invoked with. */
+  /**
+  The environment the canonical runner is invoked with.
+  */
   readonly runnerEnv: NodeJS.ProcessEnv;
 }
 
 export interface UsageStackOptions {
   readonly repositoryRoot: string;
   readonly platform: NodeJS.Platform;
-  /** The prefix of this path's progress lines, e.g. `dev` or `install`. */
+  /**
+  The prefix of this path's progress lines, e.g. `dev` or `install`.
+  */
   readonly label: string;
 }
 
 function runUsageCommand(
   command: string,
-  args: readonly string[],
+  arguments_: readonly string[],
   options: UsageStackCommandOptions
 ): UsageStackCommandResult {
-  const result = spawnSync(command, [...args], {
+  const result = spawnSync(command, [...arguments_], {
     cwd: options.cwd,
     stdio: options.stdio,
     timeout: options.timeoutMs,
@@ -155,33 +163,35 @@ function waitForDockerEngine(
   );
 }
 
-/** launchd's default search path for processes in the user's login session. */
+/**
+launchd's default search path for processes in the user's login session.
+*/
 const LOGIN_SESSION_PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
 
 /**
- * The environment Docker Desktop is launched with.
- *
- * `open` hands its whole environment to the application it launches
- * ("Opened applications inherit environment variables just as if you had
- * launched the application directly", open(1)). The caller's environment is
- * a toolchain environment -- pnpm lifecycle variables, Node and Electron
- * options, AutoDev secrets such as the Usage service token. Launched with
- * it, Docker Desktop's backend fails to start its Electron UI ("starting
- * electron: unmarshaling start request: unexpected EOF") and shuts itself
- * down, so the Engine never comes up -- while the same app opened from Finder
- * starts normally. Docker Desktop is therefore launched the way Finder
- * launches it: with only the login-session identity, never the caller's
- * environment.
- */
+The environment Docker Desktop is launched with.
+
+`open` hands its whole environment to the application it launches
+("Opened applications inherit environment variables just as if you had
+launched the application directly", open(1)). The caller's environment is
+a toolchain environment -- pnpm lifecycle variables, Node and Electron
+options, AutoDev secrets such as the Usage service token. Launched with
+it, Docker Desktop's backend fails to start its Electron UI ("starting
+electron: unmarshaling start request: unexpected EOF") and shuts itself
+down, so the Engine never comes up -- while the same app opened from Finder
+starts normally. Docker Desktop is therefore launched the way Finder
+launches it: with only the login-session identity, never the caller's
+environment.
+*/
 export function desktopLaunchEnvironment(
-  callerEnv: NodeJS.ProcessEnv
+  callerEnvironment: NodeJS.ProcessEnv
 ): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { PATH: LOGIN_SESSION_PATH };
+  const environment: NodeJS.ProcessEnv = { PATH: LOGIN_SESSION_PATH };
   for (const name of ["HOME", "USER", "LOGNAME"] as const) {
-    const value = callerEnv[name];
-    if (value) env[name] = value;
+    const value = callerEnvironment[name];
+    if (value) environment[name] = value;
   }
-  return env;
+  return environment;
 }
 
 async function ensureDockerEngine(
@@ -227,14 +237,14 @@ async function isStackReady(
 }
 
 /**
- * Bring the Usage stack up and prove it is serving.
- *
- * The runner owns the whole lifecycle -- the image, the secrets, the Compose
- * reconciliation, the readiness wait, the Collector's schema, and the
- * deployed Usage v5 response contract -- so this is one call to it and a
- * readiness wait. A failure names the stack, because the caller that
- * invoked it cannot know more than the runner reported.
- */
+Bring the Usage stack up and prove it is serving.
+
+The runner owns the whole lifecycle -- the image, the secrets, the Compose
+reconciliation, the readiness wait, the Collector's schema, and the
+deployed Usage v5 response contract -- so this is one call to it and a
+readiness wait. A failure names the stack, because the caller that
+invoked it cannot know more than the runner reported.
+*/
 export async function ensureUsageStack(
   options: UsageStackOptions,
   overrides: Partial<UsageStackDependencies> = {}

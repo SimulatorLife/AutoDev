@@ -6,54 +6,62 @@ export interface TabDefinition {
   readonly id: string;
   readonly label: string;
   /**
-   * Accessible name, when the visible label would name two different things.
-   *
-   * A tab and a top-level page can share a label -- the "Tools" tab on an MCP
-   * server and the Tools catalog, the "Prompts" tab and the Prompts catalog.
-   * The links are correct, but a links list then shows the same name twice with
-   * two destinations, and nothing tells the entries apart. A caller that knows
-   * which page its tabs belong to names them here; the visible label does not
-   * change, and the name still contains it.
-   */
+  Accessible name, when the visible label would name two different things.
+  
+  A tab and a top-level page can share a label -- the "Tools" tab on an MCP
+  server and the Tools catalog, the "Prompts" tab and the Prompts catalog.
+  The links are correct, but a links list then shows the same name twice with
+  two destinations, and nothing tells the entries apart. A caller that knows
+  which page its tabs belong to names them here; the visible label does not
+  change, and the name still contains it.
+  */
   readonly ariaLabel?: string | undefined;
 }
 
 export interface TabNavProps {
-  /** Accessible label for the surrounding `<nav>` landmark. */
+  /**
+  Accessible label for the surrounding `<nav>` landmark.
+  */
   readonly navLabel: string;
-  /** Route path the tab links are relative to, e.g. `/mcps/playwright`. */
+  /**
+  Route path the tab links are relative to, e.g. `/mcps/playwright`.
+  */
   readonly basePath: string;
   readonly tabs: readonly TabDefinition[];
   readonly activeTabId: string;
-  /** Query parameter name carrying the active tab id. Defaults to `tab`. */
+  /**
+  Query parameter name carrying the active tab id. Defaults to `tab`.
+  */
   readonly tabParam?: string;
-  /** Optional URL builder when a page must preserve additional query state. */
+  /**
+  Optional URL builder when a page must preserve additional query state.
+  */
   readonly hrefFor?: ((tabId: string) => string) | undefined;
 }
 
 const DEFAULT_TAB_PARAM = "tab";
-type TabLinkProps = React.ComponentProps<typeof NavigationLink> & {
+type TabLinkProperties = React.ComponentProps<typeof NavigationLink> & {
   readonly "data-tab-item": string;
   readonly "aria-label"?: string | undefined;
 };
 
 /**
- * Builds a deterministic, server-addressable URL for a tab: `basePath?tab=id`.
- */
+Builds a deterministic, server-addressable URL for a tab: `basePath?tab=id`.
+*/
 export function tabHref(
   basePath: string,
   tabId: string,
-  tabParam: string = DEFAULT_TAB_PARAM
+  tabParameter: string = DEFAULT_TAB_PARAM
 ): string {
-  return `${basePath}?${encodeURIComponent(tabParam)}=${encodeURIComponent(tabId)}`;
+  return `${basePath}?${encodeURIComponent(tabParameter)}=${encodeURIComponent(tabId)}`;
 }
 
 /**
- * Resolves the active tab id from a raw (possibly missing or invalid) query
- * value. Any value that does not match a known tab id falls back to
- * `fallbackTabId` so an unknown/missing `?tab=` never renders a blank or
- * mismatched panel.
- */
+Resolves the active tab id from a raw (possibly missing or invalid) query
+value. Any value that does not match a known tab id falls back to
+`fallbackTabId` so an unknown/missing `?tab=` never renders a blank or
+mismatched panel.
+*/
 export function resolveActiveTabId(
   tabs: readonly TabDefinition[],
   requestedTabId: string | undefined,
@@ -69,25 +77,25 @@ export function resolveActiveTabId(
 }
 
 /**
- * Shared, server-rendered tab navigation primitive.
- *
- * Renders a real `<nav>` landmark containing Next.js links (server-rendered as
- * ordinary `<a href>` elements), one per tab, with `aria-current="page"`
- * marking the active tab. Next.js handles in-place route transitions while
- * preserving each tab's addressable, bookmarkable `?tab=<id>` URL.
- *
- * This intentionally does NOT use the ARIA `tablist`/`tab`/`tabpanel` widget
- * roles, because those roles carry a contract of arrow-key roving-tabindex
- * interaction that this primitive does not implement. Using plain link
- * semantics keeps the navigation correctly operable by keyboard and screen
- * reader users without an unmet ARIA contract.
- */
+Shared, server-rendered tab navigation primitive.
+
+Renders a real `<nav>` landmark containing Next.js links (server-rendered as
+ordinary `<a href>` elements), one per tab, with `aria-current="page"`
+marking the active tab. Next.js handles in-place route transitions while
+preserving each tab's addressable, bookmarkable `?tab=<id>` URL.
+
+This intentionally does NOT use the ARIA `tablist`/`tab`/`tabpanel` widget
+roles, because those roles carry a contract of arrow-key roving-tabindex
+interaction that this primitive does not implement. Using plain link
+semantics keeps the navigation correctly operable by keyboard and screen
+reader users without an unmet ARIA contract.
+*/
 export function TabNav({
   navLabel,
   basePath,
   tabs,
   activeTabId,
-  tabParam = DEFAULT_TAB_PARAM,
+  tabParam: tabParameter = DEFAULT_TAB_PARAM,
   hrefFor
 }: TabNavProps): React.JSX.Element {
   return React.createElement(
@@ -101,13 +109,11 @@ export function TabNav({
       { className: "flex flex-wrap gap-1 list-none p-0 m-0" },
       ...tabs.map((tab) => {
         const isActive = tab.id === activeTabId;
-        const linkProps: TabLinkProps = {
-          href: hrefFor ? hrefFor(tab.id) : tabHref(basePath, tab.id, tabParam),
+        const linkProperties: TabLinkProperties = {
+          href: hrefFor ? hrefFor(tab.id) : tabHref(basePath, tab.id, tabParameter),
           "aria-current": isActive ? "page" : undefined,
           "data-tab-item": tab.id,
-          ...(tab.ariaLabel === undefined
-            ? {}
-            : { "aria-label": tab.ariaLabel }),
+          ...(tab.ariaLabel !== undefined && { "aria-label": tab.ariaLabel }),
           className: `inline-block px-4 py-2.5 text-sm font-medium border-b-2 transition-colors no-underline  ${
             isActive
               ? "border-accent text-accent bg-surface/40"
@@ -117,7 +123,7 @@ export function TabNav({
         return React.createElement(
           "li",
           { key: tab.id },
-          React.createElement(NavigationLink, linkProps, tab.label)
+          React.createElement(NavigationLink, linkProperties, tab.label)
         );
       })
     )

@@ -98,7 +98,7 @@ test("provider reset client uses the typed server-only Control API path and conf
 test("same-origin provider reset confirms on Runtime before redirecting to the selected tab", async () => {
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   const previousBaseUrl = process.env.AUTODEV_CONTROL_API_BASE_URL;
-  const previousFetch = globalThis.fetch;
+  const previousFetch = fetch;
   process.env.AUTODEV_CONTROL_API_TOKEN = "server-secret";
   process.env.AUTODEV_CONTROL_API_BASE_URL = "http://runtime.test";
   let requestBody: unknown;
@@ -132,12 +132,12 @@ test("same-origin provider reset confirms on Runtime before redirecting to the s
 test("provider reset refuses an unchecked confirmation without calling Runtime", async () => {
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   const previousBaseUrl = process.env.AUTODEV_CONTROL_API_BASE_URL;
-  const previousFetch = globalThis.fetch;
+  const previousFetch = fetch;
   process.env.AUTODEV_CONTROL_API_TOKEN = "server-secret";
   process.env.AUTODEV_CONTROL_API_BASE_URL = "http://runtime.test";
-  let called = false;
+  let isCalled = false;
   globalThis.fetch = async () => {
-    called = true;
+    isCalled = true;
     return Response.json(RESET_RESPONSE);
   };
   try {
@@ -149,7 +149,7 @@ test("provider reset refuses an unchecked confirmation without calling Runtime",
       response.headers.get("location"),
       "/providers?control=failed&refusal=confirmation_missing"
     );
-    assert.equal(called, false);
+    assert.equal(isCalled, false);
   } finally {
     globalThis.fetch = previousFetch;
     if (previousToken === undefined)

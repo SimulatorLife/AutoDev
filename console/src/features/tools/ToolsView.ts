@@ -37,7 +37,7 @@ import { CHIP_CLASS, chipList } from "../../components/tables/Chips.ts";
 import {
   DataTable,
   type DataTableFeatures,
-  type DataTableProps
+  type DataTableProps as DataTableProperties
 } from "../../components/tables/DataTable.ts";
 import {
   ACTION_LINK_CLASS,
@@ -63,19 +63,19 @@ import {
 } from "./tools-list-url.ts";
 
 /**
- * Tools catalog list view.
- *
- * Tools is a composite read model that joins RuleSync MCP declarations and
- * the execution-contract role projection. It does not introduce a second
- * configuration authority; every entry keeps its canonical edit surface so
- * the operator can pivot to MCPs or Agents without the catalog ever owning
- * an edit affordance.
- *
- * The list is URL-filtered by `?source=`, `?role=` and `?q=`. Filters update
- * the query string only and never the server state. Source authority and
- * availability render through the StatusBadge vocabulary; missing evidence
- * stays explicit instead of becoming a default zero or ready.
- */
+Tools catalog list view.
+
+Tools is a composite read model that joins RuleSync MCP declarations and
+the execution-contract role projection. It does not introduce a second
+configuration authority; every entry keeps its canonical edit surface so
+the operator can pivot to MCPs or Agents without the catalog ever owning
+an edit affordance.
+
+The list is URL-filtered by `?source=`, `?role=` and `?q=`. Filters update
+the query string only and never the server state. Source authority and
+availability render through the StatusBadge vocabulary; missing evidence
+stays explicit instead of becoming a default zero or ready.
+*/
 
 const SOURCE_VALUES: readonly ToolSource[] = ["native", "mcp", "plugin"];
 const SOURCE_FILTERS: readonly (ToolSource | "all")[] = [
@@ -88,12 +88,12 @@ export interface ToolsViewFilters {
   readonly source: string;
   readonly role: string;
   /**
-   * The free-text query the list is narrowed by.
-   *
-   * Optional, because a caller that does not narrow by text says so by leaving
-   * it out rather than by passing an empty string, and the page is the only
-   * caller that knows which of the two it meant.
-   */
+  The free-text query the list is narrowed by.
+  
+  Optional, because a caller that does not narrow by text says so by leaving
+  it out rather than by passing an empty string, and the page is the only
+  caller that knows which of the two it meant.
+  */
   readonly query?: string | undefined;
 }
 
@@ -102,19 +102,19 @@ export interface ToolsViewProps {
   readonly coverage: ToolCatalogCoverage;
   readonly validity: ToolCatalogValidity;
   /**
-   * Whether the execution contract was read.
-   *
-   * The catalogue is built from two independent reads -- the RuleSync
-   * declarations and the contract's role projection -- and the contract's
-   * accessor falls back to an empty contract when the read fails, so an empty
-   * contract and a contract nobody read look the same to a caller. They are
-   * not the same claim, and every count over the catalogue, and every
-   * statement about a tool's role exposure, depends on which one it was.
-   *
-   * False when the contract could not be read: the entries that arrived are
-   * then the ones the RuleSync source alone declared, and the catalogue's
-   * size is not known.
-   */
+  Whether the execution contract was read.
+  
+  The catalogue is built from two independent reads -- the RuleSync
+  declarations and the contract's role projection -- and the contract's
+  accessor falls back to an empty contract when the read fails, so an empty
+  contract and a contract nobody read look the same to a caller. They are
+  not the same claim, and every count over the catalogue, and every
+  statement about a tool's role exposure, depends on which one it was.
+  
+  False when the contract could not be read: the entries that arrived are
+  then the ones the RuleSync source alone declared, and the catalogue's
+  size is not known.
+  */
   readonly executionContractObserved: boolean;
   readonly usageLink: string;
   readonly filters: ToolsViewFilters;
@@ -223,12 +223,12 @@ function coverageBannerClasses(variant: "info" | "warning" | "error"): string {
 }
 
 /**
- * The compact accent link that names a tool's canonical edit surface.
- *
- * Mono because the label is usually an identifier -- an MCP server name, a
- * command, a prompt -- and an identifier that falls back to the body face reads
- * as a different kind of value from the tool names beside it.
- */
+The compact accent link that names a tool's canonical edit surface.
+
+Mono because the label is usually an identifier -- an MCP server name, a
+command, a prompt -- and an identifier that falls back to the body face reads
+as a different kind of value from the tool names beside it.
+*/
 const EDIT_SURFACE_LINK_CLASS =
   // `block min-h-6` for WCAG 2.5.8, for the same two reasons as elsewhere: the
   // box was 14px against a 24px floor with the spacing exception unavailable,
@@ -238,12 +238,12 @@ const EDIT_SURFACE_LINK_CLASS =
   `block min-h-6 font-mono text-xs ${ACTION_LINK_CLASS}`;
 
 /**
- * Where a tool's canonical source is edited, and what to call the link when the
- * catalog does not name the surface.
- *
- * The three sections differ only in these two values, so the link is one element
- * and the branch is a lookup, rather than three copies of the same anchor.
- */
+Where a tool's canonical source is edited, and what to call the link when the
+catalog does not name the surface.
+
+The three sections differ only in these two values, so the link is one element
+and the branch is a lookup, rather than three copies of the same anchor.
+*/
 function editSurfaceTarget(
   surface: NonNullable<ToolCatalogItem["canonicalEditSurface"]>
 ): { readonly href: string; readonly fallbackLabel: string } {
@@ -285,17 +285,17 @@ function EditSurfaceLink({
 }
 
 /**
- * What the filter bar says about what is in view.
- *
- * The count of what is in view belongs to the filter that narrowed it, and only
- * when something was narrowed: an unfiltered catalogue reporting "56 of 56" says
- * nothing the stat row above it does not already say.
- *
- * The total is stated only when the catalogue was fully observed. A catalogue
- * that was only partly read has entries, and the number of them is exactly right
- * for what arrived and incomplete for what the unread source would have
- * contributed, so "of N" would name a catalogue size nobody established.
- */
+What the filter bar says about what is in view.
+
+The count of what is in view belongs to the filter that narrowed it, and only
+when something was narrowed: an unfiltered catalogue reporting "56 of 56" says
+nothing the stat row above it does not already say.
+
+The total is stated only when the catalogue was fully observed. A catalogue
+that was only partly read has entries, and the number of them is exactly right
+for what arrived and incomplete for what the unread source would have
+contributed, so "of N" would name a catalogue size nobody established.
+*/
 function toolsFilterSummary(
   filtered: number,
   total: number,
@@ -307,16 +307,16 @@ function toolsFilterSummary(
 }
 
 /**
- * What an empty tool table has to say.
- *
- * Five different facts end with an empty table: the source is not observed, a
- * filter excluded everything, the catalogue is genuinely empty, one of the two
- * sources behind the composite catalogue was not observed, and the catalogue
- * itself could not be determined. Only the caller knows which one it is
- * rendering, and the operator needs to know too -- "no tool entries match the
- * active filters" when nothing was filtered claims a filter did the emptying,
- * and there was no filter.
- */
+What an empty tool table has to say.
+
+Five different facts end with an empty table: the source is not observed, a
+filter excluded everything, the catalogue is genuinely empty, one of the two
+sources behind the composite catalogue was not observed, and the catalogue
+itself could not be determined. Only the caller knows which one it is
+rendering, and the operator needs to know too -- "no tool entries match the
+active filters" when nothing was filtered claims a filter did the emptying,
+and there was no filter.
+*/
 function toolEmptyMessage(
   validity: ToolCatalogValidity,
   coverage: ToolCatalogCoverage,
@@ -343,22 +343,30 @@ function toolEmptyMessage(
 }
 
 /**
- * The list's state, resolved once.
- *
- * The source is validated here rather than by the page, because a source the
- * catalogue cannot honour is a fact the catalogue has to report, and the
- * catalogue is what renders the report.
- */
+The list's state, resolved once.
+
+The source is validated here rather than by the page, because a source the
+catalogue cannot honour is a fact the catalogue has to report, and the
+catalogue is what renders the report.
+*/
 interface ToolsListState {
-  /** The source to apply, or `null` when every source is shown. */
+  /**
+  The source to apply, or `null` when every source is shown.
+  */
   readonly source: ToolSource | null;
   readonly role: string;
   readonly query: string;
-  /** The one description of the narrowing, shared by every link on the page. */
+  /**
+  The one description of the narrowing, shared by every link on the page.
+  */
   readonly listFilters: ToolsListFilters;
-  /** The filters this page was asked for and could not apply. */
+  /**
+  The filters this page was asked for and could not apply.
+  */
   readonly unapplied: readonly UnappliedFilter[];
-  /** Whether the list is narrower than the catalogue. */
+  /**
+  Whether the list is narrower than the catalogue.
+  */
   readonly narrowed: boolean;
 }
 
@@ -390,12 +398,12 @@ function resolveToolsListState(filters: ToolsViewFilters): ToolsListState {
 }
 
 /**
- * What the section says about the entries it is about.
- *
- * The count itself belongs to the filter bar, which is where the narrowing
- * happened; what is left here is the fact the table cannot state by itself --
- * how many of the entries on screen are unobserved rather than measured.
- */
+What the section says about the entries it is about.
+
+The count itself belongs to the filter bar, which is where the narrowing
+happened; what is left here is the fact the table cannot state by itself --
+how many of the entries on screen are unobserved rather than measured.
+*/
 function availabilityNote(
   validity: ToolCatalogValidity,
   unobservedCount: number
@@ -417,7 +425,6 @@ export function ToolsView({
   usageLink,
   filters
 }: ToolsViewProps): React.JSX.Element {
-  const state = resolveToolsListState(filters);
   const {
     source: requestedSource,
     role: requestedRole,
@@ -425,7 +432,7 @@ export function ToolsView({
     listFilters,
     unapplied: unappliedFilters,
     narrowed
-  } = state;
+  } = resolveToolsListState(filters);
 
   // The catalogue is a composite of two independent reads. A count over it is
   // a number only when both were read: one unread read makes the count
@@ -725,27 +732,25 @@ export function ToolsView({
           className:
             "flex flex-wrap items-center gap-1.5 bg-surface border border-border p-1 rounded-lg"
         },
-        SOURCE_FILTERS.map((src) =>
+        SOURCE_FILTERS.map((source) =>
           React.createElement(
             NavigationLink,
             {
-              key: src,
-              href: toolsSourceHref(listFilters, src),
-              dataAttributes: { "data-source-filter": src },
+              key: source,
+              href: toolsSourceHref(listFilters, source),
+              dataAttributes: { "data-source-filter": source },
               // The label is the console's word for the source, not the value
               // capitalised: the value is "mcp", and the Console says "MCP".
               className: `px-3 py-1 rounded text-xs font-medium transition-colors ${
-                requestedSource === src || (src === "all" && !requestedSource)
+                requestedSource === source || (source === "all" && !requestedSource)
                   ? "bg-surface-raised text-accent"
                   : `${MUTED_TEXT_CLASS} hover:text-fg`
               }`,
               // The selected chip is otherwise distinguishable only by its
               // background, which is no way to read a selection aloud.
-              ...(requestedSource === src || (src === "all" && !requestedSource)
-                ? { "aria-current": "true" }
-                : {})
+              ...((requestedSource === source || (source === "all" && !requestedSource)) && { "aria-current": "true" })
             },
-            TOOL_SOURCE_LABEL[src]
+            TOOL_SOURCE_LABEL[source]
           )
         )
       ),
@@ -773,7 +778,7 @@ export function ToolsView({
                 }`,
                 // The selected chip is otherwise distinguishable only by its
                 // background, which is no way to read a selection aloud.
-                ...(requestedRole ? {} : { "aria-current": "true" })
+                ...(!requestedRole && { "aria-current": "true" })
               },
               "All"
             ),
@@ -791,7 +796,7 @@ export function ToolsView({
                   }`,
                   // The selected chip is otherwise distinguishable only by its
                   // background, which is no way to read a selection aloud.
-                  ...(requestedRole === role ? { "aria-current": "true" } : {})
+                  ...((requestedRole === role) && { "aria-current": "true" })
                 },
                 role
               )
@@ -836,7 +841,7 @@ export function ToolsView({
           "View tool-call usage →"
         )
       ),
-      React.createElement<DataTableProps<ToolCatalogItem>>(DataTable, {
+      React.createElement<DataTableProperties<ToolCatalogItem>>(DataTable, {
         data: filtered,
         columns,
         keyExtractor: (tool) => toolId(tool),

@@ -1,4 +1,6 @@
-/** Observe enrolled native host sessions without granting execution authority. */
+/**
+Observe enrolled native host sessions without granting execution authority.
+*/
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -7,35 +9,34 @@ import { readLocalAdmission } from "../mcp/gateway-admission.ts";
 import { isEntryPoint } from "../shared/entry-point.ts";
 import {
   NATIVE_SESSION_EVENTS_PATH,
-  nativeSessionObservationSchema,
-  type NativeSessionObservation
-} from "../shared/native-session-observation.ts";
+  type NativeSessionObservation,
+  nativeSessionObservationSchema} from "../shared/native-session-observation.ts";
 import { extractHookContext, parseHookPayload } from "./hook-payload.ts";
 
 /**
- * MiniMax's installed projection supplies a fixed host marker; Claude Code
- * supplies its own launch environment. Never infer a client from a model.
- */
+MiniMax's installed projection supplies a fixed host marker; Claude Code
+supplies its own launch environment. Never infer a client from a model.
+*/
 export function nativeHookObservation(
   input: string,
   event: NativeSessionObservation["event"],
-  env: NodeJS.ProcessEnv = process.env,
-  args: readonly string[] = process.argv.slice(2)
+  environment: NodeJS.ProcessEnv = process.env,
+  arguments_: readonly string[] = process.argv.slice(2)
 ): NativeSessionObservation | null {
   const payload = parseHookPayload(input);
   if (!payload) return null;
-  const context = extractHookContext(payload, env);
+  const context = extractHookContext(payload, environment);
   if (
     context.origin !== "unmanaged" ||
-    env.AUTODEV_SESSION_ID?.trim() ||
-    env.AUTODEV_AGENT_ROLE?.trim() ||
+    environment.AUTODEV_SESSION_ID?.trim() ||
+    environment.AUTODEV_AGENT_ROLE?.trim() ||
     !context.sessionId
   ) {
     return null;
   }
-  const client = args.includes("--client=mcode")
+  const client = arguments_.includes("--client=mcode")
     ? "minimax_code"
-    : env.CLAUDECODE === "1" || env.CLAUDE_CODE_ENTRYPOINT
+    : environment.CLAUDECODE === "1" || environment.CLAUDE_CODE_ENTRYPOINT
       ? "claude_code"
       : null;
   if (!client) return null;
@@ -72,7 +73,7 @@ export async function reportNativeSession(
     const admission = readLocalAdmission(codexHome);
     if (!admission) return;
     const port = Number(process.env.CODEX_MODEL_ROUTER_PORT ?? "4100");
-    if (!Number.isInteger(port) || port < 1 || port > 65535) return;
+    if (!Number.isInteger(port) || port < 1 || port > 65_535) return;
     const response = await fetch(
       `http://127.0.0.1:${port}${NATIVE_SESSION_EVENTS_PATH}`,
       {

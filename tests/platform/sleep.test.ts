@@ -13,8 +13,8 @@ test("sleep resolves only after the requested delay", async () => {
 });
 
 test("sleep resolves with no value, so it satisfies the deps `sleep` contract", async () => {
-  const asDepsMember: (ms: number) => Promise<void> = sleep;
-  assert.equal(await asDepsMember(1), undefined);
+  const asDependenciesMember: (ms: number) => Promise<void> = sleep;
+  assert.equal(await asDependenciesMember(1), undefined);
 });
 
 test("a zero delay still resolves rather than hanging the readiness wait", async () => {

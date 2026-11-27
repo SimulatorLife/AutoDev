@@ -23,11 +23,11 @@ import {
 export const dynamic = "force-dynamic";
 
 /**
- * The resource's own name, taken from the route parameter rather than from a
- * second fetch of the resource. The page body already reads the same
- * parameter, and a metadata function that fetched would double every
- * detail-page request.
- */
+The resource's own name, taken from the route parameter rather than from a
+second fetch of the resource. The page body already reads the same
+parameter, and a metadata function that fetched would double every
+detail-page request.
+*/
 export async function generateMetadata({
   params
 }: {
@@ -129,7 +129,7 @@ export default async function HookEventDetailPage({
       // an empty list, and a badge with that list's length would claim the
       // target declares no hooks -- a claim about the read, not about the
       // target. The list page draws the badge the same way.
-      ...(result.data.valid === true ? { counts: { Hooks: hooks.length } } : {})
+      ...((result.data.valid === true) && { counts: { Hooks: hooks.length } })
     },
     React.createElement(HookEventDetailView, {
       hook,
@@ -138,7 +138,7 @@ export default async function HookEventDetailPage({
       revision: result.data.revision,
       sourceText: result.data.sourceText,
       applied,
-      ...(appliedUnavailable === null ? {} : { appliedUnavailable })
+      ...(appliedUnavailable !== null && { appliedUnavailable })
     })
   );
 }

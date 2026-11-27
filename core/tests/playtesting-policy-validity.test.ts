@@ -1,11 +1,11 @@
 /**
- * `PlayerPolicyValidity` derivation.
- *
- * The artifact was declared and used nowhere until the diagnostic ladder took
- * competence-checked observers. The point of these tests is that `competence`
- * is *derived*, never asserted: no amount of supplied metrics turns an
- * unmeasured policy into one that may speak for a person.
- */
+`PlayerPolicyValidity` derivation.
+
+The artifact was declared and used nowhere until the diagnostic ladder took
+competence-checked observers. The point of these tests is that `competence`
+is *derived*, never asserted: no amount of supplied metrics turns an
+unmeasured policy into one that may speak for a person.
+*/
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -22,7 +22,9 @@ import {
 
 import { sha256 } from "./support/hash.ts";
 
-/** A valid frozen benchmark, used only to prove the citation is accepted. */
+/**
+A valid frozen benchmark, used only to prove the citation is accepted.
+*/
 function benchmarkFixture(): PlaytestBenchmark {
   const withoutHash = {
     benchmarkId: "benchmark-policy-validity-v1",
@@ -177,7 +179,7 @@ test("a metric outside [0, 1] is a data error, not an extreme result", () => {
     { legalityRate: 1.5 },
     { repeatability: -0.1 },
     { coverage: 2 },
-    { distributionDivergence: Number.NaN }
+    { distributionDivergence: NaN }
   ]) {
     assert.throws(
       () => buildPlaytestPolicyValidity(input(overrides)),

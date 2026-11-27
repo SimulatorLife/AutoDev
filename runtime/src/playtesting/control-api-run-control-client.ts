@@ -1,4 +1,6 @@
-/** MCP-side client for the single Runtime Control API run owner. */
+/**
+MCP-side client for the single Runtime Control API run owner.
+*/
 import {
   assertWorkspaceVisualPlaytestTargetApproval,
   type ControlApiPlaytestingActiveRunsResponse,
@@ -64,10 +66,10 @@ function record(value: unknown): Record<string, unknown> | null {
 }
 
 /**
- * A session list is a 1:1 cover of its assignmentIds with distinct,
- * well-formed episode IDs, so a Console can link every assignment to exactly
- * one deterministic session without guessing or deduplicating.
- */
+A session list is a 1:1 cover of its assignmentIds with distinct,
+well-formed episode IDs, so a Console can link every assignment to exactly
+one deterministic session without guessing or deduplicating.
+*/
 function parseSessionReferences(
   sessions: unknown
 ): readonly PlaytestSessionReference[] | null {
@@ -221,8 +223,8 @@ function sessionHeader(session: PlaytestMcpSession): string {
     workspaceId: session.workspaceId,
     role: session.role,
     actor: session.actor,
-    ...(session.taskId === undefined ? {} : { taskId: session.taskId }),
-    ...(session.runId === undefined ? {} : { runId: session.runId })
+    ...(session.taskId !== undefined && { taskId: session.taskId }),
+    ...(session.runId !== undefined && { runId: session.runId })
   };
   return Buffer.from(JSON.stringify(processSession), "utf8").toString(
     "base64url"
@@ -230,11 +232,11 @@ function sessionHeader(session: PlaytestMcpSession): string {
 }
 
 /**
- * All run state lives in Runtime's authenticated Control API process. The MCP
- * server forwards only typed operations and its trusted host-bound session;
- * it does not create a second runner, scheduler, budget map, or cancellation
- * registry.
- */
+All run state lives in Runtime's authenticated Control API process. The MCP
+server forwards only typed operations and its trusted host-bound session;
+it does not create a second runner, scheduler, budget map, or cancellation
+registry.
+*/
 export function createPlaytestControlApiRunClient(
   options: PlaytestControlApiRunClientOptions
 ): PlaytestRunControl {
@@ -272,9 +274,9 @@ export function createPlaytestControlApiRunClient(
           authorization: "Bearer " + token,
           "x-autodev-actor": actor,
           [SESSION_HEADER]: sessionHeader(session),
-          ...(body === undefined ? {} : { "content-type": "application/json" })
+          ...(body !== undefined && { "content-type": "application/json" })
         },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        ...(body !== undefined && { body: JSON.stringify(body) }),
         signal: AbortSignal.timeout(
           Math.max(DEFAULT_REQUEST_TIMEOUT_MS, waitMs + 5000)
         ),
@@ -299,10 +301,10 @@ export function createPlaytestControlApiRunClient(
 
   return {
     /**
-     * Forwarded to the Runtime owner rather than computed here, so a Console
-     * reading cross-session analysis and an MCP caller reach the same
-     * eligibility, cap and receipt decisions.
-     */
+    Forwarded to the Runtime owner rather than computed here, so a Console
+    reading cross-session analysis and an MCP caller reach the same
+    eligibility, cap and receipt decisions.
+    */
     async prepareCrossSessionReview(session, workspaceId, episodeIds) {
       if (
         episodeIds.length === 0 ||
@@ -483,7 +485,7 @@ export function createPlaytestControlApiRunClient(
         response.assignmentIds.length !== response.assignmentCount ||
         new Set(response.assignmentIds).size !==
           response.assignmentIds.length ||
-        !response.assignmentIds.every((id) => ASSIGNMENT_ID_PATTERN.test(id)) ||
+        response.assignmentIds.some((id) => !ASSIGNMENT_ID_PATTERN.test(id)) ||
         !validSessionReferences(response.sessions, response.assignmentIds) ||
         !sessionReferencesMatchLaunch(
           response.sessions,
@@ -587,19 +589,19 @@ export function createPlaytestControlApiRunClient(
         response.runs.length > MAX_ACTIVE_RUNS ||
         // Every entry now drives live progress rendering, so one malformed
         // status record fails the whole read rather than a partial view.
-        !response.runs.every(
+        response.runs.some(
           (run) =>
-            typeof run.batchId === "string" &&
-            run.batchId.length > 0 &&
-            typeof run.assignmentCount === "number" &&
-            Number.isSafeInteger(run.assignmentCount) &&
-            run.assignmentCount > 0 &&
-            typeof run.createdAt === "string" &&
-            Array.isArray(run.sessions) &&
-            run.sessions.length === run.assignmentCount &&
-            parseSessionReferences(run.sessions) !== null &&
-            record(run.status) !== null &&
-            typeof run.status.status === "string"
+            !(typeof run.batchId === "string" &&
+            run.batchId.length > 0) ||
+            typeof run.assignmentCount !== "number" ||
+            !Number.isSafeInteger(run.assignmentCount) ||
+            !(run.assignmentCount > 0) ||
+            typeof run.createdAt !== "string" ||
+            !Array.isArray(run.sessions) ||
+            run.sessions.length !== run.assignmentCount ||
+            parseSessionReferences(run.sessions) === null ||
+            record(run.status) === null ||
+            typeof run.status.status !== "string"
         )
       ) {
         throw new PlaytestMcpUnavailableError(
@@ -670,13 +672,15 @@ export function createPlaytestControlApiRunClient(
   };
 }
 
-/** Build the process client only when the secured local Control API is configured. */
+/**
+Build the process client only when the secured local Control API is configured.
+*/
 export function playtestControlApiRunClientFromEnvironment(
-  env: NodeJS.ProcessEnv = process.env,
+  environment: NodeJS.ProcessEnv = process.env,
   fetcher?: typeof fetch
 ): PlaytestRunControl | null {
-  const sessionRole = env.AUTODEV_PLAYTEST_CONTROL_API_ROLE?.trim() ?? "";
-  const configuredMcpRole = env.AUTODEV_PLAYTEST_ROLE?.trim() ?? "";
+  const sessionRole = environment.AUTODEV_PLAYTEST_CONTROL_API_ROLE?.trim() ?? "";
+  const configuredMcpRole = environment.AUTODEV_PLAYTEST_ROLE?.trim() ?? "";
   if (configuredMcpRole === "playtest-analyst") {
     if (sessionRole && sessionRole !== configuredMcpRole) {
       throw new PlaytestMcpUnavailableError(
@@ -685,9 +689,9 @@ export function playtestControlApiRunClientFromEnvironment(
     }
     return null;
   }
-  const configuredUrl = env.AUTODEV_CONTROL_API_BASE_URL?.trim();
-  const host = env.AUTODEV_CONTROL_API_LISTEN_HOST?.trim();
-  const port = env.AUTODEV_CONTROL_API_LISTEN_PORT?.trim() || "4101";
+  const configuredUrl = environment.AUTODEV_CONTROL_API_BASE_URL?.trim();
+  const host = environment.AUTODEV_CONTROL_API_LISTEN_HOST?.trim();
+  const port = environment.AUTODEV_CONTROL_API_LISTEN_PORT?.trim() || "4101";
   const baseUrl = configuredUrl || (host ? `http://${host}:${port}` : "");
   if (!baseUrl) {
     throw new PlaytestMcpUnavailableError(
@@ -695,10 +699,10 @@ export function playtestControlApiRunClientFromEnvironment(
     );
   }
   const serviceToken =
-    env.AUTODEV_PLAYTEST_CONTROL_API_TOKEN?.trim() ||
-    readRuntimeSecret("AUTODEV_PLAYTEST_CONTROL_API_TOKEN", env) ||
+    environment.AUTODEV_PLAYTEST_CONTROL_API_TOKEN?.trim() ||
+    readRuntimeSecret("AUTODEV_PLAYTEST_CONTROL_API_TOKEN", environment) ||
     "";
-  const actor = env.AUTODEV_PLAYTEST_CONTROL_API_ACTOR?.trim() ?? "";
+  const actor = environment.AUTODEV_PLAYTEST_CONTROL_API_ACTOR?.trim() ?? "";
   if (
     !serviceToken ||
     !actor ||
@@ -715,6 +719,6 @@ export function playtestControlApiRunClientFromEnvironment(
     actor,
     sessionRole:
       sessionRole as PlaytestControlApiRunClientOptions["sessionRole"],
-    ...(fetcher === undefined ? {} : { fetcher })
+    ...(fetcher !== undefined && { fetcher })
   });
 }

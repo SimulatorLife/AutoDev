@@ -3,28 +3,34 @@ import type { ControlApiPromptVersionResponse } from "@simulatorlife/autodev-cor
 import type { ControlApiResult } from "./control-api.ts";
 
 /**
- * The prompt's committed history, as the URL asks for it.
- *
- * The history of a command is one ordered list of committed revisions and a
- * page of it is a window: the operator who needs an older revision asks for
- * the next page instead of being told to go and read Git. The page is named in
- * the URL, so the walk back through the history is addressable and a reload
- * shows the operator the list they chose a revision from.
- *
- * Which revisions exist is the Control API's answer and not the page's: a
- * revision the operator reached by paging back is older than the page the
- * page happens to be showing, and a revision URL copied from another page has
- * to keep working. So the selection below reads the service's answer, and the
- * page's own list is only what the operator is looking at.
- */
+The prompt's committed history, as the URL asks for it.
 
-/** A committed revision is a Git object name: forty or sixty-four hex digits. */
+The history of a command is one ordered list of committed revisions and a
+page of it is a window: the operator who needs an older revision asks for
+the next page instead of being told to go and read Git. The page is named in
+the URL, so the walk back through the history is addressable and a reload
+shows the operator the list they chose a revision from.
+
+Which revisions exist is the Control API's answer and not the page's: a
+revision the operator reached by paging back is older than the page the
+page happens to be showing, and a revision URL copied from another page has
+to keep working. So the selection below reads the service's answer, and the
+page's own list is only what the operator is looking at.
+*/
+
+/**
+A committed revision is a Git object name: forty or sixty-four hex digits.
+*/
 const GIT_REVISION_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
 
-/** A whole offset of zero or more, with no sign and no fraction. */
+/**
+A whole offset of zero or more, with no sign and no fraction.
+*/
 const WHOLE_OFFSET_PATTERN = /^\d+$/u;
 
-/** The page of the committed history a URL names. */
+/**
+The page of the committed history a URL names.
+*/
 export function historyOffsetFromQuery(
   value: string | readonly string[] | undefined
 ): number {
@@ -36,7 +42,9 @@ export function historyOffsetFromQuery(
   return Number(offset);
 }
 
-/** The committed revision a URL asks to open, and what to say when it cannot. */
+/**
+The committed revision a URL asks to open, and what to say when it cannot.
+*/
 export function promptVersionSelection(
   name: string,
   requestedRevision: string | readonly string[] | undefined,

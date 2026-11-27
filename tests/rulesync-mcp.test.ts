@@ -67,7 +67,7 @@ function declared(target: string): Record<string, McpServer> {
   }
   return servers;
 }
-function runRulesync(args: readonly string[], home?: string): RunResult {
+function runRulesync(arguments_: readonly string[], home?: string): RunResult {
   return spawnSync(
     process.execPath,
     [
@@ -77,7 +77,7 @@ function runRulesync(args: readonly string[], home?: string): RunResult {
       sourceRoot,
       "--features",
       "mcp",
-      ...args,
+      ...arguments_,
       "--silent"
     ],
     {
@@ -250,17 +250,17 @@ test("Codex projection matches the Codex declaration without mutating the portab
       typeof server.headers === "object" &&
       !Array.isArray(server.headers)
     ) {
-      const envHeaders: Record<string, string> = {};
+      const environmentHeaders: Record<string, string> = {};
       const httpHeaders: Record<string, string> = {};
       for (const [header, value] of Object.entries(
         server.headers as Record<string, string>
       )) {
         const match = ENVIRONMENT_REFERENCE.exec(value);
-        if (match?.[1]) envHeaders[header] = match[1];
+        if (match?.[1]) environmentHeaders[header] = match[1];
         else httpHeaders[header] = value;
       }
-      if (Object.keys(envHeaders).length > 0)
-        projected.env_http_headers = envHeaders;
+      if (Object.keys(environmentHeaders).length > 0)
+        projected.env_http_headers = environmentHeaders;
       if (Object.keys(httpHeaders).length > 0)
         projected.http_headers = httpHeaders;
     }

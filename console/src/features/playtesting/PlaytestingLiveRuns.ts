@@ -1,12 +1,12 @@
 "use client";
 
 /**
- * Client host for live batch monitoring.
- *
- * Mounted next to the run controls so starting a batch and watching it are one
- * surface. The focused batch lives in the URL, so a refresh or Back keeps the
- * operator on the same batch rather than resetting them to a list.
- */
+Client host for live batch monitoring.
+
+Mounted next to the run controls so starting a batch and watching it are one
+surface. The focused batch lives in the URL, so a refresh or Back keeps the
+operator on the same batch rather than resetting them to a list.
+*/
 import type { ControlApiPlaytestingRunRecord } from "@simulatorlife/autodev-core";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
@@ -44,9 +44,9 @@ async function postCancel(
 }
 
 /**
- * Cancellation is confirmed against a server-read status, never against the
- * browser's own idea of what the batch was doing a moment ago.
- */
+Cancellation is confirmed against a server-read status, never against the
+browser's own idea of what the batch was doing a moment ago.
+*/
 async function confirmBatchStillRunning(
   workspaceId: string,
   batchId: string,
@@ -76,13 +76,17 @@ async function confirmBatchStillRunning(
 export interface PlaytestingLiveRunsProps {
   readonly workspaceId: string;
   readonly scope: PlaytestingScope;
-  /** Focused batch, read from the URL so refresh and Back restore it. */
+  /**
+  Focused batch, read from the URL so refresh and Back restore it.
+  */
   readonly initialFocusedBatchId: string | null;
   readonly wallTimeMs: number | null;
   readonly showEmptyState: boolean;
   readonly allowCancel: boolean;
   readonly cancelUnavailableReason: string | null;
-  /** The dashboard's single status owner, shared with the run start card. */
+  /**
+  The dashboard's single status owner, shared with the run start card.
+  */
   readonly live: UsePlaytestingActiveRunsResult;
 }
 
@@ -121,10 +125,12 @@ export function PlaytestingLiveRuns({
   useEffect(() => {
     if (focusedBatchId !== null || autoFocusApplied) return;
     const active = state.runs.find((run) => !isTerminal(run.record));
-    if (active) {
-      setFocusedBatchId(active.batchId);
-      setAutoFocusApplied(true);
+    if (!active) {
+      return;
     }
+
+    setFocusedBatchId(active.batchId);
+    setAutoFocusApplied(true);
   }, [autoFocusApplied, focusedBatchId, state.runs]);
 
   // The focused batch is address state. Writing it through the History API

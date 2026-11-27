@@ -1,12 +1,12 @@
 /**
- * Exact measurement of what a git commit changed.
- *
- * The numbers here come from Git's first-parent commit diffs (`show` for
- * statuses and `numstat` line counts). Nothing is inferred from edit counts,
- * tool calls, or diff size, because the requirement is a record of what the
- * commit actually contains -- and a proxy would let a commit of nine empty
- * files look like a large one.
- */
+Exact measurement of what a git commit changed.
+
+The numbers here come from Git's first-parent commit diffs (`show` for
+statuses and `numstat` line counts). Nothing is inferred from edit counts,
+tool calls, or diff size, because the requirement is a record of what the
+commit actually contains -- and a proxy would let a commit of nine empty
+files look like a large one.
+*/
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -22,7 +22,9 @@ const execFileAsync = promisify(execFile);
 const GIT_TIMEOUT_MS = 10_000;
 const GIT_MAX_BUFFER_BYTES = 8 * 1024 * 1024;
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/iu;
-/** Git prints `-` in place of a count for binary files. */
+/**
+Git prints `-` in place of a count for binary files.
+*/
 const BINARY_NUMSTAT_FIELD = "-";
 const NUMSTAT_COUNT_PATTERN = /^\d+$/u;
 const MAX_COMMITS_PER_OBSERVATION = 200;
@@ -31,50 +33,58 @@ const MAX_CONCURRENT_COMMIT_MEASUREMENTS = 4;
 export type GitChangeStatus = "added" | "deleted" | "modified" | "renamed";
 
 export interface GitCommitChange {
-  /** The commit object that was actually created. Never a metric dimension. */
+  /**
+  The commit object that was actually created. Never a metric dimension.
+  */
   readonly commit: string;
-  /** Distinct paths touched, across added/deleted/modified/renamed. */
+  /**
+  Distinct paths touched, across added/deleted/modified/renamed.
+  */
   readonly filesChanged: number;
   readonly filesAdded: number;
   readonly filesDeleted: number;
   readonly linesAdded: number;
   readonly linesRemoved: number;
   /**
-   * The actor recovered from the commit's own committer identity, or `null`
-   * when the commit was not made by an AutoDev agent.
-   *
-   * Recovered from git rather than supplied by the caller: the caller is
-   * observing a workspace it may share with subagents, and cannot know which
-   * of them made this commit.
-   */
+  The actor recovered from the commit's own committer identity, or `null`
+  when the commit was not made by an AutoDev agent.
+  
+  Recovered from git rather than supplied by the caller: the caller is
+  observing a workspace it may share with subagents, and cannot know which
+  of them made this commit.
+  */
   readonly actor: GitCommitActor | null;
   /**
-   * True when a diff status or line count could not be summarized (for
-   * example, a binary file or malformed Git output).
-   *
-   * Partial is reported rather than absorbed: a smaller "complete" number would
-   * be indistinguishable from a genuinely small commit.
-   */
+  True when a diff status or line count could not be summarized (for
+  example, a binary file or malformed Git output).
+  
+  Partial is reported rather than absorbed: a smaller "complete" number would
+  be indistinguishable from a genuinely small commit.
+  */
   readonly partial: boolean;
 }
 
 export interface GitCommitChangeOptions {
   readonly repositoryRoot: string;
-  /** Commit ids, oldest-first. Bounds are enforced by the caller. */
+  /**
+  Commit ids, oldest-first. Bounds are enforced by the caller.
+  */
   readonly commits: readonly string[];
-  /** Injected for tests; defaults to a real `git` invocation. */
+  /**
+  Injected for tests; defaults to a real `git` invocation.
+  */
   readonly runGit?: (
     repositoryRoot: string,
-    args: readonly string[]
+    arguments_: readonly string[]
   ) => Promise<{ readonly exitCode: number; readonly stdout: string }>;
 }
 
 async function defaultRunGit(
   repositoryRoot: string,
-  args: readonly string[]
+  arguments_: readonly string[]
 ): Promise<{ readonly exitCode: number; readonly stdout: string }> {
   try {
-    const result = await execFileAsync("git", ["-C", repositoryRoot, ...args], {
+    const result = await execFileAsync("git", ["-C", repositoryRoot, ...arguments_], {
       timeout: GIT_TIMEOUT_MS,
       maxBuffer: GIT_MAX_BUFFER_BYTES
     });
@@ -89,21 +99,21 @@ async function defaultRunGit(
 }
 
 /**
- * Parse `git diff-tree --name-status -r -M` output.
- *
- * Renames are reported as `R<score>\told\tnew`, so the two-path form must be
- * consumed without counting the old path as a second changed file.
- */
+Parse `git diff-tree --name-status -r -M` output.
+
+Renames are reported as `R<score>\told\tnew`, so the two-path form must be
+consumed without counting the old path as a second changed file.
+*/
 export function parseChangeStatuses(stdout: string): {
   readonly statuses: readonly GitChangeStatus[];
   readonly partial: boolean;
 } {
   const statuses: GitChangeStatus[] = [];
-  let partial = false;
+  let isPartial = false;
   for (const line of stdout.split("\n")) {
     const trimmed = line.trim();
     if (trimmed.length === 0) continue;
-    const [rawStatus = ""] = trimmed.split("\t");
+    const [rawStatus = ""] = trimmed.split("\t", 1);
     const letter = rawStatus.charAt(0).toUpperCase();
     if (letter === "A") statuses.push("added");
     else if (letter === "D") statuses.push("deleted");
@@ -112,12 +122,14 @@ export function parseChangeStatuses(stdout: string): {
       statuses.push("modified");
     // An unrecognised status means git told us about a change we cannot
     // classify, so the commit is partial rather than quietly undercounted.
-    else partial = true;
+    else isPartial = true;
   }
-  return { statuses, partial };
+  return { statuses, partial: isPartial };
 }
 
-/** Parse `git show --numstat` output into insertions/deletions totals. */
+/**
+Parse `git show --numstat` output into insertions/deletions totals.
+*/
 export function parseNumstat(stdout: string): {
   readonly linesAdded: number;
   readonly linesRemoved: number;
@@ -125,44 +137,44 @@ export function parseNumstat(stdout: string): {
 } {
   let linesAdded = 0;
   let linesRemoved = 0;
-  let partial = false;
+  let isPartial = false;
   for (const line of stdout.split("\n")) {
     const trimmed = line.trim();
     if (trimmed.length === 0) continue;
-    const [added, removed] = trimmed.split("\t");
+    const [added, removed] = trimmed.split("\t", 2);
     if (added === BINARY_NUMSTAT_FIELD || removed === BINARY_NUMSTAT_FIELD) {
       // Git counted the file but not its lines. That is a real change with an
       // unreportable size, so it marks the commit partial.
-      partial = true;
+      isPartial = true;
       continue;
     }
     if (
       !NUMSTAT_COUNT_PATTERN.test(added ?? "") ||
       !NUMSTAT_COUNT_PATTERN.test(removed ?? "")
     ) {
-      partial = true;
+      isPartial = true;
       continue;
     }
     const parsedAdded = Number(added);
     const parsedRemoved = Number(removed);
     if (!Number.isInteger(parsedAdded) || !Number.isInteger(parsedRemoved)) {
-      partial = true;
+      isPartial = true;
       continue;
     }
     linesAdded += parsedAdded;
     linesRemoved += parsedRemoved;
   }
-  return { linesAdded, linesRemoved, partial };
+  return { linesAdded, linesRemoved, partial: isPartial };
 }
 
 /**
- * Measure the change-output of specific commits.
- *
- * Returns one observation per commit that git could actually summarize. A
- * commit that cannot be read is omitted rather than reported as zero changes,
- * because "git could not tell us" and "this commit changed nothing" are
- * different facts.
- */
+Measure the change-output of specific commits.
+
+Returns one observation per commit that git could actually summarize. A
+commit that cannot be read is omitted rather than reported as zero changes,
+because "git could not tell us" and "this commit changed nothing" are
+different facts.
+*/
 export async function measureGitCommitChanges({
   repositoryRoot,
   commits,
@@ -227,17 +239,17 @@ export async function measureGitCommitChanges({
 }
 
 /**
- * Commits created in `range`, oldest-first.
- *
- * An empty range is a normal result meaning "nothing was committed", so it
- * returns an empty list rather than an error.
- */
+Commits created in `range`, oldest-first.
+
+An empty range is a normal result meaning "nothing was committed", so it
+returns an empty list rather than an error.
+*/
 export async function listCommitsInRange(
   repositoryRoot: string,
   range: string,
   runGit: (
     repositoryRoot: string,
-    args: readonly string[]
+    arguments_: readonly string[]
   ) => Promise<{
     readonly exitCode: number;
     readonly stdout: string;

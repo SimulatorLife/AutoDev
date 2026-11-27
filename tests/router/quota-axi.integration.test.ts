@@ -33,7 +33,9 @@ interface PersistedQuotaPoll {
   readonly readAt?: Readonly<Record<string, number>>;
 }
 
-/** The router's persisted quota poll, once its debounced state write lands. */
+/**
+The router's persisted quota poll, once its debounced state write lands.
+*/
 async function persistedQuotaPoll(
   stateFile: string
 ): Promise<PersistedQuotaPoll | null> {
@@ -305,7 +307,7 @@ test("the router includes the resolved agy CLI directory on quota-axi PATH", asy
     "/usr/bin"
   ].join(path.delimiter);
 
-  const isolatedEnv: NodeJS.ProcessEnv = {
+  const isolatedEnvironment: NodeJS.ProcessEnv = {
     PATH: restrictedPath,
     HOME: temporaryHome,
     TMPDIR: temporaryDirectory,
@@ -326,7 +328,7 @@ test("the router includes the resolved agy CLI directory on quota-axi PATH", asy
 
   const child = spawn(process.execPath, [ROUTER_ENTRY], {
     cwd: process.cwd(),
-    env: isolatedEnv,
+    env: isolatedEnvironment,
     stdio: ["ignore", "pipe", "pipe"]
   });
   let processOutput = "";

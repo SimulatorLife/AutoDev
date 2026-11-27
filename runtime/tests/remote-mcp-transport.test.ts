@@ -17,7 +17,7 @@ import {
 } from "../src/mcp/remote-transport.ts";
 
 const SECRET = "synthetic-private-credential-fixture";
-const RPC_ERROR = -32042;
+const RPC_ERROR = -32_042;
 
 test("remote transport diagnostics never expose raw URLs or exception contents", () => {
   for (const url of [
@@ -52,22 +52,22 @@ test("remote transport diagnostics never expose raw URLs or exception contents",
 });
 
 async function remoteFixture() {
-  const server = createServer((req, res) => {
-    if (req.headers.authorization !== `Bearer ${SECRET}`) {
+  const server = createServer((request, res) => {
+    if (request.headers.authorization !== `Bearer ${SECRET}`) {
       res.writeHead(401).end("fixture credential missing");
       return;
     }
-    if (req.method === "GET") {
+    if (request.method === "GET") {
       res.writeHead(405).end();
       return;
     }
-    if (req.method === "DELETE") {
+    if (request.method === "DELETE") {
       res.writeHead(200).end();
       return;
     }
     const chunks: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => chunks.push(chunk));
-    req.on("end", () => {
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", () => {
       const message = JSON.parse(Buffer.concat(chunks).toString("utf8"));
       if (message.id === undefined) {
         res.writeHead(202).end();
@@ -94,10 +94,11 @@ async function remoteFixture() {
         });
       } else if (message.method === "tools/call") {
         switch (message.params.arguments?.mode) {
-          case "http":
+          case "http": {
             res.writeHead(503).end(`upstream diagnostic echoed ${SECRET}`);
             break;
-          case "rpc":
+          }
+          case "rpc": {
             reply({
               error: {
                 code: RPC_ERROR,
@@ -106,7 +107,8 @@ async function remoteFixture() {
               }
             });
             break;
-          case "tool-error":
+          }
+          case "tool-error": {
             reply({
               result: {
                 isError: true,
@@ -116,12 +118,14 @@ async function remoteFixture() {
               }
             });
             break;
-          default:
+          }
+          default: {
             reply({
               result: {
                 content: [{ type: "text", text: "ordinary tool result" }]
               }
             });
+          }
         }
       } else {
         reply({ result: {} });

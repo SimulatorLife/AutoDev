@@ -36,20 +36,26 @@ export interface RouterEvent {
   timestamp: string;
   routerInstanceId: string;
   requestId: string | null;
-  /** The Codex thread the request came from, when the caller named one. */
+  /**
+  The Codex thread the request came from, when the caller named one.
+  */
   thread: string | null;
-  /** Canonical live-agent identity; differs from thread for delegated threads. */
+  /**
+  Canonical live-agent identity; differs from thread for delegated threads.
+  */
   activitySubject?: string | null;
-  /** The Codex client surface that originated the request, when observed. */
+  /**
+  The Codex client surface that originated the request, when observed.
+  */
   clientSurface?: ClientSurface | null;
   phase: string;
   role: string | null;
   /**
-   * Where the request came from: the root thread ("orchestrator"), a child
-   * thread ("subagent") or an unidentified caller ("direct"). Persisted so a
-   * replay after a restart attributes a roleless child-thread request the same
-   * way the live event did.
-   */
+  Where the request came from: the root thread ("orchestrator"), a child
+  thread ("subagent") or an unidentified caller ("direct"). Persisted so a
+  replay after a restart attributes a roleless child-thread request the same
+  way the live event did.
+  */
   origin: string | null;
   requestedModel: string | null | undefined;
   provider: string | null | undefined;
@@ -75,9 +81,13 @@ export interface RecordRouterEventInput {
   phase: string;
   requestId?: string | null | undefined;
   thread?: string | null | undefined;
-  /** Canonical live-agent identity used for active-session joins. */
+  /**
+  Canonical live-agent identity used for active-session joins.
+  */
   activitySubject?: string | null | undefined;
-  /** Observed Codex client surface for this request, if any. */
+  /**
+  Observed Codex client surface for this request, if any.
+  */
   clientSurface?: ClientSurface | null | undefined;
   role?: string | null | undefined;
   requestedModel?: string | null | undefined;
@@ -286,8 +296,8 @@ export class RouterEventRecorder {
       timestamp,
       routerInstanceId: this.routerInstanceId,
       requestId: input.requestId ?? null,
-      ...(activitySubject ? { activitySubject } : {}),
-      ...(clientSurface ? { clientSurface } : {}),
+      ...(activitySubject && { activitySubject }),
+      ...(clientSurface && { clientSurface }),
       thread: input.thread ?? requestIdentity?.thread ?? null,
       phase: input.phase,
       role: effectiveRole,
@@ -329,7 +339,9 @@ export class RouterEventRecorder {
       try {
         this.logger(event);
       } catch {
-        /* best effort logging */
+        /*
+        best effort logging
+        */
       }
     }
 
@@ -356,7 +368,9 @@ export function recordRouterEvent(input: RecordRouterEventInput): RouterEvent {
   return getDefaultRouterEventRecorder().record(input);
 }
 
-/** Attribute later request events to both the raw thread and canonical subject. */
+/**
+Attribute later request events to both the raw thread and canonical subject.
+*/
 export function noteRequestIdentity(
   requestId: string,
   thread: string | null,

@@ -1,25 +1,25 @@
 /**
- * The one owner of canonical AutoDev tool names.
- *
- * Every identifier a model can reach on the Codex code-mode `tools` global
- * follows `<namespace>__<tool>` with snake_case segments and a double-underscore
- * separator. The family is:
- *
- *   - `<namespace>__<tool>`              -- snake_case, double underscore
- *   - `<namespace>` is a stable snake_case identifier (e.g. `multi_agent_v1`,
- *     `mcp`)
- *   - `<tool>` is the bare tool name the server returns (also snake_case)
- *
- * Bridges, hooks, MCP launchers, the Codex code-mode shim, and tests all read
- * these constants rather than writing the literal strings. That keeps the
- * surface uniform across every model provider and gives us one place to
- * update when a tool is renamed.
- *
- * CLI-required exceptions are documented at the bottom of this file. They are
- * PascalCase / lowercase names that the upstream CLI fixes and that the
- * bridge translates into the canonical names below; do not adopt their
- * style for a new AutoDev tool.
- */
+The one owner of canonical AutoDev tool names.
+
+Every identifier a model can reach on the Codex code-mode `tools` global
+follows `<namespace>__<tool>` with snake_case segments and a double-underscore
+separator. The family is:
+
+  - `<namespace>__<tool>`              -- snake_case, double underscore
+  - `<namespace>` is a stable snake_case identifier (e.g. `multi_agent_v1`,
+    `mcp`)
+  - `<tool>` is the bare tool name the server returns (also snake_case)
+
+Bridges, hooks, MCP launchers, the Codex code-mode shim, and tests all read
+these constants rather than writing the literal strings. That keeps the
+surface uniform across every model provider and gives us one place to
+update when a tool is renamed.
+
+CLI-required exceptions are documented at the bottom of this file. They are
+PascalCase / lowercase names that the upstream CLI fixes and that the
+bridge translates into the canonical names below; do not adopt their
+style for a new AutoDev tool.
+*/
 
 // ---------------------------------------------------------------------------
 // Codex code-mode meta-tool. The runtime delivers every other tool through
@@ -27,34 +27,50 @@
 // the rest of the surface hangs off the `tools` global.
 // ---------------------------------------------------------------------------
 
-/** The Codex code-mode meta-tool. Plain `exec`, no namespace. */
+/**
+The Codex code-mode meta-tool. Plain `exec`, no namespace.
+*/
 export const EXEC_TOOL = "exec" as const;
 
 // ---------------------------------------------------------------------------
 // Multi-agent delegation. Hangs off `tools.multi_agent_v1__*` in code mode.
 // ---------------------------------------------------------------------------
 
-/** Namespace prefix for the multi-agent delegation surface. Versioned. */
+/**
+Namespace prefix for the multi-agent delegation surface. Versioned.
+*/
 export const MULTI_AGENT_NAMESPACE = "multi_agent_v1" as const;
 
-/** Build a canonical multi-agent tool name from the suffix. */
+/**
+Build a canonical multi-agent tool name from the suffix.
+*/
 export function multiAgentToolName(suffix: string): string {
   return `${MULTI_AGENT_NAMESPACE}__${suffix}`;
 }
 
-/** Spawn a child agent. */
+/**
+Spawn a child agent.
+*/
 export const MULTI_AGENT_SPAWN_TOOL = multiAgentToolName("spawn_agent");
 
-/** Wait for one or more child threads to reach a terminal state. */
+/**
+Wait for one or more child threads to reach a terminal state.
+*/
 export const MULTI_AGENT_WAIT_TOOL = multiAgentToolName("wait_agent");
 
-/** Close a terminal child thread. */
+/**
+Close a terminal child thread.
+*/
 export const MULTI_AGENT_CLOSE_TOOL = multiAgentToolName("close_agent");
 
-/** Resume a suspended child thread. */
+/**
+Resume a suspended child thread.
+*/
 export const MULTI_AGENT_RESUME_TOOL = multiAgentToolName("resume_agent");
 
-/** Send a follow-up message into a running child thread. */
+/**
+Send a follow-up message into a running child thread.
+*/
 export const MULTI_AGENT_SEND_INPUT_TOOL = multiAgentToolName("send_input");
 
 // ---------------------------------------------------------------------------
@@ -63,10 +79,14 @@ export const MULTI_AGENT_SEND_INPUT_TOOL = multiAgentToolName("send_input");
 // the prefix is added.
 // ---------------------------------------------------------------------------
 
-/** Namespace prefix Codex adds to every MCP tool name. */
+/**
+Namespace prefix Codex adds to every MCP tool name.
+*/
 export const MCP_NAMESPACE = "mcp" as const;
 
-/** Build the canonical MCP tool name from server and bare tool name. */
+/**
+Build the canonical MCP tool name from server and bare tool name.
+*/
 export function mcpToolName(server: string, tool: string): string {
   return `${MCP_NAMESPACE}__${server}__${tool}`;
 }
@@ -88,26 +108,28 @@ export const MCP_SERVER_PLAYTEST = "playtest" as const;
 export const MCP_SERVER_GITHUB = "github" as const;
 export const MCP_SERVER_XACPX = "xacpx" as const;
 /**
- * AutoDev's declarative command surface: operator-approved, fixed executable and
- * argument definitions exposed as individually discoverable MCP tools.
- */
+AutoDev's declarative command surface: operator-approved, fixed executable and
+argument definitions exposed as individually discoverable MCP tools.
+*/
 export const MCP_SERVER_COMMANDS = "commands" as const;
 /**
- * AutoDev's one file-interaction surface:
- * `@modelcontextprotocol/server-filesystem`, confined to the turn's workspace.
- * Every provider-native file tool is disabled in its favour.
- */
+AutoDev's one file-interaction surface:
+`@modelcontextprotocol/server-filesystem`, confined to the turn's workspace.
+Every provider-native file tool is disabled in its favour.
+*/
 export const MCP_SERVER_FILESYSTEM = "filesystem" as const;
-/** Set to "1" in a read-only role's MCP environment to start it `--read-only`. */
+/**
+Set to "1" in a read-only role's MCP environment to start it `--read-only`.
+*/
 export const MCP_FILESYSTEM_READ_ONLY_ENV = "AUTODEV_MCP_READ_ONLY" as const;
 export const MCP_FILESYSTEM_WORKSPACE_ONLY_ENV =
   "AUTODEV_MCP_WORKSPACE_ONLY" as const;
 
 /**
- * Codex App tools live behind the codex-app-tools plugin and are surfaced to
- * the model as a plugin-provided MCP server, not through the rulesync catalog.
- * The orchestrator role gates this server to a single tool.
- */
+Codex App tools live behind the codex-app-tools plugin and are surfaced to
+the model as a plugin-provided MCP server, not through the rulesync catalog.
+The orchestrator role gates this server to a single tool.
+*/
 export const MCP_SERVER_CODEX_APP = "codex_app" as const;
 export const CODEX_APP_REQUEST_USER_INPUT_TOOL = "request_user_input" as const;
 
@@ -116,10 +138,14 @@ export const CODEX_APP_REQUEST_USER_INPUT_TOOL = "request_user_input" as const;
 // not an MCP server.
 // ---------------------------------------------------------------------------
 
-/** Codex's hosted web search. */
+/**
+Codex's hosted web search.
+*/
 export const WEB_SEARCH_TOOL = "web_search" as const;
 
-/** Codex's hosted web fetch. */
+/**
+Codex's hosted web fetch.
+*/
 export const WEB_FETCH_TOOL = "web_fetch" as const;
 
 // ---------------------------------------------------------------------------
@@ -127,28 +153,28 @@ export const WEB_FETCH_TOOL = "web_fetch" as const;
 // ---------------------------------------------------------------------------
 
 /**
- * The regex that matches every multi-segment canonical AutoDev tool name.
- *
- *   `multi_agent_v1__<bare>`     -- multi-agent delegation surface
- *   `mcp__<server>__<bare>`      -- MCP tools; the server segment is
- *                                   snake_case OR the documented
- *                                   openaiDeveloperDocs camelCase that already
- *                                   ships in `.rulesync/mcp.jsonc`; the bare
- *                                   tool suffix is always snake_case.
- *
- * Single-segment canonical names (`exec`, `web_search`, `web_fetch`,
- * `request_user_input`) are NOT matched by the regex on purpose: a namespace
- * prefix such as `multi_agent_v1` looks syntactically like a single-segment
- * snake_case string, and the only way to distinguish a real tool name from a
- * namespace prefix is membership in `CANONICAL_SINGLE_SEGMENT_NAMES`. The
- * audit (`auditToolNames`) is the public surface; the regex is the lower-level
- * check for multi-segment names only.
- *
- * `<bare>` is `[a-z][a-z0-9_]*`. `<server>` is `[a-z][a-zA-Z0-9_-]*` to allow
- * the historical `openaiDeveloperDocs` server name. PascalCase, lowercase
- * bash-style names, and unrelated mixed forms do not match; they belong in
- * one of the documented CLI exception sets.
- */
+The regex that matches every multi-segment canonical AutoDev tool name.
+
+  `multi_agent_v1__<bare>`     -- multi-agent delegation surface
+  `mcp__<server>__<bare>`      -- MCP tools; the server segment is
+                                  snake_case OR the documented
+                                  openaiDeveloperDocs camelCase that already
+                                  ships in `.rulesync/mcp.jsonc`; the bare
+                                  tool suffix is always snake_case.
+
+Single-segment canonical names (`exec`, `web_search`, `web_fetch`,
+`request_user_input`) are NOT matched by the regex on purpose: a namespace
+prefix such as `multi_agent_v1` looks syntactically like a single-segment
+snake_case string, and the only way to distinguish a real tool name from a
+namespace prefix is membership in `CANONICAL_SINGLE_SEGMENT_NAMES`. The
+audit (`auditToolNames`) is the public surface; the regex is the lower-level
+check for multi-segment names only.
+
+`<bare>` is `[a-z][a-z0-9_]*`. `<server>` is `[a-z][a-zA-Z0-9_-]*` to allow
+the historical `openaiDeveloperDocs` server name. PascalCase, lowercase
+bash-style names, and unrelated mixed forms do not match; they belong in
+one of the documented CLI exception sets.
+*/
 export const CANONICAL_TOOL_NAME_PATTERN =
   /^(?:multi_agent_v1__[a-z][a-z0-9_]*|mcp__[a-z][a-zA-Z0-9_-]*__[a-z][a-z0-9_]*)$/;
 
@@ -164,14 +190,14 @@ const CANONICAL_SINGLE_SEGMENT_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * True if `name` matches the canonical AutoDev tool-name convention.
- *
- * Multi-segment names (e.g. `multi_agent_v1__spawn_agent`,
- * `mcp__lsp__lsp_goto_definition`) are checked against the canonical regex.
- * Single-segment names (e.g. `exec`, `web_search`) are checked against the
- * explicit canonical set; the regex alone would also match namespace prefixes
- * like `multi_agent_v1`, so the regex is reserved for unambiguous forms.
- */
+True if `name` matches the canonical AutoDev tool-name convention.
+
+Multi-segment names (e.g. `multi_agent_v1__spawn_agent`,
+`mcp__lsp__lsp_goto_definition`) are checked against the canonical regex.
+Single-segment names (e.g. `exec`, `web_search`) are checked against the
+explicit canonical set; the regex alone would also match namespace prefixes
+like `multi_agent_v1`, so the regex is reserved for unambiguous forms.
+*/
 export function isCanonicalToolName(name: string): boolean {
   return (
     CANONICAL_SINGLE_SEGMENT_NAMES.has(name) ||
@@ -186,10 +212,10 @@ export function isCanonicalToolName(name: string): boolean {
 // ---------------------------------------------------------------------------
 
 /**
- * Claude CLI native tools. PascalCase is fixed by the Claude CLI; renaming
- * would break every recorded Claude turn. The Claude bridge keeps them and
- * translates them into the canonical Codex surface on the way out.
- */
+Claude CLI native tools. PascalCase is fixed by the Claude CLI; renaming
+would break every recorded Claude turn. The Claude bridge keeps them and
+translates them into the canonical Codex surface on the way out.
+*/
 export const CLAUDE_NATIVE_TOOL_EXCEPTIONS = {
   webSearch: "WebSearch",
   webFetch: "WebFetch",
@@ -197,15 +223,15 @@ export const CLAUDE_NATIVE_TOOL_EXCEPTIONS = {
 } as const;
 
 /**
- * Antigravity CLI native tools. `search_web` and `read_url_content` are
- * Antigravity's web-research tool names; the bridge exposes Codex's
- * `web_search` / `web_fetch` to the model. `bash`, `read_file`, `write_file`,
- * `edit_file`, `glob`, `grep` and the others are Antigravity's local file
- * system tools; the bridge translates them into Codex's `exec_command` and
- * the role's MCP tools. `call_mcp_tool` is the provider-native lazy dispatcher
- * for servers in Antigravity's MCP manifest; it does not flatten each server
- * tool into a separate function.
- */
+Antigravity CLI native tools. `search_web` and `read_url_content` are
+Antigravity's web-research tool names; the bridge exposes Codex's
+`web_search` / `web_fetch` to the model. `bash`, `read_file`, `write_file`,
+`edit_file`, `glob`, `grep` and the others are Antigravity's local file
+system tools; the bridge translates them into Codex's `exec_command` and
+the role's MCP tools. `call_mcp_tool` is the provider-native lazy dispatcher
+for servers in Antigravity's MCP manifest; it does not flatten each server
+tool into a separate function.
+*/
 export const ANTIGRAVITY_NATIVE_TOOL_EXCEPTIONS = {
   searchWeb: "search_web",
   readUrlContent: "read_url_content",
@@ -220,9 +246,9 @@ export const ANTIGRAVITY_NATIVE_TOOL_EXCEPTIONS = {
 } as const;
 
 /**
- * Copilot CLI native tools. The bridge translates `bash`/`shell`/`execute`
- * into Codex's `exec_command` and passes through Codex-shaped MCP tools.
- */
+Copilot CLI native tools. The bridge translates `bash`/`shell`/`execute`
+into Codex's `exec_command` and passes through Codex-shaped MCP tools.
+*/
 export const COPILOT_NATIVE_TOOL_EXCEPTIONS = {
   bash: "bash",
   shell: "shell",
@@ -230,14 +256,14 @@ export const COPILOT_NATIVE_TOOL_EXCEPTIONS = {
 } as const;
 
 /**
- * MiniMax Code native tool names, in the canonical AutoDev dialect.
- *
- * MiniMax Code names its own file tools `read`, `write` and `edit`, while the
- * canonical hook declarations name the Codex dialect (`read_file`,
- * `write_to_file`, `replace_file_content`). The hook implementations read
- * the canonical names, so a MiniMax Code payload is translated when the hook
- * payload is normalized.
- */
+MiniMax Code native tool names, in the canonical AutoDev dialect.
+
+MiniMax Code names its own file tools `read`, `write` and `edit`, while the
+canonical hook declarations name the Codex dialect (`read_file`,
+`write_to_file`, `replace_file_content`). The hook implementations read
+the canonical names, so a MiniMax Code payload is translated when the hook
+payload is normalized.
+*/
 export const MCODE_NATIVE_TOOL_NAMES: Readonly<Record<string, string>> = {
   read: "read_file",
   write: "write_to_file",
@@ -245,16 +271,16 @@ export const MCODE_NATIVE_TOOL_NAMES: Readonly<Record<string, string>> = {
 };
 
 /**
- * The canonical AutoDev tool names, in MiniMax Code's dialect.
- *
- * MiniMax Code matches a hook against the names of the tools it offers, so a
- * canonical hook matcher is projected onto these names before it is written
- * into a MiniMax Code profile. The canonical names are the ones the hook
- * declarations are written against (`write_to_file`, `read_file`, and the other
- * separator-tolerant spellings); a canonical tool MiniMax Code does not offer
- * (`view_image`, `write_stdin`, Antigravity's `call_mcp_tool` dispatcher) is
- * absent here and therefore not projected.
- */
+The canonical AutoDev tool names, in MiniMax Code's dialect.
+
+MiniMax Code matches a hook against the names of the tools it offers, so a
+canonical hook matcher is projected onto these names before it is written
+into a MiniMax Code profile. The canonical names are the ones the hook
+declarations are written against (`write_to_file`, `read_file`, and the other
+separator-tolerant spellings); a canonical tool MiniMax Code does not offer
+(`view_image`, `write_stdin`, Antigravity's `call_mcp_tool` dispatcher) is
+absent here and therefore not projected.
+*/
 export const CANONICAL_TO_MCODE_TOOL_NAMES: Readonly<Record<string, string>> = {
   apply_patch: "apply_patch",
   bash: "bash",
@@ -278,7 +304,9 @@ export const CANONICAL_TO_MCODE_TOOL_NAMES: Readonly<Record<string, string>> = {
   zsh: "bash"
 };
 
-/** Flat set of every documented CLI exception. */
+/**
+Flat set of every documented CLI exception.
+*/
 export const ALL_DOCUMENTED_EXCEPTIONS: ReadonlySet<string> = new Set([
   ...Object.values(CLAUDE_NATIVE_TOOL_EXCEPTIONS),
   ...Object.values(ANTIGRAVITY_NATIVE_TOOL_EXCEPTIONS),

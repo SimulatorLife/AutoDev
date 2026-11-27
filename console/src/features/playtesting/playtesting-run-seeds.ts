@@ -1,4 +1,6 @@
-/** Seed selection for the Playtesting run form, owned by the Runtime's admissible-seed contract. */
+/**
+Seed selection for the Playtesting run form, owned by the Runtime's admissible-seed contract.
+*/
 import type { ControlApiPlaytestingCapabilitiesResponse } from "@simulatorlife/autodev-core";
 
 export type PlaytestingAdmissibleSeeds =
@@ -10,14 +12,18 @@ export interface PlaytestingSeededAssignment {
   readonly seed: string;
 }
 
-/** The seed the first assignment starts with. */
+/**
+The seed the first assignment starts with.
+*/
 export function initialPlaytestingSeed(
   admissibleSeeds: PlaytestingAdmissibleSeeds
 ): string {
   return admissibleSeeds?.[0]?.seed ?? "seed-1";
 }
 
-/** Whether the Runtime would admit this seed for the latest build. */
+/**
+Whether the Runtime would admit this seed for the latest build.
+*/
 export function isAdmissiblePlaytestingSeed(
   admissibleSeeds: PlaytestingAdmissibleSeeds,
   seed: string
@@ -31,11 +37,11 @@ export function isAdmissiblePlaytestingSeed(
 }
 
 /**
- * The seed a new assignment starts with. A build that freezes a benchmark
- * admits only its inventory, so the first inventory seed unused in that
- * scenario/policy cell is offered (null once exhausted); otherwise the next
- * numbered seed unused in the batch.
- */
+The seed a new assignment starts with. A build that freezes a benchmark
+admits only its inventory, so the first inventory seed unused in that
+scenario/policy cell is offered (null once exhausted); otherwise the next
+numbered seed unused in the batch.
+*/
 export function nextPlaytestingSeed(
   admissibleSeeds: PlaytestingAdmissibleSeeds,
   assignments: readonly PlaytestingSeededAssignment[],

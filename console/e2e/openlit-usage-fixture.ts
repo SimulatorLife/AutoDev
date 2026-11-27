@@ -1,56 +1,60 @@
 /**
- * Deterministic, explicitly synthetic Usage telemetry fixture for browser
- * acceptance tests.
- *
- * It serves the fixed read-only `autodev-openlit-usage-v5` contract that
- * Data and the Console already speak, so the Console can render a Usage
- * surface without a live OpenLIT deployment. Only the widgets the acceptance
- * assertions depend on are observed; the rest answer as unobserved rather
- * than as zero, because a synthetic fixture that invented zeros would make
- * the surface look measured when nothing measured it.
- *
- * Four scopes answer with a failure instead of a snapshot, one for each way
- * the Usage contract says a read can fail, so the page's failure paths can
- * be reached at all rather than only described.
- */
+Deterministic, explicitly synthetic Usage telemetry fixture for browser
+acceptance tests.
+
+It serves the fixed read-only `autodev-openlit-usage-v5` contract that
+Data and the Console already speak, so the Console can render a Usage
+surface without a live OpenLIT deployment. Only the widgets the acceptance
+assertions depend on are observed; the rest answer as unobserved rather
+than as zero, because a synthetic fixture that invented zeros would make
+the surface look measured when nothing measured it.
+
+Four scopes answer with a failure instead of a snapshot, one for each way
+the Usage contract says a read can fail, so the page's failure paths can
+be reached at all rather than only described.
+*/
 import { createServer, type ServerResponse } from "node:http";
 
 const PORT = Number(process.env.AUTODEV_OPENLIT_USAGE_FIXTURE_PORT ?? 4312);
 const WORKSPACE_ID = "fixture/game";
 const LOGICAL_REQUESTS = 12;
-/** The provider hops the fixture reports: three requests changed provider. */
+/**
+The provider hops the fixture reports: three requests changed provider.
+*/
 const PROVIDER_HOPS = 3;
 
 /**
- * The scopes that answer with a failure instead of a snapshot.
- *
- * The Usage contract distinguishes four ways a read can fail, and the Console
- * has to say which one happened: the transport failed, the response did not
- * validate, the service rejected the credential, or the service answered with
- * an HTTP error. A fixture that only ever answers correctly can only prove
- * that the Console renders a snapshot; it cannot prove that the Console keeps
- * metric cards off the page when the read failed, or that it names the
- * failure rather than reporting an empty interval.
- *
- * The scopes are chosen by the selection the Console sends, because that is
- * the only handle the Console's read has on the source: the request body
- * carries the scope it was asked for. Each one therefore reaches a different
- * failure path in the same request.
- */
+The scopes that answer with a failure instead of a snapshot.
+
+The Usage contract distinguishes four ways a read can fail, and the Console
+has to say which one happened: the transport failed, the response did not
+validate, the service rejected the credential, or the service answered with
+an HTTP error. A fixture that only ever answers correctly can only prove
+that the Console renders a snapshot; it cannot prove that the Console keeps
+metric cards off the page when the read failed, or that it names the
+failure rather than reporting an empty interval.
+
+The scopes are chosen by the selection the Console sends, because that is
+the only handle the Console's read has on the source: the request body
+carries the scope it was asked for. Each one therefore reaches a different
+failure path in the same request.
+*/
 const INVALID_RESPONSE_SCOPE = "7D";
 const HTTP_ERROR_SCOPE = "3M";
 const UNREACHABLE_SCOPE = "1M";
 const UNAUTHORIZED_SCOPE = "CUSTOM";
 
 /**
- * The span id the telemetry source never retained.
- *
- * The Control fixture's evaluation rows point at it, so the trace lookup has
- * a span whose absence is the source's own answer rather than a broken read.
- */
+The span id the telemetry source never retained.
+
+The Control fixture's evaluation rows point at it, so the trace lookup has
+a span whose absence is the source's own answer rather than a broken read.
+*/
 const UNOBSERVED_SPAN_ID = "ffffffffffffffff";
 
-/** The widget set the v5 contract requires, in the contract's own order. */
+/**
+The widget set the v5 contract requires, in the contract's own order.
+*/
 const USAGE_WIDGET_IDS = [
   "logical-requests",
   "requests-by-agent",
@@ -118,11 +122,11 @@ function unobserved(key: string): UsageWidget {
 }
 
 /**
- * The observed widgets the acceptance assertions read.
- *
- * `logical-requests` and `requests-by-workspace` agree on the same total, so
- * the breakdown is internally consistent with the count it sits beside.
- */
+The observed widgets the acceptance assertions read.
+
+`logical-requests` and `requests-by-workspace` agree on the same total, so
+the breakdown is internally consistent with the count it sits beside.
+*/
 function observedWidgets(): readonly UsageWidget[] {
   return [
     {
@@ -286,11 +290,11 @@ function usageResponse(): unknown {
 }
 
 /**
- * The scope the Console asked for.
- *
- * The request body carries the whole selection, and the scope is the part of
- * it that says which failure this read should meet.
- */
+The scope the Console asked for.
+
+The request body carries the whole selection, and the scope is the part of
+it that says which failure this read should meet.
+*/
 function requestedScope(body: string): string | null {
   try {
     const parsed: unknown = JSON.parse(body);
@@ -305,13 +309,13 @@ function requestedScope(body: string): string | null {
 }
 
 /**
- * The answer for one scope.
- *
- * The three failure scopes each break the read in a different way, because
- * the three are different facts about the source: a body the contract cannot
- * validate, an HTTP status the source chose, and a connection that died
- * before the source answered at all.
- */
+The answer for one scope.
+
+The three failure scopes each break the read in a different way, because
+the three are different facts about the source: a body the contract cannot
+validate, an HTTP status the source chose, and a connection that died
+before the source answered at all.
+*/
 function respond(scope: string | null, response: ServerResponse): void {
   if (scope === INVALID_RESPONSE_SCOPE) {
     // A body that is not the Usage contract. The schema is right and the
@@ -350,14 +354,14 @@ function respond(scope: string | null, response: ServerResponse): void {
 }
 
 /**
- * The trace detail for one span.
- *
- * The trace reader asks for one span and gets the spans around it, so the
- * panel has a tree to draw: the selected span, the work it asked for, and the
- * call that work made. The span that was never retained answers with the
- * not-found code the reader looks for, which is what tells the Console that
- * the span is absent rather than that the source is broken.
- */
+The trace detail for one span.
+
+The trace reader asks for one span and gets the spans around it, so the
+panel has a tree to draw: the selected span, the work it asked for, and the
+call that work made. The span that was never retained answers with the
+not-found code the reader looks for, which is what tells the Console that
+the span is absent rather than that the source is broken.
+*/
 function respondTrace(spanId: string, response: ServerResponse): void {
   if (spanId === UNOBSERVED_SPAN_ID) {
     response.writeHead(404, { "content-type": "application/json" }).end(
@@ -410,15 +414,17 @@ function respondTrace(spanId: string, response: ServerResponse): void {
 }
 
 /**
- * The spans one session holds.
- *
- * The session's span page is paginated, and the point of the pagination is
- * that a long session is longer than one page: the fixture holds more spans
- * than a single page holds, so the Console's pager has something to page.
- */
+The spans one session holds.
+
+The session's span page is paginated, and the point of the pagination is
+that a long session is longer than one page: the fixture holds more spans
+than a single page holds, so the Console's pager has something to page.
+*/
 const SESSION_SPAN_COUNT = 250;
 
-/** One span of the fixture session, with a stable id and timestamp. */
+/**
+One span of the fixture session, with a stable id and timestamp.
+*/
 function sessionSpan(index: number): Record<string, unknown> {
   const suffix = index.toString(16).padStart(16, "0");
   return {
@@ -449,12 +455,12 @@ function sessionSpan(index: number): Record<string, unknown> {
 }
 
 /**
- * The session's span page.
- *
- * The page is a window onto the session's whole span list: it carries the
- * exact total, whether another page follows, and the session's whole cost
- * estimate rather than this page's.
- */
+The session's span page.
+
+The page is a window onto the session's whole span list: it carries the
+exact total, whether another page follows, and the session's whole cost
+estimate rather than this page's.
+*/
 function respondSessionUsage(body: string, response: ServerResponse): void {
   let request: { limit?: unknown; offset?: unknown; sortDirection?: unknown };
   try {

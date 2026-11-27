@@ -47,9 +47,9 @@ import {
   type ProviderCommandBackend
 } from "./provider.ts";
 import {
-  dispatchRepoCommand,
+  dispatchRepoCommand as dispatchRepositoryCommand,
   REPO_SUBCOMMANDS,
-  type RepoCommandBackend
+  type RepoCommandBackend as RepositoryCommandBackend
 } from "./repo.ts";
 import {
   dispatchRouterCommand,
@@ -58,19 +58,19 @@ import {
 } from "./router.ts";
 
 /**
- * The render vocabulary, owned here and consumed by validation, help, and
- * errors. The dispatch is a `switch` over these values rather than a narrowing
- * guard, so this list is what `default` rejects against.
- */
+The render vocabulary, owned here and consumed by validation, help, and
+errors. The dispatch is a `switch` over these values rather than a narrowing
+guard, so this list is what `default` rejects against.
+*/
 export const RENDER_TARGETS = ["agents", "contract", "mcp", "catalog"] as const;
 
-const repoRoot = path.resolve(resolveRuntimeSourceRoot(import.meta.dirname));
+const repositoryRoot = path.resolve(resolveRuntimeSourceRoot(import.meta.dirname));
 const defaults = {
-  agents: path.join(repoRoot, "agents/roles"),
-  prompts: path.join(repoRoot, "agents/prompts"),
-  mcp: path.join(repoRoot, ".rulesync/mcp.jsonc"),
-  rootConfig: path.join(repoRoot, ".rulesync/mcp.jsonc"),
-  contract: path.join(repoRoot, "config/execution-contract.json")
+  agents: path.join(repositoryRoot, "agents/roles"),
+  prompts: path.join(repositoryRoot, "agents/prompts"),
+  mcp: path.join(repositoryRoot, ".rulesync/mcp.jsonc"),
+  rootConfig: path.join(repositoryRoot, ".rulesync/mcp.jsonc"),
+  contract: path.join(repositoryRoot, "config/execution-contract.json")
 };
 
 function parseVersionParts(value: string): number[] {
@@ -107,7 +107,7 @@ function checkRepository(): number {
     ["portable configuration", defaults.rootConfig]
   ] as const)
     assertPath(target, label);
-  execFileSync("git", ["diff", "--check"], { cwd: repoRoot, stdio: "ignore" });
+  execFileSync("git", ["diff", "--check"], { cwd: repositoryRoot, stdio: "ignore" });
   writeLine(`AutoDev check passed on Node ${process.versions.node}`);
   return 0;
 }
@@ -148,19 +148,19 @@ function checkRenderedFiles(
 }
 
 /**
- * Runs one render target.
- *
- * Every target `RENDER_TARGETS` declares is handled here, and `default` is the
- * single place an unusable one is rejected -- including the empty string from
- * `autodev render` with no target, which is why the command no longer needs a
- * guard above the switch. Keeping one rejection site means the accepted values
- * cannot be listed in one message and validated in another.
- *
- * `tests/cli/command-usage.test.ts` is what holds the three lists together: it
- * walks the `--help` output and drives every value advertised there through
- * dispatch, so adding a target to `RENDER_TARGETS` without handling it here
- * fails the suite instead of silently falling through to `default`.
- */
+Runs one render target.
+
+Every target `RENDER_TARGETS` declares is handled here, and `default` is the
+single place an unusable one is rejected -- including the empty string from
+`autodev render` with no target, which is why the command no longer needs a
+guard above the switch. Keeping one rejection site means the accepted values
+cannot be listed in one message and validated in another.
+
+`tests/cli/command-usage.test.ts` is what holds the three lists together: it
+walks the `--help` output and drives every value advertised there through
+dispatch, so adding a target to `RENDER_TARGETS` without handling it here
+fails the suite instead of silently falling through to `default`.
+*/
 function renderCommand(kind: string, argv: string[]): number {
   const { values, flags } = parseArgs(argv);
   switch (kind) {
@@ -207,19 +207,19 @@ function renderCommand(kind: string, argv: string[]): number {
 }
 
 /**
- * The command families `--help` advertises, in the order it lists them, each
- * paired with the values its subcommand accepts.
- *
- * Assembled from the same lists the dispatchers validate against. It used to
- * be one string literal with the subcommands typed out a second time, so
- * nothing connected the help to the validators: a command could be advertised
- * here and rejected there, which is exactly how `render` ended up described as
- * unimplemented while `--help` listed it. `render`, `router`, `provider`,
- * `hook`, and `repo` now expand their alternatives automatically, so the two
- * families whose values were previously undiscoverable -- `provider` and
- * `hook` -- name what they accept instead of showing a bare `<name>`, and
- * reading `--help` is enough rather than running a command to fail.
- */
+The command families `--help` advertises, in the order it lists them, each
+paired with the values its subcommand accepts.
+
+Assembled from the same lists the dispatchers validate against. It used to
+be one string literal with the subcommands typed out a second time, so
+nothing connected the help to the validators: a command could be advertised
+here and rejected there, which is exactly how `render` ended up described as
+unimplemented while `--help` listed it. `render`, `router`, `provider`,
+`hook`, and `repo` now expand their alternatives automatically, so the two
+families whose values were previously undiscoverable -- `provider` and
+`hook` -- name what they accept instead of showing a bare `<name>`, and
+reading `--help` is enough rather than running a command to fail.
+*/
 const COMMAND_ROWS: readonly (readonly [string, string])[] = [
   ["check", ""],
   ["render", RENDER_TARGETS.join("|")],
@@ -291,7 +291,7 @@ export interface CliBackends {
   router?: RouterCommandBackend;
   provider?: ProviderCommandBackend;
   hook?: HookCommandBackend;
-  repo?: RepoCommandBackend;
+  repo?: RepositoryCommandBackend;
   install?: InstallCommandBackend;
   playtest?: PlaytestCommandBackend;
   lease?: LeaseCommandBackend;
@@ -334,7 +334,7 @@ export function runMain(
     return dispatchHookCommand(subcommand ?? "", backends.hook);
   }
   if (command === "repo") {
-    return dispatchRepoCommand(subcommand ?? "", rest, backends.repo);
+    return dispatchRepositoryCommand(subcommand ?? "", rest, backends.repo);
   }
   if (command === "playtest") {
     return dispatchPlaytestCommand(
@@ -345,19 +345,19 @@ export function runMain(
   }
   if (command === "diagnostics") {
     // The session id is positional, so it arrives as the subcommand slot.
-    const args = [subcommand, ...rest].filter(
+    const arguments_ = [subcommand, ...rest].filter(
       (value): value is string => value !== undefined
     );
-    return runDiagnosticsCommand(args);
+    return runDiagnosticsCommand(arguments_);
   }
   if (command === "lease") {
     return dispatchLeaseCommand(subcommand ?? "", rest, backends.lease);
   }
   if (command === "install") {
-    const args = [subcommand, ...rest].filter(
+    const arguments_ = [subcommand, ...rest].filter(
       (value): value is string => value !== undefined
     );
-    return dispatchInstallCommand(backends.install, args);
+    return dispatchInstallCommand(backends.install, arguments_);
   }
   throw unsupportedChoice(
     "command",

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server.js";
 
+import type { SearchSource } from "../../../../src/components/navigation/search-destinations.ts";
 import {
   fetchAgents,
   fetchModels,
@@ -7,7 +8,6 @@ import {
   fetchWorkspaces
 } from "../../../../src/lib/server/control-api.ts";
 import { readNodeContext } from "../../../_console.ts";
-import type { SearchSource } from "../../../../src/components/navigation/search-destinations.ts";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +18,9 @@ const RECORD_SOURCES = [
   "workspaces"
 ] as const;
 
-/** Serialize canonical Control API records for the shared client-side search. */
+/**
+Serialize canonical Control API records for the shared client-side search.
+*/
 export async function GET(): Promise<NextResponse> {
   try {
     const { config } = readNodeContext("/providers");
@@ -44,10 +46,10 @@ export async function GET(): Promise<NextResponse> {
     const successfulReads = 4 - unavailableSources.length;
     return NextResponse.json(
       {
-        ...(providers.kind === "ok" ? { providers: providers.data } : {}),
-        ...(models.kind === "ok" ? { models: models.data } : {}),
-        ...(agents.kind === "ok" ? { agents: agents.data } : {}),
-        ...(workspaces.kind === "ok" ? { workspaces: workspaces.data } : {}),
+        ...((providers.kind === "ok") && { providers: providers.data }),
+        ...((models.kind === "ok") && { models: models.data }),
+        ...((agents.kind === "ok") && { agents: agents.data }),
+        ...((workspaces.kind === "ok") && { workspaces: workspaces.data }),
         unavailableSources
       },
       { status: successfulReads === 0 ? 503 : 200 }

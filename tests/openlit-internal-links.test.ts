@@ -4,30 +4,30 @@ import { join, relative } from "node:path";
 import test from "node:test";
 
 /**
- * Every internal navigation target in the patched OpenLIT client must resolve
- * to a route the app actually serves.
- *
- * Four dead links got through review before this file existed, and each was a
- * different shape:
- *
- *   /settings/database-config  a redirect to `/organisation`, deleted in patch 32
- *   /rule-engine/<id>          linked from the evaluation panel, deleted in patch 30
- *   /manage-models             an alias nothing linked to
- *   /agents                    a sidebar entry left behind when patch 37 deleted
- *                              the agents page
- *
- * All four were reachable by clicking. None of them is unusual — each is what
- * you get when a page is deleted and the reference is not — so reading for them
- * individually does not scale. This derives the served route set from the App
- * Router's own `page.tsx`/`route.ts` files and diffs it against every internal
- * target in the source, which makes the next one a test failure instead of a
- * bug report.
- *
- * It runs against the applied patch chain when one is available and skips
- * rather than failing when the OpenLIT tree has not been materialised, because
- * "the fork is not checked out here" is not a product defect. Set
- * OPENLIT_CLIENT_DIR to point at a tree.
- */
+Every internal navigation target in the patched OpenLIT client must resolve
+to a route the app actually serves.
+
+Four dead links got through review before this file existed, and each was a
+different shape:
+
+  /settings/database-config  a redirect to `/organisation`, deleted in patch 32
+  /rule-engine/<id>          linked from the evaluation panel, deleted in patch 30
+  /manage-models             an alias nothing linked to
+  /agents                    a sidebar entry left behind when patch 37 deleted
+                             the agents page
+
+All four were reachable by clicking. None of them is unusual — each is what
+you get when a page is deleted and the reference is not — so reading for them
+individually does not scale. This derives the served route set from the App
+Router's own `page.tsx`/`route.ts` files and diffs it against every internal
+target in the source, which makes the next one a test failure instead of a
+bug report.
+
+It runs against the applied patch chain when one is available and skips
+rather than failing when the OpenLIT tree has not been materialised, because
+"the fork is not checked out here" is not a product defect. Set
+OPENLIT_CLIENT_DIR to point at a tree.
+*/
 const CLIENT = process.env.OPENLIT_CLIENT_DIR ?? "";
 const APP = CLIENT ? join(CLIENT, "src/app") : "";
 const SRC = CLIENT ? join(CLIENT, "src") : "";
@@ -50,7 +50,9 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-/** Route groups `(playground)` do not appear in a URL. */
+/**
+Route groups `(playground)` do not appear in a URL.
+*/
 function toRoute(file: string): string {
   return (
     "/" +
@@ -71,15 +73,15 @@ function before(value: string, marker: string): string {
 }
 
 /**
- * Does `target` resolve to a route?
- *
- * An interpolated suffix names a fixed prefix plus a value only known at
- * runtime: `/api/telemetry/request/span/${id}/heirarchy${qs}` is really
- * "under /api/telemetry/request/span". Truncating at the first `${` and
- * wildcard-matching the remainder is what keeps those from reading as broken
- * — matching the interpolated segment against `[id]` instead is what produced
- * a false positive on every one of them.
- */
+Does `target` resolve to a route?
+
+An interpolated suffix names a fixed prefix plus a value only known at
+runtime: `/api/telemetry/request/span/${id}/heirarchy${qs}` is really
+"under /api/telemetry/request/span". Truncating at the first `${` and
+wildcard-matching the remainder is what keeps those from reading as broken
+— matching the interpolated segment against `[id]` instead is what produced
+a false positive on every one of them.
+*/
 function matches(target: string, routes: Set<string>): boolean {
   const candidate = before(before(before(target, "?"), "#"), "${");
   const base = normalise(candidate.replace(/\/$/, ""));
@@ -98,12 +100,12 @@ function matches(target: string, routes: Set<string>): boolean {
       // literal parent whose only children are parameters. That resolves.
       const parentOfDynamicChildren =
         segs.length < routeSegs.length &&
-        segs.every((seg, i) => routeSegs[i] === seg) &&
+        segs.every((seg, index) => routeSegs[index] === seg) &&
         routeSegs.slice(segs.length).every((s) => s.startsWith("["));
       if (parentOfDynamicChildren) return true;
       continue;
     }
-    if (routeSegs.every((seg, i) => seg.startsWith("[") || seg === segs[i]))
+    if (routeSegs.every((seg, index) => seg.startsWith("[") || seg === segs[index]))
       return true;
   }
   return false;

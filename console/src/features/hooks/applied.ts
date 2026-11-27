@@ -16,34 +16,34 @@ import {
 } from "../../components/ui/text-classes.ts";
 
 /**
- * The vocabulary the applied hook projection's two surfaces share.
- *
- * The list presents every published event and the event's own page presents
- * one of them, and the two have to say the same thing about the same
- * projection: a projection that could not be read is one fact, a projection
- * that holds no action for an event is another, and the reason for the first
- * belongs with it rather than in a log the operator never opens.
- */
+The vocabulary the applied hook projection's two surfaces share.
+
+The list presents every published event and the event's own page presents
+one of them, and the two have to say the same thing about the same
+projection: a projection that could not be read is one fact, a projection
+that holds no action for an event is another, and the reason for the first
+belongs with it rather than in a log the operator never opens.
+*/
 
 /**
- * Why the applied projection could not be read.
- *
- * The declaration and the projection are two different reads, so one of them
- * failing says nothing about the other. The page therefore keeps the reason
- * rather than reducing the failure to "not observed".
- */
+Why the applied projection could not be read.
+
+The declaration and the projection are two different reads, so one of them
+failing says nothing about the other. The page therefore keeps the reason
+rather than reducing the failure to "not observed".
+*/
 export interface HooksAppliedUnavailable {
   readonly code: string;
   readonly message: string;
 }
 
 /**
- * The state of the applied projection when it could not be read at all.
- *
- * The gap is stated as a gap -- nothing is claimed about what the Runtime
- * published -- and the reason for it travels with it, because a gap on the
- * page with no explanation for it is a question the operator cannot answer.
- */
+The state of the applied projection when it could not be read at all.
+
+The gap is stated as a gap -- nothing is claimed about what the Runtime
+published -- and the reason for it travels with it, because a gap on the
+page with no explanation for it is a question the operator cannot answer.
+*/
 export function hookAppliedUnavailableNotice(
   unavailable: HooksAppliedUnavailable | null
 ): React.JSX.Element {
@@ -73,12 +73,12 @@ export function hookAppliedUnavailableNotice(
 }
 
 /**
- * What the Runtime published, in one sentence.
- *
- * The list says it about the whole projection and the event's own page says it
- * about the projection that carries that event, and they say it in the same
- * words: the sentence is the same fact read from two surfaces.
- */
+What the Runtime published, in one sentence.
+
+The list says it about the whole projection and the event's own page says it
+about the projection that carries that event, and they say it in the same
+words: the sentence is the same fact read from two surfaces.
+*/
 export function hookAppliedSummaryText(
   applied: ControlApiHooksAppliedResponse
 ): string {
@@ -88,11 +88,11 @@ export function hookAppliedSummaryText(
 }
 
 /**
- * One event the Runtime published.
- *
- * The projection groups the actions by matcher, so what is published for an
- * event is the event's actions and the matcher they run under.
- */
+One event the Runtime published.
+
+The projection groups the actions by matcher, so what is published for an
+event is the event's actions and the matcher they run under.
+*/
 export function hookAppliedEventPanel(
   event: ControlApiHookEvent
 ): React.JSX.Element {

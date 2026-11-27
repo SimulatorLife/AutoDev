@@ -1,12 +1,14 @@
-/** Runtime-owned, off-hot-path discovery of provider model capabilities. */
+/**
+Runtime-owned, off-hot-path discovery of provider model capabilities.
+*/
 import { homedir } from "node:os";
 import path from "node:path";
 
 import {
   type AntigravityProvider,
+  CONTROL_API_PROVIDER_MODEL_DISCOVERY_SCHEMA_ID,
   type ControlApiDiscoveredProviderModel,
   type ControlApiProviderModelDiscovery,
-  CONTROL_API_PROVIDER_MODEL_DISCOVERY_SCHEMA_ID,
   type ControlApiProviderModelsResponse,
   isRecord
 } from "@simulatorlife/autodev-core";
@@ -16,14 +18,16 @@ import {
   OPENCLI_PROVIDERS,
   type OpencliProvider
 } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
+import { resolveManagedSecret } from "@simulatorlife/autodev-runtime/shared/runtime-secrets";
 import { execa } from "execa";
 
 import { ROUTES, ROUTING_POLICY } from "../router/routing.ts";
-import { resolveManagedSecret } from "@simulatorlife/autodev-runtime/shared/runtime-secrets";
 import { readClaudeOAuthToken } from "./claude-credential.ts";
 import { loadCodexAuth } from "./codex-auth.ts";
 
-/** The marker `boundedResponseText` puts in an oversized-body error. */
+/**
+The marker `boundedResponseText` puts in an oversized-body error.
+*/
 const SIZE_BOUND_MESSAGE = "size bound";
 const DEFAULT_REFRESH_INTERVAL_MS = 15 * 60_000;
 const DEFAULT_RETRY_BASE_MS = 30_000;
@@ -51,20 +55,20 @@ const ANTHROPIC_OAUTH_BETA = "oauth-2025-04-20";
 const CODEX_BACKEND_BASE_URL = "https://chatgpt.com/backend-api/codex";
 const CODEX_MODEL_LIST_URL = `${CODEX_BACKEND_BASE_URL}/models`;
 /**
- * The client version the Runtime declares to the Codex account model list.
- *
- * The endpoint filters the account's models by the client version the caller
- * declares, so a client that is not the Codex CLI has to declare a version of
- * its own. The Runtime drives the Codex backend directly: it does not spawn
- * the Codex CLI, and it sends no client version with inference requests, so
- * the installed CLI's release is not a bound on what the Runtime can use.
- * Declaring the installed CLI's version hid the models the Runtime's own
- * routing configuration selects -- `gpt-6-sol` and `gpt-6-luna` need a
- * client at 0.155.0 -- while the Runtime drove them successfully all the
- * same. The Runtime declares a version above every client release, so the
- * listing is the account's own model set: the set an operator may assign to
- * a role.
- */
+The client version the Runtime declares to the Codex account model list.
+
+The endpoint filters the account's models by the client version the caller
+declares, so a client that is not the Codex CLI has to declare a version of
+its own. The Runtime drives the Codex backend directly: it does not spawn
+the Codex CLI, and it sends no client version with inference requests, so
+the installed CLI's release is not a bound on what the Runtime can use.
+Declaring the installed CLI's version hid the models the Runtime's own
+routing configuration selects -- `gpt-6-sol` and `gpt-6-luna` need a
+client at 0.155.0 -- while the Runtime drove them successfully all the
+same. The Runtime declares a version above every client release, so the
+listing is the account's own model set: the set an operator may assign to
+a role.
+*/
 const CODEX_ACCOUNT_CLIENT_VERSION = "0.999.0";
 const MAX_DISCOVERED_MODELS = 512;
 const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
@@ -85,7 +89,7 @@ interface PersistedProviderModels {
 }
 
 const persistedProviderModels = new Map<string, PersistedProviderModels>();
-let invalidPersistedProviderModels = false;
+let isInvalidPersistedProviderModels = false;
 
 export interface ProviderModelDiscoveryItem {
   readonly id: string;
@@ -102,22 +106,24 @@ export interface ProviderModelDiscoveryOptions {
   readonly adapters?: Readonly<Record<string, ProviderModelDiscoveryAdapter>>;
   readonly now?: () => Date;
   readonly refreshIntervalMs?: number;
-  /** First retry delay after a failed or empty listing; doubles to the refresh interval. */
+  /**
+  First retry delay after a failed or empty listing; doubles to the refresh interval.
+  */
   readonly retryBaseMs?: number;
   readonly onSnapshotChanged?: (() => void) | undefined;
   /**
-   * What each listing said about the provider's account: the bridge's message
-   * when it reported the account must be signed in again, null when it listed
-   * models. The Router records it as provider health evidence.
-   */
+  What each listing said about the provider's account: the bridge's message
+  when it reported the account must be signed in again, null when it listed
+  models. The Router records it as provider health evidence.
+  */
   readonly onSignIn?:
     ((provider: string, detail: string | null) => void) | undefined;
 }
 
 /**
- * A model listing a bridge refused because its provider account must be
- * signed in again (`sign_in_required`).
- */
+A model listing a bridge refused because its provider account must be
+signed in again (`sign_in_required`).
+*/
 export class ProviderSignInRequiredError extends Error {
   override readonly name = "ProviderSignInRequiredError";
 }
@@ -130,7 +136,9 @@ function isCanonicalTimestamp(value: unknown): value is string {
   );
 }
 
-/** Snapshot only the last provider-confirmed IDs, never credentials or routing policy. */
+/**
+Snapshot only the last provider-confirmed IDs, never credentials or routing policy.
+*/
 export function providerModelDiscoveryPersistenceSnapshot(): unknown {
   return {
     schema: DISCOVERY_PERSISTENCE_SCHEMA,
@@ -140,12 +148,14 @@ export function providerModelDiscoveryPersistenceSnapshot(): unknown {
   };
 }
 
-/** Restore a bounded cache; Runtime will expose it as stale until refresh succeeds. */
+/**
+Restore a bounded cache; Runtime will expose it as stale until refresh succeeds.
+*/
 export function restoreProviderModelDiscoveryPersistence(
   value: unknown
 ): boolean {
   persistedProviderModels.clear();
-  invalidPersistedProviderModels = false;
+  isInvalidPersistedProviderModels = false;
   if (value === null || value === undefined) return true;
   if (
     !isRecord(value) ||
@@ -153,7 +163,7 @@ export function restoreProviderModelDiscoveryPersistence(
     !Array.isArray(value.providers) ||
     value.providers.length > 64
   ) {
-    invalidPersistedProviderModels = true;
+    isInvalidPersistedProviderModels = true;
     return false;
   }
 
@@ -178,7 +188,7 @@ export function restoreProviderModelDiscoveryPersistence(
       candidate.models.length > MAX_DISCOVERED_MODELS
     ) {
       persistedProviderModels.clear();
-      invalidPersistedProviderModels = true;
+      isInvalidPersistedProviderModels = true;
       return false;
     }
 
@@ -195,7 +205,7 @@ export function restoreProviderModelDiscoveryPersistence(
             model.displayName.length > DISPLAY_NAME_LIMIT))
       ) {
         persistedProviderModels.clear();
-        invalidPersistedProviderModels = true;
+        isInvalidPersistedProviderModels = true;
         return false;
       }
       modelIds.add(model.id);
@@ -249,25 +259,25 @@ export function parseAntigravityModelList(
   return models;
 }
 
-function agyExecutable(env: NodeJS.ProcessEnv): string {
+function agyExecutable(environment: NodeJS.ProcessEnv): string {
   return (
-    env.AGY_CLI_PATH?.trim() ||
-    path.join(env.HOME?.trim() || homedir(), ".local", "bin", "agy")
+    environment.AGY_CLI_PATH?.trim() ||
+    path.join(environment.HOME?.trim() || homedir(), ".local", "bin", "agy")
   );
 }
 
 /**
- * One model-discovery adapter per Antigravity provider, all answered by one
- * `agy models` listing.
- *
- * `agy models` lists every model the subscription serves; each Antigravity
- * provider (`antigravity-gemini`, `antigravity-argon`,
- * `antigravity-claude-gpt`) offers the ones its route owns. A refresh asks
- * every provider, so the providers asking while a listing is running share it
- * rather than each spawning the CLI.
- */
+One model-discovery adapter per Antigravity provider, all answered by one
+`agy models` listing.
+
+`agy models` lists every model the subscription serves; each Antigravity
+provider (`antigravity-gemini`, `antigravity-argon`,
+`antigravity-claude-gpt`) offers the ones its route owns. A refresh asks
+every provider, so the providers asking while a listing is running share it
+rather than each spawning the CLI.
+*/
 export function createAntigravityModelDiscoveryAdapters(
-  env: NodeJS.ProcessEnv = process.env,
+  environment: NodeJS.ProcessEnv = process.env,
   timeoutMs: number = ANTIGRAVITY_CLI_TIMEOUT_MS
 ): Readonly<Record<AntigravityProvider, ProviderModelDiscoveryAdapter>> {
   let listing: Promise<readonly ProviderModelDiscoveryItem[]> | null = null;
@@ -276,7 +286,7 @@ export function createAntigravityModelDiscoveryAdapters(
   ): Promise<readonly ProviderModelDiscoveryItem[]> => {
     if (listing === null) {
       const started: Promise<readonly ProviderModelDiscoveryItem[]> =
-        listAgyModels(env, timeoutMs, signal).finally(() => {
+        listAgyModels(environment, timeoutMs, signal).finally(() => {
           if (listing === started) listing = null;
         });
       listing = started;
@@ -302,21 +312,21 @@ export function createAntigravityModelDiscoveryAdapters(
 }
 
 /**
- * Run the `agy models` listing once. Execa owns the subprocess lifecycle
- * (deadline, output bound, cancellation, termination); this function only
- * translates its result into the discovery contract.
- */
+Run the `agy models` listing once. Execa owns the subprocess lifecycle
+(deadline, output bound, cancellation, termination); this function only
+translates its result into the discovery contract.
+*/
 async function listAgyModels(
-  env: NodeJS.ProcessEnv,
+  environment: NodeJS.ProcessEnv,
   timeoutMs: number,
   signal: AbortSignal
 ): Promise<readonly ProviderModelDiscoveryItem[]> {
   const cancelled = (): Error =>
     new Error("provider model discovery was cancelled");
   if (signal.aborted) throw cancelled();
-  const result = await execa(agyExecutable(env), ["models"], {
-    cwd: env.AUTODEV_REPO_ROOT?.trim() || process.cwd(),
-    env,
+  const result = await execa(agyExecutable(environment), ["models"], {
+    cwd: environment.AUTODEV_REPO_ROOT?.trim() || process.cwd(),
+    env: environment,
     extendEnv: false,
     stdio: ["ignore", "pipe", "ignore"],
     encoding: "buffer",
@@ -418,11 +428,11 @@ function parseOpenAiModelList(
 }
 
 export async function discoverMiniMaxModels(
-  env: NodeJS.ProcessEnv = process.env,
-  fetchImpl: typeof fetch = globalThis.fetch,
+  environment: NodeJS.ProcessEnv = process.env,
+  fetchImpl: typeof fetch = fetch,
   parentSignal?: AbortSignal
 ): Promise<readonly ProviderModelDiscoveryItem[]> {
-  const apiKey = resolveManagedSecret("MINIMAX_API_KEY", env);
+  const apiKey = resolveManagedSecret("MINIMAX_API_KEY", environment);
   if (!apiKey) {
     throw new Error("MINIMAX_API_KEY is not configured for model discovery.");
   }
@@ -453,30 +463,38 @@ export async function discoverMiniMaxModels(
 }
 
 function minimaxModelAdapter(
-  env: NodeJS.ProcessEnv = process.env,
-  fetchImpl: typeof fetch = globalThis.fetch
+  environment: NodeJS.ProcessEnv = process.env,
+  fetchImpl: typeof fetch = fetch
 ): ProviderModelDiscoveryAdapter {
   return {
     source: "MiniMax GET /v1/models",
-    discover: (signal) => discoverMiniMaxModels(env, fetchImpl, signal)
+    discover: (signal) => discoverMiniMaxModels(environment, fetchImpl, signal)
   };
 }
 
-/** A local bridge listing for provider-owned models, used by opencli. */
+/**
+A local bridge listing for provider-owned models, used by opencli.
+*/
 export interface BridgeModelListSource {
-  /** The name the provider is reported under in errors. */
+  /**
+  The name the provider is reported under in errors.
+  */
   readonly label: string;
   readonly host: string;
   readonly port: string;
-  /** A query naming the provider, for a bridge serving several. */
+  /**
+  A query naming the provider, for a bridge serving several.
+  */
   readonly query?: string;
-  /** Keep only the ids that start with this, for a bridge serving several providers. */
+  /**
+  Keep only the ids that start with this, for a bridge serving several providers.
+  */
   readonly modelPrefix?: string;
 }
 
 export async function discoverBridgeModels(
   source: BridgeModelListSource,
-  fetchImpl: typeof fetch = globalThis.fetch,
+  fetchImpl: typeof fetch = fetch,
   parentSignal?: AbortSignal
 ): Promise<readonly ProviderModelDiscoveryItem[]> {
   const timeout = AbortSignal.timeout(PROVIDER_API_DISCOVERY_TIMEOUT_MS);
@@ -521,17 +539,17 @@ export async function discoverBridgeModels(
 }
 
 /**
- * One opencli provider's models: the opencli bridge lists every site's models
- * (Gemini's read from the site itself), and each provider keeps its own.
- */
+One opencli provider's models: the opencli bridge lists every site's models
+(Gemini's read from the site itself), and each provider keeps its own.
+*/
 export function opencliModelSource(
   provider: OpencliProvider,
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): BridgeModelListSource {
   return {
     label: provider,
-    host: env.OPENCLI_PROXY_HOST?.trim() || "127.0.0.1",
-    port: env.OPENCLI_PROXY_PORT?.trim() || "4004",
+    host: environment.OPENCLI_PROXY_HOST?.trim() || "127.0.0.1",
+    port: environment.OPENCLI_PROXY_PORT?.trim() || "4004",
     query: `provider=${provider}`,
     modelPrefix: `${provider}-`
   };
@@ -539,7 +557,7 @@ export function opencliModelSource(
 
 function bridgeModelAdapter(
   source: BridgeModelListSource,
-  fetchImpl: typeof fetch = globalThis.fetch
+  fetchImpl: typeof fetch = fetch
 ): ProviderModelDiscoveryAdapter {
   return {
     source: `${source.label} bridge GET /v1/models`,
@@ -548,13 +566,13 @@ function bridgeModelAdapter(
 }
 
 /**
- * The Anthropic model list for the signed-in Claude account.
- *
- * The listing authenticates with the account's own OAuth token, so it reports
- * the models this account can run rather than the models Anthropic sells. The
- * Runtime needs that distinction: a model the account cannot run is not a
- * choice an operator may assign to a role.
- */
+The Anthropic model list for the signed-in Claude account.
+
+The listing authenticates with the account's own OAuth token, so it reports
+the models this account can run rather than the models Anthropic sells. The
+Runtime needs that distinction: a model the account cannot run is not a
+choice an operator may assign to a role.
+*/
 export function parseAnthropicModelList(
   payload: unknown
 ): readonly ProviderModelDiscoveryItem[] {
@@ -595,12 +613,12 @@ export function parseAnthropicModelList(
 }
 
 export async function discoverClaudeModels(
-  env: NodeJS.ProcessEnv = process.env,
-  fetchImpl: typeof fetch = globalThis.fetch,
+  environment: NodeJS.ProcessEnv = process.env,
+  fetchImpl: typeof fetch = fetch,
   parentSignal?: AbortSignal,
-  readToken: (env: NodeJS.ProcessEnv) => string = readClaudeOAuthToken
+  readToken: (environment_: NodeJS.ProcessEnv) => string = readClaudeOAuthToken
 ): Promise<readonly ProviderModelDiscoveryItem[]> {
-  const token = readToken(env);
+  const token = readToken(environment);
   if (!token) {
     throw new Error(
       "Claude Code OAuth token is not configured for model discovery."
@@ -638,12 +656,12 @@ export async function discoverClaudeModels(
 }
 
 function claudeModelAdapter(
-  env: NodeJS.ProcessEnv = process.env,
-  fetchImpl: typeof fetch = globalThis.fetch
+  environment: NodeJS.ProcessEnv = process.env,
+  fetchImpl: typeof fetch = fetch
 ): ProviderModelDiscoveryAdapter {
   return {
     source: "Claude account GET /v1/models",
-    discover: (signal) => discoverClaudeModels(env, fetchImpl, signal)
+    discover: (signal) => discoverClaudeModels(environment, fetchImpl, signal)
   };
 }
 
@@ -712,7 +730,7 @@ function codexRouteUsesAccountBackend(): boolean {
 }
 
 export async function discoverCodexModels(
-  fetchImpl: typeof fetch = globalThis.fetch,
+  fetchImpl: typeof fetch = fetch,
   loadAuth: typeof loadCodexAuth = loadCodexAuth,
   parentSignal?: AbortSignal
 ): Promise<readonly ProviderModelDiscoveryItem[]> {
@@ -767,7 +785,7 @@ export async function discoverCodexModels(
 }
 
 function codexModelAdapter(
-  fetchImpl: typeof fetch = globalThis.fetch
+  fetchImpl: typeof fetch = fetch
 ): ProviderModelDiscoveryAdapter {
   return {
     source: "Codex account GET /backend-api/codex/models",
@@ -885,7 +903,7 @@ export class ProviderModelDiscoveryService {
         unavailable(
           adapter.source,
           null,
-          invalidPersistedProviderModels
+          isInvalidPersistedProviderModels
             ? "The persisted model snapshot was invalid and was discarded; waiting for a fresh provider listing."
             : "Model availability has not been observed yet."
         )
@@ -951,15 +969,15 @@ export class ProviderModelDiscoveryService {
   }
 
   /**
-   * Retry soon after a listing that did not confirm a provider's models.
-   *
-   * The periodic refresh is every 15 minutes, so one failed listing -- the
-   * Runtime starting before a bridge it lists from, a provider's API blip, a
-   * browser-driven site that rendered no picker -- left that provider with no
-   * fresh models for the whole interval, and with none at all when it had
-   * never been observed. A failed or empty listing is retried at 30 s,
-   * doubling to the refresh interval, until every provider confirms.
-   */
+  Retry soon after a listing that did not confirm a provider's models.
+  
+  The periodic refresh is every 15 minutes, so one failed listing -- the
+  Runtime starting before a bridge it lists from, a provider's API blip, a
+  browser-driven site that rendered no picker -- left that provider with no
+  fresh models for the whole interval, and with none at all when it had
+  never been observed. A failed or empty listing is retried at 30 s,
+  doubling to the refresh interval, until every provider confirms.
+  */
   private scheduleRetry(unconfirmed: number): void {
     if (this.retryTimer !== null) clearTimeout(this.retryTimer);
     this.retryTimer = null;
@@ -980,10 +998,10 @@ export class ProviderModelDiscoveryService {
   }
 
   /**
-   * Re-read one provider's listing now, as an operator's provider check does,
-   * and return its discovery state afterwards; null for a provider with no
-   * listing adapter. It does not wait for, or disturb, the periodic refresh.
-   */
+  Re-read one provider's listing now, as an operator's provider check does,
+  and return its discovery state afterwards; null for a provider with no
+  listing adapter. It does not wait for, or disturb, the periodic refresh.
+  */
   async refreshProvider(
     provider: string
   ): Promise<ControlApiProviderModelDiscovery | null> {
@@ -995,7 +1013,9 @@ export class ProviderModelDiscoveryService {
     return this.states.get(provider) ?? null;
   }
 
-  /** Refresh providers; resolves to how many did not confirm their models. */
+  /**
+  Refresh providers; resolves to how many did not confirm their models.
+  */
   private async refreshProviders(
     signal: AbortSignal,
     providers: readonly string[] = this.providerIds()
@@ -1085,9 +1105,9 @@ export class ProviderModelDiscoveryService {
   }
 
   /**
-   * A listing that failed: the provider keeps its last listing as stale, or
-   * has none; a listing refused for a signed-out account is reported too.
-   */
+  A listing that failed: the provider keeps its last listing as stale, or
+  has none; a listing refused for a signed-out account is reported too.
+  */
   private recordListingFailure(
     provider: string,
     adapter: ProviderModelDiscoveryAdapter,

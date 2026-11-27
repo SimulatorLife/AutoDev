@@ -20,10 +20,10 @@ import {
 import { ROUTES } from "@simulatorlife/autodev-runtime/router/routing";
 
 test("opencli health server reports liveliness, browser errors, and discovered models without /v1/responses", async () => {
-  let browserReady = true;
+  let isBrowserReady = true;
   const health = createOpencliHealthServer({
     browserHealth: () =>
-      browserReady
+      isBrowserReady
         ? { ready: true, error: null }
         : { ready: false, error: "dedicated Chrome missing" },
     run: async ({ args }) => {
@@ -33,8 +33,8 @@ test("opencli health server reports liveliness, browser errors, and discovered m
       return [];
     }
   });
-  const server = createServer((req, res) => {
-    void health.handle(req, res);
+  const server = createServer((request, res) => {
+    void health.handle(request, res);
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -55,7 +55,7 @@ test("opencli health server reports liveliness, browser errors, and discovered m
       modelsJson.data.some((entry) => entry.id === "opencli-chatgpt-balanced")
     );
 
-    browserReady = false;
+    isBrowserReady = false;
     const liveFail = await fetch(`http://127.0.0.1:${port}/health/liveliness`);
     assert.equal(liveFail.status, 503);
 
@@ -86,8 +86,8 @@ test("opencli output parsing, conversation id extraction, and limit helpers beha
         '{"ok":false,"error":{"code":"AUTH_REQUIRED","message":"Sign in"}}',
         1
       ),
-    (err: unknown) =>
-      err instanceof OpencliCommandError && err.code === "AUTH_REQUIRED"
+    (error: unknown) =>
+      error instanceof OpencliCommandError && error.code === "AUTH_REQUIRED"
   );
   assert.deepEqual(
     replyFromRow({ response: "done", conversationId: "conv-1" }),

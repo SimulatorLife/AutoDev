@@ -1,4 +1,6 @@
-/** One Runtime-process Playtesting run owner shared by Control API routes. */
+/**
+One Runtime-process Playtesting run owner shared by Control API routes.
+*/
 import { ConfigRepository } from "@simulatorlife/autodev-data";
 import { PlaytestRepository } from "@simulatorlife/autodev-data/playtesting";
 import {
@@ -16,10 +18,10 @@ import {
 let defaultRunControl: PlaytestRunOwner | null = null;
 
 /**
- * The authenticated Control API and any in-process Runtime facade share this
- * exact manager. It owns run IDs, cancellation, worker/episode reservations,
- * approval revocation monitoring and terminal status.
- */
+The authenticated Control API and any in-process Runtime facade share this
+exact manager. It owns run IDs, cancellation, worker/episode reservations,
+approval revocation monitoring and terminal status.
+*/
 export function getDefaultPlaytestRunControl(): PlaytestRunOwner {
   if (defaultRunControl !== null) return defaultRunControl;
   const configRepository = new ConfigRepository();
@@ -46,7 +48,9 @@ export function getDefaultPlaytestRunControl(): PlaytestRunOwner {
   return defaultRunControl;
 }
 
-/** Cancel live adapter containers before the Runtime process exits. */
+/**
+Cancel live adapter containers before the Runtime process exits.
+*/
 export async function shutdownDefaultPlaytestRunControl(): Promise<void> {
   await defaultRunControl?.shutdown();
 }

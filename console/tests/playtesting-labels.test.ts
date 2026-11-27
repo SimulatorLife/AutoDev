@@ -38,12 +38,12 @@ function scope(view: "findings" | "overview" | "sessions") {
 }
 
 /**
- * One finding, as the Control API returns it.
- *
- * The finding is a claim about the game that was checked against the
- * evidence, so it carries an identity that is stable across builds and the
- * counts that say how often it has been seen.
- */
+One finding, as the Control API returns it.
+
+The finding is a claim about the game that was checked against the
+evidence, so it carries an identity that is stable across builds and the
+counts that say how often it has been seen.
+*/
 function finding(overrides: Partial<PlaytestFinding> = {}): PlaytestFinding {
   return {
     identity: {

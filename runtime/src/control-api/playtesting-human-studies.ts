@@ -1,4 +1,6 @@
-/** Authorized human-study import/withdrawal and suppression-aware aggregate reads. */
+/**
+Authorized human-study import/withdrawal and suppression-aware aggregate reads.
+*/
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import {
@@ -368,9 +370,9 @@ function workspaceQuery(
   permitted: readonly string[],
   response: ServerResponse
 ): WorkspaceQuery | null {
-  const params = new URL(request.url ?? pathname, "http://127.0.0.1")
+  const parameters = new URL(request.url ?? pathname, "http://127.0.0.1")
     .searchParams;
-  for (const key of params.keys()) {
+  for (const key of parameters.keys()) {
     if (!permitted.includes(key)) {
       sendError(
         response,
@@ -382,7 +384,7 @@ function workspaceQuery(
     }
   }
   for (const key of permitted) {
-    const values = params.getAll(key);
+    const values = parameters.getAll(key);
     if (values.length > 1) {
       sendError(
         response,
@@ -406,7 +408,7 @@ function workspaceQuery(
       return null;
     }
   }
-  const workspaceId = params.get("workspaceId") ?? "";
+  const workspaceId = parameters.get("workspaceId") ?? "";
   if (!WORKSPACE_ID_PATTERN.test(workspaceId)) {
     sendError(
       response,
@@ -416,7 +418,7 @@ function workspaceQuery(
     );
     return null;
   }
-  return { workspaceId, params };
+  return { workspaceId, params: parameters };
 }
 
 function hasControls(value: string): boolean {
@@ -526,7 +528,7 @@ function audit(
     workspaceId,
     outcome,
     changes,
-    ...(reason === undefined ? {} : { reason })
+    ...(reason !== undefined && { reason })
   });
 }
 
@@ -652,8 +654,8 @@ async function registerStudy(
   )
     return;
   try {
-    const repo = repositoryFor(options);
-    const benchmark = await repo.getLatestBenchmark(
+    const repository = repositoryFor(options);
+    const benchmark = await repository.getLatestBenchmark(
       input.workspaceId,
       input.benchmarkId
     );
@@ -666,7 +668,7 @@ async function registerStudy(
       );
       return;
     }
-    const experimentPage = await repo.listExperiments(
+    const experimentPage = await repository.listExperiments(
       { workspaceId: input.workspaceId, benchmarkId: input.benchmarkId },
       { limit: 500 }
     );
@@ -675,8 +677,8 @@ async function registerStudy(
       ...acceptedExperimentBuildIds(experimentPage.rows)
     ]);
     if (
-      !input.allowedBuilds.some(
-        (build) => build.id === benchmark.referenceBuildSha
+      input.allowedBuilds.every(
+        (build) => build.id !== benchmark.referenceBuildSha
       ) ||
       input.allowedBuilds.some((build) => !permittedBuilds.has(build.id)) ||
       (input.orderDesign === "single-build" &&
@@ -698,34 +700,28 @@ async function registerStudy(
         ({ id, version, contentHash }) => ({
           id,
           version,
-          ...(contentHash === undefined ? {} : { contentHash })
+          ...(contentHash !== undefined && { contentHash })
         })
       ),
-      ...(preferencePlan === undefined
-        ? {}
-        : {
+      ...(preferencePlan !== undefined && {
             preferencePlan: {
               ...preferencePlan,
               buildA: {
                 id: preferencePlan.buildA.id,
                 version: preferencePlan.buildA.version,
-                ...(preferencePlan.buildA.contentHash === undefined
-                  ? {}
-                  : { contentHash: preferencePlan.buildA.contentHash })
+                ...(preferencePlan.buildA.contentHash !== undefined && { contentHash: preferencePlan.buildA.contentHash })
               },
               buildB: {
                 id: preferencePlan.buildB.id,
                 version: preferencePlan.buildB.version,
-                ...(preferencePlan.buildB.contentHash === undefined
-                  ? {}
-                  : { contentHash: preferencePlan.buildB.contentHash })
+                ...(preferencePlan.buildB.contentHash !== undefined && { contentHash: preferencePlan.buildB.contentHash })
               }
             }
           }),
       approved: true,
       approvedBy: actor.actor
     };
-    const prior = await repo.getLatestHumanStudy(
+    const prior = await repository.getLatestHumanStudy(
       study.workspaceId,
       study.studyId
     );
@@ -739,7 +735,7 @@ async function registerStudy(
       return;
     }
     responsesFor(options).registerStudy(study);
-    if (!prior) await repo.insertHumanStudy(study);
+    if (!prior) await repository.insertHumanStudy(study);
     const body: ControlApiPlaytestingHumanStudyRegistrationResponse = {
       schema: "autodev-control-playtesting-human-study-registration-v1",
       workspaceId: study.workspaceId,
@@ -857,9 +853,7 @@ async function importStudyResponses(
 ): Promise<void> {
   if (!operatorRequired(actor, response)) return;
   const query = workspaceQuery(request, pathname, ["workspaceId"], response);
-  if (!query || !catalogWorkspace(query.workspaceId, options, response, true))
-    return;
-  if (!humanStudyApproval(query.workspaceId, options, response)) return;
+  if (!query || !catalogWorkspace(query.workspaceId, options, response, true) || !humanStudyApproval(query.workspaceId, options, response)) return;
   const study = await ensureStudyAvailable(
     query.workspaceId,
     studyId,
@@ -899,8 +893,8 @@ async function importStudyResponses(
           .filter((id) => id.length > 0)
       )
     ];
-    const repo = repositoryFor(options);
-    const episodes = await episodesByIds(repo, query.workspaceId, episodeIds);
+    const repository = repositoryFor(options);
+    const episodes = await episodesByIds(repository, query.workspaceId, episodeIds);
     const validators = validatorsForImport(study, options, episodes);
     const report = responseStore.importRows(
       studyId,
@@ -985,9 +979,7 @@ async function importStudyPreferenceResponses(
 ): Promise<void> {
   if (!operatorRequired(actor, response)) return;
   const query = workspaceQuery(request, pathname, ["workspaceId"], response);
-  if (!query || !catalogWorkspace(query.workspaceId, options, response, true))
-    return;
-  if (!humanStudyApproval(query.workspaceId, options, response)) return;
+  if (!query || !catalogWorkspace(query.workspaceId, options, response, true) || !humanStudyApproval(query.workspaceId, options, response)) return;
   const study = await ensureStudyAvailable(
     query.workspaceId,
     studyId,
@@ -1040,8 +1032,8 @@ async function importStudyPreferenceResponses(
           .filter((id) => id.length > 0)
       )
     ];
-    const repo = repositoryFor(options);
-    const episodes = await episodesByIds(repo, query.workspaceId, episodeIds);
+    const repository = repositoryFor(options);
+    const episodes = await episodesByIds(repository, query.workspaceId, episodeIds);
     const validators = validatorsForPreferenceImport(study, options, episodes);
     const report = responseStore.importPreferenceRows(
       studyId,
@@ -1103,9 +1095,7 @@ async function consentParticipant(
 ): Promise<void> {
   if (!operatorRequired(actor, response)) return;
   const query = workspaceQuery(request, pathname, ["workspaceId"], response);
-  if (!query || !catalogWorkspace(query.workspaceId, options, response, true))
-    return;
-  if (!humanStudyApproval(query.workspaceId, options, response)) return;
+  if (!query || !catalogWorkspace(query.workspaceId, options, response, true) || !humanStudyApproval(query.workspaceId, options, response)) return;
   const study = await ensureStudyAvailable(
     query.workspaceId,
     studyId,
@@ -1244,12 +1234,12 @@ async function preferenceSensitivityForApi(
     reasons.push("small-cell-suppressed");
   } else {
     const decisive = summary.counts.preferA + summary.counts.preferB;
-    const supportedPlan =
+    const isSupportedPlan =
       plan.interval.method === "scipy-binomial-exact" &&
       plan.interval.libraryVersion === EXPECTED_LOCK_TAG &&
       plan.interval.resamples === null &&
       plan.interval.seed === null;
-    if (!supportedPlan) {
+    if (!isSupportedPlan) {
       reasons.push("unsupported-preference-interval-plan");
     } else if (decisive > 0) {
       try {
@@ -1313,7 +1303,7 @@ async function humanValidationSummary(
   const buildSha = query.params.get("buildSha") ?? "";
   if (
     !SHA_PATTERN.test(buildSha) ||
-    !study.allowedBuilds.some((build) => build.id === buildSha)
+    study.allowedBuilds.every((build) => build.id !== buildSha)
   ) {
     sendError(
       response,
@@ -1325,15 +1315,14 @@ async function humanValidationSummary(
   }
   const a = query.params.get("aBuildSha");
   const b = query.params.get("bBuildSha");
-  let pairedArmBuildIds: { readonly a: string; readonly b: string } | undefined;
   if (
     (a === null) !== (b === null) ||
     (a !== null &&
       b !== null &&
       (!SHA_PATTERN.test(a) ||
         !SHA_PATTERN.test(b) ||
-        !study.allowedBuilds.some((build) => build.id === a) ||
-        !study.allowedBuilds.some((build) => build.id === b)))
+        study.allowedBuilds.every((build) => build.id !== a) ||
+        study.allowedBuilds.every((build) => build.id !== b)))
   ) {
     sendError(
       response,
@@ -1343,11 +1332,12 @@ async function humanValidationSummary(
     );
     return;
   }
+  let pairedArmBuildIds: { readonly a: string; readonly b: string } | undefined;
   if (a !== null && b !== null) pairedArmBuildIds = { a, b };
   try {
     const responseStore = responsesFor(options);
     const summary = responseStore.getHumanValidationSummary(studyId, buildSha, {
-      ...(pairedArmBuildIds ? { pairedArmBuildIds } : {})
+      ...(pairedArmBuildIds && { pairedArmBuildIds })
     });
     const preference = await preferenceSensitivityForApi(
       study,
@@ -1598,7 +1588,9 @@ function respondHumanError(
   );
 }
 
-/** Authorized study management and import; only suppression-aware aggregates leave Data. */
+/**
+Authorized study management and import; only suppression-aware aggregates leave Data.
+*/
 export async function handlePlaytestingHumanStudyControlApiRequest(
   request: IncomingMessage,
   response: ServerResponse,

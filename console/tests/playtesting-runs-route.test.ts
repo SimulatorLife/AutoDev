@@ -38,7 +38,7 @@ function request(assignments: readonly unknown[]): NextRequest {
 }
 
 test("same-origin route forwards the canonical 1,000-assignment batch without truncation", async () => {
-  const previousFetch = globalThis.fetch;
+  const previousFetch = fetch;
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   process.env.AUTODEV_CONTROL_API_TOKEN = "r".repeat(64);
   let forwarded: unknown = null;
@@ -102,7 +102,7 @@ test("same-origin route forwards the canonical 1,000-assignment batch without tr
 });
 
 test("same-origin route rejects assignment 1,001 before contacting Runtime", async () => {
-  const previousFetch = globalThis.fetch;
+  const previousFetch = fetch;
   let calls = 0;
   globalThis.fetch = (async () => {
     calls += 1;
@@ -127,7 +127,7 @@ test("same-origin route rejects assignment 1,001 before contacting Runtime", asy
 });
 
 test("active-runs GET reads the typed owner and rejects a non-canonical workspace", async () => {
-  const previousFetch = globalThis.fetch;
+  const previousFetch = fetch;
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   process.env.AUTODEV_CONTROL_API_TOKEN = "r".repeat(64);
   let requested = "";
@@ -197,7 +197,7 @@ test("active-runs GET reads the typed owner and rejects a non-canonical workspac
 });
 
 test("active-runs GET refuses a response whose live status is not its own batch", async () => {
-  const previousFetch = globalThis.fetch;
+  const previousFetch = fetch;
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   process.env.AUTODEV_CONTROL_API_TOKEN = "r".repeat(64);
   globalThis.fetch = (async () =>
@@ -241,7 +241,7 @@ test("active-runs GET refuses a response whose live status is not its own batch"
 });
 
 test("active-runs GET refuses duplicate assignment-to-session references", async () => {
-  const previousFetch = globalThis.fetch;
+  const previousFetch = fetch;
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   process.env.AUTODEV_CONTROL_API_TOKEN = "r".repeat(64);
   globalThis.fetch = (async () =>
@@ -288,7 +288,7 @@ test("active-runs GET refuses duplicate assignment-to-session references", async
 });
 
 test("request recovery reads the actor/workspace-scoped immutable receipt without starting another run", async () => {
-  const previousFetch = globalThis.fetch;
+  const previousFetch = fetch;
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   process.env.AUTODEV_CONTROL_API_TOKEN = "r".repeat(64);
   let requested = "";
@@ -394,7 +394,7 @@ const VALID_VISUAL_LIMITS = {
 };
 
 test("autonomous-visual launch accepts strictly valid payload and forwards to Runtime", async () => {
-  const previousFetch = globalThis.fetch;
+  const previousFetch = fetch;
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   process.env.AUTODEV_CONTROL_API_TOKEN = "r".repeat(64);
   let forwarded: unknown = null;
@@ -442,7 +442,7 @@ test("autonomous-visual launch accepts strictly valid payload and forwards to Ru
 });
 
 test("autonomous-visual launch strictly rejects invalid payloads before contacting Runtime", async () => {
-  const previousFetch = globalThis.fetch;
+  const previousFetch = fetch;
   let calls = 0;
   globalThis.fetch = (async () => {
     calls += 1;

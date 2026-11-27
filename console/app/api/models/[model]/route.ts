@@ -1,14 +1,14 @@
 /**
- * Server-only Console model enablement route.
- *
- * Receives the bounded form submission from a model toggle on a Providers
- * page, validates its same-origin browser context, and forwards a typed PATCH
- * to Runtime using the server-side Control API credential.
- *
- * Only POST is exported. The response redirects back to the Providers page
- * the toggle was rendered on, adding a could-not-be-confirmed notice when the
- * submission is invalid or Runtime rejects it.
- */
+Server-only Console model enablement route.
+
+Receives the bounded form submission from a model toggle on a Providers
+page, validates its same-origin browser context, and forwards a typed PATCH
+to Runtime using the server-side Control API credential.
+
+Only POST is exported. The response redirects back to the Providers page
+the toggle was rendered on, adding a could-not-be-confirmed notice when the
+submission is invalid or Runtime rejects it.
+*/
 
 import type { NextRequest, NextResponse } from "next/server.js";
 

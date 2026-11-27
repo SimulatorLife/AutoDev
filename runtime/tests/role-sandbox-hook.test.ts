@@ -11,11 +11,11 @@ import {
 } from "../src/hooks/role-sandbox.ts";
 
 /**
- * A `PreToolUse` payload as Codex sends it.
- *
- * Codex sends the tool name, the tool's own input, and the role the thread
- * that made the call is: the role is what the policy is read under.
- */
+A `PreToolUse` payload as Codex sends it.
+
+Codex sends the tool name, the tool's own input, and the role the thread
+that made the call is: the role is what the policy is read under.
+*/
 function payload(input: {
   readonly agentType?: string | null;
   readonly model?: string;
@@ -33,7 +33,7 @@ function payload(input: {
     tool_use_id: "call",
     transcript_path: null,
     turn_id: "turn",
-    ...(input.agentType === undefined ? {} : { agent_type: input.agentType })
+    ...(input.agentType !== undefined && { agent_type: input.agentType })
   });
 }
 
@@ -97,7 +97,9 @@ test("the root session's own turns are left to the session's sandbox", () => {
   assert.equal(outcome.denied, false);
 });
 
-/** The environment the Runtime gives a provider process it launched. */
+/**
+The environment the Runtime gives a provider process it launched.
+*/
 function runtimeEnvironment(role: string): NodeJS.ProcessEnv {
   return {
     AUTODEV_SESSION_ID: "runtime-session",
@@ -115,7 +117,7 @@ test("explicit orchestrator roles and the AutoDev root alias may not read git hi
     ["orchestrator", "claude-opus", runtimeEnvironment("orchestrator")],
     [undefined, "claude-opus", runtimeEnvironment("orchestrator")]
   ] as const) {
-    for (const cmd of [
+    for (const command of [
       "git log -p -- src/a.ts",
       "git show abc123",
       "git -C /repo blame src/a.ts",
@@ -125,14 +127,14 @@ test("explicit orchestrator roles and the AutoDev root alias may not read git hi
     ]) {
       const outcome = evaluateRoleSandboxHook(
         payload({
-          ...(agentType === undefined ? {} : { agentType }),
+          ...(agentType !== undefined && { agentType }),
           model,
           toolName: "exec_command",
-          toolInput: { cmd }
+          toolInput: { cmd: command }
         }),
         environment
       );
-      assert.equal(outcome.denied, true, `${model}: ${cmd} was allowed`);
+      assert.equal(outcome.denied, true, `${model}: ${command} was allowed`);
       assert.match(outcome.reason ?? "", /does not read git history/u);
       assert.match(outcome.reason ?? "", /delegate/u);
     }
@@ -173,7 +175,7 @@ test("children and unrelated standalone sessions may read git history", () => {
   ] as const) {
     const outcome = evaluateRoleSandboxHook(
       payload({
-        ...(agentType === undefined ? {} : { agentType }),
+        ...(agentType !== undefined && { agentType }),
         model,
         toolName: "exec_command",
         toolInput: { cmd: "git log -p -5 -- src/a.ts" }
@@ -266,12 +268,12 @@ test("a role the contract does not describe fails closed as read-only", () => {
 });
 
 /**
- * Run the hook and capture what it wrote.
- *
- * The hook writes its decision to stdout and its reason to stderr, so both
- * are captured; the status is the hook's exit code, which is what Codex reads
- * as a blocking refusal.
- */
+Run the hook and capture what it wrote.
+
+The hook writes its decision to stdout and its reason to stderr, so both
+are captured; the status is the hook's exit code, which is what Codex reads
+as a blocking refusal.
+*/
 function runHookCapturing(
   raw: string,
   codexHome?: string
@@ -279,10 +281,10 @@ function runHookCapturing(
   readonly status: number;
   readonly output: string;
 } {
-  const ownedTemp = codexHome
+  const ownedTemporary = codexHome
     ? null
     : mkdtempSync(path.join(tmpdir(), "autodev-hook-test-"));
-  const targetHome = codexHome ?? ownedTemp!;
+  const targetHome = codexHome ?? ownedTemporary!;
   const previousCodexHome = process.env.CODEX_HOME;
   process.env.CODEX_HOME = targetHome;
   const chunks: string[] = [];
@@ -303,7 +305,7 @@ function runHookCapturing(
     process.stderr.write = originalError;
     if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
     else process.env.CODEX_HOME = previousCodexHome;
-    if (ownedTemp) rmSync(ownedTemp, { recursive: true, force: true });
+    if (ownedTemporary) rmSync(ownedTemporary, { recursive: true, force: true });
   }
 }
 

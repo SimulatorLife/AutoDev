@@ -837,10 +837,10 @@ test("capabilities expose approved visual targets without claiming an uninstalle
     )
   );
   assert.ok(
-    !modes["autonomous-visual"].reasons.some(
+    modes["autonomous-visual"].reasons.every(
       (reason) =>
-        reason.code === "visual-control-timing-unsupported" ||
-        reason.code === "visual-target-setup-required"
+        reason.code !== "visual-control-timing-unsupported" &&
+        reason.code !== "visual-target-setup-required"
     ),
     "target-local limitations are not reported as workspace-wide blockers"
   );
@@ -1693,8 +1693,8 @@ test("Playtesting reads distinguish unknown workspaces, unavailable catalogs, an
 });
 
 test("default workspace-scoped Playtesting reads gate on readiness and reuse an explicit schema retry", async () => {
-  const originalFetch = globalThis.fetch;
-  let failSchemaInitialization = true;
+  const originalFetch = fetch;
+  let isFailSchemaInitialization = true;
   const clickHouseCalls: { query: string; workspaceId: string | null }[] = [];
   globalThis.fetch = (async (input: string | URL | Request) => {
     const url = new URL(String(input));
@@ -1704,7 +1704,7 @@ test("default workspace-scoped Playtesting reads gate on readiness and reuse an 
       workspaceId: url.searchParams.get("param_workspaceId")
     });
     if (
-      failSchemaInitialization &&
+      isFailSchemaInitialization &&
       /^(?:CREATE TABLE|ALTER TABLE)/iu.test(query.trim())
     ) {
       return new Response("ClickHouse unavailable", { status: 503 });
@@ -1787,7 +1787,7 @@ test("default workspace-scoped Playtesting reads gate on readiness and reuse an 
       "a viewer resource read must not restart failed schema DDL"
     );
 
-    failSchemaInitialization = false;
+    isFailSchemaInitialization = false;
     const retry = await callReadiness("POST", "operator");
     assert.equal(retry.status, 200);
     assert.equal((retry.body as { status: string }).status, "initializing");
@@ -2235,7 +2235,7 @@ test("Control API authenticates and routes workspace-scoped Playtesting reads", 
     }),
     "utf8"
   );
-  const envBefore = {
+  const environmentBefore = {
     token: process.env.AUTODEV_CONTROL_API_TOKEN,
     viewers: process.env.AUTODEV_CONTROL_VIEWERS,
     operators: process.env.AUTODEV_CONTROL_OPERATORS
@@ -2386,15 +2386,15 @@ test("Control API authenticates and routes workspace-scoped Playtesting reads", 
     );
     assert.equal(unauthorized.statusCode, 403);
   } finally {
-    if (envBefore.token === undefined)
+    if (environmentBefore.token === undefined)
       delete process.env.AUTODEV_CONTROL_API_TOKEN;
-    else process.env.AUTODEV_CONTROL_API_TOKEN = envBefore.token;
-    if (envBefore.viewers === undefined)
+    else process.env.AUTODEV_CONTROL_API_TOKEN = environmentBefore.token;
+    if (environmentBefore.viewers === undefined)
       delete process.env.AUTODEV_CONTROL_VIEWERS;
-    else process.env.AUTODEV_CONTROL_VIEWERS = envBefore.viewers;
-    if (envBefore.operators === undefined)
+    else process.env.AUTODEV_CONTROL_VIEWERS = environmentBefore.viewers;
+    if (environmentBefore.operators === undefined)
       delete process.env.AUTODEV_CONTROL_OPERATORS;
-    else process.env.AUTODEV_CONTROL_OPERATORS = envBefore.operators;
+    else process.env.AUTODEV_CONTROL_OPERATORS = environmentBefore.operators;
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -2415,7 +2415,7 @@ test("Playtesting run credentials cannot authorize cross-session analysis", asyn
     }),
     "utf8"
   );
-  const envKeys = [
+  const environmentKeys = [
     "AUTODEV_CONTROL_API_TOKEN",
     "AUTODEV_CONTROL_API_VIEWERS",
     "AUTODEV_CONTROL_API_OPERATORS",
@@ -2427,7 +2427,7 @@ test("Playtesting run credentials cannot authorize cross-session analysis", asyn
     "AUTODEV_OPENLIT_SECRET_FILE",
     "AUTODEV_PLAYTEST_ANALYST_CONTROL_API_TOKEN"
   ] as const;
-  const previous = new Map(envKeys.map((key) => [key, process.env[key]]));
+  const previous = new Map(environmentKeys.map((key) => [key, process.env[key]]));
   try {
     process.env.AUTODEV_CONTROL_API_TOKEN = "console-control-secret";
     process.env.AUTODEV_CONTROL_VIEWERS = "";
@@ -2710,7 +2710,7 @@ test("Playtesting run credentials cannot authorize cross-session analysis", asyn
       "autodev_control_api_unauthorized"
     );
   } finally {
-    for (const key of envKeys) {
+    for (const key of environmentKeys) {
       const value = previous.get(key);
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
@@ -2813,7 +2813,7 @@ test("authorized human-study API registers consent, imports idempotently, suppre
     rootDirectory: path.join(root, "restricted")
   });
   const token = "human-api-token-0123456789";
-  const priorEnv = {
+  const priorEnvironment = {
     token: process.env.AUTODEV_CONTROL_API_TOKEN,
     viewers: process.env.AUTODEV_CONTROL_VIEWERS,
     operators: process.env.AUTODEV_CONTROL_OPERATORS
@@ -2844,16 +2844,16 @@ test("authorized human-study API registers consent, imports idempotently, suppre
     role: "viewer" | "operator",
     body?: unknown
   ) => {
-    const req = runRequest(method, url, body);
-    req.headers = {
-      ...req.headers,
+    const request_ = runRequest(method, url, body);
+    request_.headers = {
+      ...request_.headers,
       authorization: `Bearer ${token}`,
       "x-autodev-actor":
         role === "operator" ? "human-study-operator" : "human-study-viewer"
     };
     const response = responseRecorder();
     await handleControlApiRequest(
-      req,
+      request_,
       response as unknown as ServerResponse,
       new URL(url, "http://127.0.0.1").pathname,
       baseOptions
@@ -3273,15 +3273,15 @@ test("authorized human-study API registers consent, imports idempotently, suppre
       ["stale", "stale", "stale", "withdrawn"]
     );
   } finally {
-    if (priorEnv.token === undefined)
+    if (priorEnvironment.token === undefined)
       delete process.env.AUTODEV_CONTROL_API_TOKEN;
-    else process.env.AUTODEV_CONTROL_API_TOKEN = priorEnv.token;
-    if (priorEnv.viewers === undefined)
+    else process.env.AUTODEV_CONTROL_API_TOKEN = priorEnvironment.token;
+    if (priorEnvironment.viewers === undefined)
       delete process.env.AUTODEV_CONTROL_VIEWERS;
-    else process.env.AUTODEV_CONTROL_VIEWERS = priorEnv.viewers;
-    if (priorEnv.operators === undefined)
+    else process.env.AUTODEV_CONTROL_VIEWERS = priorEnvironment.viewers;
+    if (priorEnvironment.operators === undefined)
       delete process.env.AUTODEV_CONTROL_OPERATORS;
-    else process.env.AUTODEV_CONTROL_OPERATORS = priorEnv.operators;
+    else process.env.AUTODEV_CONTROL_OPERATORS = priorEnvironment.operators;
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -3456,7 +3456,7 @@ test("cross-session analysis delegates to the owner and bounds the selection", a
     `/control/playtesting/analyses?workspaceId=${encodeURIComponent(WORKSPACE)}`,
     operator,
     options,
-    { episodeIds: Array.from({ length: 17 }, (_, i) => `episode-${i}`) }
+    { episodeIds: Array.from({ length: 17 }, (_, index) => `episode-${index}`) }
   );
   assert.equal(oversized.status, 400);
 

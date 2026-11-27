@@ -546,7 +546,9 @@ test("an exhausted agy quota scope changes only the route named by its known lim
   assert.doesNotMatch(rowFor(markup, "antigravity-argon"), /Quota exhausted/u);
 });
 
-/** The table row whose provider-id link is `id`. */
+/**
+The table row whose provider-id link is `id`.
+*/
 function rowFor(markup: string, id: string): string {
   const rows = markup.match(/<tr[\s\S]*?<\/tr>/gu) ?? [];
   const row = rows.find((candidate) => candidate.includes(`>${id}<`));

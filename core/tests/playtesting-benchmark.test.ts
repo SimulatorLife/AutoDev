@@ -248,7 +248,7 @@ test("benchmark rejects cohortWeights whose keys are empty or whose weights are 
     () =>
       assertPlaytestBenchmark({
         ...benchmark,
-        cohortWeights: { easy: Number.NaN, hard: 1 }
+        cohortWeights: { easy: NaN, hard: 1 }
       }),
     /finite number/u
   );

@@ -4,57 +4,61 @@ import { ACTION_LINK_CLASS } from "../ui/text-classes.ts";
 import { NavigationLink } from "./NavigationLink.ts";
 
 /**
- * A single breadcrumb trail item. Items with an `href` render as Next.js
- * navigation links; items without an `href` render as non-link spans. The last
- * entry in the trail is treated as the current page and additionally
- * receives `aria-current="page"` so assistive tech identifies it as the
- * present location without offering a stale self-link.
- */
+A single breadcrumb trail item. Items with an `href` render as Next.js
+navigation links; items without an `href` render as non-link spans. The last
+entry in the trail is treated as the current page and additionally
+receives `aria-current="page"` so assistive tech identifies it as the
+present location without offering a stale self-link.
+*/
 export interface BreadcrumbItem {
-  /** Visible text for the item. */
+  /**
+  Visible text for the item.
+  */
   readonly label: string;
   /**
-   * Destination URL for ancestor items. Omit to render the item as a
-   * non-link span (for example, on the current page or when an ancestor
-   * has no canonical destination yet). The component never falls back to a
-   * placeholder `href="#"`.
-   */
+  Destination URL for ancestor items. Omit to render the item as a
+  non-link span (for example, on the current page or when an ancestor
+  has no canonical destination yet). The component never falls back to a
+  placeholder `href="#"`.
+  */
   readonly href?: string;
 }
 
 export interface BreadcrumbsProps {
   /**
-   * Ordered list of ancestor items followed by the current page item. The
-   * last entry is treated as the current page; only its `label` is required.
-   */
+  Ordered list of ancestor items followed by the current page item. The
+  last entry is treated as the current page; only its `label` is required.
+  */
   readonly items: readonly [BreadcrumbItem, ...BreadcrumbItem[]];
-  /** Accessible label override for the surrounding `<nav>`. Defaults to "Breadcrumb". */
+  /**
+  Accessible label override for the surrounding `<nav>`. Defaults to "Breadcrumb".
+  */
   readonly ariaLabel?: string | undefined;
 }
 
 /**
- * Both item shapes truncate. A breadcrumb label is a canonical identifier and
- * can be one long unbreakable token, so the trail has to ellipsize inside its
- * container rather than push the page sideways; `title` keeps the full label
- * reachable on hover and the text stays selectable for copy.
- */
+Both item shapes truncate. A breadcrumb label is a canonical identifier and
+can be one long unbreakable token, so the trail has to ellipsize inside its
+container rather than push the page sideways; `title` keeps the full label
+reachable on hover and the text stays selectable for copy.
+*/
 const ITEM_LINK_CLASS = `min-w-0 truncate rounded-sm ${ACTION_LINK_CLASS}`;
 const ITEM_PLAIN_CLASS = "min-w-0 truncate rounded-sm text-fg font-medium";
 const SEPARATOR_CLASS = "mx-2 select-none text-fg-muted";
 
 /**
- * Server-renderable breadcrumbs landmark.
- *
- * Renders a single `<nav aria-label="Breadcrumb"><ol>...</ol></nav>` with
- * ancestor items that carry an `href` rendered as Next.js links, which retain
- * native anchor semantics while routing within the Console without a document
- * reload. Any
- * ancestor without an `href` rendered as a non-link span. The final item is
- * always the current page, rendered as a non-link `<span aria-current="page">`.
- * The trail starts with the supplied ancestors and always ends on the current
- * page; no synthetic "Home" entry is added and no placeholder `href="#"` is
- * ever emitted.
- */
+Server-renderable breadcrumbs landmark.
+
+Renders a single `<nav aria-label="Breadcrumb"><ol>...</ol></nav>` with
+ancestor items that carry an `href` rendered as Next.js links, which retain
+native anchor semantics while routing within the Console without a document
+reload. Any
+ancestor without an `href` rendered as a non-link span. The final item is
+always the current page, rendered as a non-link `<span aria-current="page">`.
+The trail starts with the supplied ancestors and always ends on the current
+page; no synthetic "Home" entry is added and no placeholder `href="#"` is
+ever emitted.
+*/
 export function Breadcrumbs({
   items,
   ariaLabel

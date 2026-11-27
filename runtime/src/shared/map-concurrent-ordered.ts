@@ -1,11 +1,11 @@
 /**
- * Map a list in bounded, ordered batches.
- *
- * Each batch runs concurrently; results are returned in input order and the
- * next batch does not start until every task in the current batch settles. If a
- * task fails, peers in its batch are allowed to settle before the earliest
- * in-order failure is rethrown, so callers never leave detached I/O behind.
- */
+Map a list in bounded, ordered batches.
+
+Each batch runs concurrently; results are returned in input order and the
+next batch does not start until every task in the current batch settles. If a
+task fails, peers in its batch are allowed to settle before the earliest
+in-order failure is rethrown, so callers never leave detached I/O behind.
+*/
 export async function mapConcurrentOrdered<T, R>(
   items: readonly T[],
   concurrency: number,

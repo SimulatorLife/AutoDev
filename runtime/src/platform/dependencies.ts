@@ -32,11 +32,11 @@ export interface DependencyOptions {
 
 export interface DependencyDeps {
   readonly commandPath: (command: string) => string | null;
-  readonly capture: (command: string, args: readonly string[]) => string | null;
+  readonly capture: (command: string, arguments_: readonly string[]) => string | null;
   readonly run: (
     command: string,
-    args: readonly string[],
-    env?: NodeJS.ProcessEnv
+    arguments_: readonly string[],
+    environment?: NodeJS.ProcessEnv
   ) => number;
   readonly fileExists: (filePath: string) => boolean;
   readonly platform: NodeJS.Platform;
@@ -46,12 +46,12 @@ const DEFAULT_COCOINDEX_PACKAGE = "cocoindex-code[full]==0.2.41";
 const DEFAULT_CODEGRAPHCONTEXT_PACKAGE = "codegraphcontext==0.6.13";
 const DEFAULT_PYTHON_LANGUAGE_SERVER_PACKAGE = "python-lsp-server==1.15.0";
 
-function defaultDeps(): DependencyDeps {
+function defaultDependencies(): DependencyDeps {
   return {
     commandPath: (command) => resolveCommandOnPath(command),
-    capture: (command, args) => {
+    capture: (command, arguments_) => {
       try {
-        return execFileSync(command, [...args], {
+        return execFileSync(command, [...arguments_], {
           encoding: "utf8",
           stdio: ["ignore", "pipe", "ignore"]
         }).trim();
@@ -59,9 +59,9 @@ function defaultDeps(): DependencyDeps {
         return null;
       }
     },
-    run: (command, args, env) =>
-      spawnSync(command, [...args], {
-        env: { ...process.env, ...env },
+    run: (command, arguments_, environment) =>
+      spawnSync(command, [...arguments_], {
+        env: { ...process.env, ...environment },
         stdio: "inherit"
       }).status ?? 1,
     fileExists: (filePath) => {
@@ -77,17 +77,17 @@ function defaultDeps(): DependencyDeps {
 }
 
 export function resolveDependencyOptions(
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): DependencyOptions {
   return {
     cocoindexPackage: DEFAULT_COCOINDEX_PACKAGE,
     codegraphcontextPackage: DEFAULT_CODEGRAPHCONTEXT_PACKAGE,
     pythonLanguageServerPackage: DEFAULT_PYTHON_LANGUAGE_SERVER_PACKAGE,
-    skipCocoIndex: env.AUTODEV_SKIP_COCOINDEX_INSTALL === "1",
-    skipCodeGraphContext: env.AUTODEV_SKIP_CODEGRAPHCONTEXT_INSTALL === "1",
-    skipLanguageServer: env.AUTODEV_SKIP_LSP_INSTALL === "1",
-    codegraphcontextBin: env.AUTODEV_CODEGRAPHCONTEXT_BIN,
-    skipPipx: env.AUTODEV_SKIP_PIPX_INSTALL === "1"
+    skipCocoIndex: environment.AUTODEV_SKIP_COCOINDEX_INSTALL === "1",
+    skipCodeGraphContext: environment.AUTODEV_SKIP_CODEGRAPHCONTEXT_INSTALL === "1",
+    skipLanguageServer: environment.AUTODEV_SKIP_LSP_INSTALL === "1",
+    codegraphcontextBin: environment.AUTODEV_CODEGRAPHCONTEXT_BIN,
+    skipPipx: environment.AUTODEV_SKIP_PIPX_INSTALL === "1"
   };
 }
 
@@ -95,27 +95,29 @@ function fail(message: string): never {
   throw new Error(message);
 }
 
-/** Use the native Homebrew architecture even when AutoDev runs under Rosetta. */
+/**
+Use the native Homebrew architecture even when AutoDev runs under Rosetta.
+*/
 export function homebrewInvocation(
   brew: string,
-  args: readonly string[],
-  deps: Pick<DependencyDeps, "platform" | "capture"> = defaultDeps()
+  arguments_: readonly string[],
+  dependencies: Pick<DependencyDeps, "platform" | "capture"> = defaultDependencies()
 ): { command: string; args: string[] } {
-  const translated =
-    deps.platform === "darwin" &&
-    deps.capture("sysctl", ["-n", "sysctl.proc_translated"]) === "1" &&
-    deps.capture("sysctl", ["-n", "hw.optional.arm64"]) === "1";
-  if (translated) {
+  const isTranslated =
+    dependencies.platform === "darwin" &&
+    dependencies.capture("sysctl", ["-n", "sysctl.proc_translated"]) === "1" &&
+    dependencies.capture("sysctl", ["-n", "hw.optional.arm64"]) === "1";
+  if (isTranslated) {
     writeErrorLine(
       "running Homebrew natively (this process is translated under Rosetta)"
     );
-    return { command: "arch", args: ["-arm64", "brew", ...args] };
+    return { command: "arch", args: ["-arm64", "brew", ...arguments_] };
   }
-  return { command: brew, args: [...args] };
+  return { command: brew, args: [...arguments_] };
 }
 
-function ensurePipx(options: DependencyOptions, deps: DependencyDeps): string {
-  const existing = deps.commandPath("pipx");
+function ensurePipx(options: DependencyOptions, dependencies: DependencyDeps): string {
+  const existing = dependencies.commandPath("pipx");
   if (existing) {
     writeErrorLine(`ok pipx (${existing})`);
     return existing;
@@ -123,74 +125,74 @@ function ensurePipx(options: DependencyOptions, deps: DependencyDeps): string {
   if (options.skipPipx)
     fail("pipx installation is disabled (AUTODEV_SKIP_PIPX_INSTALL=1)");
 
-  const brew = deps.commandPath("brew");
+  const brew = dependencies.commandPath("brew");
   let userPipx: string | null = null;
   if (brew) {
     const { command, args } = homebrewInvocation(
       brew,
       ["install", "pipx"],
-      deps
+      dependencies
     );
     writeErrorLine("installing pipx with Homebrew");
-    deps.run(command, args);
+    dependencies.run(command, args);
   } else {
-    const python = deps.commandPath("python3");
+    const python = dependencies.commandPath("python3");
     if (!python)
       fail("cannot install pipx automatically: python3 is unavailable");
     writeErrorLine("installing pipx with pip --user");
-    if (deps.run(python, ["-m", "pip", "install", "--user", "pipx"]) !== 0) {
+    if (dependencies.run(python, ["-m", "pip", "install", "--user", "pipx"]) !== 0) {
       fail(
         "could not install pipx with pip --user; the Python environment may be externally managed (PEP 668)"
       );
     }
-    const userBase = deps.capture(python, ["-m", "site", "--user-base"]);
+    const userBase = dependencies.capture(python, ["-m", "site", "--user-base"]);
     userPipx = userBase ? path.join(userBase, "bin", "pipx") : null;
   }
 
   const refreshed =
-    deps.commandPath("pipx") ??
-    (userPipx && deps.fileExists(userPipx) ? userPipx : null) ??
+    dependencies.commandPath("pipx") ??
+    (userPipx && dependencies.fileExists(userPipx) ? userPipx : null) ??
     ["/opt/homebrew/bin/pipx", "/usr/local/bin/pipx"].find((filePath) =>
-      deps.fileExists(filePath)
+      dependencies.fileExists(filePath)
     );
   if (!refreshed) fail("pipx installation did not put pipx on PATH");
-  deps.run(refreshed, ["ensurepath"]);
+  dependencies.run(refreshed, ["ensurepath"]);
   writeErrorLine(`ok pipx installed (${refreshed})`);
   return refreshed;
 }
 
-function nativeBuildEnvironment(deps: DependencyDeps): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {};
-  if (!process.env.SDKROOT && deps.platform === "darwin") {
-    const sdk = deps.capture("xcrun", ["--show-sdk-path"]);
+function nativeBuildEnvironment(dependencies: DependencyDeps): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {};
+  if (!process.env.SDKROOT && dependencies.platform === "darwin") {
+    const sdk = dependencies.capture("xcrun", ["--show-sdk-path"]);
     if (sdk && existsSync(path.join(sdk, "usr", "include"))) {
       writeErrorLine(`using macOS SDK at ${sdk} for native dependency builds`);
-      env.SDKROOT = sdk;
+      environment.SDKROOT = sdk;
     }
   }
   if (
     !process.env.CC &&
-    deps.platform === "darwin" &&
-    deps.fileExists("/usr/bin/clang")
+    dependencies.platform === "darwin" &&
+    dependencies.fileExists("/usr/bin/clang")
   ) {
-    const clangOnPath = deps.commandPath("clang");
+    const clangOnPath = dependencies.commandPath("clang");
     const clangOnPathVersion = clangOnPath
-      ? (deps.capture(clangOnPath, ["--version"]) ?? "")
+      ? (dependencies.capture(clangOnPath, ["--version"]) ?? "")
       : "";
     if (!clangOnPathVersion.includes("Apple clang")) {
       writeErrorLine(
         "using /usr/bin/clang for native builds (the clang on PATH is not Apple clang)"
       );
-      env.CC = "/usr/bin/clang";
-      env.CXX = "/usr/bin/clang++";
+      environment.CC = "/usr/bin/clang";
+      environment.CXX = "/usr/bin/clang++";
     }
   }
-  return env;
+  return environment;
 }
 
 export function installCocoIndex(
   options = resolveDependencyOptions(),
-  deps = defaultDeps()
+  dependencies = defaultDependencies()
 ): number {
   if (options.skipCocoIndex) {
     writeErrorLine(
@@ -198,25 +200,25 @@ export function installCocoIndex(
     );
     return 0;
   }
-  const existing = deps.commandPath("ccc");
+  const existing = dependencies.commandPath("ccc");
   if (existing) {
     writeErrorLine(`ok CocoIndex Code executable (${existing})`);
     return 0;
   }
-  const pipx = ensurePipx(options, deps);
+  const pipx = ensurePipx(options, dependencies);
   writeErrorLine(
     `installing CocoIndex Code with pipx (${options.cocoindexPackage})`
   );
-  return deps.run(
+  return dependencies.run(
     pipx,
     ["install", options.cocoindexPackage],
-    nativeBuildEnvironment(deps)
+    nativeBuildEnvironment(dependencies)
   );
 }
 
 export function installCodeGraphContext(
   options = resolveDependencyOptions(),
-  deps = defaultDeps()
+  dependencies = defaultDependencies()
 ): number {
   if (options.skipCodeGraphContext) {
     writeErrorLine(
@@ -226,7 +228,7 @@ export function installCodeGraphContext(
   }
   const configured = options.codegraphcontextBin;
   if (configured) {
-    if (deps.fileExists(configured)) {
+    if (dependencies.fileExists(configured)) {
       writeErrorLine(`ok CodeGraphContext executable (${configured})`);
       return 0;
     }
@@ -234,25 +236,25 @@ export function installCodeGraphContext(
       `CodeGraphContext executable is missing or not executable at AUTODEV_CODEGRAPHCONTEXT_BIN (${configured})`
     );
   }
-  const existing = deps.commandPath("codegraphcontext");
+  const existing = dependencies.commandPath("codegraphcontext");
   if (existing) {
     writeErrorLine(`ok CodeGraphContext executable (${existing})`);
     return 0;
   }
-  const pipx = ensurePipx(options, deps);
+  const pipx = ensurePipx(options, dependencies);
   writeErrorLine(
     `installing CodeGraphContext with pipx (${options.codegraphcontextPackage})`
   );
-  return deps.run(
+  return dependencies.run(
     pipx,
     ["install", options.codegraphcontextPackage],
-    nativeBuildEnvironment(deps)
+    nativeBuildEnvironment(dependencies)
   );
 }
 
 export function installPythonLanguageServer(
   options = resolveDependencyOptions(),
-  deps = defaultDeps()
+  dependencies = defaultDependencies()
 ): number {
   if (options.skipLanguageServer) {
     writeErrorLine(
@@ -260,21 +262,21 @@ export function installPythonLanguageServer(
     );
     return 0;
   }
-  const existing = deps.commandPath("pylsp");
+  const existing = dependencies.commandPath("pylsp");
   if (existing) {
     writeErrorLine(`ok Python language server (${existing})`);
     return 0;
   }
-  const pipx = ensurePipx(options, deps);
+  const pipx = ensurePipx(options, dependencies);
   writeErrorLine(
     `installing Python language server with pipx (${options.pythonLanguageServerPackage})`
   );
-  return deps.run(pipx, ["install", options.pythonLanguageServerPackage]);
+  return dependencies.run(pipx, ["install", options.pythonLanguageServerPackage]);
 }
 
 export function checkCocoIndex(
   options = resolveDependencyOptions(),
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): number {
   if (options.skipCocoIndex) {
     writeLine(
@@ -286,7 +288,7 @@ export function checkCocoIndex(
   // has to run the tool. pipx installs into `~/.local/bin`, which a shell
   // profile puts on PATH and a bare process does not, so a PATH-only lookup
   // reported an installed tool as missing.
-  const existing = resolveCocoIndexBinary(env);
+  const existing = resolveCocoIndexBinary(environment);
   if (existing) {
     writeLine(`ok CocoIndex Code executable (${existing})`);
     return 0;
@@ -299,8 +301,8 @@ export function checkCocoIndex(
 
 export function checkCodeGraphContext(
   options = resolveDependencyOptions(),
-  deps = defaultDeps(),
-  env: NodeJS.ProcessEnv = process.env
+  dependencies = defaultDependencies(),
+  environment: NodeJS.ProcessEnv = process.env
 ): number {
   if (options.skipCodeGraphContext) {
     writeLine(
@@ -310,7 +312,7 @@ export function checkCodeGraphContext(
   }
   const configured = options.codegraphcontextBin;
   if (configured) {
-    if (deps.fileExists(configured)) {
+    if (dependencies.fileExists(configured)) {
       writeLine(`ok CodeGraphContext executable (${configured})`);
       return 0;
     }
@@ -325,7 +327,7 @@ export function checkCodeGraphContext(
   // reported an installed tool as missing -- and then the graph database
   // check beside it answered, which is how a working dependency was reported
   // as missing while the thing that depends on it worked.
-  const existing = resolveCodeGraphContextBinary(env);
+  const existing = resolveCodeGraphContextBinary(environment);
   if (existing) {
     writeLine(`ok CodeGraphContext executable (${existing})`);
     return 0;
@@ -338,7 +340,7 @@ export function checkCodeGraphContext(
 
 export function checkPythonLanguageServer(
   options = resolveDependencyOptions(),
-  deps = defaultDeps()
+  dependencies = defaultDependencies()
 ): number {
   if (options.skipLanguageServer) {
     writeLine(
@@ -346,7 +348,7 @@ export function checkPythonLanguageServer(
     );
     return 0;
   }
-  const existing = deps.commandPath("pylsp");
+  const existing = dependencies.commandPath("pylsp");
   if (existing) {
     writeLine(`ok Python language server (${existing})`);
     return 0;

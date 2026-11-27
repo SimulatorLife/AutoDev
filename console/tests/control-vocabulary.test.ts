@@ -20,9 +20,9 @@ import {
 } from "../src/components/ui/field-classes.ts";
 
 /**
- * Every feature source file, so a rule about feature views is checked against
- * all of them rather than against the ones somebody remembered.
- */
+Every feature source file, so a rule about feature views is checked against
+all of them rather than against the ones somebody remembered.
+*/
 function featureSourceFiles(
   directory = fileURLToPath(new URL("../src/features/", import.meta.url))
 ): string[] {
@@ -39,37 +39,37 @@ function featureSourceFiles(
 }
 
 /**
- * The Console's control vocabulary.
- *
- * The Console fixed its buttons once -- "the cursor is the primary signal that a
- * thing is clickable" -- and left every other control spelling its own answer.
- * Every select in the product rendered with the default arrow while carrying
- * the Console's own drawn chevron and a border that reads as a target, so the
- * pointer contradicted the chrome on the page where an operator chooses a role
- * priority, a model, a workspace or a date range.
- *
- * The five checkboxes disagreed about everything: three sizes, two chromes, two
- * accents -- one of them `accent-error` on a box that was confirming rather
- * than destroying -- and not one of them showed the pointer. Two adjacent
- * checkboxes on different pages looked like two different products.
- *
- * Six buttons in the playtesting strand wore the *input* chrome, which reserves
- * 32px of right padding for a select chevron they never drew, so they were
- * neither a button nor an input. A control's chrome has to say what the control
- * does.
- *
- * The properties pinned here are the properties, not the class names: a select
- * shows the pointer, a text field shows the caret, a checkbox is one size with
- * one accent, and no button wears a form's chrome.
- */
+The Console's control vocabulary.
+
+The Console fixed its buttons once -- "the cursor is the primary signal that a
+thing is clickable" -- and left every other control spelling its own answer.
+Every select in the product rendered with the default arrow while carrying
+the Console's own drawn chevron and a border that reads as a target, so the
+pointer contradicted the chrome on the page where an operator chooses a role
+priority, a model, a workspace or a date range.
+
+The five checkboxes disagreed about everything: three sizes, two chromes, two
+accents -- one of them `accent-error` on a box that was confirming rather
+than destroying -- and not one of them showed the pointer. Two adjacent
+checkboxes on different pages looked like two different products.
+
+Six buttons in the playtesting strand wore the *input* chrome, which reserves
+32px of right padding for a select chevron they never drew, so they were
+neither a button nor an input. A control's chrome has to say what the control
+does.
+
+The properties pinned here are the properties, not the class names: a select
+shows the pointer, a text field shows the caret, a checkbox is one size with
+one accent, and no button wears a form's chrome.
+*/
 
 /**
- * The shared chrome is chrome, not a cursor.
- *
- * One shared string can only ever spell one cursor, and spelling it for the
- * most common case gave the other two the wrong one. The chrome therefore
- * carries none of them, and each control role names its own.
- */
+The shared chrome is chrome, not a cursor.
+
+One shared string can only ever spell one cursor, and spelling it for the
+most common case gave the other two the wrong one. The chrome therefore
+carries none of them, and each control role names its own.
+*/
 test("the shared control chrome carries no cursor of its own", () => {
   assert.doesNotMatch(
     FIELD_CONTROL_CLASS,
@@ -329,21 +329,21 @@ test("a button does not wear the form input chrome", () => {
 });
 
 /**
- * The quiet button, and the one focus ring.
- *
- * The quiet chrome was spelled out seven times across the playtesting strand
- * before it became a member of the button family, and the copies had drifted:
- * two carried a hover surface, one carried a hover that named a token the
- * theme has never had -- so its hover never happened -- and the rest had no
- * hover at all, which is why a quiet button in one panel answered the pointer
- * and the same button in another panel did not.
- *
- * The focus ring is the other half of the same rule. The product has one
- * canonical focus ring, in `app/globals.css`, and a feature view that declares
- * a focus treatment of its own has replaced it: `focus:ring-1 focus:ring-accent`
- * on a text field is a second ring in a different colour, and `focus:outline-none`
- * suppresses the canonical one before it does.
- */
+The quiet button, and the one focus ring.
+
+The quiet chrome was spelled out seven times across the playtesting strand
+before it became a member of the button family, and the copies had drifted:
+two carried a hover surface, one carried a hover that named a token the
+theme has never had -- so its hover never happened -- and the rest had no
+hover at all, which is why a quiet button in one panel answered the pointer
+and the same button in another panel did not.
+
+The focus ring is the other half of the same rule. The product has one
+canonical focus ring, in `app/globals.css`, and a feature view that declares
+a focus treatment of its own has replaced it: `focus:ring-1 focus:ring-accent`
+on a text field is a second ring in a different colour, and `focus:outline-none`
+suppresses the canonical one before it does.
+*/
 test("a quiet button wears the shared chrome", () => {
   assert.match(
     QUIET_BUTTON_CLASS,

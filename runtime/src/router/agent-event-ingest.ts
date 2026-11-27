@@ -44,18 +44,18 @@ const INGESTED_AGENT_EVENTS = Object.freeze(
 );
 
 /**
- * The lifecycle facts a bridge may report: only what the router cannot see.
- *
- * The router settles every request itself (`endRequest`), from the response it
- * relays: whether it ended in a tool call, needs input, failed, or left live
- * children. A bridge's own `tool_wait`/`user_wait`/`finished`/`failed` for the
- * same request only repeat that -- late, over a separate channel, and about
- * the request rather than the agent -- so a per-response `finished` arriving
- * after the router had put the agent in `tool_wait` ended the agent between
- * two of its tool calls. What a bridge alone knows is its own in-CLI
- * delegation: `subagent_wait` while bridge-native children run, and `resumed`
- * once they report back. Heartbeats keep a long request visibly alive.
- */
+The lifecycle facts a bridge may report: only what the router cannot see.
+
+The router settles every request itself (`endRequest`), from the response it
+relays: whether it ended in a tool call, needs input, failed, or left live
+children. A bridge's own `tool_wait`/`user_wait`/`finished`/`failed` for the
+same request only repeat that -- late, over a separate channel, and about
+the request rather than the agent -- so a per-response `finished` arriving
+after the router had put the agent in `tool_wait` ended the agent between
+two of its tool calls. What a bridge alone knows is its own in-CLI
+delegation: `subagent_wait` while bridge-native children run, and `resumed`
+once they report back. Heartbeats keep a long request visibly alive.
+*/
 const REPORTABLE_AGENT_ACTIVITY_STATES = Object.freeze(
   new Set(["subagent_wait", "resumed", "heartbeat"])
 );
@@ -138,10 +138,10 @@ function resolveIngestContext(requestId: string): BridgeRequestContext | null {
 }
 
 /**
- * Best-effort session-id fallback for /v1/agent-events posts that arrive
- * before the router has had a chance to register the parent request.
- * Returns null when no workspace metadata can be recovered.
- */
+Best-effort session-id fallback for /v1/agent-events posts that arrive
+before the router has had a chance to register the parent request.
+Returns null when no workspace metadata can be recovered.
+*/
 function sessionFallbackContext(
   sessionKey: string
 ): BridgeRequestContext | null {
@@ -156,7 +156,7 @@ function sessionFallbackContext(
 }
 
 function applyAgentActivityEvent(
-  deps: AgentEventIngestDeps,
+  dependencies: AgentEventIngestDeps,
   event: Record<string, unknown>,
   context: BridgeRequestContext,
   counters: AgentEventCounters
@@ -166,7 +166,7 @@ function applyAgentActivityEvent(
     counters.rejected += 1;
     return;
   }
-  noteBridgeAgentActivity(deps, state, context);
+  noteBridgeAgentActivity(dependencies, state, context);
   counters.accepted += 1;
 }
 
@@ -307,7 +307,7 @@ function applyMcpExposedEvent(
 }
 
 function applyAgentEvent(
-  deps: AgentEventIngestDeps,
+  dependencies: AgentEventIngestDeps,
   event: Record<string, unknown>,
   context: BridgeRequestContext,
   requestId: string,
@@ -321,11 +321,11 @@ function applyAgentEvent(
         : recordBridgeSkillFailed({ event, context });
     if (accepted) {
       counters.accepted += 1;
-      recordAgentLiveFeedEvent(deps, event, context, requestId);
+      recordAgentLiveFeedEvent(dependencies, event, context, requestId);
     }
     return;
   }
-  recordAgentLiveFeedEvent(deps, event, context, requestId);
+  recordAgentLiveFeedEvent(dependencies, event, context, requestId);
   if (type === "subagent_tools_unavailable") {
     recordSpawnFailure({
       requestId,
@@ -342,7 +342,7 @@ function applyAgentEvent(
     type === "tool_unavailable"
   ) {
     recordBridgeToolObservation({ event, context });
-    touchAgentActivity(deps, context);
+    touchAgentActivity(dependencies, context);
     return;
   }
   if (type === "skill_exposed") {
@@ -354,12 +354,12 @@ function applyAgentEvent(
     return;
   }
   if (isHeartbeatAgentEvent(event)) {
-    touchAgentActivity(deps, context);
+    touchAgentActivity(dependencies, context);
     counters.accepted += 1;
     return;
   }
   if (type === "activity") {
-    applyAgentActivityEvent(deps, event, context, counters);
+    applyAgentActivityEvent(dependencies, event, context, counters);
     return;
   }
   if (type === "subagent_result") {
@@ -378,7 +378,7 @@ type AgentEventCounters = {
 };
 
 function ingestAgentEvents(
-  deps: AgentEventIngestDeps,
+  dependencies: AgentEventIngestDeps,
   payload: Record<string, unknown>
 ): AgentEventCounters & { reason: string | null } {
   const requestId =
@@ -415,22 +415,26 @@ function ingestAgentEvents(
       counters.rejected += 1;
       continue;
     }
-    applyAgentEvent(deps, event, context, requestId, counters);
+    applyAgentEvent(dependencies, event, context, requestId, counters);
   }
   return { ...counters, reason: null };
 }
 
-/** What the ingest needs from the router that owns the live agent state. */
+/**
+What the ingest needs from the router that owns the live agent state.
+*/
 export interface AgentEventIngestDeps {
   readonly agentActivity: AgentActivityTracker;
   readonly liveFeedEvents: LiveFeedRecorder;
 }
 
-/** The ingest of bridge-reported agent events, bound to the router's state. */
-export function createAgentEventIngest(deps: AgentEventIngestDeps): (
+/**
+The ingest of bridge-reported agent events, bound to the router's state.
+*/
+export function createAgentEventIngest(dependencies: AgentEventIngestDeps): (
   payload: Record<string, unknown>
 ) => AgentEventCounters & {
   reason: string | null;
 } {
-  return (payload) => ingestAgentEvents(deps, payload);
+  return (payload) => ingestAgentEvents(dependencies, payload);
 }

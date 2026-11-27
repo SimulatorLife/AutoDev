@@ -1,11 +1,11 @@
 /**
- * Game-neutral trace-window selection, budget enforcement, and evidence-
- * citation mechanics shared by every analyst evidence packet contract
- * (confirmatory adapter packets and discovery visual packets). This module
- * understands only trace steps, selection windows, and supplied/omitted
- * artifact bookkeeping; packet-kind-specific fields (rubric/metrics/
- * cross-session context) stay owned by their respective packet modules.
- */
+Game-neutral trace-window selection, budget enforcement, and evidence-
+citation mechanics shared by every analyst evidence packet contract
+(confirmatory adapter packets and discovery visual packets). This module
+understands only trace steps, selection windows, and supplied/omitted
+artifact bookkeeping; packet-kind-specific fields (rubric/metrics/
+cross-session context) stay owned by their respective packet modules.
+*/
 import { isCount, isRecord } from "../shared/object-guards.ts";
 import { SHA256_PATTERN } from "../shared/sha256.ts";
 import {
@@ -46,7 +46,9 @@ const TRACE_STEP_KEYS = new Set([
   "frameRefs"
 ]);
 
-/** Core-owned packet ID syntax shared by every packet, receipt and review. */
+/**
+Core-owned packet ID syntax shared by every packet, receipt and review.
+*/
 export function isPlaytestEvidencePacketId(value: unknown): value is string {
   return (
     typeof value === "string" && PLAYTEST_EVIDENCE_PACKET_ID_PATTERN.test(value)
@@ -206,11 +208,11 @@ export function rangeAround(
 }
 
 /**
- * Generic decision/card-play events and checked-in lifecycle transitions
- * repeat actions/state changes already carried by trace steps. Keep those
- * lines sampleable; outcome events and other game-specific events remain
- * packet anchors because they carry evidence not represented by the action.
- */
+Generic decision/card-play events and checked-in lifecycle transitions
+repeat actions/state changes already carried by trace steps. Keep those
+lines sampleable; outcome events and other game-specific events remain
+packet anchors because they carry evidence not represented by the action.
+*/
 export function hasMandatoryEventEvidence(
   entry: PlaytestEvidenceTraceStep
 ): boolean {
@@ -300,9 +302,9 @@ export function initiallySelectedRanges(
 }
 
 /**
- * The steps of one range that the current selection does not cover, grouped
- * into contiguous ranges.
- */
+The steps of one range that the current selection does not cover, grouped
+into contiguous ranges.
+*/
 function uncoveredRanges(
   range: SelectionRange,
   selected: readonly SelectionRange[]
@@ -413,7 +415,9 @@ export function suppliedArtifactsFor(input: {
   });
 }
 
-/** Conservative UTF-8 byte length of any canonical Playtest JSON value. */
+/**
+Conservative UTF-8 byte length of any canonical Playtest JSON value.
+*/
 export function packetContentBytes(value: object): number {
   return new TextEncoder().encode(canonicalPlaytestJson(value)).byteLength;
 }
@@ -424,7 +428,9 @@ export interface EvidenceWindowLimits {
   readonly radius: number;
 }
 
-/** Shared bound/default resolution for every packet builder's selection knobs. */
+/**
+Shared bound/default resolution for every packet builder's selection knobs.
+*/
 export function resolveEvidenceWindowLimits(input: {
   readonly maxWindows?: number;
   readonly maxSelectedSteps?: number;
@@ -448,11 +454,11 @@ export function resolveEvidenceWindowLimits(input: {
 }
 
 /**
- * Shared window-selection/budget loop: builds the smallest packet value that
- * fits the byte/token budget by shrinking non-mandatory ordinary-sample
- * windows first. Mandatory event-bearing and terminal evidence is never
- * dropped; if it alone exceeds the budget, this throws.
- */
+Shared window-selection/budget loop: builds the smallest packet value that
+fits the byte/token budget by shrinking non-mandatory ordinary-sample
+windows first. Mandatory event-bearing and terminal evidence is never
+dropped; if it alone exceeds the budget, this throws.
+*/
 export function buildBoundedEvidenceWindows<TPacket extends object>(input: {
   readonly traceSteps: readonly PlaytestEvidenceTraceStep[];
   readonly limits: EvidenceWindowLimits;
@@ -538,16 +544,18 @@ export function assertUniqueSelectedEventIds(
   }
 }
 
-/** Structural view shared by every packet kind that supports evidence citation. */
+/**
+Structural view shared by every packet kind that supports evidence citation.
+*/
 export interface PlaytestEvidencePacketLocatorView {
   readonly episodeId: string;
   readonly traceArtifactId: string;
   /**
-   * The selected windows, reduced to what a citation needs: the step
-   * ordinal, the events it recorded and the frames it captured. A packet
-   * that carries its step evidence once may leave the observation itself out
-   * of the window.
-   */
+  The selected windows, reduced to what a citation needs: the step
+  ordinal, the events it recorded and the frames it captured. A packet
+  that carries its step evidence once may leave the observation itself out
+  of the window.
+  */
   readonly selectedWindows: readonly {
     readonly steps: readonly {
       readonly step: number;
@@ -616,7 +624,7 @@ function assertEpisodeLocatorWithinPacket(
       ? (packet.crossSessionContext.sessions ?? [])
       : [];
   if (
-    !siblingEpisodes.some((episode) => episode.episodeId === locator.id) ||
+    siblingEpisodes.every((episode) => episode.episodeId !== locator.id) ||
     locator.step !== undefined ||
     locator.revision !== undefined ||
     locator.frameIndex !== undefined ||
@@ -680,7 +688,9 @@ function assertFrameLocatorWithinPacket(
   }
 }
 
-/** Keep analyst citations within the exact packet delivered for this review. */
+/**
+Keep analyst citations within the exact packet delivered for this review.
+*/
 export function assertPlaytestEvidenceLocatorsWithinPacket(
   values: readonly PlaytestEvidenceLocator[],
   packet: PlaytestEvidencePacketLocatorView
@@ -713,7 +723,9 @@ export function assertPlaytestEvidenceLocatorsWithinPacket(
   }
 }
 
-/** Structural view used by supplied/omitted artifact provenance checks. */
+/**
+Structural view used by supplied/omitted artifact provenance checks.
+*/
 export interface PlaytestEvidencePacketArtifactView {
   readonly traceArtifactId: string;
   readonly selectedWindows: readonly PlaytestEvidenceWindow[];
@@ -772,7 +784,7 @@ export function assertPacketArtifactProvenance(
   if (
     traceCount !== 1 ||
     frameIds.size !== expectedFrames.size ||
-    [...expectedFrames].some((frameId) => !frameIds.has(frameId))
+    !expectedFrames.isSubsetOf(frameIds)
   ) {
     throw new TypeError(
       "Evidence packet does not bind every supplied trace and frame."
@@ -780,7 +792,9 @@ export function assertPacketArtifactProvenance(
   }
 }
 
-/** Structural view used by the omitted-artifact provenance check. */
+/**
+Structural view used by the omitted-artifact provenance check.
+*/
 export interface PlaytestEvidencePacketOmittedArtifactView {
   readonly suppliedArtifacts: readonly PlaytestEvidenceSuppliedArtifact[];
   readonly omittedArtifacts: readonly PlaytestEvidenceOmittedArtifact[];

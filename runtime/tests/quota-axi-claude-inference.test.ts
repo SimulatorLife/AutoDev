@@ -1,15 +1,15 @@
 /**
- * The patched quota-axi reads Claude's quota through Claude Code inference when
- * Anthropic's usage endpoint answers the bridge's inference-only env token with
- * a 429.
- *
- * The endpoint refuses that token either with a 403 scope denial or with a 429
- * it never lifts. Unpatched quota-axi took the inference reading only for the
- * 403, so the Console showed "Quota rate limited" for Claude indefinitely
- * (`patches/quota-axi@0.1.69.patch`). The test runs the real quota-axi binary
- * against a stubbed usage endpoint and a fake `claude` that prints the debug
- * response block quota-axi parses; nothing reaches a vendor or the Keychain.
- */
+The patched quota-axi reads Claude's quota through Claude Code inference when
+Anthropic's usage endpoint answers the bridge's inference-only env token with
+a 429.
+
+The endpoint refuses that token either with a 403 scope denial or with a 429
+it never lifts. Unpatched quota-axi took the inference reading only for the
+403, so the Console showed "Quota rate limited" for Claude indefinitely
+(`patches/quota-axi@0.1.69.patch`). The test runs the real quota-axi binary
+against a stubbed usage endpoint and a fake `claude` that prints the debug
+response block quota-axi parses; nothing reaches a vendor or the Keychain.
+*/
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import {
@@ -39,7 +39,9 @@ const quotaAxi = path.join(
 const FIVE_HOUR_RESET_S = Math.floor(Date.now() / 1000) + 3600;
 const SEVEN_DAY_RESET_S = Math.floor(Date.now() / 1000) + 3 * 86_400;
 
-/** Every vendor request fails; the usage endpoint answers 429 as observed. */
+/**
+Every vendor request fails; the usage endpoint answers 429 as observed.
+*/
 const FETCH_STUB = `
 globalThis.fetch = async (input) => {
   const url = String(input instanceof Request ? input.url : input);
@@ -50,7 +52,9 @@ globalThis.fetch = async (input) => {
 };
 `;
 
-/** Claude Code's API debug block, as `--debug api` writes it. */
+/**
+Claude Code's API debug block, as `--debug api` writes it.
+*/
 const FAKE_CLAUDE = `#!/bin/sh
 cat >&2 <<EOF
 [log_test] response start {
@@ -66,7 +70,7 @@ EOF
 echo OK
 `;
 
-async function readClaude(args: readonly string[]) {
+async function readClaude(arguments_: readonly string[]) {
   const root = mkdtempSync(path.join(tmpdir(), "quota-axi-claude-"));
   try {
     const bin = path.join(root, "bin");
@@ -78,7 +82,7 @@ async function readClaude(args: readonly string[]) {
     writeFileSync(path.join(bin, "security"), "#!/bin/sh\nexit 44\n");
     chmodSync(path.join(bin, "claude"), 0o755);
     chmodSync(path.join(bin, "security"), 0o755);
-    const env: NodeJS.ProcessEnv = {
+    const environment: NodeJS.ProcessEnv = {
       HOME: root,
       PATH: [bin, path.dirname(process.execPath), "/usr/bin", "/bin"].join(
         path.delimiter
@@ -88,8 +92,8 @@ async function readClaude(args: readonly string[]) {
     };
     const { stdout } = await execFileAsync(
       quotaAxi,
-      ["--json", "--no-credential-refresh", "--provider=claude", ...args],
-      { env, encoding: "utf8" }
+      ["--json", "--no-credential-refresh", "--provider=claude", ...arguments_],
+      { env: environment, encoding: "utf8" }
     ).catch((error: { code?: number; stdout?: string }) => {
       // quota-axi exits 1 when every provider failed, still printing its report.
       if (error.code !== 1 || error.stdout === undefined) throw error;

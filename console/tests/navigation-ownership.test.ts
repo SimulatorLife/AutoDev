@@ -5,15 +5,15 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 /**
- * The modules that own the Console's navigation.
- *
- * The whole-page owner asks for the destination's page and navigates in the
- * same turn, so the router holds that page by the time the navigation is
- * dispatched. The form owner is the boundary between that owner and Next.js's
- * router, and the link asks the owner on the operator's click. Everything else
- * in the Console reaches its destinations through `NavigationLink`, which asks
- * the owner.
- */
+The modules that own the Console's navigation.
+
+The whole-page owner asks for the destination's page and navigates in the
+same turn, so the router holds that page by the time the navigation is
+dispatched. The form owner is the boundary between that owner and Next.js's
+router, and the link asks the owner on the operator's click. Everything else
+in the Console reaches its destinations through `NavigationLink`, which asks
+the owner.
+*/
 const NAVIGATION_OWNERS = new Set([
   "src/components/navigation/whole-page-navigation.ts",
   "src/components/navigation/FormNavigationOwner.ts",
@@ -21,15 +21,17 @@ const NAVIGATION_OWNERS = new Set([
 ]);
 
 /**
- * The paths another session owns.
- *
- * The Playtesting workspace is being migrated to the same owner by another
- * session. The exclusion is written down rather than hidden, so that the
- * guard's claim stays exact about what it covers and what it does not.
- */
+The paths another session owns.
+
+The Playtesting workspace is being migrated to the same owner by another
+session. The exclusion is written down rather than hidden, so that the
+guard's claim stays exact about what it covers and what it does not.
+*/
 const OTHER_SESSION_PATHS = ["src/features/playtesting/", "app/playtesting/"];
 
-/** The source roots the Console's own code lives in. */
+/**
+The source roots the Console's own code lives in.
+*/
 const SOURCE_ROOTS = ["src", "app"];
 
 function consoleSources(directory: string): string[] {
@@ -60,7 +62,7 @@ test("only the navigation owner drives the router", () => {
   const offenders: string[] = [];
   for (const root of SOURCE_ROOTS) {
     for (const path of consoleSources(join(consoleRoot, root))) {
-      const relativePath = relative(consoleRoot, path).split("\\").join("/");
+      const relativePath = relative(consoleRoot, path).replaceAll('\\', '/');
       if (
         OTHER_SESSION_PATHS.some((excluded) =>
           relativePath.startsWith(excluded)
@@ -69,12 +71,11 @@ test("only the navigation owner drives the router", () => {
         continue;
       }
       const source = readFileSync(path, "utf8");
-      const drivesRouter =
+      const isDrivesRouter =
         /useRouter\(\)|router\.(?:push|replace|refresh|prefetch)\(/u.test(
           source
         );
-      if (!drivesRouter) continue;
-      if (NAVIGATION_OWNERS.has(relativePath)) continue;
+      if (!isDrivesRouter || NAVIGATION_OWNERS.has(relativePath)) continue;
       offenders.push(relativePath);
     }
   }

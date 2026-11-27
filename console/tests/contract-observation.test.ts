@@ -9,19 +9,19 @@ import { AgentsView } from "../src/features/agents/AgentsView.ts";
 import { SkillsView } from "../src/features/skills/SkillsView.ts";
 
 /**
- * The execution contract's read decides what the agents and skills pages may
- * claim.
- *
- * Both catalogues draw role assignments from the contract, and the accessor
- * that reads the contract falls back to an empty contract when the read fails.
- * An empty contract and a contract nobody read look the same to a caller that
- * only sees the roles -- and they are not the same claim. The first says the
- * contract declares no role; the second says nobody read it.
- *
- * So the Runtime publishes whether the contract was read, the Console refuses a
- * payload that does not, and the pages say which read did not happen instead of
- * counting an empty catalogue.
- */
+The execution contract's read decides what the agents and skills pages may
+claim.
+
+Both catalogues draw role assignments from the contract, and the accessor
+that reads the contract falls back to an empty contract when the read fails.
+An empty contract and a contract nobody read look the same to a caller that
+only sees the roles -- and they are not the same claim. The first says the
+contract declares no role; the second says nobody read it.
+
+So the Runtime publishes whether the contract was read, the Console refuses a
+payload that does not, and the pages say which read did not happen instead of
+counting an empty catalogue.
+*/
 
 const SKILL: ScopedSkillDefinition = {
   name: "code-review",

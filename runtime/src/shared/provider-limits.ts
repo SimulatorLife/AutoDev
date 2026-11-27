@@ -64,7 +64,9 @@ export const INCOMPLETE_REASON_CODEX_TOOLS_UNREACHABLE =
 
 // Re-export the canonical Core hard limit classes
 
-/** A bounded, provider-supplied failure classification safe to return downstream. */
+/**
+A bounded, provider-supplied failure classification safe to return downstream.
+*/
 export interface ProviderFailureDiagnostic {
   code: string;
   phase?: string;
@@ -116,12 +118,12 @@ const RESETS_AT_PATTERN =
   /reset(?:s|ting)?(?: at| on| in)?[:\s]+([0-9TZ:.\-+ ]{4,40})/i;
 
 /**
- * Best-effort classification of a CLI failure message. Always reports
- * `inferred`: this reads free text, so a bare keyword without a stated future
- * reset stays on the transient ladder rather than locking a provider out. When
- * the message states a future reset window (absolute or relative), the router
- * holds a hard-limit class as a `hard` cooldown up to `hardCooldownMaxMs`.
- */
+Best-effort classification of a CLI failure message. Always reports
+`inferred`: this reads free text, so a bare keyword without a stated future
+reset stays on the transient ladder rather than locking a provider out. When
+the message states a future reset window (absolute or relative), the router
+holds a hard-limit class as a `hard` cooldown up to `hardCooldownMaxMs`.
+*/
 export function classifyCliLimit(
   message: unknown,
   exitCode: number | null = null,
@@ -131,7 +133,7 @@ export function classifyCliLimit(
   if (!text.trim()) return null;
   const match = CLI_LIMIT_PATTERNS.find(({ pattern }) => pattern.test(text));
   if (!match) return null;
-  const absoluteMatch = text.match(RESETS_AT_PATTERN);
+  const absoluteMatch = RESETS_AT_PATTERN.exec(text);
   const absoluteResetsAt = absoluteMatch?.[1]
     ? normalizeResetsAt(absoluteMatch[1].trim())
     : null;
@@ -146,7 +148,9 @@ export function classifyCliLimit(
   };
 }
 
-/** Response headers describing a limit. Absent fields are omitted, never sent empty. */
+/**
+Response headers describing a limit. Absent fields are omitted, never sent empty.
+*/
 export function limitResponseHeaders(
   limit: ProviderLimit | null | undefined
 ): Record<string, string> {
@@ -164,14 +168,14 @@ export function limitResponseHeaders(
 }
 
 /**
- * The inverse of `limitResponseHeaders`, for the router reading a failed
- * upstream response. Returns null when the provider said nothing structural, so
- * the caller can tell "no limit reported" from "limit reported without a reset".
- *
- * Accepts any header bag -- a `Headers`, a plain record, or a substitute
- * implementation of either shape -- because what reaches this point came off a
- * pluggable fetch and was never more specific than `unknown`.
- */
+The inverse of `limitResponseHeaders`, for the router reading a failed
+upstream response. Returns null when the provider said nothing structural, so
+the caller can tell "no limit reported" from "limit reported without a reset".
+
+Accepts any header bag -- a `Headers`, a plain record, or a substitute
+implementation of either shape -- because what reaches this point came off a
+pluggable fetch and was never more specific than `unknown`.
+*/
 export function readLimitHeaders(headers: unknown): ProviderLimit | null {
   const limitClass = headerValue(headers, LIMIT_HEADER_CLASS);
   if (!limitClass) return null;
@@ -189,7 +193,9 @@ export function readLimitHeaders(headers: unknown): ProviderLimit | null {
   };
 }
 
-/** Seconds until the limit's stated reset, or null when it stated none. */
+/**
+Seconds until the limit's stated reset, or null when it stated none.
+*/
 export function retryAfterSecondsFromLimit(
   limit: ProviderLimit | null | undefined,
   now = Date.now()
@@ -201,10 +207,10 @@ export function retryAfterSecondsFromLimit(
 }
 
 /**
- * The wire shape of a limit, used identically for
- * `incomplete_details.provider_limit` and for `error.limit` on a non-streamed
- * failure, so the router reads one shape wherever it finds it.
- */
+The wire shape of a limit, used identically for
+`incomplete_details.provider_limit` and for `error.limit` on a non-streamed
+failure, so the router reads one shape wherever it finds it.
+*/
 export function limitPayload(
   limit: ProviderLimit | null | undefined
 ): Record<string, string | null> | null {
@@ -229,7 +235,9 @@ export function incompleteDetails(
   return details;
 }
 
-/** Why the turn stopped, phrased to follow "The provider". */
+/**
+Why the turn stopped, phrased to follow "The provider".
+*/
 function truncationCause(limit: ProviderLimit | null, reason: string): string {
   if (limit?.limitClass === "capacity") return "was over capacity";
   if (reason === INCOMPLETE_REASON_TIMEOUT) return "timed out";
@@ -244,11 +252,11 @@ function truncationCause(limit: ProviderLimit | null, reason: string): string {
 }
 
 /**
- * The sentence appended to a truncated turn's text. The consumer is a model
- * deciding what to do next, so it has to say plainly that the work is partial
- * and that nothing after it ran -- a partial answer read as a complete one is
- * worse than a failure.
- */
+The sentence appended to a truncated turn's text. The consumer is a model
+deciding what to do next, so it has to say plainly that the work is partial
+and that nothing after it ran -- a partial answer read as a complete one is
+worse than a failure.
+*/
 export function truncationNotice({
   provider = null,
   limit = null,
@@ -270,14 +278,14 @@ export function truncationNotice({
 }
 
 /**
- * The ordered terminal events that close a turn cut short, mirroring the
- * success path each bridge already emits so a consumer needs no special case
- * beyond reading `status`. `response` is the caller's own payload object (their
- * usage and metadata shape differs); status and incomplete_details are set here.
- *
- * Returns [eventName, payload] pairs for the caller to emit in order, followed
- * by the caller writing `data: [DONE]`.
- */
+The ordered terminal events that close a turn cut short, mirroring the
+success path each bridge already emits so a consumer needs no special case
+beyond reading `status`. `response` is the caller's own payload object (their
+usage and metadata shape differs); status and incomplete_details are set here.
+
+Returns [eventName, payload] pairs for the caller to emit in order, followed
+by the caller writing `data: [DONE]`.
+*/
 export function terminalIncompleteEvents({
   responseId,
   itemId,
@@ -353,7 +361,9 @@ export function terminalIncompleteEvents({
 type TerminalEvent = [string, Record<string, unknown>];
 const OUTPUT_ITEM_DONE = "response.output_item.done";
 
-/** The events that close the reasoning item at output index 0. */
+/**
+The events that close the reasoning item at output index 0.
+*/
 function reasoningDoneEvents(
   item: { id: string },
   reasoningText: string
@@ -383,7 +393,9 @@ function reasoningDoneEvents(
   ];
 }
 
-/** The events that close the assistant message item at output index 1. */
+/**
+The events that close the assistant message item at output index 1.
+*/
 function messageDoneEvents(
   item: { id: string },
   finalText: string

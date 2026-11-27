@@ -32,15 +32,15 @@ const ERROR_CODE_ATTRIBUTE = "data-error-code";
 const ATTEMPTS_PANEL = '[data-feature="usage-recent-attempts"]';
 
 /**
- * The value of one stat card, found by the card's own title.
- *
- * A stat card is a `<dl>` whose term is the title and whose description is
- * the value, so the title is the only thing that names which fact the value
- * is: the same word appears as a section heading and as a value elsewhere on
- * this page. The term is not a sibling of the value -- the card puts the
- * title in its own row, above the value -- so the value is reached through
- * the card rather than through the term.
- */
+The value of one stat card, found by the card's own title.
+
+A stat card is a `<dl>` whose term is the title and whose description is
+the value, so the title is the only thing that names which fact the value
+is: the same word appears as a section heading and as a value elsewhere on
+this page. The term is not a sibling of the value -- the card puts the
+title in its own row, above the value -- so the value is reached through
+the card rather than through the term.
+*/
 function statValue(page: Page, title: string): Locator {
   return page
     .locator(`dt:text-is("${title}")`)
@@ -48,12 +48,12 @@ function statValue(page: Page, title: string): Locator {
 }
 
 /**
- * One stat card whose signal the source did not report.
- *
- * The absence of a measurement is not a measurement, so the card has to say
- * which of the two it is rather than showing a number the source never
- * produced.
- */
+One stat card whose signal the source did not report.
+
+The absence of a measurement is not a measurement, so the card has to say
+which of the two it is rather than showing a number the source never
+produced.
+*/
 async function assertStatIsUnobserved(
   page: Page,
   title: string
@@ -64,12 +64,12 @@ async function assertStatIsUnobserved(
 }
 
 /**
- * One filter dimension the source did not report.
- *
- * The control has to say that the dimension was not observed and cannot be
- * used, rather than offering an empty list that reads as a filter which found
- * nothing.
- */
+One filter dimension the source did not report.
+
+The control has to say that the dimension was not observed and cannot be
+used, rather than offering an empty list that reads as a filter which found
+nothing.
+*/
 async function assertDimensionIsUnobserved(
   page: Page,
   dimension: string
@@ -81,12 +81,12 @@ async function assertDimensionIsUnobserved(
 }
 
 /**
- * Whether the Runtime's live projection answers.
- *
- * The live scope has to be able to show what a failed read looks like, and the
- * only way to reach that state is for the Runtime to stop answering. The
- * fixture is told directly, because the Console has no handle on it.
- */
+Whether the Runtime's live projection answers.
+
+The live scope has to be able to show what a failed read looks like, and the
+only way to reach that state is for the Runtime to stop answering. The
+fixture is told directly, because the Console has no handle on it.
+*/
 async function setRuntimeAvailable(
   request: APIRequestContext,
   available: boolean

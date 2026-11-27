@@ -2,9 +2,9 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { Readable } from "node:stream";
 
 /**
- * The slice of `ServerResponse` a route actually touches, captured so a test can
- * assert on status, headers and body without binding a socket.
- */
+The slice of `ServerResponse` a route actually touches, captured so a test can
+assert on status, headers and body without binding a socket.
+*/
 export interface RecordedResponse extends ServerResponse {
   readonly statusCode: number;
   readonly headers: Record<string, string | number>;
@@ -12,11 +12,11 @@ export interface RecordedResponse extends ServerResponse {
 }
 
 /**
- * A minimal writable stand-in for `ServerResponse`. Only the four members the
- * JSON sender uses are implemented; anything else a route starts calling shows
- * up here as a missing method, which is the point — a silent no-op would let a
- * broken route pass.
- */
+A minimal writable stand-in for `ServerResponse`. Only the four members the
+JSON sender uses are implemented; anything else a route starts calling shows
+up here as a missing method, which is the point — a silent no-op would let a
+broken route pass.
+*/
 class ResponseRecorder {
   statusCode = 0;
   headers: Record<string, string | number> = {};
@@ -56,7 +56,9 @@ export function responseRecorder(): RecordedResponse {
   return new ResponseRecorder() as unknown as RecordedResponse;
 }
 
-/** The parsed JSON body, or `null` for an empty body or a non-JSON one. */
+/**
+The parsed JSON body, or `null` for an empty body or a non-JSON one.
+*/
 export function responseBody(
   response: RecordedResponse
 ): Record<string, unknown> | null {
@@ -75,9 +77,9 @@ function isRecordedResponse(
 }
 
 /**
- * Extract the machine-readable `error.code` field from either a recorded
- * response or an already-parsed JSON response body.
- */
+Extract the machine-readable `error.code` field from either a recorded
+response or an already-parsed JSON response body.
+*/
 export function errorCode(
   responseOrBody: RecordedResponse | Record<string, unknown> | null
 ): unknown {
@@ -90,7 +92,9 @@ export function errorCode(
     : undefined;
 }
 
-/** A request the route can read without a socket; a `body` is sent as JSON. */
+/**
+A request the route can read without a socket; a `body` is sent as JSON.
+*/
 export function makeRequest(
   method: string,
   url: string,

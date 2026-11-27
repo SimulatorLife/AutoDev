@@ -5,10 +5,10 @@ import path from "node:path";
 import { tokenize } from "../agents/read-only-policy.ts";
 import { resolveRuntimeSourceRoot } from "./runtime-source-root.ts";
 
-export function resolveSkillRoots(configuredRepoRoot?: string): string[] {
+export function resolveSkillRoots(configuredRepositoryRoot?: string): string[] {
   const home = homedir();
-  const repoRoot =
-    configuredRepoRoot?.trim() ||
+  const repositoryRoot =
+    configuredRepositoryRoot?.trim() ||
     resolveRuntimeSourceRoot(
       import.meta.dirname,
       process.env.AUTODEV_REPO_ROOT
@@ -19,8 +19,8 @@ export function resolveSkillRoots(configuredRepoRoot?: string): string[] {
     path.join(home, ".codex", "skills"),
     path.join(home, "AutoDev", ".agents", "skills"),
     path.join(home, "AutoDev", ".rulesync", "skills"),
-    path.join(repoRoot, ".agents", "skills"),
-    path.join(repoRoot, ".rulesync", "skills")
+    path.join(repositoryRoot, ".agents", "skills"),
+    path.join(repositoryRoot, ".rulesync", "skills")
   ].filter((p) => existsSync(p));
 }
 
@@ -103,9 +103,11 @@ export function normaliseSkillReadPath(
   );
 }
 
-/** Reuses the canonical shell tokenizer owned by `read-only-policy.ts`. */
-export function tokenizeShellWords(cmd: string): string[] {
-  return tokenize(cmd);
+/**
+Reuses the canonical shell tokenizer owned by `read-only-policy.ts`.
+*/
+export function tokenizeShellWords(command: string): string[] {
+  return tokenize(command);
 }
 
 export function isPathLikeToken(token: unknown): string | null {
@@ -130,24 +132,26 @@ export function flattenCommandValue(raw: unknown): string {
 }
 
 export function matchExecReadPaths(raw: unknown): string[] {
-  const cmd = flattenCommandValue(raw);
-  if (!cmd || cmd.length > 4096) return [];
-  const tokens = tokenizeShellWords(cmd);
+  const command = flattenCommandValue(raw);
+  if (!command || command.length > 4096) return [];
+  const tokens = tokenizeShellWords(command);
   const candidates: string[] = [];
-  for (let i = 0; i < tokens.length; i++) {
-    const word = tokens[i] ?? "";
-    const isSedPrint = word === "sed" && tokens[i + 1] === "-n";
+  for (let index = 0; index < tokens.length; index++) {
+    const word = tokens[index] ?? "";
+    const isSedPrint = word === "sed" && tokens[index + 1] === "-n";
     if (!SKILL_READ_COMMANDS.has(word) && !isSedPrint) continue;
-    candidates.push(...pathArguments(tokens, isSedPrint ? i + 2 : i + 1));
+    candidates.push(...pathArguments(tokens, index + (isSedPrint ? 2 : 1)));
   }
   return candidates;
 }
 
-/** The path-like arguments of a command, up to the next shell control token. */
+/**
+The path-like arguments of a command, up to the next shell control token.
+*/
 function pathArguments(tokens: readonly string[], start: number): string[] {
   const paths: string[] = [];
-  for (let j = start; j < tokens.length && j < start + 8; j++) {
-    const next = tokens[j] ?? "";
+  for (let index = start; index < tokens.length && index < start + 8; index++) {
+    const next = tokens[index] ?? "";
     if (SHELL_CONTROL_TOKENS.has(next)) break;
     const candidate = isPathLikeToken(next);
     if (candidate) paths.push(candidate);
@@ -188,8 +192,8 @@ export function matchSkillReadTarget(
   const roots = customRoots ?? resolveSkillRoots();
   for (const rootRaw of roots) {
     const root = rootRaw.replaceAll(/[\\/]+/g, path.sep);
-    const rootWithSep = root.endsWith(path.sep) ? root : root + path.sep;
-    if (!normalised.startsWith(rootWithSep)) continue;
+    const rootWithSeparator = root.endsWith(path.sep) ? root : root + path.sep;
+    if (!normalised.startsWith(rootWithSeparator)) continue;
     const relative = normalised
       .slice(root.length)
       .replace(LEADING_SEPARATORS, "");
@@ -207,14 +211,16 @@ export function matchSkillReadPath(
   return matchSkillReadTarget(filePath, customRoots)?.skill ?? null;
 }
 
-/** The path a direct file-read tool names in its arguments, if it names one. */
-function directReadPath(args: Record<string, unknown>): string | null {
+/**
+The path a direct file-read tool names in its arguments, if it names one.
+*/
+function directReadPath(arguments_: Record<string, unknown>): string | null {
   for (const key of DIRECT_PATH_KEYS) {
-    const value = args[key];
+    const value = arguments_[key];
     if (typeof value === "string" && value.trim()) return value.trim();
   }
   for (const key of ARRAY_PATH_KEYS) {
-    const value = args[key];
+    const value = arguments_[key];
     if (!Array.isArray(value)) continue;
     const first = value.find(
       (entry) => typeof entry === "string" && entry.trim()
@@ -224,15 +230,17 @@ function directReadPath(args: Record<string, unknown>): string | null {
   return null;
 }
 
-/** The path a shell command reads, preferring one that is a skill's SKILL.md. */
+/**
+The path a shell command reads, preferring one that is a skill's SKILL.md.
+*/
 function execReadPath(
-  argsObject: unknown,
-  args: Record<string, unknown>
+  argumentsObject: unknown,
+  arguments_: Record<string, unknown>
 ): string | null {
   const command =
-    typeof argsObject === "string"
-      ? argsObject
-      : (args.command ?? args.cmd ?? argsObject);
+    typeof argumentsObject === "string"
+      ? argumentsObject
+      : (arguments_.command ?? arguments_.cmd ?? argumentsObject);
   const candidates = matchExecReadPaths(command);
   const skillRead = candidates.find((candidate) =>
     matchSkillReadPath(normaliseSkillReadPath(candidate))
@@ -244,7 +252,7 @@ const FILESYSTEM_TOOL_PREFIX = /^(?:mcp__)?filesystem(?:__|[-/.])/u;
 
 export function extractSkillReadPath(
   toolName: unknown,
-  argsObject: unknown
+  argumentsObject: unknown
 ): string | null {
   // A `filesystem` tool arrives under its MCP name (`mcp__filesystem__…` from
   // Codex, `filesystem__…`, `filesystem-…` or `filesystem/…` from a bridge);
@@ -255,10 +263,10 @@ export function extractSkillReadPath(
     .replace(FILESYSTEM_TOOL_PREFIX, "");
 
   const isObject =
-    argsObject && typeof argsObject === "object" && !Array.isArray(argsObject);
-  const args = isObject ? (argsObject as Record<string, unknown>) : {};
+    argumentsObject && typeof argumentsObject === "object" && !Array.isArray(argumentsObject);
+  const arguments_ = isObject ? (argumentsObject as Record<string, unknown>) : {};
 
-  if (SKILL_READ_TOOL_NAMES.has(name)) return directReadPath(args);
-  if (SKILL_EXEC_TOOL_NAMES.has(name)) return execReadPath(argsObject, args);
+  if (SKILL_READ_TOOL_NAMES.has(name)) return directReadPath(arguments_);
+  if (SKILL_EXEC_TOOL_NAMES.has(name)) return execReadPath(argumentsObject, arguments_);
   return null;
 }

@@ -33,15 +33,15 @@ interface Fixture {
 // answers `query` with the repository paths the test says are indexed.
 function fixture(): Fixture {
   const base = mkdtempSync(join(tmpdir(), "autodev-code-graph-"));
-  const repo = join(base, "repo");
-  mkdirSync(repo);
-  execFileSync("git", ["init", "-q"], { cwd: repo });
-  writeFileSync(join(repo, "a.ts"), "export const a = 1;\n");
-  execFileSync("git", ["add", "."], { cwd: repo });
+  const repository = join(base, "repo");
+  mkdirSync(repository);
+  execFileSync("git", ["init", "-q"], { cwd: repository });
+  writeFileSync(join(repository, "a.ts"), "export const a = 1;\n");
+  execFileSync("git", ["add", "."], { cwd: repository });
   execFileSync(
     "git",
     ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"],
-    { cwd: repo }
+    { cwd: repository }
   );
   const log = join(base, "calls.log");
   const indexed = join(base, "indexed.json");
@@ -65,7 +65,7 @@ esac
 `,
     { mode: 0o755 }
   );
-  const root = gitRoot(repo);
+  const root = gitRoot(repository);
   assert.ok(root);
   return {
     root,
@@ -201,13 +201,13 @@ test("ensureCodeGraph starts a worker for the checkout's top level only", (t) =>
 });
 
 /**
- * The reason a check prints has to be the reason the child gave.
- *
- * A command that exits non-zero leaves Node's own message as "Command failed:
- * <path> <args>", which names the command and nothing else. The operator who
- * has to act on it needs the database the command was using and the reason it
- * did not answer.
- */
+The reason a check prints has to be the reason the child gave.
+
+A command that exits non-zero leaves Node's own message as "Command failed:
+<path> <args>", which names the command and nothing else. The operator who
+has to act on it needs the database the command was using and the reason it
+did not answer.
+*/
 function captureOutput(callback: () => void): {
   readonly stdout: string;
   readonly stderr: string;

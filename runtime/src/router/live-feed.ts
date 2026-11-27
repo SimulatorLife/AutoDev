@@ -11,26 +11,28 @@ export const LIVE_FEED_CATEGORIES = [
 export type LiveFeedCategory = (typeof LIVE_FEED_CATEGORIES)[number];
 
 /**
- * Per-occurrence telemetry event published to `status.liveFeed`.
- *
- * The router records one record per occurrence. Each record carries a
- * `category` and a `type` field, plus an event timestamp and any
- * category-specific detail fields (`status`, `outcome`, `durationMs`,
- * `name`, `server`, `tool`, `skill`, `hook`, `source`, `handlerType`).
- *
- * These records are the sole interval source for tool / hook / skill /
- * MCP and routing activity stats when the dashboard's Lookback selector
- * is anything other than `All`. Lifetime cumulative summaries in
- * `status.usage` and `status.codexTelemetry` are never derived from
- * per-record `lastSeenAt` fields; they remain current-state buckets
- * used unchanged for the `All` view.
- */
+Per-occurrence telemetry event published to `status.liveFeed`.
+
+The router records one record per occurrence. Each record carries a
+`category` and a `type` field, plus an event timestamp and any
+category-specific detail fields (`status`, `outcome`, `durationMs`,
+`name`, `server`, `tool`, `skill`, `hook`, `source`, `handlerType`).
+
+These records are the sole interval source for tool / hook / skill /
+MCP and routing activity stats when the dashboard's Lookback selector
+is anything other than `All`. Lifetime cumulative summaries in
+`status.usage` and `status.codexTelemetry` are never derived from
+per-record `lastSeenAt` fields; they remain current-state buckets
+used unchanged for the `All` view.
+*/
 interface LiveFeedFields {
   category: LiveFeedCategory;
   type: string;
   summary: string;
   requestId?: string | null | undefined;
-  /** Internal OTel correlation; local snapshots retain it, status output strips it. */
+  /**
+  Internal OTel correlation; local snapshots retain it, status output strips it.
+  */
   agent?: string | null | undefined;
   provider?: string | null | undefined;
   model?: string | null | undefined;
@@ -101,16 +103,15 @@ function optionalScalar(value: unknown): string | number | null {
 }
 
 function optionalDuration(value: unknown): number | null {
-  if (typeof value !== "number" || !Number.isFinite(value)) return null;
-  if (value < 0) return null;
+  if (typeof value !== "number" || !Number.isFinite(value) || (value < 0)) return null;
   return value;
 }
 
 /**
- * Returns the optional numeric detail fields used by the dashboard's
- * Lookback aggregator. The keys are exposed so tests and other
- * producers can iterate without copying the literal list.
- */
+Returns the optional numeric detail fields used by the dashboard's
+Lookback aggregator. The keys are exposed so tests and other
+producers can iterate without copying the literal list.
+*/
 export const LIVE_FEED_NUMERIC_KEYS = [
   "durationMs",
   "durationSeconds"

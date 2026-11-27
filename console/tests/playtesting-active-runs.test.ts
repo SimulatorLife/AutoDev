@@ -695,15 +695,17 @@ test("assignment count details use the Runtime result only when it is present", 
 });
 
 /**
- * The scheduling rule behind the live view.
- *
- * These drive `createPollLoop` directly because the hook's effect cannot run
- * under `renderToStaticMarkup`, and because the defect they guard is precisely
- * one that only shows up across repeated polls: arming the timer once per
- * effect run instead of once per completed poll.
- */
+The scheduling rule behind the live view.
 
-/** Let the loop's pending promise chain settle without advancing fake time. */
+These drive `createPollLoop` directly because the hook's effect cannot run
+under `renderToStaticMarkup`, and because the defect they guard is precisely
+one that only shows up across repeated polls: arming the timer once per
+effect run instead of once per completed poll.
+*/
+
+/**
+Let the loop's pending promise chain settle without advancing fake time.
+*/
 async function settle(): Promise<void> {
   for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
 }
@@ -745,14 +747,14 @@ test("the poll loop stops as soon as the subject reaches a terminal state", asyn
   t.mock.timers.enable({ apis: ["setTimeout"] });
   try {
     let polls = 0;
-    let nonterminal = true;
+    let isNonterminal = true;
     const loop = createPollLoop({
       poll: async () => {
         polls += 1;
         // The batch completes during this poll; `watching` flips afterwards.
-        nonterminal = false;
+        isNonterminal = false;
       },
-      shouldContinue: () => nonterminal,
+      shouldContinue: () => isNonterminal,
       delayFor: () => INITIAL_POLL_INTERVAL_MS
     });
     loop.start();

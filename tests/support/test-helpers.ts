@@ -3,7 +3,9 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-/** Bind an ephemeral loopback TCP port, close the probe socket, and return the port number. */
+/**
+Bind an ephemeral loopback TCP port, close the probe socket, and return the port number.
+*/
 export function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = createServer();
@@ -20,7 +22,9 @@ export function freePort(): Promise<number> {
   });
 }
 
-/** Run `callback` with a fresh temporary directory and remove it when `callback` returns or throws. */
+/**
+Run `callback` with a fresh temporary directory and remove it when `callback` returns or throws.
+*/
 export function withTempDir<T>(
   callback: (directory: string) => T,
   prefix = "autodev-test-"

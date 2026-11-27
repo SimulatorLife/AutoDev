@@ -27,22 +27,22 @@ import {
 
 export const dynamic = "force-dynamic";
 
-function firstSearchParam(
+function firstSearchParameter(
   raw: string | string[] | undefined
 ): string | undefined {
   return Array.isArray(raw) ? raw[0] : raw;
 }
 
 /**
- * The outcome the last write ended in, when the redirect named one.
- *
- * A query value that is not an outcome is not an outcome: it is ignored, and
- * the page reports no write at all rather than a write it did not measure.
- */
+The outcome the last write ended in, when the redirect named one.
+
+A query value that is not an outcome is not an outcome: it is ignored, and
+the page reports no write at all rather than a write it did not measure.
+*/
 function mcpSaveOutcome(
   value: string | string[] | undefined
 ): McpDeclarationSaveOutcome | undefined {
-  const outcome = firstSearchParam(value);
+  const outcome = firstSearchParameter(value);
   return outcome === "conflict" ||
     outcome === "validation" ||
     outcome === "apply-failed" ||
@@ -52,11 +52,11 @@ function mcpSaveOutcome(
 }
 
 /**
- * The resource's own name, taken from the route parameter rather than from a
- * second fetch of the resource. The page body already reads the same
- * parameter, and a metadata function that fetched would double every
- * detail-page request.
- */
+The resource's own name, taken from the route parameter rather than from a
+second fetch of the resource. The page body already reads the same
+parameter, and a metadata function that fetched would double every
+detail-page request.
+*/
 export async function generateMetadata({
   params
 }: {
@@ -75,12 +75,12 @@ export default async function McpDetailPage({
     Record<string, string | string[] | undefined>
   >;
 }): Promise<React.JSX.Element> {
-  const [{ name }, resolvedSearchParams] = await Promise.all([
+  const [{ name }, resolvedSearchParameters] = await Promise.all([
     params,
     searchParams ??
       Promise.resolve({} as Record<string, string | string[] | undefined>)
   ]);
-  const activeTab = firstSearchParam(resolvedSearchParams.tab);
+  const activeTab = firstSearchParameter(resolvedSearchParameters.tab);
   const { section, config } = readNodeContext("/mcps");
   if (!config) {
     return React.createElement(
@@ -148,13 +148,13 @@ export default async function McpDetailPage({
   // it, and the page says which of the two it is.
   const applied = appliedResult.kind === "ok" ? appliedResult.data : null;
 
-  const saveOutcome = mcpSaveOutcome(resolvedSearchParams.save);
+  const saveOutcome = mcpSaveOutcome(resolvedSearchParameters.save);
   // The editor writes against the revision it was filled from. A refused write
   // leaves the browser holding the operator's edit, so the page keeps the
   // revision that edit was written for rather than the revision the
   // declaration has moved to.
   const editorRevision =
-    editorBaseRevisionFromQuery(resolvedSearchParams.based) ??
+    editorBaseRevisionFromQuery(resolvedSearchParameters.based) ??
     result.data.revision;
 
   return React.createElement(
@@ -166,9 +166,7 @@ export default async function McpDetailPage({
       // an empty list, and a badge with that list's length would claim the
       // target declares no MCP servers -- a claim about the read, not about
       // the target. The list page draws the badge the same way.
-      ...(result.data.valid === true
-        ? { counts: { MCPs: result.data.servers.length } }
-        : {})
+      ...((result.data.valid === true) && { counts: { MCPs: result.data.servers.length } })
     },
     React.createElement(McpDetailView, {
       server,
@@ -182,7 +180,7 @@ export default async function McpDetailPage({
           ? toolsResult.data.tools.filter((tool) => tool.server === server.name)
           : null,
       activeTab,
-      ...(saveOutcome ? { saveOutcome } : {})
+      ...(saveOutcome && { saveOutcome })
     })
   );
 }

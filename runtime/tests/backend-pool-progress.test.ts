@@ -128,7 +128,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
           params: {
             name: "echo",
             arguments: { label },
-            ...(withProgress ? { _meta: { progressToken: 0 } } : {})
+            ...(withProgress && { _meta: { progressToken: 0 } })
           }
         });
       const [first, second] = await Promise.all([

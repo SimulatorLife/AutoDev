@@ -208,7 +208,7 @@ test("a proposal that declares a command twice is never offered for approval", (
           description: "Inspect working tree status.",
           executable: "git",
           args: ["status"],
-          timeoutMs: 15000,
+          timeoutMs: 15_000,
           executionClass: "validation",
           concurrency: "exclusive"
         })},`

@@ -77,13 +77,13 @@ two that can straddle a change.
 export interface PermissionPolicySource {
   readonly read: PermissionPolicyRead;
   /**
-   * The canonical source's exact text, or null when its text could not be
-   * read.
-   *
-   * A source that was read and did not parse still has its text, so the
-   * fault can be seen where it is rather than described from outside. A
-   * source that was never read has none.
-   */
+  The canonical source's exact text, or null when its text could not be
+  read.
+  
+  A source that was read and did not parse still has its text, so the
+  fault can be seen where it is rather than described from outside. A
+  source that was never read has none.
+  */
   readonly content: string | null;
 }
 
@@ -204,11 +204,11 @@ function oversizedPolicy(): PolicyFileRead {
 }
 
 /**
- * Read a bounded snapshot from one regular-file descriptor. The canonical
- * source's immediate directory and the file itself must not be symlinks.
- * A configured applied-state directory may be an operator-selected alias;
- * the composed file itself must still be regular and not a symlink.
- */
+Read a bounded snapshot from one regular-file descriptor. The canonical
+source's immediate directory and the file itself must not be symlinks.
+A configured applied-state directory may be an operator-selected alias;
+the composed file itself must still be regular and not a symlink.
+*/
 function readRegularPolicyFile(file: string, canonical = true): PolicyFileRead {
   try {
     if (canonical && !lstatSync(path.dirname(file)).isDirectory()) {

@@ -1,4 +1,6 @@
-/** Role-aware OS confinement for local AutoDev MCP backends served via Supergateway. */
+/**
+Role-aware OS confinement for local AutoDev MCP backends served via Supergateway.
+*/
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
@@ -17,7 +19,6 @@ import {
   MCP_SERVER_FILESYSTEM,
   MCP_SERVER_GITHUB,
   MCP_SERVER_LSP,
-  MCP_SERVER_PLAYTEST,
   MCP_SERVER_PLAYWRIGHT,
   MCP_SERVER_XACPX
 } from "../shared/tool-names.ts";
@@ -34,11 +35,17 @@ export interface ExternalBackend {
 }
 
 export interface ExternalMcpBackendOptions {
-  /** Override whether the backend enforces read-only confinement; defaults to the assigned role's contract. */
+  /**
+  Override whether the backend enforces read-only confinement; defaults to the assigned role's contract.
+  */
   readonly readOnly?: boolean;
-  /** Canonical AutoDev role governing this backend's capabilities. */
+  /**
+  Canonical AutoDev role governing this backend's capabilities.
+  */
   readonly role?: string;
-  /** Optional explicit read-only skill roots to mount on the filesystem MCP. */
+  /**
+  Optional explicit read-only skill roots to mount on the filesystem MCP.
+  */
   readonly skillRoots?: readonly string[];
   /**
   The Runtime source tree the backends run from. The ChatGPT gateway passes
@@ -107,7 +114,9 @@ function resolveDirectNodeExecutable(node: string, cwd: string): string {
       return realpathSync(target);
     }
   } catch {
-    /* Fall back cleanly if the supplied path cannot evaluate a JS probe. */
+    /*
+    Fall back cleanly if the supplied path cannot evaluate a JS probe.
+    */
   }
   return resolved;
 }
@@ -129,12 +138,12 @@ function externalSkillReadRoots(
 }
 
 /**
- * Resolve the confined launch command for a role-authorized AutoDev MCP server.
- *
- * Confinement follows the assigned role's canonical execution contract (writable
- * roles may mutate inside the confined workspace; read-only roles remain strictly
- * read-only), never a blanket provider- or external-only read-only restriction.
- */
+Resolve the confined launch command for a role-authorized AutoDev MCP server.
+
+Confinement follows the assigned role's canonical execution contract (writable
+roles may mutate inside the confined workspace; read-only roles remain strictly
+read-only), never a blanket provider- or external-only read-only restriction.
+*/
 export function externalMcpBackend(
   server: string,
   repositoryRoot: string,
@@ -147,11 +156,11 @@ export function externalMcpBackend(
   if (process.platform !== "darwin" || !existsSync(sandboxExecutable))
     throw new Error("External MCP confinement requires macOS sandbox-exec");
   const readOnly =
-    options.readOnly !== undefined
-      ? options.readOnly
-      : options.role !== undefined
-        ? isReadOnlyRole(options.role)
-        : false;
+    options.readOnly === undefined
+      ? options.role === undefined
+        ? false
+        : isReadOnlyRole(options.role)
+      : options.readOnly;
   const binary = resolveDirectNodeExecutable(node, workspace);
   const physicalHome = physicalPath(home);
   const physicalCodexHome = physicalPath(codexHome);
@@ -344,10 +353,10 @@ interface WorkspaceToolSandboxOptions {
 }
 
 /**
- * Confinement profile for workspace code/orchestration servers (LSP, CocoIndex,
- * CodeGraphContext, XACPX): enforces role-scoped write boundaries, blocks host
- * secrets/tunnels/`.env*`, and blocks outbound non-local network traffic.
- */
+Confinement profile for workspace code/orchestration servers (LSP, CocoIndex,
+CodeGraphContext, XACPX): enforces role-scoped write boundaries, blocks host
+secrets/tunnels/`.env*`, and blocks outbound non-local network traffic.
+*/
 function workspaceCodeToolSandboxProfile(
   options: WorkspaceToolSandboxOptions
 ): string {
@@ -389,12 +398,10 @@ function workspaceCodeToolSandboxProfile(
     "(deny file-read* " + deniedSecrets.join(" ") + ")"
   ];
   if (options.allowUnixSockets) {
-    rules.push("(allow network* (remote unix-socket))");
-    rules.push("(allow network* (local unix-socket))");
+    rules.push("(allow network* (remote unix-socket))", "(allow network* (local unix-socket))");
   }
   if (options.allowLocalhostNetwork) {
-    rules.push('(allow network* (local ip "localhost:*"))');
-    rules.push('(allow network* (remote ip "localhost:*"))');
+    rules.push('(allow network* (local ip "localhost:*"))', '(allow network* (remote ip "localhost:*"))');
   }
   if (options.allowPosixIpc) {
     rules.push("(allow ipc-posix*)");
@@ -406,19 +413,23 @@ function workspaceCodeToolSandboxProfile(
 }
 
 export interface FilesystemSandboxProfileOptions {
-  /** When true, deny all workspace writes; when false, permit writes strictly inside `workspace`. */
+  /**
+  When true, deny all workspace writes; when false, permit writes strictly inside `workspace`.
+  */
   readonly readOnly?: boolean;
-  /** Additional read-only skill roots mounted outside the workspace. */
+  /**
+  Additional read-only skill roots mounted outside the workspace.
+  */
   readonly readOnlySkillRoots?: readonly string[];
 }
 
 /**
- * Default deny, including all network and arbitrary host paths.
- * Reads are limited to the workspace, optional read-only skill roots, installed
- * runtime modules, and system libraries. Writes are denied for read-only roles
- * and strictly confined to `workspace` for writable roles. Never exposes `.env*`
- * secret files (except workspace `.env.example`) or host credentials.
- */
+Default deny, including all network and arbitrary host paths.
+Reads are limited to the workspace, optional read-only skill roots, installed
+runtime modules, and system libraries. Writes are denied for read-only roles
+and strictly confined to `workspace` for writable roles. Never exposes `.env*`
+secret files (except workspace `.env.example`) or host credentials.
+*/
 export function filesystemSandboxProfile(
   workspace: string,
   modules: string,

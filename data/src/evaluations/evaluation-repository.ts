@@ -16,7 +16,9 @@ import {
 
 const LINE_BREAK_PATTERN = /\r?\n/u;
 
-/** ClickHouse counts as a decimal string in `JSONEachRow`. */
+/**
+ClickHouse counts as a decimal string in `JSONEachRow`.
+*/
 const COUNT_PATTERN = /^\d+$/u;
 
 export class EvaluationSourceUnavailableError extends Error {
@@ -44,7 +46,9 @@ export interface RawClickHouseEvaluationRow {
   readonly scores?: Record<string, number>;
 }
 
-/** Verdicts ClickHouse rows spell as success, and as failure. */
+/**
+Verdicts ClickHouse rows spell as success, and as failure.
+*/
 const PASSING_VERDICTS: ReadonlySet<string> = new Set([
   "pass",
   "passed",
@@ -53,13 +57,13 @@ const PASSING_VERDICTS: ReadonlySet<string> = new Set([
 const FAILING_VERDICTS: ReadonlySet<string> = new Set(["fail", "failed", "no"]);
 
 /**
- * A metric verdict, as three states rather than two.
- *
- * A score says nothing about whether an evaluation passed, so an absent or
- * unrecognised verdict is `null` -- "not observed" -- and never `false`. The
- * label set was a nested ternary inside a loop inside a map; a row that failed
- * validation two lines earlier still had to be read through it.
- */
+A metric verdict, as three states rather than two.
+
+A score says nothing about whether an evaluation passed, so an absent or
+unrecognised verdict is `null` -- "not observed" -- and never `false`. The
+label set was a nested ternary inside a loop inside a map; a row that failed
+validation two lines earlier still had to be read through it.
+*/
 function verdictPass(verdict: string | undefined): boolean | null {
   const normalized = verdict?.trim().toLowerCase();
   if (normalized === undefined) return null;
@@ -68,10 +72,11 @@ function verdictPass(verdict: string | undefined): boolean | null {
   return null;
 }
 
-/** The identity and timing every row needs before it can describe a run. */
+/**
+The identity and timing every row needs before it can describe a run.
+*/
 function hasUsableIdentity(row: RawClickHouseEvaluationRow): boolean {
-  if (typeof row.id !== "string" || row.id.trim().length === 0) return false;
-  if (typeof row.created_at !== "string" || row.created_at.trim().length === 0)
+  if (typeof row.id !== "string" || row.id.trim().length === 0 || typeof row.created_at !== "string" || row.created_at.trim().length === 0)
     return false;
   if (
     row.span_id !== undefined &&
@@ -82,13 +87,13 @@ function hasUsableIdentity(row: RawClickHouseEvaluationRow): boolean {
 }
 
 /**
- * The measurement columns must be presentable as lists.
- *
- * ClickHouse's `Array(String)` columns arrive as `[]` when unset and as
- * whatever it sent otherwise, so `?? []` covers the unset case and the type
- * checks cover the rest. A missing scores column is an empty object, which is
- * a row with no metrics rather than a broken row.
- */
+The measurement columns must be presentable as lists.
+
+ClickHouse's `Array(String)` columns arrive as `[]` when unset and as
+whatever it sent otherwise, so `?? []` covers the unset case and the type
+checks cover the rest. A missing scores column is an empty object, which is
+a row with no metrics rather than a broken row.
+*/
 function hasUsableMeasurements(row: RawClickHouseEvaluationRow): boolean {
   const names = row["evaluationData.evaluation"] ?? [];
   const verdicts = row["evaluationData.verdict"] ?? [];
@@ -102,14 +107,14 @@ function hasUsableMeasurements(row: RawClickHouseEvaluationRow): boolean {
 }
 
 /**
- * One newline-delimited ClickHouse row into one evaluation result.
- *
- * Every rejection is the same `EvaluationSourceUnavailableError`: the caller
- * cannot act on *which* field was wrong, because ClickHouse is the upstream
- * and a row it cannot be read from is not a partial result. That made the three
- * inline guard blocks interchangeable, so they are named here instead -- a
- * reader can see what is being required without counting which `throw` it hit.
- */
+One newline-delimited ClickHouse row into one evaluation result.
+
+Every rejection is the same `EvaluationSourceUnavailableError`: the caller
+cannot act on *which* field was wrong, because ClickHouse is the upstream
+and a row it cannot be read from is not a partial result. That made the three
+inline guard blocks interchangeable, so they are named here instead -- a
+reader can see what is being required without counting which `throw` it hit.
+*/
 function parseEvaluationRow(line: string): EvaluationResult {
   let parsed: unknown;
   try {
@@ -122,7 +127,7 @@ function parseEvaluationRow(line: string): EvaluationResult {
   if (!hasUsableIdentity(row) || !hasUsableMeasurements(row))
     throw new EvaluationSourceUnavailableError();
 
-  const evNames = row["evaluationData.evaluation"] ?? [];
+  const eventNames = row["evaluationData.evaluation"] ?? [];
   const verdicts = row["evaluationData.verdict"] ?? [];
   const scores = row.scores ?? {};
 
@@ -134,15 +139,15 @@ function parseEvaluationRow(line: string): EvaluationResult {
       return {
         name,
         value,
-        pass: verdictPass(verdicts[evNames.indexOf(name)])
+        pass: verdictPass(verdicts[eventNames.indexOf(name)])
       };
     }
   );
 
   const hasFailedMetric = metrics.some((metric) => metric.pass === false);
-  const allMetricsPassed =
+  const isAllMetricsPassed =
     metrics.length > 0 && metrics.every((metric) => metric.pass === true);
-  const passed = hasFailedMetric ? false : allMetricsPassed ? true : null;
+  const passed = hasFailedMetric ? false : isAllMetricsPassed ? true : null;
   const meta = row.meta ?? {};
   const agentRole = meta.agentRole ?? meta.role ?? meta.agent ?? "unknown";
   const model = meta.model ?? meta["gen_ai.request.model"] ?? "unknown";
@@ -150,9 +155,9 @@ function parseEvaluationRow(line: string): EvaluationResult {
 
   return {
     id: row.id,
-    ...(row.span_id?.trim() ? { spanId: row.span_id.trim() } : {}),
+    ...(row.span_id?.trim() && { spanId: row.span_id.trim() }),
     agentRole,
-    ...(promptName ? { promptName } : {}),
+    ...(promptName && { promptName }),
     model,
     metrics,
     passed,
@@ -161,22 +166,26 @@ function parseEvaluationRow(line: string): EvaluationResult {
 }
 
 /**
- * One bounded read of the evaluation table, with the size of the table it was
- * taken from.
- *
- * `total` is a separate number from `results.length` on purpose. The read is
- * capped, so a page of rows is not the history -- and a caller that is handed
- * only the rows will report "100 evaluations" about a table holding five
- * thousand. That is a claim the source never made, and it is the same synthesis
- * as rendering an unreadable source as an empty one.
- */
+One bounded read of the evaluation table, with the size of the table it was
+taken from.
+
+`total` is a separate number from `results.length` on purpose. The read is
+capped, so a page of rows is not the history -- and a caller that is handed
+only the rows will report "100 evaluations" about a table holding five
+thousand. That is a claim the source never made, and it is the same synthesis
+as rendering an unreadable source as an empty one.
+*/
 export interface EvaluationPage {
   readonly results: readonly EvaluationResult[];
-  /** Every evaluation row in the table, not just the ones this read returned. */
+  /**
+  Every evaluation row in the table, not just the ones this read returned.
+  */
   readonly total: number;
 }
 
-/** The most evaluation rows one read will return, whatever the caller asks for. */
+/**
+The most evaluation rows one read will return, whatever the caller asks for.
+*/
 const MAX_EVALUATION_WINDOW = 1000;
 
 export class EvaluationRepository {
@@ -190,7 +199,9 @@ export class EvaluationRepository {
     this.timeoutMs = options.timeoutMs ?? DEFAULT_CLICKHOUSE_REQUEST_TIMEOUT_MS;
   }
 
-  /** Reads evaluation results from ClickHouse `openlit.openlit_evaluation`. */
+  /**
+  Reads evaluation results from ClickHouse `openlit.openlit_evaluation`.
+  */
   async listEvaluations(limit = 100): Promise<EvaluationPage> {
     const safeLimit = Math.max(1, Math.min(limit, MAX_EVALUATION_WINDOW));
     const select =
@@ -231,7 +242,7 @@ export class EvaluationRepository {
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            ...(signal ? { signal } : {})
+            ...(signal && { signal })
           }
         );
         if (!response.ok) throw new EvaluationSourceUnavailableError();
@@ -258,13 +269,13 @@ export class EvaluationRepository {
 }
 
 /**
- * The row count ClickHouse reported.
- *
- * A count that cannot be read throws rather than defaulting to zero. Zero is a
- * claim -- "this table holds no evaluations" -- and a reader that cannot see the
- * count has no way to make it; defaulting would turn a broken count into a page
- * claiming the store is empty while rows sit right above it.
- */
+The row count ClickHouse reported.
+
+A count that cannot be read throws rather than defaulting to zero. Zero is a
+claim -- "this table holds no evaluations" -- and a reader that cannot see the
+count has no way to make it; defaulting would turn a broken count into a page
+claiming the store is empty while rows sit right above it.
+*/
 function parseCount(text: string): number {
   for (const line of text.split(LINE_BREAK_PATTERN)) {
     const trimmed = line.trim();

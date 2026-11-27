@@ -27,6 +27,7 @@ import { join, relative } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { parseJsoncObject } from "@simulatorlife/autodev-data/files";
 import { staleUserSkillLinks } from "@simulatorlife/autodev-runtime/platform/install-materializer";
 import { userLevelSkills } from "@simulatorlife/autodev-runtime/platform/user-level-skills";
 
@@ -43,7 +44,6 @@ import {
   readSkill,
   splitFrontmatter
 } from "./support/skill-document.ts";
-import { parseJsoncObject } from "@simulatorlife/autodev-data/files";
 
 type JsonObject = Record<string, unknown>;
 type RunResult = ReturnType<typeof spawnSync>;

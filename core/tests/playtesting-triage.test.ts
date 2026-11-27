@@ -90,7 +90,7 @@ test("verified evidence outranks hypothesis within the same severity class", () 
     totalEligibleEpisodes: 100
   });
 
-  const fVer = createFinding({
+  const fVersion = createFinding({
     findingId: "f-ver",
     severity: "major",
     evidenceStatus: "verified",
@@ -98,7 +98,7 @@ test("verified evidence outranks hypothesis within the same severity class", () 
     totalEligibleEpisodes: 100
   });
 
-  const triaged = triagePlaytestFindings([fHypo, fVer]);
+  const triaged = triagePlaytestFindings([fHypo, fVersion]);
 
   assert.equal(triaged[0]!.finding.findingId, "f-ver");
   assert.equal(triaged[1]!.finding.findingId, "f-hypo");

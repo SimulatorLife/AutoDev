@@ -1,16 +1,16 @@
 /**
- * Cost accounting for the critic-versus-deterministic comparison.
- *
- * The corpus test in this package proves the scores; this proves the cost side
- * the contract also requires, and specifically that a *missing* measurement
- * stays missing. Reporting `0` for "not measured" would be the same defect the
- * live-run count tiles had: a value nobody produced rendered as a plausible
- * number on a decision.
- *
- * Every result here comes from the real `evaluatePlaytestDiagnosticCorpus`, so
- * the coverage the cost divides by is the coverage the scores were computed
- * against rather than a second hand-written description of it.
- */
+Cost accounting for the critic-versus-deterministic comparison.
+
+The corpus test in this package proves the scores; this proves the cost side
+the contract also requires, and specifically that a *missing* measurement
+stays missing. Reporting `0` for "not measured" would be the same defect the
+live-run count tiles had: a value nobody produced rendered as a plausible
+number on a decision.
+
+Every result here comes from the real `evaluatePlaytestDiagnosticCorpus`, so
+the coverage the cost divides by is the coverage the scores were computed
+against rather than a second hand-written description of it.
+*/
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -67,10 +67,14 @@ function input(
   };
 }
 
-/** The contract's worked fixture: three known positives, three reviewed episodes. */
+/**
+The contract's worked fixture: three known positives, three reviewed episodes.
+*/
 const RESULT = evaluatePlaytestDiagnosticCorpus(input());
 
-/** Per-arm usage; overrides are scoped to one arm so they cannot leak. */
+/**
+Per-arm usage; overrides are scoped to one arm so they cannot leak.
+*/
 function usage(
   overrides: Partial<
     Record<PlaytestAnalysisArmUsage["arm"], Partial<PlaytestAnalysisArmUsage>>
@@ -175,7 +179,7 @@ test("an arm scored over different episodes makes the comparison unavailable", (
 
 test("cost accounting refuses measurements it cannot stand behind", () => {
   const arms: PlaytestAnalysisArmUsage[] = [
-    { arm: "critic", measuredCost: Number.NaN, critiquesRun: 1 }
+    { arm: "critic", measuredCost: NaN, critiquesRun: 1 }
   ];
   assert.throws(
     () => comparePlaytestAnalysisCost(RESULT, arms),

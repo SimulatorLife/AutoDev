@@ -1,16 +1,16 @@
 /**
- * JSON-RPC v1 envelope validators for the Core-owned game-adapter contract.
- *
- * The protocol is intentionally stricter than JSON-RPC 2.0: a fresh
- * `expectedRevision` must accompany every `submit_step`, the adapter may only
- * answer with the closed `error.code` vocabulary below, and a missing
- * `advertise_capabilities` call is treated as protocol violation rather than
- * as a successful but unspecified session.
- *
- * Validators throw `TypeError` with a single-line reason so the Runtime can
- * log them verbatim; they never return a permissive `{ valid: false }` that
- * a downstream caller could silently drop.
- */
+JSON-RPC v1 envelope validators for the Core-owned game-adapter contract.
+
+The protocol is intentionally stricter than JSON-RPC 2.0: a fresh
+`expectedRevision` must accompany every `submit_step`, the adapter may only
+answer with the closed `error.code` vocabulary below, and a missing
+`advertise_capabilities` call is treated as protocol violation rather than
+as a successful but unspecified session.
+
+Validators throw `TypeError` with a single-line reason so the Runtime can
+log them verbatim; they never return a permissive `{ valid: false }` that
+a downstream caller could silently drop.
+*/
 
 import { isRecord } from "../shared/object-guards.ts";
 import { SHA256_PATTERN } from "../shared/sha256.ts";
@@ -40,7 +40,9 @@ import {
   PLAYTESTS_PROTOCOL_VERSION
 } from "./types.ts";
 
-/** Is `value` one of the documented JSON-RPC error codes? */
+/**
+Is `value` one of the documented JSON-RPC error codes?
+*/
 export function isPlaytestAdapterErrorCode(
   value: unknown
 ): value is PlaytestAdapterErrorCode {
@@ -51,7 +53,9 @@ export function isPlaytestAdapterErrorCode(
   );
 }
 
-/** Is `value` one of the documented JSON-RPC methods? */
+/**
+Is `value` one of the documented JSON-RPC methods?
+*/
 export function isPlaytestAdapterMethod(
   value: unknown
 ): value is PlaytestAdapterMethod {
@@ -61,7 +65,9 @@ export function isPlaytestAdapterMethod(
   );
 }
 
-/** Is `value` one of the documented wire modes? */
+/**
+Is `value` one of the documented wire modes?
+*/
 function isPlaytestGameMode(value: unknown): boolean {
   return (
     typeof value === "string" &&
@@ -78,7 +84,9 @@ function isOptionalAdapterMethod(
   );
 }
 
-/** Is `value` one of the documented evidence locator kinds? */
+/**
+Is `value` one of the documented evidence locator kinds?
+*/
 export function isPlaytestLocatorKind(
   value: unknown
 ): value is PlaytestLocatorKind {
@@ -88,7 +96,9 @@ export function isPlaytestLocatorKind(
   );
 }
 
-/** Is `value` one of the documented miniPXI items? */
+/**
+Is `value` one of the documented miniPXI items?
+*/
 export function isPlaytestMiniPxiItem(
   value: unknown
 ): value is PlaytestMiniPxiItem {
@@ -129,11 +139,13 @@ const APPLICATION_ERROR_CODE_SET = new Set<number>(
   Object.values(PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES)
 );
 
-function isApplicationErrorCode(value: number): boolean {
+function isAppErrorCode(value: number): boolean {
   return APPLICATION_ERROR_CODE_SET.has(value);
 }
 
-/** Validate a strict, single JSON-RPC v1 request envelope (never a batch). */
+/**
+Validate a strict, single JSON-RPC v1 request envelope (never a batch).
+*/
 export function assertPlaytestJsonRpcRequest(
   value: unknown
 ): asserts value is PlaytestJsonRpcRequest {
@@ -165,7 +177,9 @@ export function assertPlaytestJsonRpcRequest(
   }
 }
 
-/** Validate a JSON-RPC notification with no id and no response. */
+/**
+Validate a JSON-RPC notification with no id and no response.
+*/
 export function assertPlaytestJsonRpcNotification(
   value: unknown
 ): asserts value is PlaytestJsonRpcNotification {
@@ -195,7 +209,9 @@ export function assertPlaytestJsonRpcNotification(
   }
 }
 
-/** Validate a JSON-RPC v1 success response envelope. */
+/**
+Validate a JSON-RPC v1 success response envelope.
+*/
 export function assertPlaytestJsonRpcSuccess(
   value: unknown
 ): asserts value is PlaytestJsonRpcSuccess {
@@ -217,7 +233,9 @@ export function assertPlaytestJsonRpcSuccess(
   }
 }
 
-/** Validate a JSON-RPC v1 error response envelope and application disposition. */
+/**
+Validate a JSON-RPC v1 error response envelope and application disposition.
+*/
 export function assertPlaytestJsonRpcError(
   value: unknown
 ): asserts value is PlaytestJsonRpcError {
@@ -250,7 +268,7 @@ export function assertPlaytestJsonRpcError(
   if (!isNonEmptyString(error.message)) {
     throw new TypeError("JSON-RPC error message must be a non-empty string.");
   }
-  if (isApplicationErrorCode(error.code)) {
+  if (isAppErrorCode(error.code)) {
     if (value.id === null) {
       throw new TypeError(
         "Game-adapter application errors must retain their request id."
@@ -283,7 +301,9 @@ export function assertPlaytestJsonRpcError(
   }
 }
 
-/** Validate exactly one JSON-RPC v1 result or error response. */
+/**
+Validate exactly one JSON-RPC v1 result or error response.
+*/
 export function assertPlaytestJsonRpcResponse(
   value: unknown
 ): asserts value is PlaytestJsonRpcResponse {
@@ -327,7 +347,9 @@ function assertSchemaHash(value: unknown, field: string): void {
   }
 }
 
-/** Validate the complete, exact v1 capability negotiation payload. */
+/**
+Validate the complete, exact v1 capability negotiation payload.
+*/
 export function assertPlaytestCapabilityAdvertisement(
   value: unknown
 ): asserts value is PlaytestCapabilityAdvertisement {
@@ -454,14 +476,14 @@ export function assertPlaytestCapabilityAdvertisement(
 }
 
 /**
- * Validate a structured evidence locator.
- *
- * Locators are the only way a review, finding or comparison can refer to
- * evidence. The validator rejects any locator whose `kind` is outside the
- * closed vocabulary, whose `id` is empty, or whose numeric sub-fields are
- * not finite integers; this is the first line of defence against
- * nonexistent/irrelevant locators becoming "verified".
- */
+Validate a structured evidence locator.
+
+Locators are the only way a review, finding or comparison can refer to
+evidence. The validator rejects any locator whose `kind` is outside the
+closed vocabulary, whose `id` is empty, or whose numeric sub-fields are
+not finite integers; this is the first line of defence against
+nonexistent/irrelevant locators becoming "verified".
+*/
 export function assertPlaytestEvidenceLocator(
   value: unknown
 ): asserts value is PlaytestEvidenceLocator {
@@ -501,13 +523,15 @@ export function assertPlaytestEvidenceLocator(
   }
 }
 
-/** Stable schema version for diagnostic output. */
+/**
+Stable schema version for diagnostic output.
+*/
 
 /**
- * Normalise a candidate native miniPXI Likert value. Returns the value when
- * it is an integer in the closed `[-3, 3]` range, otherwise returns `null`
- * and a stable reason so the caller can record missingness honestly.
- */
+Normalise a candidate native miniPXI Likert value. Returns the value when
+it is an integer in the closed `[-3, 3]` range, otherwise returns `null`
+and a stable reason so the caller can record missingness honestly.
+*/
 export function normaliseMiniPxiEnjValue(value: unknown): {
   value: number | null;
   missingReason: "missing-ENJ" | "wrong-instrument" | null;
@@ -515,10 +539,7 @@ export function normaliseMiniPxiEnjValue(value: unknown): {
   if (value === null || value === undefined) {
     return { value: null, missingReason: "missing-ENJ" };
   }
-  if (typeof value !== "number" || !Number.isInteger(value)) {
-    return { value: null, missingReason: "wrong-instrument" };
-  }
-  if (value < PLAYTESTS_MINIPXI_ENJ_MIN || value > PLAYTESTS_MINIPXI_ENJ_MAX) {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < PLAYTESTS_MINIPXI_ENJ_MIN || value > PLAYTESTS_MINIPXI_ENJ_MAX) {
     return { value: null, missingReason: "wrong-instrument" };
   }
   return { value, missingReason: null };

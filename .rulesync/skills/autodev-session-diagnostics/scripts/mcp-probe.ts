@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 
 /**
- * Start one AutoDev MCP server the way Codex does and exercise it.
- *
- * Runs `$CODEX_HOME/hooks/run-autodev-mcp.sh <server>` with a minimal
- * environment (Codex does not start MCP servers with your shell's PATH), does
- * the MCP handshake, lists the tools, makes each requested call in order, and
- * prints the server's stderr if it dies -- which is what an agent sees as
- * "Transport closed". The server runs in its own process group and the whole
- * group is killed at the end, so no language server it spawned is orphaned.
- *
- *   node mcp-probe.ts <server> [--cwd DIR] [--call <tool> '<json-args>']... [--timeout-ms N]
- */
+Start one AutoDev MCP server the way Codex does and exercise it.
+
+Runs `$CODEX_HOME/hooks/run-autodev-mcp.sh <server>` with a minimal
+environment (Codex does not start MCP servers with your shell's PATH), does
+the MCP handshake, lists the tools, makes each requested call in order, and
+prints the server's stderr if it dies -- which is what an agent sees as
+"Transport closed". The server runs in its own process group and the whole
+group is killed at the end, so no language server it spawned is orphaned.
+
+  node mcp-probe.ts <server> [--cwd DIR] [--call <tool> '<json-args>']... [--timeout-ms N]
+*/
 
 import { spawn } from "node:child_process";
 import { homedir } from "node:os";
@@ -75,7 +75,7 @@ function formatCallReply(
 
 async function executeCalls(
   calls: ProbeOptions["calls"],
-  rpc: (method: string, params: JsonRecord) => Promise<JsonRpcMessage | null>,
+  rpc: (method: string, parameters: JsonRecord) => Promise<JsonRpcMessage | null>,
   getExited: () => ProbeResult["exited"]
 ): Promise<ProbeResult["calls"]> {
   const results: ProbeResult["calls"] = [];
@@ -95,12 +95,14 @@ async function executeCalls(
   return results;
 }
 
-/** The environment Codex gives an MCP server: HOME and a system PATH, not your shell's. */
+/**
+The environment Codex gives an MCP server: HOME and a system PATH, not your shell's.
+*/
 export function codexLikeEnv(): NodeJS.ProcessEnv {
   return {
     HOME: process.env.HOME ?? homedir(),
     PATH: "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin",
-    ...(process.env.CODEX_HOME ? { CODEX_HOME: process.env.CODEX_HOME } : {})
+    ...(process.env.CODEX_HOME && { CODEX_HOME: process.env.CODEX_HOME })
   };
 }
 
@@ -132,7 +134,9 @@ export async function probe(options: ProbeOptions): Promise<ProbeResult> {
           pending.delete(message.id);
         }
       } catch {
-        /* not a JSON-RPC line */
+        /*
+        not a JSON-RPC line
+        */
       }
     }
   });
@@ -143,7 +147,7 @@ export async function probe(options: ProbeOptions): Promise<ProbeResult> {
   });
   const rpc = (
     method: string,
-    params: JsonRecord
+    parameters: JsonRecord
   ): Promise<JsonRpcMessage | null> =>
     new Promise((resolve) => {
       if (exited) {
@@ -160,7 +164,7 @@ export async function probe(options: ProbeOptions): Promise<ProbeResult> {
         resolve(message);
       });
       child.stdin.write(
-        `${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`
+        `${JSON.stringify({ jsonrpc: "2.0", id, method, params: parameters })}\n`
       );
     });
   const result: ProbeResult = {
@@ -191,25 +195,27 @@ export async function probe(options: ProbeOptions): Promise<ProbeResult> {
     try {
       if (child.pid) process.kill(-child.pid, "SIGTERM");
     } catch {
-      /* already gone */
+      /*
+      already gone
+      */
     }
     result.stderrTail = stderr.slice(-3000);
   }
   return result;
 }
 
-function parseArgs(argv: string[]): ProbeOptions | null {
+function parseArguments(argv: string[]): ProbeOptions | null {
   const codexHome = process.env.CODEX_HOME ?? path.join(homedir(), ".codex");
   let server = "";
   let cwd = process.cwd();
   let timeoutMs = 60_000;
   const calls: ProbeOptions["calls"] = [];
   for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index]!;
-    if (arg === "--cwd") cwd = argv[++index] ?? cwd;
-    else if (arg === "--timeout-ms")
+    const argument = argv[index]!;
+    if (argument === "--cwd") cwd = argv[++index] ?? cwd;
+    else if (argument === "--timeout-ms")
       timeoutMs = Number(argv[++index] ?? timeoutMs);
-    else if (arg === "--call") {
+    else if (argument === "--call") {
       const tool = argv[++index];
       const raw =
         argv[index + 1] && !argv[index + 1]!.startsWith("--")
@@ -217,7 +223,7 @@ function parseArgs(argv: string[]): ProbeOptions | null {
           : "{}";
       if (!tool) return null;
       calls.push({ tool, args: JSON.parse(raw) as JsonRecord });
-    } else if (!arg.startsWith("--")) server = arg;
+    } else if (!argument.startsWith("--")) server = argument;
   }
   if (!server) return null;
   return {
@@ -233,7 +239,7 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  const options = parseArgs(process.argv.slice(2));
+  const options = parseArguments(process.argv.slice(2));
   if (!options) {
     process.stderr.write(
       "usage: mcp-probe.ts <server> [--cwd DIR] [--call <tool> '<json-args>']... [--timeout-ms N]\n"

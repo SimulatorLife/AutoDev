@@ -2,17 +2,17 @@ import type { ControlRefusalReason } from "../control-failure.ts";
 import type { ControlApiResult } from "./control-api.ts";
 
 /**
- * The refusal an operator is told about, given what the Runtime's workspace
- * playtesting-approval route answered.
- *
- * Mapped onto the Console's shared refusal vocabulary rather than a new one:
- * `conflicted` already says "this changed since you read it; reload and
- * decide again", which is exactly the revision-conflict case the checkout
- * approval boundary depends on, and `forbidden` already says "you are not
- * permitted to do this", which covers both a non-operator credential and a
- * disabled workspace refusing to accept a new approval -- the workspace is
- * not, right now, something this action is permitted against.
- */
+The refusal an operator is told about, given what the Runtime's workspace
+playtesting-approval route answered.
+
+Mapped onto the Console's shared refusal vocabulary rather than a new one:
+`conflicted` already says "this changed since you read it; reload and
+decide again", which is exactly the revision-conflict case the checkout
+approval boundary depends on, and `forbidden` already says "you are not
+permitted to do this", which covers both a non-operator credential and a
+disabled workspace refusing to accept a new approval -- the workspace is
+not, right now, something this action is permitted against.
+*/
 export function workspacePlaytestingRefusalFor(
   result: Exclude<ControlApiResult<unknown>, { readonly kind: "ok" }>
 ): ControlRefusalReason {

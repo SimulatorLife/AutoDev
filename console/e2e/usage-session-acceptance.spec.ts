@@ -3,27 +3,35 @@ import { expect, type Page, test } from "@playwright/test";
 import { waitForPageContent } from "./acceptance-helpers";
 
 /**
- * The session the Control API fixture answers for.
- *
- * The same id is used by the fixture's own diagnostics routes and by the
- * acceptance, so a link the Console builds for a session reaches the fixture's
- * session rather than a session that does not exist.
- */
+The session the Control API fixture answers for.
+
+The same id is used by the fixture's own diagnostics routes and by the
+acceptance, so a link the Console builds for a session reaches the fixture's
+session rather than a session that does not exist.
+*/
 const SESSION_ID = "01a0ba14-d54c-78f2-9367-3f80e9a8f75f";
-/** The worker thread of that session. */
+/**
+The worker thread of that session.
+*/
 const WORKER_THREAD_ID = "01a0ba16-d54c-78f2-9367-3f80e9a8f75f";
 
-/** The Session ID control in the page's top filter bar. */
+/**
+The Session ID control in the page's top filter bar.
+*/
 function sessionField(page: Page) {
   return page.locator('[data-text-field="usage-session-id"]');
 }
 
-/** The Apply filters button of the top filter bar. */
+/**
+The Apply filters button of the top filter bar.
+*/
 function applyButton(page: Page) {
   return page.locator('[data-button="usage-apply"]');
 }
 
-/** The fleet-wide metrics the page renders when it is not scoped to a session. */
+/**
+The fleet-wide metrics the page renders when it is not scoped to a session.
+*/
 function fleetMetrics(page: Page) {
   return page.getByText("Requests & model usage");
 }

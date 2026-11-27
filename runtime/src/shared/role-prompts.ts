@@ -1,10 +1,10 @@
 /**
- * Single authoritative owner for AutoDev role prompt composition from
- * `agents/prompts/` (`base.md`, `leaf.md`, `code-search.md`, `roles/<role>.md`).
- *
- * Used identically by both static role projection (`render-agent-configs.ts`)
- * and live ACP/XACPX session dispatch (`xacpx/manager.ts`).
- */
+Single authoritative owner for AutoDev role prompt composition from
+`agents/prompts/` (`base.md`, `leaf.md`, `code-search.md`, `roles/<role>.md`).
+
+Used identically by both static role projection (`render-agent-configs.ts`)
+and live ACP/XACPX session dispatch (`xacpx/manager.ts`).
+*/
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -45,9 +45,9 @@ export function loadSharedRolePromptParts(
 }
 
 /**
- * Compose the canonical system prompt for a declared AutoDev role from
- * `agents/prompts/`, matching every provider's projected prompt surface.
- */
+Compose the canonical system prompt for a declared AutoDev role from
+`agents/prompts/`, matching every provider's projected prompt surface.
+*/
 export function composeRoleSystemPrompt(
   role: string,
   repositoryRoot: string = resolveRuntimeSourceRoot(

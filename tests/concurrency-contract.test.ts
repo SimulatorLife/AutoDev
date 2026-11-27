@@ -37,10 +37,10 @@ assert.equal(
 
 const SCENARIOS = contract.scenarios as Record<string, JsonRecord>;
 
-function getPath(obj: any, dotted: string): any {
-  let cur = obj;
-  for (const part of dotted.split(".")) cur = cur?.[part];
-  return cur;
+function getPath(object: any, dotted: string): any {
+  let current = object;
+  for (const part of dotted.split(".")) current = current?.[part];
+  return current;
 }
 
 function runParseScenario(name: string, scenario: JsonRecord): Promise<void> {
@@ -172,11 +172,11 @@ describe("concurrency contract admission scenarios", () => {
     const actualLimit =
       getDefaultConcurrencyManager().concurrencyStatus()
         .effectivePerSessionLimit;
-    const limitMatches = actualLimit === scenario.configuredLimit;
+    const isLimitMatches = actualLimit === scenario.configuredLimit;
     test(
       name,
       {
-        skip: limitMatches
+        skip: isLimitMatches
           ? false
           : `requires effective limit ${scenario.configuredLimit}; host has ${actualLimit ?? "no configured limit"}`
       },

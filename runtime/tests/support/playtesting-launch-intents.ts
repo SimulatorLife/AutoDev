@@ -2,7 +2,9 @@ import type { PlaytestLaunchIntent } from "@simulatorlife/autodev-data/playtesti
 
 import type { PlaytestLaunchIntentRepository } from "../../src/playtesting/run-control.ts";
 
-/** In-memory launch intent store for tests; production always injects Data's durable ClickHouse owner. */
+/**
+In-memory launch intent store for tests; production always injects Data's durable ClickHouse owner.
+*/
 export function inMemoryPlaytestLaunchIntentRepository(): PlaytestLaunchIntentRepository {
   const intents = new Map<string, PlaytestLaunchIntent>();
   const key = (workspaceId: string, actorId: string, requestId: string) =>

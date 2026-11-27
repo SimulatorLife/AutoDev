@@ -1,12 +1,12 @@
 /**
- * A visual episode that runs out of an approved budget is a truncation.
- *
- * The request count, the token budget and the per-response usage are approved
- * ceilings. An episode that reaches one of them was cut short by its
- * approval, not lost to a runtime failure, and the two must not be reported
- * the same way: the first is a truncation the operator can read in the
- * episode, the second is infrastructure loss.
- */
+A visual episode that runs out of an approved budget is a truncation.
+
+The request count, the token budget and the per-response usage are approved
+ceilings. An episode that reaches one of them was cut short by its
+approval, not lost to a runtime failure, and the two must not be reported
+the same way: the first is a truncation the operator can read in the
+episode, the second is infrastructure loss.
+*/
 import assert from "node:assert/strict";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -127,7 +127,9 @@ function inMemoryRepository(
   };
 }
 
-/** A driver that observes a playable page and never leaves the approved origin. */
+/**
+A driver that observes a playable page and never leaves the approved origin.
+*/
 function observedDriver(
   artifacts: PlaytestArtifactStore
 ): PlaytestVisualDriverOpener {

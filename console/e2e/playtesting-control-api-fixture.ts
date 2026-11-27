@@ -1,4 +1,6 @@
-/** Deterministic, explicitly synthetic Control API fixture for browser usability tests. */
+/**
+Deterministic, explicitly synthetic Control API fixture for browser usability tests.
+*/
 import { createHash } from "node:crypto";
 import {
   createServer,
@@ -41,7 +43,6 @@ import {
 
 import {
   canonicalSource,
-  type CanonicalSourceKind,
   moveCanonicalSource,
   resetCanonicalSources
 } from "./canonical-source-fixture.ts";
@@ -54,12 +55,12 @@ import {
 } from "./session-diagnostics-fixture.ts";
 
 /**
- * The vocabulary the fixture speaks in.
- *
- * The fixture is a stand-in for the Control API, so the values it writes are
- * the API's values; naming them once keeps the fixture from spelling the
- * same mode or policy two ways.
- */
+The vocabulary the fixture speaks in.
+
+The fixture is a stand-in for the Control API, so the values it writes are
+the API's values; naming them once keeps the fixture from spelling the
+same mode or policy two ways.
+*/
 const FIXTURE_NOT_APPLICABLE = "not-applicable";
 const FIXTURE_SMART_DIRECT_POLICY = "smart-direct";
 const FIXTURE_AUTONOMOUS_VISUAL_MODE = "autonomous-visual";
@@ -71,11 +72,11 @@ const FIXTURE_REVIEW_TIMESTAMP = "2026-02-11T09:40:00.000Z";
 const FIXTURE_EARLIER_TIMESTAMP = "2026-02-11T08:22:00.000Z";
 
 /**
- * The explanation the Runtime gives for a converged surface.
- *
- * It is the same sentence wherever it appears, so the wording cannot drift
- * between the surfaces that publish it.
- */
+The explanation the Runtime gives for a converged surface.
+
+It is the same sentence wherever it appears, so the wording cannot drift
+between the surfaces that publish it.
+*/
 const FIXTURE_CONVERGED_EXPLANATION =
   "The runtime has observed the latest desired generation; convergence is recorded.";
 
@@ -105,42 +106,42 @@ const SYNTHETIC_VISUAL_LIMIT_KEYS = new Set([
 ]);
 const WORKSPACE_ID = "fixture/game";
 /**
- * The canonical workspace configuration the fixture holds.
- *
- * The Runtime owns the real catalog and publishes a revision the write is
- * compared against, so the fixture has to hold a configuration and a revision
- * too: a spec that writes through the Console has to be able to see that the
- * write landed, and a spec that moves the revision underneath an open page
- * has to be able to make the page's next write a conflict.
- */
-const workspaceConfiguration = {
+The canonical workspace configuration the fixture holds.
+
+The Runtime owns the real catalog and publishes a revision the write is
+compared against, so the fixture has to hold a configuration and a revision
+too: a spec that writes through the Console has to be able to see that the
+write landed, and a spec that moves the revision underneath an open page
+has to be able to make the page's next write a conflict.
+*/
+const workspaceConfig = {
   id: WORKSPACE_ID,
   baseBranch: "main",
   enabled: true,
   agentRoles: null as string[] | null,
   revision: "e".repeat(64)
 };
-const INITIAL_WORKSPACE_REVISION = workspaceConfiguration.revision;
+const INITIAL_WORKSPACE_REVISION = workspaceConfig.revision;
 
 /**
- * The canonical permission policy the fixture holds.
- *
- * The Runtime reads the policy from the canonical source that states it and
- * publishes a revision the write is compared against, so the fixture holds a
- * policy and a revision too: a spec that writes through the Console has to be
- * able to see that the write landed, and a spec that moves the revision
- * underneath an open page has to be able to make the page's next write a
- * conflict.
- */
+The canonical permission policy the fixture holds.
+
+The Runtime reads the policy from the canonical source that states it and
+publishes a revision the write is compared against, so the fixture holds a
+policy and a revision too: a spec that writes through the Console has to be
+able to see that the write landed, and a spec that moves the revision
+underneath an open page has to be able to make the page's next write a
+conflict.
+*/
 /**
- * The sandbox the fixture's session runs in.
- *
- * It is the ceiling every role runs under: a role may narrow the sandbox it
- * runs in, never widen it.
- */
+The sandbox the fixture's session runs in.
+
+It is the ceiling every role runs under: a role may narrow the sandbox it
+runs in, never widen it.
+*/
 /**
- * The canonical JSONC the fixture's permission policy holds.
- */
+The canonical JSONC the fixture's permission policy holds.
+*/
 const FIXTURE_PERMISSION_SOURCE = `{
   // The portable policy the session runs under.
   "codexcli": {
@@ -165,13 +166,13 @@ const permissionPolicy = {
 const INITIAL_PERMISSION_POLICY_REVISION = permissionPolicy.revision;
 
 /**
- * The states the fixture's own control routes put a setting back to.
- *
- * "enabled" and "disabled" say which way a setting goes, and "revision-moved"
- * moves the revision without this Console knowing -- so the page that holds
- * the revision it was rendered with writes against a setting that has moved
- * past it.
- */
+The states the fixture's own control routes put a setting back to.
+
+"enabled" and "disabled" say which way a setting goes, and "revision-moved"
+moves the revision without this Console knowing -- so the page that holds
+the revision it was rendered with writes against a setting that has moved
+past it.
+*/
 const FIXTURE_STATE_ENABLED = "enabled";
 const FIXTURE_STATE_DISABLED = "disabled";
 const FIXTURE_STATE_REVISION_MOVED = "revision-moved";
@@ -566,13 +567,13 @@ const latestReview = {
 } as const;
 
 /**
- * The persisted reviews, in the summary shape the Control API serves.
- *
- * The Console reads the analyst's durable record through this route, and a
- * fixture that serves only the in-process analyst envelope leaves the
- * Findings view with nothing to show — so the review a session carries is
- * projected into the shape the reader validates.
- */
+The persisted reviews, in the summary shape the Control API serves.
+
+The Console reads the analyst's durable record through this route, and a
+fixture that serves only the in-process analyst envelope leaves the
+Findings view with nothing to show — so the review a session carries is
+projected into the shape the reader validates.
+*/
 function reviewSummaryRow(review: {
   readonly reviewId: string;
   readonly episodeId: string;
@@ -626,16 +627,18 @@ function reviewSummaryRow(review: {
   };
 }
 
-/** The reviews a reader sees before any analysis has been run. */
+/**
+The reviews a reader sees before any analysis has been run.
+*/
 const persistedReviewRows = [reviewSummaryRow(latestReview)];
 
 /**
- * The reviews a reader sees.
- *
- * They are the persisted ones plus any review an analyst run in this fixture
- * has just produced, so a reader who runs an analysis and comes back to the
- * Findings view finds the analysis there.
- */
+The reviews a reader sees.
+
+They are the persisted ones plus any review an analyst run in this fixture
+has just produced, so a reader who runs an analysis and comes back to the
+Findings view finds the analysis there.
+*/
 function respondPlaytestingReviews(response: ServerResponse): void {
   const fromRuns = Array.from(syntheticRunReviews.values(), (review) =>
     reviewSummaryRow(
@@ -917,20 +920,24 @@ function sendJson(
   response.end(body);
 }
 
-/** The path of one MCP server's canonical declaration. */
+/**
+The path of one MCP server's canonical declaration.
+*/
 const MCP_SERVER_ROUTE = /^\/control\/mcps\/([^/]+)$/u;
 
-/** The moment the fixture's synthetic applied state was observed. */
+/**
+The moment the fixture's synthetic applied state was observed.
+*/
 const MCP_OBSERVED_AT = "2026-10-22T12:00:00.000Z";
 
 /**
- * The canonical MCP declaration, and what the Runtime published from it.
- *
- * The fixture keeps the two apart the way the Runtime does: the declaration
- * says what the operator asked for, the applied configuration says what the
- * Runtime published, and the reconciliation between them is the Runtime's own
- * verdict. A write moves the declaration, applies it, and the verdict follows.
- */
+The canonical MCP declaration, and what the Runtime published from it.
+
+The fixture keeps the two apart the way the Runtime does: the declaration
+says what the operator asked for, the applied configuration says what the
+Runtime published, and the reconciliation between them is the Runtime's own
+verdict. A write moves the declaration, applies it, and the verdict follows.
+*/
 interface McpLaunchServer {
   readonly name: string;
   readonly command: string | null;
@@ -951,12 +958,12 @@ interface McpDeclarationState {
 }
 
 /**
- * What the canonical declaration says for the `codexcli` target.
- *
- * The target has no override of its own, so it inherits the shared server
- * whole, and the declared side of the reconciliation is the shared
- * declaration's own endpoint.
- */
+What the canonical declaration says for the `codexcli` target.
+
+The target has no override of its own, so it inherits the shared server
+whole, and the declared side of the reconciliation is the shared
+declaration's own endpoint.
+*/
 const MCP_DECLARED_DOCS: McpLaunchServer = {
   name: "openaiDeveloperDocs",
   command: null,
@@ -968,14 +975,14 @@ const MCP_DECLARED_DOCS: McpLaunchServer = {
 };
 
 /**
- * What the Runtime published, before it has observed the declaration.
- *
- * The runtime is behind the declaration here, so the two sides of the
- * reconciliation differ and the verdict is a pending one that is true. A
- * fixture whose declared and published sides were the same would render a
- * pending verdict over two identical generations, which says the runtime has
- * not caught up while showing that it has.
- */
+What the Runtime published, before it has observed the declaration.
+
+The runtime is behind the declaration here, so the two sides of the
+reconciliation differ and the verdict is a pending one that is true. A
+fixture whose declared and published sides were the same would render a
+pending verdict over two identical generations, which says the runtime has
+not caught up while showing that it has.
+*/
 const MCP_MOVED_SERVER = "openaiDeveloperDocs";
 
 const MCP_PUBLISHED_DOCS: McpLaunchServer = {
@@ -990,11 +997,11 @@ function mcpGeneration(servers: readonly McpLaunchServer[]): string {
 }
 
 /**
- * The declaration, and what the Runtime published from it, as they start.
- *
- * A reset puts them back to this, so one spec's write is not the next spec's
- * starting state.
- */
+The declaration, and what the Runtime published from it, as they start.
+
+A reset puts them back to this, so one spec's write is not the next spec's
+starting state.
+*/
 function initialMcpDeclaration(): McpDeclarationState {
   return {
     revision: createHash("sha256")
@@ -1011,20 +1018,20 @@ function initialMcpDeclaration(): McpDeclarationState {
 let mcpDeclaration: McpDeclarationState = initialMcpDeclaration();
 
 /**
- * The fixture's hook state, in the contract's own shapes.
- *
- * The published events are the contract's `ControlApiHookEvent` and the
- * declared ones are the contract's `ControlApiHookDeclaration`, so the fixture
- * cannot publish a shape the Runtime would not: an applied event that carried a
- * declaration origin would not compile here.
- *
- * That matters because a fixture which invents a shape is how a reader and a
- * publisher come to disagree about what the Runtime said. It happened once --
- * the fixture's applied events carried an origin the Runtime never publishes,
- * the Console's reader was written to accept exactly that, and the two agreed
- * with each other and disagreed with the Runtime on every real read. Pinning
- * the fixture to the contract's types makes that failure impossible to write.
- */
+The fixture's hook state, in the contract's own shapes.
+
+The published events are the contract's `ControlApiHookEvent` and the
+declared ones are the contract's `ControlApiHookDeclaration`, so the fixture
+cannot publish a shape the Runtime would not: an applied event that carried a
+declaration origin would not compile here.
+
+That matters because a fixture which invents a shape is how a reader and a
+publisher come to disagree about what the Runtime said. It happened once --
+the fixture's applied events carried an origin the Runtime never publishes,
+the Console's reader was written to accept exactly that, and the two agreed
+with each other and disagreed with the Runtime on every real read. Pinning
+the fixture to the contract's types makes that failure impossible to write.
+*/
 interface FixtureHookDeclaration {
   readonly revision: string;
   readonly events: readonly ControlApiHookDeclaration[];
@@ -1035,11 +1042,11 @@ interface FixtureHookDeclaration {
 }
 
 /**
- * The events the fixture declares.
- *
- * One event every target inherits and one event the target declares alone, so
- * the page shows both origins rather than one.
- */
+The events the fixture declares.
+
+One event every target inherits and one event the target declares alone, so
+the page shows both origins rather than one.
+*/
 const FIXTURE_SHARED_HOOK: ControlApiHookDeclaration = {
   event: "preToolUse",
   origin: "shared",
@@ -1060,11 +1067,11 @@ const FIXTURE_TARGET_HOOK: ControlApiHookDeclaration = {
 };
 
 /**
- * The canonical JSONC the fixture's hook declaration holds.
- *
- * The comments are the point: a raw view that lost them would be a
- * serialization of the declaration rather than its source.
- */
+The canonical JSONC the fixture's hook declaration holds.
+
+The comments are the point: a raw view that lost them would be a
+serialization of the declaration rather than its source.
+*/
 const FIXTURE_HOOK_SOURCE = `{
   // The hook every target inherits.
   "hooks": {
@@ -1091,26 +1098,26 @@ const FIXTURE_HOOK_SOURCE = `{
 }`;
 
 /**
- * The collator the Runtime's own hook comparison uses.
- *
- * The fixture compares the two sides the way the Runtime compares them, so a
- * verdict here means what the same two sides would mean there.
- */
+The collator the Runtime's own hook comparison uses.
+
+The fixture compares the two sides the way the Runtime compares them, so a
+verdict here means what the same two sides would mean there.
+*/
 const HOOK_COLLATOR = new Intl.Collator();
 
 /**
- * The generation one side of the hook comparison holds.
- *
- * The origin is left out, because the Runtime's comparison leaves it out too:
- * the projection the Runtime published carries no declaration origin, and a
- * generation that counted it would report drift between a declaration and the
- * very projection it produced.
- *
- * The events and the actions are compared as sets, for the Runtime's reason:
- * the projection groups the actions by matcher, so the order across matchers
- * follows the grouping rather than the declaration, and comparing the lists in
- * order would report drift where there is none.
- */
+The generation one side of the hook comparison holds.
+
+The origin is left out, because the Runtime's comparison leaves it out too:
+the projection the Runtime published carries no declaration origin, and a
+generation that counted it would report drift between a declaration and the
+very projection it produced.
+
+The events and the actions are compared as sets, for the Runtime's reason:
+the projection groups the actions by matcher, so the order across matchers
+follows the grouping rather than the declaration, and comparing the lists in
+order would report drift where there is none.
+*/
 function hookGeneration(events: readonly ControlApiHookEvent[]): string {
   const serialized = JSON.stringify(
     events
@@ -1128,8 +1135,8 @@ function hookGeneration(events: readonly ControlApiHookEvent[]): string {
         event: event.event,
         actions: event.actions.sort((left, right) =>
           HOOK_COLLATOR.compare(
-            `${left.matcher ?? ""}\u0000${left.command}\u0000${left.statusMessage ?? ""}`,
-            `${right.matcher ?? ""}\u0000${right.command}\u0000${right.statusMessage ?? ""}`
+            `${left.matcher ?? ""}\0${left.command}\0${left.statusMessage ?? ""}`,
+            `${right.matcher ?? ""}\0${right.command}\0${right.statusMessage ?? ""}`
           )
         )
       }))
@@ -1138,14 +1145,14 @@ function hookGeneration(events: readonly ControlApiHookEvent[]): string {
 }
 
 /**
- * The declaration, and what the Runtime published from it, as they start.
- *
- * The published side carries an older command, so the Runtime is behind the
- * declaration and the verdict is a pending one that is true. A fixture whose
- * two sides were identical would render a pending verdict over two identical
- * generations, which says the runtime has not caught up while showing that it
- * has.
- */
+The declaration, and what the Runtime published from it, as they start.
+
+The published side carries an older command, so the Runtime is behind the
+declaration and the verdict is a pending one that is true. A fixture whose
+two sides were identical would render a pending verdict over two identical
+generations, which says the runtime has not caught up while showing that it
+has.
+*/
 function initialHookDeclaration(): FixtureHookDeclaration {
   const events = [FIXTURE_SHARED_HOOK, FIXTURE_TARGET_HOOK];
   // The published side carries no declaration origin, because the projection
@@ -1176,13 +1183,13 @@ function initialHookDeclaration(): FixtureHookDeclaration {
 let hookDeclaration: FixtureHookDeclaration = initialHookDeclaration();
 
 /**
- * The Runtime's verdict on the hook declaration.
- *
- * The verdict is the Runtime's own: the fixture says what it published and
- * the shared reconciliation contract says whether that matches the
- * declaration. The verdict is the contract's own type, so the fixture cannot
- * publish a convergence the Runtime's vocabulary does not have.
- */
+The Runtime's verdict on the hook declaration.
+
+The verdict is the Runtime's own: the fixture says what it published and
+the shared reconciliation contract says whether that matches the
+declaration. The verdict is the contract's own type, so the fixture cannot
+publish a convergence the Runtime's vocabulary does not have.
+*/
 function hookReconciliation(): ReconciliationView {
   return {
     status: {
@@ -1201,20 +1208,19 @@ function hookReconciliation(): ReconciliationView {
 }
 
 /**
- * The write of one MCP server's launch configuration.
- *
- * The write is a compare-and-swap on the declaration's revision, so a write
- * decided on an older declaration is refused. A write that lands moves the
- * declaration, applies it, and the Runtime's verdict follows.
- */
+The write of one MCP server's launch configuration.
+
+The write is a compare-and-swap on the declaration's revision, so a write
+decided on an older declaration is refused. A write that lands moves the
+declaration, applies it, and the Runtime's verdict follows.
+*/
 async function applyMcpDeclarationWrite(
   response: ServerResponse,
   request: IncomingMessage,
   url: URL
 ): Promise<boolean> {
   const match = url.pathname.match(MCP_SERVER_ROUTE);
-  if (match === null) return false;
-  if (request.method !== "PATCH") return false;
+  if ((match === null) || (request.method !== "PATCH")) return false;
   const server = decodeURIComponent(match[1] ?? "");
   const body = await readJsonBody(request);
   const expectedRevision = body?.expectedRevision;
@@ -1256,7 +1262,7 @@ async function applyMcpDeclarationWrite(
   const written: McpLaunchServer = {
     name: server,
     command: readLaunchText(launch.command, current.command),
-    args: readLaunchArgs(launch.args, current.args),
+    args: readLaunchArguments(launch.args, current.args),
     cwd: readLaunchText(launch.cwd, current.cwd),
     url: readLaunchText(launch.url, current.url),
     bearerTokenEnvVar: readLaunchText(
@@ -1309,23 +1315,23 @@ function readLaunchText(raw: unknown, current: string | null): string | null {
   return current;
 }
 
-function readLaunchArgs(
+function readLaunchArguments(
   raw: unknown,
   current: readonly string[]
 ): readonly string[] {
   if (raw === null) return [];
-  if (Array.isArray(raw) && raw.every((arg) => typeof arg === "string")) {
+  if (Array.isArray(raw) && raw.every((argument) => typeof argument === "string")) {
     return raw as string[];
   }
   return current;
 }
 
 /**
- * A refusal, in the shape the Runtime refuses a request in.
- *
- * The Console reads the code out of the error, so a refusal that does not
- * carry one leaves the Console guessing what happened from the status alone.
- */
+A refusal, in the shape the Runtime refuses a request in.
+
+The Console reads the code out of the error, so a refusal that does not
+carry one leaves the Console guessing what happened from the status alone.
+*/
 function sendCanonicalSourceError(
   response: ServerResponse,
   status: number,
@@ -1407,8 +1413,8 @@ const syntheticLaunchIntents = new Map<
     readonly createdAt: string;
   }
 >();
-let failNextRunAcknowledgement = false;
-let failNextRunByRequestLookup = false;
+let isFailNextRunAcknowledgement = false;
+let isFailNextRunByRequestLookup = false;
 type SyntheticAnalystRun = {
   readonly run: {
     readonly analysisId: string;
@@ -1450,18 +1456,18 @@ const syntheticAnalystRuns = new Map<string, SyntheticAnalystRun>();
 let nextAnalystRunId = 1;
 
 /**
- * When set, the active-runs read fails. The Console must then show an explicit
- * unavailable state; a test that never sees the read fail cannot tell a stale
- * frame from a live one.
- */
-let syntheticRunsReadFails = false;
-let syntheticVisualReadinessEnabled = false;
-let syntheticVisualRunEnabled = false;
+When set, the active-runs read fails. The Console must then show an explicit
+unavailable state; a test that never sees the read fail cannot tell a stale
+frame from a live one.
+*/
+let isSyntheticRunsReadFails = false;
+let isSyntheticVisualReadinessEnabled = false;
+let isSyntheticVisualRunEnabled = false;
 let syntheticReadinessPendingPolls = 0;
 let syntheticReadinessPollCount = 0;
-let syntheticReadinessUnavailable = false;
-let syntheticAnalystRunsReadFails = false;
-let syntheticAnalystTaskHistoryMissing = false;
+let isSyntheticReadinessUnavailable = false;
+let isSyntheticAnalystRunsReadFails = false;
+let isSyntheticAnalystTaskHistoryMissing = false;
 const syntheticRunEpisodes = new Map<string, Record<string, unknown>>();
 const syntheticRunReviews = new Map<string, Record<string, unknown>>();
 
@@ -1703,7 +1709,7 @@ async function handleSyntheticAnalysisMutation(
       !Array.isArray(episodeIds) ||
       episodeIds.length === 0 ||
       episodeIds.length > PLAYTESTS_MAX_ANALYSIS_SESSIONS ||
-      !episodeIds.every((id) => typeof id === "string") ||
+      episodeIds.some((id) => !(typeof id === "string")) ||
       new Set(episodeIds).size !== episodeIds.length ||
       url.searchParams.get("workspaceId") !== WORKSPACE_ID
     ) {
@@ -1791,7 +1797,7 @@ async function handleSyntheticAnalysisMutation(
     return true;
   }
   if (request.method === "GET") {
-    if (syntheticAnalystRunsReadFails) {
+    if (isSyntheticAnalystRunsReadFails) {
       sendJson(
         response,
         {
@@ -1943,7 +1949,7 @@ async function handleSyntheticAnalysisMutation(
     sendJson(response, {
       schema: "autodev-control-playtesting-analyses-v1",
       workspaceId: WORKSPACE_ID,
-      runs: syntheticAnalystTaskHistoryMissing ? [] : runs,
+      runs: isSyntheticAnalystTaskHistoryMissing ? [] : runs,
       syntheses: Array.from(syntheticAnalystRuns.values()).flatMap((entry) =>
         entry.synthesis === null ? [] : [entry.synthesis]
       )
@@ -1998,68 +2004,51 @@ async function handleSyntheticComparisonMutation(
 }
 
 /**
- * Whether a visual launch request is the one the fixture serves.
- *
- * The fixture answers for the Runtime, so it accepts a request only when the
- * request is exactly the shape the Console sends for an approved target --
- * no extra keys, no missing ones, and the capability revision the readiness
- * read reported.
- */
+Whether a visual launch request is the one the fixture serves.
+
+The fixture answers for the Runtime, so it accepts a request only when the
+request is exactly the shape the Console sends for an approved target --
+no extra keys, no missing ones, and the capability revision the readiness
+read reported.
+*/
 function syntheticVisualLaunchShapeIsValid(
   launch: Record<string, unknown>,
   limits: unknown
 ): boolean {
-  if (!syntheticVisualReadinessEnabled) return false;
-  if (Object.keys(launch).length !== SYNTHETIC_VISUAL_LAUNCH_KEYS.size) {
+  if (!isSyntheticVisualReadinessEnabled || (Object.keys(launch).length !== SYNTHETIC_VISUAL_LAUNCH_KEYS.size)) {
     return false;
   }
-  if (
-    Object.keys(launch).some((key) => !SYNTHETIC_VISUAL_LAUNCH_KEYS.has(key))
-  ) {
-    return false;
-  }
-  if (launch.schema !== PLAYTEST_LAUNCH_REQUEST_SCHEMA) return false;
-  if (launch.workspaceId !== WORKSPACE_ID) return false;
-  if (launch.targetId !== SYNTHETIC_VISUAL_TARGET.targetId) return false;
-  if (launch.policyId !== FIXTURE_SMART_DIRECT_POLICY) return false;
-  if (launch.capabilityRevision !== FIXTURE_CAPABILITY_REVISION) return false;
-  if (typeof launch.requestId !== "string") return false;
-  if (!REQUEST_ID_PATTERN.test(launch.requestId)) return false;
+  if (Object.keys(launch).some((key) => !SYNTHETIC_VISUAL_LAUNCH_KEYS.has(key)) || (launch.schema !== PLAYTEST_LAUNCH_REQUEST_SCHEMA)) return false;
+  if ((launch.workspaceId !== WORKSPACE_ID) || (launch.targetId !== SYNTHETIC_VISUAL_TARGET.targetId)) return false;
+  if ((launch.policyId !== FIXTURE_SMART_DIRECT_POLICY) || (launch.capabilityRevision !== FIXTURE_CAPABILITY_REVISION)) return false;
+  if ((typeof launch.requestId !== "string") || !REQUEST_ID_PATTERN.test(launch.requestId)) return false;
   if (!limits || typeof limits !== "object" || Array.isArray(limits)) {
     return false;
   }
   const limitKeys = Object.keys(limits);
   if (limitKeys.length !== SYNTHETIC_VISUAL_LIMIT_KEYS.size) return false;
-  return !limitKeys.some((key) => !SYNTHETIC_VISUAL_LIMIT_KEYS.has(key));
+  return limitKeys.every((key) => SYNTHETIC_VISUAL_LIMIT_KEYS.has(key));
 }
 
 /**
- * Whether the requested budget is inside the approved target's budget.
- *
- * The approved target is the ceiling: a launch may ask for less than the
- * approval allows and never for more.
- */
+Whether the requested budget is inside the approved target's budget.
+
+The approved target is the ceiling: a launch may ask for less than the
+approval allows and never for more.
+*/
 function syntheticVisualLimitsWithinApproval(
   launch: Record<string, unknown>,
   limits: Record<string, unknown>
 ): boolean {
   const approved = SYNTHETIC_VISUAL_TARGET.limits;
   const episodes = Number(limits.episodeCount);
-  if (!Number.isSafeInteger(limits.episodeCount) || episodes < 1) return false;
-  if (episodes > approved.episodeCount) return false;
+  if (!Number.isSafeInteger(limits.episodeCount) || episodes < 1 || (episodes > approved.episodeCount)) return false;
   const steps = Number(limits.maxStepsPerEpisode);
-  if (!Number.isSafeInteger(limits.maxStepsPerEpisode) || steps < 1) {
+  if (!Number.isSafeInteger(limits.maxStepsPerEpisode) || steps < 1 || (steps > approved.maxStepsPerEpisode)) return false;
+  if ((limits.wallTimeMs !== approved.wallTimeMs) || (limits.smartRequestsPerEpisode !== approved.smartRequestsPerEpisode)) {
     return false;
   }
-  if (steps > approved.maxStepsPerEpisode) return false;
-  if (limits.wallTimeMs !== approved.wallTimeMs) return false;
-  if (limits.smartRequestsPerEpisode !== approved.smartRequestsPerEpisode) {
-    return false;
-  }
-  if (limits.smartTokensPerEpisode !== approved.smartTokensPerEpisode) {
-    return false;
-  }
-  if (limits.screenshotCountPerEpisode !== approved.screenshotCountPerEpisode) {
+  if ((limits.smartTokensPerEpisode !== approved.smartTokensPerEpisode) || (limits.screenshotCountPerEpisode !== approved.screenshotCountPerEpisode)) {
     return false;
   }
   if (limits.artifactBytesPerEpisode !== approved.artifactBytesPerEpisode) {
@@ -2071,12 +2060,12 @@ function syntheticVisualLimitsWithinApproval(
 }
 
 /**
- * The fixture's answer to a visual launch.
- *
- * A visual launch is a different request from an adapter launch: it names an
- * approved target, a budget inside that target, and a focus. It is handled
- * on its own so the two launches cannot be confused for one another.
- */
+The fixture's answer to a visual launch.
+
+A visual launch is a different request from an adapter launch: it names an
+approved target, a budget inside that target, and a focus. It is handled
+on its own so the two launches cannot be confused for one another.
+*/
 function handleSyntheticVisualLaunch(
   launch: Record<string, unknown>,
   request: IncomingMessage,
@@ -2111,7 +2100,7 @@ function handleSyntheticVisualLaunch(
     );
     return true;
   }
-  if (!syntheticVisualRunEnabled) {
+  if (!isSyntheticVisualRunEnabled) {
     sendJson(
       response,
       {
@@ -2223,8 +2212,8 @@ function handleSyntheticVisualLaunch(
     createdAt
   };
   syntheticLaunchIntents.set(requestKey, intent);
-  if (failNextRunAcknowledgement) {
-    failNextRunAcknowledgement = false;
+  if (isFailNextRunAcknowledgement) {
+    isFailNextRunAcknowledgement = false;
     sendJson(
       response,
       {
@@ -2395,8 +2384,8 @@ async function handleSyntheticLaunchMutation(
     createdAt
   };
   syntheticLaunchIntents.set(requestKey, intent);
-  if (failNextRunAcknowledgement) {
-    failNextRunAcknowledgement = false;
+  if (isFailNextRunAcknowledgement) {
+    isFailNextRunAcknowledgement = false;
     sendJson(
       response,
       {
@@ -2469,10 +2458,7 @@ async function handleSyntheticRunMutation(
   response: ServerResponse,
   url: URL
 ): Promise<boolean> {
-  if (await handleSyntheticComparisonMutation(request, response, url)) {
-    return true;
-  }
-  if (await handleSyntheticLaunchMutation(request, response, url)) {
+  if ((await handleSyntheticComparisonMutation(request, response, url)) || (await handleSyntheticLaunchMutation(request, response, url))) {
     return true;
   }
   return handleSyntheticCancellationMutation(request, response, url);
@@ -2498,7 +2484,7 @@ function syntheticModeReadiness(
               }
             ]
           },
-    "autonomous-visual": syntheticVisualReadinessEnabled
+    "autonomous-visual": isSyntheticVisualReadinessEnabled
       ? {
           status: "ready",
           reasons: [],
@@ -2557,13 +2543,13 @@ function syntheticModeReadiness(
 }
 
 /**
- * Each decision backend the visual mode offers, with its own readiness.
- *
- * A mode being ready says the browser can be driven; it does not say that
- * every backend can be reached. The launch form refuses to start a run
- * against a backend that cannot be reached, so a fixture that offered only
- * the mode's readiness would leave the form disabled for no stated reason.
- */
+Each decision backend the visual mode offers, with its own readiness.
+
+A mode being ready says the browser can be driven; it does not say that
+every backend can be reached. The launch form refuses to start a run
+against a backend that cannot be reached, so a fixture that offered only
+the mode's readiness would leave the form disabled for no stated reason.
+*/
 function syntheticVisualPolicyReadiness() {
   return [
     {
@@ -2587,24 +2573,24 @@ function syntheticVisualPolicyReadiness() {
   ];
 }
 
-function handleSyntheticReadFailureConfiguration(
+function handleSyntheticReadFailureConfig(
   url: URL,
   response: ServerResponse
 ): boolean {
   switch (url.pathname) {
     case "/fixture/runs-read-fail": {
-      syntheticRunsReadFails = url.searchParams.get("mode") !== "off";
-      sendJson(response, { syntheticRunsReadFails });
+      isSyntheticRunsReadFails = url.searchParams.get("mode") !== "off";
+      sendJson(response, { syntheticRunsReadFails: isSyntheticRunsReadFails });
       return true;
     }
     case "/fixture/run-ack-failure": {
-      failNextRunAcknowledgement = url.searchParams.get("mode") === "once";
-      sendJson(response, { failNextRunAcknowledgement });
+      isFailNextRunAcknowledgement = url.searchParams.get("mode") === "once";
+      sendJson(response, { failNextRunAcknowledgement: isFailNextRunAcknowledgement });
       return true;
     }
     case "/fixture/run-by-request-not-found": {
-      failNextRunByRequestLookup = url.searchParams.get("mode") === "once";
-      sendJson(response, { failNextRunByRequestLookup });
+      isFailNextRunByRequestLookup = url.searchParams.get("mode") === "once";
+      sendJson(response, { failNextRunByRequestLookup: isFailNextRunByRequestLookup });
       return true;
     }
     case "/fixture/run-count": {
@@ -2612,25 +2598,25 @@ function handleSyntheticReadFailureConfiguration(
       return true;
     }
     case "/fixture/visual-readiness": {
-      syntheticVisualReadinessEnabled = ["ready", "run"].includes(
+      isSyntheticVisualReadinessEnabled = ["ready", "run"].includes(
         url.searchParams.get("mode") ?? ""
       );
-      syntheticVisualRunEnabled = url.searchParams.get("mode") === "run";
+      isSyntheticVisualRunEnabled = url.searchParams.get("mode") === "run";
       sendJson(response, {
-        syntheticVisualReadinessEnabled,
-        syntheticVisualRunEnabled
+        syntheticVisualReadinessEnabled: isSyntheticVisualReadinessEnabled,
+        syntheticVisualRunEnabled: isSyntheticVisualRunEnabled
       });
       return true;
     }
     case "/fixture/analyses-read-fail": {
-      syntheticAnalystRunsReadFails = url.searchParams.get("mode") !== "off";
-      sendJson(response, { syntheticAnalystRunsReadFails });
+      isSyntheticAnalystRunsReadFails = url.searchParams.get("mode") !== "off";
+      sendJson(response, { syntheticAnalystRunsReadFails: isSyntheticAnalystRunsReadFails });
       return true;
     }
     case "/fixture/analyst-history": {
-      syntheticAnalystTaskHistoryMissing =
+      isSyntheticAnalystTaskHistoryMissing =
         url.searchParams.get("mode") === "missing";
-      sendJson(response, { syntheticAnalystTaskHistoryMissing });
+      sendJson(response, { syntheticAnalystTaskHistoryMissing: isSyntheticAnalystTaskHistoryMissing });
       return true;
     }
     default: {
@@ -2803,8 +2789,8 @@ function respondSyntheticRunByRequest(
   // A one-shot transient: the prior Visual POST was persisted, but this
   // single by-request recovery must temporarily report the canonical
   // not-found envelope so the Console can re-POST the saved payload.
-  const transientNotFound = failNextRunByRequestLookup;
-  if (transientNotFound) failNextRunByRequestLookup = false;
+  const transientNotFound = isFailNextRunByRequestLookup;
+  if (transientNotFound) isFailNextRunByRequestLookup = false;
   if (!intent || transientNotFound) {
     sendJson(response, {
       schema: "autodev-control-playtesting-run-request-v2",
@@ -2863,7 +2849,7 @@ function respondSyntheticRunList(response: ServerResponse): boolean {
         error: null
       }
     }));
-  if (syntheticRunsReadFails) {
+  if (isSyntheticRunsReadFails) {
     // A deliberately unreadable read: the Console must show an explicit
     // unavailable state rather than freezing the last good frame.
     sendJson(
@@ -2912,7 +2898,7 @@ function respondSyntheticReadiness(
   url: URL
 ): boolean {
   if (url.pathname !== "/control/playtesting/readiness") return false;
-  if (syntheticReadinessUnavailable) {
+  if (isSyntheticReadinessUnavailable) {
     sendJson(
       response,
       {
@@ -2939,7 +2925,7 @@ function respondSyntheticReadiness(
 function respondSyntheticPlaytestingDataReadiness(
   response: ServerResponse
 ): boolean {
-  const code = syntheticReadinessUnavailable
+  const code = isSyntheticReadinessUnavailable
     ? "autodev_control_playtesting_source_unavailable"
     : syntheticReadinessPollCount < syntheticReadinessPendingPolls
       ? "autodev_control_playtesting_source_initializing"
@@ -3180,19 +3166,19 @@ function resetSyntheticFixture(
   syntheticAnalystRuns.clear();
   nextRunId = 1;
   nextAnalystRunId = 1;
-  syntheticRunsReadFails = false;
-  syntheticVisualReadinessEnabled = false;
-  syntheticVisualRunEnabled = false;
-  failNextRunAcknowledgement = false;
-  failNextRunByRequestLookup = false;
+  isSyntheticRunsReadFails = false;
+  isSyntheticVisualReadinessEnabled = false;
+  isSyntheticVisualRunEnabled = false;
+  isFailNextRunAcknowledgement = false;
+  isFailNextRunByRequestLookup = false;
   syntheticReadinessPendingPolls = 0;
   syntheticReadinessPollCount = 0;
-  syntheticReadinessUnavailable = false;
-  syntheticAnalystRunsReadFails = false;
-  syntheticAnalystTaskHistoryMissing = false;
+  isSyntheticReadinessUnavailable = false;
+  isSyntheticAnalystRunsReadFails = false;
+  isSyntheticAnalystTaskHistoryMissing = false;
   skillAssignmentRevision = INITIAL_SKILL_ASSIGNMENT_REVISION;
   skillRoles["code-review"] = [...INITIAL_SKILL_ROLES];
-  runtimeUnavailable = false;
+  isRuntimeUnavailable = false;
   mcpDeclaration = initialMcpDeclaration();
   sendJson(response, { reset: true });
   return true;
@@ -3211,7 +3197,7 @@ function handleSyntheticReadinessInitialization(
     response.writeHead(400).end();
     return true;
   }
-  syntheticReadinessUnavailable = false;
+  isSyntheticReadinessUnavailable = false;
   syntheticReadinessPendingPolls = 0;
   sendJson(response, {
     schema: CONTROL_API_PLAYTESTING_READINESS_SCHEMA,
@@ -3226,7 +3212,7 @@ function configureReadinessFixture(
   response: ServerResponse
 ): boolean {
   if (url.pathname !== "/fixture/readiness") return false;
-  syntheticReadinessUnavailable = url.searchParams.get("unavailable") === "on";
+  isSyntheticReadinessUnavailable = url.searchParams.get("unavailable") === "on";
   const polls = Number(url.searchParams.get("pendingPolls") ?? 0);
   syntheticReadinessPendingPolls = Number.isSafeInteger(polls)
     ? Math.max(0, Math.min(10, polls))
@@ -3234,39 +3220,53 @@ function configureReadinessFixture(
   syntheticReadinessPollCount = 0;
   sendJson(response, {
     syntheticReadinessPendingPolls,
-    syntheticReadinessUnavailable
+    syntheticReadinessUnavailable: isSyntheticReadinessUnavailable
   });
   return true;
 }
 
-/** The route that assigns the roles of one skill. */
+/**
+The route that assigns the roles of one skill.
+*/
 const SKILL_ROLES_ROUTE = /^\/control\/skills\/([^/]+)$/u;
 
-/** The route that reads one skill's canonical source. */
+/**
+The route that reads one skill's canonical source.
+*/
 const SKILL_CONTENT_ROUTE = /^\/control\/skills\/([^/]+)\/content$/u;
 
-/** The route that reads one agent's detail. */
+/**
+The route that reads one agent's detail.
+*/
 const AGENT_DETAIL_ROUTE = /^\/control\/agents\/([^/]+)$/u;
 
-/** The route that reads one prompt's detail. */
+/**
+The route that reads one prompt's detail.
+*/
 const PROMPT_DETAIL_ROUTE = /^\/control\/prompts\/([^/]+)$/u;
 
-/** The moment the fixture says a write was applied. */
+/**
+The moment the fixture says a write was applied.
+*/
 const FIXTURE_APPLIED_AT = "2026-01-01T00:00:00.000Z";
 
-/** The agent kind a role runs as a leaf rather than as an orchestrator. */
+/**
+The agent kind a role runs as a leaf rather than as an orchestrator.
+*/
 const LEAF_AGENT_KIND = "leaf";
 
-/** The convergence verdict for a state the Runtime has not reported. */
+/**
+The convergence verdict for a state the Runtime has not reported.
+*/
 const NOT_OBSERVED_CONVERGENCE = "not-observed";
 
 /**
- * The skill role assignment the fixture holds.
- *
- * The revision is what the Console's compare-and-swap is checked against, so
- * it has to move when the roles move: a page that loaded the old revision and
- * then saved is a conflict, which is the state the acceptance needs to reach.
- */
+The skill role assignment the fixture holds.
+
+The revision is what the Console's compare-and-swap is checked against, so
+it has to move when the roles move: a page that loaded the old revision and
+then saved is a conflict, which is the state the acceptance needs to reach.
+*/
 const INITIAL_SKILL_ASSIGNMENT_REVISION = "b".repeat(64);
 const INITIAL_SKILL_ROLES = ["worker"];
 let skillAssignmentRevision = INITIAL_SKILL_ASSIGNMENT_REVISION;
@@ -3275,15 +3275,15 @@ const skillRoles: Record<string, string[]> = {
 };
 
 /**
- * The agent enablement the fixture holds.
- *
- * The revision is what the Console's compare-and-swap is checked against, so
- * it has to move when the enablement moves: a page that loaded the old
- * revision and then wrote is a conflict, not a silent overwrite of somebody
- * else's change. The second role has no runtime projection at all, so it has
- * no enablement to change and no revision to offer -- which is the state the
- * Console has to keep distinct from "disabled".
- */
+The agent enablement the fixture holds.
+
+The revision is what the Console's compare-and-swap is checked against, so
+it has to move when the enablement moves: a page that loaded the old
+revision and then wrote is a conflict, not a silent overwrite of somebody
+else's change. The second role has no runtime projection at all, so it has
+no enablement to change and no revision to offer -- which is the state the
+Console has to keep distinct from "disabled".
+*/
 const INITIAL_AGENT_ENABLEMENT_REVISION = "a".repeat(64);
 const agentEnablement: Record<
   string,
@@ -3302,33 +3302,33 @@ function nextAgentEnablementRevision(revision: string): string {
 }
 
 /**
- * The next revision of the canonical workspace configuration.
- *
- * The revision is the catalog's own handle, so moving it is what makes a page
- * that holds the old one write against a catalog that has moved past it.
- */
+The next revision of the canonical workspace configuration.
+
+The revision is the catalog's own handle, so moving it is what makes a page
+that holds the old one write against a catalog that has moved past it.
+*/
 function nextWorkspaceRevision(revision: string): string {
   return nextRevision(revision);
 }
 
 /**
- * The next revision of a canonical source.
- *
- * The revision is the source's own handle, so moving it is what makes a page
- * that holds the old one write against a source that has moved past it.
- */
+The next revision of a canonical source.
+
+The revision is the source's own handle, so moving it is what makes a page
+that holds the old one write against a source that has moved past it.
+*/
 function nextRevision(revision: string): string {
   return (BigInt(`0x${revision}`) + 1n).toString(16).padStart(64, "0");
 }
 
 /**
- * One workspace's configuration, as the Runtime reports it.
- *
- * The list and the detail read the same state through this one function, so a
- * write that lands is the same fact on both surfaces rather than two the
- * fixture keeps in step by hand.
- */
-function workspaceConfigurationRecord(): {
+One workspace's configuration, as the Runtime reports it.
+
+The list and the detail read the same state through this one function, so a
+write that lands is the same fact on both surfaces rather than two the
+fixture keeps in step by hand.
+*/
+function workspaceConfigRecord(): {
   id: string;
   baseBranch: string;
   enabled: boolean;
@@ -3337,22 +3337,22 @@ function workspaceConfigurationRecord(): {
   runtime: { status: "not-observed" };
 } {
   return {
-    id: workspaceConfiguration.id,
-    baseBranch: workspaceConfiguration.baseBranch,
-    enabled: workspaceConfiguration.enabled,
-    agentRoles: workspaceConfiguration.agentRoles,
+    id: workspaceConfig.id,
+    baseBranch: workspaceConfig.baseBranch,
+    enabled: workspaceConfig.enabled,
+    agentRoles: workspaceConfig.agentRoles,
     configuration: { status: "configured" },
     runtime: { status: "not-observed" }
   };
 }
 
 /**
- * The canonical catalog's desired-vs-actual view, as the Runtime reports it.
- *
- * The catalog is the file the fixture serves, so the observed generation is
- * the revision the fixture holds -- the same fact the write answers with.
- */
-function workspaceConfigurationReconciliation(): {
+The canonical catalog's desired-vs-actual view, as the Runtime reports it.
+
+The catalog is the file the fixture serves, so the observed generation is
+the revision the fixture holds -- the same fact the write answers with.
+*/
+function workspaceConfigReconciliation(): {
   status: {
     convergence: "converged";
     desiredGeneration: string;
@@ -3367,8 +3367,8 @@ function workspaceConfigurationReconciliation(): {
   return {
     status: {
       convergence: "converged",
-      desiredGeneration: workspaceConfiguration.revision,
-      observedGeneration: workspaceConfiguration.revision,
+      desiredGeneration: workspaceConfig.revision,
+      observedGeneration: workspaceConfig.revision,
       lastApplyAt: null,
       lastObservationAt: null,
       lastError: null,
@@ -3379,12 +3379,12 @@ function workspaceConfigurationReconciliation(): {
 }
 
 /**
- * One role's enablement, as the Runtime reports it.
- *
- * The list and the detail read the same state through this one function, so a
- * write that lands is the same fact on both surfaces rather than two the
- * fixture keeps in step by hand.
- */
+One role's enablement, as the Runtime reports it.
+
+The list and the detail read the same state through this one function, so a
+write that lands is the same fact on both surfaces rather than two the
+fixture keeps in step by hand.
+*/
 function agentEnablementFor(role: string): {
   kind: "observed" | "unavailable";
   enabled: boolean | null;
@@ -3416,14 +3416,14 @@ function nextSkillAssignmentRevision(): string {
 }
 
 /**
- * Where the fixture's skills are installed.
- *
- * The fixture's catalogue is a repository's own `.rulesync/skills` directory,
- * so the skill is installed inside that repository and belongs to the
- * workspace that repository is. The scope is read from the machine and is
- * never the caller's to say, so a write that names a different workspace is
- * refused rather than applied somewhere it does not belong.
- */
+Where the fixture's skills are installed.
+
+The fixture's catalogue is a repository's own `.rulesync/skills` directory,
+so the skill is installed inside that repository and belongs to the
+workspace that repository is. The scope is read from the machine and is
+never the caller's to say, so a write that names a different workspace is
+refused rather than applied somewhere it does not belong.
+*/
 const FIXTURE_SKILL_SCOPES: Readonly<
   Record<
     string,
@@ -3434,13 +3434,13 @@ const FIXTURE_SKILL_SCOPES: Readonly<
 };
 
 /**
- * Why an assignment may not be made where it was asked for, if it may not.
- *
- * `null` is "the assignment may be made here". The rule is the Runtime's own:
- * a skill installed inside a repository belongs to that repository's workspace
- * alone, and a skill installed anywhere else is assigned to agent roles
- * globally rather than to one workspace.
- */
+Why an assignment may not be made where it was asked for, if it may not.
+
+`null` is "the assignment may be made here". The rule is the Runtime's own:
+a skill installed inside a repository belongs to that repository's workspace
+alone, and a skill installed anywhere else is assigned to agent roles
+globally rather than to one workspace.
+*/
 function skillScopeRefusal(
   name: string,
   requestedWorkspace: string | null
@@ -3462,13 +3462,13 @@ function skillScopeRefusal(
 }
 
 /**
- * The skill role assignment write.
- *
- * The whole desired set travels with the write, so the fixture replaces the
- * roles rather than adding to them, and the write is checked against the
- * revision the caller read: a page holding a stale revision is a conflict,
- * not a silent overwrite of somebody else's assignment.
- */
+The skill role assignment write.
+
+The whole desired set travels with the write, so the fixture replaces the
+roles rather than adding to them, and the write is checked against the
+revision the caller read: a page holding a stale revision is a conflict,
+not a silent overwrite of somebody else's assignment.
+*/
 async function handleSyntheticSkillRoleMutation(
   request: IncomingMessage,
   response: ServerResponse,
@@ -3495,7 +3495,7 @@ async function handleSyntheticSkillRoleMutation(
     );
     return true;
   }
-  if (!roles.every((role) => typeof role === "string")) {
+  if (roles.some((role) => typeof role !== "string")) {
     sendJson(
       response,
       {
@@ -3578,22 +3578,21 @@ async function handleSyntheticSkillRoleMutation(
 }
 
 /**
- * The agent enablement write.
- *
- * The Runtime owns this state, so the write carries the revision the caller
- * read and is checked against it: a page holding a stale revision is a
- * conflict, not a silent overwrite of somebody else's change. A role with no
- * runtime projection has nothing to enable, so the write is refused there too
- * rather than inventing a value for it.
- */
+The agent enablement write.
+
+The Runtime owns this state, so the write carries the revision the caller
+read and is checked against it: a page holding a stale revision is a
+conflict, not a silent overwrite of somebody else's change. A role with no
+runtime projection has nothing to enable, so the write is refused there too
+rather than inventing a value for it.
+*/
 async function handleAgentEnablementMutation(
   request: IncomingMessage,
   response: ServerResponse,
   url: URL
 ): Promise<boolean> {
   const match = url.pathname.match(AGENT_DETAIL_ROUTE);
-  if (match === null) return false;
-  if (request.method !== "PATCH") return false;
+  if ((match === null) || (request.method !== "PATCH")) return false;
 
   const role = decodeURIComponent(match[1]);
   const body = await readJsonBody(request);
@@ -3676,15 +3675,15 @@ async function handleAgentEnablementMutation(
 }
 
 /**
- * The fixture's own control over the agent enablement.
- *
- * `/fixture/agents/state?state=revision-moved` moves the revision without this
- * Console knowing: the page that has the agent open holds the revision it was
- * rendered with, so moving it here is what makes the page's next write a
- * conflict rather than a silent overwrite of somebody else's change. The
- * `enabled` and `disabled` states put the enablement back where a test that
- * writes starts from.
- */
+The fixture's own control over the agent enablement.
+
+`/fixture/agents/state?state=revision-moved` moves the revision without this
+Console knowing: the page that has the agent open holds the revision it was
+rendered with, so moving it here is what makes the page's next write a
+conflict rather than a silent overwrite of somebody else's change. The
+`enabled` and `disabled` states put the enablement back where a test that
+writes starts from.
+*/
 function configureAgentEnablementFixture(
   request: IncomingMessage,
   response: ServerResponse,
@@ -3725,29 +3724,30 @@ function configureAgentEnablementFixture(
   return true;
 }
 
-/** One workspace's own configuration route. */
+/**
+One workspace's own configuration route.
+*/
 const WORKSPACE_CONFIGURATION_ROUTE =
   /^\/control\/workspaces\/([^/]+)\/([^/]+)$/u;
 
 /**
- * The write to one workspace's canonical configuration.
- *
- * The Runtime owns the catalog, so the fixture has to do what the Runtime
- * does: compare the revision the write was decided on against the revision it
- * holds, refuse a write that names a revision the catalog has moved past, and
- * answer a write that lands with the catalog's new revision.
- */
-async function applyWorkspaceConfigurationWrite(
+The write to one workspace's canonical configuration.
+
+The Runtime owns the catalog, so the fixture has to do what the Runtime
+does: compare the revision the write was decided on against the revision it
+holds, refuse a write that names a revision the catalog has moved past, and
+answer a write that lands with the catalog's new revision.
+*/
+async function applyWorkspaceConfigWrite(
   request: IncomingMessage,
   response: ServerResponse,
   url: URL
 ): Promise<boolean> {
   const match = url.pathname.match(WORKSPACE_CONFIGURATION_ROUTE);
-  if (match === null) return false;
-  if (request.method !== "PATCH") return false;
+  if ((match === null) || (request.method !== "PATCH")) return false;
 
   const workspaceId = `${decodeURIComponent(match[1] ?? "")}/${decodeURIComponent(match[2] ?? "")}`;
-  if (workspaceId !== workspaceConfiguration.id) {
+  if (workspaceId !== workspaceConfig.id) {
     sendJson(
       response,
       {
@@ -3772,7 +3772,7 @@ async function applyWorkspaceConfigurationWrite(
     );
     return true;
   }
-  if (expectedRevision !== workspaceConfiguration.revision) {
+  if (expectedRevision !== workspaceConfig.revision) {
     sendJson(
       response,
       {
@@ -3786,9 +3786,9 @@ async function applyWorkspaceConfigurationWrite(
   }
 
   const before = JSON.stringify({
-    baseBranch: workspaceConfiguration.baseBranch,
-    enabled: workspaceConfiguration.enabled,
-    agentRoles: workspaceConfiguration.agentRoles
+    baseBranch: workspaceConfig.baseBranch,
+    enabled: workspaceConfig.enabled,
+    agentRoles: workspaceConfig.agentRoles
   });
   if ("enabled" in body) {
     if (typeof body.enabled !== "boolean") {
@@ -3802,7 +3802,7 @@ async function applyWorkspaceConfigurationWrite(
       );
       return true;
     }
-    workspaceConfiguration.enabled = body.enabled;
+    workspaceConfig.enabled = body.enabled;
   }
   if ("baseBranch" in body) {
     if (typeof body.baseBranch !== "string" || body.baseBranch.trim() === "") {
@@ -3816,7 +3816,7 @@ async function applyWorkspaceConfigurationWrite(
       );
       return true;
     }
-    workspaceConfiguration.baseBranch = body.baseBranch.trim();
+    workspaceConfig.baseBranch = body.baseBranch.trim();
   }
   if ("agentRoles" in body) {
     if (
@@ -3835,41 +3835,41 @@ async function applyWorkspaceConfigurationWrite(
       );
       return true;
     }
-    workspaceConfiguration.agentRoles = body.agentRoles as string[] | null;
+    workspaceConfig.agentRoles = body.agentRoles as string[] | null;
   }
   const after = JSON.stringify({
-    baseBranch: workspaceConfiguration.baseBranch,
-    enabled: workspaceConfiguration.enabled,
-    agentRoles: workspaceConfiguration.agentRoles
+    baseBranch: workspaceConfig.baseBranch,
+    enabled: workspaceConfig.enabled,
+    agentRoles: workspaceConfig.agentRoles
   });
-  const changed = before !== after;
-  if (changed) {
-    workspaceConfiguration.revision = nextWorkspaceRevision(
-      workspaceConfiguration.revision
+  const isChanged = before !== after;
+  if (isChanged) {
+    workspaceConfig.revision = nextWorkspaceRevision(
+      workspaceConfig.revision
     );
   }
   sendJson(response, {
     schema: "autodev-control-workspace-patch-v2",
-    id: workspaceConfiguration.id,
-    revision: workspaceConfiguration.revision,
-    changed,
-    workspace: workspaceConfigurationRecord(),
-    reconciliation: workspaceConfigurationReconciliation(),
+    id: workspaceConfig.id,
+    revision: workspaceConfig.revision,
+    changed: isChanged,
+    workspace: workspaceConfigRecord(),
+    reconciliation: workspaceConfigReconciliation(),
     diff: {
-      summary: changed
+      summary: isChanged
         ? "Canonical workspace configuration changed."
         : "Canonical workspace configuration unchanged; the catalog already held these values.",
-      identifier: workspaceConfiguration.revision
+      identifier: workspaceConfig.revision
     }
   });
   return true;
 }
 
 /**
- * The canonical permission policy, as the Runtime reports it.
- *
- * The read and external source-change fixture share the same observed state.
- */
+The canonical permission policy, as the Runtime reports it.
+
+The read and external source-change fixture share the same observed state.
+*/
 function permissionPolicyRecord(): {
   approvalPolicy: string;
   approvalsReviewer: string;
@@ -3883,15 +3883,15 @@ function permissionPolicyRecord(): {
 }
 
 /**
- * The fixture's own control over the canonical permission policy.
- *
- * `/fixture/permissions/state?state=revision-moved` moves the revision
- * without this Console knowing: the page that has the permissions open holds
- * the revision it was rendered with, so moving it here is what makes the
- * page's next write a conflict rather than a silent overwrite of somebody
- * else's change. The `reset` state puts the policy back where a test that
- * writes starts.
- */
+The fixture's own control over the canonical permission policy.
+
+`/fixture/permissions/state?state=revision-moved` moves the revision
+without this Console knowing: the page that has the permissions open holds
+the revision it was rendered with, so moving it here is what makes the
+page's next write a conflict rather than a silent overwrite of somebody
+else's change. The `reset` state puts the policy back where a test that
+writes starts.
+*/
 function configurePermissionPolicyFixture(
   request: IncomingMessage,
   response: ServerResponse,
@@ -3930,15 +3930,15 @@ function configurePermissionPolicyFixture(
 }
 
 /**
- * The fixture's own control over the canonical workspace configuration.
- *
- * `/fixture/workspaces/state?state=revision-moved` moves the revision without
- * this Console knowing: the page that has the workspace open holds the
- * revision it was rendered with, so moving it here is what makes the page's
- * next write a conflict rather than a silent overwrite of somebody else's
- * change. The `enabled` and `disabled` states put the configuration back
- * where a test that writes starts.
- */
+The fixture's own control over the canonical workspace configuration.
+
+`/fixture/workspaces/state?state=revision-moved` moves the revision without
+this Console knowing: the page that has the workspace open holds the
+revision it was rendered with, so moving it here is what makes the page's
+next write a conflict rather than a silent overwrite of somebody else's
+change. The `enabled` and `disabled` states put the configuration back
+where a test that writes starts.
+*/
 function configureWorkspaceFixture(
   request: IncomingMessage,
   response: ServerResponse,
@@ -3951,13 +3951,13 @@ function configureWorkspaceFixture(
   }
   const state = url.searchParams.get("state");
   if (state === FIXTURE_STATE_ENABLED || state === FIXTURE_STATE_DISABLED) {
-    workspaceConfiguration.enabled = state === FIXTURE_STATE_ENABLED;
-    workspaceConfiguration.baseBranch = "main";
-    workspaceConfiguration.agentRoles = null;
-    workspaceConfiguration.revision = INITIAL_WORKSPACE_REVISION;
+    workspaceConfig.enabled = state === FIXTURE_STATE_ENABLED;
+    workspaceConfig.baseBranch = "main";
+    workspaceConfig.agentRoles = null;
+    workspaceConfig.revision = INITIAL_WORKSPACE_REVISION;
   } else if (state === FIXTURE_STATE_REVISION_MOVED) {
-    workspaceConfiguration.revision = nextWorkspaceRevision(
-      workspaceConfiguration.revision
+    workspaceConfig.revision = nextWorkspaceRevision(
+      workspaceConfig.revision
     );
   } else {
     sendJson(
@@ -3975,24 +3975,24 @@ function configureWorkspaceFixture(
       state === FIXTURE_STATE_REVISION_MOVED
         ? FIXTURE_STATE_REVISION_MOVED
         : state,
-    enabled: workspaceConfiguration.enabled,
-    baseBranch: workspaceConfiguration.baseBranch,
-    agentRoles: workspaceConfiguration.agentRoles,
-    revision: workspaceConfiguration.revision
+    enabled: workspaceConfig.enabled,
+    baseBranch: workspaceConfig.baseBranch,
+    agentRoles: workspaceConfig.agentRoles,
+    revision: workspaceConfig.revision
   });
   return true;
 }
 
 /**
- * The fixture's own control over the skill assignment.
- *
- * `/fixture/skills/revision` moves the canonical roles without this Console
- * knowing: the page that has the skills open holds the revision it was
- * rendered with, so bumping the revision here is what makes its next write a
- * conflict rather than a silent overwrite of somebody else's assignment.
- * `/fixture/skills/reset` puts the assignment back, so a test that writes
- * starts from the catalog the fixture declares.
- */
+The fixture's own control over the skill assignment.
+
+`/fixture/skills/revision` moves the canonical roles without this Console
+knowing: the page that has the skills open holds the revision it was
+rendered with, so bumping the revision here is what makes its next write a
+conflict rather than a silent overwrite of somebody else's assignment.
+`/fixture/skills/reset` puts the assignment back, so a test that writes
+starts from the catalog the fixture declares.
+*/
 function configureSkillFixture(
   request: IncomingMessage,
   response: ServerResponse,
@@ -4020,15 +4020,15 @@ function configureSkillFixture(
 }
 
 /**
- * Moves the canonical hook declaration without the Console knowing.
- *
- * The page that has the declaration open holds the revision it was rendered
- * with, so moving the declaration here is what makes its next write a
- * conflict rather than a silent overwrite of somebody else's edit.
- *
- * `/fixture/hooks/reset` puts it back the way the fixture declares it, so one
- * spec's write is not the next spec's starting state.
- */
+Moves the canonical hook declaration without the Console knowing.
+
+The page that has the declaration open holds the revision it was rendered
+with, so moving the declaration here is what makes its next write a
+conflict rather than a silent overwrite of somebody else's edit.
+
+`/fixture/hooks/reset` puts it back the way the fixture declares it, so one
+spec's write is not the next spec's starting state.
+*/
 function configureHookFixture(
   request: IncomingMessage,
   response: ServerResponse,
@@ -4062,15 +4062,15 @@ function configureHookFixture(
 }
 
 /**
- * Moves the canonical MCP declaration without the Console knowing.
- *
- * The page that has the declaration open holds the revision it was rendered
- * with, so moving the declaration here is what makes its next write a conflict
- * rather than a silent overwrite of somebody else's edit.
- *
- * `/fixture/mcp/reset` puts it back the way the fixture declares it, so one
- * spec's write is not the next spec's starting state.
- */
+Moves the canonical MCP declaration without the Console knowing.
+
+The page that has the declaration open holds the revision it was rendered
+with, so moving the declaration here is what makes its next write a conflict
+rather than a silent overwrite of somebody else's edit.
+
+`/fixture/mcp/reset` puts it back the way the fixture declares it, so one
+spec's write is not the next spec's starting state.
+*/
 function configureMcpFixture(
   request: IncomingMessage,
   response: ServerResponse,
@@ -4113,45 +4113,45 @@ function configureMcpFixture(
 }
 
 /**
- * The Runtime's live projection, as this fixture reports it.
- *
- * `liveAgents` is null on purpose. The Runtime registered no live-agent
- * activity source, so the Agents list keeps saying that a per-agent live
- * count is not observed instead of inventing a zero for it. The router's own
- * counters are a separate source and are reported, and they are what the
- * Usage Active Sessions scope reads.
- */
+The Runtime's live projection, as this fixture reports it.
+
+`liveAgents` is null on purpose. The Runtime registered no live-agent
+activity source, so the Agents list keeps saying that a per-agent live
+count is not observed instead of inventing a zero for it. The router's own
+counters are a separate source and are reported, and they are what the
+Usage Active Sessions scope reads.
+*/
 const RUNTIME_ACTIVE_SESSIONS = 3;
 const RUNTIME_ACTIVE_SUBAGENT_THREADS = 2;
 const RUNTIME_IN_FLIGHT_REQUESTS = 4;
 
 /**
- * Whether the Runtime answers at all.
- *
- * A live scope that can only ever be read successfully cannot show what a
- * failed read looks like, and the difference between "the Runtime is idle" and
- * "the Runtime was never observed" is the whole point of the scope.
- */
-let runtimeUnavailable = false;
+Whether the Runtime answers at all.
+
+A live scope that can only ever be read successfully cannot show what a
+failed read looks like, and the difference between "the Runtime is idle" and
+"the Runtime was never observed" is the whole point of the scope.
+*/
+let isRuntimeUnavailable = false;
 
 /**
- * Whether the GitHub Actions runtime state can be read.
- *
- * The workflow definitions are parsed from the repository's YAML and the
- * runtime state comes from the GitHub Actions API, so the two can be read
- * apart. The page has to keep them apart too: a page that can only render
- * observed runtime facts cannot show that it refuses to invent them.
- */
-let githubRuntimeUnavailable = false;
+Whether the GitHub Actions runtime state can be read.
+
+The workflow definitions are parsed from the repository's YAML and the
+runtime state comes from the GitHub Actions API, so the two can be read
+apart. The page has to keep them apart too: a page that can only render
+observed runtime facts cannot show that it refuses to invent them.
+*/
+let isGithubRuntimeUnavailable = false;
 
 /**
- * The workflow definitions the repository declares.
- *
- * The rows carry the states the page has to tell apart: a workflow that is
- * active in GitHub and one that was disabled by hand, one whose runtime state
- * was never loaded, one that declares no trigger event and one that declares
- * no schedule.
- */
+The workflow definitions the repository declares.
+
+The rows carry the states the page has to tell apart: a workflow that is
+active in GitHub and one that was disabled by hand, one whose runtime state
+was never loaded, one that declares no trigger event and one that declares
+no schedule.
+*/
 function githubWorkflows(): readonly Record<string, unknown>[] {
   return [
     {
@@ -4224,8 +4224,8 @@ function githubWorkflows(): readonly Record<string, unknown>[] {
 }
 
 /**
- * The bounded recent-run sample the Actions API returned.
- */
+The bounded recent-run sample the Actions API returned.
+*/
 function githubRecentRuns(): readonly Record<string, unknown>[] {
   return [
     {
@@ -4292,12 +4292,12 @@ function githubRecentRuns(): readonly Record<string, unknown>[] {
 }
 
 /**
- * The GitHub workflow catalog and the observed Actions runtime state.
- *
- * The read is read-only in the product as well as here: dispatch, cancel,
- * rerun and schedule controls are unimplemented, so the fixture answers no
- * mutation of its own.
- */
+The GitHub workflow catalog and the observed Actions runtime state.
+
+The read is read-only in the product as well as here: dispatch, cancel,
+rerun and schedule controls are unimplemented, so the fixture answers no
+mutation of its own.
+*/
 function handleGithubRead(
   request: IncomingMessage,
   response: ServerResponse,
@@ -4308,9 +4308,9 @@ function handleGithubRead(
       response.writeHead(405).end();
       return true;
     }
-    githubRuntimeUnavailable = url.searchParams.get("state") === "unavailable";
+    isGithubRuntimeUnavailable = url.searchParams.get("state") === "unavailable";
     sendJson(response, {
-      state: githubRuntimeUnavailable ? "unavailable" : "observed"
+      state: isGithubRuntimeUnavailable ? "unavailable" : "observed"
     });
     return true;
   }
@@ -4327,13 +4327,13 @@ function handleGithubRead(
     catalogStatus: "valid",
     totalWorkflows: workflows.length,
     workflows,
-    runtimeFactsAvailable: !githubRuntimeUnavailable,
-    runtimeStatus: githubRuntimeUnavailable ? "unavailable" : "available",
-    runtimeMessage: githubRuntimeUnavailable
+    runtimeFactsAvailable: !isGithubRuntimeUnavailable,
+    runtimeStatus: isGithubRuntimeUnavailable ? "unavailable" : "available",
+    runtimeMessage: isGithubRuntimeUnavailable
       ? "The GitHub Actions API could not be reached for the configured repository."
       : null,
     repository: "SimulatorLife/AutoDev",
-    stats: githubRuntimeUnavailable
+    stats: isGithubRuntimeUnavailable
       ? null
       : {
           totalRuns: 30,
@@ -4343,17 +4343,17 @@ function handleGithubRead(
           cancelledRuns: 2,
           successRate: 0.7
         },
-    recentRuns: githubRuntimeUnavailable ? null : githubRecentRuns()
+    recentRuns: isGithubRuntimeUnavailable ? null : githubRecentRuns()
   });
   return true;
 }
 
 /**
- * The Runtime's read-only live projection, and the fixture's control over it.
- *
- * `/fixture/runtime/state` takes the Runtime away, so a page that reads it
- * has to say that the read failed rather than showing an idle Runtime.
- */
+The Runtime's read-only live projection, and the fixture's control over it.
+
+`/fixture/runtime/state` takes the Runtime away, so a page that reads it
+has to say that the read failed rather than showing an idle Runtime.
+*/
 function handleRuntimeFixture(
   request: IncomingMessage,
   response: ServerResponse,
@@ -4364,14 +4364,14 @@ function handleRuntimeFixture(
       response.writeHead(405).end();
       return true;
     }
-    runtimeUnavailable = url.searchParams.get("state") === "unavailable";
+    isRuntimeUnavailable = url.searchParams.get("state") === "unavailable";
     sendJson(response, {
-      state: runtimeUnavailable ? "unavailable" : "observed"
+      state: isRuntimeUnavailable ? "unavailable" : "observed"
     });
     return true;
   }
   if (url.pathname !== "/control/runtime") return false;
-  if (runtimeUnavailable) {
+  if (isRuntimeUnavailable) {
     response.writeHead(503).end();
     return true;
   }
@@ -4402,28 +4402,36 @@ function handleRuntimeFixture(
 }
 
 /**
- * The evaluation results the fixture holds.
- *
- * The rows keep the states the Evaluations view has to tell apart: a run
- * that passed, a run that failed and a run whose verdict was never observed;
- * a run that reported a prompt and one that did not; a run whose trace the
- * Usage fixture can open and one whose trace was never retained.
- */
+The evaluation results the fixture holds.
+
+The rows keep the states the Evaluations view has to tell apart: a run
+that passed, a run that failed and a run whose verdict was never observed;
+a run that reported a prompt and one that did not; a run whose trace the
+Usage fixture can open and one whose trace was never retained.
+*/
 const EVALUATION_ROLES = ["orchestrator", "browser-tester"] as const;
 const EVALUATION_MODELS = ["claude-sonnet-5", "gpt-6-meridian"] as const;
 const EVALUATION_PROMPTS = ["release-notes", "review"] as const;
-/** The rows one read carries. */
+/**
+The rows one read carries.
+*/
 const EVALUATION_WINDOW = 60;
-/** The results the store holds behind that window. */
+/**
+The results the store holds behind that window.
+*/
 const EVALUATION_STORE = 120;
-/** The instant the fixture's newest run was recorded. */
+/**
+The instant the fixture's newest run was recorded.
+*/
 const EVALUATION_NEWEST_AT = "2026-02-11T09:30:00.000Z";
-/** The span id the Usage fixture never retained. */
+/**
+The span id the Usage fixture never retained.
+*/
 const EVALUATION_UNOBSERVED_SPAN_ID = "ffffffffffffffff";
 
 /**
- * One of the fixture's axes, chosen by the row's place in the window.
- */
+One of the fixture's axes, chosen by the row's place in the window.
+*/
 function evaluationAxis<T>(values: readonly T[], index: number): T {
   const value = values[index % values.length];
   if (value === undefined) {
@@ -4433,20 +4441,20 @@ function evaluationAxis<T>(values: readonly T[], index: number): T {
 }
 
 /**
- * A span id the Usage fixture answers with a trace.
- */
+A span id the Usage fixture answers with a trace.
+*/
 function evaluationSpanId(index: number): string {
   return `a1a1a1a1${index.toString(16).padStart(8, "0")}`;
 }
 
 /**
- * One evaluation result.
- *
- * The row carries the states the Evaluations view has to tell apart: a run
- * that passed, a run that failed and a run whose verdict was never observed;
- * a run that reported a prompt and one that did not; a run whose trace the
- * Usage fixture can open and one whose trace was never retained.
- */
+One evaluation result.
+
+The row carries the states the Evaluations view has to tell apart: a run
+that passed, a run that failed and a run whose verdict was never observed;
+a run that reported a prompt and one that did not; a run whose trace the
+Usage fixture can open and one whose trace was never retained.
+*/
 function evaluationRow(index: number): Record<string, unknown> {
   const verdict = index % 3;
   const passed = verdict === 0 ? true : verdict === 1 ? false : null;
@@ -4485,12 +4493,12 @@ function evaluationRow(index: number): Record<string, unknown> {
 }
 
 /**
- * The retained evaluation results, most recent first.
- *
- * The window is bounded and the store behind it is larger, because the two
- * numbers are different facts: one is what the read carried, the other is
- * what the store holds.
- */
+The retained evaluation results, most recent first.
+
+The window is bounded and the store behind it is larger, because the two
+numbers are different facts: one is what the read carried, the other is
+what the store holds.
+*/
 function evaluationRows(): readonly Record<string, unknown>[] {
   const rows: Record<string, unknown>[] = [];
   for (let index = 0; index < EVALUATION_WINDOW; index += 1) {
@@ -4500,12 +4508,12 @@ function evaluationRows(): readonly Record<string, unknown>[] {
 }
 
 /**
- * The retained evaluation results.
- *
- * The envelope says the read is a bounded window over a larger store, so the
- * page has to render the store's size and the window's size as the different
- * facts they are.
- */
+The retained evaluation results.
+
+The envelope says the read is a bounded window over a larger store, so the
+page has to render the store's size and the window's size as the different
+facts they are.
+*/
 function handleEvaluationsRead(url: URL, response: ServerResponse): boolean {
   if (url.pathname !== "/control/evaluations") return false;
   const rows = evaluationRows();
@@ -4521,13 +4529,13 @@ function handleEvaluationsRead(url: URL, response: ServerResponse): boolean {
 }
 
 /**
- * The hook reads the Configure group publishes.
- *
- * The declaration and the projection the Runtime published are two different
- * questions, so they are two different reads. The fixture publishes both from
- * the contract's own types, so a published event cannot carry a field the
- * Runtime would not send it.
- */
+The hook reads the Configure group publishes.
+
+The declaration and the projection the Runtime published are two different
+questions, so they are two different reads. The fixture publishes both from
+the contract's own types, so a published event cannot carry a field the
+Runtime would not send it.
+*/
 function handleHookCatalogRead(url: URL, response: ServerResponse): boolean {
   if (url.pathname === "/control/hooks") {
     const body: ControlApiHooksResponse = {
@@ -4573,15 +4581,15 @@ function handleHookCatalogRead(url: URL, response: ServerResponse): boolean {
 }
 
 /**
- * The catalog resources the Console reads: the MCP catalog and the Configure
- * group's agents, skills, hooks, prompts and permissions.
- *
- * Each response carries the states the Console has to keep apart -- a
- * declared server and one that exists only in a target projection, an
- * enabled assignment and one the Runtime could not report, a measured count
- * and an unobserved one -- so the pages are exercised against the states
- * rather than against a single happy row.
- */
+The catalog resources the Console reads: the MCP catalog and the Configure
+group's agents, skills, hooks, prompts and permissions.
+
+Each response carries the states the Console has to keep apart -- a
+declared server and one that exists only in a target projection, an
+enabled assignment and one the Runtime could not report, a measured count
+and an unobserved one -- so the pages are exercised against the states
+rather than against a single happy row.
+*/
 function handleCatalogResourceRead(
   url: URL,
   response: ServerResponse
@@ -5026,15 +5034,15 @@ function handleCatalogResourceRead(
 }
 
 /**
- * The fixture's own control over the canonical source.
- *
- * `/fixture/canonical-source/move` changes a canonical source without this
- * Console knowing: the page that has the source open holds the revision it
- * was rendered with, so moving the source here is what makes its next write a
- * conflict rather than a silent overwrite of somebody else's edit.
- * `/fixture/canonical-source/reset` puts the sources back, so a test starts
- * from the sources the fixture declares.
- */
+The fixture's own control over the canonical source.
+
+`/fixture/canonical-source/move` changes a canonical source without this
+Console knowing: the page that has the source open holds the revision it
+was rendered with, so moving the source here is what makes its next write a
+conflict rather than a silent overwrite of somebody else's edit.
+`/fixture/canonical-source/reset` puts the sources back, so a test starts
+from the sources the fixture declares.
+*/
 function configureCanonicalSourceFixture(
   request: IncomingMessage,
   response: ServerResponse,
@@ -5071,40 +5079,38 @@ function configureCanonicalSourceFixture(
 }
 
 /**
- * The fixture's own control routes and the catalog resources it answers.
- *
- * One dispatch from the request handler rather than two, so the handler
- * stays within the complexity budget it was written to.
- */
+The fixture's own control routes and the catalog resources it answers.
+
+One dispatch from the request handler rather than two, so the handler
+stays within the complexity budget it was written to.
+*/
 function handleFixtureCatalogRoutes(
   request: IncomingMessage,
   response: ServerResponse,
   url: URL
 ): boolean {
-  if (configureSkillFixture(request, response, url)) return true;
-  if (configureMcpFixture(request, response, url)) return true;
-  if (configureHookFixture(request, response, url)) return true;
-  if (configureWorkspaceFixture(request, response, url)) return true;
-  if (configurePermissionPolicyFixture(request, response, url)) return true;
-  if (configureCanonicalSourceFixture(request, response, url)) return true;
-  if (handleRuntimeFixture(request, response, url)) return true;
-  if (handleGithubRead(request, response, url)) return true;
-  if (handleEvaluationsRead(url, response)) return true;
+  if (configureSkillFixture(request, response, url) || configureMcpFixture(request, response, url) || configureHookFixture(request, response, url) || configureWorkspaceFixture(request, response, url) || configurePermissionPolicyFixture(request, response, url) || configureCanonicalSourceFixture(request, response, url) || handleRuntimeFixture(request, response, url) || handleGithubRead(request, response, url) || handleEvaluationsRead(url, response)) return true;
   return handleCatalogResourceRead(url, response);
 }
 
-/** The role a provider assignment is for, as the Console writes it. */
+/**
+The role a provider assignment is for, as the Console writes it.
+*/
 const PROVIDER_ROLE_ROUTE =
   /^\/control\/providers\/([^/]+)\/roles\/(orchestrator|subagent)$/u;
 const PROVIDER_AGENT_MODEL_ROUTE =
   /^\/control\/providers\/([^/]+)\/agents\/([a-z0-9-]+)$/u;
-/** The agent roles each fixture provider lists under its Subagent model. */
+/**
+The agent roles each fixture provider lists under its Subagent model.
+*/
 const FIXTURE_AGENT_ROLES = [
   { role: "explorer", tier: "default" },
   { role: "worker", tier: "default" },
   { role: "smart", tier: "smart" }
 ] as const;
-/** Agent-role model writes the fixture has accepted, by `provider:role`. */
+/**
+Agent-role model writes the fixture has accepted, by `provider:role`.
+*/
 const agentModelWrites = new Map<string, string>();
 
 function fixtureAgentModels(provider: string, tierModel: string | null) {
@@ -5153,17 +5159,19 @@ const INITIAL_ROLE_PRIORITIES: Readonly<
 > = { orchestrator: 2, subagent: 1 };
 
 /**
- * The provider role writes the fixture has accepted, by `provider:role`.
- *
- * The provider list is otherwise static. A role write is held here so the
- * list read after it carries what was written, as the Runtime's does, and
- * the specs read it back to see what reached the "Runtime".
- */
+The provider role writes the fixture has accepted, by `provider:role`.
+
+The provider list is otherwise static. A role write is held here so the
+list read after it carries what was written, as the Runtime's does, and
+the specs read it back to see what reached the "Runtime".
+*/
 const providerRoleWrites = new Map<
   string,
   { priority: FixtureRolePriority; model: string | null }
 >();
-/** A code the next role write is refused with, as the Runtime would. */
+/**
+A code the next role write is refused with, as the Runtime would.
+*/
 let refuseNextProviderRoleWrite: string | null = null;
 
 function fixtureProviderRole(
@@ -5233,12 +5241,12 @@ async function handleProviderRoleMutation(
 }
 
 /**
- * The fixture's own control over provider roles.
- *
- * `POST /fixture/providers/roles?state=reset` forgets every write;
- * `?state=refuse-next&code=<code>` refuses the next write with that code;
- * `GET` lists the writes that were accepted.
- */
+The fixture's own control over provider roles.
+
+`POST /fixture/providers/roles?state=reset` forgets every write;
+`?state=refuse-next&code=<code>` refuses the next write with that code;
+`GET` lists the writes that were accepted.
+*/
 function configureProviderRoleFixture(
   request: IncomingMessage,
   response: ServerResponse,
@@ -5277,33 +5285,19 @@ function configureProviderRoleFixture(
 }
 
 /**
- * The fixture's own write routes.
- *
- * One dispatch for the writes, so the request handler stays within the
- * complexity budget it was written to. Each of these answers a route that the
- * read-only guard would otherwise reject with a bare 405 -- which reads as a
- * route that does not exist.
- */
+The fixture's own write routes.
+
+One dispatch for the writes, so the request handler stays within the
+complexity budget it was written to. Each of these answers a route that the
+read-only guard would otherwise reject with a bare 405 -- which reads as a
+route that does not exist.
+*/
 async function handleSyntheticMutationRoutes(
   request: IncomingMessage,
   response: ServerResponse,
   url: URL
 ): Promise<boolean> {
-  if (await handleSyntheticWorkspaceApproval(request, response, url.pathname)) {
-    return true;
-  }
-  if (await handleSyntheticAnalysisMutation(request, response, url))
-    return true;
-  if (await handleSyntheticRunMutation(request, response, url)) return true;
-  if (handleSyntheticReadinessInitialization(request, response, url))
-    return true;
-  if (await handleSyntheticSkillRoleMutation(request, response, url))
-    return true;
-  if (await handleAgentEnablementMutation(request, response, url)) return true;
-  if (await handleProviderRoleMutation(request, response, url)) return true;
-  if (await handleAgentModelMutation(request, response, url)) return true;
-  if (configureProviderRoleFixture(request, response, url)) return true;
-  if (await applyMcpDeclarationWrite(response, request, url)) {
+  if ((await handleSyntheticWorkspaceApproval(request, response, url.pathname)) || (await handleSyntheticAnalysisMutation(request, response, url)) || (await handleSyntheticRunMutation(request, response, url)) || handleSyntheticReadinessInitialization(request, response, url) || (await handleSyntheticSkillRoleMutation(request, response, url)) || (await handleAgentEnablementMutation(request, response, url)) || (await handleProviderRoleMutation(request, response, url)) || (await handleAgentModelMutation(request, response, url)) || configureProviderRoleFixture(request, response, url) || (await applyMcpDeclarationWrite(response, request, url))) {
     return true;
   }
   if (url.pathname.startsWith("/control/hooks/")) {
@@ -5319,7 +5313,7 @@ async function handleSyntheticMutationRoutes(
     );
     return true;
   }
-  if (await applyWorkspaceConfigurationWrite(request, response, url)) {
+  if (await applyWorkspaceConfigWrite(request, response, url)) {
     return true;
   }
   if (
@@ -5367,13 +5361,13 @@ async function handleSyntheticMutationRoutes(
 }
 
 /**
- * The session-diagnostics routes.
- *
- * The Console's session-scoped Usage view reads them, so the stand-in answers
- * them with the Core contract's own shapes. A session id that names no
- * session answers with `found: false` rather than a 404: a session that does
- * not exist is a fact about the machine, not a missing route.
- */
+The session-diagnostics routes.
+
+The Console's session-scoped Usage view reads them, so the stand-in answers
+them with the Core contract's own shapes. A session id that names no
+session answers with `found: false` rather than a 404: a session that does
+not exist is a fact about the machine, not a missing route.
+*/
 function respondSessionDiagnostics(
   url: URL,
   response: ServerResponse
@@ -5414,10 +5408,7 @@ const server = createServer(
       response.writeHead(200).end("ok");
       return;
     }
-    if (resetSyntheticFixture(request, response)) return;
-    if (configureReadinessFixture(url, response)) return;
-    if (handleSyntheticReadFailureConfiguration(url, response)) return;
-    if (await handleSyntheticMutationRoutes(request, response, url)) return;
+    if (resetSyntheticFixture(request, response) || configureReadinessFixture(url, response) || handleSyntheticReadFailureConfig(url, response) || (await handleSyntheticMutationRoutes(request, response, url))) return;
     // The catalog and the fixture's own control routes are answered before the
     // read-only guard: one of them is a write, and a write that the guard
     // rejects with a bare 405 is a route that does not exist.
@@ -5433,15 +5424,15 @@ const server = createServer(
         source: "fixture",
         readOnly: false,
         catalogStatus: "valid",
-        revision: workspaceConfiguration.revision,
+        revision: workspaceConfig.revision,
         totalWorkspaces: 1,
-        reconciliation: workspaceConfigurationReconciliation(),
+        reconciliation: workspaceConfigReconciliation(),
         workspaces: [
           {
-            id: workspaceConfiguration.id,
-            baseBranch: workspaceConfiguration.baseBranch,
-            enabled: workspaceConfiguration.enabled,
-            agentRoles: workspaceConfiguration.agentRoles,
+            id: workspaceConfig.id,
+            baseBranch: workspaceConfig.baseBranch,
+            enabled: workspaceConfig.enabled,
+            agentRoles: workspaceConfig.agentRoles,
             configuration: { status: "configured" },
             runtime: { status: "not-observed" }
           }
@@ -5702,8 +5693,7 @@ const server = createServer(
       response.writeHead(404).end();
       return;
     }
-    if (handleSyntheticRunRead(request, response, url)) return;
-    if (handleSyntheticPlaytestingRead(response, url)) return;
+    if (handleSyntheticRunRead(request, response, url) || handleSyntheticPlaytestingRead(response, url)) return;
     response.writeHead(404).end();
   }
 );

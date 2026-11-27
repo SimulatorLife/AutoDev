@@ -22,7 +22,7 @@ import {
 } from "../src/router/telemetry.ts";
 import {
   gitCommitIdentity,
-  gitCommitIdentityEnv
+  gitCommitIdentityEnv as gitCommitIdentityEnvironment
 } from "../src/telemetry/git-commit-identity.ts";
 import {
   createWorkspaceCommitObserver,
@@ -37,21 +37,21 @@ setTelemetryMetricExporterForTest(metricExporter);
 
 function execGit(
   root: string,
-  args: readonly string[],
+  arguments_: readonly string[],
   options: { readonly env?: NodeJS.ProcessEnv } = {}
 ): string {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  for (const key of Object.keys(env)) {
-    if (key.startsWith("GIT_")) delete env[key];
+  const environment: NodeJS.ProcessEnv = { ...process.env };
+  for (const key of Object.keys(environment)) {
+    if (key.startsWith("GIT_")) delete environment[key];
   }
   for (const [key, value] of Object.entries(options.env ?? {})) {
-    if (value === undefined) delete env[key];
-    else env[key] = value;
+    if (value === undefined) delete environment[key];
+    else environment[key] = value;
   }
-  return execFileSync("git", ["-C", root, ...args], {
+  return execFileSync("git", ["-C", root, ...arguments_], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
-    env
+    env: environment
   }).trim();
 }
 
@@ -70,7 +70,7 @@ async function withGitRepository<T>(
 }
 
 function realRunGit(root: string): RunGit {
-  return async (repositoryRoot, args) => {
+  return async (repositoryRoot, arguments_) => {
     // git resolves the repository it is asked about, so the observer's
     // repository root and the workspace directory it was given can be the
     // same directory under two names (`/var` and `/private/var` on macOS).
@@ -80,7 +80,7 @@ function realRunGit(root: string): RunGit {
       return { exitCode: -1, stdout: "" };
     }
     try {
-      const stdout = execGit(root, args);
+      const stdout = execGit(root, arguments_);
       return { exitCode: 0, stdout };
     } catch (error) {
       const code =
@@ -303,14 +303,14 @@ test("an unmeasurable commit blocks the baseline and is retried", async () => {
     // work, so the failure is isolated to a single commit.
     const failing = new Set<string>();
     const real = realRunGit(root);
-    const runGit: RunGit = async (repositoryRoot, args) => {
-      if (args[0] === "show") {
-        const commit = args.at(-1);
+    const runGit: RunGit = async (repositoryRoot, arguments_) => {
+      if (arguments_[0] === "show") {
+        const commit = arguments_.at(-1);
         if (commit && failing.has(commit)) {
           return { exitCode: 128, stdout: "" };
         }
       }
-      return real(repositoryRoot, args);
+      return real(repositoryRoot, arguments_);
     };
 
     const observer = createWorkspaceCommitObserver({
@@ -463,11 +463,11 @@ test("git failures are reported, not absorbed into a fabricated zero", async () 
     const observer = createWorkspaceCommitObserver({
       workspaceKey: "ws-test-007",
       repositoryRoot: root,
-      runGit: async (repositoryRoot, args) => {
-        if (args[0] === "rev-list") {
+      runGit: async (repositoryRoot, arguments_) => {
+        if (arguments_[0] === "rev-list") {
           return { exitCode: 128, stdout: "" };
         }
-        return realRunGit(root)(repositoryRoot, args);
+        return realRunGit(root)(repositoryRoot, arguments_);
       }
     });
     await observer.initialize();
@@ -631,7 +631,7 @@ test("Router selected/result events emit only commit-identity Git metrics", asyn
     await writeFile(join(root, "agent.txt"), "agent\n");
     execGit(root, ["add", "."]);
     execGit(root, ["commit", "-q", "-m", "agent"], {
-      env: gitCommitIdentityEnv({ role: "worker", provider: "codex" })
+      env: gitCommitIdentityEnvironment({ role: "worker", provider: "codex" })
     });
 
     await observe("result");
@@ -688,7 +688,7 @@ test("the Router observes the workspace the session works in, not the session's 
     await writeFile(join(root, "agent.txt"), "agent\n");
     execGit(root, ["add", "."]);
     execGit(root, ["commit", "-q", "-m", "agent"], {
-      env: gitCommitIdentityEnv({ role: "worker", provider: "codex" })
+      env: gitCommitIdentityEnvironment({ role: "worker", provider: "codex" })
     });
 
     await observe("result");

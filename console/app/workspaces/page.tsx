@@ -26,20 +26,20 @@ export const metadata: Metadata = {
   title: "Workspaces"
 };
 
-function firstSearchParam(
+function firstSearchParameter(
   raw: string | string[] | undefined
 ): string | undefined {
   return Array.isArray(raw) ? raw[0] : raw;
 }
 
 /**
- * Each configured workspace's most recent playtesting approval, read
- * independently per workspace because the Control API answers this fact
- * per workspace rather than embedding it in the catalog read above. A
- * workspace whose read failed is kept distinct (`"unavailable"`) from one
- * the Control API confirmed has no approval (`null`): one is missing
- * evidence, the other is an observed absence.
- */
+Each configured workspace's most recent playtesting approval, read
+independently per workspace because the Control API answers this fact
+per workspace rather than embedding it in the catalog read above. A
+workspace whose read failed is kept distinct (`"unavailable"`) from one
+the Control API confirmed has no approval (`null`): one is missing
+evidence, the other is an observed absence.
+*/
 async function readApprovals(
   workspaceIds: readonly string[],
   config: ControlApiConfig
@@ -63,7 +63,7 @@ export default async function WorkspacesPage({
     Record<string, string | string[] | undefined>
   >;
 }): Promise<React.JSX.Element> {
-  const resolvedSearchParams = searchParams
+  const resolvedSearchParameters = searchParams
     ? await searchParams
     : ({} as Record<string, string | string[] | undefined>);
   const { section, config } = readNodeContext("/workspaces");
@@ -115,18 +115,18 @@ export default async function WorkspacesPage({
   // answers. The page itself is about the workspace catalogue, and the
   // Control API answers that in milliseconds.
   const approvals = await readApprovals(workspaceIds, config);
-  const saveOutcome = workspaceSaveOutcomeFromQuery(resolvedSearchParams.save);
+  const saveOutcome = workspaceSaveOutcomeFromQuery(resolvedSearchParameters.save);
   // A refused write leaves the control based on the revision it was filled
   // from, so the operator's edit is not silently paired with a catalog that
   // has since moved.
-  const basedOn = editorBaseRevisionFromQuery(resolvedSearchParams.based);
+  const basedOn = editorBaseRevisionFromQuery(resolvedSearchParameters.based);
   // The workspace the last write was about. It is resolved against the
   // declared workspaces rather than taken on trust: a query value that names
   // a workspace this target does not declare is not a workspace, and the
   // notice then says what it can without it.
   const savedWorkspace = workspaces.find(
     (workspace) =>
-      workspace.id === firstSearchParam(resolvedSearchParams.workspace)
+      workspace.id === firstSearchParameter(resolvedSearchParameters.workspace)
   )?.id;
   return React.createElement(
     ConsolePageShell,
@@ -140,8 +140,8 @@ export default async function WorkspacesPage({
       revision: basedOn ?? result.data.revision,
       catalogStatus: result.data.catalogStatus,
       reconciliation: result.data.reconciliation,
-      ...(saveOutcome === undefined ? {} : { saveOutcome }),
-      ...(savedWorkspace === undefined ? {} : { savedWorkspace })
+      ...(saveOutcome !== undefined && { saveOutcome }),
+      ...(savedWorkspace !== undefined && { savedWorkspace })
     })
   );
 }

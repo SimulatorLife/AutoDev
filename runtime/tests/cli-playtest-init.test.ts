@@ -52,11 +52,11 @@ function read(root: string, name: string): Record<string, unknown> {
 }
 
 /**
- * The binding `init` scaffolds, with the optional methods bound as well.
- *
- * Derived from the scaffold rather than restated, so these tests cannot drift
- * out of sync with what `init` actually writes.
- */
+The binding `init` scaffolds, with the optional methods bound as well.
+
+Derived from the scaffold rather than restated, so these tests cannot drift
+out of sync with what `init` actually writes.
+*/
 function completeBinding(root: string): Record<string, unknown> {
   const binding = read(root, PLAYTESTS_BINDING_FILE);
   binding.bindings = {
@@ -182,7 +182,7 @@ test("an empty metricDefinitions array does not hide a malformed registry envelo
 
   const problems = checkPlaytestIntegration(root).problems;
   assert.ok(problems.some((problem) => problem.code === "invalid-rubric"));
-  assert.ok(!problems.some((problem) => problem.code === "empty-rubric"));
+  assert.ok(problems.every((problem) => problem.code !== "empty-rubric"));
 });
 
 test("a non-empty Core v2 registry is not reported as an empty rubric", () => {

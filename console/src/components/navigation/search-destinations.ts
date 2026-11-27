@@ -49,13 +49,13 @@ export function searchFailureMessage(
   const sources = unavailableSources
     .map((source) => SEARCH_SOURCE_LABELS[source])
     .join(", ");
-  const totalFailure =
+  const isTotalFailure =
     unavailableSources.includes("configuration") ||
     unavailableSources.includes("endpoint") ||
     ["providers", "models", "agentRoles", "workspaces"].every((source) =>
       unavailableSources.includes(source as SearchSource)
     );
-  const prefix = totalFailure
+  const prefix = isTotalFailure
     ? "Search records are unavailable"
     : "Some search records are unavailable";
   return `${prefix}: ${sources || "search service"}. Section results remain available. Reopen Search to retry.`;

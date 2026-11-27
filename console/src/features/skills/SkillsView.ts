@@ -27,7 +27,7 @@ import { Chip, chipList } from "../../components/tables/Chips.ts";
 import {
   DataTable,
   type DataTableFeatures,
-  type DataTableProps
+  type DataTableProps as DataTableProperties
 } from "../../components/tables/DataTable.ts";
 import { PathText } from "../../components/tables/PathText.ts";
 import {
@@ -47,83 +47,83 @@ import {
 } from "./skills-list-url.ts";
 
 /**
- * Skills resource view.
- *
- * Configuration vs. runtime evidence are separate concerns. A configured
- * skill is only that: configured and possibly eligible. Whether it was
- * exposed, selected, or used must come from runtime telemetry.
- *
- * A skill's reach is a third fact again, and it is not a setting: where the
- * skill is installed decides which roles can reach it at all. A skill in the
- * catalogue and installed nowhere is a configuration defect, so the page says
- * so instead of listing it as though it were live.
- *
- * The catalogue and role assignments are a single read-only view.
- */
+Skills resource view.
+
+Configuration vs. runtime evidence are separate concerns. A configured
+skill is only that: configured and possibly eligible. Whether it was
+exposed, selected, or used must come from runtime telemetry.
+
+A skill's reach is a third fact again, and it is not a setting: where the
+skill is installed decides which roles can reach it at all. A skill in the
+catalogue and installed nowhere is a configuration defect, so the page says
+so instead of listing it as though it were live.
+
+The catalogue and role assignments are a single read-only view.
+*/
 
 export interface SkillsViewProps {
   readonly skills: readonly ScopedSkillDefinition[];
   readonly eligibility: readonly SkillEligibility[];
   /**
-   * The skills the execution contract assigns that no canonical source exists
-   * for.
-   *
-   * Null when the catalogue was not read: the join between the contract's
-   * assignments and the catalogue's names was not performed, so the set is not
-   * known rather than empty. The catalogue's own state says the same thing on
-   * the page.
-   */
+  The skills the execution contract assigns that no canonical source exists
+  for.
+  
+  Null when the catalogue was not read: the join between the contract's
+  assignments and the catalogue's names was not performed, so the set is not
+  known rather than empty. The catalogue's own state says the same thing on
+  the page.
+  */
   readonly unresolvedAssignments: readonly SkillEligibility[] | null;
   readonly sourceValidity: boolean | null;
   /**
-   * How the canonical catalog is invalid.
-   *
-   * Required rather than defaulted to `[]`: an invalid catalog renders no
-   * skills, so without the reasons the page says "the catalog is empty" for a
-   * directory that holds six and cannot apply one of them.
-   */
+  How the canonical catalog is invalid.
+  
+  Required rather than defaulted to `[]`: an invalid catalog renders no
+  skills, so without the reasons the page says "the catalog is empty" for a
+  directory that holds six and cannot apply one of them.
+  */
   readonly validationIssues: readonly RuleSyncValidationIssue[];
   /**
-   * Roles the execution contract declares, and its digest.
-   */
+  Roles the execution contract declares, and its digest.
+  */
   readonly assignmentRoles: readonly string[];
   readonly executionContractRevision: string | null;
   /**
-   * The exposure and use the Runtime has observed.
-   *
-   * Required rather than defaulted: a page that cannot say whether any
-   * telemetry has been observed must not claim that nothing happened.
-   */
+  The exposure and use the Runtime has observed.
+  
+  Required rather than defaulted: a page that cannot say whether any
+  telemetry has been observed must not claim that nothing happened.
+  */
   readonly telemetry: SkillTelemetry;
   /**
-   * Whether the execution contract was read.
-   *
-   * The role assignments come from the contract, and the accessor that reads
-   * it falls back to an empty contract when the read fails: an empty contract
-   * and a contract nobody read look the same to a caller that only sees the
-   * roles. They are not the same claim, and the card that counts the
-   * assignments -- and the roles the filter may offer -- depend on
-   * which one it was.
-   */
+  Whether the execution contract was read.
+  
+  The role assignments come from the contract, and the accessor that reads
+  it falls back to an empty contract when the read fails: an empty contract
+  and a contract nobody read look the same to a caller that only sees the
+  roles. They are not the same claim, and the card that counts the
+  assignments -- and the roles the filter may offer -- depend on
+  which one it was.
+  */
   readonly executionContractObserved: boolean;
   /**
-   * The role the list is narrowed to.
-   *
-   * Optional, because a caller that does not narrow by role says so by
-   * leaving it out rather than by passing an empty string.
-   */
+  The role the list is narrowed to.
+  
+  Optional, because a caller that does not narrow by role says so by
+  leaving it out rather than by passing an empty string.
+  */
   readonly role?: string | undefined;
 }
 
 /**
- * What an empty skill table has to say.
- *
- * Three different facts end with an empty table: the source is invalid, the
- * source was not observed, a role excluded everything, and the catalogue is
- * genuinely empty. Only the caller knows which one it is rendering, and the
- * operator needs to know too -- "no skills configured" when the role was
- * "worker" says the catalogue is empty, and it is not.
- */
+What an empty skill table has to say.
+
+Three different facts end with an empty table: the source is invalid, the
+source was not observed, a role excluded everything, and the catalogue is
+genuinely empty. Only the caller knows which one it is rendering, and the
+operator needs to know too -- "no skills configured" when the role was
+"worker" says the catalogue is empty, and it is not.
+*/
 function skillEmptyMessage(
   sourceValidity: boolean | null,
   narrowed: boolean
@@ -143,28 +143,28 @@ function skillEmptyMessage(
 }
 
 /**
- * How many times the Runtime saw something happen.
- *
- * `null` is "nothing has been observed" and `0` is "observed, and it never
- * happened". The two are different facts, so a count of zero is printed as a
- * zero and never as "not observed".
- */
+How many times the Runtime saw something happen.
+
+`null` is "nothing has been observed" and `0` is "observed, and it never
+happened". The two are different facts, so a count of zero is printed as a
+zero and never as "not observed".
+*/
 function observedCountLabel(count: number | null, noun: string): string {
   if (count === null) return NOT_OBSERVED_LABEL;
   return `${count} ${noun}`;
 }
 
 /**
- * What the Runtime has observed about one skill.
- *
- * A skill with no observation says so once, rather than three times: "Not
- * observed · Not observed · Not observed" reads like three facts where there
- * is one.
- *
- * The failure count is stated beside the uses because they are different
- * facts: a skill whose reads all failed was tried and did not work, which is
- * not the same as a skill nobody tried.
- */
+What the Runtime has observed about one skill.
+
+A skill with no observation says so once, rather than three times: "Not
+observed · Not observed · Not observed" reads like three facts where there
+is one.
+
+The failure count is stated beside the uses because they are different
+facts: a skill whose reads all failed was tried and did not work, which is
+not the same as a skill nobody tried.
+*/
 function skillObservationLine(
   observation: SkillObservation | undefined
 ): string {
@@ -180,12 +180,12 @@ function skillObservationLine(
 }
 
 /**
- * The state of one skill, as the State column says it.
- *
- * A skill that is installed nowhere comes first: it cannot be invoked by
- * anybody, so saying it is "Assigned" would report the contract's opinion
- * instead of what an agent can actually reach.
- */
+The state of one skill, as the State column says it.
+
+A skill that is installed nowhere comes first: it cannot be invoked by
+anybody, so saying it is "Assigned" would report the contract's opinion
+instead of what an agent can actually reach.
+*/
 function skillStateBadge(
   skill: ScopedSkillDefinition,
   item: SkillEligibility | undefined,
@@ -220,12 +220,12 @@ function skillStateBadge(
 }
 
 /**
- * The callout for the assignments that no canonical source backs.
- *
- * It is a defect the operator can act on, so it is an alert; the catalogue's
- * own state carries everything the page could not observe. A null set is not a
- * defect: the join was not performed, and the catalogue says why.
- */
+The callout for the assignments that no canonical source backs.
+
+It is a defect the operator can act on, so it is an alert; the catalogue's
+own state carries everything the page could not observe. A null set is not a
+defect: the join was not performed, and the catalogue says why.
+*/
 function unresolvedAssignmentsSection(
   assignments: readonly SkillEligibility[] | null
 ): React.JSX.Element | null {
@@ -509,9 +509,7 @@ export function SkillsView({
       React.createElement(StatCard, {
         title: "Configured",
         value: configuredCount,
-        ...(sourceValidity === true
-          ? { subtitle: `of ${skills.length} in the catalog` }
-          : {})
+        ...((sourceValidity === true) && { subtitle: `of ${skills.length} in the catalog` })
       }),
       React.createElement(StatCard, {
         title: "Role-assigned",
@@ -520,9 +518,7 @@ export function SkillsView({
         // counts what the execution contract assigns, and a skill it assigns
         // that is installed nowhere is still assigned -- it is simply
         // unreachable, and the row says so.
-        ...(sourceValidity === true
-          ? { subtitle: `of ${skills.length} in the catalog` }
-          : {})
+        ...((sourceValidity === true) && { subtitle: `of ${skills.length} in the catalog` })
       }),
       React.createElement(StatCard, {
         title: "Observed Exposure",
@@ -589,7 +585,7 @@ export function SkillsView({
         },
         "Agent Skills"
       ),
-      React.createElement<DataTableProps<ScopedSkillDefinition>>(DataTable, {
+      React.createElement<DataTableProperties<ScopedSkillDefinition>>(DataTable, {
         data: narrowed,
         columns,
         keyExtractor: (s: ScopedSkillDefinition) => s.name,

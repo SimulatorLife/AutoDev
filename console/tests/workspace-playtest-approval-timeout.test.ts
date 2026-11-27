@@ -19,12 +19,12 @@ const APPROVAL = {
 };
 
 /**
- * A Control API that accepts the request and answers it after `delayMs`.
- *
- * The Workspaces page reads one approval per workspace as a single fan-out,
- * and the Control API answers that read set from the ClickHouse-backed
- * playtesting store.
- */
+A Control API that accepts the request and answers it after `delayMs`.
+
+The Workspaces page reads one approval per workspace as a single fan-out,
+and the Control API answers that read set from the ClickHouse-backed
+playtesting store.
+*/
 function answerAfter(delayMs: number): typeof globalThis.fetch {
   return ((_input: RequestInfo | URL, init?: RequestInit) =>
     new Promise<Response>((resolve, reject) => {

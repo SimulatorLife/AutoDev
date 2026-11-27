@@ -34,12 +34,16 @@ function readWorkspace(): string {
   return readFileSync(path.join(root, "pnpm-workspace.yaml"), "utf8");
 }
 
-/** The version the repository's own manifest pins. */
+/**
+The version the repository's own manifest pins.
+*/
 const OPENCLI_VERSION = pinnedOpencliVersion(readManifest())!;
 
 const FIXTURE_PATCH = "--- a/dist/index.js\n+++ b/dist/index.js\n";
 
-/** The lockfile block pnpm writes for the pinned patch recorded as \`hash\`. */
+/**
+The lockfile block pnpm writes for the pinned patch recorded as \`hash\`.
+*/
 function lockfileWithPatchHash(hash: string): string {
   return [
     "lockfileVersion: '9.0'",
@@ -65,9 +69,9 @@ function writeInstalledVersion(dir: string, version: string): void {
 }
 
 /**
- * A repository whose every statement about opencli says the pinned version:
- * manifest, workspace patch key, patch file, lockfile and installed package.
- */
+A repository whose every statement about opencli says the pinned version:
+manifest, workspace patch key, patch file, lockfile and installed package.
+*/
 function consistentRepository(t: TestContext): string {
   const dir = mkdtempSync(path.join(tmpdir(), "autodev-opencli-version-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));

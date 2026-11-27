@@ -1,4 +1,6 @@
-/** Operator-owned visual game target approval, isolated from adapter approval. */
+/**
+Operator-owned visual game target approval, isolated from adapter approval.
+*/
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
@@ -149,7 +151,7 @@ function report(
     targetId,
     outcome,
     changes,
-    ...(reason === undefined ? {} : { reason })
+    ...(reason !== undefined && { reason })
   });
 }
 
@@ -335,9 +337,7 @@ async function approveTarget(
     limits: parsed.body.limits,
     // The no-progress thresholds, when the operator set them. An approval
     // without them is measured against the defaults.
-    ...(parsed.body.progressPolicy === undefined
-      ? {}
-      : { progressPolicy: parsed.body.progressPolicy }),
+    ...(parsed.body.progressPolicy !== undefined && { progressPolicy: parsed.body.progressPolicy }),
     approvedAt: now.toISOString(),
     approvedBy: actor.actor,
     revokedAt: null,
@@ -623,7 +623,9 @@ async function revokeTarget(
   }
 }
 
-/** Handle the exact Workspaces-owned target list, approve, and revoke routes. */
+/**
+Handle the exact Workspaces-owned target list, approve, and revoke routes.
+*/
 export async function handleWorkspaceVisualPlaytestTargetRequest(
   request: IncomingMessage,
   response: ServerResponse,

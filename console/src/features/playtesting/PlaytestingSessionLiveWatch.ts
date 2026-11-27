@@ -16,13 +16,13 @@ export function PlaytestingSessionLiveWatch({
   readonly isLive: boolean;
   readonly intervalMs?: number;
   /**
-   * Whether the operator is looking at the page.
-   *
-   * The watch is a read of the live session, and the session page is the
-   * largest page in the Console: every tick re-reads and re-renders the
-   * whole session. Doing that for a tab nobody is reading is work nobody
-   * asked for.
-   */
+  Whether the operator is looking at the page.
+  
+  The watch is a read of the live session, and the session page is the
+  largest page in the Console: every tick re-reads and re-renders the
+  whole session. Doing that for a tab nobody is reading is work nobody
+  asked for.
+  */
   readonly visibility?: VisibilitySource | undefined;
 }): React.JSX.Element | null {
   let router: ReturnType<typeof useRouter> | null = null;

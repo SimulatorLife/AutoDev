@@ -188,13 +188,13 @@ export class RuntimePlaytestStatAnalysis {
     input: PlaytestBootstrapInput
   ): Promise<PlaytestNumericInterval> {
     validateBootstrapInput(input);
-    const params = {
+    const parameters = {
       array: Array.from(input.array),
       resamples: input.resamples ?? 100_000,
       confidenceLevel: input.confidenceLevel ?? 0.95,
       seed: input.seed ?? 42
     };
-    const envelope = await this.invoke("statistics.bootstrap", params);
+    const envelope = await this.invoke("statistics.bootstrap", parameters);
     const intervalEnvelope = envelope.result.interval;
     if (
       !intervalEnvelope ||
@@ -259,12 +259,12 @@ export class RuntimePlaytestStatAnalysis {
     input: PlaytestMultiplicityInput
   ): Promise<PlaytestMultiplicityResult> {
     validateMultiplicityInput(input);
-    const params = {
+    const parameters = {
       pvalues: Array.from(input.pvalues),
       alpha: input.alpha ?? 0.05,
       method: input.method ?? "fdr_bh"
     };
-    const envelope = await this.invoke("statistics.multipletests", params);
+    const envelope = await this.invoke("statistics.multipletests", parameters);
     const result = envelope.result.multipletests;
     if (!result || typeof result !== "object" || Array.isArray(result)) {
       throw new PlaytestStatisticTransportError(
@@ -272,11 +272,11 @@ export class RuntimePlaytestStatAnalysis {
         "Worker multipletests response did not include a multipletests object."
       );
     }
-    const obj = result as Record<string, unknown>;
-    const rejected = obj.rejected;
-    const pAdjusted = obj.pAdjusted;
-    const method = obj.method;
-    const libraryVersion = obj.libraryVersion;
+    const object = result as Record<string, unknown>;
+    const rejected = object.rejected;
+    const pAdjusted = object.pAdjusted;
+    const method = object.method;
+    const libraryVersion = object.libraryVersion;
     if (
       !Array.isArray(rejected) ||
       !Array.isArray(pAdjusted) ||
@@ -305,7 +305,7 @@ export class RuntimePlaytestStatAnalysis {
       pAdjusted,
       method,
       libraryVersion,
-      alpha: params.alpha
+      alpha: parameters.alpha
     };
   }
 
@@ -370,14 +370,14 @@ export class RuntimePlaytestStatAnalysis {
       | "statistics.bootstrap"
       | "statistics.binomial_proportion"
       | "statistics.multipletests",
-    params: Record<string, unknown>
+    parameters: Record<string, unknown>
   ): Promise<Extract<JsonRpcEnvelope, { kind: "response" }>> {
     const requestId = randomUUID();
     const payload = JSON.stringify({
       jsonrpc: "2.0",
       id: requestId,
       method,
-      params
+      params: parameters
     });
 
     if (!this.uvBinary) {
@@ -394,8 +394,8 @@ export class RuntimePlaytestStatAnalysis {
       this.timeoutMs
     );
     if (collected.envelope.kind === "error") {
-      const err = collected.envelope.error;
-      const data = err.data ?? {};
+      const error = collected.envelope.error;
+      const data = error.data ?? {};
       const category =
         typeof data.category === "string"
           ? (data.category as string)
@@ -410,7 +410,7 @@ export class RuntimePlaytestStatAnalysis {
       }
       throw new PlaytestStatisticTransportError(
         category,
-        err.message + "\n" + collected.stderrTail.slice(-512)
+        error.message + "\n" + collected.stderrTail.slice(-512)
       );
     }
     return collected.envelope;
@@ -422,7 +422,7 @@ function spawnUvWorker(
   environment: ResolvedPlaytestStatEnvironment,
   payload: string
 ): ReturnType<typeof spawn> {
-  const args = [
+  const arguments_ = [
     "run",
     "--frozen",
     "--project",
@@ -432,7 +432,7 @@ function spawnUvWorker(
     "-m",
     environment.workerModule
   ];
-  const child = spawn(uvBinary, args, {
+  const child = spawn(uvBinary, arguments_, {
     cwd: environment.projectRoot,
     env: {
       ...process.env,
@@ -476,8 +476,8 @@ async function collectWorkerEnvelope(
     stdout.push(chunk);
   });
 
-  child.once("error", (err) => {
-    spawnError = err;
+  child.once("error", (error) => {
+    spawnError = error;
   });
 
   let timer: NodeJS.Timeout | undefined;
@@ -525,18 +525,18 @@ async function collectWorkerEnvelope(
       continue;
     }
     if (!parsed || typeof parsed !== "object") continue;
-    const obj = parsed as Record<string, unknown>;
-    if (obj.jsonrpc !== "2.0") continue;
-    const id = obj.id;
+    const object = parsed as Record<string, unknown>;
+    if (object.jsonrpc !== "2.0") continue;
+    const id = object.id;
     if (id !== requestId) continue;
-    if ("result" in obj) {
+    if ("result" in object) {
       resolvedEnvelope = {
         kind: "response",
         id: String(id),
-        result: (obj.result ?? {}) as Record<string, unknown>
+        result: (object.result ?? {}) as Record<string, unknown>
       };
-    } else if ("error" in obj) {
-      const err = obj.error as {
+    } else if ("error" in object) {
+      const error = object.error as {
         code: number;
         message: string;
         data?: Readonly<Record<string, unknown>>;
@@ -544,7 +544,7 @@ async function collectWorkerEnvelope(
       resolvedEnvelope = {
         kind: "error",
         id: typeof id === "string" ? id : null,
-        error: err
+        error: error
       };
     }
   }

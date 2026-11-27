@@ -28,9 +28,9 @@ A repeated parameter takes its first value, which is what the browser's own
 form submission produces and what the other list surfaces read.
 */
 export function readPromptsQuery(
-  params: Readonly<Record<string, string | readonly string[] | undefined>>
+  parameters: Readonly<Record<string, string | readonly string[] | undefined>>
 ): string {
-  const raw = params.q;
+  const raw = parameters.q;
   const value = Array.isArray(raw) ? raw[0] : raw;
   return typeof value === "string" ? value.trim() : "";
 }

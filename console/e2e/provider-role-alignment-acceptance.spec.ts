@@ -3,27 +3,27 @@ import { expect, test } from "@playwright/test";
 import { waitForPageContent } from "./acceptance-helpers.ts";
 
 /**
- * The role strip is an aligned configuration, so its columns line up.
- *
- * Each provider carries two fixed roles, and each role's row is a strip of
- * controls: the role's label, its priority, its model, and its reasoning
- * effort. The strip is a *grid* precisely so that the rows' controls
- * start at the same x position and the eye can scan down a column -- the
- * operator compares priorities across roles, and a column that drifts makes
- * that comparison a hunt.
- *
- * The label column is the one track that can break that. Sized to its own
- * content (`max-content`), every row sized its own label track to its own
- * label, so the four rows' controls started at four different x positions:
- * measured in Chromium against the production build, the priority column
- * drifted 38px between `Smart` and `Orchestrator`, and the model column
- * drifted with it.
- *
- * The other half of the repair is that a fixed label column must still fit
- * the longest label. `Orchestrator`, with its icon, needs 92px, and the
- * column is 92px -- so this sweep also checks that no role label is cut by
- * the column it sits in.
- */
+The role strip is an aligned configuration, so its columns line up.
+
+Each provider carries two fixed roles, and each role's row is a strip of
+controls: the role's label, its priority, its model, and its reasoning
+effort. The strip is a *grid* precisely so that the rows' controls
+start at the same x position and the eye can scan down a column -- the
+operator compares priorities across roles, and a column that drifts makes
+that comparison a hunt.
+
+The label column is the one track that can break that. Sized to its own
+content (`max-content`), every row sized its own label track to its own
+label, so the four rows' controls started at four different x positions:
+measured in Chromium against the production build, the priority column
+drifted 38px between `Smart` and `Orchestrator`, and the model column
+drifted with it.
+
+The other half of the repair is that a fixed label column must still fit
+the longest label. `Orchestrator`, with its icon, needs 92px, and the
+column is 92px -- so this sweep also checks that no role label is cut by
+the column it sits in.
+*/
 const ROUTES = ["/providers", "/providers/claude"];
 const FIXTURE_BASE_URL = `http://127.0.0.1:${process.env.AUTODEV_PLAYTEST_FIXTURE_PORT ?? "4311"}`;
 
@@ -42,7 +42,7 @@ for (const route of ROUTES) {
                 // The Subagent model is the hierarchical select's closed
                 // control rather than a native select.
                 row.querySelector<HTMLElement>(
-                  `select[name="${name}"], [data-hierarchical-select] > span[id^="select-${name}-"]`
+                  `select[name="${CSS.escape(name)}"], [data-hierarchical-select] > span[id^="select-${CSS.escape(name)}-"]`
                 )
               )
               .filter((select): select is HTMLElement => select !== null)

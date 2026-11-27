@@ -14,13 +14,13 @@ import {
 const SELECTION: UsageFilterSelection = { range: "24H", values: {} };
 
 /**
- * A read that answers with a snapshot the test can recognise.
- *
- * The Console's Usage reads are expensive because of the fan-out behind
- * them, so the thing under test here is how many times that fan-out is
- * asked for. A loader that counts its calls answers that question
- * directly.
- */
+A read that answers with a snapshot the test can recognise.
+
+The Console's Usage reads are expensive because of the fan-out behind
+them, so the thing under test here is how many times that fan-out is
+asked for. A loader that counts its calls answers that question
+directly.
+*/
 function countingLoader(
   calls: { count: number },
   kind: "ok" | "unreachable" = "ok"

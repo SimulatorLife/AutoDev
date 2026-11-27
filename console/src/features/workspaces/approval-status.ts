@@ -1,16 +1,16 @@
 import type { StatusBadgeVariant } from "../../components/status/StatusBadge.ts";
 
 /**
- * One playtesting approval lifecycle, read from the two facts that decide it:
- * whether the workspace carries an approval record at all, and whether that
- * record has been revoked.
- *
- * `unavailable` is kept distinct from `none` on purpose. The Control API
- * failing to answer is not the same claim as it answering "there is no
- * approval" -- the first is missing evidence, the second is observed absence,
- * and collapsing them would let a store outage render as a quiet, confident
- * "Not approved".
- */
+One playtesting approval lifecycle, read from the two facts that decide it:
+whether the workspace carries an approval record at all, and whether that
+record has been revoked.
+
+`unavailable` is kept distinct from `none` on purpose. The Control API
+failing to answer is not the same claim as it answering "there is no
+approval" -- the first is missing evidence, the second is observed absence,
+and collapsing them would let a store outage render as a quiet, confident
+"Not approved".
+*/
 export type WorkspaceApprovalStatus =
   "unavailable" | "none" | "active" | "revoked";
 

@@ -18,7 +18,7 @@ const migrationPath = new URL(
 // Structural helper: every canonical nav resource must be presented in the
 // target doc's resource surface. Resources may appear in tree (├── / └──)
 // form or as a bolded table heading; both count as canonical presentation.
-function canonicalNavSurface(doc: string): {
+function canonicalNavSurface(document: string): {
   presented: string[];
   treeEntries: string[];
   groups: { Configure: string[]; Observe: string[]; Operate: string[] };
@@ -34,11 +34,9 @@ function canonicalNavSurface(doc: string): {
       Operate: []
     };
   const fencePattern = /(?:~~~|```)(?:text)?\n([\s\S]*?)\n(?:~~~|```)/gu;
-  for (const fence of doc.matchAll(fencePattern)) {
+  for (const fence of document.matchAll(fencePattern)) {
     const block = fence[1] ?? "";
-    if (!/\bConfigure\b/.test(block)) continue;
-    if (!/\bObserve\b/.test(block)) continue;
-    if (!/\bOperate\b/.test(block)) continue;
+    if (!/\bConfigure\b/.test(block) || !/\bObserve\b/.test(block) || !/\bOperate\b/.test(block)) continue;
     let currentGroup: keyof typeof groups | null = null;
     const groupHeaderRegex = /^[ \t]*(Configure|Observe|Operate)[ \t]*$/;
     const treeEntryRegex = /^[ \t]*[├└]──\s+(\S+?)\s*$/;
@@ -49,22 +47,24 @@ function canonicalNavSurface(doc: string): {
         continue;
       }
       const m = treeEntryRegex.exec(line);
-      if (m && m[1] && currentGroup) {
-        treeEntries.push(m[1]);
-        groups[currentGroup].push(m[1]);
+      if (!m || !m[1] || !currentGroup) {
+        continue;
       }
+
+      treeEntries.push(m[1]);
+      groups[currentGroup].push(m[1]);
     }
     break;
   }
   const presented: string[] = [];
   for (const item of CANONICAL_NAVIGATION) {
     const escaped = item.replaceAll(/[.*+?^$(){}|[\]\\]/g, String.raw`\$&`);
-    const treeHit = new RegExp(
+    const isTreeHit = new RegExp(
       `^[ \t]*[├└]──\\s+\\**${escaped}\\**\\s*$`,
       "mu"
-    ).test(doc);
-    const boldHit = new RegExp(String.raw`\*\*${escaped}\*\*`).test(doc);
-    if (treeHit || boldHit) presented.push(item);
+    ).test(document);
+    const isBoldHit = new RegExp(String.raw`\*\*${escaped}\*\*`).test(document);
+    if (isTreeHit || isBoldHit) presented.push(item);
   }
   return { presented, treeEntries, groups };
 }
@@ -72,10 +72,10 @@ function canonicalNavSurface(doc: string): {
 // Structural helper: confirms a removed OpenLIT surface is documented as an
 // explicit, bolded out-of-scope label (the target doc's "**Label:**"
 // convention), not merely named anywhere in passing prose.
-function hasBoldOutOfScopeLabel(doc: string, phrase: string): boolean {
+function hasBoldOutOfScopeLabel(document: string, phrase: string): boolean {
   const escaped = phrase.replaceAll(/[.*+?^$(){}|[\]\\]/g, String.raw`\$&`);
   return new RegExp(String.raw`\*\*[^*\n]*${escaped}[^*\n]*\*\*`, "u").test(
-    doc
+    document
   );
 }
 
@@ -549,10 +549,10 @@ test("monorepo layout, console features, and control API match target state exac
   assert.ok(workspaceYaml.includes("- core"));
   assert.ok(workspaceYaml.includes("- data"));
 
-  for (const mod of ["console", "runtime", "core", "data"]) {
-    assert.ok(existsSync(new URL(`${mod}/package.json`, repositoryRoot)));
-    assert.ok(existsSync(new URL(`${mod}/tsconfig.json`, repositoryRoot)));
-    assert.ok(existsSync(new URL(`${mod}/src/index.ts`, repositoryRoot)));
+  for (const module_ of ["console", "runtime", "core", "data"]) {
+    assert.ok(existsSync(new URL(`${module_}/package.json`, repositoryRoot)));
+    assert.ok(existsSync(new URL(`${module_}/tsconfig.json`, repositoryRoot)));
+    assert.ok(existsSync(new URL(`${module_}/src/index.ts`, repositoryRoot)));
   }
 
   // Every canonical nav resource has a Console feature folder.
@@ -1046,12 +1046,12 @@ test("canonical target and migration tracker track gaps without claiming prematu
   assert.match(target, /Never synthesize ready, converged, healthy/u);
 
   // Root src/ tree is absent (semantic: obsolete root implementation is gone).
-  const rootSrcGone =
+  const isRootSourceGone =
     /root src\/\s*is gone/u.test(migration) ||
     /obsolete root implementation tree is gone/u.test(migration) ||
     /no legacy root implementation\/facade returns/u.test(target);
   assert.ok(
-    rootSrcGone,
+    isRootSourceGone,
     "obsolete root src/ implementation tree must be recorded as gone"
   );
 
@@ -1285,7 +1285,7 @@ function consoleSourceFiles(): URL[] {
 // text) against every realistic Console background token.
 function srgbToLinear(channel: number): number {
   const v = channel / 255;
-  return v <= 0.039_28 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
 }
 
 function relativeLuminance(hex: string): number {
@@ -1629,12 +1629,12 @@ function statusBorderClass(
     if (className === prefix) return { color, opacity: 1, source, className };
     if (!className.startsWith(`${prefix}/`)) continue;
     const rawOpacity = className.slice(prefix.length + 1);
-    const digitsOnly =
+    const isDigitsOnly =
       rawOpacity.length > 0 &&
       [...rawOpacity].every(
         (character) => character >= "0" && character <= "9"
       );
-    if (!digitsOnly) continue;
+    if (!isDigitsOnly) continue;
     const percent = Number(rawOpacity);
     if (percent >= 0 && percent <= 100)
       return { color, opacity: percent / 100, source, className };
@@ -1982,9 +1982,9 @@ test("Console form interactions forbid document reload while preserving intentio
 // Documentation-structure assertions do not prove the runtime meets ACP, quota,
 // Cockatiel, or permission invariants. Those require executable adapter/fault tests.
 test("unified target has one source of authority and nonduplicated subsystem contracts", () => {
-  const doc = readFileSync(targetStatePath, "utf8");
-  assert.match(doc, /^# AutoDev — Unified Target State$/mu);
-  const headings = doc.match(/^#{1,3} .+$/gmu) ?? [];
+  const document = readFileSync(targetStatePath, "utf8");
+  assert.match(document, /^# AutoDev — Unified Target State$/mu);
+  const headings = document.match(/^#{1,3} .+$/gmu) ?? [];
   for (const heading of [
     "## 4. Repository and module architecture",
     "### Role-oriented execution and provider routing",
@@ -2012,10 +2012,10 @@ test("unified target has one source of authority and nonduplicated subsystem con
 });
 
 test("resilience and ACP gates have reviewable structural tables", () => {
-  const doc = readFileSync(targetStatePath, "utf8");
-  const policy = doc.slice(
-    doc.indexOf("### Resilience mechanics and provider cooldown policy"),
-    doc.indexOf("### Agent execution transport contract: ACP, MCP, and OpenCLI")
+  const document = readFileSync(targetStatePath, "utf8");
+  const policy = document.slice(
+    document.indexOf("### Resilience mechanics and provider cooldown policy"),
+    document.indexOf("### Agent execution transport contract: ACP, MCP, and OpenCLI")
   );
   assert.match(
     policy,
@@ -2026,12 +2026,12 @@ test("resilience and ACP gates have reviewable structural tables", () => {
     // valid outside unicode mode, where `\`` is an invalid escape.
     assert.match(policy, new RegExp(`^\\|\\s*\`${kind}\`\\s*\\|`, "mu"));
   }
-  const acpRows = doc
+  const acpRows = document
     .slice(
-      doc.indexOf(
+      document.indexOf(
         "### Agent execution transport contract: ACP, MCP, and OpenCLI"
       ),
-      doc.indexOf("### Dependency ownership and maintainability")
+      document.indexOf("### Dependency ownership and maintainability")
     )
     .split("\n");
   for (const criterion of [
@@ -2117,10 +2117,10 @@ test("actual workspace package dependencies remain declared and acyclic", () => 
 });
 
 test("canonical MCP target requires one gateway for every provider", () => {
-  const doc = readFileSync(targetStatePath, "utf8");
-  const section = doc.slice(
-    doc.indexOf("### Mandatory shared MCP gateway"),
-    doc.indexOf("### File interaction surface")
+  const document = readFileSync(targetStatePath, "utf8");
+  const section = document.slice(
+    document.indexOf("### Mandatory shared MCP gateway"),
+    document.indexOf("### File interaction surface")
   );
   assert.match(
     section,
@@ -2138,32 +2138,32 @@ test("canonical MCP target requires one gateway for every provider", () => {
 });
 
 test("canonical delegation target uses only XACPX MCP across providers", () => {
-  const doc = readFileSync(targetStatePath, "utf8");
-  const section = doc.slice(
-    doc.indexOf("### Cross-provider agent delegation contract"),
-    doc.indexOf("### Resilience mechanics and provider cooldown policy")
+  const document = readFileSync(targetStatePath, "utf8");
+  const section = document.slice(
+    document.indexOf("### Cross-provider agent delegation contract"),
+    document.indexOf("### Resilience mechanics and provider cooldown policy")
   );
   assert.match(section, /canonical `xacpx` MCP server/u);
   assert.match(section, /exclusively through Supergateway/u);
   assert.match(section, /no parallel delegation mechanism or fallback/u);
   assert.match(section, /no permanent host-native delegation fallback/u);
   assert.doesNotMatch(
-    doc,
+    document,
     /Shell and delegation \(`multi_agent_v1__\*`\) retain/u
   );
-  assert.doesNotMatch(doc, /Keep host-native delegation until/u);
+  assert.doesNotMatch(document, /Keep host-native delegation until/u);
 });
 
 test("canonical target does not restore pre-ACP provider hopping or removed memory", () => {
-  const doc = readFileSync(targetStatePath, "utf8");
-  assert.match(doc, /Mid-session provider hopping is retired/u);
-  assert.match(doc, /never a mid-session hop/u);
-  assert.doesNotMatch(doc, /the provider an agent runs on is not fixed/u);
+  const document = readFileSync(targetStatePath, "utf8");
+  assert.match(document, /Mid-session provider hopping is retired/u);
+  assert.match(document, /never a mid-session hop/u);
+  assert.doesNotMatch(document, /the provider an agent runs on is not fixed/u);
   assert.doesNotMatch(
-    doc,
+    document,
     /Existing PostgreSQL\/pgvector memory is transitional/u
   );
-  assert.doesNotMatch(doc, /memory-target-state\.md owns/u);
+  assert.doesNotMatch(document, /memory-target-state\.md owns/u);
   const setup = readFileSync(
     new URL("docs/local-setup.md", repositoryRoot),
     "utf8"
@@ -2173,10 +2173,10 @@ test("canonical target does not restore pre-ACP provider hopping or removed memo
 });
 
 test("canonical target treats ChatGPT as a first-class role-governed participant", () => {
-  const doc = readFileSync(targetStatePath, "utf8");
-  const entrypoints = doc.slice(
-    doc.indexOf("### Unified user-chat and CLI execution entrypoints"),
-    doc.indexOf("### Role-oriented execution and provider routing")
+  const document = readFileSync(targetStatePath, "utf8");
+  const entrypoints = document.slice(
+    document.indexOf("### Unified user-chat and CLI execution entrypoints"),
+    document.indexOf("### Role-oriented execution and provider routing")
   );
   assert.match(
     entrypoints,
@@ -2190,15 +2190,15 @@ test("canonical target treats ChatGPT as a first-class role-governed participant
   assert.match(entrypoints, /workspace-confined filesystem mutations/u);
   assert.match(entrypoints, /canonical `xacpx` MCP interface/u);
   assert.doesNotMatch(
-    doc,
+    document,
     /External grants remain separately reviewed and may be narrower than local roles/u
   );
-  const tunnelDoc = readFileSync(
+  const tunnelDocument = readFileSync(
     new URL("docs/chatgpt-secure-mcp-tunnel.md", repositoryRoot),
     "utf8"
   );
-  assert.doesNotMatch(tunnelDoc, /restricted to stateless, read-only tools/u);
-  assert.match(tunnelDoc, /Role-driven MCP access policy/u);
+  assert.doesNotMatch(tunnelDocument, /restricted to stateless, read-only tools/u);
+  assert.match(tunnelDocument, /Role-driven MCP access policy/u);
 });
 
 test("active documentation does not prescribe retired execution paths", () => {

@@ -56,9 +56,9 @@ const REQUEST_LOOKUP_PATH = RUNS_PATH + "/by-request";
 const ANALYSES_PATH = "/control/playtesting/analyses";
 
 /**
- * Bounded, explicit selection. The workspace is not in the body: the query
- * string is its single authority, so the two can never disagree.
- */
+Bounded, explicit selection. The workspace is not in the body: the query
+string is its single authority, so the two can never disagree.
+*/
 const analysisRequestSchema = z
   .strictObject({
     episodeIds: z
@@ -149,21 +149,25 @@ export interface PlaytestingRunControlApiOptions {
     "list"
   >;
   /**
-   * The probes that decide whether the visual browser driver and the
-   * Smart-direct route are reachable. They read the machine by default; a
-   * caller that owns its own environment pins them so the mode's readiness
-   * is a property of the caller rather than of the host it runs on.
-   */
+  The probes that decide whether the visual browser driver and the
+  Smart-direct route are reachable. They read the machine by default; a
+  caller that owns its own environment pins them so the mode's readiness
+  is a property of the caller rather than of the host it runs on.
+  */
   readonly visualReadinessProbes?: {
     readonly visualDriverAvailable?: () => boolean;
     readonly smartDirectPolicyAvailable?: () => Promise<boolean>;
-    /** Whether the operator's own local OneJev server is reachable. */
+    /**
+    Whether the operator's own local OneJev server is reachable.
+    */
     readonly oneJevLocalPolicyAvailable?: () => Promise<boolean>;
   };
   readonly readWorkspaceCatalog?: () => ReturnType<
     ConfigRepository["readWorkspaceCatalog"]
   >;
-  /** The same Runtime run owner used by MCP; this route owns no scheduler. */
+  /**
+  The same Runtime run owner used by MCP; this route owns no scheduler.
+  */
   readonly runControl?: PlaytestRunControl &
     Partial<PlaytestAnalystReviewDispatch>;
   readonly requireSessionHeader?: boolean;
@@ -201,13 +205,13 @@ function queryValues(
   pathname: string,
   permitted: readonly string[]
 ): URLSearchParams | null {
-  const params = new URL(request.url ?? pathname, "http://127.0.0.1")
+  const parameters = new URL(request.url ?? pathname, "http://127.0.0.1")
     .searchParams;
-  for (const key of params.keys()) {
+  for (const key of parameters.keys()) {
     if (!permitted.includes(key)) return null;
   }
   for (const key of permitted) {
-    const values = params.getAll(key);
+    const values = parameters.getAll(key);
     if (values.length > 1) return null;
     const value = values[0];
     if (
@@ -216,7 +220,7 @@ function queryValues(
     )
       return null;
   }
-  return params;
+  return parameters;
 }
 
 function sessionFor(
@@ -322,8 +326,8 @@ function sessionFor(
     workspaceId: session.workspaceId,
     role: session.role,
     actor: session.actor,
-    ...(session.taskId === undefined ? {} : { taskId: session.taskId }),
-    ...(session.runId === undefined ? {} : { runId: session.runId })
+    ...(session.taskId !== undefined && { taskId: session.taskId }),
+    ...(session.runId !== undefined && { runId: session.runId })
   };
 }
 
@@ -352,7 +356,7 @@ function workspaceError(
       message: "The canonical workspace catalog is unavailable."
     };
   }
-  if (!catalog.workspaces.some((workspace) => workspace.id === workspaceId)) {
+  if (catalog.workspaces.every((workspace) => workspace.id !== workspaceId)) {
     return {
       status: 404,
       code: "autodev_control_playtesting_workspace_not_found",
@@ -405,11 +409,11 @@ function pathId(pathname: string, pattern: RegExp): string | null {
 }
 
 /**
- * Cross-session packet preparation over an explicit selection. Every rule —
- * eligibility, the per-batch critique cap, and which selected sessions
- * produced no packet — belongs to the Runtime owner; this route only
- * authorizes and forwards.
- */
+Cross-session packet preparation over an explicit selection. Every rule —
+eligibility, the per-batch critique cap, and which selected sessions
+produced no packet — belongs to the Runtime owner; this route only
+authorizes and forwards.
+*/
 async function listAnalystReviewRuns(
   request: IncomingMessage,
   response: ServerResponse,
@@ -522,8 +526,8 @@ async function requestCrossSessionReview(
     return;
   }
   try {
-    const dispatch = parsed.data.operation === "dispatch";
-    if (dispatch) {
+    const isDispatch = parsed.data.operation === "dispatch";
+    if (isDispatch) {
       if (actor.role !== "operator") {
         sendError(
           response,
@@ -652,9 +656,9 @@ function workspaceQuery(
   options: PlaytestingRunControlApiOptions,
   response: ServerResponse
 ): { readonly workspaceId: string; readonly params: URLSearchParams } | null {
-  const params = queryValues(request, pathname, permitted);
-  const workspaceId = params?.get("workspaceId") ?? "";
-  if (!params || !WORKSPACE_ID_PATTERN.test(workspaceId)) {
+  const parameters = queryValues(request, pathname, permitted);
+  const workspaceId = parameters?.get("workspaceId") ?? "";
+  if (!parameters || !WORKSPACE_ID_PATTERN.test(workspaceId)) {
     sendError(
       response,
       400,
@@ -673,7 +677,7 @@ function workspaceQuery(
     );
     return null;
   }
-  return { workspaceId, params };
+  return { workspaceId, params: parameters };
 }
 
 function recordAudit(
@@ -697,7 +701,7 @@ function recordAudit(
     workspaceId,
     outcome,
     changes,
-    ...(reason ? { reason } : {})
+    ...(reason && { reason })
   });
 }
 
@@ -1002,7 +1006,7 @@ function addCapabilityReason(
     readonly severity: CapabilityReasonSeverity;
   }
 ): void {
-  if (!reasons.some((reason) => reason.code === input.code)) {
+  if (reasons.every((reason) => reason.code !== input.code)) {
     reasons.push(input);
   }
 }
@@ -1191,13 +1195,13 @@ function visualModeReadiness(input: {
 }
 
 /**
- * One decision backend's readiness.
- *
- * The Smart-directed route needs the authenticated local model router; the
- * local OneJev route needs the operator's own model server. They are
- * different services with different reasons to be down, and a reader
- * choosing a backend needs to know which one is missing.
- */
+One decision backend's readiness.
+
+The Smart-directed route needs the authenticated local model router; the
+local OneJev route needs the operator's own model server. They are
+different services with different reasons to be down, and a reader
+choosing a backend needs to know which one is missing.
+*/
 function visualPolicyReadiness(input: {
   readonly policyId: PlaytestVisualPolicyId;
   readonly available: boolean;
@@ -1263,7 +1267,7 @@ async function capabilitiesForLaunchRequest(input: {
     input.runControl.getCapabilities(input.session, input.workspaceId),
     visualTargetsForWorkspace(input.workspaceId, input.options)
   ]);
-  const operatorActionsAvailable = input.actor.role === "operator";
+  const isOperatorActionsAvailable = input.actor.role === "operator";
   const probes = input.options.visualReadinessProbes;
   const capabilities: Omit<
     ControlApiPlaytestingCapabilitiesResponse,
@@ -1271,15 +1275,15 @@ async function capabilitiesForLaunchRequest(input: {
   > = {
     schema: "autodev-control-playtesting-capabilities-v3",
     ...runCapabilities,
-    operatorActionsAvailable,
+    operatorActionsAvailable: isOperatorActionsAvailable,
     modeReadiness: {
       "adapter-accelerated": adapterModeReadiness(
         runCapabilities,
-        operatorActionsAvailable
+        isOperatorActionsAvailable
       ),
       "autonomous-visual": visualModeReadiness({
         workspaceEnabled: runCapabilities.workspaceEnabled,
-        operatorActionsAvailable,
+        operatorActionsAvailable: isOperatorActionsAvailable,
         visualDriverAvailable:
           probes?.visualDriverAvailable?.() ??
           isPlaytestVisualBrowserDriverAvailable(),
@@ -1313,7 +1317,7 @@ async function capabilitiesForLaunchRequest(input: {
         ],
         ...visualTargets
       }),
-      "scripted-regression": scriptedModeReadiness(operatorActionsAvailable)
+      "scripted-regression": scriptedModeReadiness(isOperatorActionsAvailable)
     }
   };
   const capabilityRevision = createHash("sha256")
@@ -1642,10 +1646,10 @@ const INTERNAL_ERROR_CODE_PATTERN = /^[A-Za-z0-9_:-]{1,64}$/u;
 const INTERNAL_ERROR_STACK_FRAME_PATTERN = /^\s*at\s/u;
 
 /**
- * Keep internal failure logs useful without serializing exception messages,
- * which can contain Data/backend text or user-controlled values. Stack frames
- * are bounded and omit the message line.
- */
+Keep internal failure logs useful without serializing exception messages,
+which can contain Data/backend text or user-controlled values. Stack frames
+are bounded and omit the message line.
+*/
 export function formatControlApiInternalErrorDiagnostic(
   error: unknown
 ): string {
@@ -1970,15 +1974,17 @@ async function dispatchRunControlRoute(input: {
 }
 
 /**
- * Whether the path belongs to the run-control surface. Callers resolve the
- * Runtime run owner only for these paths, so a request for any other resource
- * never constructs the owner and its on-disk repositories.
- */
+Whether the path belongs to the run-control surface. Callers resolve the
+Runtime run owner only for these paths, so a request for any other resource
+never constructs the owner and its on-disk repositories.
+*/
 export function isPlaytestingRunControlPath(pathname: string): boolean {
   return runControlRoute(pathname) !== null;
 }
 
-/** Typed Control API entry points delegate to the exact MCP run-control owner. */
+/**
+Typed Control API entry points delegate to the exact MCP run-control owner.
+*/
 export async function handlePlaytestingRunControlRequest(
   request: IncomingMessage,
   response: ServerResponse,

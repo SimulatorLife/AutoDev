@@ -27,7 +27,9 @@ import {
 const WORKSPACE_ID = "fixture/racing-game";
 const ORIGIN = "http://127.0.0.1:5173";
 const FRAME_BYTES = new TextEncoder().encode("bounded fixture frame bytes");
-/** The charset the Core gives every control id, and the one a candidate keeps. */
+/**
+The charset the Core gives every control id, and the one a candidate keeps.
+*/
 const ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 // The upstream reads the frame from a directory it was started with, so the
 // Runtime writes into a real one.

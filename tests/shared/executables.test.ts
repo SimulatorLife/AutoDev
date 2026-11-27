@@ -26,9 +26,9 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/executables";
 
 /**
- * A home directory with nothing in it, so every lookup in a test starts from
- * a known-empty machine rather than the one the test runs on.
- */
+A home directory with nothing in it, so every lookup in a test starts from
+a known-empty machine rather than the one the test runs on.
+*/
 function homeFixture(): { home: string; cleanup: () => void } {
   const home = mkdtempSync(join(tmpdir(), "autodev-copilot-home-"));
   return {
@@ -45,9 +45,9 @@ function installExecutable(path: string): string {
 }
 
 /**
- * A Codex CLI that reports the given version, or one that reports no version
- * at all when the version is null.
- */
+A Codex CLI that reports the given version, or one that reports no version
+at all when the version is null.
+*/
 function installCodex(path: string, version: string | null): string {
   mkdirSync(join(path, ".."), { recursive: true });
   const script =
@@ -60,10 +60,10 @@ function installCodex(path: string, version: string | null): string {
 }
 
 /**
- * A Runtime layout holding a private copy of the resolver module, so the test
- * controls the package symlink it resolves through while that one module
- * instance stays loaded -- the way the long-lived bridge does across an install.
- */
+A Runtime layout holding a private copy of the resolver module, so the test
+controls the package symlink it resolves through while that one module
+instance stays loaded -- the way the long-lived bridge does across an install.
+*/
 function runtimeFixture(): {
   root: string;
   load: () => Promise<

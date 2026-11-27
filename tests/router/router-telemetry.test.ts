@@ -3,14 +3,12 @@ import "@simulatorlife/autodev-runtime/router/http";
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { trace } from "@opentelemetry/api";
 import {
   AggregationTemporality,
   InMemoryMetricExporter,
   InstrumentType
 } from "@opentelemetry/sdk-metrics";
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace";
-import { COOLDOWNS } from "@simulatorlife/autodev-runtime/router/cooldown";
 import {
   recordBridgeSkillExposure,
   recordBridgeSkillFailed,
@@ -83,12 +81,12 @@ function responseRecorder(): any {
   };
 }
 
-const route = (provider: string, envKey: string): Candidate => ({
+const route = (provider: string, environmentKey: string): Candidate => ({
   provider,
   pattern: /.*/,
   baseUrl: `http://${provider}.test/v1`,
   model: provider === "claude" ? "sonnet" : "MiniMax-M3",
-  envKey
+  envKey: environmentKey
 });
 
 interface SpanRecord {
@@ -557,7 +555,7 @@ test("privacy protection sanitizes IDs, paths, prompt content, and high-cardinal
 
   // Paths and URLs are stripped
   assert.equal(sanitizeCategoricalLabel("/Users/project/path"), null);
-  assert.equal(sanitizeCategoricalLabel("http://example.com"), null);
+  assert.equal(sanitizeCategoricalLabel("https://example.com"), null);
 
   // Content with whitespace is stripped
   assert.equal(sanitizeCategoricalLabel("Summarize this context please"), null);
@@ -806,7 +804,9 @@ test("an invalid observation does not consume the commit's idempotency claim", a
   assert.equal(totalGitCommits(), totalBefore + 1);
 });
 
-/** Cumulative temporality keeps one point per attribute set, so sum them. */
+/**
+Cumulative temporality keeps one point per attribute set, so sum them.
+*/
 function totalGitCommits(): number {
   return findMetricPoints(METRIC_GIT_COMMITS).reduce(
     (sum, point) =>
@@ -879,7 +879,7 @@ test("an unidentified session is not published as a session identity", () => {
     null,
     undefined,
     "",
-    "   ",
+    ' '.repeat(3),
     "unknown",
     "process-scope",
     "/Users/someone/workspace",

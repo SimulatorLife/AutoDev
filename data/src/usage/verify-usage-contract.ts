@@ -8,13 +8,13 @@ const DEFAULT_BASE_URL = "http://127.0.0.1:3000";
 const CONTRACT_PROBE_DATE = "2000-01-01";
 
 /**
- * What the deployed Usage API answered with.
- *
- * `unreachable` is the class that matters to a supervisor: the API did not
- * answer at all, which is a backend that has not come up yet rather than a
- * contract that is wrong. The Data layer owns the contract and reports the
- * class; the Runtime owns what each class means for a supervised service.
- */
+What the deployed Usage API answered with.
+
+`unreachable` is the class that matters to a supervisor: the API did not
+answer at all, which is a backend that has not come up yet rather than a
+contract that is wrong. The Data layer owns the contract and reports the
+class; the Runtime owns what each class means for a supervised service.
+*/
 export type UsageContractOutcome =
   | { readonly kind: "ok" }
   | { readonly kind: "invalid-response" }
@@ -34,7 +34,9 @@ export interface UsageContractOptions {
   readonly fetchImpl?: typeof fetch;
 }
 
-/** Verify the deployed Usage response against the v5 contract. */
+/**
+Verify the deployed Usage response against the v5 contract.
+*/
 export async function verifyUsageContract(
   options: UsageContractOptions = {}
 ): Promise<UsageContractOutcome> {
@@ -48,7 +50,7 @@ export async function verifyUsageContract(
       process.env.AUTODEV_OPENLIT_USAGE_URL?.trim() ??
       DEFAULT_BASE_URL,
     serviceToken,
-    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {})
+    ...(options.fetchImpl && { fetchImpl: options.fetchImpl })
   });
   const timeoutMs = options.timeoutMs ?? DEFAULT_CONTRACT_PROBE_TIMEOUT_MS;
   const result = await client.query(

@@ -1,15 +1,15 @@
 /**
- * `autodev playtest init` and `autodev playtest check`.
- *
- * Onboarding a game should cost one declarative config, not a scattered set of
- * root-level manifests plus a hand-maintained digest generator. `init` lays out
- * the standard `.autodev/` tree and writes the hash chain; `check` verifies the
- * same tree end to end before a workspace is approved.
- *
- * Scaffolding ships no invented measurement intent. An empty rubric is reported
- * as empty rather than filled with plausible defaults, because a metric registry
- * AutoDev made up would silently become the game's own stated intent.
- */
+`autodev playtest init` and `autodev playtest check`.
+
+Onboarding a game should cost one declarative config, not a scattered set of
+root-level manifests plus a hand-maintained digest generator. `init` lays out
+the standard `.autodev/` tree and writes the hash chain; `check` verifies the
+same tree end to end before a workspace is approved.
+
+Scaffolding ships no invented measurement intent. An empty rubric is reported
+as empty rather than filled with plausible defaults, because a metric registry
+AutoDev made up would silently become the game's own stated intent.
+*/
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -76,7 +76,9 @@ type PlaytestProblemCode =
 interface PlaytestCheckProblem {
   readonly severity: PlaytestProblemSeverity;
   readonly code: PlaytestProblemCode;
-  /** Checkout-relative, so the message names a path the operator can open. */
+  /**
+  Checkout-relative, so the message names a path the operator can open.
+  */
   readonly file: string;
   readonly message: string;
 }
@@ -87,13 +89,13 @@ export interface PlaytestCheckReport {
 }
 
 export interface PlaytestCommandBackend {
-  init(args?: readonly string[]): number;
-  check(args?: readonly string[]): number;
+  init(arguments_?: readonly string[]): number;
+  check(arguments_?: readonly string[]): number;
   /**
-   * Async because the episode is real: it loads the game's entry module and
-   * speaks the protocol to it, so it cannot be answered synchronously.
-   */
-  conformance(args?: readonly string[]): number | Promise<number>;
+  Async because the episode is real: it loads the game's entry module and
+  speaks the protocol to it, so it cannot be answered synchronously.
+  */
+  conformance(arguments_?: readonly string[]): number | Promise<number>;
 }
 
 function writeLine(message: string): void {
@@ -104,7 +106,9 @@ function writeErrorLine(message: string): void {
   process.stderr.write(`${message}\n`);
 }
 
-/** The adapter command the config declares, or null when it declares none. */
+/**
+The adapter command the config declares, or null when it declares none.
+*/
 function configAdapterCommand(checkoutRoot: string): readonly string[] | null {
   const config = readJsonFile(
     path.join(integrationRoot(checkoutRoot), PLAYTESTS_CONFIG_FILE)
@@ -117,7 +121,9 @@ function configAdapterCommand(checkoutRoot: string): readonly string[] | null {
     : null;
 }
 
-/** The benchmark the config declares, resolved beside the config itself. */
+/**
+The benchmark the config declares, resolved beside the config itself.
+*/
 function declaredBenchmarkPath(checkoutRoot: string): string | null {
   const root = integrationRoot(checkoutRoot);
   const config = readJsonFile(path.join(root, PLAYTESTS_CONFIG_FILE));
@@ -159,12 +165,12 @@ function readJsonFile(
 }
 
 /**
- * Verify one integration directory.
- *
- * Reads only; it never repairs. `init` writes, `check` reports, so a check that
- * silently fixed a digest would be indistinguishable from an integration that
- * was already correct.
- */
+Verify one integration directory.
+
+Reads only; it never repairs. `init` writes, `check` reports, so a check that
+silently fixed a digest would be indistinguishable from an integration that
+was already correct.
+*/
 const REQUIRED_PLAYTEST_FILES = [
   PLAYTESTS_CONFIG_FILE,
   PLAYTESTS_OBSERVATION_FILE,
@@ -174,12 +180,12 @@ const REQUIRED_PLAYTEST_FILES = [
 type RequiredPlaytestFile = (typeof REQUIRED_PLAYTEST_FILES)[number];
 
 /**
- * Verify one integration directory.
- *
- * Reads only; it never repairs. init writes, check reports, so a check that
- * silently fixed a digest would be indistinguishable from an integration that
- * was already correct.
- */
+Verify one integration directory.
+
+Reads only; it never repairs. init writes, check reports, so a check that
+silently fixed a digest would be indistinguishable from an integration that
+was already correct.
+*/
 export function checkPlaytestIntegration(
   checkoutRoot: string
 ): PlaytestCheckReport {
@@ -492,7 +498,9 @@ function checkDeclaredPolicies(
   }
 }
 
-/** The policies the checked-in config declares, or none when it declares none. */
+/**
+The policies the checked-in config declares, or none when it declares none.
+*/
 function configPolicies(checkoutRoot: string): readonly string[] {
   const config = readJsonFile(
     path.join(integrationRoot(checkoutRoot), PLAYTESTS_CONFIG_FILE)
@@ -519,13 +527,13 @@ function readAdapterBinding(
 }
 
 /**
- * The digests AutoDev derives for this integration: the rubric's own bytes,
- * and the benchmark's cross-references to it and to the observation contract.
- *
- * The benchmark repeats these three fields, which is exactly why a game
- * hand-maintains them: nothing in the repo told it which rubric it was pointing
- * at. They are read here and written by `--write-hashes`.
- */
+The digests AutoDev derives for this integration: the rubric's own bytes,
+and the benchmark's cross-references to it and to the observation contract.
+
+The benchmark repeats these three fields, which is exactly why a game
+hand-maintains them: nothing in the repo told it which rubric it was pointing
+at. They are read here and written by `--write-hashes`.
+*/
 function derivedDigests(checkoutRoot: string): {
   readonly rubricHash: string;
   readonly observationSchemaHash: string;
@@ -557,11 +565,11 @@ function derivedDigests(checkoutRoot: string): {
 }
 
 /**
- * Regenerate every digest this command owns, from the files' own content.
- *
- * Reads the rubric's bytes rather than a re-encoding, so what is written is
- * what approval will compare against.
- */
+Regenerate every digest this command owns, from the files' own content.
+
+Reads the rubric's bytes rather than a re-encoding, so what is written is
+what approval will compare against.
+*/
 export function writePlaytestHashes(checkoutRoot: string): PlaytestCheckReport {
   const root = integrationRoot(checkoutRoot);
   const observationFile = path.join(root, PLAYTESTS_OBSERVATION_FILE);
@@ -621,10 +629,10 @@ export function writePlaytestHashes(checkoutRoot: string): PlaytestCheckReport {
 }
 
 /**
- * Lay out the standard tree. Nothing here encodes measurement intent: the
- * rubric starts empty and says so, because a metric AutoDev invented would be
- * indistinguishable from one the game chose.
- */
+Lay out the standard tree. Nothing here encodes measurement intent: the
+rubric starts empty and says so, because a metric AutoDev invented would be
+indistinguishable from one the game chose.
+*/
 export function initPlaytestIntegration(checkoutRoot: string): number {
   const root = integrationRoot(checkoutRoot);
   mkdirSync(root, { recursive: true });
@@ -770,25 +778,25 @@ export function initPlaytestIntegration(checkoutRoot: string): number {
   return 0;
 }
 
-function checkoutRootFrom(args: readonly string[]): string {
-  const index = args.indexOf("--checkout-root");
-  if (index !== -1 && index + 1 < args.length) {
-    return path.resolve(args[index + 1]!);
+function checkoutRootFrom(arguments_: readonly string[]): string {
+  const index = arguments_.indexOf("--checkout-root");
+  if (index !== -1 && index + 1 < arguments_.length) {
+    return path.resolve(arguments_[index + 1]!);
   }
   return process.cwd();
 }
 
 /**
- * Write the generated-scaffold pair: the module whose bodies throw, and the
- * binding that declares AutoDev wrote them.
- *
- * Never overwrites. A game that has started implementing must not have its work
- * replaced by a fresh set of stubs, so a second `--scaffold` is reported rather
- * than silently regenerating over the top.
- */
-function reportScaffold(checkoutRoot: string, args: readonly string[]): number {
+Write the generated-scaffold pair: the module whose bodies throw, and the
+binding that declares AutoDev wrote them.
+
+Never overwrites. A game that has started implementing must not have its work
+replaced by a fresh set of stubs, so a second `--scaffold` is reported rather
+than silently regenerating over the top.
+*/
+function reportScaffold(checkoutRoot: string, arguments_: readonly string[]): number {
   const root = integrationRoot(checkoutRoot);
-  const factory = scaffoldFactoryFrom(args);
+  const factory = scaffoldFactoryFrom(arguments_);
   const fileName = "adapter.js";
   const modulePath = path.join(root, fileName);
   const bindingPath = path.join(root, PLAYTESTS_BINDING_FILE);
@@ -815,10 +823,12 @@ function reportScaffold(checkoutRoot: string, args: readonly string[]): number {
   return 0;
 }
 
-/** `--factory <name>`, defaulting to the conventional export name. */
-function scaffoldFactoryFrom(args: readonly string[]): string {
-  const index = args.indexOf("--factory");
-  const declared = index === -1 ? undefined : args[index + 1];
+/**
+`--factory <name>`, defaulting to the conventional export name.
+*/
+function scaffoldFactoryFrom(arguments_: readonly string[]): string {
+  const index = arguments_.indexOf("--factory");
+  const declared = index === -1 ? undefined : arguments_[index + 1];
   return declared && SCAFFOLD_FACTORY_PATTERN.test(declared)
     ? declared
     : "createGame";
@@ -847,22 +857,22 @@ function reportCheck(checkoutRoot: string, writeHashes: boolean): number {
 }
 
 export const defaultPlaytestBackend: PlaytestCommandBackend = {
-  init: (args = []) =>
-    args.includes("--scaffold")
-      ? reportScaffold(checkoutRootFrom(args), args)
-      : initPlaytestIntegration(checkoutRootFrom(args)),
-  check: (args = []) =>
-    reportCheck(checkoutRootFrom(args), args.includes("--write-hashes")),
-  conformance: (args = []) => reportConformance(checkoutRootFrom(args))
+  init: (arguments_ = []) =>
+    arguments_.includes("--scaffold")
+      ? reportScaffold(checkoutRootFrom(arguments_), arguments_)
+      : initPlaytestIntegration(checkoutRootFrom(arguments_)),
+  check: (arguments_ = []) =>
+    reportCheck(checkoutRootFrom(arguments_), arguments_.includes("--write-hashes")),
+  conformance: (arguments_ = []) => reportConformance(checkoutRootFrom(arguments_))
 };
 
 /**
- * Run the game's own episode and report where it stopped.
- *
- * Asynchronous because the episode is real: it loads the game's entry module
- * and speaks the protocol to it. Exit code is non-zero when it does not hold
- * up, so onboarding a game can gate on it.
- */
+Run the game's own episode and report where it stopped.
+
+Asynchronous because the episode is real: it loads the game's entry module
+and speaks the protocol to it. Exit code is non-zero when it does not hold
+up, so onboarding a game can gate on it.
+*/
 async function reportConformance(checkoutRoot: string): Promise<number> {
   const report = await runPlaytestConformance(checkoutRoot);
   const text = formatConformanceReport(report);
@@ -876,12 +886,12 @@ async function reportConformance(checkoutRoot: string): Promise<number> {
 
 export function dispatchPlaytestCommand(
   subcommand: string,
-  args: readonly string[] = [],
+  arguments_: readonly string[] = [],
   backend: PlaytestCommandBackend = defaultPlaytestBackend
 ): number | Promise<number> {
-  if (subcommand === "init") return backend.init(args);
-  if (subcommand === "check") return backend.check(args);
-  if (subcommand === "conformance") return backend.conformance(args);
+  if (subcommand === "init") return backend.init(arguments_);
+  if (subcommand === "check") return backend.check(arguments_);
+  if (subcommand === "conformance") return backend.conformance(arguments_);
   throw unsupportedChoice(
     "playtest subcommand",
     subcommand,

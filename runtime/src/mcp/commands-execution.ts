@@ -24,14 +24,14 @@ import {
 import { execa } from "execa";
 
 import {
-  commandExecutableNameSchema,
-  type CommandDefinition,
-  type CommandResult
-} from "./commands-catalogue.ts";
-import {
   terminateCommandProcessTree,
   terminateDetachedCommandDescendants
 } from "./command-process-tree.ts";
+import {
+  type CommandDefinition,
+  commandExecutableNameSchema,
+  type CommandResult
+} from "./commands-catalogue.ts";
 
 const SANDBOX = "/usr/bin/sandbox-exec";
 /**

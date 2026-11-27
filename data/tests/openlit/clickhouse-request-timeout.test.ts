@@ -13,9 +13,9 @@ interface RecordedRequest {
 }
 
 /**
- * Replace `fetch` with a request that never answers, so the only way the call
- * can end is the ceiling the client put on it.
- */
+Replace `fetch` with a request that never answers, so the only way the call
+can end is the ceiling the client put on it.
+*/
 function hangingFetch(): typeof globalThis.fetch {
   return (async (
     _url: string | URL | Request,
@@ -30,7 +30,9 @@ function hangingFetch(): typeof globalThis.fetch {
     })) as typeof globalThis.fetch;
 }
 
-/** A fetch that answers at once, so only the recorded ceiling is under test. */
+/**
+A fetch that answers at once, so only the recorded ceiling is under test.
+*/
 function answeringFetch(): typeof globalThis.fetch {
   return (async () => new Response("")) as typeof globalThis.fetch;
 }
@@ -39,7 +41,7 @@ async function withFetch(
   fetchImpl: typeof globalThis.fetch,
   body: (requests: RecordedRequest[]) => Promise<void>
 ): Promise<void> {
-  const originalFetch = globalThis.fetch;
+  const originalFetch = fetch;
   const requests: RecordedRequest[] = [];
   globalThis.fetch = (async (
     url: string | URL | Request,

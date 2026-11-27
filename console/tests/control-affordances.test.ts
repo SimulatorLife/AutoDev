@@ -25,25 +25,25 @@ import { ProvidersView } from "../src/features/providers/ProvidersView.ts";
 import { ToolsView } from "../src/features/tools/index.ts";
 
 /**
- * The Console's control affordances.
- *
- * Two properties are pinned here, and both are the kind that look fine in the
- * source and wrong on the page.
- *
- * The pointer is the primary signal that a control is clickable. Every button
- * in the Console -- "Apply filters", "Reset to defaults", the provider row's
- * limit steppers -- rendered with the default arrow while looking and behaving
- * like a button, so the cursor contradicted the chrome on every page. The
- * Console's own newer surfaces spelled `cursor-pointer` inline instead, which
- * left the same role with two spellings and the shared vocabulary with none.
- *
- * A table header is a label, and the shared table contract says a column's
- * weight must be large enough for its own header. Two headers were smaller
- * than their own names: "Active Agents" wrapped to two lines, and "Requests"
- * pushed its help marker onto a line of its own, under the label it explains.
- * The same table header then measured 35.5px on twelve pages and 50.5px on
- * those two, so the header rhythm was not the Console's rhythm.
- */
+The Console's control affordances.
+
+Two properties are pinned here, and both are the kind that look fine in the
+source and wrong on the page.
+
+The pointer is the primary signal that a control is clickable. Every button
+in the Console -- "Apply filters", "Reset to defaults", the provider row's
+limit steppers -- rendered with the default arrow while looking and behaving
+like a button, so the cursor contradicted the chrome on every page. The
+Console's own newer surfaces spelled `cursor-pointer` inline instead, which
+left the same role with two spellings and the shared vocabulary with none.
+
+A table header is a label, and the shared table contract says a column's
+weight must be large enough for its own header. Two headers were smaller
+than their own names: "Active Agents" wrapped to two lines, and "Requests"
+pushed its help marker onto a line of its own, under the label it explains.
+The same table header then measured 35.5px on twelve pages and 50.5px on
+those two, so the header rhythm was not the Console's rhythm.
+*/
 
 const BUTTON_VARIANT_CLASSES = [
   PRIMARY_BUTTON_CLASS,
@@ -53,12 +53,12 @@ const BUTTON_VARIANT_CLASSES = [
 ];
 
 /**
- * A provider that holds a routing slot in two capability tiers.
- *
- * Two tiers is the case the links list has to survive: the provider's name is
- * visible three times on the page -- once in the providers table, once per
- * routing tier -- and only the name is on the surface.
- */
+A provider that holds a routing slot in two capability tiers.
+
+Two tiers is the case the links list has to survive: the provider's name is
+visible three times on the page -- once in the providers table, once per
+routing tier -- and only the name is on the surface.
+*/
 const NO_CONVERGENCE = {
   convergence: "not-observed" as const,
   desiredGeneration: null,
@@ -142,17 +142,17 @@ test("a disabled button keeps the not-allowed cursor", () => {
 });
 
 /**
- * A control that is working is not an unavailable control.
- *
- * A disabled control is dropped out of the page's focus order the moment it is
- * disabled, so the operator who pressed it loses their place in the document
- * and the next Tab starts from the top of the page. That is exactly what the
- * prompt preview did: its control was disabled while the request was in
- * flight, and the browser moved the focus to the document the moment it was.
- *
- * The shared vocabulary says "busy" for that state, so a control that is
- * working keeps its place in the page and says it is unavailable while it is.
- */
+A control that is working is not an unavailable control.
+
+A disabled control is dropped out of the page's focus order the moment it is
+disabled, so the operator who pressed it loses their place in the document
+and the next Tab starts from the top of the page. That is exactly what the
+prompt preview did: its control was disabled while the request was in
+flight, and the browser moved the focus to the document the moment it was.
+
+The shared vocabulary says "busy" for that state, so a control that is
+working keeps its place in the page and says it is unavailable while it is.
+*/
 test("a busy button is working, not unavailable", () => {
   const markup = renderToStaticMarkup(
     React.createElement(Button, { busy: true }, "Approving…")
@@ -242,16 +242,16 @@ test("the rendered button carries the pointer and its own variant's class", () =
 });
 
 /**
- * A control that shows a state and can change it is one control, not two.
- *
- * The agent enablement pill and the model enablement pill were the same
- * control written twice -- the same chrome string, the same three tones, and
- * the same paragraph explaining why the hover strengthens the border instead
- * of tinting the fill. Two features changing the same vocabulary is how they
- * drift apart, and they had already drifted: neither spelling carried a
- * pointer cursor, so a control that shows a state and takes a click still
- * pointed at nothing.
- */
+A control that shows a state and can change it is one control, not two.
+
+The agent enablement pill and the model enablement pill were the same
+control written twice -- the same chrome string, the same three tones, and
+the same paragraph explaining why the hover strengthens the border instead
+of tinting the fill. Two features changing the same vocabulary is how they
+drift apart, and they had already drifted: neither spelling carried a
+pointer cursor, so a control that shows a state and takes a click still
+pointed at nothing.
+*/
 test("the state-coloured button is one vocabulary, and it is a pointer target", () => {
   assert.match(
     STATE_PILL_BUTTON_CLASS,
@@ -334,13 +334,13 @@ test("a control that states its name says the word it shows", () => {
 });
 
 /**
- * The help marker explains the label it sits beside, so the two are one unit.
- *
- * They were two inline spans, which left the line break as the only thing
- * between them: when a column was a few pixels too narrow the marker dropped
- * onto a line of its own. A flex row keeps them together -- the label still
- * wraps inside itself, and the marker stays beside it.
- */
+The help marker explains the label it sits beside, so the two are one unit.
+
+They were two inline spans, which left the line break as the only thing
+between them: when a column was a few pixels too narrow the marker dropped
+onto a line of its own. A flex row keeps them together -- the label still
+wraps inside itself, and the marker stays beside it.
+*/
 test("a column help marker is bound to its label rather than floating after it", () => {
   const source = readFileSync(
     new URL("../src/components/tables/DataTable.ts", import.meta.url),
@@ -365,18 +365,18 @@ test("a column help marker is bound to its label rather than floating after it",
 });
 
 /**
- * The page's outline starts with the page.
- *
- * The sidebar is chrome: it is on every page and it sits before the shell
- * header in the document, so its group labels came first in every page's
- * heading outline -- three navigation headings ahead of the page's own title,
- * and at the same level as the page's body sections. An operator navigating
- * by heading met "Configure", "Observe" and "Operate" before they met the
- * page they were on.
- *
- * The group is still a labelled region: `aria-labelledby` names it from its
- * label element, and a labelled region does not need a heading for that.
- */
+The page's outline starts with the page.
+
+The sidebar is chrome: it is on every page and it sits before the shell
+header in the document, so its group labels came first in every page's
+heading outline -- three navigation headings ahead of the page's own title,
+and at the same level as the page's body sections. An operator navigating
+by heading met "Configure", "Observe" and "Operate" before they met the
+page they were on.
+
+The group is still a labelled region: `aria-labelledby` names it from its
+label element, and a labelled region does not need a heading for that.
+*/
 test("the navigation's group labels are labels, not headings of the page", () => {
   const markup = renderToStaticMarkup(
     React.createElement(AppNav, {
@@ -403,14 +403,14 @@ test("the navigation's group labels are labels, not headings of the page", () =>
 });
 
 /**
- * A scroll region has to say that it scrolls.
- *
- * A table's declared widths are a content budget, and the region scrolls when
- * the viewport cannot provide it -- by design. macOS hides overlay scrollbars
- * until you scroll, so the region gave the operator nothing to act on: a
- * table whose last column was cut in half read as a rendering fault rather
- * than as more content to the right.
- */
+A scroll region has to say that it scrolls.
+
+A table's declared widths are a content budget, and the region scrolls when
+the viewport cannot provide it -- by design. macOS hides overlay scrollbars
+until you scroll, so the region gave the operator nothing to act on: a
+table whose last column was cut in half read as a rendering fault rather
+than as more content to the right.
+*/
 test("the Console's scroll regions are visible", () => {
   const css = readFileSync(
     new URL("../app/globals.css", import.meta.url),
@@ -429,20 +429,20 @@ test("the Console's scroll regions are visible", () => {
 });
 
 /**
- * A link's name has to say what it points at.
- *
- * Three tables repeated one name per row: every prompt carried an
- * "Evaluations" link, every tool repeated a filter link per exposed role, and
- * every agent repeated a provider link. The links were correct -- each one
- * pointed at its own row -- but a links list, which is how a screen reader
- * user scans a page, showed "Evaluations" seventy-six times and
- * "Filter tools exposed to smart" twenty-four times, with nothing to tell
- * the entries apart.
- *
- * The visible text stays short -- a chip says "Evaluations" -- and the
- * accessible name carries the row. The name still contains the visible text,
- * which is what keeps a voice-control user able to say what they see.
- */
+A link's name has to say what it points at.
+
+Three tables repeated one name per row: every prompt carried an
+"Evaluations" link, every tool repeated a filter link per exposed role, and
+every agent repeated a provider link. The links were correct -- each one
+pointed at its own row -- but a links list, which is how a screen reader
+user scans a page, showed "Evaluations" seventy-six times and
+"Filter tools exposed to smart" twenty-four times, with nothing to tell
+the entries apart.
+
+The visible text stays short -- a chip says "Evaluations" -- and the
+accessible name carries the row. The name still contains the visible text,
+which is what keeps a voice-control user able to say what they see.
+*/
 test("a repeated link names the row it belongs to", () => {
   const prompts = renderToStaticMarkup(
     React.createElement(PromptsView, {
@@ -491,20 +491,20 @@ test("a repeated link names the row it belongs to", () => {
 });
 
 /**
- * The page heading can receive the focus a navigation hands it.
- *
- * Every navigation in the Console is an in-place one, and the focus the
- * operator had on the link they activated was dropped to the document body when
- * the page changed: the next Tab started at the skip link and walked the whole
- * navigation again, and a screen reader was told nothing at all. The navigation
- * owner moves the focus to the new page's heading, which is also how the page
- * change is announced -- a focused heading is read out.
- *
- * The heading has to be focusable for that, and out of the tab order so it is
- * never a stop the operator has to walk past. The browser's own behaviour is
- * covered by the navigation acceptance; this pins the affordance the handoff
- * depends on.
- */
+The page heading can receive the focus a navigation hands it.
+
+Every navigation in the Console is an in-place one, and the focus the
+operator had on the link they activated was dropped to the document body when
+the page changed: the next Tab started at the skip link and walked the whole
+navigation again, and a screen reader was told nothing at all. The navigation
+owner moves the focus to the new page's heading, which is also how the page
+change is announced -- a focused heading is read out.
+
+The heading has to be focusable for that, and out of the tab order so it is
+never a stop the operator has to walk past. The browser's own behaviour is
+covered by the navigation acceptance; this pins the affordance the handoff
+depends on.
+*/
 test("the page heading is focusable and out of the tab order", () => {
   const markup = renderToStaticMarkup(
     React.createElement(AppShell, { activeSection: "Agents" })
@@ -522,17 +522,17 @@ test("the page heading is focusable and out of the tab order", () => {
 });
 
 /**
- * The count a sighted operator can read is information a screen reader must be
- * able to hear.
- *
- * The sidebar shows each section's count in a badge beside its name, so
- * "Providers" is visibly "Providers 3". The link's accessible name has to be
- * *stated* rather than taken from its content, because in the rail the label
- * and the badge are both hidden and a content-based name would be empty. But a
- * stated name that stops at the section name drops the count: the operator can
- * see the "3" and a screen reader hears nothing, which is exactly the gap
- * recognition-over-recall is about.
- */
+The count a sighted operator can read is information a screen reader must be
+able to hear.
+
+The sidebar shows each section's count in a badge beside its name, so
+"Providers" is visibly "Providers 3". The link's accessible name has to be
+*stated* rather than taken from its content, because in the rail the label
+and the badge are both hidden and a content-based name would be empty. But a
+stated name that stops at the section name drops the count: the operator can
+see the "3" and a screen reader hears nothing, which is exactly the gap
+recognition-over-recall is about.
+*/
 test("a navigation link names the count it shows", () => {
   const markup = renderToStaticMarkup(
     React.createElement(AppNav, {
@@ -567,14 +567,14 @@ test("a navigation link names the count it shows", () => {
 });
 
 /**
- * A tab and a top-level page can share a label.
- *
- * The "Tools" tab on an MCP server and the Tools catalog are two different
- * destinations, and the navigation carries both on every page. A links list
- * then shows "Tools" twice with nothing to tell the entries apart, so the tab
- * says which server's tools it opens. The visible label does not change, and
- * the name still contains it.
- */
+A tab and a top-level page can share a label.
+
+The "Tools" tab on an MCP server and the Tools catalog are two different
+destinations, and the navigation carries both on every page. A links list
+then shows "Tools" twice with nothing to tell the entries apart, so the tab
+says which server's tools it opens. The visible label does not change, and
+the name still contains it.
+*/
 test("a tab that shares a label with a page says which page it belongs to", () => {
   const tabs = mcpDetailTabs("cocoindex-code");
   const tools = tabs.find((tab) => tab.id === "tools");
@@ -591,19 +591,19 @@ test("a tab that shares a label with a page says which page it belongs to", () =
 });
 
 /**
- * A section heading that repeats the page's own title says nothing.
- *
- * The shell renders the page's `h1` from the canonical section name -- "Tools",
- * "Providers" -- so a section heading with the same words adds a level to the
- * outline that carries no information, and the operator navigating by heading
- * meets the page's own name twice.
- *
- * `/providers` did exactly that: an `h2` reading "Providers" under an `h1`
- * reading "Providers", with a table header reading "PROVIDER" beneath it.
- * `/tools` had the opposite fault: the only catalog page whose table arrived
- * with no heading at all, so scanning the outline found nothing between the
- * page title and the table.
- */
+A section heading that repeats the page's own title says nothing.
+
+The shell renders the page's `h1` from the canonical section name -- "Tools",
+"Providers" -- so a section heading with the same words adds a level to the
+outline that carries no information, and the operator navigating by heading
+meets the page's own name twice.
+
+`/providers` did exactly that: an `h2` reading "Providers" under an `h1`
+reading "Providers", with a table header reading "PROVIDER" beneath it.
+`/tools` had the opposite fault: the only catalog page whose table arrived
+with no heading at all, so scanning the outline found nothing between the
+page title and the table.
+*/
 test("a section heading names the section rather than repeating the page", () => {
   const providers = renderToStaticMarkup(
     React.createElement(ProvidersView, {
@@ -655,15 +655,15 @@ test("a section heading names the section rather than repeating the page", () =>
 });
 
 /**
- * The same link, twice, has to say which one is which.
- *
- * A provider appears on `/providers` more than once: once in the providers
- * table, and once for every capability tier it holds a routing slot in. The
- * visible text is the provider's name in all of those places, so the accessible
- * name has to carry the slot -- otherwise a links list, which is how a screen
- * reader user scans the page, showed "Open provider claude" three times with
- * nothing to tell the entries apart.
- */
+The same link, twice, has to say which one is which.
+
+A provider appears on `/providers` more than once: once in the providers
+table, and once for every capability tier it holds a routing slot in. The
+visible text is the provider's name in all of those places, so the accessible
+name has to carry the slot -- otherwise a links list, which is how a screen
+reader user scans the page, showed "Open provider claude" three times with
+nothing to tell the entries apart.
+*/
 test("a provider link names the routing slot it points at", () => {
   const providers = renderToStaticMarkup(
     React.createElement(ProvidersView, {

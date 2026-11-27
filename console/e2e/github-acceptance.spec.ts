@@ -10,41 +10,51 @@ import { statCard } from "./acceptance-helpers.ts";
 
 const FIXTURE_BASE_URL = `http://127.0.0.1:${process.env.AUTODEV_PLAYTEST_FIXTURE_PORT ?? "4311"}`;
 const REPOSITORY = "SimulatorLife/AutoDev";
-/** The state a workflow whose runtime facts were never read carries. */
+/**
+The state a workflow whose runtime facts were never read carries.
+*/
 const UNAVAILABLE = "Unavailable";
-/** The heading and the card that count the runs the API returned. */
+/**
+The heading and the card that count the runs the API returned.
+*/
 const RECENT_RUNS = "Recent Workflow Runs";
 /**
- * The words a GitHub mutation control would carry.
- *
- * Dispatch, cancel, rerun and schedule are the four controls the target
- * state leaves unimplemented, so a control named after one of them is a
- * control the Console must not offer. The words are whole words: a workflow
- * named "Scheduler" is a schedule trigger, not a schedule control.
- */
+The words a GitHub mutation control would carry.
+
+Dispatch, cancel, rerun and schedule are the four controls the target
+state leaves unimplemented, so a control named after one of them is a
+control the Console must not offer. The words are whole words: a workflow
+named "Scheduler" is a schedule trigger, not a schedule control.
+*/
 const MUTATION_CONTROL = /\b(dispatch|cancel|rerun|schedule)\b/iu;
-/** The page's sentence about the runtime state it could not read. */
+/**
+The page's sentence about the runtime state it could not read.
+*/
 const REQUIRES_THE_ACTIONS_API = /require the GitHub Actions API/iu;
-/** The runtime message the fixture reports when it cannot reach the API. */
+/**
+The runtime message the fixture reports when it cannot reach the API.
+*/
 const RUNTIME_UNREACHABLE =
   /could not be reached for the configured repository\./u;
-/** The page's sentence about the controls it does not offer. */
+/**
+The page's sentence about the controls it does not offer.
+*/
 const NO_MUTATION_CONTROLS = /mutation controls remain unimplemented/iu;
 
 /**
- * The page's own body, which owns the state marker.
- */
+The page's own body, which owns the state marker.
+*/
 function githubBody(page: Page): Locator {
   return page.locator('[data-feature="github"]');
 }
 
 /**
- * The table under one of the page's section headings.
- *
- * The page carries two tables -- the workflow definitions and the recent
- * runs -- and they are told apart by the heading above them, which is what an
- * operator reads them by.
- */
+The table under one of the page's section headings.
+
+The page carries two tables -- the workflow definitions and the recent
+runs -- and they are told apart by the heading above them, which is what an
+operator reads them by.
+*/
 function tableUnder(page: Page, heading: string): Locator {
   return page
     .getByRole("heading", { name: heading, exact: true })
@@ -52,13 +62,13 @@ function tableUnder(page: Page, heading: string): Locator {
 }
 
 /**
- * Whether the fixture can read the GitHub Actions runtime state.
- *
- * The runtime state comes from the GitHub Actions API and the definitions
- * come from the repository's YAML, so the two can be read apart. The fixture's
- * toggle takes the runtime state away, because a page that has only ever
- * rendered observed facts cannot show that it refuses to invent them.
- */
+Whether the fixture can read the GitHub Actions runtime state.
+
+The runtime state comes from the GitHub Actions API and the definitions
+come from the repository's YAML, so the two can be read apart. The fixture's
+toggle takes the runtime state away, because a page that has only ever
+rendered observed facts cannot show that it refuses to invent them.
+*/
 async function setGithubRuntimeState(
   request: APIRequestContext,
   state: "observed" | "unavailable"

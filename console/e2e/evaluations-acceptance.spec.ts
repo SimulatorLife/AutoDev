@@ -3,46 +3,54 @@ import { expect, type Locator, type Page, test } from "@playwright/test";
 import { statCard } from "./acceptance-helpers.ts";
 
 /**
- * The evaluation results the Control fixture holds.
- *
- * The read is a bounded window over a larger store, and the rows carry the
- * three verdicts the page has to keep apart, so the page is exercised
- * against a window that is smaller than the store and against a history that
- * holds a failure and an unobserved verdict next to a success.
- */
+The evaluation results the Control fixture holds.
+
+The read is a bounded window over a larger store, and the rows carry the
+three verdicts the page has to keep apart, so the page is exercised
+against a window that is smaller than the store and against a history that
+holds a failure and an unobserved verdict next to a success.
+*/
 const READ_ROWS = 60;
 const STORE_ROWS = 120;
 const PAGE_ROWS = 50;
-/** A span the Usage fixture answers with a trace. */
+/**
+A span the Usage fixture answers with a trace.
+*/
 const SERVED_SPAN_ID = "a1a1a1a100000000";
-/** A span the Usage fixture never retained. */
+/**
+A span the Usage fixture never retained.
+*/
 const UNOBSERVED_SPAN_ID = "ffffffffffffffff";
-/** The role whose rows all report the same prompt. */
+/**
+The role whose rows all report the same prompt.
+*/
 const NARROWED_ROLE = "orchestrator";
-/** The prompt the other role's rows report and the narrowed rows do not. */
+/**
+The prompt the other role's rows report and the narrowed rows do not.
+*/
 const OTHER_ROLE_PROMPT = "review";
 
 /**
- * The page's own body, which owns the state markers.
- */
+The page's own body, which owns the state markers.
+*/
 function evaluationsBody(page: Page): Locator {
   return page.locator('[data-feature="evaluations"]');
 }
 
 /**
- * The filter bar's own sentence about the rows it narrowed.
- */
+The filter bar's own sentence about the rows it narrowed.
+*/
 function filterSummary(page: Page): Locator {
   return page.getByRole("form", { name: "Evaluation filters" });
 }
 
 /**
- * The rows the read carried, waited for.
- *
- * The Console streams a page: the route's shell arrives first with the
- * section's loading state, and the page's own content is swapped in once the
- * server has the data. Reading the page before that swap reads the shell.
- */
+The rows the read carried, waited for.
+
+The Console streams a page: the route's shell arrives first with the
+section's loading state, and the page's own content is swapped in once the
+server has the data. Reading the page before that swap reads the shell.
+*/
 async function openEvaluations(page: Page, query = ""): Promise<void> {
   await page.goto(`/evaluations${query}`);
   await expect(evaluationsBody(page)).toBeVisible();

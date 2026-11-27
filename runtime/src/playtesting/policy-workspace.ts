@@ -1,17 +1,17 @@
 /**
- * Private, source-empty workspace for Smart-direct decision turns.
- *
- * The Router resolves a turn's workspace from structured request metadata and
- * refuses to guess one; the providers behind it then bootstrap that turn in
- * the resolved directory. The Smart-direct policy plays a game, so its turn
- * must not be able to read or edit the game checkout. Binding it to a private
- * root with no source in it gives the turn a resolvable workspace without
- * exposing the game -- the same boundary the playtest analyst role uses.
- *
- * The root is a local Git repository because some providers omit their
- * structured workspace metadata for a non-Git working directory, which makes
- * the Router refuse the request.
- */
+Private, source-empty workspace for Smart-direct decision turns.
+
+The Router resolves a turn's workspace from structured request metadata and
+refuses to guess one; the providers behind it then bootstrap that turn in
+the resolved directory. The Smart-direct policy plays a game, so its turn
+must not be able to read or edit the game checkout. Binding it to a private
+root with no source in it gives the turn a resolvable workspace without
+exposing the game -- the same boundary the playtest analyst role uses.
+
+The root is a local Git repository because some providers omit their
+structured workspace metadata for a non-Git working directory, which makes
+the Router refuse the request.
+*/
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
@@ -26,16 +26,24 @@ import path from "node:path";
 const DIRECTORY_MODE = 0o700;
 
 export interface PlaytestPolicyWorkspace {
-  /** Temporary root that owns the workspace directory and its Git metadata. */
+  /**
+  Temporary root that owns the workspace directory and its Git metadata.
+  */
   readonly root: string;
-  /** Absolute path of the empty Git root a decision turn is bound to. */
+  /**
+  Absolute path of the empty Git root a decision turn is bound to.
+  */
   readonly workspacePath: string;
 }
 
 export interface PlaytestPolicyWorkspaceOptions {
-  /** Prefix for the temporary root directory name. */
+  /**
+  Prefix for the temporary root directory name.
+  */
   readonly prefix?: string;
-  /** Environment for the local `git init`; the workspace must stay untracked. */
+  /**
+  Environment for the local `git init`; the workspace must stay untracked.
+  */
   readonly environment?: NodeJS.ProcessEnv;
   readonly execFileSyncImpl?: typeof execFileSync;
 }

@@ -305,9 +305,9 @@ test("provider role administration is independent", () => {
   );
   assert.equal(policy.isProviderEnabledForRole("claude", "subagent"), true);
   assert.ok(
-    !policy
+    policy
       .orchestratorCandidates(seeded(7))
-      .some((candidate) => candidate.provider === "claude")
+      .every((candidate) => candidate.provider !== "claude")
   );
   assert.ok(
     policy

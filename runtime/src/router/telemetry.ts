@@ -1,33 +1,33 @@
 /**
- * Source-owned OpenTelemetry instrumentation for the AutoDev router.
- *
- * Every routed logical request and every physical provider/model attempt is
- * emitted as standard OTel spans. The router uses the official OTel JS SDK
- * and OTLP HTTP exporter; it never hand-builds OTLP payloads, never adds a
- * Collector, never modifies OpenLIT, and never duplicates telemetry. Spans
- * are only exported when a real OTEL_EXPORTER_OTLP_ENDPOINT is configured;
- * if the exporter is unavailable or initialization fails, telemetry degrades
- * to a no-op tracer without blocking the routed turn.
- *
- * Span topology:
- *   autodev.routed_request          (one logical AutoDev routed request)
- *   └── gen_ai.client_operation     (one physical provider/model attempt,
- *                                    including fallback AND retries)
- *
- * Standard gen_ai.* attributes are only attached when the owning response
- * (or attempted response) supplies a real value; absent values produce no
- * attribute. Token counts live on the attempt that consumed them; the
- * logical request never carries attempt tokens, so totals are never
- * double-counted between parent and child.
- *
- * Privacy: this module never exports raw paths, prompts, credentials,
- * request/session/trace IDs or tool arguments as metric dimensions or as
- * sensitive span attributes. The source-confirmed GenAI conversation ID is
- * retained only on the attempt span for trace-level correlation.
- * autodev.workspace and
- * autodev.agent.role are attached only after value validation (non-empty,
- * non-"unattributed", trimmed, bounded length).
- */
+Source-owned OpenTelemetry instrumentation for the AutoDev router.
+
+Every routed logical request and every physical provider/model attempt is
+emitted as standard OTel spans. The router uses the official OTel JS SDK
+and OTLP HTTP exporter; it never hand-builds OTLP payloads, never adds a
+Collector, never modifies OpenLIT, and never duplicates telemetry. Spans
+are only exported when a real OTEL_EXPORTER_OTLP_ENDPOINT is configured;
+if the exporter is unavailable or initialization fails, telemetry degrades
+to a no-op tracer without blocking the routed turn.
+
+Span topology:
+  autodev.routed_request          (one logical AutoDev routed request)
+  └── gen_ai.client_operation     (one physical provider/model attempt,
+                                   including fallback AND retries)
+
+Standard gen_ai.* attributes are only attached when the owning response
+(or attempted response) supplies a real value; absent values produce no
+attribute. Token counts live on the attempt that consumed them; the
+logical request never carries attempt tokens, so totals are never
+double-counted between parent and child.
+
+Privacy: this module never exports raw paths, prompts, credentials,
+request/session/trace IDs or tool arguments as metric dimensions or as
+sensitive span attributes. The source-confirmed GenAI conversation ID is
+retained only on the attempt span for trace-level correlation.
+autodev.workspace and
+autodev.agent.role are attached only after value validation (non-empty,
+non-"unattributed", trimmed, bounded length).
+*/
 
 import {
   type Context,
@@ -106,15 +106,15 @@ const ATTR_GEN_AI_ERROR_TYPE = "error.type" as const;
 const ATTR_AUTODEV_WORKSPACE = "autodev.workspace" as const;
 const ATTR_AUTODEV_AGENT_ROLE = "autodev.agent.role" as const;
 /**
- * The source-confirmed session a request belongs to.
- *
- * A session is the identity that makes a per-session view possible: it is
- * the conversation a request is part of, and it is the one dimension the
- * router knows that no breakdown can be reconstructed from afterwards. It
- * is a span attribute rather than a metric dimension -- session ids are
- * unbounded, so a dimension keyed on them would be a cardinality hazard --
- * and it is bounded and opaque before it is published.
- */
+The source-confirmed session a request belongs to.
+
+A session is the identity that makes a per-session view possible: it is
+the conversation a request is part of, and it is the one dimension the
+router knows that no breakdown can be reconstructed from afterwards. It
+is a span attribute rather than a metric dimension -- session ids are
+unbounded, so a dimension keyed on them would be a cardinality hazard --
+and it is bounded and opaque before it is published.
+*/
 export const ATTR_AUTODEV_SESSION_ID = "autodev.session.id" as const;
 export const METRIC_GIT_COMMITS = "autodev.git.commits";
 export const METRIC_GIT_FILES_CHANGED = "autodev.git.files_changed";
@@ -122,26 +122,28 @@ export const METRIC_GIT_FILES_ADDED = "autodev.git.files_added";
 export const METRIC_GIT_FILES_DELETED = "autodev.git.files_deleted";
 export const METRIC_GIT_LINES_ADDED = "autodev.git.lines_added";
 export const METRIC_GIT_LINES_REMOVED = "autodev.git.lines_removed";
-/** Marks a commit whose diff could not be fully summarized. */
+/**
+Marks a commit whose diff could not be fully summarized.
+*/
 export const ATTR_AUTODEV_GIT_PARTIAL = "autodev.git.partial" as const;
 /**
- * How the actor on a commit was established.
- *
- * `commit_identity` means the commit itself carried an AutoDev committer, so
- * the actor is read from git. `unattributed` means the commit was observed but
- * carries no agent identity -- a human commit, or one made before this
- * identity existed. Both are facts worth querying; a downstream breakdown must
- * be able to exclude the unattributed ones rather than average over them.
- */
+How the actor on a commit was established.
+
+`commit_identity` means the commit itself carried an AutoDev committer, so
+the actor is read from git. `unattributed` means the commit was observed but
+carries no agent identity -- a human commit, or one made before this
+identity existed. Both are facts worth querying; a downstream breakdown must
+be able to exclude the unattributed ones rather than average over them.
+*/
 export const ATTR_AUTODEV_GIT_ATTRIBUTION = "autodev.git.attribution" as const;
 export const GIT_ATTRIBUTION_VALUES = Object.freeze([
   "commit_identity",
   "unattributed"
 ] as const);
 /**
- * Process-local commit-idempotency bound. A commit observed by two producers
- * (a session and a later reconciliation pass) must still be counted once.
- */
+Process-local commit-idempotency bound. A commit observed by two producers
+(a session and a later reconciliation pass) must still be counted once.
+*/
 const MAX_TRACKED_GIT_COMMITS = 1000;
 const trackedGitCommits = new Set<string>();
 
@@ -155,7 +157,9 @@ function claimGitCommit(commit: string): boolean {
   return true;
 }
 
-/** Test seam: the commit dedup set is process-wide and must be resettable. */
+/**
+Test seam: the commit dedup set is process-wide and must be resettable.
+*/
 export function resetTrackedGitCommitsForTest(): void {
   trackedGitCommits.clear();
 }
@@ -168,14 +172,22 @@ const METRIC_LOGICAL_REQUEST_DURATION =
   "autodev.router.logical_request.duration";
 const METRIC_CACHE_READ_TOKENS = "autodev.gen_ai.cache_read.input_tokens";
 const METRIC_SKILL_EVENTS = "autodev.skill.events";
-/** Seconds one attempt spent in a bridge-reported phase (`autodev.provider.phase`). */
+/**
+Seconds one attempt spent in a bridge-reported phase (`autodev.provider.phase`).
+*/
 export const METRIC_PROVIDER_PHASE_DURATION = "autodev.provider.phase.duration";
-/** `queued` (waiting for the provider, e.g. a free browser tab) or `on_site`. */
+/**
+`queued` (waiting for the provider, e.g. a free browser tab) or `on_site`.
+*/
 export const ATTR_AUTODEV_PROVIDER_PHASE = "autodev.provider.phase" as const;
-/** Seconds the attempt waited before the provider took it. */
+/**
+Seconds the attempt waited before the provider took it.
+*/
 export const ATTR_AUTODEV_PROVIDER_QUEUE_DURATION =
   "autodev.provider.queue.duration" as const;
-/** Seconds the provider spent on the attempt once it had it. */
+/**
+Seconds the provider spent on the attempt once it had it.
+*/
 export const ATTR_AUTODEV_PROVIDER_SITE_DURATION =
   "autodev.provider.site.duration" as const;
 
@@ -256,8 +268,7 @@ let instruments: RouterMetricInstruments | null = null;
 function safeTrim(value: string | null | undefined): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
-  if (trimmed.length === 0) return null;
-  if (trimmed.length > ATTR_VALUE_MAX_LENGTH) return null;
+  if ((trimmed.length === 0) || (trimmed.length > ATTR_VALUE_MAX_LENGTH)) return null;
   return trimmed;
 }
 
@@ -275,16 +286,18 @@ function logTelemetryError(message: string): void {
   try {
     process.stderr.write(`[autodev-telemetry] ${message}\n`);
   } catch {
-    /* ignore */
+    /*
+    ignore
+    */
   }
 }
 
 /**
- * Git Usage derives exact time-window counts by subtracting cumulative counter
- * readings. Keep the Router's OTLP stream cumulative even if a process-wide
- * temporality preference requests delta data, which has different window
- * boundary semantics.
- */
+Git Usage derives exact time-window counts by subtracting cumulative counter
+readings. Keep the Router's OTLP stream cumulative even if a process-wide
+temporality preference requests delta data, which has different window
+boundary semantics.
+*/
 export function createOtlpMetricExporter(
   endpoint: string,
   headers: Record<string, string>
@@ -480,16 +493,18 @@ function recordTokenMetrics(
   }
 }
 
-/** Exported for deterministic tests and runtime diagnostics; contains no secret. */
+/**
+Exported for deterministic tests and runtime diagnostics; contains no secret.
+*/
 export function isOtlpExporterInstalled(): boolean {
   return state.otlpExporterInstalled;
 }
 
 /**
- * Install a test exporter before the tracer provider is initialized.
- * Production does not call this; the test suite uses one in-memory exporter
- * and resets its contents between cases rather than replacing the global SDK.
- */
+Install a test exporter before the tracer provider is initialized.
+Production does not call this; the test suite uses one in-memory exporter
+and resets its contents between cases rather than replacing the global SDK.
+*/
 export function setTelemetryExporter(exporter: SpanExporter | null): void {
   if (state.initialized) {
     throw new Error(
@@ -499,7 +514,9 @@ export function setTelemetryExporter(exporter: SpanExporter | null): void {
   state.testExporter = exporter;
 }
 
-/** Configure one in-memory metrics exporter before the first telemetry event. */
+/**
+Configure one in-memory metrics exporter before the first telemetry event.
+*/
 export function setTelemetryMetricExporterForTest(
   exporter: InMemoryMetricExporter
 ): void {
@@ -550,11 +567,11 @@ function buildSpanProcessors(): SpanProcessor[] {
 }
 
 /**
- * Initialize the official OpenTelemetry SDK synchronously and exactly once.
- * With no configured endpoint and no test exporter, the API's no-op tracer
- * remains in place. Exporter initialization is non-blocking with respect to
- * provider requests; BatchSpanProcessor sends spans asynchronously.
- */
+Initialize the official OpenTelemetry SDK synchronously and exactly once.
+With no configured endpoint and no test exporter, the API's no-op tracer
+remains in place. Exporter initialization is non-blocking with respect to
+provider requests; BatchSpanProcessor sends spans asynchronously.
+*/
 export function ensureOtelInitialized(): Tracer {
   if (state.initialized) return state.tracer;
   state.initialized = true;
@@ -597,7 +614,9 @@ export function resetTelemetryExporter(): void {
   try {
     exporter?.reset?.();
   } catch {
-    /* ignore test exporter cleanup failures */
+    /*
+    ignore test exporter cleanup failures
+    */
   }
 }
 
@@ -614,47 +633,36 @@ function hasProhibitedIdPrefixWithDigit(value: string): boolean {
   const prefix = PROHIBITED_ID_PREFIX_PATTERN.exec(value)?.[0];
   if (!prefix) return false;
 
-  let containsDigit = false;
+  let isContainsDigit = false;
   for (const character of value.slice(prefix.length).toLowerCase()) {
     const code = character.charCodeAt(0);
     if ((code < 48 || code > 57) && (code < 97 || code > 122)) {
       return false;
     }
-    if (code >= 48 && code <= 57) containsDigit = true;
+    if (code >= 48 && code <= 57) isContainsDigit = true;
   }
-  return containsDigit;
+  return isContainsDigit;
 }
 
 /**
- * Source-supported enumerations for the `autodev.context.compactions` metric
- * dimensions. `sanitizeCategoricalLabel` only bounds the shape and length of
- * a string, not its cardinality, so an untrusted `x-codex-turn-metadata`
- * header could otherwise multiply series with one safe 64-character label
- * per `trigger`/`reason`/`implementation`/`phase`/`strategy` value. The
- * router collapses any value outside the matching allowlist onto the
- * single `COMPACTION_DIMENSION_OTHER` bucket, so the counter still
- * increments for a source-confirmed compaction but the cardinality of
- * each dimension is bounded by the size of its allowlist plus one.
- *
- * To add a new value, extend the matching allowlist explicitly. Hidden
- * aliasing or a competing source of truth is intentionally avoided.
- */
+Source-supported enumerations for the `autodev.context.compactions` metric
+dimensions. `sanitizeCategoricalLabel` only bounds the shape and length of
+a string, not its cardinality, so an untrusted `x-codex-turn-metadata`
+header could otherwise multiply series with one safe 64-character label
+per `trigger`/`reason`/`implementation`/`phase`/`strategy` value. The
+router collapses any value outside the matching allowlist onto the
+single `COMPACTION_DIMENSION_OTHER` bucket, so the counter still
+increments for a source-confirmed compaction but the cardinality of
+each dimension is bounded by the size of its allowlist plus one.
+
+To add a new value, extend the matching allowlist explicitly. Hidden
+aliasing or a competing source of truth is intentionally avoided.
+*/
 export function sanitizeCategoricalLabel(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
-  if (!trimmed || trimmed.length > ATTR_VALUE_MAX_LENGTH) return null;
-  if (trimmed === "unattributed" || trimmed.toLowerCase() === "unknown") {
-    return null;
-  }
-  if (!SAFE_CATEGORICAL_LABEL_PATTERN.test(trimmed)) return null;
-  if (UUID_PATTERN.test(trimmed)) return null;
-  if (
-    hasProhibitedIdPrefixWithDigit(trimmed) ||
-    PROHIBITED_RAW_ID_PATTERN.test(trimmed)
-  ) {
-    return null;
-  }
-  if (HEX_HASH_PATTERN.test(trimmed)) return null;
+  if (!trimmed || trimmed.length > ATTR_VALUE_MAX_LENGTH || trimmed === "unattributed" || trimmed.toLowerCase() === "unknown" || !SAFE_CATEGORICAL_LABEL_PATTERN.test(trimmed) || UUID_PATTERN.test(trimmed) || hasProhibitedIdPrefixWithDigit(trimmed) ||
+    PROHIBITED_RAW_ID_PATTERN.test(trimmed) || HEX_HASH_PATTERN.test(trimmed)) return null;
   return trimmed;
 }
 
@@ -671,27 +679,27 @@ export interface RecordGitCommitOptions {
   readonly provider?: string | null | undefined;
   readonly model?: string | null | undefined;
   /**
-   * Whether `role`/`provider` came from the commit's own committer identity.
-   *
-   * When false they are dropped rather than emitted: an actor supplied by the
-   * observing Runtime is a guess whenever more than one actor could have made
-   * the commit, and a blended number is worse than an unattributed one.
-   */
+  Whether `role`/`provider` came from the commit's own committer identity.
+  
+  When false they are dropped rather than emitted: an actor supplied by the
+  observing Runtime is a guess whenever more than one actor could have made
+  the commit, and a blended number is worse than an unattributed one.
+  */
   readonly actorFromCommitIdentity?: boolean | undefined;
 }
 
 /**
- * Record one commit's change output.
- *
- * Only the dimensions the producing source actually knew are attached. The
- * commit id is used for idempotency and is deliberately *not* an attribute:
- * it is unbounded and identifies a specific object, both of which the privacy
- * rules forbid. File paths, repository URLs, and branch names never reach here
- * because the measurement never carries them.
- *
- * Returns false when the commit was already recorded, was not measurable, or
- * telemetry is unavailable -- so a caller can tell "not counted" from "counted".
- */
+Record one commit's change output.
+
+Only the dimensions the producing source actually knew are attached. The
+commit id is used for idempotency and is deliberately *not* an attribute:
+it is unbounded and identifies a specific object, both of which the privacy
+rules forbid. File paths, repository URLs, and branch names never reach here
+because the measurement never carries them.
+
+Returns false when the commit was already recorded, was not measurable, or
+telemetry is unavailable -- so a caller can tell "not counted" from "counted".
+*/
 export function recordGitCommit(options: RecordGitCommitOptions): boolean {
   if (!options.commit) return false;
   const counters = [
@@ -741,21 +749,23 @@ export function recordGitCommit(options: RecordGitCommitOptions): boolean {
   }
 }
 
-/** Router event listener for commit observations; this module owns the metric emitter. */
+/**
+Router event listener for commit observations; this module owns the metric emitter.
+*/
 export const observeRouterWorkspaceGitCommits =
   createRouterWorkspaceGitCommitObserver(recordGitCommit);
 
 /**
- * Publish one provider hop on the request's own span.
- *
- * The hop is published with both providers and the reason for the change, so
- * the evidence answers "how often", "which way" and "why" without the reader
- * having to reconstruct the chain from separate spans.
- *
- * A hop whose providers cannot be named is not published: a hop from
- * "nothing" to "something" is not a change of provider, and a hop to an
- * unnamed provider cannot be explained or filtered.
- */
+Publish one provider hop on the request's own span.
+
+The hop is published with both providers and the reason for the change, so
+the evidence answers "how often", "which way" and "why" without the reader
+having to reconstruct the chain from separate spans.
+
+A hop whose providers cannot be named is not published: a hop from
+"nothing" to "something" is not a change of provider, and a hop to an
+unnamed provider cannot be explained or filtered.
+*/
 export interface LogicalRequestSpanOptions {
   requestId: string | null;
   role: string | null;
@@ -766,30 +776,30 @@ export interface LogicalRequestSpanOptions {
   memoryMode?: "jit" | "retrieval-only" | "disabled" | "invalid" | undefined;
   turnMetadataHeader?: string | null | undefined;
   /**
-   * The source-confirmed session the request belongs to.
-   *
-   * The Router resolves it from the request's own session identity. The
-   * process-wide anonymous bucket is not a session and is not published, so
-   * an unrelated set of requests is never attributed to one conversation.
-   */
+  The source-confirmed session the request belongs to.
+  
+  The Router resolves it from the request's own session identity. The
+  process-wide anonymous bucket is not a session and is not published, so
+  an unrelated set of requests is never attributed to one conversation.
+  */
   sessionId?: string | null | undefined;
   /**
-   * The observed client surface that originated the request (from the
-   * `originator` header or `User-Agent`), or null when absent.
-   */
+  The observed client surface that originated the request (from the
+  `originator` header or `User-Agent`), or null when absent.
+  */
   clientSurface?: ClientSurface | null | undefined;
 }
 
 type LogicalSpanAttributes = Record<string, string | number | boolean>;
 
 /**
- * Copy the bounded request context onto each operation that Usage may query
- * independently. The logical request remains the authority; child attempts
- * carry the same safe workspace/role span attributes so a provider breakdown
- * can honor those filters without joining across spans or widening metric
- * dimensions.
- */
-function addAutoDevSpanContext(
+Copy the bounded request context onto each operation that Usage may query
+independently. The logical request remains the authority; child attempts
+carry the same safe workspace/role span attributes so a provider breakdown
+can honor those filters without joining across spans or widening metric
+dimensions.
+*/
+function addAutoDevelopmentSpanContext(
   attributes: LogicalSpanAttributes,
   requestContext: {
     readonly workspace?: { readonly key?: string | null } | null | undefined;
@@ -818,7 +828,7 @@ function logicalRequestSpanData(options: LogicalRequestSpanOptions): {
     "autodev.router.subject": safeTrim(options.subject) ?? "request",
     "autodev.router.provider_role": options.providerRole
   };
-  addAutoDevSpanContext(attributes, options);
+  addAutoDevelopmentSpanContext(attributes, options);
   const model = safeModelName(options.requestedModel);
   if (model) attributes["autodev.requested_model"] = model;
   if (options.memoryMode) {
@@ -898,11 +908,11 @@ const SAFE_SKILL_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
 const SKILL_SOURCES = new Set(["role_contract", "skill_read"]);
 
 /**
- * Record one accepted skill fact at the router's semantic boundary. Skill
- * names and source are span-only; metric dimensions are the bounded event,
- * workspace, and allowlisted agent role. Never attach paths, request IDs,
- * plugin IDs, or skill content.
- */
+Record one accepted skill fact at the router's semantic boundary. Skill
+names and source are span-only; metric dimensions are the bounded event,
+workspace, and allowlisted agent role. Never attach paths, request IDs,
+plugin IDs, or skill content.
+*/
 export function recordSkillObservation(options: {
   event: SkillObservationEvent;
   skill: string;
@@ -944,10 +954,8 @@ export function recordSkillObservation(options: {
 
     instruments?.skillEvents.add(1, {
       "autodev.skill.event": options.event,
-      ...(role && METRIC_AGENT_ROLES.has(role)
-        ? { [ATTR_AUTODEV_AGENT_ROLE]: role }
-        : {}),
-      ...(workspace ? { [ATTR_AUTODEV_WORKSPACE]: workspace } : {})
+      ...(role && METRIC_AGENT_ROLES.has(role) && { [ATTR_AUTODEV_AGENT_ROLE]: role }),
+      ...(workspace && { [ATTR_AUTODEV_WORKSPACE]: workspace })
     });
     return true;
   } catch {
@@ -959,27 +967,35 @@ export function recordSkillObservation(options: {
 export interface AttemptSpanOptions {
   provider: string | null;
   model: string | null;
-  /** AutoDev logical model selector, which may differ from the provider target. */
+  /**
+  AutoDev logical model selector, which may differ from the provider target.
+  */
   requestedModel?: string | null;
   selection: string;
   attemptNumber: number;
   role?: string | null;
   workspace?: { key: string; cwd?: string | null } | null;
-  /** The source-confirmed session this attempt serves. */
+  /**
+  The source-confirmed session this attempt serves.
+  */
   sessionId?: string | null | undefined;
-  /** Source-confirmed Codex thread served by this physical attempt. */
+  /**
+  Source-confirmed Codex thread served by this physical attempt.
+  */
   threadId?: string | null | undefined;
-  /** The observed client surface that originated this attempt, or null. */
+  /**
+  The observed client surface that originated this attempt, or null.
+  */
   clientSurface?: ClientSurface | null | undefined;
 }
 
 /**
- * Start a child GenAI client-operation span for one physical
- * provider/model attempt. The new span is parented to whatever span is
- * currently active in the OTel context, so the logical AutoDev
- * routed-request span (started by startLogicalRequestSpan and made active
- * via context.with(trace.setSpan(...))) becomes the parent.
- */
+Start a child GenAI client-operation span for one physical
+provider/model attempt. The new span is parented to whatever span is
+currently active in the OTel context, so the logical AutoDev
+routed-request span (started by startLogicalRequestSpan and made active
+via context.with(trace.setSpan(...))) becomes the parent.
+*/
 export function startAttemptSpan(options: AttemptSpanOptions): Span {
   ensureOtelInitialized();
   const attributes: Record<string, string | number | boolean> = {
@@ -987,7 +1003,7 @@ export function startAttemptSpan(options: AttemptSpanOptions): Span {
     "autodev.router.selection": safeTrim(options.selection) ?? "primary",
     "autodev.router.attempt_number": options.attemptNumber
   };
-  addAutoDevSpanContext(attributes, options);
+  addAutoDevelopmentSpanContext(attributes, options);
   const provider = safeProviderName(options.provider);
   if (provider) attributes[ATTR_GEN_AI_PROVIDER_NAME] = provider;
   const model = safeModelName(options.model);
@@ -1005,8 +1021,8 @@ export function startAttemptSpan(options: AttemptSpanOptions): Span {
       ...metricAttributes({
         provider: options.provider,
         model: options.model,
-        ...(options.workspace ? { workspace: options.workspace } : {}),
-        ...(options.role ? { role: options.role } : {}),
+        ...(options.workspace && { workspace: options.workspace }),
+        ...(options.role && { role: options.role }),
         clientSurface: options.clientSurface ?? null
       }),
       [ATTR_GEN_AI_OPERATION_NAME]: "chat"
@@ -1030,7 +1046,9 @@ export interface EndAttemptSpanOptions {
   finishReason?: string | null;
   usage?: AttemptUsage | null;
   responseModel?: string | null;
-  /** Where a bridge says the attempt's time went; absent when it does not. */
+  /**
+  Where a bridge says the attempt's time went; absent when it does not.
+  */
   phases?: ProviderPhaseTiming | null;
 }
 
@@ -1134,18 +1152,18 @@ export function endAttemptSpan(
 }
 
 /**
- * Adapt a context with a given parent span as the active span, run the
- * callback, and restore the previous context. Used by proxy entry points
- * to make the logical AutoDev routed-request span the active context for
- * any attempt spans that follow.
- */
+Adapt a context with a given parent span as the active span, run the
+callback, and restore the previous context. Used by proxy entry points
+to make the logical AutoDev routed-request span the active context for
+any attempt spans that follow.
+*/
 export function withLogicalSpan<T>(
   span: Span,
   callback: () => Promise<T>
 ): Promise<T> {
   ensureOtelInitialized();
-  const ctxWithSpan: Context = trace.setSpan(context.active(), span);
-  return context.with(ctxWithSpan, callback);
+  const contextWithSpan: Context = trace.setSpan(context.active(), span);
+  return context.with(contextWithSpan, callback);
 }
 
 export function withExtractedTraceContext<T>(

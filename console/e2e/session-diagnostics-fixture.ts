@@ -1,27 +1,41 @@
 /**
- * The session-diagnostics fixtures the Control API stand-in serves.
- *
- * The Console's session-scoped Usage view reads `/control/diagnostics/*`, so
- * the browser acceptance needs a stand-in that answers those routes with the
- * contract the Console validates. The shapes here are the Core contract's own
- * schemas: a session report, a recent-sessions listing, a fleet scan and a
- * hook-denial summary.
- */
+The session-diagnostics fixtures the Control API stand-in serves.
 
-/** The session the acceptance inspects. */
+The Console's session-scoped Usage view reads `/control/diagnostics/*`, so
+the browser acceptance needs a stand-in that answers those routes with the
+contract the Console validates. The shapes here are the Core contract's own
+schemas: a session report, a recent-sessions listing, a fleet scan and a
+hook-denial summary.
+*/
+
+/**
+The session the acceptance inspects.
+*/
 export const DIAGNOSTICS_SESSION_ID = "01a0ba14-d54c-78f2-9367-3f80e9a8f75f";
-/** The root thread of that session. */
+/**
+The root thread of that session.
+*/
 const DIAGNOSTICS_ROOT_THREAD_ID = "01a0ba15-d54c-78f2-9367-3f80e9a8f75f";
-/** A subagent thread of that session. */
+/**
+A subagent thread of that session.
+*/
 const DIAGNOSTICS_WORKER_THREAD_ID = "01a0ba16-d54c-78f2-9367-3f80e9a8f75f";
 
-/** The worker's model, as the router recorded it. */
+/**
+The worker's model, as the router recorded it.
+*/
 const WORKER_MODEL = "gemini-2.5-pro";
-/** When the session started. */
+/**
+When the session started.
+*/
 const SESSION_START = "2026-11-10T12:00:00.000Z";
-/** When the worker thread started. */
+/**
+When the worker thread started.
+*/
 const WORKER_START = "2026-11-10T12:00:01.000Z";
-/** When the session's last write landed. */
+/**
+When the session's last write landed.
+*/
 const SESSION_END = "2026-11-10T12:00:18.000Z";
 
 const ROUTER_EVENTS = [
@@ -78,7 +92,9 @@ const THREAD_ITEMS = [
   }
 ];
 
-/** One session's diagnostics, in the shape the Console validates. */
+/**
+One session's diagnostics, in the shape the Console validates.
+*/
 export function sessionDiagnosticsReport(): Record<string, unknown> {
   return {
     schema: "autodev-session-diagnostics-v1",
@@ -328,7 +344,9 @@ export function sessionDiagnosticsReport(): Record<string, unknown> {
   };
 }
 
-/** The recent-sessions listing. */
+/**
+The recent-sessions listing.
+*/
 export function recentSessionsResponse(): Record<string, unknown> {
   return {
     schema: "autodev-session-recent-v1",
@@ -354,7 +372,9 @@ export function recentSessionsResponse(): Record<string, unknown> {
   };
 }
 
-/** The fleet scan. */
+/**
+The fleet scan.
+*/
 export function fleetScanResponse(): Record<string, unknown> {
   return {
     schema: "autodev-session-fleet-scan-v1",
@@ -399,7 +419,9 @@ export function fleetScanResponse(): Record<string, unknown> {
   };
 }
 
-/** The hook-denial summary. */
+/**
+The hook-denial summary.
+*/
 export function hookDenialsResponse(): Record<string, unknown> {
   return {
     schema: "autodev-session-hook-denials-v1",

@@ -7,18 +7,18 @@ import {
 } from "../src/lib/server/catalogue-detail.ts";
 
 /**
- * The answer a detail route gives for an item its catalogue did not hold.
- *
- * A catalogue is a read, and a read that failed cannot say an item is absent.
- * Only a catalogue that was read can, so the rule is: a catalogue that was
- * read answers "not found", and a catalogue that was not read -- or that was
- * read and found broken -- answers "unavailable", with the reason.
- *
- * These cases pin that rule, and they pin it in one place, because the three
- * detail routes that compose their answer from a catalogue read (hooks, MCP
- * servers and tools) all answer through here. A route that grew its own
- * answer would be a second rule, and the two would drift.
- */
+The answer a detail route gives for an item its catalogue did not hold.
+
+A catalogue is a read, and a read that failed cannot say an item is absent.
+Only a catalogue that was read can, so the rule is: a catalogue that was
+read answers "not found", and a catalogue that was not read -- or that was
+read and found broken -- answers "unavailable", with the reason.
+
+These cases pin that rule, and they pin it in one place, because the three
+detail routes that compose their answer from a catalogue read (hooks, MCP
+servers and tools) all answer through here. A route that grew its own
+answer would be a second rule, and the two would drift.
+*/
 
 const SUBJECT = "Hook event";
 const SOURCE = "canonical hook declaration";

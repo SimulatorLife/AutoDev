@@ -137,7 +137,7 @@ function seedBridgeChildrenOverflow(op: Operation): void {
   });
   const children = Array.from(
     { length: value<number>(op, "totalChildren") },
-    (_, i) => ({ id: `seed.${i}`, model: "inherit" })
+    (_, index) => ({ id: `seed.${index}`, model: "inherit" })
   );
   const perBatch = 50;
   for (let offset = 0; offset < children.length; offset += perBatch) {
@@ -188,11 +188,11 @@ const OPERATION_HANDLERS: Record<string, OperationHandler> = {
   assert_recent_deep_equal: (name, op) =>
     assertRecentRow(name, op, assert.deepEqual),
   assert_recent_absent: (name, op) => {
-    const found = recentStatus().some(
+    const isFound = recentStatus().some(
       (row) => row.requestId === value<string>(op, "requestId")
     );
     assert.equal(
-      found,
+      isFound,
       false,
       `${name}: ${value<string>(op, "requestId")} must not appear in recent${noteSuffix(op)}`
     );
@@ -247,12 +247,12 @@ const OPERATION_HANDLERS: Record<string, OperationHandler> = {
       `${name}: recordSubagentSpawn must return null for ${op.mechanism}`
     ),
   record_subagent_spawn_repeat: (name, op) => {
-    for (let i = 0; i < value<number>(op, "count"); i += 1)
+    for (let index = 0; index < value<number>(op, "count"); index += 1)
       recordExpectedSpawn(
         name,
         spawnInput(
           op,
-          `${value<string>(op, "prefix")}${value<number>(op, "startIndex") + i}`,
+          `${value<string>(op, "prefix")}${value<number>(op, "startIndex") + index}`,
           1
         )
       );

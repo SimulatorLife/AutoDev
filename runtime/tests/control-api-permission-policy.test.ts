@@ -25,13 +25,13 @@ const OPERATOR_ACTOR = "permission-policy-operator";
 const VIEWER_ACTOR = "permission-policy-viewer";
 
 /**
- * The canonical policy the write starts from.
- *
- * It is written the way the portable source is written: mostly comments, with
- * the settings spread across the top level and two tables. A write that
- * re-serialised the file would drop every comment, and the comment above
- * `network_access` is the one that says what the setting is for.
- */
+The canonical policy the write starts from.
+
+It is written the way the portable source is written: mostly comments, with
+the settings spread across the top level and two tables. A write that
+re-serialised the file would drop every comment, and the comment above
+`network_access` is the one that says what the setting is for.
+*/
 const POLICY_SOURCE = `{
   "version": "1.0.0",
   // Codex CLI defaults for AutoDev

@@ -23,13 +23,13 @@ function formatCount(value: number | null): string {
 }
 
 /**
- * The tool's historical use evidence.
- *
- * The view renders a state; it does not read it. The read is the browser's
- * and it happens after the page has rendered, because the twenty-four hour
- * telemetry aggregation is the most expensive read the Console makes and it
- * answers a question about one panel rather than about the page.
- */
+The tool's historical use evidence.
+
+The view renders a state; it does not read it. The read is the browser's
+and it happens after the page has rendered, because the twenty-four hour
+telemetry aggregation is the most expensive read the Console makes and it
+answers a question about one panel rather than about the page.
+*/
 export function toolUsageView({
   state,
   usageLink

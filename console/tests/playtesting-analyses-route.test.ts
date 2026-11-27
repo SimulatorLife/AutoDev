@@ -44,7 +44,7 @@ function withToken<T>(run: () => Promise<T>): Promise<T> {
 
 test("the route dispatches the selected packets and returns every receipt", async () => {
   await withToken(async () => {
-    const previousFetch = globalThis.fetch;
+    const previousFetch = fetch;
     let forwarded: unknown = null;
     globalThis.fetch = (async (_input, init) => {
       forwarded = JSON.parse(String(init?.body));
@@ -142,7 +142,7 @@ test("the route dispatches the selected packets and returns every receipt", asyn
 
 test("a findings request reaches the Runtime as a findings request", async () => {
   await withToken(async () => {
-    const previousFetch = globalThis.fetch;
+    const previousFetch = fetch;
     let forwarded: unknown = null;
     globalThis.fetch = (async (_input, init) => {
       forwarded = JSON.parse(String(init?.body));
@@ -198,7 +198,7 @@ test("a findings request reaches the Runtime as a findings request", async () =>
 
 test("a malformed findings flag is refused rather than read as a hypothesis review", async () => {
   await withToken(async () => {
-    const previousFetch = globalThis.fetch;
+    const previousFetch = fetch;
     let calls = 0;
     globalThis.fetch = (async () => {
       calls += 1;
@@ -220,7 +220,7 @@ test("a malformed findings flag is refused rather than read as a hypothesis revi
 
 test("a response that drops a selected session is refused", async () => {
   await withToken(async () => {
-    const previousFetch = globalThis.fetch;
+    const previousFetch = fetch;
     globalThis.fetch = (async () =>
       Response.json({
         schema: "autodev-control-playtesting-analysis-v1",
@@ -258,7 +258,7 @@ test("a response that drops a selected session is refused", async () => {
 
 test("status reads are workspace-scoped and keep the Runtime run identity", async () => {
   await withToken(async () => {
-    const previousFetch = globalThis.fetch;
+    const previousFetch = fetch;
     globalThis.fetch = (async () =>
       Response.json({
         schema: "autodev-control-playtesting-analyses-v1",
@@ -305,7 +305,7 @@ test("status reads are workspace-scoped and keep the Runtime run identity", asyn
 
 test("malformed and cross-origin selections are refused before any request", async () => {
   await withToken(async () => {
-    const previousFetch = globalThis.fetch;
+    const previousFetch = fetch;
     let calls = 0;
     globalThis.fetch = (async () => {
       calls += 1;

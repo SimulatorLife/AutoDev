@@ -1,4 +1,6 @@
-/** Approved, single-episode gameplay loop over the v1 adapter transport. */
+/**
+Approved, single-episode gameplay loop over the v1 adapter transport.
+*/
 import { performance } from "node:perf_hooks";
 
 import {
@@ -86,12 +88,16 @@ export interface PlaytestEpisodeBranchExecution {
 
 export interface PlaytestEpisodeRunOptions {
   readonly approval: WorkspacePlaytestApproval;
-  /** The latest committed build this batch resolved and snapshotted at start. */
+  /**
+  The latest committed build this batch resolved and snapshotted at start.
+  */
   readonly build: WorkspacePlaytestBuild;
   readonly sandbox: PlaytestSandboxHandle;
   readonly artifacts: PlaytestArtifactStore;
   readonly batchId: string;
-  /** Batch-local frozen assignment id; paired in Data, never sent to the game. */
+  /**
+  Batch-local frozen assignment id; paired in Data, never sent to the game.
+  */
   readonly assignmentId: string;
   readonly repository: string;
   readonly scenarioId: string;
@@ -109,11 +115,15 @@ export interface PlaytestEpisodeRunOptions {
   readonly branch?: PlaytestEpisodeBranchExecution;
   readonly signal?: AbortSignal;
   readonly now?: () => number;
-  /** Game-authored mapping; absent mappings leave the game outcome unknown. */
+  /**
+  Game-authored mapping; absent mappings leave the game outcome unknown.
+  */
   readonly classifyOutcome?: (
     outcome: PlaytestJsonValue | null
   ) => PlaytestEpisode["outcome"];
-  /** Only this public projection may enter the analyst-visible trace. */
+  /**
+  Only this public projection may enter the analyst-visible trace.
+  */
   readonly projectPublicOutcome?: (
     outcome: PlaytestJsonValue | null
   ) => PlaytestJsonValue | null;
@@ -139,9 +149,13 @@ export interface PlaytestEpisodeRunFailure {
 }
 
 export interface PlaytestEpisodeRunResult {
-  /** Last validated adapter capabilities, if negotiation completed before failure. */
+  /**
+  Last validated adapter capabilities, if negotiation completed before failure.
+  */
   readonly capabilities: PlaytestCapabilityAdvertisement | null;
-  /** Null when adapter negotiation/reset failed before the game assigned an episode ID. */
+  /**
+  Null when adapter negotiation/reset failed before the game assigned an episode ID.
+  */
   readonly episode: PlaytestAdapterEpisode | null;
   readonly steps: readonly PlaytestEpisodeStep[];
   readonly traceReference: PlaytestArtifactReference | null;
@@ -193,7 +207,9 @@ interface EpisodeExecutionContext {
   capabilities: PlaytestCapabilityAdvertisement | null;
   reset: GameResetResult | null;
   startedAt: string | null;
-  /** The adapter's protocol handle for this episode; never a persisted key. */
+  /**
+  The adapter's protocol handle for this episode; never a persisted key.
+  */
   episodeId: string;
   revision: number;
   simulationWallMs: number;
@@ -320,10 +336,10 @@ function outcomeFromCall<T>(result: PlaytestAdapterCallResult): T {
 async function callAdapter<T>(
   client: PlaytestAdapterClient,
   method: Parameters<PlaytestAdapterClient["call"]>[0],
-  params: Readonly<Record<string, unknown>>
+  parameters: Readonly<Record<string, unknown>>
 ): Promise<{ readonly value: T; readonly durationMs: number }> {
   const start = performance.now();
-  const result = await client.call(method, params);
+  const result = await client.call(method, parameters);
   return {
     value: outcomeFromCall<T>(result),
     durationMs: Math.max(0, performance.now() - start)
@@ -527,8 +543,7 @@ function captureEvent(
 
 function captureNotifications(context: EpisodeExecutionContext): void {
   context.unsubscribe = context.client.onNotification((notification) => {
-    if (notification.method !== "game.event") return;
-    if (!isRecord(notification.params) || !isRecord(notification.params.event))
+    if ((notification.method !== "game.event") || !isRecord(notification.params) || !isRecord(notification.params.event))
       return;
     captureEvent(
       context,
@@ -557,7 +572,7 @@ function eventReferences(
         id,
         step: event.step,
         revision: event.revision,
-        ...(event.phaseId === null ? {} : { phaseId: event.phaseId })
+        ...(event.phaseId !== null && { phaseId: event.phaseId })
       }
     ];
   });
@@ -570,7 +585,9 @@ function eventsMatchStep(
   return ids.every((id) => context.eventById.has(id));
 }
 
-/** Retrieve the exact step's game-authored events when the adapter supports it. */
+/**
+Retrieve the exact step's game-authored events when the adapter supports it.
+*/
 async function captureEventsForStep(
   context: EpisodeExecutionContext,
   step: number,
@@ -688,13 +705,13 @@ async function negotiateAndInitialize(
   });
   context.simulationWallMs += reset.durationMs;
   storeReset(context, reset.value, startedAt);
-  const reproducibilityMatches =
+  const isReproducibilityMatches =
     reset.value.rngProvenance.reproducible ===
     capabilities.deterministic.seededRuns;
-  const rngVersionMatches =
+  const isRngVersionMatches =
     !capabilities.deterministic.seededRuns ||
     reset.value.rngProvenance.version === capabilities.deterministic.rngVersion;
-  if (!reproducibilityMatches || !rngVersionMatches) {
+  if (!isReproducibilityMatches || !isRngVersionMatches) {
     throw new TypeError(
       "game.reset RNG provenance does not match the capability advertisement."
     );
@@ -1003,7 +1020,7 @@ async function runOneStep(
   context.revision = stepResult.value.revision;
   await captureEventsForStep(context, step, stepResult.value.eventIds);
   capturePendingFrame(context, step, observation.value.frame);
-  const eventRefs = eventReferences(context, stepResult.value.eventIds);
+  const eventReferences_ = eventReferences(context, stepResult.value.eventIds);
   if (!eventsMatchStep(context, stepResult.value.eventIds)) {
     context.missingReasons.add(INFRASTRUCTURE_FAILED);
   }
@@ -1021,7 +1038,7 @@ async function runOneStep(
     selectedActionId: decision.actionId,
     preActionPrediction: decision.prediction,
     authoritativeOutcome: null,
-    eventRefs,
+    eventRefs: eventReferences_,
     frameRef: null,
     checkpoint,
     executed: true,
@@ -1253,15 +1270,15 @@ function adapterExecutionProvenance(
   branchLineage: PlaytestBranchLineage | null
 ): PlaytestAdapterEpisode["executionProvenance"] {
   const { options } = context;
-  const sourceRevisionVerified = COMMIT_PATTERN.test(options.build.buildSha);
+  const isSourceRevisionVerified = COMMIT_PATTERN.test(options.build.buildSha);
   const provenance = {
     mode: "adapter-accelerated",
     source: {
       kind: "repo-checkout",
       repository: options.repository,
-      revision: sourceRevisionVerified ? options.build.buildSha : null,
-      revisionConfidence: sourceRevisionVerified ? "verified" : "unknown",
-      checkoutState: sourceRevisionVerified ? "clean" : "unknown",
+      revision: isSourceRevisionVerified ? options.build.buildSha : null,
+      revisionConfidence: isSourceRevisionVerified ? "verified" : "unknown",
+      checkoutState: isSourceRevisionVerified ? "clean" : "unknown",
       artifactFingerprint: null,
       targetId: null,
       targetOrigin: null
@@ -1284,7 +1301,7 @@ function adapterExecutionProvenance(
 function assembleEpisode(
   context: EpisodeExecutionContext,
   trace: PlaytestArtifactReference | null,
-  frameRefs: readonly PlaytestEvidenceLocator[]
+  frameReferences: readonly PlaytestEvidenceLocator[]
 ): PlaytestAdapterEpisode | null {
   const { options } = context;
   if (context.reset === null || context.capabilities === null) return null;
@@ -1368,7 +1385,7 @@ function assembleEpisode(
         : "non-reproducible",
     trace:
       trace === null ? null : { kind: "replay-segment", id: trace.artifactId },
-    frames: frameRefs,
+    frames: frameReferences,
     stepCount: context.drafts.filter((draft) => draft.executed).length,
     metrics,
     findingIds: [],
@@ -1405,8 +1422,7 @@ async function runStepsRecursively(
   guard: PlaytestLoopGuard,
   step: number
 ): Promise<void> {
-  if (step >= context.options.maxSteps) return;
-  if (await runOneStep(context, guard, step)) return;
+  if ((step >= context.options.maxSteps) || (await runOneStep(context, guard, step))) return;
   await runStepsRecursively(context, guard, step + 1);
 }
 
@@ -1423,15 +1439,17 @@ async function runSteps(context: EpisodeExecutionContext): Promise<void> {
   if (context.options.signal?.aborted) throw new Error("assignment cancelled");
   const guard = new PlaytestLoopGuard(context.options.goal);
   await runStepsRecursively(context, guard, 0);
-  if (context.failure === null && context.outcome?.state !== "terminal") {
-    context.failure = {
-      stage: "execution",
-      category: BUDGET_TRUNCATED,
-      code: null,
-      disposition: "unchanged"
-    };
-    context.missingReasons.add(BUDGET_TRUNCATED);
+  if (context.failure !== null || context.outcome?.state === "terminal") {
+    return;
   }
+
+  context.failure = {
+    stage: "execution",
+    category: BUDGET_TRUNCATED,
+    code: null,
+    disposition: "unchanged"
+  };
+  context.missingReasons.add(BUDGET_TRUNCATED);
 }
 
 function contextFor(
@@ -1467,10 +1485,10 @@ function contextFor(
 }
 
 /**
- * Run one episode in an already launched, approved Docker sandbox. An attempt
- * that fails before game.reset has no episode ID and returns `episode: null`;
- * the owning batch records that assigned infrastructure failure separately.
- */
+Run one episode in an already launched, approved Docker sandbox. An attempt
+that fails before game.reset has no episode ID and returns `episode: null`;
+the owning batch records that assigned infrastructure failure separately.
+*/
 export async function runPlaytestEpisode(
   options: PlaytestEpisodeRunOptions
 ): Promise<PlaytestEpisodeRunResult> {

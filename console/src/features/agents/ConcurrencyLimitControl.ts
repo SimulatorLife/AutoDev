@@ -30,9 +30,9 @@ function stepped(
 ): number {
   if (current === null || current === undefined) {
     const base =
-      fallbackLimit !== null && fallbackLimit !== undefined
-        ? fallbackLimit
-        : DEFAULT_STEP_LIMIT;
+      fallbackLimit === null || fallbackLimit === undefined
+        ? DEFAULT_STEP_LIMIT
+        : fallbackLimit;
     return Math.min(
       MAX_LIMIT,
       Math.max(MIN_LIMIT, base + (delta < 0 ? -1 : 1))
@@ -47,12 +47,12 @@ function display(value: number | null | undefined): string {
 }
 
 /**
- * What the config file declares, in the operator's words.
- *
- * The limit is absent when the file was there and could not be read, and that
- * is not a file that declares no limit: it says the cap the operator
- * configured is not the cap in force. So the three states keep three words.
- */
+What the config file declares, in the operator's words.
+
+The limit is absent when the file was there and could not be read, and that
+is not a file that declares no limit: it says the cap the operator
+configured is not the cap in force. So the three states keep three words.
+*/
 function configFileLimitLabel(limit: number | null | undefined): string {
   if (limit === undefined) return "not read";
   if (limit === null) return "Unlimited";
@@ -60,14 +60,14 @@ function configFileLimitLabel(limit: number | null | undefined): string {
 }
 
 /**
- * What the operator is told about where the limit in force came from.
- *
- * The Runtime publishes the source, so the Console renders it rather than
- * inferring it: a stored override, the limit the config file declares, or
- * nothing that could be read declaring a limit. A config file nobody could
- * read is named as such -- "the limit is the default" would be a claim about a
- * file the Runtime never read.
- */
+What the operator is told about where the limit in force came from.
+
+The Runtime publishes the source, so the Console renders it rather than
+inferring it: a stored override, the limit the config file declares, or
+nothing that could be read declaring a limit. A config file nobody could
+read is named as such -- "the limit is the default" would be a claim about a
+file the Runtime never read.
+*/
 function limitSourceLabel(
   source: ControlApiConcurrencyLimitSource | undefined,
   configFileLimit: number | null | undefined
@@ -86,12 +86,12 @@ function limitSourceLabel(
 }
 
 /**
- * Interactive concurrency control for orchestrator subagent threads.
- *
- * Provides stepper (− / +), explicit Unlimited selection, and reset-to-config
- * when a runtime stored override is in effect. Monotonically tracks revision
- * to detect and refuse conflicting concurrent operator edits.
- */
+Interactive concurrency control for orchestrator subagent threads.
+
+Provides stepper (− / +), explicit Unlimited selection, and reset-to-config
+when a runtime stored override is in effect. Monotonically tracks revision
+to detect and refuse conflicting concurrent operator edits.
+*/
 export function ConcurrencyLimitControl({
   concurrency,
   returnTo
@@ -163,7 +163,7 @@ export function ConcurrencyLimitControl({
             className:
               "inline-flex h-7 w-8 shrink-0 items-center justify-center text-center font-mono text-xs tabular-nums text-fg border border-border rounded bg-surface",
             "data-concurrency-value": String(effectiveLimit),
-            ...(isUnlimited ? { title: "Unlimited (no ceiling)" } : {})
+            ...(isUnlimited && { title: "Unlimited (no ceiling)" })
           },
           display(effectiveLimit)
         ),

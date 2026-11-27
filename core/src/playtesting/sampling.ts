@@ -1,14 +1,14 @@
 /**
- * Seeded surveillance sampling without replacement, with minimum-stratum
- * allocation plus proportional largest-remainder apportionment, and a
- * separate seeded discovery-sample selector.
- *
- * The sampler is a pure function of (population, strata, budget, seed): the
- * same inputs always produce the same selection, which is required for a
- * frozen review batch to be reproducible across runs. An over-budget design
- * (more nonempty strata than the budget can cover with at least one unit
- * each) is a hard, explicit error rather than a silently coarsened sample.
- */
+Seeded surveillance sampling without replacement, with minimum-stratum
+allocation plus proportional largest-remainder apportionment, and a
+separate seeded discovery-sample selector.
+
+The sampler is a pure function of (population, strata, budget, seed): the
+same inputs always produce the same selection, which is required for a
+frozen review batch to be reproducible across runs. An over-budget design
+(more nonempty strata than the budget can cover with at least one unit
+each) is a hard, explicit error rather than a silently coarsened sample.
+*/
 
 import {
   type PlaytestDiscoverySample,
@@ -16,17 +16,19 @@ import {
   type PlaytestSurveillanceSample
 } from "./types.ts";
 
-/** One population unit (an episode id) assigned to exactly one stratum. */
+/**
+One population unit (an episode id) assigned to exactly one stratum.
+*/
 export interface PlaytestStratumMember {
   readonly id: string;
   readonly stratumKey: string;
 }
 
 /**
- * Deterministic 32-bit string hash (FNV-1a). Used only to derive a stable,
- * reproducible pseudo-random ordering from a seed; it is not a cryptographic
- * hash and must never be used for identity or security purposes.
- */
+Deterministic 32-bit string hash (FNV-1a). Used only to derive a stable,
+reproducible pseudo-random ordering from a seed; it is not a cryptographic
+hash and must never be used for identity or security purposes.
+*/
 function compareStableText(left: string, right: string): number {
   if (left === right) return 0;
   return left < right ? -1 : 1;
@@ -41,12 +43,16 @@ function fnv1a(input: string): number {
   return hash >>> 0;
 }
 
-/** Deterministic [0,1) pseudo-random value derived from seed + salt. */
+/**
+Deterministic [0,1) pseudo-random value derived from seed + salt.
+*/
 function seededUnitInterval(seed: string, salt: string): number {
   return fnv1a(`${seed}:${salt}`) / 0xff_ff_ff_ff;
 }
 
-/** Stable sort by a deterministic seeded random key, tie-broken by id. */
+/**
+Stable sort by a deterministic seeded random key, tie-broken by id.
+*/
 function seededShuffle<T extends { readonly id: string }>(
   items: readonly T[],
   seed: string
@@ -87,11 +93,11 @@ function groupByStratum(
 }
 
 /**
- * Allocate at least one unit per nonempty stratum, then distribute the
- * remaining budget proportionally to stratum population using the largest
- * remainder method. Throws when there are more nonempty strata than the
- * budget can cover (one unit each).
- */
+Allocate at least one unit per nonempty stratum, then distribute the
+remaining budget proportionally to stratum population using the largest
+remainder method. Throws when there are more nonempty strata than the
+budget can cover (one unit each).
+*/
 export function allocatePlaytestSurveillanceStrata(
   groups: readonly StratumGroup[],
   budget: number
@@ -187,10 +193,10 @@ export function allocatePlaytestSurveillanceStrata(
 }
 
 /**
- * Build a seeded surveillance sample without replacement, allocating at
- * least one unit per nonempty stratum, then proportionally by population
- * using largest-remainder apportionment.
- */
+Build a seeded surveillance sample without replacement, allocating at
+least one unit per nonempty stratum, then proportionally by population
+using largest-remainder apportionment.
+*/
 export function samplePlaytestSurveillance(
   members: readonly PlaytestStratumMember[],
   budget: number,
@@ -253,10 +259,10 @@ export interface PlaytestExperimentAssignment {
 }
 
 /**
- * Freeze a seeded, fixed-N arm allocation before outcome labels exist. The
- * caller supplies the independent units and exact per-arm quotas from the
- * approved manifest; this function never reads outcomes or reallocates.
- */
+Freeze a seeded, fixed-N arm allocation before outcome labels exist. The
+caller supplies the independent units and exact per-arm quotas from the
+approved manifest; this function never reads outcomes or reallocates.
+*/
 export function allocatePlaytestExperimentArms(
   independentUnitIds: readonly string[],
   arms: readonly PlaytestExperimentArmQuota[],
@@ -309,18 +315,20 @@ export function allocatePlaytestExperimentArms(
   return assignments;
 }
 
-/** One candidate episode for discovery ranking by a versioned anomaly signal. */
+/**
+One candidate episode for discovery ranking by a versioned anomaly signal.
+*/
 export interface PlaytestDiscoveryCandidate {
   readonly id: string;
   readonly anomalyScore: number;
 }
 
 /**
- * Rank remaining episodes by a versioned anomaly/novelty signal and select
- * the top `budget` with seeded tie-breaks. Deduplication of similar
- * discovery traces is the caller's responsibility (it requires domain-
- * specific similarity, which Core does not define).
- */
+Rank remaining episodes by a versioned anomaly/novelty signal and select
+the top `budget` with seeded tie-breaks. Deduplication of similar
+discovery traces is the caller's responsibility (it requires domain-
+specific similarity, which Core does not define).
+*/
 export function samplePlaytestDiscovery(
   candidates: readonly PlaytestDiscoveryCandidate[],
   budget: number,

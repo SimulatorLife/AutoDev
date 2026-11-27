@@ -19,13 +19,13 @@ import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
 const UNAVAILABLE_LABEL = "Runtime did not report this agent's enablement.";
 
 /**
- * Control chrome per state.
- *
- * The pill states the agent's current value and its activation applies the
- * opposite, so one control carries both. Showing a status badge next to a
- * separate "Enable"/"Disable" button would repeat the same fact twice and force
- * every Agents row to wrap.
- */
+Control chrome per state.
+
+The pill states the agent's current value and its activation applies the
+opposite, so one control carries both. Showing a status badge next to a
+separate "Enable"/"Disable" button would repeat the same fact twice and force
+every Agents row to wrap.
+*/
 type AgentEnablementVisualState = "on" | "off" | "unknown";
 
 function presentationFor(enablement: AgentEnablementState): {
@@ -49,15 +49,15 @@ function presentationFor(enablement: AgentEnablementState): {
     };
   }
   const state = enablement.enabled ? "on" : "off";
-  const nextEnabled = !enablement.enabled;
+  const isNextEnabled = !enablement.enabled;
   return {
     state,
     status: enablement.enabled ? "enabled" : "disabled",
     stateLabel: enablement.enabled ? "Enabled" : "Disabled",
     reason: null,
-    nextEnabled,
+    nextEnabled: isNextEnabled,
     revision: enablement.revision,
-    buttonLabel: nextEnabled ? "Enable" : "Disable"
+    buttonLabel: isNextEnabled ? "Enable" : "Disable"
   };
 }
 
@@ -87,17 +87,17 @@ function convergenceNotice(
 }
 
 /**
- * The one enable/disable control for an agent role. It renders wherever an
- * agent appears -- its own Agents row, its detail view -- so every placement
- * posts the same bounded same-origin form to the same typed Console route and
- * shows the same state vocabulary. The control never applies optimistic state:
- * the page that renders after the redirect shows the Runtime-confirmed value.
- *
- * `AgentEnablementState` carries the Runtime's own verdict: `observed` is a
- * mutable enablement with a revision the next write must echo, and `unavailable`
- * is a nonmutable reason. The control disables itself when `mutable` is false
- * so the form cannot submit a write the Runtime would refuse.
- */
+The one enable/disable control for an agent role. It renders wherever an
+agent appears -- its own Agents row, its detail view -- so every placement
+posts the same bounded same-origin form to the same typed Console route and
+shows the same state vocabulary. The control never applies optimistic state:
+the page that renders after the redirect shows the Runtime-confirmed value.
+
+`AgentEnablementState` carries the Runtime's own verdict: `observed` is a
+mutable enablement with a revision the next write must echo, and `unavailable`
+is a nonmutable reason. The control disables itself when `mutable` is false
+so the form cannot submit a write the Runtime would refuse.
+*/
 export function AgentEnablementControl({
   role,
   enablement,
@@ -121,12 +121,10 @@ export function AgentEnablementControl({
   // control's description: a title that carried only the action made the
   // control announce its action twice.
   const name =
-    presentation.reason === null
-      ? namedAfterVisible(
+    namedAfterVisible(
           presentation.stateLabel,
-          `${presentation.buttonLabel} ${role}`
-        )
-      : namedAfterVisible(presentation.stateLabel, presentation.reason);
+          presentation.reason === null ? `${presentation.buttonLabel} ${role}` : presentation.reason
+        );
   return React.createElement(
     "div",
     { className: "inline-flex flex-col items-start gap-1" },
@@ -177,9 +175,7 @@ export function AgentEnablementControl({
           "data-enablement": "agent",
           "data-enablement-target": role,
           "data-status": presentation.status,
-          ...(presentation.reason === null
-            ? {}
-            : { "data-enablement-unavailable": "true" }),
+          ...(presentation.reason !== null && { "data-enablement-unavailable": "true" }),
           className: `${STATE_PILL_BUTTON_CLASS} ${STATE_PILL_TONE_CLASS[presentation.state]}`
         },
         presentation.stateLabel

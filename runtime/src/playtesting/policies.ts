@@ -1,4 +1,6 @@
-/** Small code-owned gameplay policy interfaces and safe deterministic baselines. */
+/**
+Small code-owned gameplay policy interfaces and safe deterministic baselines.
+*/
 import { createHmac } from "node:crypto";
 
 import type { PlaytestJsonValue } from "@simulatorlife/autodev-core";
@@ -7,14 +9,18 @@ export interface PlaytestPolicyContext {
   readonly seed: string;
   readonly episodeId: string;
   readonly step: number;
-  /** Filtered game-authored player-visible state only. */
+  /**
+  Filtered game-authored player-visible state only.
+  */
   readonly observation: PlaytestJsonValue;
   readonly legalActionIds: readonly string[];
 }
 
 export interface PlaytestPolicyDecision {
   readonly actionId: string;
-  /** Frozen before action execution; null means no expectation was collected. */
+  /**
+  Frozen before action execution; null means no expectation was collected.
+  */
   readonly prediction: PlaytestJsonValue | null;
 }
 
@@ -31,10 +37,10 @@ export interface PlaytestPolicy {
 }
 
 /**
- * Deterministic pseudorandom legal-action baseline. Uses HMAC-SHA-256 with a
- * domain-separated episode/step input, so retries and worker scheduling cannot
- * change a decision and no ambient `Math.random()` state is consulted.
- */
+Deterministic pseudorandom legal-action baseline. Uses HMAC-SHA-256 with a
+domain-separated episode/step input, so retries and worker scheduling cannot
+change a decision and no ambient `Math.random()` state is consulted.
+*/
 export function createSeededRandomPlaytestPolicy(
   options: {
     readonly id?: string;
@@ -99,10 +105,10 @@ export function createSeededRandomPlaytestPolicy(
 }
 
 /**
- * Wrap a target-owned deterministic heuristic without importing game rules
- * into AutoDev. The scorer sees only the policy context and returns a finite
- * score for legal action IDs; ties resolve by stable action-id ordering.
- */
+Wrap a target-owned deterministic heuristic without importing game rules
+into AutoDev. The scorer sees only the policy context and returns a finite
+score for legal action IDs; ties resolve by stable action-id ordering.
+*/
 export function createScoredPlaytestPolicy(options: {
   readonly id: string;
   readonly version: string;
@@ -148,13 +154,13 @@ export function createScoredPlaytestPolicy(options: {
         if (!Number.isFinite(score)) {
           throw new TypeError("Scored policy must return finite scores.");
         }
-        if (
-          score > selectedScore ||
-          (score === selectedScore && actionId < selected)
-        ) {
-          selected = actionId;
-          selectedScore = score;
+        if (!(score > selectedScore) &&
+          (score !== selectedScore || !(actionId < selected))) {
+          continue;
         }
+
+        selected = actionId;
+        selectedScore = score;
       }
       return { actionId: selected, prediction: null };
     }
@@ -162,17 +168,17 @@ export function createScoredPlaytestPolicy(options: {
 }
 
 /**
- * Deterministic lowest-action-id baseline.
- *
- * Independent of the random policy in the way that matters for a comparison arm:
- * it consults no seed and no RNG state, so its decisions cannot move when the
- * seed, the worker count or the scheduling order changes. It always takes the
- * lexicographically first legal action, which makes it the reference for
- * whether an arm's improvement came from the heuristic rather than from luck.
- *
- * It is a policy in its own right rather than a scored wrapper, so it needs no
- * game code and is therefore available to every onboarded game.
- */
+Deterministic lowest-action-id baseline.
+
+Independent of the random policy in the way that matters for a comparison arm:
+it consults no seed and no RNG state, so its decisions cannot move when the
+seed, the worker count or the scheduling order changes. It always takes the
+lexicographically first legal action, which makes it the reference for
+whether an arm's improvement came from the heuristic rather than from luck.
+
+It is a policy in its own right rather than a scored wrapper, so it needs no
+game code and is therefore available to every onboarded game.
+*/
 export function createFirstLegalPlaytestPolicy(
   options: {
     readonly id?: string;
@@ -215,18 +221,20 @@ export function createFirstLegalPlaytestPolicy(
 }
 
 /**
- * The policies AutoDev can actually run, in one place.
- *
- * A game config may name any policy string, so this registry is what the
- * onboarding check validates against. Without it, a game could declare a policy
- * no code path constructs and meet the refusal as a mid-run failure.
- */
+The policies AutoDev can actually run, in one place.
+
+A game config may name any policy string, so this registry is what the
+onboarding check validates against. Without it, a game could declare a policy
+no code path constructs and meet the refusal as a mid-run failure.
+*/
 export const PLAYTESTS_BUILTIN_POLICY_IDS: ReadonlySet<string> = new Set([
   "random",
   "first-legal"
 ]);
 
-/** Construct a built-in policy by id, or null when the id is not one. */
+/**
+Construct a built-in policy by id, or null when the id is not one.
+*/
 export function createBuiltinPlaytestPolicy(
   policyId: string,
   options: { readonly version?: string } = {}

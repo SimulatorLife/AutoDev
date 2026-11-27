@@ -12,7 +12,9 @@ interface ProbeRecorder extends ProbeWaitDeps {
   readonly probes: number;
 }
 
-/** Build deps whose probe reports `readyAfter`-th success, recording every call. */
+/**
+Build deps whose probe reports `readyAfter`-th success, recording every call.
+*/
 function recorder(
   readyAfter: number,
   overrides: Partial<ProbeWaitDeps> = {}
@@ -33,17 +35,17 @@ function recorder(
 }
 
 test("a healthy service resolves without sleeping", async () => {
-  const deps = recorder(1);
-  assert.equal(await waitForProbe(deps, 1000), true);
-  assert.equal(deps.probes, 1);
-  assert.deepEqual(deps.sleeps, []);
+  const dependencies = recorder(1);
+  assert.equal(await waitForProbe(dependencies, 1000), true);
+  assert.equal(dependencies.probes, 1);
+  assert.deepEqual(dependencies.sleeps, []);
 });
 
 test("the wait polls on a fixed interval until the service answers", async () => {
-  const deps = recorder(3);
-  assert.equal(await waitForProbe(deps, 1000), true);
-  assert.equal(deps.probes, 3);
-  assert.deepEqual(deps.sleeps, [100, 100]);
+  const dependencies = recorder(3);
+  assert.equal(await waitForProbe(dependencies, 1000), true);
+  assert.equal(dependencies.probes, 3);
+  assert.deepEqual(dependencies.sleeps, [100, 100]);
 });
 
 test("an elapsed deadline still probes once, so a service ready at the timeout counts", async () => {
@@ -51,34 +53,34 @@ test("an elapsed deadline still probes once, so a service ready at the timeout c
   // service that came up during the final sleep was ready for every other ensure
   // step and failed for Console alone. A zero timeout must still observe the
   // service rather than assume it is down.
-  const deps = recorder(1);
-  assert.equal(await waitForProbe(deps, 0), true);
-  assert.equal(deps.probes, 1);
-  assert.deepEqual(deps.sleeps, []);
+  const dependencies = recorder(1);
+  assert.equal(await waitForProbe(dependencies, 0), true);
+  assert.equal(dependencies.probes, 1);
+  assert.deepEqual(dependencies.sleeps, []);
 });
 
 test("a service that never answers reports the final probe once, not forever", async () => {
-  const deps = recorder(Number.MAX_SAFE_INTEGER);
-  assert.equal(await waitForProbe(deps, 0), false);
-  assert.equal(deps.probes, 1);
-  assert.deepEqual(deps.sleeps, []);
+  const dependencies = recorder(Number.MAX_SAFE_INTEGER);
+  assert.equal(await waitForProbe(dependencies, 0), false);
+  assert.equal(dependencies.probes, 1);
+  assert.deepEqual(dependencies.sleeps, []);
 });
 
 test("the wait stops at its timeout and returns the last probe's result", async () => {
   const started = performance.now();
   const sleeps: number[] = [];
-  const deps = recorder(Number.MAX_SAFE_INTEGER, {
+  const dependencies = recorder(Number.MAX_SAFE_INTEGER, {
     sleep: async (ms) => {
       sleeps.push(ms);
       await delay(ms);
     }
   });
-  assert.equal(await waitForProbe(deps, 40), false);
+  assert.equal(await waitForProbe(dependencies, 40), false);
   assert.ok(
     performance.now() - started >= 39,
     "the wait must honour its timeout instead of returning immediately"
   );
-  assert.ok(deps.probes >= 1);
+  assert.ok(dependencies.probes >= 1);
   assert.ok(
     sleeps.every((ms) => ms <= 40),
     "sleep cannot exceed the wait budget"
@@ -86,9 +88,9 @@ test("the wait stops at its timeout and returns the last probe's result", async 
 });
 
 test("invalid readiness budgets fail instead of polling indefinitely", async () => {
-  const deps = recorder(1);
+  const dependencies = recorder(1);
   for (const timeout of [NaN, Infinity, -1]) {
-    await assert.rejects(waitForProbe(deps, timeout), RangeError);
+    await assert.rejects(waitForProbe(dependencies, timeout), RangeError);
   }
-  assert.equal(deps.probes, 0);
+  assert.equal(dependencies.probes, 0);
 });

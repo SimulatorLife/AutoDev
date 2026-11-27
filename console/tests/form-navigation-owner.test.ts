@@ -9,7 +9,7 @@ import {
   type FormElementLike,
   type FormLike,
   FormNavigationOwner,
-  type FormNavigationOwnerProps,
+  type FormNavigationOwnerProps as FormNavigationOwnerProperties,
   type FormNavigationRouter,
   type FormNavigationStatus,
   type FormSubmissionEvent,
@@ -119,7 +119,7 @@ test("FormNavigationOwner renders accessible live region with idle status", () =
 
 test("FormNavigationOwner renders visible pending status with accessible live announcement", () => {
   const markup = renderToStaticMarkup(
-    React.createElement<FormNavigationOwnerProps>(FormNavigationOwner, {
+    React.createElement<FormNavigationOwnerProperties>(FormNavigationOwner, {
       initialFeedback: {
         status: "submitting",
         message: "Applying filters..."
@@ -142,7 +142,7 @@ test("FormNavigationOwner renders visible pending status with accessible live an
 
 test("FormNavigationOwner renders visible actionable error feedback with alert role and assertive live region", () => {
   const markup = renderToStaticMarkup(
-    React.createElement<FormNavigationOwnerProps>(FormNavigationOwner, {
+    React.createElement<FormNavigationOwnerProperties>(FormNavigationOwner, {
       initialFeedback: {
         status: "error",
         message:
@@ -174,7 +174,7 @@ test("FormNavigationOwner renders visible actionable error feedback with alert r
 
 test("FormNavigationOwner renders visible completed feedback with polite live region", () => {
   const markup = renderToStaticMarkup(
-    React.createElement<FormNavigationOwnerProps>(FormNavigationOwner, {
+    React.createElement<FormNavigationOwnerProperties>(FormNavigationOwner, {
       initialFeedback: {
         status: "completed",
         message: "Changes saved."
@@ -385,14 +385,14 @@ test("registerFormNavigation tracks submitter click and includes memory stepper 
 });
 
 test("native validation: invalid form prevents default without routing or fetching", async () => {
-  let reported = false;
+  let isReported = false;
   const form: MockDomForm = {
     action: "/usage",
     method: "GET",
     elements: [{ name: "search", value: "" }],
     checkValidity: () => false,
     reportValidity: () => {
-      reported = true;
+      isReported = true;
       return false;
     }
   };
@@ -413,7 +413,7 @@ test("native validation: invalid form prevents default without routing or fetchi
   });
 
   assert.equal(nativeEvent.defaultPrevented, true);
-  assert.equal(reported, true);
+  assert.equal(isReported, true);
   assert.equal(pushes.length, 0);
   assert.equal(result.intercepted, true);
   assert.equal(result.bypassedReason, "validation_failed");
@@ -503,18 +503,18 @@ test("same-origin/CSRF semantics: external-origin form bypasses interception all
   };
 
   const { router } = createMockRouter();
-  let fetchCalled = false;
+  let isFetchCalled = false;
   const result = await handleFormSubmission(submitEvent, {
     router,
     currentUrl: "http://console.test/login",
     fetch: async () => {
-      fetchCalled = true;
+      isFetchCalled = true;
       return new Response();
     }
   });
 
   assert.equal(nativeEvent.defaultPrevented, false);
-  assert.equal(fetchCalled, false);
+  assert.equal(isFetchCalled, false);
   assert.equal(result.intercepted, false);
   assert.equal(result.bypassedReason, "external_origin");
 });
@@ -765,7 +765,7 @@ test("POST followed redirects surface provider, model, skill, and prompt failure
     const fetchImpl: typeof fetch = async () =>
       ({
         status: 200,
-        url: `http://console.test${redirectPath}`,
+        url: `https://console.test${redirectPath}`,
         headers: new Headers()
       }) as Response;
 
@@ -1096,8 +1096,8 @@ test("extractFormData extracts synthetic form fields and appends submitter entry
     value: "save"
   };
 
-  const params = extractFormData(form, submitter);
-  assert.equal(params.toString(), "token=xyz&option=two&flag=on&action=save");
+  const parameters = extractFormData(form, submitter);
+  assert.equal(parameters.toString(), "token=xyz&option=two&flag=on&action=save");
 });
 
 test("scroll and focus: preserves window scroll position and restores element focus with preventScroll", async () => {
@@ -1136,15 +1136,17 @@ test("scroll and focus: preserves window scroll position and restores element fo
     }
   };
 
-  Object.defineProperty(globalThis, "window", {
-    value: mockWindow,
-    configurable: true,
-    writable: true
-  });
-  Object.defineProperty(globalThis, "document", {
-    value: mockDocument,
-    configurable: true,
-    writable: true
+  Object.defineProperties(globalThis, {
+    window: {
+      value: mockWindow,
+      configurable: true,
+      writable: true
+    },
+    document: {
+      value: mockDocument,
+      configurable: true,
+      writable: true
+    },
   });
 
   try {
@@ -1174,15 +1176,17 @@ test("scroll and focus: preserves window scroll position and restores element fo
     assert.equal(focusedId, "search-input");
     assert.equal(preventScrollOption, true);
   } finally {
-    Object.defineProperty(globalThis, "window", {
-      value: originalWindow,
-      configurable: true,
-      writable: true
-    });
-    Object.defineProperty(globalThis, "document", {
-      value: originalDocument,
-      configurable: true,
-      writable: true
+    Object.defineProperties(globalThis, {
+      window: {
+        value: originalWindow,
+        configurable: true,
+        writable: true
+      },
+      document: {
+        value: originalDocument,
+        configurable: true,
+        writable: true
+      },
     });
   }
 });

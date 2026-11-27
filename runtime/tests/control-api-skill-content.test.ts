@@ -118,7 +118,7 @@ function harness(options: { readonly installed?: boolean } = {}): Harness {
   process.env.AUTODEV_CONTROL_VIEWERS = `${OPERATOR_ACTOR}-viewer`;
   reloadExecutionContract();
 
-  const restoreEnv = (name: string, previous: string | undefined): void => {
+  const restoreEnvironment = (name: string, previous: string | undefined): void => {
     if (previous === undefined) delete process.env[name];
     else process.env[name] = previous;
   };
@@ -128,10 +128,10 @@ function harness(options: { readonly installed?: boolean } = {}): Harness {
     home,
     skillPath,
     restore: () => {
-      restoreEnv("CODEX_EXECUTION_CONTRACT_FILE", previousContract);
-      restoreEnv("AUTODEV_CONTROL_API_TOKEN", previousToken);
-      restoreEnv("AUTODEV_CONTROL_OPERATORS", previousOperators);
-      restoreEnv("AUTODEV_CONTROL_VIEWERS", previousViewers);
+      restoreEnvironment("CODEX_EXECUTION_CONTRACT_FILE", previousContract);
+      restoreEnvironment("AUTODEV_CONTROL_API_TOKEN", previousToken);
+      restoreEnvironment("AUTODEV_CONTROL_OPERATORS", previousOperators);
+      restoreEnvironment("AUTODEV_CONTROL_VIEWERS", previousViewers);
       reloadExecutionContract();
       rmSync(root, { recursive: true, force: true });
     },

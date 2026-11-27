@@ -64,11 +64,8 @@ function nativeEvent(line: string) {
     const id = safeAutoDevSessionId(raw.thread);
     if (!id?.startsWith(`native:${client}:`)) return null;
     const event = raw.outcome;
-    if (!isNativeSessionEvent(event)) return null;
-    if (
-      typeof raw.timestamp !== "string" ||
-      !Number.isFinite(Date.parse(raw.timestamp))
-    )
+    if (!isNativeSessionEvent(event) || typeof raw.timestamp !== "string" ||
+      !Number.isFinite(Date.parse(raw.timestamp)))
       return null;
     const at = new Date(raw.timestamp).toISOString();
     const model =
@@ -103,17 +100,17 @@ export function readNativeSessionEvidence(
       if (!observed) continue;
       const previous = sessions.get(observed.id);
       if (previous && observed.at < previous.lastObservedAt) continue;
-      const opening = observed.event === "start";
-      const resumed = observed.event === "prompt";
+      const isOpening = observed.event === "start";
+      const isResumed = observed.event === "prompt";
       sessions.set(observed.id, {
         id: observed.id,
         clientSurface: observed.client,
-        startedAt: opening ? observed.at : (previous?.startedAt ?? null),
+        startedAt: isOpening ? observed.at : (previous?.startedAt ?? null),
         lastObservedAt: observed.at,
         endedAt:
           observed.event === "end"
             ? observed.at
-            : opening || resumed
+            : isOpening || isResumed
               ? null
               : (previous?.endedAt ?? null),
         model: observed.model ?? previous?.model ?? null,

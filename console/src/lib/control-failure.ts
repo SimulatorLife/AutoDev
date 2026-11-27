@@ -1,38 +1,40 @@
 /**
- * One vocabulary for "this mutation did not land".
- *
- * Mutation routes may be used by a progressively enhanced native form or by
- * an in-place client submission. In-place callers receive the same bounded
- * refusal vocabulary as JSON; a no-JavaScript form fallback redirects to the
- * owning page with these query flags so it can render the shared notice.
- * Neither path reflects an arbitrary Runtime message into the UI.
- *
- * A failed mutation is never presented as success: the re-read authoritative
- * value or the bounded failure state tells the operator what to do next.
- */
+One vocabulary for "this mutation did not land".
 
-/** Query flag a mutation route sets when a change could not be confirmed. */
+Mutation routes may be used by a progressively enhanced native form or by
+an in-place client submission. In-place callers receive the same bounded
+refusal vocabulary as JSON; a no-JavaScript form fallback redirects to the
+owning page with these query flags so it can render the shared notice.
+Neither path reflects an arbitrary Runtime message into the UI.
+
+A failed mutation is never presented as success: the re-read authoritative
+value or the bounded failure state tells the operator what to do next.
+*/
+
+/**
+Query flag a mutation route sets when a change could not be confirmed.
+*/
 export const CONTROL_FAILED_PARAM = "control";
 const CONTROL_FAILED_VALUE = "failed";
 
 /**
- * Query flag carrying *why* a submission was refused, for the cases where the
- * route knows.
- *
- * The flag above deliberately says only "could not be confirmed", and that is
- * right for the ordinary mutation: the refreshed value the redirect lands on is
- * the authoritative answer, so the notice must not invent an outcome. But
- * "must not invent" is not "must withhold a known fact". A purge refused because
- * the confirmation was not given is a different situation from one the Runtime
- * turned down, and the operator's next move differs completely -- tick the box,
- * versus do not retry because durable memory still cites this envelope. Told
- * only "could not be confirmed", the first operator retries the identical
- * request.
- *
- * So the route carries a code, never a message. A code cannot reflect attacker
- * text into the page, cannot drift from what the route means by it, and cannot
- * be used to claim an outcome the route did not observe.
- */
+Query flag carrying *why* a submission was refused, for the cases where the
+route knows.
+
+The flag above deliberately says only "could not be confirmed", and that is
+right for the ordinary mutation: the refreshed value the redirect lands on is
+the authoritative answer, so the notice must not invent an outcome. But
+"must not invent" is not "must withhold a known fact". A purge refused because
+the confirmation was not given is a different situation from one the Runtime
+turned down, and the operator's next move differs completely -- tick the box,
+versus do not retry because durable memory still cites this envelope. Told
+only "could not be confirmed", the first operator retries the identical
+request.
+
+So the route carries a code, never a message. A code cannot reflect attacker
+text into the page, cannot drift from what the route means by it, and cannot
+be used to claim an outcome the route did not observe.
+*/
 export const CONTROL_REFUSAL_PARAM = "refusal";
 export const CONTROL_REFUSAL_REASONS = [
   "confirmation_missing",
@@ -78,7 +80,9 @@ export function withControlFailure(path: string): string {
   return `${path}${path.includes("?") ? "&" : "?"}${CONTROL_FAILED_PARAM}=${CONTROL_FAILED_VALUE}`;
 }
 
-/** Attach the refusal flag to a redirect, with the reason the route observed. */
+/**
+Attach the refusal flag to a redirect, with the reason the route observed.
+*/
 export function withControlRefusal(
   path: string,
   reason: ControlRefusalReason
@@ -87,10 +91,10 @@ export function withControlRefusal(
 }
 
 /**
- * The refusal reason a redirect carried, or `undefined` when it carried none or
- * carried something this build does not recognise. An unrecognised value is
- * treated as absent rather than rendered: the generic notice is still true.
- */
+The refusal reason a redirect carried, or `undefined` when it carried none or
+carried something this build does not recognise. An unrecognised value is
+treated as absent rather than rendered: the generic notice is still true.
+*/
 export function readControlRefusal(
   raw: string | readonly string[] | undefined
 ): ControlRefusalReason | undefined {

@@ -15,13 +15,13 @@ import {
   InlineDisplayToggle,
   nextRepresentationIndex
 } from "../src/components/ui/InlineDisplayToggle.ts";
-import { InstantDisplay } from "../src/components/ui/InstantDisplay.ts";
 import {
   instantLabel,
   isReadableInstant,
   localInstantText,
   relativeInstantText
 } from "../src/components/ui/instant.ts";
+import { InstantDisplay } from "../src/components/ui/InstantDisplay.ts";
 import {
   measureRepresentations,
   measureText
@@ -276,8 +276,7 @@ test("an instant has one owner, so no view can spell one of its own", () => {
     })) {
       const file = join(consoleRoot, dir, relative.toString());
       if (!file.endsWith(".ts") && !file.endsWith(".tsx")) continue;
-      if (!statSync(file).isFile()) continue;
-      if (owners.has(file)) continue;
+      if (!statSync(file).isFile() || owners.has(file)) continue;
       const source = readFileSync(file, "utf8");
       source.split("\n").forEach((line, index) => {
         const trimmed = line.trim();

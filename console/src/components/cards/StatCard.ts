@@ -15,21 +15,21 @@ export interface StatCardProps {
 }
 
 /**
- * Whether a card's value reports nothing at all.
- *
- * The obvious test is `value === NOT_OBSERVED_LABEL`, and it missed a real card.
- * `/usage` builds one value from two measurements -- input and output tokens --
- * so the card said "Not observed / Not observed": unobserved twice over, and
- * rendered at `text-2xl` bold because neither half equals the label on its own.
- * The card therefore read as the row's one confident measurement while its three
- * neighbours were correctly quiet, which is the exact failure the meta treatment
- * exists to prevent -- reintroduced through a string the card cannot compare.
- *
- * So the test asks the question the card is actually asking: is there a
- * measurement anywhere in this value? A composite counts as observed when any
- * part is observed, including a measured `0`, so a genuinely half-observed card
- * keeps the value scale rather than being understated.
- */
+Whether a card's value reports nothing at all.
+
+The obvious test is `value === NOT_OBSERVED_LABEL`, and it missed a real card.
+`/usage` builds one value from two measurements -- input and output tokens --
+so the card said "Not observed / Not observed": unobserved twice over, and
+rendered at `text-2xl` bold because neither half equals the label on its own.
+The card therefore read as the row's one confident measurement while its three
+neighbours were correctly quiet, which is the exact failure the meta treatment
+exists to prevent -- reintroduced through a string the card cannot compare.
+
+So the test asks the question the card is actually asking: is there a
+measurement anywhere in this value? A composite counts as observed when any
+part is observed, including a measured `0`, so a genuinely half-observed card
+keeps the value scale rather than being understated.
+*/
 function isUnobserved(value: string | number): boolean {
   if (typeof value === "number") return false;
   const parts = value
@@ -62,7 +62,7 @@ export function StatCard({
   // rather than printed twice. A real value -- including a measured zero -- is
   // untouched.
   const unobserved = isUnobserved(value);
-  const redundantSubtitle = unobserved && subtitle === NOT_OBSERVED_LABEL;
+  const isRedundantSubtitle = unobserved && subtitle === NOT_OBSERVED_LABEL;
 
   // A card is a labelled fact, and this module already says what a labelled fact
   // is: `DetailGrid` is "the <dl> behind a row of label/value pairs" and
@@ -113,7 +113,7 @@ export function StatCard({
               className: unobserved
                 ? MUTED_BODY_CLASS
                 : "text-2xl font-bold text-fg tracking-tight",
-              ...(unobserved ? { "data-stat-unobserved": "true" } : {})
+              ...(unobserved && { "data-stat-unobserved": "true" })
             },
             value
           ),
@@ -129,7 +129,7 @@ export function StatCard({
               )
             : null
         ),
-        subtitle && !redundantSubtitle
+        subtitle && !isRedundantSubtitle
           ? React.createElement(
               "p",
               { className: "mt-1 text-xs text-fg-muted" },

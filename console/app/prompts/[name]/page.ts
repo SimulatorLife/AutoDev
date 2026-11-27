@@ -35,11 +35,11 @@ const UNAVAILABLE_PROMPT_HISTORY: PromptHistoryState = {
 };
 
 /**
- * The resource's own name, taken from the route parameter rather than from a
- * second fetch of the resource. The page body already reads the same
- * parameter, and a metadata function that fetched would double every
- * detail-page request.
- */
+The resource's own name, taken from the route parameter rather than from a
+second fetch of the resource. The page body already reads the same
+parameter, and a metadata function that fetched would double every
+detail-page request.
+*/
 export async function generateMetadata({
   params
 }: {
@@ -124,10 +124,8 @@ export default async function PromptDetailPage({
       prompt,
       reconciliation: result.data.reconciliation,
       history,
-      ...(selection.selectedVersion
-        ? { selectedVersion: selection.selectedVersion }
-        : {}),
-      ...(selection.error ? { versionSelectionError: selection.error } : {})
+      ...(selection.selectedVersion && { selectedVersion: selection.selectedVersion }),
+      ...(selection.error && { versionSelectionError: selection.error })
     })
   );
 }

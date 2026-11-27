@@ -1,42 +1,42 @@
 /**
- * Runtime-owned bounded, content-addressed Playtesting artifact store.
- *
- * Implements the storage primitive described in
- * `docs/playtesting-target-state.md` sections 3-4 and 9, and
- * `docs/playtesting-measurement-contract.md` sections 3, 6 and 10. The
- * store keeps large trace bytes and bounded indexed step/event JSONL
- * windows out of ClickHouse and OTLP, and never produces a second
- * evaluation/feed backend or a duplicate whole-trace cache.
- *
- * Boundaries enforced at this layer:
- *
- * - Local-only storage under a configured rootDirectory
- *   ($CODEX_HOME/playtesting/artifacts by default; tests inject a tmp root).
- * - Content-addressed by SHA-256; writes are atomic, idempotent and verify
- *   the hash on read. The returned PlaytestArtifactReference never carries
- *   a filesystem path: only an opaque artifact id, the verified SHA-256, the
- *   byte length, the media type and (for windows) the bounded line count.
- * - Owner-only permissions on every directory (0o700) and file (0o600). New
- *   files default to that mode regardless of the host umask.
- * - Strict root / realpath / symlink / path-traversal enforcement: the root
- *   must canonicalize without symlinks, the workspace is bound from
- *   trusted server-side context, and every internal path is verified to stay
- *   inside the canonical root.
- * - Bounded payload size, bounded JSONL line size (1 MiB) and bounded window
- *   total bytes / step count.
- * - Retention / expiry cleanup with explicit present, expired, missing and
- *   not-authorized states.
- * - Partial evidence preservation: failed window writes keep their .tmp
- *   scratch file so the operator can recover what was streamed before the
- *   failure.
- *
- * This module does not trust a caller-supplied URI/path: the workspace is
- * bound at construction time and a reference is only authorized when its
- * metadata file resolves under that workspace. Human survey responses and
- * withdrawal flows are explicitly out of scope for this generic LLM
- * artifact store; they are routed through a separate, consent-owned path
- * per the measurement contract.
- */
+Runtime-owned bounded, content-addressed Playtesting artifact store.
+
+Implements the storage primitive described in
+`docs/playtesting-target-state.md` sections 3-4 and 9, and
+`docs/playtesting-measurement-contract.md` sections 3, 6 and 10. The
+store keeps large trace bytes and bounded indexed step/event JSONL
+windows out of ClickHouse and OTLP, and never produces a second
+evaluation/feed backend or a duplicate whole-trace cache.
+
+Boundaries enforced at this layer:
+
+- Local-only storage under a configured rootDirectory
+  ($CODEX_HOME/playtesting/artifacts by default; tests inject a tmp root).
+- Content-addressed by SHA-256; writes are atomic, idempotent and verify
+  the hash on read. The returned PlaytestArtifactReference never carries
+  a filesystem path: only an opaque artifact id, the verified SHA-256, the
+  byte length, the media type and (for windows) the bounded line count.
+- Owner-only permissions on every directory (0o700) and file (0o600). New
+  files default to that mode regardless of the host umask.
+- Strict root / realpath / symlink / path-traversal enforcement: the root
+  must canonicalize without symlinks, the workspace is bound from
+  trusted server-side context, and every internal path is verified to stay
+  inside the canonical root.
+- Bounded payload size, bounded JSONL line size (1 MiB) and bounded window
+  total bytes / step count.
+- Retention / expiry cleanup with explicit present, expired, missing and
+  not-authorized states.
+- Partial evidence preservation: failed window writes keep their .tmp
+  scratch file so the operator can recover what was streamed before the
+  failure.
+
+This module does not trust a caller-supplied URI/path: the workspace is
+bound at construction time and a reference is only authorized when its
+metadata file resolves under that workspace. Human survey responses and
+withdrawal flows are explicitly out of scope for this generic LLM
+artifact store; they are routed through a separate, consent-owned path
+per the measurement contract.
+*/
 
 import { createHash, randomBytes } from "node:crypto";
 import {
@@ -180,33 +180,51 @@ function existingWindowResult(input: {
   };
 }
 
-/** Upper bound on a single artifact payload. Anything larger is rejected. */
+/**
+Upper bound on a single artifact payload. Anything larger is rejected.
+*/
 export const PLAYTESTS_ARTIFACT_MAX_BYTES = 64 * 1024 * 1024;
 
-/** Hard v1 JSONL line ceiling, matching the v1 adapter transport cap. */
+/**
+Hard v1 JSONL line ceiling, matching the v1 adapter transport cap.
+*/
 export const PLAYTESTS_ARTIFACT_MAX_LINE_BYTES = 1_048_576;
 
-/** Default upper bound on a single indexed JSONL window payload. */
+/**
+Default upper bound on a single indexed JSONL window payload.
+*/
 export const PLAYTESTS_ARTIFACT_MAX_WINDOW_BYTES = 8 * 1024 * 1024;
 
-/** Default upper bound on the number of step/event entries in one window. */
+/**
+Default upper bound on the number of step/event entries in one window.
+*/
 export const PLAYESTS_ARTIFACT_MAX_WINDOW_STEPS = 4096;
 
-/** Default retention duration when none is supplied. */
+/**
+Default retention duration when none is supplied.
+*/
 export const PLAYTESTS_ARTIFACT_DEFAULT_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
 
-/** Default media type for indexed step/event windows. */
+/**
+Default media type for indexed step/event windows.
+*/
 export const PLAYTESTS_ARTIFACT_WINDOW_MEDIA_TYPE =
   "application/x-ndjson" as const;
 
-/** Canonical owner-only permission bits. */
+/**
+Canonical owner-only permission bits.
+*/
 const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
 
-/** Atomic-write scratch suffix. */
+/**
+Atomic-write scratch suffix.
+*/
 const TMP_SUFFIX = ".tmp";
 
-/** Canonical workspace identity pattern (matches the Core validator). */
+/**
+Canonical workspace identity pattern (matches the Core validator).
+*/
 const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
 
 const ARTIFACT_ID_PATTERN = /^[A-Za-z0-9_-]{4,128}$/u;
@@ -215,14 +233,16 @@ const MEDIA_TYPE_TOKEN_PATTERN = /^[A-Za-z0-9!#$&^_.+-]+$/u;
 const MAX_ARTIFACT_REFERENCE_FILES_TO_SCAN = 100_000;
 const ARTIFACT_ID_COLLATOR = new Intl.Collator("en");
 
-/** Pure helper: bounded SHA-256 over a byte buffer. */
+/**
+Pure helper: bounded SHA-256 over a byte buffer.
+*/
 function sha256Hex(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
 /**
- * Returns the default root directory for playtesting artifacts under CODEX_HOME.
- */
+Returns the default root directory for playtesting artifacts under CODEX_HOME.
+*/
 export function defaultPlaytestArtifactsRoot(): string {
   const codexHome =
     process.env.CODEX_HOME?.trim() || path.join(homedir(), ".codex");
@@ -230,10 +250,10 @@ export function defaultPlaytestArtifactsRoot(): string {
 }
 
 /**
- * Minimal filesystem surface the store depends on. Defaults to the real
- * node:fs module; tests inject a custom surface to exercise permission
- * failures or alternate storage without subclassing.
- */
+Minimal filesystem surface the store depends on. Defaults to the real
+node:fs module; tests inject a custom surface to exercise permission
+failures or alternate storage without subclassing.
+*/
 export interface PlaytestArtifactFileSystem {
   readonly existsSync: (path: string) => boolean;
   readonly realpathSync?: (path: string) => string;
@@ -314,45 +334,69 @@ const defaultFileSystem: PlaytestArtifactFileSystem = {
   }
 };
 
-/** Bounded construction options for the store. */
+/**
+Bounded construction options for the store.
+*/
 export interface PlaytestArtifactStoreOptions {
   /**
-   * Filesystem root for the artifact store. Resolved to its canonical real
-   * path on construction; symbolic links in the root are rejected.
-   * Defaults to $CODEX_HOME/playtesting/artifacts.
-   */
+  Filesystem root for the artifact store. Resolved to its canonical real
+  path on construction; symbolic links in the root are rejected.
+  Defaults to $CODEX_HOME/playtesting/artifacts.
+  */
   readonly rootDirectory?: string;
   /**
-   * Canonical workspace id (owner/repository) bound from trusted
-   * server-side context. The store never reads a workspace id off a
-   * caller-supplied URI or path.
-   */
+  Canonical workspace id (owner/repository) bound from trusted
+  server-side context. The store never reads a workspace id off a
+  caller-supplied URI or path.
+  */
   readonly workspaceId: string;
-  /** Upper bound on a single artifact payload. Defaults to the v1 cap. */
+  /**
+  Upper bound on a single artifact payload. Defaults to the v1 cap.
+  */
   readonly maxBytes?: number;
-  /** Hard ceiling on one JSONL line. Defaults to the v1 transport cap. */
+  /**
+  Hard ceiling on one JSONL line. Defaults to the v1 transport cap.
+  */
   readonly maxWindowLineBytes?: number;
-  /** Upper bound on a single window payload. Defaults to the v1 cap. */
+  /**
+  Upper bound on a single window payload. Defaults to the v1 cap.
+  */
   readonly maxWindowBytes?: number;
-  /** Upper bound on the number of entries in one window. */
+  /**
+  Upper bound on the number of entries in one window.
+  */
   readonly maxWindowSteps?: number;
-  /** Retention window applied to every artifact. */
+  /**
+  Retention window applied to every artifact.
+  */
   readonly retentionMs?: number;
-  /** Deterministic clock override (tests). */
+  /**
+  Deterministic clock override (tests).
+  */
   readonly now?: () => number;
-  /** Override the random token mint (tests / forced collisions). */
+  /**
+  Override the random token mint (tests / forced collisions).
+  */
   readonly randomToken?: () => string;
-  /** Override the file system surface (tests). */
+  /**
+  Override the file system surface (tests).
+  */
   readonly fileSystem?: PlaytestArtifactFileSystem;
-  /** Override the SHA-256 helper (tests / pinning). */
+  /**
+  Override the SHA-256 helper (tests / pinning).
+  */
   readonly hash?: (bytes: Uint8Array) => string;
 }
 
-/** Canonical lifecycle state of an artifact reference. */
+/**
+Canonical lifecycle state of an artifact reference.
+*/
 export type PlaytestArtifactState =
   "present" | "expired" | "missing" | "not-authorized" | "corrupted";
 
-/** Opaque on-disk metadata for one artifact (blob or window). */
+/**
+Opaque on-disk metadata for one artifact (blob or window).
+*/
 interface PlaytestArtifactMetadata {
   readonly artifactId: string;
   readonly workspaceId: string;
@@ -363,27 +407,37 @@ interface PlaytestArtifactMetadata {
   readonly lineCount: number;
   readonly createdAt: number;
   readonly expiresAt: number;
-  /** Non-null while another durable store has not yet recorded this reference. */
+  /**
+  Non-null while another durable store has not yet recorded this reference.
+  */
   readonly pendingCommitId: string | null;
 }
 
-/** Request payload for writeArtifact. */
+/**
+Request payload for writeArtifact.
+*/
 export interface PlaytestArtifactWriteRequest {
   readonly artifactId?: string;
   readonly mediaType: string;
   readonly bytes: Uint8Array;
-  /** Optional durable owner whose commit finalizes this artifact reference. */
+  /**
+  Optional durable owner whose commit finalizes this artifact reference.
+  */
   readonly pendingCommitId?: string;
 }
 
-/** Request payload for writeWindow. */
+/**
+Request payload for writeWindow.
+*/
 export interface PlaytestArtifactWindowWriteRequest {
   readonly artifactId?: string;
   readonly mediaType?: string;
   readonly entries: readonly unknown[];
 }
 
-/** Result returned by every write call. */
+/**
+Result returned by every write call.
+*/
 export interface PlaytestArtifactWriteResult {
   readonly reference: PlaytestArtifactReference;
   readonly lineCount: number;
@@ -391,7 +445,9 @@ export interface PlaytestArtifactWriteResult {
   readonly expiresAt: number;
 }
 
-/** Indexed pending reference returned to Runtime's cross-store reconciler. */
+/**
+Indexed pending reference returned to Runtime's cross-store reconciler.
+*/
 export interface PlaytestPendingArtifactReference {
   readonly reference: PlaytestArtifactReference;
   readonly pendingCommitId: string;
@@ -401,18 +457,24 @@ export interface PlaytestPendingArtifactReference {
 
 export interface PlaytestPendingArtifactList {
   readonly entries: readonly PlaytestPendingArtifactReference[];
-  /** True when the bounded page did not include every pending reference. */
+  /**
+  True when the bounded page did not include every pending reference.
+  */
   readonly truncated: boolean;
 }
 
-/** Window read result with the raw bounded JSONL bytes. */
+/**
+Window read result with the raw bounded JSONL bytes.
+*/
 export interface PlaytestArtifactWindowReadResult {
   readonly reference: PlaytestArtifactReference;
   readonly bytes: Uint8Array;
   readonly lineCount: number;
 }
 
-/** Cleanup summary returned by cleanup. */
+/**
+Cleanup summary returned by cleanup.
+*/
 export interface PlaytestArtifactCleanupResult {
   readonly removedRefs: number;
   readonly removedBlobs: number;
@@ -420,7 +482,9 @@ export interface PlaytestArtifactCleanupResult {
   readonly expiredRefs: readonly string[];
 }
 
-/** Configuration errors surface as a distinct error type. */
+/**
+Configuration errors surface as a distinct error type.
+*/
 export class PlaytestArtifactConfigurationError extends Error {
   constructor(message: string) {
     super(message);
@@ -428,7 +492,9 @@ export class PlaytestArtifactConfigurationError extends Error {
   }
 }
 
-/** Payload or window exceeds the configured bounds. */
+/**
+Payload or window exceeds the configured bounds.
+*/
 export class PlaytestArtifactOversizedError extends Error {
   readonly limit: number;
   readonly actual: number;
@@ -455,7 +521,9 @@ export class PlaytestArtifactOversizedError extends Error {
   }
 }
 
-/** Stored bytes do not match their declared SHA-256 (tamper / corruption). */
+/**
+Stored bytes do not match their declared SHA-256 (tamper / corruption).
+*/
 export class PlaytestArtifactIntegrityError extends Error {
   readonly artifactId: string;
   readonly expectedSha256: string;
@@ -475,7 +543,9 @@ export class PlaytestArtifactIntegrityError extends Error {
   }
 }
 
-/** Reference is not registered for this workspace (cross-workspace leakage). */
+/**
+Reference is not registered for this workspace (cross-workspace leakage).
+*/
 export class PlaytestArtifactNotAuthorizedError extends Error {
   readonly artifactId: string;
   constructor(artifactId: string, workspaceId: string) {
@@ -487,7 +557,9 @@ export class PlaytestArtifactNotAuthorizedError extends Error {
   }
 }
 
-/** Reference exists but has passed its configured retention window. */
+/**
+Reference exists but has passed its configured retention window.
+*/
 export class PlaytestArtifactExpiredError extends Error {
   readonly artifactId: string;
   readonly expiresAt: number;
@@ -499,7 +571,9 @@ export class PlaytestArtifactExpiredError extends Error {
   }
 }
 
-/** Backing file is missing from local storage. */
+/**
+Backing file is missing from local storage.
+*/
 export class PlaytestArtifactMissingError extends Error {
   readonly artifactId: string;
   constructor(artifactId: string) {
@@ -509,7 +583,9 @@ export class PlaytestArtifactMissingError extends Error {
   }
 }
 
-/** Reference metadata or payload is malformed. */
+/**
+Reference metadata or payload is malformed.
+*/
 export class PlaytestArtifactFormatError extends Error {
   constructor(message: string) {
     super(message);
@@ -523,8 +599,8 @@ function assertWorkspaceId(value: string): void {
       `Workspace id must be a canonical owner/repository id; received ${JSON.stringify(value)}.`
     );
   }
-  const [owner, repo] = value.split("/");
-  if (owner === ".." || owner === "." || repo === ".." || repo === ".") {
+  const [owner, repository] = value.split("/", 2);
+  if (owner === ".." || owner === "." || repository === ".." || repository === ".") {
     throw new PlaytestArtifactConfigurationError(
       `Workspace id must not contain traversal segments; received ${JSON.stringify(value)}.`
     );
@@ -545,16 +621,16 @@ function assertMediaType(value: string): void {
   const slash = essence.indexOf("/");
   const parameters =
     parameterSeparator === -1 ? "" : value.slice(parameterSeparator + 1);
-  const validEssence =
+  const isValidEssence =
     slash > 0 &&
     slash === essence.lastIndexOf("/") &&
     MEDIA_TYPE_TOKEN_PATTERN.test(essence.slice(0, slash)) &&
     MEDIA_TYPE_TOKEN_PATTERN.test(essence.slice(slash + 1));
-  const validParameters = [...parameters].every((character) => {
+  const isValidParameters = [...parameters].every((character) => {
     const code = character.codePointAt(0) ?? 0;
     return code >= 32 && code <= 126;
   });
-  if (separator !== slash || !validEssence || !validParameters) {
+  if (separator !== slash || !isValidEssence || !isValidParameters) {
     throw new PlaytestArtifactFormatError(
       `Media type ${JSON.stringify(value)} is not a valid token.`
     );
@@ -763,8 +839,8 @@ function appendSeparator(value: string): string {
 
 function safeJoin(root: string, ...segments: readonly string[]): string {
   for (const segment of segments) {
-    const parts = segment.split(path.sep);
-    if (parts.includes("..") || parts.includes("")) {
+    const parts = new Set(segment.split(path.sep));
+    if (parts.has("..") || parts.has("")) {
       throw new PlaytestArtifactConfigurationError(
         `Path segment ${JSON.stringify(segment)} contains a traversal token.`
       );
@@ -916,20 +992,20 @@ function writeMetadata(
   fileSystem: PlaytestArtifactFileSystem
 ): void {
   const json = JSON.stringify(metadata);
-  const tmp = `${metadataFile}${TMP_SUFFIX}.${Date.now().toString(36)}${randomBytes(6).toString("hex")}`;
-  fileSystem.writeFileSync(tmp, new TextEncoder().encode(json), FILE_MODE);
-  fileSystem.chmodSync(tmp, FILE_MODE);
+  const temporary = `${metadataFile}${TMP_SUFFIX}.${Date.now().toString(36)}${randomBytes(6).toString("hex")}`;
+  fileSystem.writeFileSync(temporary, new TextEncoder().encode(json), FILE_MODE);
+  fileSystem.chmodSync(temporary, FILE_MODE);
   // Retained rename: the injected fileSystem owns artifact writes so partial evidence survives failures.
-  fileSystem.renameSync(tmp, metadataFile);
+  fileSystem.renameSync(temporary, metadataFile);
 }
 
 /**
- * Runtime-owned bounded, content-addressed Playtesting artifact store.
- *
- * A store is constructed once per workspace and bound to the workspace id
- * supplied by trusted server-side context. The workspace id never comes
- * from the caller; every read/write is authorized against that binding.
- */
+Runtime-owned bounded, content-addressed Playtesting artifact store.
+
+A store is constructed once per workspace and bound to the workspace id
+supplied by trusted server-side context. The workspace id never comes
+from the caller; every read/write is authorized against that binding.
+*/
 export class PlaytestArtifactStore {
   private readonly root: string;
   private readonly workspaceId: string;
@@ -1007,21 +1083,25 @@ export class PlaytestArtifactStore {
     );
   }
 
-  /** Returns the canonical, real-path root the store was bound to. */
+  /**
+  Returns the canonical, real-path root the store was bound to.
+  */
   rootDirectory(): string {
     return this.root;
   }
 
-  /** Returns the workspace id the store was bound to. */
+  /**
+  Returns the workspace id the store was bound to.
+  */
   boundWorkspaceId(): string {
     return this.workspaceId;
   }
 
   /**
-   * Resolve a workspace-local opaque ID to its integrity metadata without
-   * revealing a filesystem path. Reads must still go through `readWindow` or
-   * `readArtifact`, which enforce expiry and verify the bytes.
-   */
+  Resolve a workspace-local opaque ID to its integrity metadata without
+  revealing a filesystem path. Reads must still go through `readWindow` or
+  `readArtifact`, which enforce expiry and verify the bytes.
+  */
   referenceForId(artifactId: string): PlaytestArtifactReference | null {
     let file: string;
     try {
@@ -1046,10 +1126,10 @@ export class PlaytestArtifactStore {
   }
 
   /**
-   * List a bounded set of owner-pending references of one media type,
-   * including expired entries so the owner can apply its retention policy.
-   * Metadata is validated and workspace-scoped; no filesystem paths escape.
-   */
+  List a bounded set of owner-pending references of one media type,
+  including expired entries so the owner can apply its retention policy.
+  Metadata is validated and workspace-scoped; no filesystem paths escape.
+  */
   listPendingArtifacts(input: {
     readonly mediaType: string;
     readonly limit: number;
@@ -1064,14 +1144,14 @@ export class PlaytestArtifactStore {
         "Pending artifact list limit must be between 1 and 10,000."
       );
     }
-    const refsDirectory = safeJoin(this.root, this.workspaceId, "refs");
-    if (!this.fileSystem.existsSync(refsDirectory)) {
+    const referencesDirectory = safeJoin(this.root, this.workspaceId, "refs");
+    if (!this.fileSystem.existsSync(referencesDirectory)) {
       return { entries: [], truncated: false };
     }
-    const refsDirectoryInfo = this.fileSystem.lstatSync(refsDirectory);
+    const referencesDirectoryInfo = this.fileSystem.lstatSync(referencesDirectory);
     if (
-      refsDirectoryInfo.isSymbolicLink() ||
-      !refsDirectoryInfo.isDirectory()
+      referencesDirectoryInfo.isSymbolicLink() ||
+      !referencesDirectoryInfo.isDirectory()
     ) {
       throw new PlaytestArtifactConfigurationError(
         "Artifact reference directory must be a real directory."
@@ -1079,7 +1159,7 @@ export class PlaytestArtifactStore {
     }
     const entries: PlaytestPendingArtifactReference[] = [];
     let scannedReferences = 0;
-    for (const file of this.fileSystem.readdirSync(refsDirectory, {
+    for (const file of this.fileSystem.readdirSync(referencesDirectory, {
       withFileTypes: true
     })) {
       if (!file.isFile() || !file.name.endsWith(".json")) continue;
@@ -1090,7 +1170,7 @@ export class PlaytestArtifactStore {
         );
       }
       const entry = pendingArtifactFromMetadata({
-        metadataFile: safeJoin(refsDirectory, file.name),
+        metadataFile: safeJoin(referencesDirectory, file.name),
         fileName: file.name,
         workspaceId: this.workspaceId,
         mediaType: input.mediaType,
@@ -1106,11 +1186,13 @@ export class PlaytestArtifactStore {
           right.reference.artifactId
         )
     );
-    const truncated = entries.length > input.limit;
-    return { entries: entries.slice(0, input.limit), truncated };
+    const isTruncated = entries.length > input.limit;
+    return { entries: entries.slice(0, input.limit), truncated: isTruncated };
   }
 
-  /** Mark a reference durable after its external owner has committed it. */
+  /**
+  Mark a reference durable after its external owner has committed it.
+  */
   markArtifactCommitted(
     reference: PlaytestArtifactReference,
     pendingCommitId: string
@@ -1159,17 +1241,17 @@ export class PlaytestArtifactStore {
 
   private writeBlobIfMissing(blobFile: string, bytes: Uint8Array): void {
     if (this.fileSystem.existsSync(blobFile)) return;
-    const blobTmp = `${blobFile}${TMP_SUFFIX}.${mintToken(this.randomToken)}`;
+    const blobTemporary = `${blobFile}${TMP_SUFFIX}.${mintToken(this.randomToken)}`;
     try {
-      this.fileSystem.writeFileSync(blobTmp, bytes, FILE_MODE);
-      this.fileSystem.chmodSync(blobTmp, FILE_MODE);
+      this.fileSystem.writeFileSync(blobTemporary, bytes, FILE_MODE);
+      this.fileSystem.chmodSync(blobTemporary, FILE_MODE);
       // Retained rename: failed blob writes keep their partial .tmp file as evidence.
-      this.fileSystem.renameSync(blobTmp, blobFile);
+      this.fileSystem.renameSync(blobTemporary, blobFile);
     } catch (error) {
-      if (this.fileSystem.existsSync(blobTmp)) {
+      if (this.fileSystem.existsSync(blobTemporary)) {
         // Preserve partial evidence for diagnostics; do not auto-delete.
         try {
-          this.fileSystem.chmodSync(blobTmp, FILE_MODE);
+          this.fileSystem.chmodSync(blobTemporary, FILE_MODE);
         } catch {
           // Ignore secondary chmod error.
         }
@@ -1229,11 +1311,11 @@ export class PlaytestArtifactStore {
   }
 
   /**
-   * Write an opaque artifact payload (frame, snapshot, trace, media).
-   * Same content + same media type yields the same artifact id; writes
-   * are content-deduplicated. Returns the opaque reference plus
-   * metadata timestamps.
-   */
+  Write an opaque artifact payload (frame, snapshot, trace, media).
+  Same content + same media type yields the same artifact id; writes
+  are content-deduplicated. Returns the opaque reference plus
+  metadata timestamps.
+  */
   writeArtifact(
     request: PlaytestArtifactWriteRequest
   ): PlaytestArtifactWriteResult {
@@ -1242,14 +1324,14 @@ export class PlaytestArtifactStore {
     const now = this.now();
     const expiresAt = now + this.retentionMs;
     const blobFile = blobPath(this.root, this.workspaceId, sha256);
-    const refsDirectory = safeJoin(this.root, this.workspaceId, "refs");
+    const referencesDirectory = safeJoin(this.root, this.workspaceId, "refs");
     const blobsDirectory = safeJoin(
       this.root,
       this.workspaceId,
       "blobs",
       sha256.slice(0, 2)
     );
-    ensureOwnedDirectory(refsDirectory, this.root, this.fileSystem);
+    ensureOwnedDirectory(referencesDirectory, this.root, this.fileSystem);
     ensureOwnedDirectory(blobsDirectory, this.root, this.fileSystem);
     this.writeBlobIfMissing(blobFile, request.bytes);
     const artifactId = request.artifactId ?? sha256;
@@ -1268,13 +1350,13 @@ export class PlaytestArtifactStore {
   }
 
   /**
-   * Write a bounded indexed JSONL step/event window. Each entry is
-   * JSON-serialized on a single line; every line is rejected when it
-   * exceeds the configured line cap (1 MiB by default). The whole window
-   * is rejected when it exceeds the configured total byte or step bound.
-   * A failed write preserves the partial .tmp scratch file so the
-   * operator can recover what was streamed before the failure.
-   */
+  Write a bounded indexed JSONL step/event window. Each entry is
+  JSON-serialized on a single line; every line is rejected when it
+  exceeds the configured line cap (1 MiB by default). The whole window
+  is rejected when it exceeds the configured total byte or step bound.
+  A failed write preserves the partial .tmp scratch file so the
+  operator can recover what was streamed before the failure.
+  */
   writeWindow(
     request: PlaytestArtifactWindowWriteRequest
   ): PlaytestArtifactWriteResult {
@@ -1310,8 +1392,8 @@ export class PlaytestArtifactStore {
     const expiresAt = now + this.retentionMs;
     const artifactId = request.artifactId ?? sha256;
     const windowFile = windowPath(this.root, this.workspaceId, artifactId);
-    const refsDirectory = safeJoin(this.root, this.workspaceId, "refs");
-    ensureOwnedDirectory(refsDirectory, this.root, this.fileSystem);
+    const referencesDirectory = safeJoin(this.root, this.workspaceId, "refs");
+    ensureOwnedDirectory(referencesDirectory, this.root, this.fileSystem);
     ensureOwnedDirectory(windowsDirectory, this.root, this.fileSystem);
     const metadataFile = metadataPath(this.root, this.workspaceId, artifactId);
     const existing = existingWindowResult({
@@ -1353,11 +1435,11 @@ export class PlaytestArtifactStore {
   }
 
   /**
-   * Resolve the canonical lifecycle state of a reference under the
-   * bound workspace. The returned state never depends on the caller's
-   * view of the file system: it is computed against the bound workspace
-   * and the canonical root.
-   */
+  Resolve the canonical lifecycle state of a reference under the
+  bound workspace. The returned state never depends on the caller's
+  view of the file system: it is computed against the bound workspace
+  and the canonical root.
+  */
   state(reference: PlaytestArtifactReference): PlaytestArtifactState {
     const auth = this.authorize(reference);
     if (!auth.metadata) return "not-authorized";
@@ -1383,7 +1465,9 @@ export class PlaytestArtifactStore {
     return "present";
   }
 
-  /** Verify stored size and content hash after the caller authorizes the file. */
+  /**
+  Verify stored size and content hash after the caller authorizes the file.
+  */
   private readVerifiedBytes(
     file: string,
     metadata: Pick<PlaytestArtifactMetadata, "artifactId" | "bytes" | "sha256">
@@ -1409,11 +1493,11 @@ export class PlaytestArtifactStore {
   }
 
   /**
-   * Read a blob artifact and verify its content hash. Throws when the
-   * reference is not authorized for the bound workspace, when the
-   * artifact has expired, or when the on-disk bytes do not match the
-   * declared SHA-256.
-   */
+  Read a blob artifact and verify its content hash. Throws when the
+  reference is not authorized for the bound workspace, when the
+  artifact has expired, or when the on-disk bytes do not match the
+  declared SHA-256.
+  */
   readArtifact(reference: PlaytestArtifactReference): {
     readonly bytes: Uint8Array;
     readonly reference: PlaytestArtifactReference;
@@ -1462,9 +1546,9 @@ export class PlaytestArtifactStore {
   }
 
   /**
-   * Read a bounded JSONL window and verify its content hash.
-   * Same authorization / expiry / integrity guarantees as readArtifact.
-   */
+  Read a bounded JSONL window and verify its content hash.
+  Same authorization / expiry / integrity guarantees as readArtifact.
+  */
   readWindow(
     reference: PlaytestArtifactReference
   ): PlaytestArtifactWindowReadResult {
@@ -1509,13 +1593,13 @@ export class PlaytestArtifactStore {
   }
 
   /**
-   * Remove every reference whose expiresAt is at or before now, along
-   * with their underlying blobs / windows when no other reference still
-   * points at the same content hash. Returns a structured summary so
-   * callers can report retention work without reading internal paths.
-   */
+  Remove every reference whose expiresAt is at or before now, along
+  with their underlying blobs / windows when no other reference still
+  points at the same content hash. Returns a structured summary so
+  callers can report retention work without reading internal paths.
+  */
   private collectRetainedReferences(
-    refsDirectory: string,
+    referencesDirectory: string,
     now: number
   ): {
     readonly removedRefs: number;
@@ -1523,22 +1607,22 @@ export class PlaytestArtifactStore {
     readonly blobHashes: ReadonlySet<string>;
     readonly windowIds: ReadonlySet<string>;
   } {
-    const expiredRefs: string[] = [];
+    const expiredReferences: string[] = [];
     const blobHashes = new Set<string>();
     const windowIds = new Set<string>();
-    let removedRefs = 0;
-    const entries = this.fileSystem.readdirSync(refsDirectory, {
+    let removedReferences = 0;
+    const entries = this.fileSystem.readdirSync(referencesDirectory, {
       withFileTypes: true
     });
     for (const entry of entries) {
       if (!entry.isFile()) continue;
-      const metadataFile = safeJoin(refsDirectory, entry.name);
+      const metadataFile = safeJoin(referencesDirectory, entry.name);
       let metadata: PlaytestArtifactMetadata;
       try {
         metadata = readMetadata(metadataFile, this.fileSystem);
       } catch {
         this.removeOwnedFile(metadataFile);
-        removedRefs += 1;
+        removedReferences += 1;
         continue;
       }
       if (metadata.expiresAt > now) {
@@ -1546,11 +1630,11 @@ export class PlaytestArtifactStore {
         else windowIds.add(metadata.artifactId);
         continue;
       }
-      expiredRefs.push(metadata.artifactId);
+      expiredReferences.push(metadata.artifactId);
       this.removeOwnedFile(metadataFile);
-      removedRefs += 1;
+      removedReferences += 1;
     }
-    return { removedRefs, expiredRefs, blobHashes, windowIds };
+    return { removedRefs: removedReferences, expiredRefs: expiredReferences, blobHashes, windowIds };
   }
 
   private removeUnreferencedBlobs(
@@ -1614,12 +1698,12 @@ export class PlaytestArtifactStore {
   }
 
   /**
-   * Remove expired references and garbage-collect unreferenced content while
-   * preserving active content-addressed blobs shared by multiple references.
-   */
+  Remove expired references and garbage-collect unreferenced content while
+  preserving active content-addressed blobs shared by multiple references.
+  */
   cleanup(now: number = this.now()): PlaytestArtifactCleanupResult {
-    const refsDirectory = safeJoin(this.root, this.workspaceId, "refs");
-    if (!this.fileSystem.existsSync(refsDirectory)) {
+    const referencesDirectory = safeJoin(this.root, this.workspaceId, "refs");
+    if (!this.fileSystem.existsSync(referencesDirectory)) {
       return {
         removedRefs: 0,
         removedBlobs: 0,
@@ -1627,7 +1711,7 @@ export class PlaytestArtifactStore {
         expiredRefs: []
       };
     }
-    const retained = this.collectRetainedReferences(refsDirectory, now);
+    const retained = this.collectRetainedReferences(referencesDirectory, now);
     return {
       removedRefs: retained.removedRefs,
       removedBlobs: this.removeUnreferencedBlobs(
@@ -1643,11 +1727,11 @@ export class PlaytestArtifactStore {
   }
 
   /**
-   * Remove a single artifact reference (and its backing file when no
-   * other reference still hashes to the same content). Idempotent: a
-   * reference that is already missing or expired is reported back as a
-   * no-op rather than throwing.
-   */
+  Remove a single artifact reference (and its backing file when no
+  other reference still hashes to the same content). Idempotent: a
+  reference that is already missing or expired is reported back as a
+  no-op rather than throwing.
+  */
   remove(reference: PlaytestArtifactReference): {
     readonly removed: boolean;
     readonly reason: PlaytestArtifactState;
@@ -1692,12 +1776,12 @@ export class PlaytestArtifactStore {
   }
 
   /**
-   * Authorize a reference: returns the stored metadata when the reference
-   * resolves under the bound workspace, otherwise null. The reference
-   * is never resolved against any other workspace; cross-workspace
-   * references always return null so the caller can report
-   * not-authorized without learning anything about the other workspace.
-   */
+  Authorize a reference: returns the stored metadata when the reference
+  resolves under the bound workspace, otherwise null. The reference
+  is never resolved against any other workspace; cross-workspace
+  references always return null so the caller can report
+  not-authorized without learning anything about the other workspace.
+  */
   private authorize(reference: PlaytestArtifactReference): {
     readonly metadata: PlaytestArtifactMetadata | null;
   } {
@@ -1742,14 +1826,14 @@ export class PlaytestArtifactStore {
     sha256: string,
     excludeArtifactId: string
   ): boolean {
-    const refsDirectory = safeJoin(this.root, this.workspaceId, "refs");
-    if (!this.fileSystem.existsSync(refsDirectory)) return false;
-    const entries = this.fileSystem.readdirSync(refsDirectory, {
+    const referencesDirectory = safeJoin(this.root, this.workspaceId, "refs");
+    if (!this.fileSystem.existsSync(referencesDirectory)) return false;
+    const entries = this.fileSystem.readdirSync(referencesDirectory, {
       withFileTypes: true
     });
     for (const entry of entries) {
       if (!entry.isFile()) continue;
-      const metadataFile = safeJoin(refsDirectory, entry.name);
+      const metadataFile = safeJoin(referencesDirectory, entry.name);
       let metadata: PlaytestArtifactMetadata;
       try {
         metadata = readMetadata(metadataFile, this.fileSystem);
@@ -1791,7 +1875,9 @@ export class PlaytestArtifactStore {
   }
 }
 
-/** Concatenate a sequence of Uint8Array chunks into one fresh Uint8Array. */
+/**
+Concatenate a sequence of Uint8Array chunks into one fresh Uint8Array.
+*/
 function concatBytes(chunks: readonly Uint8Array[]): Uint8Array {
   let total = 0;
   for (const chunk of chunks) total += chunk.byteLength;

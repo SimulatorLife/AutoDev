@@ -31,26 +31,26 @@ export interface WorkspacePlaytestApprovalFormProps {
   readonly pending: boolean;
   readonly onSubmit: React.FormEventHandler<HTMLFormElement>;
   /**
-   * The workspace's most recent approval, active or revoked, or `null` when
-   * none has ever been granted. A revoked record seeds every field so
-   * re-approving an unchanged build is a review rather than a blank form, and
-   * its `revision` becomes the form's `expectedRevision` -- the exact
-   * optimistic-concurrency token the Runtime checks before writing a new one.
-   */
+  The workspace's most recent approval, active or revoked, or `null` when
+  none has ever been granted. A revoked record seeds every field so
+  re-approving an unchanged build is a review rather than a blank form, and
+  its `revision` becomes the form's `expectedRevision` -- the exact
+  optimistic-concurrency token the Runtime checks before writing a new one.
+  */
   readonly priorApproval: WorkspacePlaytestApproval | null;
 }
 
 /**
- * The operator form that grants a checkout playtesting approval. Each batch
- * runs the checkout's latest commit, resolved by the Runtime at batch start,
- * so the form names no commit and a new commit needs no re-approval.
- *
- * Every field here is the whole grant: the Runtime refuses a game-run request
- * for anything this approval does not name, so a field left blank is not a
- * convenience default, it is a boundary the operator did not set. The native
- * labelled form uses an in-place client submission to the same-origin server
- * route, which forwards the mutation using the server-only Control API token.
- */
+The operator form that grants a checkout playtesting approval. Each batch
+runs the checkout's latest commit, resolved by the Runtime at batch start,
+so the form names no commit and a new commit needs no re-approval.
+
+Every field here is the whole grant: the Runtime refuses a game-run request
+for anything this approval does not name, so a field left blank is not a
+convenience default, it is a boundary the operator did not set. The native
+labelled form uses an in-place client submission to the same-origin server
+route, which forwards the mutation using the server-only Control API token.
+*/
 export function WorkspacePlaytestApprovalForm({
   workspaceId,
   priorApproval,

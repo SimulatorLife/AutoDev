@@ -12,10 +12,10 @@ import {
 } from "@simulatorlife/autodev-core";
 
 /**
- * Baseline evidence for a resource whose desired generation has been applied
- * and observed, so the default fixture is genuinely converged. Any test that
- * wants another state overrides the generations explicitly.
- */
+Baseline evidence for a resource whose desired generation has been applied
+and observed, so the default fixture is genuinely converged. Any test that
+wants another state overrides the generations explicitly.
+*/
 function makeEvidence(
   overrides: Partial<ReconciliationEvidence> = {}
 ): ReconciliationEvidence {

@@ -7,12 +7,11 @@ export {
   type PermissionPolicyKey,
   type PermissionPolicyRead,
   permissionPolicyRevision,
+  type PermissionPolicySource,
   readAntigravityCliPermissionDefaults,
   readAppliedPermissionPolicyFile,
   readPermissionPolicyFile,
-  readPermissionPolicySource,
-  type PermissionPolicySource
-} from "./config/permission-policy.ts";
+  readPermissionPolicySource} from "./config/permission-policy.ts";
 export {
   readWorkspaceCatalogRevision,
   updateWorkspaceCatalogEntry,

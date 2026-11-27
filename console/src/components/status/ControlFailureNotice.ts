@@ -7,15 +7,15 @@ import {
 import { CALLOUT_WARNING_CLASS } from "../layout/Callout.ts";
 
 /**
- * One sentence per refusal the route can actually observe.
- *
- * The notice's primary sentence is deliberately outcome-free -- the refreshed
- * value the redirect lands on is the authoritative answer -- but these are not
- * invented outcomes. They are reasons the route refused on its own, before or
- * instead of asking the Runtime, and they change what the operator should do
- * next. `confirmation_missing` in particular is the one case where the obvious
- * next action is simply to do what the form asked.
- */
+One sentence per refusal the route can actually observe.
+
+The notice's primary sentence is deliberately outcome-free -- the refreshed
+value the redirect lands on is the authoritative answer -- but these are not
+invented outcomes. They are reasons the route refused on its own, before or
+instead of asking the Runtime, and they change what the operator should do
+next. `confirmation_missing` in particular is the one case where the obvious
+next action is simply to do what the form asked.
+*/
 export function isControlRefusalReason(
   value: unknown
 ): value is ControlRefusalReason {
@@ -66,30 +66,30 @@ const REFUSAL_DETAIL: Record<ControlRefusalReason, string> = {
 };
 
 /**
- * Shown after a mutation could not be confirmed.
- *
- * One notice for every mutation surface, so a failed provider toggle, model
- * edit, or memory transition reads identically. It deliberately claims only
- * that the change is unconfirmed: the refreshed value the redirect lands on is
- * the authoritative answer, so the notice must not invent a more specific
- * outcome it cannot know.
- *
- * `refusal` adds one line *only* where the route observed a reason, passed as a
- * bounded code in an in-place result or fallback redirect rather than as a
- * message the Console chose. Every other mutation surface can continue to use
- * the generic notice without inventing a more specific outcome.
- *
- * It carries the shared warning callout rather than its own geometry, so a
- * mutation that could not be confirmed looks like every other warning the
- * Console shows.
- *
- * It stays. The root feedback owner is what ends a result: it announces the
- * outcome, counts the five seconds down and sends the operator here for the
- * reason -- "The server could not save these changes. Review the notice on
- * this page." A notice that left on its own would leave that pointer aimed at
- * nothing, and the reason is the one thing the operator has to act on. The
- * countdown lives in one place, so there is one set of words for it.
- */
+Shown after a mutation could not be confirmed.
+
+One notice for every mutation surface, so a failed provider toggle, model
+edit, or memory transition reads identically. It deliberately claims only
+that the change is unconfirmed: the refreshed value the redirect lands on is
+the authoritative answer, so the notice must not invent a more specific
+outcome it cannot know.
+
+`refusal` adds one line *only* where the route observed a reason, passed as a
+bounded code in an in-place result or fallback redirect rather than as a
+message the Console chose. Every other mutation surface can continue to use
+the generic notice without inventing a more specific outcome.
+
+It carries the shared warning callout rather than its own geometry, so a
+mutation that could not be confirmed looks like every other warning the
+Console shows.
+
+It stays. The root feedback owner is what ends a result: it announces the
+outcome, counts the five seconds down and sends the operator here for the
+reason -- "The server could not save these changes. Review the notice on
+this page." A notice that left on its own would leave that pointer aimed at
+nothing, and the reason is the one thing the operator has to act on. The
+countdown lives in one place, so there is one set of words for it.
+*/
 export function ControlFailureNotice({
   refusal
 }: ControlFailureNoticeProps): React.JSX.Element {
@@ -100,7 +100,7 @@ export function ControlFailureNotice({
     {
       role: "status",
       "data-control-outcome": "failed",
-      ...(refusal === undefined ? {} : { "data-control-refusal": refusal }),
+      ...(refusal !== undefined && { "data-control-refusal": refusal }),
       className: CALLOUT_WARNING_CLASS
     },
     "The change could not be confirmed. Check the current state before retrying.",

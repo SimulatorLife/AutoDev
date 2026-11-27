@@ -1,18 +1,18 @@
 /**
- * Core-owned, infrastructure-free consented human-study CSV/JSON import.
- *
- * Authorized export parsing, strict manifest/item mapping, and every policy
- * decision that Core cannot answer on its own (study approval, instrument
- * trust, consent validity, workspace/build linkage, episode linkage,
- * exposure sufficiency and response-window timing) are delegated to
- * explicit trusted callbacks supplied by the caller. This module never
- * touches the network or a datastore, and it never silently resolves a
- * duplicate participant\u00d7episode\u00d7instrument submission -- those are
- * always quarantined for an operator to resolve.
- *
- * See docs/playtesting-measurement-contract.md#7-human-labels-and-change-sensitivity
- * and docs/playtesting-target-state.md Human-calibrated quality scoring.
- */
+Core-owned, infrastructure-free consented human-study CSV/JSON import.
+
+Authorized export parsing, strict manifest/item mapping, and every policy
+decision that Core cannot answer on its own (study approval, instrument
+trust, consent validity, workspace/build linkage, episode linkage,
+exposure sufficiency and response-window timing) are delegated to
+explicit trusted callbacks supplied by the caller. This module never
+touches the network or a datastore, and it never silently resolves a
+duplicate participant\u00d7episode\u00d7instrument submission -- those are
+always quarantined for an operator to resolve.
+
+See docs/playtesting-measurement-contract.md#7-human-labels-and-change-sensitivity
+and docs/playtesting-target-state.md Human-calibrated quality scoring.
+*/
 
 import {
   type HumanExperienceResponse,
@@ -27,7 +27,7 @@ import {
   PLAYTESTS_HUMAN_STUDY_SCHEMA,
   PLAYTESTS_MINIPXI_ITEMS,
   PLAYTESTS_MISSING_REASONS,
-  type PlaytestVersionedRef
+  type PlaytestVersionedRef as PlaytestVersionedReference
 } from "./types.ts";
 
 const MAX_HUMAN_EXPORT_CHARACTERS = 2_000_000;
@@ -51,7 +51,9 @@ export const HUMAN_STUDY_COMPLETION_STATUSES = [
 export type HumanStudyCompletionStatus =
   (typeof HUMAN_STUDY_COMPLETION_STATUSES)[number];
 
-/** Published PXI construct IDs; each full-PXI construct has three items. */
+/**
+Published PXI construct IDs; each full-PXI construct has three items.
+*/
 export const PLAYTESTS_PXI_CONSTRUCTS = [
   "AA",
   "CH",
@@ -74,7 +76,9 @@ export interface HumanStudyPxiItemConstructMapping {
   }[];
 }
 
-/** Restricted-store response with completion and native scale provenance. */
+/**
+Restricted-store response with completion and native scale provenance.
+*/
 export interface HumanStudyResponse extends HumanExperienceResponse {
   readonly completionStatus: HumanStudyCompletionStatus;
   readonly nativeMinimum: number;
@@ -83,10 +87,14 @@ export interface HumanStudyResponse extends HumanExperienceResponse {
   readonly constructId?: PlaytestPxiConstructId;
 }
 
-/** Supported authorized export encodings for a human-study submission batch. */
+/**
+Supported authorized export encodings for a human-study submission batch.
+*/
 export type HumanStudyExportFormat = "csv" | "json";
 
-/** One native item column mapped from the export to a declared item id. */
+/**
+One native item column mapped from the export to a declared item id.
+*/
 export interface HumanStudyExportItemColumn {
   readonly itemId: string;
   readonly valueColumn: string;
@@ -94,10 +102,10 @@ export interface HumanStudyExportItemColumn {
 }
 
 /**
- * Explicit export-to-item mapping. There is no universal survey-export
- * schema; every column must be named here or the row is rejected as
- * malformed rather than guessed at.
- */
+Explicit export-to-item mapping. There is no universal survey-export
+schema; every column must be named here or the row is rejected as
+malformed rather than guessed at.
+*/
 export interface HumanStudyExportManifest {
   readonly studyIdColumn: string;
   readonly responseIdColumn: string;
@@ -119,21 +127,29 @@ export interface HumanStudyExportManifest {
   readonly orderColumn: string;
   readonly submittedAtColumn: string;
   readonly completionStatusColumn: string;
-  /** Required for project-authored instruments; their scale is never guessed. */
+  /**
+  Required for project-authored instruments; their scale is never guessed.
+  */
   readonly nativeScale?: {
     readonly minimum: number;
     readonly maximum: number;
     readonly unit: string;
   };
-  /** Full PXI mappings must be explicit and bound to the trusted instrument content hash. */
+  /**
+  Full PXI mappings must be explicit and bound to the trusted instrument content hash.
+  */
   readonly pxiItemConstructMapping?: HumanStudyPxiItemConstructMapping;
   readonly items: readonly HumanStudyExportItemColumn[];
 }
 
-/** One raw export row after format-specific parsing, before manifest mapping. */
+/**
+One raw export row after format-specific parsing, before manifest mapping.
+*/
 export type HumanStudyRawRow = Readonly<Record<string, string>>;
 
-/** Trusted operator/consent-system callbacks Core cannot answer itself. */
+/**
+Trusted operator/consent-system callbacks Core cannot answer itself.
+*/
 export interface HumanStudyImportValidators {
   readonly isApprovedStudy: (study: HumanPlaytestStudy) => boolean;
   readonly isWorkspaceAllowed: (
@@ -142,7 +158,7 @@ export interface HumanStudyImportValidators {
   ) => boolean;
   readonly isBuildAllowed: (
     study: HumanPlaytestStudy,
-    build: PlaytestVersionedRef
+    build: PlaytestVersionedReference
   ) => boolean;
   readonly isTrustedInstrumentVersion: (
     study: HumanPlaytestStudy,
@@ -150,7 +166,9 @@ export interface HumanStudyImportValidators {
     instrumentVersion: string,
     instrumentHash: string
   ) => boolean;
-  /** Confirms that the explicit item/construct mapping belongs to this exact published full-PXI hash. */
+  /**
+  Confirms that the explicit item/construct mapping belongs to this exact published full-PXI hash.
+  */
   readonly isTrustedPxiItemConstructMapping: (
     study: HumanPlaytestStudy,
     mapping: HumanStudyPxiItemConstructMapping
@@ -158,7 +176,7 @@ export interface HumanStudyImportValidators {
   readonly isValidEpisodeLink: (
     study: HumanPlaytestStudy,
     episodeId: string,
-    build: PlaytestVersionedRef
+    build: PlaytestVersionedReference
   ) => boolean;
   readonly isConsentValid: (
     study: HumanPlaytestStudy,
@@ -182,7 +200,9 @@ export interface HumanStudyImportValidators {
   ) => boolean;
 }
 
-/** Closed rejection vocabulary; never a free-form string a caller must parse. */
+/**
+Closed rejection vocabulary; never a free-form string a caller must parse.
+*/
 export const HUMAN_STUDY_IMPORT_REJECTION_REASONS = [
   REJECT_MALFORMED,
   "unapproved-study",
@@ -210,7 +230,9 @@ export interface HumanStudyImportRejection {
   readonly detail: string;
 }
 
-/** A duplicate participant\u00d7episode\u00d7instrument submission, held for operator choice. */
+/**
+A duplicate participant\u00d7episode\u00d7instrument submission, held for operator choice.
+*/
 export interface HumanStudyDuplicateQuarantine {
   readonly studyId: string;
   readonly participantId: string;
@@ -222,17 +244,25 @@ export interface HumanStudyDuplicateQuarantine {
 
 export interface HumanStudyImportOutcome {
   readonly accepted: readonly HumanStudyResponse[];
-  /** Re-imported (studyId, responseId) pairs whose content exactly matched; no new rows were produced. */
+  /**
+  Re-imported (studyId, responseId) pairs whose content exactly matched; no new rows were produced.
+  */
   readonly unchanged: readonly HumanStudyResponse[];
-  /** responseIds a newly accepted amendment supersedes. */
+  /**
+  responseIds a newly accepted amendment supersedes.
+  */
   readonly superseded: readonly string[];
   readonly rejected: readonly HumanStudyImportRejection[];
   readonly quarantined: readonly HumanStudyDuplicateQuarantine[];
-  /** Raw duplicate candidates for the restricted Data owner to retain privately until operator resolution. */
+  /**
+  Raw duplicate candidates for the restricted Data owner to retain privately until operator resolution.
+  */
   readonly quarantinedResponses: readonly HumanStudyResponse[];
 }
 
-/** Parse an authorized export into uniform string-keyed rows. No schema is assumed beyond the manifest. */
+/**
+Parse an authorized export into uniform string-keyed rows. No schema is assumed beyond the manifest.
+*/
 export function parseHumanStudyExportRows(
   raw: string,
   format: HumanStudyExportFormat
@@ -390,7 +420,9 @@ function splitCsvLines(raw: string): readonly (readonly string[])[] {
   return state.rows;
 }
 
-/** Strict reader for a flat array of objects with unique string-keyed scalar fields. */
+/**
+Strict reader for a flat array of objects with unique string-keyed scalar fields.
+*/
 class StrictHumanJsonRowsParser {
   private offset = 0;
   private readonly input: string;
@@ -477,11 +509,11 @@ class StrictHumanJsonRowsParser {
     if (this.input[this.offset] !== '"')
       throw new TypeError("Human-study JSON object keys must be strings.");
     const start = this.offset++;
-    let escaped = false;
+    let isEscaped = false;
     while (this.offset < this.input.length) {
       const char = this.input[this.offset++]!;
-      if (escaped) escaped = false;
-      else if (char === "\\") escaped = true;
+      if (isEscaped) isEscaped = false;
+      else if (char === "\\") isEscaped = true;
       else if (char === '"') {
         try {
           const parsed: unknown = JSON.parse(
@@ -660,7 +692,9 @@ function scanExponent(input: string, index: number): number | null {
     : null;
 }
 
-/** Scan the JSON/decimal numeric grammar without coercive parsing or backtracking regexes. */
+/**
+Scan the JSON/decimal numeric grammar without coercive parsing or backtracking regexes.
+*/
 function scanNumericText(input: string, start: number): number | null {
   let index = start;
   if (input[index] === "-") index += 1;
@@ -727,7 +761,9 @@ function positiveInteger(value: string): number | null {
   return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
-/** Strict finite decimal text; hex, whitespace, Infinity and empty strings never coerce. */
+/**
+Strict finite decimal text; hex, whitespace, Infinity and empty strings never coerce.
+*/
 export function parseStrictHumanNumber(value: string): number | null {
   const end = scanNumericText(value, 0);
   if (end === null || end !== value.length) return null;
@@ -844,7 +880,7 @@ interface RowFields {
   readonly instrumentVersion: string;
   readonly instrumentHash: string;
   readonly workspaceId: string;
-  readonly build: PlaytestVersionedRef;
+  readonly build: PlaytestVersionedReference;
   readonly episodeId: string;
   readonly exposureStartedAt: string;
   readonly exposureEndedAt: string;
@@ -875,7 +911,7 @@ function readRowFields(
     build: {
       id: read(manifest.buildIdColumn),
       version: read(manifest.buildVersionColumn),
-      ...(buildHash ? { contentHash: buildHash } : {})
+      ...(buildHash && { contentHash: buildHash })
     },
     episodeId: read(manifest.episodeIdColumn),
     exposureStartedAt: read(manifest.exposureStartedAtColumn),
@@ -966,7 +1002,9 @@ function orderMatchesDesign(study: HumanPlaytestStudy, order: string): boolean {
   return study.orderDesign === "A/B" ? order === "A-first" : true;
 }
 
-/** Structural checks, then authoritative study identity, then trusted callbacks (which can only restrict). */
+/**
+Structural checks, then authoritative study identity, then trusted callbacks (which can only restrict).
+*/
 function validateRow(
   study: HumanPlaytestStudy,
   fields: RowFields,
@@ -1010,7 +1048,7 @@ function validateRowShape(
 
 function studyAllowsBuild(
   study: HumanPlaytestStudy,
-  build: PlaytestVersionedRef
+  build: PlaytestVersionedReference
 ): boolean {
   return study.allowedBuilds.some((allowed) =>
     samePlaytestBuild(allowed, build)
@@ -1218,14 +1256,10 @@ function mapRowItems(
       nativeMinimum: scale.minimum,
       nativeMaximum: scale.maximum,
       nativeUnit: scale.unit,
-      ...(constructByItem.has(itemColumn.itemId)
-        ? { constructId: constructByItem.get(itemColumn.itemId)! }
-        : {}),
+      ...(constructByItem.has(itemColumn.itemId) && { constructId: constructByItem.get(itemColumn.itemId)! }),
       itemId: itemColumn.itemId,
       nativeValue: result.nativeValue,
-      ...(result.missingReason === undefined
-        ? {}
-        : { missingReason: result.missingReason }),
+      ...(result.missingReason !== undefined && { missingReason: result.missingReason }),
       withdrawn: false
     });
   }
@@ -1265,7 +1299,9 @@ function rejection(
   return { rowIndex, studyId: study.studyId, responseId, ...problem };
 }
 
-/** Parse and validate each row into candidate response groups. */
+/**
+Parse and validate each row into candidate response groups.
+*/
 function collectCandidates(
   study: HumanPlaytestStudy,
   rows: readonly HumanStudyRawRow[],
@@ -1278,7 +1314,7 @@ function collectCandidates(
   const scale = resolveNativeScale(study, manifest);
   const candidates = new Map<string, Candidate>();
   const seenIds = new Set<string>();
-  rows.forEach((row, rowIndex) => {
+  for (const [rowIndex, row] of rows.entries()) {
     if (!hasExactManifestShape(row, expectedColumns)) {
       rejected.push(
         rejection(study, rowIndex, null, {
@@ -1287,7 +1323,7 @@ function collectCandidates(
             "Row columns do not exactly match the bounded export manifest."
         })
       );
-      return;
+      continue;
     }
     const fields = readRowFields(row, manifest);
     const responseId = fields.responseId || null;
@@ -1298,27 +1334,29 @@ function collectCandidates(
           detail: "Each export row must have a unique responseId."
         })
       );
-      return;
+      continue;
     }
     if (responseId !== null) seenIds.add(responseId);
     const problem = validateRow(study, fields, validators);
     if (problem) {
       rejected.push(rejection(study, rowIndex, responseId, problem));
-      return;
+      continue;
     }
     const items = mapRowItems(row, fields, manifest, scale, constructByItem);
     if (!Array.isArray(items)) {
       rejected.push(
         rejection(study, rowIndex, responseId, items as RowProblem)
       );
-      return;
+      continue;
     }
     candidates.set(fields.responseId, { rowIndex, items });
-  });
+  }
   return candidates;
 }
 
-/** (studyId,responseId) is idempotent only when the full response provenance matches. */
+/**
+(studyId,responseId) is idempotent only when the full response provenance matches.
+*/
 function splitIdempotentReplays(
   study: HumanPlaytestStudy,
   candidates: Map<string, Candidate>,
@@ -1405,7 +1443,9 @@ function addToLineage(
   lineages.set(key, ids);
 }
 
-/** Duplicate participant x episode x instrument submissions are never silently counted twice. */
+/**
+Duplicate participant x episode x instrument submissions are never silently counted twice.
+*/
 function detectDuplicates(
   candidates: ReadonlyMap<string, Candidate>,
   existing: ExistingIndex,
@@ -1469,7 +1509,9 @@ function rejectedOutcome(
   };
 }
 
-/** Validate and map an authorized export. Re-imports are full-provenance idempotent. */
+/**
+Validate and map an authorized export. Re-imports are full-provenance idempotent.
+*/
 export function importHumanStudyResponses(
   study: HumanPlaytestStudy,
   rows: readonly HumanStudyRawRow[],

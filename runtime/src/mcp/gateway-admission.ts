@@ -65,7 +65,9 @@ function readAdmissionKey(file: string): string {
   return value;
 }
 
-/** The keys are usable only in the gateway's owned private directory. */
+/**
+The keys are usable only in the gateway's owned private directory.
+*/
 export function readLocalAdmission(
   codexHome: string
 ): { key: string; secret: string } | null {
@@ -81,7 +83,9 @@ export function readLocalAdmission(
   }
 }
 
-/** Generate missing keys exclusively; never rotate or repair an existing key silently. */
+/**
+Generate missing keys exclusively; never rotate or repair an existing key silently.
+*/
 export function ensureLocalAdmission(codexHome: string): void {
   ensurePrivateDirectory(mcpGatewayDirectory(codexHome));
   const files = localAdmissionPaths(codexHome);
@@ -130,7 +134,7 @@ export function localSurfaceUrl(
     return typeof mcpPort === "number" &&
       Number.isSafeInteger(mcpPort) &&
       mcpPort > 0 &&
-      mcpPort <= 65535
+      mcpPort <= 65_535
       ? new URL(
           `http://127.0.0.1:${String(mcpPort)}/local/${role}/${server}/mcp`
         )
@@ -180,7 +184,9 @@ export interface GatewayAdmissionContext {
   readonly node: string;
   readonly home: string;
   readonly codexHome: string;
-  /** The same reviewed workspace used by install-time policy discovery. */
+  /**
+  The same reviewed workspace used by install-time policy discovery.
+  */
   readonly catalogueWorkspace: string;
   /**
   The installed Runtime source tree the backends run from.

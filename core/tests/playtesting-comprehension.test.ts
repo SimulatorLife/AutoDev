@@ -345,18 +345,20 @@ test("controlled intervention cannot advance without qualified human evidence an
 });
 
 /**
- * Observer competence is a rung of the ladder, not a precondition the caller
- * asserts.
- *
- * `stage2ObserverCompetenceVerified` was a bare boolean: a caller could pass
- * `true` on the strength of nothing and the ladder would go on to
- * human-confusion conclusions, which is exactly the distinction the contract
- * says stage 2 exists to protect — model error cannot be separated from
- * observer deficiency without an independently initialized, competence-checked
- * observer. Naming the observers closes that, and gives `PlayerPolicyValidity`
- * its first consumer.
- */
-/** A ladder input that reaches stage 3, so only the observer gate varies. */
+Observer competence is a rung of the ladder, not a precondition the caller
+asserts.
+
+`stage2ObserverCompetenceVerified` was a bare boolean: a caller could pass
+`true` on the strength of nothing and the ladder would go on to
+human-confusion conclusions, which is exactly the distinction the contract
+says stage 2 exists to protect — model error cannot be separated from
+observer deficiency without an independently initialized, competence-checked
+observer. Naming the observers closes that, and gives `PlayerPolicyValidity`
+its first consumer.
+*/
+/**
+A ladder input that reaches stage 3, so only the observer gate varies.
+*/
 function ladderBase(): EvaluateDiagnosticLadderInput {
   return {
     mechanicKey: "heat-management",
@@ -403,7 +405,7 @@ test("an unnamed observer is not a verified observer", () => {
 
 test("an unusable observer reference is refused rather than counted", () => {
   const base = ladderBase();
-  for (const ids of [["   "], [""], ["observer-1", "  "]]) {
+  for (const ids of [[' '.repeat(3)], [""], ["observer-1", "  "]]) {
     const result = evaluateDiagnosticLadder({
       ...base,
       stage2VerifiedObserverIds: ids

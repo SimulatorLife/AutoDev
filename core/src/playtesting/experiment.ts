@@ -1,25 +1,25 @@
 /**
- * PlaytestExperiment contract and state lifecycle (measurement-contract §5).
- *
- * An experiment manifest freezes an approved baseline/treatment pair,
- * allocation, inventories, analysis plan and budget before any outcome
- * exists. This module owns two things only: strict runtime validation of
- * that frozen shape, and the explicit state machine that governs how an
- * experiment's state may change over time. It never computes metrics,
- * comparisons or owner decisions -- those stay in comparison.ts; an
- * owner-decided experiment is only as trustworthy as the comparison it
- * references, which this module requires but does not produce.
- *
- * Every transition is a pure function: given a frozen experiment and a
- * requested next state, it either throws (illegal transition, unknown
- * state, missing required field, duplicate attempt/comparison/decision) or
- * returns a brand-new, version-incremented experiment object. Nothing is
- * mutated in place and nothing is ever deleted; a denied, cancelled,
- * execution-failed or inconclusive attempt remains a permanently visible
- * record, not a silently retried draft. A game failure moves an experiment
- * to the terminal execution-failed state as an observation; it is never
- * automatically re-queued into running.
- */
+PlaytestExperiment contract and state lifecycle (measurement-contract §5).
+
+An experiment manifest freezes an approved baseline/treatment pair,
+allocation, inventories, analysis plan and budget before any outcome
+exists. This module owns two things only: strict runtime validation of
+that frozen shape, and the explicit state machine that governs how an
+experiment's state may change over time. It never computes metrics,
+comparisons or owner decisions -- those stay in comparison.ts; an
+owner-decided experiment is only as trustworthy as the comparison it
+references, which this module requires but does not produce.
+
+Every transition is a pure function: given a frozen experiment and a
+requested next state, it either throws (illegal transition, unknown
+state, missing required field, duplicate attempt/comparison/decision) or
+returns a brand-new, version-incremented experiment object. Nothing is
+mutated in place and nothing is ever deleted; a denied, cancelled,
+execution-failed or inconclusive attempt remains a permanently visible
+record, not a silently retried draft. A game failure moves an experiment
+to the terminal execution-failed state as an observation; it is never
+automatically re-queued into running.
+*/
 
 import { isRecord } from "../shared/object-guards.ts";
 import { SHA256_PATTERN } from "../shared/sha256.ts";
@@ -30,7 +30,7 @@ import {
   type PlaytestExperimentState,
   PLAYTESTS_EXPERIMENT_SCHEMA,
   PLAYTESTS_EXPERIMENT_STATES,
-  type PlaytestVersionedRef
+  type PlaytestVersionedRef as PlaytestVersionedReference
 } from "./types.ts";
 
 const EXPOSURE_UNITS = [
@@ -67,10 +67,10 @@ function nonEmptyString(
 }
 
 /**
- * Canonical hash input for the immutable experiment design. Lifecycle state,
- * revision, attempts, comparison and owner decision are excluded: they are
- * append-only revisions of one frozen assignment/analysis plan.
- */
+Canonical hash input for the immutable experiment design. Lifecycle state,
+revision, attempts, comparison and owner decision are excluded: they are
+append-only revisions of one frozen assignment/analysis plan.
+*/
 export function playtestExperimentHashInput(
   experiment: PlaytestExperiment
 ): string {
@@ -168,10 +168,10 @@ function isIsoTimestamp(value: unknown): value is string {
   );
 }
 
-function assertVersionedRef(
+function assertVersionedReference(
   value: unknown,
   field: string
-): asserts value is PlaytestVersionedRef {
+): asserts value is PlaytestVersionedReference {
   if (!isRecord(value)) throw new TypeError(field + " must be an object.");
   const allowed = new Set(["id", "version", "contentHash"]);
   if (Object.keys(value).some((key) => !allowed.has(key))) {
@@ -231,13 +231,13 @@ const BUDGET_FIELDS = [
 ] as const;
 
 /**
- * Strictly validate the full, frozen PlaytestExperiment manifest shape:
- * immutable identity, baseline/treatment artifact identity, allocation
- * (pair map and per-unit arm assignment), discovery/confirmation
- * inventories, analysis plan and budget. This is the only gate between an
- * untrusted record and a trusted PlaytestExperiment; every field is
- * checked, not just the ones a particular caller happens to read.
- */
+Strictly validate the full, frozen PlaytestExperiment manifest shape:
+immutable identity, baseline/treatment artifact identity, allocation
+(pair map and per-unit arm assignment), discovery/confirmation
+inventories, analysis plan and budget. This is the only gate between an
+untrusted record and a trusted PlaytestExperiment; every field is
+checked, not just the ones a particular caller happens to read.
+*/
 export function assertPlaytestExperiment(
   value: unknown
 ): asserts value is PlaytestExperiment {
@@ -269,8 +269,8 @@ export function assertPlaytestExperiment(
   );
   nonEmptyString(experiment.benchmarkId, "PlaytestExperiment.benchmarkId");
 
-  assertVersionedRef(experiment.baseline, "PlaytestExperiment.baseline");
-  assertVersionedRef(experiment.treatment, "PlaytestExperiment.treatment");
+  assertVersionedReference(experiment.baseline, "PlaytestExperiment.baseline");
+  assertVersionedReference(experiment.treatment, "PlaytestExperiment.treatment");
   if (experiment.baseline.id === experiment.treatment.id) {
     throw new TypeError(
       "PlaytestExperiment baseline and treatment must be distinct approved artifacts."
@@ -566,15 +566,15 @@ function assertExperimentLifecycleState(experiment: PlaytestExperiment): void {
 }
 
 /**
- * Explicit allowed-transition table (measurement-contract §5). The main
- * path is draft -> approved -> running -> completed -> analyzed ->
- * owner-decided. denied, cancelled, execution-failed and inconclusive are
- * terminal attempt results reachable from the step where the
- * corresponding failure/ambiguity is discovered; none of them lead
- * anywhere else. running may transition to itself: an infrastructure
- * retry creates a new attempt under the same assignment without erasing
- * the previous one.
- */
+Explicit allowed-transition table (measurement-contract §5). The main
+path is draft -> approved -> running -> completed -> analyzed ->
+owner-decided. denied, cancelled, execution-failed and inconclusive are
+terminal attempt results reachable from the step where the
+corresponding failure/ambiguity is discovered; none of them lead
+anywhere else. running may transition to itself: an infrastructure
+retry creates a new attempt under the same assignment without erasing
+the previous one.
+*/
 export const PLAYTESTS_EXPERIMENT_TRANSITIONS: Readonly<
   Record<PlaytestExperimentState, readonly PlaytestExperimentState[]>
 > = {
@@ -590,7 +590,9 @@ export const PLAYTESTS_EXPERIMENT_TRANSITIONS: Readonly<
   inconclusive: []
 };
 
-/** Is 'to' a permitted next state from 'from' per the table above? */
+/**
+Is 'to' a permitted next state from 'from' per the table above?
+*/
 export function isPlaytestExperimentTransitionAllowed(
   from: PlaytestExperimentState,
   to: PlaytestExperimentState
@@ -598,26 +600,34 @@ export function isPlaytestExperimentTransitionAllowed(
   return PLAYTESTS_EXPERIMENT_TRANSITIONS[from].includes(to);
 }
 
-/** Inputs accompanying a requested state transition. */
+/**
+Inputs accompanying a requested state transition.
+*/
 export interface PlaytestExperimentTransitionInput {
   readonly to: PlaytestExperimentState;
-  /** Required and must be previously-unseen when (re-)entering 'running'. */
+  /**
+  Required and must be previously-unseen when (re-)entering 'running'.
+  */
   readonly attemptId?: string;
-  /** Required exactly once, when entering 'analyzed'; immutable afterward. */
+  /**
+  Required exactly once, when entering 'analyzed'; immutable afterward.
+  */
   readonly comparisonId?: string;
-  /** Required exactly once, when entering 'owner-decided'; immutable afterward. */
+  /**
+  Required exactly once, when entering 'owner-decided'; immutable afterward.
+  */
   readonly ownerDecision?: string;
 }
 
 /**
- * Apply one state transition to a frozen experiment. Throws on an unknown
- * target state, an illegal transition per the table above, a duplicate
- * attempt id, or a missing/duplicate comparisonId/ownerDecision. On
- * success, returns a brand-new experiment object with version incremented
- * by exactly one; every other immutable field (identity, inventories,
- * allocation, analysis plan, budget) is carried over unchanged. Never
- * mutates its input.
- */
+Apply one state transition to a frozen experiment. Throws on an unknown
+target state, an illegal transition per the table above, a duplicate
+attempt id, or a missing/duplicate comparisonId/ownerDecision. On
+success, returns a brand-new experiment object with version incremented
+by exactly one; every other immutable field (identity, inventories,
+allocation, analysis plan, budget) is carried over unchanged. Never
+mutates its input.
+*/
 export function transitionPlaytestExperiment(
   experiment: PlaytestExperiment,
   input: PlaytestExperimentTransitionInput

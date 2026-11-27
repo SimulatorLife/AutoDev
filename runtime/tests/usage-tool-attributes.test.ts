@@ -8,13 +8,13 @@ import {
 } from "../src/router/usage.ts";
 
 /**
- * The names a server and a tool are recorded under.
- *
- * These are read from the telemetry as it arrives, so the names have to be the
- * names the telemetry uses. A span whose server cannot be named is a span
- * that belongs to no server: the call is counted, and the Console shows the
- * MCP as unused.
- */
+The names a server and a tool are recorded under.
+
+These are read from the telemetry as it arrives, so the names have to be the
+names the telemetry uses. A span whose server cannot be named is a span
+that belongs to no server: the call is counted, and the Console shows the
+MCP as unused.
+*/
 
 test("a server named the way the Runtime's MCP client names it is found", () => {
   // The Runtime's own MCP client writes `mcp.server.name`, and it is the

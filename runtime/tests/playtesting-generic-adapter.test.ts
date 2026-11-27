@@ -229,14 +229,14 @@ test("a broken reference fails before any episode starts", async () => {
 });
 
 test("a missing required binding is refused before the entry is loaded", async () => {
-  let loaded = false;
+  let isLoaded = false;
   await assert.rejects(
     createGenericAdapter({
       binding: binding({
         bindings: { capabilities: { export: "capabilities" } }
       }),
       loadEntry: () => {
-        loaded = true;
+        isLoaded = true;
         return game();
       },
       engineBuild: "b",
@@ -252,7 +252,7 @@ test("a missing required binding is refused before the entry is loaded", async (
       return true;
     }
   );
-  assert.equal(loaded, false, "a broken declaration must not run game code");
+  assert.equal(isLoaded, false, "a broken declaration must not run game code");
 });
 
 test("a bound function that throws is reported as a game failure", async () => {

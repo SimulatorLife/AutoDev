@@ -53,11 +53,11 @@ export function resolveConsolePort(
 }
 
 export function resolveConsoleEnsureOptions(
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): ConsoleEnsureOptions {
-  const home = env.HOME?.trim() || homedir();
-  const codexHome = env.CODEX_HOME?.trim() || path.join(home, ".codex");
-  const port = resolveConsolePort(env.AUTODEV_CONSOLE_PORT);
+  const home = environment.HOME?.trim() || homedir();
+  const codexHome = environment.CODEX_HOME?.trim() || path.join(home, ".codex");
+  const port = resolveConsolePort(environment.AUTODEV_CONSOLE_PORT);
   return {
     host: "127.0.0.1",
     port,
@@ -71,13 +71,13 @@ export function resolveConsoleEnsureOptions(
     launcher: path.join(codexHome, "hooks", "run-autodev-console.sh"),
     nodeBin: resolveServiceNode(home),
     readyTimeoutMs:
-      Number.parseInt(env.AUTODEV_CONSOLE_READY_TIMEOUT_MS ?? "5000") ||
+      Number.parseInt(environment.AUTODEV_CONSOLE_READY_TIMEOUT_MS ?? "5000") ||
       DEFAULT_READY_TIMEOUT_MS,
     logPath: path.join(codexHome, "run", "autodev-console.fallback.log")
   };
 }
 
-function defaultDeps(options: ConsoleEnsureOptions): ConsoleEnsureDeps {
+function defaultDependencies(options: ConsoleEnsureOptions): ConsoleEnsureDeps {
   const endpoint = `http://${options.host}:${options.port}/api/health`;
   return {
     launchd: new LaunchdClient(),
@@ -109,47 +109,53 @@ function defaultDeps(options: ConsoleEnsureOptions): ConsoleEnsureDeps {
 
 async function startFallback(
   options: ConsoleEnsureOptions,
-  deps: ConsoleEnsureDeps
+  dependencies: ConsoleEnsureDeps
 ): Promise<number> {
-  if (!deps.launcherExists()) {
+  if (!dependencies.launcherExists()) {
     writeErrorLine(`Console launcher is missing: ${options.launcher}`);
     return 1;
   }
-  deps.startFallback(options.launcher, options.logPath);
-  if (await waitForProbe(deps, options.readyTimeoutMs)) return 0;
+  dependencies.startFallback(options.launcher, options.logPath);
+  if (await waitForProbe(dependencies, options.readyTimeoutMs)) return 0;
   writeErrorLine(
     `Console did not become ready at http://${options.host}:${options.port}/api/health.`
   );
   return 1;
 }
 
-/** Ensure the production Console is reachable, preferring its managed LaunchAgent. */
+/**
+Ensure the production Console is reachable, preferring its managed LaunchAgent.
+*/
 export async function ensureConsole(
   options: ConsoleEnsureOptions = resolveConsoleEnsureOptions(),
-  deps: ConsoleEnsureDeps = defaultDeps(options)
+  dependencies: ConsoleEnsureDeps = defaultDependencies(options)
 ): Promise<number> {
-  if (await deps.probe()) return 0;
-  if (!deps.launchdAvailable()) return startFallback(options, deps);
+  if (await dependencies.probe()) return 0;
+  if (!dependencies.launchdAvailable()) return startFallback(options, dependencies);
 
-  if (deps.launchd.isLoaded(options.label)) {
+  if (dependencies.launchd.isLoaded(options.label)) {
     try {
-      deps.launchd.kickstart(options.label);
+      dependencies.launchd.kickstart(options.label);
     } catch {
-      /* report after readiness */
+      /*
+      report after readiness
+      */
     }
-    if (await waitForProbe(deps, options.readyTimeoutMs)) return 0;
+    if (await waitForProbe(dependencies, options.readyTimeoutMs)) return 0;
     writeErrorLine(
       `Console LaunchAgent ${options.label} did not become ready.`
     );
     return 1;
   }
 
-  if (deps.plistExists()) {
+  if (dependencies.plistExists()) {
     try {
-      deps.launchd.bootstrap(options.plist);
-      if (await waitForProbe(deps, options.readyTimeoutMs)) return 0;
+      dependencies.launchd.bootstrap(options.plist);
+      if (await waitForProbe(dependencies, options.readyTimeoutMs)) return 0;
     } catch {
-      /* launchd may be unavailable inside a sandbox */
+      /*
+      launchd may be unavailable inside a sandbox
+      */
     }
     writeErrorLine(
       `Console LaunchAgent ${options.label} did not become ready.`
@@ -157,7 +163,7 @@ export async function ensureConsole(
     return 1;
   }
 
-  return startFallback(options, deps);
+  return startFallback(options, dependencies);
 }
 
 if (isEntryPoint(import.meta.url)) {

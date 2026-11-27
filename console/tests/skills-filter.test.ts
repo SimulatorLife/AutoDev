@@ -84,7 +84,7 @@ function renderSkills(
       assignmentRoles: ["worker", "reviewer"],
       executionContractRevision: "a".repeat(64),
       telemetry: { observed: false, bySkill: new Map() },
-      ...(role === undefined ? {} : { role })
+      ...(role !== undefined && { role })
     })
   );
 }
@@ -116,7 +116,7 @@ test("a role keeps the skills assigned to it", () => {
 test("an empty role is the whole catalogue", () => {
   assert.equal(filterSkills(CATALOG, { role: "" }, ROLES_BY_SKILL).length, 3);
   assert.equal(
-    filterSkills(CATALOG, { role: "   " }, ROLES_BY_SKILL).length,
+    filterSkills(CATALOG, { role: ' '.repeat(3) }, ROLES_BY_SKILL).length,
     3
   );
 });

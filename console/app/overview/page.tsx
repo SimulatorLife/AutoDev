@@ -16,7 +16,9 @@ export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = { title: "Overview" };
 
-/** Awaits the slow source reads so the landing content can stream first. */
+/**
+Awaits the slow source reads so the landing content can stream first.
+*/
 async function OverviewSignalsSection({
   config
 }: {

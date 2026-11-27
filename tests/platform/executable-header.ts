@@ -1,4 +1,6 @@
-/** The first bytes of an executable for `arch`, which is all the check reads. */
+/**
+The first bytes of an executable for `arch`, which is all the check reads.
+*/
 export function executableHeader(
   arch: "arm64" | "amd64" | "universal" | "elf-arm64" | "elf-amd64"
 ): Buffer {

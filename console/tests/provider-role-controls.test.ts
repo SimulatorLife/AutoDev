@@ -63,11 +63,11 @@ const mockDiscovery: ProviderModelDiscoveryState = {
 };
 
 /**
- * The provider-level reconciliation the Runtime reports on the providers read.
- *
- * These fixtures exercise the role controls, so the provider's own view is a
- * fixed converged state: the role panels carry their own per-role convergence.
- */
+The provider-level reconciliation the Runtime reports on the providers read.
+
+These fixtures exercise the role controls, so the provider's own view is a
+fixed converged state: the role panels carry their own per-role convergence.
+*/
 const providerReconciliation: ReconciliationView = {
   status: {
     convergence: "converged",
@@ -252,13 +252,13 @@ test("ProviderRoleControls carries preserved reasoningEffort hidden input when r
 });
 
 /**
- * The Claude provider's orchestrator role as the Runtime reports it when the
- * role holds no model of its own.
- *
- * The effort is the provider's configured orchestrator effort, and no catalog
- * states which efforts the model the role will run supports: the levels are
- * unobserved, which is a different fact from "this model supports no effort".
- */
+The Claude provider's orchestrator role as the Runtime reports it when the
+role holds no model of its own.
+
+The effort is the provider's configured orchestrator effort, and no catalog
+states which efforts the model the role will run supports: the levels are
+unobserved, which is a different fact from "this model supports no effort".
+*/
 const mockClaudeUnobservedProvider: ControlApiProviderRecord = {
   ...mockClaudeProvider,
   roles: {
@@ -275,7 +275,9 @@ const mockClaudeUnobservedProvider: ControlApiProviderRecord = {
   }
 };
 
-/** The markup of one role's form, so an assertion can name the role it means. */
+/**
+The markup of one role's form, so an assertion can name the role it means.
+*/
 function roleForm(markup: string, provider: string, role: string): string {
   const marker = `data-role-form="${provider}-${role}"`;
   const start = markup.indexOf(marker);
@@ -342,17 +344,17 @@ test("every role select is submitted by the page-level listener and shows the Ru
 });
 
 test("POST /api/providers/[provider]/roles/[role] rejects non-same-origin requests", async () => {
-  const req = new NextRequest(
+  const request = new NextRequest(
     "http://127.0.0.1:3000/api/providers/claude/roles/subagent",
     {
       method: "POST",
       headers: {
         host: "127.0.0.1:3000",
-        origin: "http://evil.com"
+        origin: "https://evil.com"
       }
     }
   );
-  const res = await POST(req, {
+  const res = await POST(request, {
     params: Promise.resolve({ provider: "claude", role: "subagent" })
   });
   assert.equal(res.status, 303);
@@ -371,7 +373,7 @@ test("POST /api/providers/[provider]/roles/[role] rejects invalid field count", 
     extraField: "bad"
   }).toString();
 
-  const req = new NextRequest(
+  const request = new NextRequest(
     "http://127.0.0.1:3000/api/providers/claude/roles/subagent",
     {
       method: "POST",
@@ -383,7 +385,7 @@ test("POST /api/providers/[provider]/roles/[role] rejects invalid field count", 
       body
     }
   );
-  const res = await POST(req, {
+  const res = await POST(request, {
     params: Promise.resolve({ provider: "claude", role: "subagent" })
   });
   assert.equal(res.status, 303);
@@ -392,21 +394,21 @@ test("POST /api/providers/[provider]/roles/[role] rejects invalid field count", 
 });
 
 /**
- * The refusal the operator is shown for each code the Runtime answers a
- * provider-role mutation with.
- *
- * The Runtime states its reasons with machine-readable codes, and each asks for
- * a different next move, so a code the route drops on the floor leaves the
- * operator with a notice that says only "could not be confirmed". A code this
- * build does not know keeps the generic notice: the generic notice makes no
- * claim about the Runtime's reason, which is the only honest thing to say
- * about a reason this build has not read.
- */
+The refusal the operator is shown for each code the Runtime answers a
+provider-role mutation with.
+
+The Runtime states its reasons with machine-readable codes, and each asks for
+a different next move, so a code the route drops on the floor leaves the
+operator with a notice that says only "could not be confirmed". A code this
+build does not know keeps the generic notice: the generic notice makes no
+claim about the Runtime's reason, which is the only honest thing to say
+about a reason this build has not read.
+*/
 async function refusalForCode(
   status: number,
   code: string
 ): Promise<string | undefined> {
-  const previousFetch = globalThis.fetch;
+  const previousFetch = fetch;
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   process.env.AUTODEV_CONTROL_API_TOKEN = "p".repeat(64);
   globalThis.fetch = (async () =>
@@ -478,12 +480,12 @@ test("an unrecognised Runtime code keeps the generic notice rather than guessing
 });
 
 /**
- * The rejection lines a mutation route wrote to stderr while `run` ran.
- *
- * A change the Console turned away never reached the Runtime's audit, so an
- * operator's Disabled orchestrator role left no trace anywhere when it did
- * not land; these lines are that trace.
- */
+The rejection lines a mutation route wrote to stderr while `run` ran.
+
+A change the Console turned away never reached the Runtime's audit, so an
+operator's Disabled orchestrator role left no trace anywhere when it did
+not land; these lines are that trace.
+*/
 async function rejectionLines(
   run: () => Promise<unknown>
 ): Promise<Array<Record<string, unknown>>> {
@@ -537,12 +539,12 @@ test("a role change the Console turns away is logged with its cause", async () =
   // A rejected change must not reach any Control API, least of all the
   // Runtime this machine runs: the Console falls back to the real service
   // credential in CODEX_HOME when the variable is unset.
-  const realFetch = globalThis.fetch;
+  const realFetch = fetch;
   globalThis.fetch = (async () => {
     throw new Error("a rejected change must not reach the Control API");
   }) as typeof fetch;
   try {
-    const params = {
+    const parameters = {
       params: Promise.resolve({ provider: "claude", role: "orchestrator" })
     };
     const crossOrigin = await rejectionLines(() =>
@@ -550,7 +552,7 @@ test("a role change the Console turns away is logged with its cause", async () =
         orchestratorRoleRequest(DISABLE_ORCHESTRATOR, {
           origin: "http://evil.example"
         }),
-        params
+        parameters
       )
     );
     assert.equal(crossOrigin.length, 1);
@@ -562,7 +564,7 @@ test("a role change the Console turns away is logged with its cause", async () =
 
     const { model: _dropped, ...withoutModel } = DISABLE_ORCHESTRATOR;
     const missingField = await rejectionLines(() =>
-      POST(orchestratorRoleRequest(withoutModel), params)
+      POST(orchestratorRoleRequest(withoutModel), parameters)
     );
     assert.deepEqual(
       missingField.map(({ cause, resource }) => ({ cause, resource })),
@@ -584,7 +586,7 @@ test("a role change the Console turns away is logged with its cause", async () =
     // rather than writing to whatever Runtime this machine runs.
     const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
     const previousSecretFile = process.env.AUTODEV_OPENLIT_SECRET_FILE;
-    const previousFetch = globalThis.fetch;
+    const previousFetch = fetch;
     delete process.env.AUTODEV_CONTROL_API_TOKEN;
     process.env.AUTODEV_OPENLIT_SECRET_FILE =
       "/nonexistent/autodev-test-secrets.env";
@@ -593,7 +595,7 @@ test("a role change the Console turns away is logged with its cause", async () =
     }) as typeof fetch;
     try {
       const unconfigured = await rejectionLines(() =>
-        POST(orchestratorRoleRequest(DISABLE_ORCHESTRATOR), params)
+        POST(orchestratorRoleRequest(DISABLE_ORCHESTRATOR), parameters)
       );
       assert.equal(unconfigured[0]?.cause, "control_api_unconfigured");
     } finally {
@@ -610,7 +612,7 @@ test("a role change the Console turns away is logged with its cause", async () =
 });
 
 test("a role change the Runtime refuses is logged with its status and code", async () => {
-  const previousFetch = globalThis.fetch;
+  const previousFetch = fetch;
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   process.env.AUTODEV_CONTROL_API_TOKEN = "p".repeat(64);
   globalThis.fetch = (async () =>
@@ -858,7 +860,7 @@ function agentModelRequest(fields: Record<string, string>): NextRequest {
 }
 
 test("POST /api/providers/[provider]/agents/[role] refuses forms it did not render", async () => {
-  const params = {
+  const parameters = {
     params: Promise.resolve({ provider: "claude", role: "explorer" })
   };
   const valid = {
@@ -872,7 +874,7 @@ test("POST /api/providers/[provider]/agents/[role] refuses forms it did not rend
     { ...valid, role: "worker" },
     { provider: "claude", role: "explorer", returnTo: "/providers/claude" }
   ]) {
-    const response = await postAgentModel(agentModelRequest(fields), params);
+    const response = await postAgentModel(agentModelRequest(fields), parameters);
     assert.equal(response.status, 303);
     assert.match(response.headers.get("location") ?? "", /control=failed/u);
   }
@@ -880,9 +882,9 @@ test("POST /api/providers/[provider]/agents/[role] refuses forms it did not rend
     "http://127.0.0.1:3000/api/providers/claude/agents/explorer",
     {
       method: "POST",
-      headers: { host: "127.0.0.1:3000", origin: "http://evil.com" }
+      headers: { host: "127.0.0.1:3000", origin: "https://evil.com" }
     }
   );
-  const refused = await postAgentModel(crossOrigin, params);
+  const refused = await postAgentModel(crossOrigin, parameters);
   assert.match(refused.headers.get("location") ?? "", /control=failed/u);
 });

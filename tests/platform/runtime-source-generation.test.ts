@@ -214,12 +214,12 @@ test("the current generation is never collected, however old", () => {
 });
 
 /**
- * The failure this guards: an install rewrote the installed tree file by file,
- * and a bridge that started mid-install loaded an updated module beside an old
- * one -- `ERR_PACKAGE_PATH_NOT_EXPORTED` or a missing export. A process started
- * through `src` must keep importing from the generation it started on, even
- * when an install swaps `src` before its next import.
- */
+The failure this guards: an install rewrote the installed tree file by file,
+and a bridge that started mid-install loaded an updated module beside an old
+one -- `ERR_PACKAGE_PATH_NOT_EXPORTED` or a missing export. A process started
+through `src` must keep importing from the generation it started on, even
+when an install swaps `src` before its next import.
+*/
 test("a process started before a swap keeps importing from its own generation", async () => {
   const home = codexHome();
   const entry = [

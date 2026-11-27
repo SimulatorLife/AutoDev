@@ -4,19 +4,19 @@ import { join, relative } from "node:path";
 import test from "node:test";
 
 /**
- * Every internal navigation target in the Console must resolve to a route the
- * app actually serves.
- *
- * The OpenLIT fork had four links to deleted routes reach the product before
- * this class was automated (`/settings/database-config`, `/rule-engine/<id>`,
- * `/manage-models`, `/agents`) — each of them a page removed with a reference
- * left behind. `tests/openlit-internal-links.test.ts` covers the fork; this is
- * the same check for the Console's own fourteen routes, its navigation table
- * and its server-side redirects.
- *
- * Written against the Console itself rather than a materialised tree, so it
- * runs in `test:console` with no setup.
- */
+Every internal navigation target in the Console must resolve to a route the
+app actually serves.
+
+The OpenLIT fork had four links to deleted routes reach the product before
+this class was automated (`/settings/database-config`, `/rule-engine/<id>`,
+`/manage-models`, `/agents`) — each of them a page removed with a reference
+left behind. `tests/openlit-internal-links.test.ts` covers the fork; this is
+the same check for the Console's own fourteen routes, its navigation table
+and its server-side redirects.
+
+Written against the Console itself rather than a materialised tree, so it
+runs in `test:console` with no setup.
+*/
 const ROOT = join(import.meta.dirname, "..", "console");
 const APP = join(ROOT, "app");
 
@@ -28,7 +28,7 @@ function isDir(p: string): boolean {
   }
 }
 
-const available = isDir(APP) && isDir(join(ROOT, "src"));
+const isAvailable = isDir(APP) && isDir(join(ROOT, "src"));
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -47,12 +47,12 @@ function before(value: string, marker: string): string {
 }
 
 /**
- * Comments are stripped first because a JSDoc block describing a link contains
- * one verbatim, and `AppNav.ts` documents `<a href="/section">` in prose. A
- * guard that reports its own documentation is a guard people turn off. `//` is
- * only treated as a comment when it is not preceded by `:` so that a URL in a
- * string literal does not truncate the line.
- */
+Comments are stripped first because a JSDoc block describing a link contains
+one verbatim, and `AppNav.ts` documents `<a href="/section">` in prose. A
+guard that reports its own documentation is a guard people turn off. `//` is
+only treated as a comment when it is not preceded by `:` so that a URL in a
+string literal does not truncate the line.
+*/
 function stripComments(source: string): string {
   return source
     .replaceAll(/\/\*[\s\S]*?\*\//g, "")
@@ -76,9 +76,9 @@ function toRoute(file: string): string {
 }
 
 /**
- * An interpolated suffix names a fixed prefix plus a value only known at
- * runtime, so the target is truncated at the first `${` and wildcard-matched.
- */
+An interpolated suffix names a fixed prefix plus a value only known at
+runtime, so the target is truncated at the first `${` and wildcard-matched.
+*/
 function matches(target: string, routes: Set<string>): boolean {
   const candidate = before(before(before(target, "?"), "#"), "${");
   const base = normalise(candidate.replace(/\/$/, ""));
@@ -95,27 +95,27 @@ function matches(target: string, routes: Set<string>): boolean {
       // `/providers/${id}` names a literal parent whose children are parameters.
       if (
         segs.length < routeSegs.length &&
-        segs.every((seg, i) => routeSegs[i] === seg) &&
+        segs.every((seg, index) => routeSegs[index] === seg) &&
         routeSegs.slice(segs.length).every((s) => s.startsWith("["))
       ) {
         return true;
       }
       continue;
     }
-    if (routeSegs.every((seg, i) => seg.startsWith("[") || seg === segs[i]))
+    if (routeSegs.every((seg, index) => seg.startsWith("[") || seg === segs[index]))
       return true;
   }
   return false;
 }
 
 /**
- * Does an API target resolve?
- *
- * Console API paths are commonly built by appending parameters to a prefix —
- * `/api/providers/${encodeURIComponent(provider)}/roles/${role}` truncates to
- * `/api/providers`, which is a prefix of a served route rather than one. The
- * caller supplies the rest, so a segment-wise prefix is the correct test here.
- */
+Does an API target resolve?
+
+Console API paths are commonly built by appending parameters to a prefix —
+`/api/providers/${encodeURIComponent(provider)}/roles/${role}` truncates to
+`/api/providers`, which is a prefix of a served route rather than one. The
+caller supplies the rest, so a segment-wise prefix is the correct test here.
+*/
 function matchesApi(target: string, routes: Set<string>): boolean {
   const candidate = before(before(target, "?"), "${");
   const base = normalise(candidate.replace(/\/$/, ""));
@@ -124,7 +124,7 @@ function matchesApi(target: string, routes: Set<string>): boolean {
   for (const route of routes) {
     const routeSegs = normalise(route).split("/").filter(Boolean);
     if (routeSegs.length < segs.length) continue;
-    if (segs.every((seg, i) => routeSegs[i] === seg)) return true;
+    if (segs.every((seg, index) => routeSegs[index] === seg)) return true;
   }
   return false;
 }
@@ -172,7 +172,7 @@ function deadTargetsInFile(
 
 test(
   "every internal navigation target in the Console resolves to a served route",
-  { skip: available ? false : "console tree not present" },
+  { skip: isAvailable ? false : "console tree not present" },
   () => {
     const pages = new Set<string>();
     const api = new Set<string>();
@@ -200,25 +200,25 @@ test(
 );
 
 /**
- * A string literal that looks like an absolute path, in the code the browser
- * runs.
- *
- * The patterns above only see an `href`/`redirect` *shape*, which misses the
- * case that produced the OpenLIT `Agents` 404 and the case found while proving
- * this guard: an href computed through a variable or a ternary, where the dead
- * path is an ordinary string literal a shape-based scan never inspects.
- *
- * Scoped to `src/components`, `src/features` and `app` deliberately. Server
- * modules hold path-shaped literals that are not navigation at all — the
- * Console's `control-api.ts` calls the Runtime's `/control/*` endpoints, and
- * those must not be checked against the Console's own route table.
- */
+A string literal that looks like an absolute path, in the code the browser
+runs.
+
+The patterns above only see an `href`/`redirect` *shape*, which misses the
+case that produced the OpenLIT `Agents` 404 and the case found while proving
+this guard: an href computed through a variable or a ternary, where the dead
+path is an ordinary string literal a shape-based scan never inspects.
+
+Scoped to `src/components`, `src/features` and `app` deliberately. Server
+modules hold path-shaped literals that are not navigation at all — the
+Console's `control-api.ts` calls the Runtime's `/control/*` endpoints, and
+those must not be checked against the Console's own route table.
+*/
 const UI_SOURCE = /^(src\/(components|features)\/|app\/)/u;
 const PATH_LITERAL = /["'`](\/[A-Za-z0-9][^"'`\s]*)/g;
 
 test(
   "every absolute path literal in the Console's UI code resolves",
-  { skip: available ? false : "console tree not present" },
+  { skip: isAvailable ? false : "console tree not present" },
   () => {
     const pages = new Set<string>();
     const api = new Set<string>();
@@ -246,10 +246,10 @@ test(
       for (const m of body.matchAll(PATH_LITERAL)) {
         const target = m[1]!;
         if (/^\/(_next|images|static|favicon)/.test(target)) continue;
-        const ok = target.startsWith("/api/")
+        const isOk = target.startsWith("/api/")
           ? matchesApi(target, api)
           : matches(target, pages);
-        if (!ok) dead.push(`${rel} -> ${target}`);
+        if (!isOk) dead.push(`${rel} -> ${target}`);
       }
     }
 
@@ -273,7 +273,7 @@ test(
   "every canonical navigation section resolves to a Console route",
   {
     skip:
-      available && existsSync(CORE_NAV)
+      isAvailable && existsSync(CORE_NAV)
         ? false
         : "core navigation source not present"
   },

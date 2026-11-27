@@ -116,7 +116,7 @@ test("the error boundary returns to the section that failed", () => {
 });
 
 test("ConsoleErrorPage renders alert container with error message and actions", () => {
-  let resetCalled = false;
+  let isResetCalled = false;
   const mockError = new Error("Telemetry connection timed out") as Error & {
     digest?: string;
   };
@@ -126,7 +126,7 @@ test("ConsoleErrorPage renders alert container with error message and actions", 
     React.createElement(ConsoleErrorPage, {
       error: mockError,
       reset: () => {
-        resetCalled = true;
+        isResetCalled = true;
       },
       activeSection: "Agents"
     })
@@ -139,7 +139,7 @@ test("ConsoleErrorPage renders alert container with error message and actions", 
   assert.match(markup, /Try again/);
   assert.match(markup, /href="\/agents"/);
   assert.match(markup, /Return to Agents/);
-  assert.strictEqual(resetCalled, false);
+  assert.strictEqual(isResetCalled, false);
 });
 
 test("ConsoleErrorPage renders default message when error message is empty and omits digest when absent", () => {

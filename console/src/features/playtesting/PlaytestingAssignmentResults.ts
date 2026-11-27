@@ -1,6 +1,8 @@
 "use client";
 
-/** One source-backed rendering of execution and game outcomes per assignment. */
+/**
+One source-backed rendering of execution and game outcomes per assignment.
+*/
 import type {
   PlaytestRunAssignmentOutcome,
   PlaytestSessionReference

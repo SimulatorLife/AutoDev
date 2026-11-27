@@ -40,10 +40,10 @@ export interface PlaytestStdioConfiguration {
 }
 
 export function playtestWorkspaceCatalogRoot(
-  env: NodeJS.ProcessEnv = process.env,
+  environment: NodeJS.ProcessEnv = process.env,
   moduleDirectory: string = import.meta.dirname
 ): string {
-  return resolveRuntimeSourceRoot(moduleDirectory, env.AUTODEV_REPO_ROOT);
+  return resolveRuntimeSourceRoot(moduleDirectory, environment.AUTODEV_REPO_ROOT);
 }
 
 export function assertPlaytestStdioSessionBinding(
@@ -87,10 +87,10 @@ export function assertPlaytestStdioSessionBinding(
       "The configured workspace is not in the canonical catalog."
     );
   }
-  const privilegedControlRole = PRIVILEGED_CONTROL_ROLES.has(config.role);
+  const isPrivilegedControlRole = PRIVILEGED_CONTROL_ROLES.has(config.role);
   if (
-    (!configuredRoles.has(config.role) && !privilegedControlRole) ||
-    (!privilegedControlRole &&
+    (!configuredRoles.has(config.role) && !isPrivilegedControlRole) ||
+    (!isPrivilegedControlRole &&
       workspace.agentRoles !== null &&
       !workspace.agentRoles.includes(config.role))
   ) {
@@ -108,13 +108,13 @@ const ANALYST_SELECTION_ERROR =
   "The trusted analyst session selection is missing or invalid.";
 const PRIVILEGED_CONTROL_ROLES = new Set(["root", "operator"]);
 
-function requiredSessionValue(env: NodeJS.ProcessEnv, key: string): string {
-  const value = env[key]?.trim();
-  const valid =
+function requiredSessionValue(environment: NodeJS.ProcessEnv, key: string): string {
+  const value = environment[key]?.trim();
+  const isValid =
     key === "AUTODEV_PLAYTEST_WORKSPACE_ID"
       ? value !== undefined && WORKSPACE_ID_PATTERN.test(value)
       : value !== undefined && SESSION_VALUE_PATTERN.test(value);
-  if (!value || !valid) {
+  if (!value || !isValid) {
     throw new Error(
       "Required trusted playtesting session context is missing or invalid."
     );
@@ -136,9 +136,9 @@ function isValidSelectedEpisodeIds(value: unknown): value is readonly string[] {
 }
 
 function selectedEpisodeIdsFromEnvironment(
-  env: NodeJS.ProcessEnv
+  environment: NodeJS.ProcessEnv
 ): readonly string[] {
-  const raw = env.AUTODEV_PLAYTEST_SELECTED_EPISODE_IDS?.trim();
+  const raw = environment.AUTODEV_PLAYTEST_SELECTED_EPISODE_IDS?.trim();
   const maximumEncodedLength =
     2 +
     PLAYTESTS_MAX_ANALYSIS_SESSIONS * 258 +
@@ -184,29 +184,29 @@ function metricAggregationFromEnvironment(input: {
 }
 
 export function playtestStdioConfiguration(
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): PlaytestStdioConfiguration {
   const workspaceId = requiredSessionValue(
-    env,
+    environment,
     "AUTODEV_PLAYTEST_WORKSPACE_ID"
   );
-  const role = requiredSessionValue(env, "AUTODEV_PLAYTEST_ROLE");
-  const actor = requiredSessionValue(env, "AUTODEV_PLAYTEST_ACTOR_ID");
-  const taskId = requiredSessionValue(env, "AUTODEV_PLAYTEST_TASK_ID");
-  const runId = requiredSessionValue(env, "AUTODEV_PLAYTEST_RUN_ID");
+  const role = requiredSessionValue(environment, "AUTODEV_PLAYTEST_ROLE");
+  const actor = requiredSessionValue(environment, "AUTODEV_PLAYTEST_ACTOR_ID");
+  const taskId = requiredSessionValue(environment, "AUTODEV_PLAYTEST_TASK_ID");
+  const runId = requiredSessionValue(environment, "AUTODEV_PLAYTEST_RUN_ID");
   if (!WORKSPACE_ID_PATTERN.test(workspaceId)) {
     throw new Error("The trusted playtesting workspace identity is invalid.");
   }
-  const repositoryRoot = env.AUTODEV_PLAYTEST_REPOSITORY_ROOT?.trim() || null;
+  const repositoryRoot = environment.AUTODEV_PLAYTEST_REPOSITORY_ROOT?.trim() || null;
   const analysisId =
     role === ANALYST_ROLE
-      ? requiredSessionValue(env, "AUTODEV_PLAYTEST_ANALYSIS_ID")
+      ? requiredSessionValue(environment, "AUTODEV_PLAYTEST_ANALYSIS_ID")
       : undefined;
   const selectedEpisodeIds =
-    role === ANALYST_ROLE ? selectedEpisodeIdsFromEnvironment(env) : undefined;
+    role === ANALYST_ROLE ? selectedEpisodeIdsFromEnvironment(environment) : undefined;
   const analysisKind =
     role === ANALYST_ROLE
-      ? env.AUTODEV_PLAYTEST_ANALYSIS_KIND?.trim()
+      ? environment.AUTODEV_PLAYTEST_ANALYSIS_KIND?.trim()
       : undefined;
   if (
     role === ANALYST_ROLE &&
@@ -218,7 +218,7 @@ export function playtestStdioConfiguration(
   const metricAggregation =
     role === ANALYST_ROLE && analysisKind === "confirmatory"
       ? metricAggregationFromEnvironment({
-          env,
+          env: environment,
           workspaceId,
           analysisId: analysisId!,
           episodeIds: selectedEpisodeIds!
@@ -232,12 +232,10 @@ export function playtestStdioConfiguration(
     taskId,
     runId,
     repositoryRoot,
-    ...(analysisId === undefined ? {} : { analysisId }),
-    ...(selectedEpisodeIds === undefined ? {} : { selectedEpisodeIds }),
-    ...(analysisKind === undefined
-      ? {}
-      : { analysisKind: analysisKind as "confirmatory" | "discovery" }),
-    ...(metricAggregation === undefined ? {} : { metricAggregation })
+    ...(analysisId !== undefined && { analysisId }),
+    ...(selectedEpisodeIds !== undefined && { selectedEpisodeIds }),
+    ...(analysisKind !== undefined && { analysisKind: analysisKind as "confirmatory" | "discovery" }),
+    ...(metricAggregation !== undefined && { metricAggregation })
   };
 }
 
@@ -251,18 +249,10 @@ export function playtestMcpSessionProvider(
     taskId: config.taskId,
     runId: config.runId,
     repositoryRoot: config.repositoryRoot,
-    ...(config.analysisId === undefined
-      ? {}
-      : { analysisId: config.analysisId }),
-    ...(config.selectedEpisodeIds === undefined
-      ? {}
-      : { selectedEpisodeIds: config.selectedEpisodeIds }),
-    ...(config.analysisKind === undefined
-      ? {}
-      : { analysisKind: config.analysisKind }),
-    ...(config.metricAggregation === undefined
-      ? {}
-      : { metricAggregation: config.metricAggregation })
+    ...(config.analysisId !== undefined && { analysisId: config.analysisId }),
+    ...(config.selectedEpisodeIds !== undefined && { selectedEpisodeIds: config.selectedEpisodeIds }),
+    ...(config.analysisKind !== undefined && { analysisKind: config.analysisKind }),
+    ...(config.metricAggregation !== undefined && { metricAggregation: config.metricAggregation })
   };
   return {
     current: () => session
@@ -270,14 +260,14 @@ export function playtestMcpSessionProvider(
 }
 
 export async function main(
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): Promise<void> {
-  const config = playtestStdioConfiguration(env);
+  const config = playtestStdioConfiguration(environment);
   const sessionProvider = playtestMcpSessionProvider(config);
   // `repositoryRoot` is the game checkout, not AutoDev's canonical workspace
   // catalog. The trusted Runtime source root owns workspace/role identity.
   const configRepository = new ConfigRepository(
-    playtestWorkspaceCatalogRoot(env)
+    playtestWorkspaceCatalogRoot(environment)
   );
   const catalog = configRepository.readWorkspaceCatalog();
   assertPlaytestStdioSessionBinding(
@@ -313,7 +303,7 @@ export async function main(
   const server = createPlaytestMcpServer({
     sessionProvider,
     artifactStoreForWorkspace,
-    playtestRunControl: playtestControlApiRunClientFromEnvironment(env),
+    playtestRunControl: playtestControlApiRunClientFromEnvironment(environment),
     approvalRepository,
     playtestRepository,
     readWorkspaceCatalog: () => configRepository.readWorkspaceCatalog()

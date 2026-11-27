@@ -11,11 +11,11 @@ import {
   validatePlaytestCadenceConfig
 } from "../src/playtesting/cadence.ts";
 import type {
-  PlaytestCadenceConfiguration,
+  PlaytestCadenceConfiguration as PlaytestCadenceConfig,
   PlaytestJudgeValidation
 } from "../src/playtesting/index.ts";
 
-const validConfig: PlaytestCadenceConfiguration = {
+const validConfig: PlaytestCadenceConfig = {
   workspaceId: "test-workspace",
   enabled: true,
   tiers: {
@@ -189,14 +189,14 @@ test("evaluateJudgeCalibration passes within tolerances and quarantines claims o
 });
 
 /**
- * An unmeasured judge is not a calibrated judge.
- *
- * Every tolerance check in `evaluateJudgeCalibration` is written to skip a
- * null metric, which is correct in isolation — one absent measurement should
- * not invent a failure. Together they meant a validation with nothing measured
- * accumulated no failures and reported `passed`, and the artifact's own
- * `status: "insufficient"` was discarded. These tests pin the opposite.
- */
+An unmeasured judge is not a calibrated judge.
+
+Every tolerance check in `evaluateJudgeCalibration` is written to skip a
+null metric, which is correct in isolation — one absent measurement should
+not invent a failure. Together they meant a validation with nothing measured
+accumulated no failures and reported `passed`, and the artifact's own
+`status: "insufficient"` was discarded. These tests pin the opposite.
+*/
 const calibrationTolerances = {
   minRepeatAgreement: 0.85,
   minSecondJudgeAgreement: 0.8,

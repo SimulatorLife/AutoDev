@@ -35,13 +35,13 @@ import { ProviderQuotaCell, type ProviderQuotaView } from "./ProviderQuota.ts";
 import { ProviderRoleControls } from "./ProviderRoleControls.ts";
 
 /**
- * The provider id as the providers table's row identifier.
- *
- * It wraps at its hyphens instead of truncating. The Antigravity providers
- * share the 11-character `antigravity-` prefix, so a truncated id reads
- * `antigravit…` on all three rows and the row names nothing; wrapped,
- * `antigravity-claude-gpt` keeps the column's width and names its row.
- */
+The provider id as the providers table's row identifier.
+
+It wraps at its hyphens instead of truncating. The Antigravity providers
+share the 11-character `antigravity-` prefix, so a truncated id reads
+`antigravit…` on all three rows and the row names nothing; wrapped,
+`antigravity-claude-gpt` keeps the column's width and names its row.
+*/
 const WRAPPING_PROVIDER_ID_LINK_CLASS = `${MONO_ID_CLASS} block min-h-6 ${ENTITY_LINK_CLASS}`;
 
 export function ProviderLink({
@@ -50,18 +50,20 @@ export function ProviderLink({
   wrap = false
 }: {
   readonly provider: string;
-  /** Wrap the id at its hyphens rather than truncating it. */
+  /**
+  Wrap the id at its hyphens rather than truncating it.
+  */
   readonly wrap?: boolean;
   /**
-   * What distinguishes this link from another link to the same provider.
-   *
-   * A provider appears on this page more than once: once in the providers
-   * table, and once for every capability tier it holds a routing slot in. The
-   * visible text is the provider's name in every one of those places, so the
-   * accessible name has to carry the slot -- otherwise a links list, which is
-   * how a screen reader user scans the page, showed "Open provider claude"
-   * three times with nothing to tell the entries apart.
-   */
+  What distinguishes this link from another link to the same provider.
+  
+  A provider appears on this page more than once: once in the providers
+  table, and once for every capability tier it holds a routing slot in. The
+  visible text is the provider's name in every one of those places, so the
+  accessible name has to carry the slot -- otherwise a links list, which is
+  how a screen reader user scans the page, showed "Open provider claude"
+  three times with nothing to tell the entries apart.
+  */
   readonly context?: string | undefined;
 }): React.JSX.Element {
   return React.createElement(
@@ -80,13 +82,13 @@ export function ProviderLink({
 }
 
 /**
- * The Providers configuration columns, including live provider counts.
- *
- * Role Enablement, Health, Credential, Available Models and Tier Priority are
- * gone: their facts are either folded into the single Status verdict or
- * reachable from the row's own controls. The column order is the contract's,
- * not a layout preference.
- */
+The Providers configuration columns, including live provider counts.
+
+Role Enablement, Health, Credential, Available Models and Tier Priority are
+gone: their facts are either folded into the single Status verdict or
+reachable from the row's own controls. The column order is the contract's,
+not a layout preference.
+*/
 export function providerColumns(
   returnTo: string,
   liveAgents: ControlApiLiveAgentCounts | null | undefined,
@@ -147,7 +149,7 @@ export function providerColumns(
         return React.createElement(ProviderStatusBadge, {
           provider,
           returnTo: providersPath(),
-          ...(exhaustion === undefined ? {} : { quotaExhaustion: exhaustion })
+          ...(exhaustion !== undefined && { quotaExhaustion: exhaustion })
         });
       },
       meta: {
@@ -241,11 +243,11 @@ export function providerColumns(
 }
 
 /**
- * The Models tab's columns. This tab keeps its own model catalog, per-tier
- * mapping, and enable/disable control: the Providers table folded those facts
- * into Status and the row's own controls, but a model is still an item with its
- * own lifecycle, so it keeps a list of its own.
- */
+The Models tab's columns. This tab keeps its own model catalog, per-tier
+mapping, and enable/disable control: the Providers table folded those facts
+into Status and the row's own controls, but a model is still an item with its
+own lifecycle, so it keeps a list of its own.
+*/
 export function modelColumns(
   returnTo: string,
   liveAgents: ControlApiLiveAgentCounts | null | undefined

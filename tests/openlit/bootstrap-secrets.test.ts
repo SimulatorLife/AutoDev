@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 
-function parseEnv(content: string): Record<string, string> {
+function parseEnvironment(content: string): Record<string, string> {
   return Object.fromEntries(
     content
       .split("\n")
@@ -29,19 +29,19 @@ function parseEnv(content: string): Record<string, string> {
 }
 
 /**
- * Build a throwaway "repository root" with an empty `console/` directory so
- * the bootstrap script's REPO_ROOT probe succeeds in the tests directory while
- * never touching the real AutoDev checkout. REPO_ROOT is honored as an
- * environment variable by the script; SECRET_FILE only via --secret-file.
- */
-function ephemeralRepoRoot(): string {
+Build a throwaway "repository root" with an empty `console/` directory so
+the bootstrap script's REPO_ROOT probe succeeds in the tests directory while
+never touching the real AutoDev checkout. REPO_ROOT is honored as an
+environment variable by the script; SECRET_FILE only via --secret-file.
+*/
+function ephemeralRepositoryRoot(): string {
   const root = mkdtempSync(join(tmpdir(), "autodev-bootstrap-secrets-"));
   mkdirSync(join(root, "console"), { recursive: true });
   return root;
 }
 
 function runBootstrap(
-  repoRoot: string,
+  repositoryRoot_: string,
   secretFile: string
 ): { status: number; stdout: string; stderr: string } {
   const result = spawnSync(
@@ -53,7 +53,7 @@ function runBootstrap(
     ],
     {
       encoding: "utf8",
-      env: { ...process.env, REPO_ROOT: repoRoot },
+      env: { ...process.env, REPO_ROOT: repositoryRoot_ },
       stdio: ["ignore", "pipe", "pipe"]
     }
   );
@@ -67,12 +67,12 @@ function runBootstrap(
 test("OpenLIT bootstrap provisions separate strong Usage service credentials outside the repo", () => {
   const directory = mkdtempSync(join(tmpdir(), "autodev-openlit-secrets-"));
   const secretFile = join(directory, "openlit-secrets.env");
-  const repoRoot = ephemeralRepoRoot();
+  const repositoryRoot_ = ephemeralRepositoryRoot();
   try {
-    const result = runBootstrap(repoRoot, secretFile);
+    const result = runBootstrap(repositoryRoot_, secretFile);
     assert.equal(result.status, 0, result.stderr);
     const content = readFileSync(secretFile, "utf8");
-    const values = parseEnv(content);
+    const values = parseEnvironment(content);
     const secretNames = [
       "OPENLIT_DB_PASSWORD",
       "AUTODEV_CONTROL_API_TOKEN",
@@ -92,7 +92,7 @@ test("OpenLIT bootstrap provisions separate strong Usage service credentials out
     assert.equal(statSync(secretFile).mode & 0o777, 0o600);
   } finally {
     rmSync(directory, { recursive: true, force: true });
-    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(repositoryRoot_, { recursive: true, force: true });
   }
 });
 
@@ -100,21 +100,21 @@ test("OpenLIT bootstrap materializes server-only Console tokens into console/.en
   const secretDirectory = mkdtempSync(
     join(tmpdir(), "autodev-openlit-secrets-env-")
   );
-  const repoRoot = ephemeralRepoRoot();
+  const repositoryRoot_ = ephemeralRepositoryRoot();
   const secretFile = join(secretDirectory, "openlit-secrets.env");
-  const consoleEnvLocal = join(repoRoot, "console", ".env.local");
+  const consoleEnvironmentLocal = join(repositoryRoot_, "console", ".env.local");
   try {
-    const result = runBootstrap(repoRoot, secretFile);
+    const result = runBootstrap(repositoryRoot_, secretFile);
     assert.equal(result.status, 0, result.stderr);
-    const consoleContent = readFileSync(consoleEnvLocal, "utf8");
-    const consoleValues = parseEnv(consoleContent);
+    const consoleContent = readFileSync(consoleEnvironmentLocal, "utf8");
+    const consoleValues = parseEnvironment(consoleContent);
     assert.equal(
-      statSync(consoleEnvLocal).mode & 0o777,
+      statSync(consoleEnvironmentLocal).mode & 0o777,
       0o600,
       "console/.env.local must be owner-readable only"
     );
     const secretContent = readFileSync(secretFile, "utf8");
-    const secretValues = parseEnv(secretContent);
+    const secretValues = parseEnvironment(secretContent);
     assert.equal(
       consoleValues.AUTODEV_CONTROL_API_TOKEN,
       secretValues.AUTODEV_CONTROL_API_TOKEN,
@@ -166,7 +166,7 @@ test("OpenLIT bootstrap materializes server-only Console tokens into console/.en
     );
   } finally {
     rmSync(secretDirectory, { recursive: true, force: true });
-    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(repositoryRoot_, { recursive: true, force: true });
   }
 });
 
@@ -174,12 +174,12 @@ test("OpenLIT bootstrap overwrites stale console/.env.local and enforces mode 06
   const secretDirectory = mkdtempSync(
     join(tmpdir(), "autodev-openlit-secrets-overwrite-")
   );
-  const repoRoot = ephemeralRepoRoot();
+  const repositoryRoot_ = ephemeralRepositoryRoot();
   const secretFile = join(secretDirectory, "openlit-secrets.env");
-  const consoleEnvLocal = join(repoRoot, "console", ".env.local");
+  const consoleEnvironmentLocal = join(repositoryRoot_, "console", ".env.local");
   try {
     writeFileSync(
-      consoleEnvLocal,
+      consoleEnvironmentLocal,
       [
         "AUTODEV_CONTROL_API_TOKEN=stale-previous-value",
         "AUTODEV_OPENLIT_USAGE_TOKEN=stale-previous-usage",
@@ -188,16 +188,16 @@ test("OpenLIT bootstrap overwrites stale console/.env.local and enforces mode 06
       ].join("\n") + "\n",
       { mode: 0o644 }
     );
-    assert.equal(statSync(consoleEnvLocal).mode & 0o777, 0o644);
+    assert.equal(statSync(consoleEnvironmentLocal).mode & 0o777, 0o644);
 
-    const result = runBootstrap(repoRoot, secretFile);
+    const result = runBootstrap(repositoryRoot_, secretFile);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(
-      statSync(consoleEnvLocal).mode & 0o777,
+      statSync(consoleEnvironmentLocal).mode & 0o777,
       0o600,
       "console/.env.local must end up mode 0600 even when overwriting a more permissive file"
     );
-    const consoleContent = readFileSync(consoleEnvLocal, "utf8");
+    const consoleContent = readFileSync(consoleEnvironmentLocal, "utf8");
     assert.equal(
       consoleContent.includes("stale-previous-value"),
       false,
@@ -216,7 +216,7 @@ test("OpenLIT bootstrap overwrites stale console/.env.local and enforces mode 06
     );
   } finally {
     rmSync(secretDirectory, { recursive: true, force: true });
-    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(repositoryRoot_, { recursive: true, force: true });
   }
 });
 
@@ -225,13 +225,13 @@ test("OpenLIT bootstrap with non-canonical secret-file does not touch repository
     join(tmpdir(), "autodev-openlit-secrets-custom-")
   );
   const secretFile = join(secretDirectory, "isolated-secrets.env");
-  const repoConsoleEnv = join(repositoryRoot, "console", ".env.local");
+  const repositoryConsoleEnvironment = join(repositoryRoot, "console", ".env.local");
   // The repository's Console environment file is a local, gitignored artifact:
   // a checkout without it has nothing to compare, and the claim under test is
   // that the bootstrap leaves it exactly as it found it.
-  const existedBefore = existsSync(repoConsoleEnv);
+  const existedBefore = existsSync(repositoryConsoleEnvironment);
   const previousContent = existedBefore
-    ? readFileSync(repoConsoleEnv, "utf8")
+    ? readFileSync(repositoryConsoleEnvironment, "utf8")
     : null;
   try {
     const result = spawnSync(
@@ -249,12 +249,12 @@ test("OpenLIT bootstrap with non-canonical secret-file does not touch repository
     );
     assert.equal(result.status, 0, result.stderr);
     assert.equal(
-      existsSync(repoConsoleEnv),
+      existsSync(repositoryConsoleEnvironment),
       existedBefore,
       "the bootstrap must not create the repository console/.env.local"
     );
     if (previousContent !== null)
-      assert.equal(readFileSync(repoConsoleEnv, "utf8"), previousContent);
+      assert.equal(readFileSync(repositoryConsoleEnvironment, "utf8"), previousContent);
   } finally {
     rmSync(secretDirectory, { recursive: true, force: true });
   }

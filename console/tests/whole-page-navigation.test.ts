@@ -57,7 +57,9 @@ function createRouter(): RecordedRouter & {
   };
 }
 
-/** Let every promise that is already waiting settle. */
+/**
+Let every promise that is already waiting settle.
+*/
 async function settle(): Promise<void> {
   for (let turn = 0; turn < 5; turn += 1) {
     await Promise.resolve();
@@ -296,8 +298,8 @@ test("the navigation does not run on the page's clock", async () => {
   const realClock = {
     dateNow: Date.now,
     performanceNow: performance.now,
-    setTimeout: globalThis.setTimeout,
-    setInterval: globalThis.setInterval
+    setTimeout: setTimeout,
+    setInterval: setInterval
   };
   Date.now = () => 1_700_000_000_000;
   performance.now = () => 1000;

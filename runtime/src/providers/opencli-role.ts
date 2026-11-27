@@ -1,20 +1,19 @@
 /**
- * OpenCLI's role execution contract.
- *
- * OpenCLI is an execution transport, not a capability or permission boundary.
- * An opencli-backed provider serves every role whose MCP surface the site can
- * natively reach, through the same shared Supergateway that every other
- * provider uses: the site selects the role's MCP app in the conversation, so
- * the conversation's tool surface is the role's canonical contract and the
- * coordinator that owns its delegated children is that role's own.
- *
- * The site never sees a translated tool-call protocol. The prompt states which
- * role the model acts as and that the role's MCP app is the only surface it
- * may act through; the model then calls the app's native MCP tools, exactly
- * as it would in a hand-written ChatGPT conversation.
- */
+OpenCLI's role execution contract.
 
-import { z } from "zod";
+OpenCLI is an execution transport, not a capability or permission boundary.
+An opencli-backed provider serves every role whose MCP surface the site can
+natively reach, through the same shared Supergateway that every other
+provider uses: the site selects the role's MCP app in the conversation, so
+the conversation's tool surface is the role's canonical contract and the
+coordinator that owns its delegated children is that role's own.
+
+The site never sees a translated tool-call protocol. The prompt states which
+role the model acts as and that the role's MCP app is the only surface it
+may act through; the model then calls the app's native MCP tools, exactly
+as it would in a hand-written ChatGPT conversation.
+*/
+
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
@@ -24,6 +23,7 @@ import {
   type OpencliProvider,
   type OpencliSite
 } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
+import { z } from "zod";
 
 import {
   answeredIn,
@@ -37,24 +37,30 @@ import {
   replyFromRow
 } from "./opencli-turn.ts";
 
-/** The default number of seconds a role turn may run before it is abandoned. */
+/**
+The default number of seconds a role turn may run before it is abandoned.
+*/
 export const DEFAULT_OPENCLI_TURN_TIMEOUT_SECONDS = 300;
 
 /**
- * The role whose site-native GitHub connection replaces an MCP `github`
- * server. Every other role's MCP surface reaches AutoDev through the shared
- * gateway's app for that role.
- */
+The role whose site-native GitHub connection replaces an MCP `github`
+server. Every other role's MCP surface reaches AutoDev through the shared
+gateway's app for that role.
+*/
 export const GITHUB_WORKER_ROLE = "github-worker";
 
-/** Whether a provider is driven through an opencli site rather than ACP. */
+/**
+Whether a provider is driven through an opencli site rather than ACP.
+*/
 export function isOpencliProvider(
   provider: string
 ): provider is OpencliProvider {
   return Object.hasOwn(OPENCLI_PROVIDER_SITES, provider);
 }
 
-/** The site an opencli provider drives. */
+/**
+The site an opencli provider drives.
+*/
 export function opencliProviderSite(provider: string): OpencliSite | null {
   return isOpencliProvider(provider) ? OPENCLI_PROVIDER_SITES[provider] : null;
 }
@@ -66,14 +72,16 @@ export interface OpencliRoleTaskSpec {
   readonly model: string;
   readonly reasoningEffort?: string | null;
   readonly sessionId: string;
-  /** The site's own conversation identity, pinned after the first turn. */
+  /**
+  The site's own conversation identity, pinned after the first turn.
+  */
   readonly conversationId: string | null;
   readonly workspace: string;
   readonly repository: string | null;
   /**
-   * The site's MCP app that carries this role's tool surface, or null when
-   * the site has no native MCP ingress for the role.
-   */
+  The site's MCP app that carries this role's tool surface, or null when
+  the site has no native MCP ingress for the role.
+  */
   readonly mcpApp: string | null;
   readonly prompt: string;
   readonly timeoutSeconds: number;
@@ -91,12 +99,12 @@ export type OpencliRunner = (
 ) => Promise<OpencliRunResult>;
 
 /**
- * Compose the prompt one site-driven role turn sends.
- *
- * The role's canonical system prompt owns the behaviour; this adds only the
- * two facts the site cannot know on its own — which repository the task is
- * about, and which surface the model may act through.
- */
+Compose the prompt one site-driven role turn sends.
+
+The role's canonical system prompt owns the behaviour; this adds only the
+two facts the site cannot know on its own — which repository the task is
+about, and which surface the model may act through.
+*/
 export function composeOpencliRolePrompt(options: {
   readonly role: string;
   readonly systemPrompt: string;
@@ -125,7 +133,9 @@ export function composeOpencliRolePrompt(options: {
   return sections.join("\n");
 }
 
-/** Build the task one site-driven role turn executes. */
+/**
+Build the task one site-driven role turn executes.
+*/
 export function buildOpencliRoleTaskSpec(options: {
   readonly role: string;
   readonly provider: OpencliProvider;
@@ -163,7 +173,9 @@ export function buildOpencliRoleTaskSpec(options: {
   };
 }
 
-/** Only the trusted Runtime uses this internal, loopback service route. */
+/**
+Only the trusted Runtime uses this internal, loopback service route.
+*/
 export const OPENCLI_ROLE_TURN_PATH = "/internal/role-turn";
 export const OPENCLI_ROUTER_AUTH_VARIABLE = "CODEX_ROUTER_OPENCLI_API_KEY";
 export const OPENCLI_DEFAULT_PORT = 4004;
@@ -207,7 +219,9 @@ const responseSchema = z.discriminatedUnion("ok", [
   })
 ]);
 
-/** Execute the native site command only inside the existing browser owner. */
+/**
+Execute the native site command only inside the existing browser owner.
+*/
 export async function executeOpencliRoleTurn(
   task: RoleTurn,
   run: RunSite,
@@ -222,7 +236,7 @@ export async function executeOpencliRoleTurn(
     );
   }
   const site = OPENCLI_PROVIDER_SITES[task.provider];
-  const baseAskArgs = (
+  const baseAskArguments = (
     model: string | null,
     thinking: string | null
   ): string[] => [
@@ -249,7 +263,7 @@ export async function executeOpencliRoleTurn(
         : null;
     try {
       rows = await run({
-        args: baseAskArgs(parsed.siteModel, requestedThinking),
+        args: baseAskArguments(parsed.siteModel, requestedThinking),
         signal
       });
     } catch (error) {
@@ -262,7 +276,7 @@ export async function executeOpencliRoleTurn(
         );
         try {
           rows = await run({
-            args: baseAskArgs(parsed.siteModel, null),
+            args: baseAskArguments(parsed.siteModel, null),
             signal
           });
         } catch (retryError) {
@@ -272,20 +286,20 @@ export async function executeOpencliRoleTurn(
           writeErrorLine(
             `opencli gemini could not switch to ${parsed.siteModel}: ${errorMessage(retryError)}`
           );
-          rows = await run({ args: baseAskArgs(null, null), signal });
+          rows = await run({ args: baseAskArguments(null, null), signal });
         }
       } else if (isGeminiModelSelectionFailure(error)) {
         writeErrorLine(
           `opencli gemini could not switch to ${parsed.siteModel}: ${errorMessage(error)}`
         );
-        rows = await run({ args: baseAskArgs(null, null), signal });
+        rows = await run({ args: baseAskArguments(null, null), signal });
       } else {
         throw geminiModelLimit(error) ?? error;
       }
     }
   } else {
     rows = await run({
-      args: baseAskArgs(parsed.siteModel, null),
+      args: baseAskArguments(parsed.siteModel, null),
       signal
     });
   }
@@ -327,9 +341,9 @@ export async function executeOpencliRoleTurn(
 }
 
 /**
- * Runtime-side client of the browser owner. No raw argv or arbitrary
- * executable is accepted by the service, and no direct spawn fallback exists.
- */
+Runtime-side client of the browser owner. No raw argv or arbitrary
+executable is accepted by the service, and no direct spawn fallback exists.
+*/
 export async function runOpencliRoleTurn(
   task: OpencliRoleTaskSpec,
   signal?: AbortSignal
@@ -353,7 +367,7 @@ export async function runOpencliRoleTurn(
   const port = Number(
     process.env.CODEX_OPENCLI_PROXY_PORT || OPENCLI_DEFAULT_PORT
   );
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
     throw new Error("Invalid OpenCLI service port.");
   }
   const body = opencliRoleTurnSchema.parse({

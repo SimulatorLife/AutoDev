@@ -13,14 +13,14 @@ import {
 import { sha256 } from "./support/hash.ts";
 
 /**
- * Fixtures for the stable PlaytestFinding identity/fingerprint contract
- * (measurement-contract §11's missed-known-issue/duplicate-flood gate).
- * Each test proves a specific property of docs/playtesting-target-state.md's
- * "Finding identity and ownership" rule: the identity is built only from
- * workspace/mechanic key, normalized failure signature and scope, and no
- * excluded provenance field (seed/batch/episode/run ID/build SHA/policy
- * ID/model ID/timestamps) can ever enter or influence it.
- */
+Fixtures for the stable PlaytestFinding identity/fingerprint contract
+(measurement-contract §11's missed-known-issue/duplicate-flood gate).
+Each test proves a specific property of docs/playtesting-target-state.md's
+"Finding identity and ownership" rule: the identity is built only from
+workspace/mechanic key, normalized failure signature and scope, and no
+excluded provenance field (seed/batch/episode/run ID/build SHA/policy
+ID/model ID/timestamps) can ever enter or influence it.
+*/
 
 function fingerprintOf(input: PlaytestFindingIdentityInput): string {
   return sha256(
@@ -28,7 +28,9 @@ function fingerprintOf(input: PlaytestFindingIdentityInput): string {
   );
 }
 
-/** A chest that silently fails to open after the matching key is picked up. */
+/**
+A chest that silently fails to open after the matching key is picked up.
+*/
 function chestInvariantInput(): PlaytestFindingIdentityInput {
   return {
     workspaceId: "fixture/synthetic-game",
@@ -46,7 +48,9 @@ function chestInvariantInput(): PlaytestFindingIdentityInput {
   };
 }
 
-/** A distinct invariant/scope: a jump-buffer timing defect in a platformer tutorial. */
+/**
+A distinct invariant/scope: a jump-buffer timing defect in a platformer tutorial.
+*/
 function jumpBufferInput(): PlaytestFindingIdentityInput {
   return {
     workspaceId: "fixture/synthetic-game",
@@ -160,9 +164,11 @@ test("scope phase and modality are optional ('as applicable') and default to nul
   assert.deepEqual(identity.failureSignature.events, []);
 });
 
-/** Shift printable ASCII (0x21-0x7E) to its Unicode fullwidth presentation form. */
+/**
+Shift printable ASCII (0x21-0x7E) to its Unicode fullwidth presentation form.
+*/
 function toFullwidth(ascii: string): string {
-  return ascii.replaceAll(/[\u0021-\u007E]/gu, (char) =>
+  return ascii.replaceAll(/[\u{21}-\u{7E}]/gu, (char) =>
     String.fromCodePoint(char.codePointAt(0)! + 0xfe_e0)
   );
 }
@@ -247,7 +253,7 @@ test("empty required fields are rejected", () => {
   const base = chestInvariantInput();
   for (const mutate of [
     (input: PlaytestFindingIdentityInput) => ({ ...input, workspaceId: "" }),
-    (input: PlaytestFindingIdentityInput) => ({ ...input, mechanicKey: "   " }),
+    (input: PlaytestFindingIdentityInput) => ({ ...input, mechanicKey: ' '.repeat(3) }),
     (input: PlaytestFindingIdentityInput) => ({
       ...input,
       failureSignature: { ...input.failureSignature, witness: "" }

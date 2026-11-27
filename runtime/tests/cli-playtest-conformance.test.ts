@@ -1,11 +1,11 @@
 /**
- * `autodev playtest conformance` against real game checkouts.
- *
- * Each case builds an integration directory the way a game would, then proves
- * the conformance report distinguishes a game that runs from one that cannot.
- * The assertions are on the report rather than on console text, because the
- * report is what an onboarding gate would branch on.
- */
+`autodev playtest conformance` against real game checkouts.
+
+Each case builds an integration directory the way a game would, then proves
+the conformance report distinguishes a game that runs from one that cannot.
+The assertions are on the report rather than on console text, because the
+report is what an onboarding gate would branch on.
+*/
 import assert from "node:assert/strict";
 import {
   mkdtempSync,

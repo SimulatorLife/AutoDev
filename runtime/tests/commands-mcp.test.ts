@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { once } from "node:events";
 import {
   chmodSync,
   existsSync,
@@ -14,7 +15,6 @@ import {
   symlinkSync,
   writeFileSync
 } from "node:fs";
-import { once } from "node:events";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -32,8 +32,8 @@ import { DurableCommandTaskStore } from "../src/mcp/command-task-store.ts";
 import {
   CommandCatalogueError,
   type CommandDefinition,
-  type CommandResult,
   commandInputSchema,
+  type CommandResult,
   parseCommandCatalogue,
   parseCommandCatalogueText,
   resolveCommandArguments
@@ -63,10 +63,9 @@ import {
 } from "../src/mcp/commands-registry-proxy.ts";
 import {
   type CommandWorkspaceLease,
-  isCommandEligibleInWorkspace,
   createCommandsMcpServer,
-  effectiveCommands
-} from "../src/mcp/commands-server.ts";
+  effectiveCommands,
+  isCommandEligibleInWorkspace} from "../src/mcp/commands-server.ts";
 import {
   configureCommandExecutionTelemetry,
   recordCommandExecutionSpan,
@@ -256,7 +255,7 @@ test("the catalogue is strict, and a parameter is only ever a whole argument", (
     parseCommandCatalogue({
       version: 1,
       commands: Object.fromEntries(
-        Array.from({ length: 65 }, (_, i) => [`command_${i}`, fixture])
+        Array.from({ length: 65 }, (_, index) => [`command_${index}`, fixture])
       )
     })
   );
@@ -629,8 +628,8 @@ test(
       path.join(tmpdir(), "autodev-command-revoke-active-")
     );
     const scope = scopeFixture(root);
-    let authorized = true;
-    let held = false;
+    let isAuthorized = true;
+    let isHeld = false;
     const created = createCommandsMcpServer({
       role: "worker",
       workspaceId: null,
@@ -648,12 +647,12 @@ test(
       }),
       scope,
       taskDirectory: taskDirectoryFixture(),
-      isAuthorized: () => authorized,
+      isAuthorized: () => isAuthorized,
       tryAcquireWorkspace: () => {
-        if (held) return null;
-        held = true;
+        if (isHeld) return null;
+        isHeld = true;
         return inertLease(() => {
-          held = false;
+          isHeld = false;
         });
       }
     });
@@ -676,7 +675,7 @@ test(
         predicate: () => boolean,
         message: string
       ): Promise<void> {
-        for (let i = 0; i < 200 && !predicate(); i += 1) {
+        for (let index = 0; index < 200 && !predicate(); index += 1) {
           await delay(25);
         }
         assert.ok(predicate(), message);
@@ -696,7 +695,7 @@ test(
       controller.abort();
       await cancelled;
       await waitUntil(
-        () => !held,
+        () => !isHeld,
         "ordinary request cancellation stops execution"
       );
       assert.equal(existsSync(late), false);
@@ -715,14 +714,14 @@ test(
         () => existsSync(ready),
         "native command actually started"
       );
-      assert.equal(held, true);
-      authorized = false;
+      assert.equal(isHeld, true);
+      isAuthorized = false;
       await waitUntil(
-        () => !held,
+        () => !isHeld,
         "revocation cancels active execution before its normal completion"
       );
       assert.equal(existsSync(late), false);
-      authorized = true;
+      isAuthorized = true;
       const rejected = await client.callTool({
         name: "typecheck",
         arguments: {}
@@ -1938,11 +1937,11 @@ test("the installed catalogue is a valid, generic catalogue", () => {
     "git_blame",
     "git_unstage"
   ]) {
-    const args = resolveCommandArguments(parsed.commands[command]!, {
+    const arguments_ = resolveCommandArguments(parsed.commands[command]!, {
       path: ":(glob)*"
     });
-    assert.ok(args.includes("--literal-pathspecs"));
-    assert.deepEqual(args.slice(-2), ["--", ":(glob)*"]);
+    assert.ok(arguments_.includes("--literal-pathspecs"));
+    assert.deepEqual(arguments_.slice(-2), ["--", ":(glob)*"]);
   }
   assert.deepEqual(
     resolveCommandArguments(parsed.commands.git_show!, {

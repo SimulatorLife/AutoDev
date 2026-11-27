@@ -36,8 +36,8 @@ import {
   type ConsoleUsageResult,
   loadOpenLITSessionUsage,
   loadOpenLITTrace,
-  type UsageSearchParams,
-  usageViewStateFromSearchParams
+  type UsageSearchParams as UsageSearchParameters,
+  usageViewStateFromSearchParams as usageViewStateFromSearchParameters
 } from "../../src/lib/server/openlit-usage.ts";
 import { loadUsageActiveSessions } from "../../src/lib/server/usage-active-sessions.ts";
 import { readUsageTelemetry } from "../../src/lib/server/usage-telemetry.ts";
@@ -52,8 +52,8 @@ const NOT_CONFIGURED = "not-configured";
 const HTTP_ERROR = "http-error";
 const FLEET_SCAN_LIMIT = 20;
 
-interface UsagePageProps {
-  readonly searchParams: Promise<UsageSearchParams>;
+interface UsagePageProperties {
+  readonly searchParams: Promise<UsageSearchParameters>;
 }
 
 export const metadata: Metadata = {
@@ -144,12 +144,12 @@ function diagnosticsFailure(
 }
 
 /**
- * The span read's refusal, as the failure the view renders.
- *
- * Every refusal is named: an unreachable telemetry store and a credential the
- * store rejected are different problems with different next steps, and a
- * generic "could not be read" would hide which one happened.
- */
+The span read's refusal, as the failure the view renders.
+
+Every refusal is named: an unreachable telemetry store and a credential the
+store rejected are different problems with different next steps, and a
+generic "could not be read" would hide which one happened.
+*/
 function spansFailureFor(
   result: Exclude<ConsoleSessionUsageResult, { readonly kind: "ok" }>
 ): SessionDiagnosticsFailure {
@@ -194,11 +194,11 @@ function spansFailureFor(
 }
 
 /**
- * A Control API refusal, as the failure the view renders.
- *
- * The unreachable case has no `code` of its own -- it has a deadline flag --
- * so the shared failure-code mapping answers for it.
- */
+A Control API refusal, as the failure the view renders.
+
+The unreachable case has no `code` of its own -- it has a deadline flag --
+so the shared failure-code mapping answers for it.
+*/
 function controlApiFailure(
   result: Exclude<ControlApiResult<unknown>, { readonly kind: "ok" }>
 ): SessionDiagnosticsFailure {
@@ -216,12 +216,12 @@ function fleetFailure(code: string, message: string): UsageFleetFailure {
 }
 
 /**
- * The historical range a session-scoped page queries.
- *
- * The live-session scope has no interval, so a session scope over it falls
- * back to the shortest historical window: the span store is queried over a
- * window, and there has to be one.
- */
+The historical range a session-scoped page queries.
+
+The live-session scope has no interval, so a session scope over it falls
+back to the shortest historical window: the span store is queried over a
+window, and there has to be one.
+*/
 function sessionRange(
   selection: UsageFilterSelection
 ): UsageHistoricalTimeRange | "CUSTOM" {
@@ -247,7 +247,7 @@ function sessionQuerySelection(
 }
 
 function sessionViewState(
-  state: ReturnType<typeof usageViewStateFromSearchParams>,
+  state: ReturnType<typeof usageViewStateFromSearchParameters>,
   sessionId: string
 ): SessionDiagnosticsViewState {
   return {
@@ -268,10 +268,10 @@ function sessionViewState(
 
 export default async function UsagePage({
   searchParams
-}: UsagePageProps): Promise<React.JSX.Element> {
+}: UsagePageProperties): Promise<React.JSX.Element> {
   const { section, config } = readNodeContext("/usage");
-  const params = await searchParams;
-  const state = usageViewStateFromSearchParams(params);
+  const parameters = await searchParams;
+  const state = usageViewStateFromSearchParameters(parameters);
   const selection: UsageFilterSelection = state.selection;
 
   // A session id in the top bar scopes the whole page to one session. The
@@ -282,7 +282,7 @@ export default async function UsagePage({
     return React.createElement(
       ConsolePageShell,
       { section },
-      await renderSessionScopedPage(params, state, config ?? null)
+      await renderSessionScopedPage(parameters, state, config ?? null)
     );
   }
 
@@ -330,7 +330,7 @@ export default async function UsagePage({
     );
   }
 
-  const rawSpanId = params.spanId;
+  const rawSpanId = parameters.spanId;
   const selectedSpanId =
     typeof rawSpanId === "string"
       ? rawSpanId
@@ -363,7 +363,7 @@ export default async function UsagePage({
       }),
       React.createElement(UsageView, {
         selection,
-        ...(traceLookup === undefined ? {} : { traceLookup })
+        ...(traceLookup !== undefined && { traceLookup })
       })
     );
   }
@@ -375,7 +375,7 @@ export default async function UsagePage({
       React.createElement(ResourceUnavailable, unavailableUsageState(result)),
       React.createElement(UsageView, {
         selection,
-        ...(traceLookup === undefined ? {} : { traceLookup })
+        ...(traceLookup !== undefined && { traceLookup })
       })
     );
   }
@@ -397,19 +397,19 @@ export default async function UsagePage({
       selection,
       fleetView,
       mcpInventory,
-      ...(traceLookup === undefined ? {} : { traceLookup })
+      ...(traceLookup !== undefined && { traceLookup })
     })
   );
 }
 
 /**
- * MCP server inventory and Runtime usage observations for the Usage page.
- *
- * Reuses the same two Control API reads as `/mcps`: the catalog read
- * describes what is configured and exposed, and the runtime read reports
- * calls and failures accumulated since router start. Unavailability stays
- * explicit rather than collapsing to an empty server list.
- */
+MCP server inventory and Runtime usage observations for the Usage page.
+
+Reuses the same two Control API reads as `/mcps`: the catalog read
+describes what is configured and exposed, and the runtime read reports
+calls and failures accumulated since router start. Unavailability stays
+explicit rather than collapsing to an empty server list.
+*/
 async function loadUsageMcpInventory(
   config: ControlApiConfig | null
 ): Promise<UsageMcpInventory> {
@@ -449,14 +449,14 @@ async function loadUsageMcpInventory(
 }
 
 /**
- * The unscoped fleet diagnostics view.
- *
- * Only the selected view is read: the fleet scan walks every recent session's
- * rollout, and the hook summary reads the whole hook log, so neither is worth
- * reading for a page that will not show it.
- */
+The unscoped fleet diagnostics view.
+
+Only the selected view is read: the fleet scan walks every recent session's
+rollout, and the hook summary reads the whole hook log, so neither is worth
+reading for a page that will not show it.
+*/
 async function renderFleetView(
-  state: ReturnType<typeof usageViewStateFromSearchParams>,
+  state: ReturnType<typeof usageViewStateFromSearchParameters>,
   config: ControlApiConfig | null
 ): Promise<React.JSX.Element> {
   if (state.view === "overview") {
@@ -518,16 +518,16 @@ async function renderFleetView(
 }
 
 /**
- * The session-scoped page.
- *
- * The Control API's diagnostics read and the OpenLIT span page are read in
- * parallel and degrade independently: a session whose spans the telemetry
- * store does not have still shows its rollouts, its router requests and its
- * failures.
- */
+The session-scoped page.
+
+The Control API's diagnostics read and the OpenLIT span page are read in
+parallel and degrade independently: a session whose spans the telemetry
+store does not have still shows its rollouts, its router requests and its
+failures.
+*/
 async function renderSessionScopedPage(
-  params: UsageSearchParams,
-  state: ReturnType<typeof usageViewStateFromSearchParams>,
+  parameters: UsageSearchParameters,
+  state: ReturnType<typeof usageViewStateFromSearchParameters>,
   config: ControlApiConfig | null
 ): Promise<React.JSX.Element> {
   if (state.sessionId === null) {
@@ -547,7 +547,7 @@ async function renderSessionScopedPage(
   }
   const sessionId = state.sessionId;
   const viewState = sessionViewState(state, sessionId);
-  const rawSpanId = params.spanId;
+  const rawSpanId = parameters.spanId;
   const selectedSpanId =
     typeof rawSpanId === "string"
       ? rawSpanId
@@ -578,9 +578,7 @@ async function renderSessionScopedPage(
             includeItems: true,
             itemsLimit: viewState.itemsLimit,
             itemsOffset: viewState.itemsOffset,
-            ...(viewState.threadId === undefined
-              ? {}
-              : { threadId: viewState.threadId })
+            ...(viewState.threadId !== undefined && { threadId: viewState.threadId })
           },
           config
         ).then((result) =>
@@ -607,7 +605,7 @@ async function renderSessionScopedPage(
     spansResult.kind === "ok" ? null : spansFailureFor(spansResult);
 
   const spanHrefFor = (offset: number): string => {
-    const params2 = new URLSearchParams({
+    const parameters2 = new URLSearchParams({
       range: viewState.range,
       sessionId,
       tab: "spans",
@@ -615,8 +613,8 @@ async function renderSessionScopedPage(
       spanSort: viewState.spanSort,
       spanOffset: String(offset)
     });
-    if (selectedSpanId !== undefined) params2.set("spanId", selectedSpanId);
-    return `/usage?${params2.toString()}`;
+    if (selectedSpanId !== undefined) parameters2.set("spanId", selectedSpanId);
+    return `/usage?${parameters2.toString()}`;
   };
 
   return React.createElement(UsageView, {
@@ -634,8 +632,6 @@ async function renderSessionScopedPage(
       spansFailure: spansFailureValue,
       spanHrefFor
     }),
-    ...(traceResult === undefined
-      ? {}
-      : { traceLookup: usageTraceLookup(traceResult) })
+    ...(traceResult !== undefined && { traceLookup: usageTraceLookup(traceResult) })
   });
 }

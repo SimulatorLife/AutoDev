@@ -47,7 +47,9 @@ const commandParameterSchema = z.strictObject({
   maxLength: z.number().int().min(1).max(4096)
 });
 
-/** A bare executable name, never a path or a dot-directory. */
+/**
+A bare executable name, never a path or a dot-directory.
+*/
 export const commandExecutableNameSchema = z
   .string()
   .regex(/^[a-zA-Z0-9][a-zA-Z0-9_.+-]{0,127}$/u);
@@ -252,7 +254,9 @@ export function resolveCommandArguments(
   });
 }
 
-/** One source for the MCP input schema and parameter validation. */
+/**
+One source for the MCP input schema and parameter validation.
+*/
 export function commandInputSchema(definition: CommandDefinition) {
   const shape: Record<string, z.ZodString> = {};
   for (const [name, parameter] of Object.entries(definition.parameters)) {

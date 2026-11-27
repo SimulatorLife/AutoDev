@@ -2,17 +2,17 @@ import type { ControlRefusalReason } from "../control-failure.ts";
 import type { ControlApiResult } from "./control-api.ts";
 
 /**
- * The refusal each Runtime code earns, as a table rather than a chain of
- * branches so a code added on the Runtime side shows up as a case this table
- * does not cover.
- *
- * The Runtime states its reasons with machine-readable codes, and each asks for
- * a different next move, so a code the route drops on the floor leaves the
- * operator with a notice that says only "could not be confirmed". A code this
- * build does not know keeps the generic notice: the generic notice makes no
- * claim about the Runtime's reason, which is the only honest thing to say
- * about a reason this build has not read.
- */
+The refusal each Runtime code earns, as a table rather than a chain of
+branches so a code added on the Runtime side shows up as a case this table
+does not cover.
+
+The Runtime states its reasons with machine-readable codes, and each asks for
+a different next move, so a code the route drops on the floor leaves the
+operator with a notice that says only "could not be confirmed". A code this
+build does not know keeps the generic notice: the generic notice makes no
+claim about the Runtime's reason, which is the only honest thing to say
+about a reason this build has not read.
+*/
 const REFUSAL_BY_CODE: Readonly<Record<string, ControlRefusalReason>> = {
   // The Runtime rejected the request as invalid before doing any work: the body
   // the route assembled does not describe a change it can make.

@@ -235,7 +235,7 @@ test("GithubActionsAdapter rejects dot path segments before any fetch", async ()
     }
   });
 
-  for (const [owner, repo] of [
+  for (const [owner, repository] of [
     [".", "AutoDev"],
     ["..", "AutoDev"],
     ["SimulatorLife", "."],
@@ -243,7 +243,7 @@ test("GithubActionsAdapter rejects dot path segments before any fetch", async ()
     ["SimulatorLife", "%2e%2e"]
   ] as const) {
     await assert.rejects(
-      () => adapter.listWorkflows(owner, repo, "safe-token"),
+      () => adapter.listWorkflows(owner, repository, "safe-token"),
       { code: "invalid_repository" }
     );
   }
@@ -396,7 +396,7 @@ test("GithubActionsAdapter rejects non-numeric run limits before fetch", async (
     }
   });
 
-  for (const limit of [Number.NaN, Number.POSITIVE_INFINITY, "10", null]) {
+  for (const limit of [NaN, Infinity, "10", null]) {
     const options = { limit } as unknown as { limit?: number };
     await assert.rejects(
       () =>
@@ -517,7 +517,7 @@ test("GithubActionsAdapter preserves HTTP status when an error body is malformed
 });
 
 test("GithubActionsAdapter keeps its timeout active while consuming a response body", async () => {
-  let cancelled = false;
+  let isCancelled = false;
   let delayedChunk: ReturnType<typeof setTimeout> | undefined;
   const mockFetch: typeof fetch = async () => {
     const body = new ReadableStream<Uint8Array>({
@@ -529,7 +529,7 @@ test("GithubActionsAdapter keeps its timeout active while consuming a response b
         }, 200);
       },
       cancel() {
-        cancelled = true;
+        isCancelled = true;
         if (delayedChunk) clearTimeout(delayedChunk);
       }
     });
@@ -544,7 +544,7 @@ test("GithubActionsAdapter keeps its timeout active while consuming a response b
     () => adapter.listWorkflows("SimulatorLife", "AutoDev", "safe-token"),
     { code: "timeout" }
   );
-  assert.equal(cancelled, true);
+  assert.equal(isCancelled, true);
 });
 
 test("GithubActionsAdapter rejects malformed successful payload collection fields", async () => {
@@ -718,11 +718,11 @@ test("GithubActionsAdapter handles errors without leaking secrets or tokens", as
   await assert.rejects(
     async () =>
       adapter401.listWorkflows("SimulatorLife", "AutoDev", SECRET_TOKEN),
-    (err: unknown) => {
-      assert.ok(err instanceof GithubActionsApiError);
-      assert.equal(err.status, 401);
-      assert.equal(err.message.includes(SECRET_TOKEN), false);
-      assert.ok(err.message.includes("[REDACTED]"));
+    (error: unknown) => {
+      assert.ok(error instanceof GithubActionsApiError);
+      assert.equal(error.status, 401);
+      assert.equal(error.message.includes(SECRET_TOKEN), false);
+      assert.ok(error.message.includes("[REDACTED]"));
       return true;
     }
   );
@@ -735,11 +735,11 @@ test("GithubActionsAdapter handles errors without leaking secrets or tokens", as
   await assert.rejects(
     async () =>
       adapterNet.listRecentRuns("SimulatorLife", "AutoDev", SECRET_TOKEN),
-    (err: unknown) => {
-      assert.ok(err instanceof GithubActionsApiError);
-      assert.equal(err.status, 502);
-      assert.equal(err.message.includes(SECRET_TOKEN), false);
-      assert.ok(err.message.includes("[REDACTED]"));
+    (error: unknown) => {
+      assert.ok(error instanceof GithubActionsApiError);
+      assert.equal(error.status, 502);
+      assert.equal(error.message.includes(SECRET_TOKEN), false);
+      assert.ok(error.message.includes("[REDACTED]"));
       return true;
     }
   );

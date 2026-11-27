@@ -19,13 +19,17 @@ export interface ProviderQuotaWindowBar {
   readonly resetAt: string | null;
 }
 
-/** A fresh, authoritative quota scope that quota-axi says is exhausted now. */
+/**
+A fresh, authoritative quota scope that quota-axi says is exhausted now.
+*/
 export interface ProviderQuotaExhaustion {
   readonly scope: string;
   readonly limitingWindowId: string;
 }
 
-/** Clamps a reported percentage into 0-100 for bar geometry and ARIA only. */
+/**
+Clamps a reported percentage into 0-100 for bar geometry and ARIA only.
+*/
 function clampPercent(value: number): number {
   return Math.min(100, Math.max(0, value));
 }
@@ -192,7 +196,9 @@ function quotaBarsForProviderEntry(
   return bars;
 }
 
-/** Extracts compact per-provider usage bars from the quota-axi snapshot. */
+/**
+Extracts compact per-provider usage bars from the quota-axi snapshot.
+*/
 function quotaByProvider(
   report: QuotaAxiSnapshot | null
 ): ReadonlyMap<string, readonly ProviderQuotaWindowBar[]> {
@@ -226,8 +232,8 @@ function authoritativeExhaustion(
     availability.runway?.status !== "exhausted_now" ||
     typeof limitingWindowId !== "string" ||
     !availability.boundedBy.includes(limitingWindowId) ||
-    !entry.windows.some(
-      (window) => window.id === limitingWindowId && window.shareOf === undefined
+    entry.windows.every(
+      (window) => window.id !== limitingWindowId || window.shareOf !== undefined
     )
   ) {
     return null;
@@ -264,17 +270,17 @@ function isModelScope(scope: string): boolean {
 }
 
 /**
- * The exhaustion that leaves a single-route provider unable to serve anything.
- *
- * A provider-wide scope (`all_models`/`all_products`), when reported, is the
- * whole verdict: one exhausted model under a live provider-wide scope (Claude's
- * `model:opus`) leaves the provider's other models serving. A provider that
- * reports no provider-wide scope meters its capacity only per model family --
- * MiniMax's `model:general`, bounded by both a 5h and a 7d window -- so it is
- * exhausted once every model scope it reports is exhausted, whichever of its
- * windows ran out. Non-routing workloads (`code_review`, `tools`, ...) never
- * decide it.
- */
+The exhaustion that leaves a single-route provider unable to serve anything.
+
+A provider-wide scope (`all_models`/`all_products`), when reported, is the
+whole verdict: one exhausted model under a live provider-wide scope (Claude's
+`model:opus`) leaves the provider's other models serving. A provider that
+reports no provider-wide scope meters its capacity only per model family --
+MiniMax's `model:general`, bounded by both a 5h and a 7d window -- so it is
+exhausted once every model scope it reports is exhausted, whichever of its
+windows ran out. Non-routing workloads (`code_review`, `tools`, ...) never
+decide it.
+*/
 function providerRouteExhaustion(
   entry: QuotaAxiProvider
 ): ProviderQuotaExhaustion | null {
@@ -303,10 +309,10 @@ function providerRouteExhaustion(
 }
 
 /**
- * The shared Antigravity service has separate AutoDev routes. Do not fan an
- * unfamiliar limiter out to every route row: both its quota scope and
- * authoritative limiting window must identify the same family.
- */
+The shared Antigravity service has separate AutoDev routes. Do not fan an
+unfamiliar limiter out to every route row: both its quota scope and
+authoritative limiting window must identify the same family.
+*/
 function antigravityExhaustions(
   entry: QuotaAxiProvider
 ): [string, ProviderQuotaExhaustion][] {
@@ -333,13 +339,13 @@ function isFreshQuotaEntry(entry: QuotaAxiProvider): boolean {
 }
 
 /**
- * How much of the quota report can support an exhaustion count.
- *
- * Exhaustion is only ever projected from fresh readings, so a count of zero is
- * an observation only when some fresh reading exists. `partial` means some
- * entries are stale, failed or unreadable, so providers they cover are not
- * known to be non-exhausted.
- */
+How much of the quota report can support an exhaustion count.
+
+Exhaustion is only ever projected from fresh readings, so a count of zero is
+an observation only when some fresh reading exists. `partial` means some
+entries are stale, failed or unreadable, so providers they cover are not
+known to be non-exhausted.
+*/
 export type QuotaExhaustionEvidence =
   "fresh" | "partial" | "stale" | "invalid" | "missing";
 
@@ -354,14 +360,14 @@ export function quotaExhaustionEvidence(
 }
 
 /**
- * Projects quota-axi's explicit, fresh exhaustion verdicts onto Console
- * provider rows: a provider is exhausted when *any* window bounding the
- * capacity it routes is exhausted -- a free 5h window does not make a provider
- * with an exhausted 7d window usable. Non-routing workloads (such as
- * `code_review`, `tools`, or `grok_bot`), a single model scope beside a
- * live provider-wide scope, stale readings, and raw percentages do not mark a
- * usable provider unavailable.
- */
+Projects quota-axi's explicit, fresh exhaustion verdicts onto Console
+provider rows: a provider is exhausted when *any* window bounding the
+capacity it routes is exhausted -- a free 5h window does not make a provider
+with an exhausted 7d window usable. Non-routing workloads (such as
+`code_review`, `tools`, or `grok_bot`), a single model scope beside a
+live provider-wide scope, stale readings, and raw percentages do not mark a
+usable provider unavailable.
+*/
 export function exhaustedQuotaByProvider(
   report: QuotaAxiSnapshot | null
 ): ReadonlyMap<string, ProviderQuotaExhaustion> {
@@ -384,36 +390,42 @@ export function exhaustedQuotaByProvider(
 }
 
 /**
- * What the quota report says about a provider whose reading is not fresh.
- *
- * The bars are the report's windows. A provider the report has no usable
- * window for is a different fact from a provider the report could not read at
- * all, and the row used to look the same for both: the quota cell rendered
- * nothing, so Claude -- whose quota endpoint was refusing every read -- looked
- * exactly like a provider quota-axi has no source for. The operator could not
- * tell "this provider has no quota" from "this provider's quota could not be
- * read", and only one of those is a fact about the provider.
- *
- * The state is the report's own: its status, its error and its retry hint,
- * read as supplied. AutoDev does not decide what a failed read means, and it
- * does not turn a failed read into a quota value.
- */
+What the quota report says about a provider whose reading is not fresh.
+
+The bars are the report's windows. A provider the report has no usable
+window for is a different fact from a provider the report could not read at
+all, and the row used to look the same for both: the quota cell rendered
+nothing, so Claude -- whose quota endpoint was refusing every read -- looked
+exactly like a provider quota-axi has no source for. The operator could not
+tell "this provider has no quota" from "this provider's quota could not be
+read", and only one of those is a fact about the provider.
+
+The state is the report's own: its status, its error and its retry hint,
+read as supplied. AutoDev does not decide what a failed read means, and it
+does not turn a failed read into a quota value.
+*/
 export interface ProviderQuotaReadState {
-  /** The short fact, as the cell shows it. */
+  /**
+  The short fact, as the cell shows it.
+  */
   readonly label: string;
-  /** When the report asks for the read to be retried. */
+  /**
+  When the report asks for the read to be retried.
+  */
   readonly retryAt: string | null;
-  /** The report's own explanation, for the hover title. */
+  /**
+  The report's own explanation, for the hover title.
+  */
   readonly title: string;
 }
 
 /**
- * The Console's wording for each state quota-axi reports.
- *
- * `fresh` is absent on purpose: a fresh reading is the one that has bars, and a
- * state line beside fresh bars would be saying nothing. A state this Console
- * does not know is left unsaid rather than guessed at.
- */
+The Console's wording for each state quota-axi reports.
+
+`fresh` is absent on purpose: a fresh reading is the one that has bars, and a
+state line beside fresh bars would be saying nothing. A state this Console
+does not know is left unsaid rather than guessed at.
+*/
 const QUOTA_READ_STATE_LABEL: Readonly<Record<string, string>> = {
   rate_limited: "Quota rate limited",
   auth_required: "Quota sign-in required",
@@ -423,12 +435,12 @@ const QUOTA_READ_STATE_LABEL: Readonly<Record<string, string>> = {
 };
 
 /**
- * Why each state means what it means, in the Console's voice.
- *
- * None of these is a verdict about the provider: a quota read that failed says
- * nothing about whether the provider can serve a request, which is what the
- * Status column answers. They say what is missing from this cell.
- */
+Why each state means what it means, in the Console's voice.
+
+None of these is a verdict about the provider: a quota read that failed says
+nothing about whether the provider can serve a request, which is what the
+Status column answers. They say what is missing from this cell.
+*/
 const QUOTA_READ_STATE_EXPLANATION: Readonly<Record<string, string>> = {
   rate_limited:
     "The quota endpoint refused this read and asked to be retried later. The provider itself is unaffected; only its usage is not being shown.",
@@ -442,17 +454,17 @@ const QUOTA_READ_STATE_EXPLANATION: Readonly<Record<string, string>> = {
 };
 
 /**
- * The read state of every provider in the report whose reading is not fresh.
- *
- * The report is the Runtime's JSON, which is quota-axi's own apart from a
- * provider that is waiting for its retry moment, whose entry the Runtime
- * carries forward unchanged. Its inner shape is read defensively either way: a
- * state this Console does not know is left unsaid rather than guessed at, and a
- * malformed entry is skipped rather than thrown on.
- *
- * The shared Antigravity service fans out the same way its windows do: one
- * quota source, three route rows, each showing that source's state.
- */
+The read state of every provider in the report whose reading is not fresh.
+
+The report is the Runtime's JSON, which is quota-axi's own apart from a
+provider that is waiting for its retry moment, whose entry the Runtime
+carries forward unchanged. Its inner shape is read defensively either way: a
+state this Console does not know is left unsaid rather than guessed at, and a
+malformed entry is skipped rather than thrown on.
+
+The shared Antigravity service fans out the same way its windows do: one
+quota source, three route rows, each showing that source's state.
+*/
 function quotaReadStates(
   report: QuotaAxiSnapshot | null
 ): ReadonlyMap<string, ProviderQuotaReadState> {
@@ -484,19 +496,25 @@ function quotaReadStates(
 }
 
 /**
- * What the quota report says about each provider, in the three shapes the
- * Console reads it in: the windows it can draw bars from, the state of a
- * reading it could not draw, and the authoritative exhaustion verdicts.
- *
- * One value rather than three parallel maps, because they are three readings
- * of the same report about the same providers.
- */
+What the quota report says about each provider, in the three shapes the
+Console reads it in: the windows it can draw bars from, the state of a
+reading it could not draw, and the authoritative exhaustion verdicts.
+
+One value rather than three parallel maps, because they are three readings
+of the same report about the same providers.
+*/
 export interface ProviderQuotaView {
-  /** The windows each provider's usage can be drawn from. */
+  /**
+  The windows each provider's usage can be drawn from.
+  */
   readonly windows: ReadonlyMap<string, readonly ProviderQuotaWindowBar[]>;
-  /** The state of each provider whose reading is not fresh. */
+  /**
+  The state of each provider whose reading is not fresh.
+  */
   readonly readStates: ReadonlyMap<string, ProviderQuotaReadState>;
-  /** The fresh, known exhaustion verdicts. */
+  /**
+  The fresh, known exhaustion verdicts.
+  */
   readonly exhaustion: ReadonlyMap<string, ProviderQuotaExhaustion>;
 }
 
@@ -511,9 +529,9 @@ export function providerQuotaView(
 }
 
 /**
- * The read state as the cell shows it: the fact and, when present, its retry
- * instant.
- */
+The read state as the cell shows it: the fact and, when present, its retry
+instant.
+*/
 function ProviderQuotaReadStateLine({
   providerId,
   state

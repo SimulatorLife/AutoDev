@@ -19,16 +19,16 @@ import { POST as postProviderRole } from "../../console/app/api/providers/[provi
 import { POST as postProviderEnabled } from "../../console/app/api/providers/[provider]/route.ts";
 
 /**
- * A role change made in the Console reaches routing, is persisted, and is
- * still in force after the router restarts.
- *
- * Every layer is the real one: the Console's form route, its Control API
- * client, the Runtime's Control API over HTTP, the router module's own
- * persistence (writing a state file of this test's), and the routing policy
- * the router selects with. An operator set Claude's orchestrator role to
- * Disabled and a session was routed to Claude anyway; each assertion below is
- * one of the places that change could have been lost.
- */
+A role change made in the Console reaches routing, is persisted, and is
+still in force after the router restarts.
+
+Every layer is the real one: the Console's form route, its Control API
+client, the Runtime's Control API over HTTP, the router module's own
+persistence (writing a state file of this test's), and the routing policy
+the router selects with. An operator set Claude's orchestrator role to
+Disabled and a session was routed to Claude anyway; each assertion below is
+one of the places that change could have been lost.
+*/
 
 const SERVICE_TOKEN = "role-change-persistence-token-0123456789abcdef";
 const ORCHESTRATOR_TIER = routing.config.orchestrator.tier;
@@ -52,7 +52,9 @@ function persistedOrchestrator(file: string): unknown {
   return saved.roleAssignments?.claude?.orchestrator;
 }
 
-/** A restart: the routing policy is emptied and read back from the file. */
+/**
+A restart: the routing policy is emptied and read back from the file.
+*/
 function restartRouter(): void {
   routing.restoreRuntimeState({});
   assert.equal(

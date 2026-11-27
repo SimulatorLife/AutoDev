@@ -3,9 +3,8 @@ import test from "node:test";
 
 import {
   matchesSearchDestination,
-  searchFailureMessage,
-  searchDestinations
-} from "../src/components/navigation/search-destinations.ts";
+  searchDestinations,
+  searchFailureMessage} from "../src/components/navigation/search-destinations.ts";
 
 test("search indexes canonical providers, models, roles, and workspace records with their real routes", () => {
   const results = searchDestinations({

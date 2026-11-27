@@ -443,16 +443,16 @@ test("OpenLITUsageClient sends typed URL filter state with server credentials", 
 
 test("OpenLITUsageClient maps unobserved and empty model breakdowns honestly without fallback", async () => {
   const payload = structuredClone(partialPayload);
-  const reqModel = payload.widgets.find(
+  const requestModel = payload.widgets.find(
     (candidate) => candidate.key === "requests-by-model"
   );
   const attModel = payload.widgets.find(
     (candidate) => candidate.key === "attempts-by-model"
   );
-  assert.ok(reqModel);
+  assert.ok(requestModel);
   assert.ok(attModel);
-  reqModel.observed = true;
-  reqModel.rows = [];
+  requestModel.observed = true;
+  requestModel.rows = [];
   attModel.observed = false;
   attModel.rows = [];
 
@@ -788,11 +788,13 @@ test("Git Usage distinguishes a source-confirmed zero from no observed metric", 
   });
   const empty = await emptyClient.query(supportedSelection);
   assert.equal(empty.kind, "ok");
-  if (empty.kind === "ok") {
-    assert.equal(empty.data.metrics.gitChanges.status, "observed");
-    assert.equal(empty.data.metrics.gitChanges.commits, 0);
-    assert.deepEqual(empty.data.metrics.gitChanges.commitsByWorkspace, []);
+  if (empty.kind !== "ok") {
+    return;
   }
+
+  assert.equal(empty.data.metrics.gitChanges.status, "observed");
+  assert.equal(empty.data.metrics.gitChanges.commits, 0);
+  assert.deepEqual(empty.data.metrics.gitChanges.commitsByWorkspace, []);
 });
 
 test("Git partial-diff query failures do not become a complete zero", async () => {
@@ -855,14 +857,16 @@ test("Git Usage is not applicable to the live Active Sessions scope", async () =
   });
   const result = await client.query({ range: "ACTIVE_SESSIONS", values: {} });
   assert.equal(result.kind, "ok");
-  if (result.kind === "ok") {
-    assert.equal(result.data.metrics.gitChanges.status, "not-applicable");
-    assert.equal(
-      result.data.metrics.gitChanges.notApplicableReason,
-      "active-sessions"
-    );
-    assert.equal(result.data.metrics.gitChanges.commits, null);
+  if (result.kind !== "ok") {
+    return;
   }
+
+  assert.equal(result.data.metrics.gitChanges.status, "not-applicable");
+  assert.equal(
+    result.data.metrics.gitChanges.notApplicableReason,
+    "active-sessions"
+  );
+  assert.equal(result.data.metrics.gitChanges.commits, null);
 });
 
 test("Git line totals stay unobserved when partial-diff coverage failed", async () => {
@@ -1176,26 +1180,28 @@ test("OpenLITUsageClient fetches a bounded, typed trace summary with server cred
   );
   assert.equal(requestedInit?.body, undefined);
   assert.equal(result.kind, "ok");
-  if (result.kind === "ok") {
-    assert.deepEqual(result.data, {
-      schema: "autodev-openlit-trace-detail-v1",
-      traceId,
-      selectedSpanId,
-      spans: [
-        {
-          spanId: selectedSpanId,
-          parentSpanId: null,
-          spanName: "gen_ai.client_operation",
-          serviceName: "autodev-router",
-          timestamp: "2026-10-05T12:00:00.000Z",
-          durationNs: 1_250_000,
-          statusCode: "OK"
-        }
-      ],
-      partial: false
-    });
-    assert.equal(JSON.stringify(result.data).includes("must not reach"), false);
+  if (result.kind !== "ok") {
+    return;
   }
+
+  assert.deepEqual(result.data, {
+    schema: "autodev-openlit-trace-detail-v1",
+    traceId,
+    selectedSpanId,
+    spans: [
+      {
+        spanId: selectedSpanId,
+        parentSpanId: null,
+        spanName: "gen_ai.client_operation",
+        serviceName: "autodev-router",
+        timestamp: "2026-10-05T12:00:00.000Z",
+        durationNs: 1_250_000,
+        statusCode: "OK"
+      }
+    ],
+    partial: false
+  });
+  assert.equal(JSON.stringify(result.data).includes("must not reach"), false);
 });
 
 test("OpenLITUsageClient rejects invalid trace IDs before fetch and preserves not-found", async () => {
@@ -1368,18 +1374,20 @@ test("OpenLITUsageClient reads a bounded exact-session span view without metric 
     "Content-Type": "application/json"
   });
   assert.equal(requestInit?.cache, "no-store");
-  if (result.kind === "ok") {
-    assert.equal(result.data.spans[0]?.role, "orchestrator");
-    assert.equal(result.data.spans[0]?.provider, "claude");
-    assert.equal(result.data.spans[0]?.conversationId, "codex-thread-123");
-    assert.equal(result.data.spans[0]?.hopRoute, null);
-    assert.equal(Object.hasOwn(result.data, "sessionId"), false);
-    assert.equal(result.data.total, 438);
-    assert.equal(result.data.limit, 50);
-    assert.equal(result.data.offset, 0);
-    assert.equal(result.data.hasMore, true);
-    assert.equal(result.data.estimatedCostUsd, 1.25);
+  if (result.kind !== "ok") {
+    return;
   }
+
+  assert.equal(result.data.spans[0]?.role, "orchestrator");
+  assert.equal(result.data.spans[0]?.provider, "claude");
+  assert.equal(result.data.spans[0]?.conversationId, "codex-thread-123");
+  assert.equal(result.data.spans[0]?.hopRoute, null);
+  assert.equal(Object.hasOwn(result.data, "sessionId"), false);
+  assert.equal(result.data.total, 438);
+  assert.equal(result.data.limit, 50);
+  assert.equal(result.data.offset, 0);
+  assert.equal(result.data.hasMore, true);
+  assert.equal(result.data.estimatedCostUsd, 1.25);
 });
 
 test("OpenLIT session evidence keeps unknown conversation identity distinct", async () => {
@@ -1404,10 +1412,12 @@ test("OpenLIT session evidence keeps unknown conversation identity distinct", as
     { range: "7D" }
   );
   assert.equal(result.kind, "ok");
-  if (result.kind === "ok") {
-    assert.equal(result.data.spans[0]?.provider, null);
-    assert.equal(result.data.spans[0]?.conversationId, null);
+  if (result.kind !== "ok") {
+    return;
   }
+
+  assert.equal(result.data.spans[0]?.provider, null);
+  assert.equal(result.data.spans[0]?.conversationId, null);
 });
 
 test("OpenLITUsageClient asks for the requested page of a session's spans", async () => {
@@ -1447,14 +1457,16 @@ test("OpenLITUsageClient asks for the requested page of a session's spans", asyn
     offset: 200,
     sortDirection: "asc"
   });
-  if (result.kind === "ok") {
-    assert.equal(result.data.total, 250);
-    assert.equal(result.data.hasMore, false);
-    assert.equal(result.data.estimatedCostUsd, 1.25);
-    assert.equal(result.data.spans.length, 50);
-    assert.equal(result.data.spans[0]?.spanId, sessionSpan(200).spanId);
-    assert.equal(result.data.spans.at(-1)?.spanId, sessionSpan(249).spanId);
+  if (result.kind !== "ok") {
+    return;
   }
+
+  assert.equal(result.data.total, 250);
+  assert.equal(result.data.hasMore, false);
+  assert.equal(result.data.estimatedCostUsd, 1.25);
+  assert.equal(result.data.spans.length, 50);
+  assert.equal(result.data.spans[0]?.spanId, sessionSpan(200).spanId);
+  assert.equal(result.data.spans.at(-1)?.spanId, sessionSpan(249).spanId);
 });
 
 test("OpenLITUsageClient rejects malformed or contradictory v3 session pages", async () => {
@@ -1533,12 +1545,12 @@ test("the session page is bounded, so an oversized page is clamped to the endpoi
 });
 
 test("OpenLITUsageClient rejects invalid session identities before network access", async () => {
-  let called = false;
+  let isCalled = false;
   const client = new OpenLITUsageClient({
     baseUrl: "http://openlit.local",
     serviceToken: "session-secret",
     fetchImpl: async () => {
-      called = true;
+      isCalled = true;
       return response({});
     }
   });
@@ -1546,7 +1558,7 @@ test("OpenLITUsageClient rejects invalid session identities before network acces
     range: "7D"
   });
   assert.deepEqual(result, { kind: "invalid-session-id" });
-  assert.equal(called, false);
+  assert.equal(isCalled, false);
 });
 
 test("OpenLITUsageClient distinguishes an observed empty session from an unavailable read", async () => {

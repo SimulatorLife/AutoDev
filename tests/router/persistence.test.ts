@@ -24,20 +24,20 @@ test("shared error formatting preserves Error and non-Error details", () => {
 test("effectiveStateFile resolves custom, environment, or default path", () => {
   assert.equal(effectiveStateFile("/custom/file.json"), "/custom/file.json");
 
-  const origEnv = process.env.CODEX_ROUTER_STATE_FILE;
+  const origEnvironment = process.env.CODEX_ROUTER_STATE_FILE;
   try {
     process.env.CODEX_ROUTER_STATE_FILE = "/env/path.json";
     assert.equal(effectiveStateFile(), "/env/path.json");
     assert.equal(new RouterPersistence().getStateFile(), "/env/path.json");
     assert.equal(
-      new RouterPersistence({ stateFile: "   " }).getStateFile(),
+      new RouterPersistence({ stateFile: ' '.repeat(3) }).getStateFile(),
       "/env/path.json"
     );
   } finally {
-    if (origEnv === undefined) {
+    if (origEnvironment === undefined) {
       delete process.env.CODEX_ROUTER_STATE_FILE;
     } else {
-      process.env.CODEX_ROUTER_STATE_FILE = origEnv;
+      process.env.CODEX_ROUTER_STATE_FILE = origEnvironment;
     }
   }
 });
@@ -51,7 +51,7 @@ test("RouterPersistence resolves explicit, configured, and dynamic state files",
     configured.getStateFile("  /override/state.json  "),
     "/override/state.json"
   );
-  assert.equal(configured.getStateFile("   "), "/configured/state.json");
+  assert.equal(configured.getStateFile(' '.repeat(3)), "/configured/state.json");
 
   let callbackCalls = 0;
   const dynamic = new RouterPersistence({
@@ -126,7 +126,9 @@ test("RouterPersistence persistNow writes atomically with mode 0o600", async () 
     try {
       await unlink(testFile);
     } catch {
-      /* ignore */
+      /*
+      ignore
+      */
     }
   }
 });
@@ -183,7 +185,7 @@ test("RouterPersistence load validates schema and dispatches sections", async ()
     await writeFile(testFile, JSON.stringify(state), "utf8");
 
     const restored: Record<string, unknown> = {};
-    let postRestoreCalled = false;
+    let isPostRestoreCalled = false;
 
     const loader = new RouterPersistence({
       stateFile: testFile,
@@ -192,7 +194,7 @@ test("RouterPersistence load validates schema and dispatches sections", async ()
       },
       onPostRestore: (fullParsed) => {
         assert.equal(fullParsed.schema, `${PERSISTED_STATE_SCHEMA}-v4`);
-        postRestoreCalled = true;
+        isPostRestoreCalled = true;
       }
     });
 
@@ -202,12 +204,14 @@ test("RouterPersistence load validates schema and dispatches sections", async ()
     assert.deepEqual(restored.disabledSubagentProviders, ["claude"]);
     assert.deepEqual(restored.subagents, { total: 10 });
     assert.deepEqual(restored.customSection, { foo: "bar" });
-    assert.equal(postRestoreCalled, true);
+    assert.equal(isPostRestoreCalled, true);
   } finally {
     try {
       await unlink(testFile);
     } catch {
-      /* ignore */
+      /*
+      ignore
+      */
     }
   }
 });
@@ -231,14 +235,14 @@ test("RouterPersistence schedulePersist debounces writes", async () => {
     persistence.schedulePersist(); // coalesced
 
     // Immediately after scheduling, file should not exist yet
-    let existsImmediately = false;
+    let isExistsImmediately = false;
     try {
       await stat(testFile);
-      existsImmediately = true;
+      isExistsImmediately = true;
     } catch {
-      existsImmediately = false;
+      isExistsImmediately = false;
     }
-    assert.equal(existsImmediately, false);
+    assert.equal(isExistsImmediately, false);
 
     // Wait for the debounced write itself instead of assuming the event loop
     // can service the timer within a fixed interval while the full suite runs.
@@ -262,7 +266,9 @@ test("RouterPersistence schedulePersist debounces writes", async () => {
     try {
       await unlink(testFile);
     } catch {
-      /* ignore */
+      /*
+      ignore
+      */
     }
   }
 });

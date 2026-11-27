@@ -160,15 +160,15 @@ const UNIX_SOCKET_MAX_BYTES = 96;
 
 export function resolveXacpxOrchestrationSocketPath(
   codexHome?: string,
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): string {
   const explicit =
-    env.XACPX_ORCHESTRATION_SOCKET?.trim() ||
-    env.AUTODEV_XACPX_ORCHESTRATION_SOCKET?.trim();
+    environment.XACPX_ORCHESTRATION_SOCKET?.trim() ||
+    environment.AUTODEV_XACPX_ORCHESTRATION_SOCKET?.trim();
   if (explicit) return explicit;
-  const home = env.HOME?.trim() || homedir();
+  const home = environment.HOME?.trim() || homedir();
   const base =
-    codexHome?.trim() || env.CODEX_HOME?.trim() || path.join(home, ".codex");
+    codexHome?.trim() || environment.CODEX_HOME?.trim() || path.join(home, ".codex");
   const preferred = path.join(base, "run", "xacpx-orchestration.sock");
   if (Buffer.byteLength(preferred, "utf8") <= UNIX_SOCKET_MAX_BYTES) {
     return preferred;
@@ -209,7 +209,7 @@ export async function startXacpxOrchestrationIpcServer(
       import.meta.dirname,
       options.env?.AUTODEV_REPO_ROOT
     );
-  const env = options.env ?? process.env;
+  const environment = options.env ?? process.env;
   const globalWorkspaceRoot = options.authorizedWorkspaceRoot?.trim() || null;
 
   const coordinators = new Map<string, RegisteredCoordinator>();
@@ -266,18 +266,18 @@ export async function startXacpxOrchestrationIpcServer(
 
   const handleMethod = async (
     method: string,
-    params: Record<string, unknown>
+    parameters: Record<string, unknown>
   ): Promise<unknown> => {
     switch (method) {
       case "coordinator.register_external": {
-        const coordinatorSession = nonEmptyString(params.coordinatorSession);
+        const coordinatorSession = nonEmptyString(parameters.coordinatorSession);
         if (!coordinatorSession) {
           throw new OrchestrationRpcError(
             "ORCHESTRATION_INVALID_REQUEST",
             "coordinatorSession is required"
           );
         }
-        const rawWorkspace = nonEmptyString(params.workspace) ?? undefined;
+        const rawWorkspace = nonEmptyString(parameters.workspace) ?? undefined;
         let workspaceRoot: string | undefined;
         if (rawWorkspace && path.isAbsolute(rawWorkspace)) {
           workspaceRoot = validateDelegatedWorkspace(
@@ -292,29 +292,29 @@ export async function startXacpxOrchestrationIpcServer(
         const record: RegisteredCoordinator = existing
           ? {
               ...existing,
-              ...(rawWorkspace ? { workspace: rawWorkspace } : {}),
-              ...(workspaceRoot ? { workspaceRoot } : {}),
+              ...(rawWorkspace && { workspace: rawWorkspace }),
+              ...(workspaceRoot && { workspaceRoot }),
               updatedAt: now
             }
           : {
               coordinatorSession,
-              ...(rawWorkspace ? { workspace: rawWorkspace } : {}),
-              ...(workspaceRoot ? { workspaceRoot } : {}),
+              ...(rawWorkspace && { workspace: rawWorkspace }),
+              ...(workspaceRoot && { workspaceRoot }),
               createdAt: now,
               updatedAt: now
             };
         coordinators.set(coordinatorSession, record);
         return {
           coordinatorSession: record.coordinatorSession,
-          ...(record.workspace ? { workspace: record.workspace } : {}),
+          ...(record.workspace && { workspace: record.workspace }),
           createdAt: record.createdAt,
           updatedAt: record.updatedAt
         };
       }
 
       case "group.new": {
-        const coordinatorSession = nonEmptyString(params.coordinatorSession);
-        const title = nonEmptyString(params.title) ?? "Delegated batch";
+        const coordinatorSession = nonEmptyString(parameters.coordinatorSession);
+        const title = nonEmptyString(parameters.title) ?? "Delegated batch";
         if (!coordinatorSession) {
           throw new OrchestrationRpcError(
             "ORCHESTRATION_INVALID_REQUEST",
@@ -334,9 +334,9 @@ export async function startXacpxOrchestrationIpcServer(
       }
 
       case "delegate.request": {
-        const sourceHandle = nonEmptyString(params.sourceHandle);
-        const targetAgent = nonEmptyString(params.targetAgent);
-        const taskPrompt = nonEmptyString(params.task);
+        const sourceHandle = nonEmptyString(parameters.sourceHandle);
+        const targetAgent = nonEmptyString(parameters.targetAgent);
+        const taskPrompt = nonEmptyString(parameters.task);
         if (!sourceHandle || !targetAgent || !taskPrompt) {
           throw new OrchestrationRpcError(
             "ORCHESTRATION_INVALID_REQUEST",
@@ -344,7 +344,7 @@ export async function startXacpxOrchestrationIpcServer(
           );
         }
         const coordinatorSession = sourceHandle;
-        const requestedRole = nonEmptyString(params.role) ?? targetAgent;
+        const requestedRole = nonEmptyString(parameters.role) ?? targetAgent;
         let validatedRole: string;
         try {
           validatedRole = validateDelegatedRole(requestedRole);
@@ -358,7 +358,7 @@ export async function startXacpxOrchestrationIpcServer(
         const boundWorkspaceRoot =
           resolveBoundWorkspaceRoot(coordinatorSession);
         const requestedCwd =
-          nonEmptyString(params.cwd) ?? boundWorkspaceRoot ?? "";
+          nonEmptyString(parameters.cwd) ?? boundWorkspaceRoot ?? "";
         let validatedCwd: string;
         try {
           validatedCwd = validateDelegatedWorkspace(
@@ -372,7 +372,7 @@ export async function startXacpxOrchestrationIpcServer(
           );
         }
 
-        const groupId = nonEmptyString(params.groupId) ?? undefined;
+        const groupId = nonEmptyString(parameters.groupId) ?? undefined;
         if (groupId) {
           const group = groups.get(groupId);
           if (!group || group.coordinatorSession !== coordinatorSession) {
@@ -391,7 +391,7 @@ export async function startXacpxOrchestrationIpcServer(
         }
 
         const taskId = `task-${randomUUID().slice(0, 12)}`;
-        const parallel = params.parallel === true;
+        const isParallel = parameters.parallel === true;
         const workerSession = `child-${validatedRole}-${randomUUID().slice(0, 8)}`;
         const now = new Date().toISOString();
         const workspaceLabel =
@@ -414,8 +414,8 @@ export async function startXacpxOrchestrationIpcServer(
           resultText: "",
           createdAt: now,
           updatedAt: now,
-          ...(groupId ? { groupId } : {}),
-          ...(parallel ? { ephemeralWorkerSession: true } : {}),
+          ...(groupId && { groupId }),
+          ...(isParallel && { ephemeralWorkerSession: true }),
           eventSeq: 1,
           events: [
             {
@@ -448,11 +448,9 @@ export async function startXacpxOrchestrationIpcServer(
               systemPrompt,
               promptOrTask: taskPrompt,
               parentSessionId: coordinatorSession,
-              ...(boundWorkspaceRoot
-                ? { authorizedWorkspaceRoot: boundWorkspaceRoot }
-                : {})
+              ...(boundWorkspaceRoot && { authorizedWorkspaceRoot: boundWorkspaceRoot })
             },
-            env,
+            environment,
             controller.signal
           )
           .then((result) => {
@@ -493,7 +491,7 @@ export async function startXacpxOrchestrationIpcServer(
           .finally(() => {
             workerBusy.delete(workerSession);
             abortControllers.delete(taskId);
-            if (parallel) {
+            if (isParallel) {
               void manager.closeSession(workerSession).catch(() => undefined);
             }
           });
@@ -506,8 +504,8 @@ export async function startXacpxOrchestrationIpcServer(
       }
 
       case "task.get": {
-        const coordinatorSession = nonEmptyString(params.coordinatorSession);
-        const taskId = nonEmptyString(params.taskId);
+        const coordinatorSession = nonEmptyString(parameters.coordinatorSession);
+        const taskId = nonEmptyString(parameters.taskId);
         if (!coordinatorSession || !taskId) {
           throw new OrchestrationRpcError(
             "ORCHESTRATION_INVALID_REQUEST",
@@ -522,7 +520,7 @@ export async function startXacpxOrchestrationIpcServer(
       }
 
       case "task.list": {
-        const filter = isRecord(params.filter) ? params.filter : params;
+        const filter = isRecord(parameters.filter) ? parameters.filter : parameters;
         const coordinatorSession = nonEmptyString(filter.coordinatorSession);
         if (!coordinatorSession) {
           throw new OrchestrationRpcError(
@@ -543,8 +541,8 @@ export async function startXacpxOrchestrationIpcServer(
       }
 
       case "task.watch": {
-        const coordinatorSession = nonEmptyString(params.coordinatorSession);
-        const taskId = nonEmptyString(params.taskId);
+        const coordinatorSession = nonEmptyString(parameters.coordinatorSession);
+        const taskId = nonEmptyString(parameters.taskId);
         if (!coordinatorSession || !taskId) {
           throw new OrchestrationRpcError(
             "ORCHESTRATION_INVALID_REQUEST",
@@ -561,19 +559,19 @@ export async function startXacpxOrchestrationIpcServer(
           };
         }
         const afterSeq =
-          typeof params.afterSeq === "number" &&
-          Number.isFinite(params.afterSeq) &&
-          params.afterSeq >= 0
-            ? Math.floor(params.afterSeq)
+          typeof parameters.afterSeq === "number" &&
+          Number.isFinite(parameters.afterSeq) &&
+          parameters.afterSeq >= 0
+            ? Math.floor(parameters.afterSeq)
             : 0;
         const mode =
-          params.mode === "next_event"
+          parameters.mode === "next_event"
             ? "next_event"
             : "until_attention_or_terminal";
         const rawTimeout =
-          typeof params.timeoutMs === "number" &&
-          Number.isFinite(params.timeoutMs)
-            ? Math.floor(params.timeoutMs)
+          typeof parameters.timeoutMs === "number" &&
+          Number.isFinite(parameters.timeoutMs)
+            ? Math.floor(parameters.timeoutMs)
             : DEFAULT_WATCH_TIMEOUT_MS;
         const timeoutMs = Math.min(
           Math.max(rawTimeout, 0),
@@ -642,8 +640,8 @@ export async function startXacpxOrchestrationIpcServer(
       }
 
       case "task.approve": {
-        const coordinatorSession = nonEmptyString(params.coordinatorSession);
-        const taskId = nonEmptyString(params.taskId);
+        const coordinatorSession = nonEmptyString(parameters.coordinatorSession);
+        const taskId = nonEmptyString(parameters.taskId);
         if (!coordinatorSession || !taskId) {
           throw new OrchestrationRpcError(
             "ORCHESTRATION_INVALID_REQUEST",
@@ -662,9 +660,9 @@ export async function startXacpxOrchestrationIpcServer(
 
       case "task.cancel": {
         const coordinatorSession =
-          nonEmptyString(params.coordinatorSession) ??
-          nonEmptyString(params.sourceHandle);
-        const taskId = nonEmptyString(params.taskId);
+          nonEmptyString(parameters.coordinatorSession) ??
+          nonEmptyString(parameters.sourceHandle);
+        const taskId = nonEmptyString(parameters.taskId);
         if (!coordinatorSession || !taskId) {
           throw new OrchestrationRpcError(
             "ORCHESTRATION_INVALID_REQUEST",
@@ -701,7 +699,7 @@ export async function startXacpxOrchestrationIpcServer(
       }
 
       case "agent.list": {
-        const coordinatorSession = nonEmptyString(params.coordinatorSession);
+        const coordinatorSession = nonEmptyString(parameters.coordinatorSession);
         if (!coordinatorSession) {
           throw new OrchestrationRpcError(
             "ORCHESTRATION_INVALID_REQUEST",
@@ -736,17 +734,17 @@ export async function startXacpxOrchestrationIpcServer(
       }
 
       case "agent.send": {
-        const coordinatorSession = nonEmptyString(params.coordinatorSession);
+        const coordinatorSession = nonEmptyString(parameters.coordinatorSession);
         const content =
-          nonEmptyString(params.message) ?? nonEmptyString(params.content);
+          nonEmptyString(parameters.message) ?? nonEmptyString(parameters.content);
         if (!coordinatorSession || !content) {
           throw new OrchestrationRpcError(
             "ORCHESTRATION_INVALID_REQUEST",
             "coordinatorSession and message are required"
           );
         }
-        const targetHandle = nonEmptyString(params.to);
-        const selector = isRecord(params.selector) ? params.selector : null;
+        const targetHandle = nonEmptyString(parameters.to);
+        const selector = isRecord(parameters.selector) ? parameters.selector : null;
         const owned = manager
           .listPinnedSessions()
           .filter((session) => session.parentSessionId === coordinatorSession);
@@ -754,13 +752,13 @@ export async function startXacpxOrchestrationIpcServer(
           ? owned.find((session) => session.sessionId === targetHandle)
           : selector
             ? owned.find((session) => {
-                const agentMatch =
+                const isAgentMatch =
                   !selector.agent || session.role === selector.agent;
-                const wsMatch =
+                const isWsMatch =
                   !selector.workspace ||
                   path.basename(session.cwd) === selector.workspace ||
                   session.cwd === selector.workspace;
-                return agentMatch && wsMatch;
+                return isAgentMatch && isWsMatch;
               })
             : undefined;
 
@@ -778,27 +776,29 @@ export async function startXacpxOrchestrationIpcServer(
         }
 
         const messageId = `msg-${randomUUID().slice(0, 10)}`;
-        const mode = nonEmptyString(params.mode) ?? "queue";
+        const mode = nonEmptyString(parameters.mode) ?? "queue";
         if (mode === "interrupt" && workerBusy.has(target.sessionId)) {
           await manager.cancelSession(target.sessionId).catch(() => undefined);
         }
         workerBusy.add(target.sessionId);
         const result = await manager
-          .promptSession(target.sessionId, content, env)
+          .promptSession(target.sessionId, content, environment)
           .finally(() => {
             workerBusy.delete(target.sessionId);
           });
         // Record the latest follow-up output on the matching task if present.
         for (const task of tasks.values()) {
-          if (task.workerSession === target.sessionId) {
-            task.resultText = result.outputText;
-            task.summary = `Follow-up completed (${result.session.provider}/${result.session.model})`;
-            appendEvent(task, {
-              type: "progress",
-              status: task.status,
-              summary: task.summary
-            });
+          if (task.workerSession !== target.sessionId) {
+            continue;
           }
+
+          task.resultText = result.outputText;
+          task.summary = `Follow-up completed (${result.session.provider}/${result.session.model})`;
+          appendEvent(task, {
+            type: "progress",
+            status: task.status,
+            summary: task.summary
+          });
         }
         return {
           messageId,
@@ -810,11 +810,12 @@ export async function startXacpxOrchestrationIpcServer(
         };
       }
 
-      default:
+      default: {
         throw new OrchestrationRpcError(
           "ORCHESTRATION_INVALID_REQUEST",
           `Unsupported XACPX orchestration RPC method: ${method}`
         );
+      }
     }
   };
 
@@ -852,14 +853,14 @@ export async function startXacpxOrchestrationIpcServer(
                 "Invalid orchestration RPC request envelope"
               );
             }
-            const req: RpcRequest = {
+            const request: RpcRequest = {
               id: parsed.id,
               method: parsed.method,
               params: isRecord(parsed.params) ? parsed.params : {}
             };
-            requestId = req.id;
-            const result = await handleMethod(req.method, req.params);
-            const response: RpcSuccess = { id: req.id, ok: true, result };
+            requestId = request.id;
+            const result = await handleMethod(request.method, request.params);
+            const response: RpcSuccess = { id: request.id, ok: true, result };
             if (!socket.destroyed) {
               socket.write(`${JSON.stringify(response)}\n`);
             }
@@ -889,19 +890,21 @@ export async function startXacpxOrchestrationIpcServer(
       try {
         chmodSync(socketPath, 0o600);
       } catch {
-        /* ignore chmod failure on platforms that disallow socket chmod */
+        /*
+        ignore chmod failure on platforms that disallow socket chmod
+        */
       }
       resolve();
     });
   });
 
-  let closed = false;
+  let isClosed = false;
   return {
     socketPath,
     server,
     async close(): Promise<void> {
-      if (closed) return;
-      closed = true;
+      if (isClosed) return;
+      isClosed = true;
       for (const controller of abortControllers.values()) {
         controller.abort();
       }

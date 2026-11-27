@@ -74,7 +74,7 @@ test("approved non-TypeScript files remain explicit and bounded", () => {
 test("AutoDev standalone OTel Collector sidecar files are not re-tracked", () => {
   // The AutoDev-owned standalone Collector must not return as a replacement
   // sidecar. No replacement file is allowed in any of these locations.
-  const removedAutoDevFiles = [
+  const removedAutoDevelopmentFiles = [
     "runtime/src/platform/otel-collector.ts",
     "runtime/src/platform/otel-provision.ts",
     "config/otel/collector.yaml",
@@ -86,7 +86,7 @@ test("AutoDev standalone OTel Collector sidecar files are not re-tracked", () =>
     "config/launchagents/com.codex.otel-collector.plist"
   ];
   const trackedSet = new Set(trackedFiles);
-  for (const filePath of removedAutoDevFiles) {
+  for (const filePath of removedAutoDevelopmentFiles) {
     assert.equal(
       trackedSet.has(filePath),
       false,

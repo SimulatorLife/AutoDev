@@ -69,11 +69,17 @@ const DEFAULT_FILE_SYSTEM = { accessSync, statSync };
 
 export interface PreparedPlaytestSandbox {
   readonly workspaceId: string;
-  /** The operator's approved checkout the build was resolved from. */
+  /**
+  The operator's approved checkout the build was resolved from.
+  */
   readonly sourceCheckoutRoot: string;
-  /** Runtime-owned, read-only snapshot of exactly `build.buildSha`; the sandbox mounts this. */
+  /**
+  Runtime-owned, read-only snapshot of exactly `build.buildSha`; the sandbox mounts this.
+  */
   readonly checkoutRoot: string;
-  /** The committed build resolved at preparation; game build is supplied to the adapter. */
+  /**
+  The committed build resolved at preparation; game build is supplied to the adapter.
+  */
   readonly build: WorkspacePlaytestBuild;
   readonly imageDigest: string;
   readonly workingDirectory: string;
@@ -166,14 +172,14 @@ export class PlaytestSandboxExecutionError extends Error {
 
 export type PlaytestSpawnFn = (
   command: string,
-  args: readonly string[],
+  arguments_: readonly string[],
   options: SpawnOptions
 ) => ChildProcess;
 export type PlaytestSpawnFunction = PlaytestSpawnFn;
 
 export type PlaytestExecFileFn = (
   file: string,
-  args: readonly string[],
+  arguments_: readonly string[],
   options?: ExecFileSyncOptionsWithStringEncoding | ExecFileSyncOptions
 ) => string | Buffer;
 export type PlaytestExecFileFunction = PlaytestExecFileFn;
@@ -193,7 +199,9 @@ export interface PlaytestSandboxInputArtifact {
 }
 
 export interface PlaytestSandboxLaunchOptions {
-  /** Verified Runtime bytes, mounted by SHA-256 filename as read-only input. */
+  /**
+  Verified Runtime bytes, mounted by SHA-256 filename as read-only input.
+  */
   readonly inputArtifacts?: readonly PlaytestSandboxInputArtifact[];
   readonly runId?: string;
   readonly socket?: string;
@@ -214,13 +222,15 @@ export interface PlaytestSandboxLaunchOptions {
 const GIT_COMMAND_TIMEOUT_MS = 10_000;
 const SNAPSHOT_COMMAND_TIMEOUT_MS = 180_000;
 /**
- * Snapshots unused for longer than this are pruned. It exceeds the largest
- * approvable wall time, and every prepare/launch refreshes its snapshot's mtime.
- */
+Snapshots unused for longer than this are pruned. It exceeds the largest
+approvable wall time, and every prepare/launch refreshes its snapshot's mtime.
+*/
 const SNAPSHOT_RETENTION_MS = 2 * 60 * 60 * 1000;
 const SNAPSHOT_PARTIAL_MARKER = ".partial-";
 
-/** Runtime-owned root for read-only committed-build snapshots. */
+/**
+Runtime-owned root for read-only committed-build snapshots.
+*/
 export function defaultPlaytestSnapshotRoot(): string {
   const codexHome =
     process.env.CODEX_HOME?.trim() || path.join(homedir(), ".codex");
@@ -228,20 +238,22 @@ export function defaultPlaytestSnapshotRoot(): string {
 }
 
 export interface PlaytestSandboxPrepareOptions {
-  /** Root for committed-build snapshots; defaults to {@link defaultPlaytestSnapshotRoot}. */
+  /**
+  Root for committed-build snapshots; defaults to {@link defaultPlaytestSnapshotRoot}.
+  */
   readonly snapshotRoot?: string;
   readonly now?: () => number;
 }
 
 function runGit(
   cwd: string,
-  args: readonly string[],
-  env: NodeJS.ProcessEnv = process.env,
+  arguments_: readonly string[],
+  environment: NodeJS.ProcessEnv = process.env,
   timeout = GIT_COMMAND_TIMEOUT_MS
 ): string {
-  return execFileSync("git", args, {
+  return execFileSync("git", arguments_, {
     cwd,
-    env,
+    env: environment,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     timeout,
@@ -249,7 +261,9 @@ function runGit(
   }).trim();
 }
 
-/** The approved checkout's latest committed build; uncommitted edits are never run. */
+/**
+The approved checkout's latest committed build; uncommitted edits are never run.
+*/
 function resolveCommittedHead(root: string): string {
   let sha: string;
   try {
@@ -283,7 +297,9 @@ function ensureOwnerDirectory(directory: string): void {
   chmodSync(absolute, 0o700);
 }
 
-/** A mounted game snapshot must be a real descendant of the private owner directory. */
+/**
+A mounted game snapshot must be a real descendant of the private owner directory.
+*/
 function assertSnapshotDirectory(
   snapshot: string,
   privateWorkspaceDirectory: string
@@ -304,23 +320,23 @@ function assertSnapshotDirectory(
 }
 
 /**
- * Check out exactly one commit into a Runtime-owned directory through a
- * temporary index, so the operator's index and working tree are untouched
- * and in-progress edits cannot leak into the build.
- */
+Check out exactly one commit into a Runtime-owned directory through a
+temporary index, so the operator's index and working tree are untouched
+and in-progress edits cannot leak into the build.
+*/
 function checkoutCommit(
   sourceRoot: string,
   sha: string,
   destination: string
 ): void {
   const indexFile = destination + ".index";
-  const env = { ...process.env, GIT_INDEX_FILE: indexFile };
+  const environment = { ...process.env, GIT_INDEX_FILE: indexFile };
   try {
-    runGit(sourceRoot, ["read-tree", sha], env, SNAPSHOT_COMMAND_TIMEOUT_MS);
+    runGit(sourceRoot, ["read-tree", sha], environment, SNAPSHOT_COMMAND_TIMEOUT_MS);
     runGit(
       sourceRoot,
       ["checkout-index", "--all", "--force", "--prefix=" + destination + "/"],
-      env,
+      environment,
       SNAPSHOT_COMMAND_TIMEOUT_MS
     );
   } finally {
@@ -346,13 +362,17 @@ function pruneStaleSnapshots(
   }
 }
 
-/** Refresh a snapshot's last-use time so retention never prunes it mid-batch. */
+/**
+Refresh a snapshot's last-use time so retention never prunes it mid-batch.
+*/
 function touchSnapshot(snapshotRoot: string, now: number): void {
   const time = new Date(now);
   utimesSync(snapshotRoot, time, time);
 }
 
-/** Materialize (or reuse) the immutable snapshot of one committed build. */
+/**
+Materialize (or reuse) the immutable snapshot of one committed build.
+*/
 function materializeCommitSnapshot(input: {
   readonly workspaceId: string;
   readonly sourceRoot: string;
@@ -397,9 +417,9 @@ function materializeCommitSnapshot(input: {
 }
 
 /**
- * The paths a sandbox mounts are the Runtime's snapshot of the latest commit;
- * the approved working directory is resolved inside that snapshot.
- */
+The paths a sandbox mounts are the Runtime's snapshot of the latest commit;
+the approved working directory is resolved inside that snapshot.
+*/
 function resolveCommittedBuildCheckout(
   approval: WorkspacePlaytestApproval,
   options: PlaytestSandboxPrepareOptions
@@ -465,10 +485,10 @@ function resolveCommittedBuildCheckout(
 }
 
 /**
- * Resolve the approved checkout's latest committed build, snapshot it, and
- * load that commit's own target configuration. Each batch therefore runs
- * whatever is committed at its start, with no per-commit approval.
- */
+Resolve the approved checkout's latest committed build, snapshot it, and
+load that commit's own target configuration. Each batch therefore runs
+whatever is committed at its start, with no per-commit approval.
+*/
 export function preparePlaytestSandbox(
   approval: WorkspacePlaytestApproval,
   options: PlaytestSandboxPrepareOptions = {}
@@ -498,7 +518,9 @@ export function preparePlaytestSandbox(
   };
 }
 
-/** Resolve only a local Docker Engine socket; remote Docker contexts are rejected. */
+/**
+Resolve only a local Docker Engine socket; remote Docker contexts are rejected.
+*/
 export function localDockerSocket(
   platform: NodeJS.Platform = process.platform,
   home = homedir()
@@ -522,7 +544,9 @@ export function localDockerSocket(
   );
 }
 
-/** Derive unique bounded Docker container name from runId. */
+/**
+Derive unique bounded Docker container name from runId.
+*/
 export function getPlaytestContainerName(runId: string): string {
   if (!RUN_ID_PATTERN.test(runId)) {
     throw new PlaytestSandboxApprovalError("Run ID is invalid.");
@@ -533,7 +557,9 @@ export function getPlaytestContainerName(runId: string): string {
     .slice(0, 24)}`;
 }
 
-/** Create an isolated empty Docker configuration directory. */
+/**
+Create an isolated empty Docker configuration directory.
+*/
 export function createIsolatedDockerConfig(): {
   readonly configDirectory: string;
   readonly cleanup: () => void;
@@ -556,24 +582,28 @@ export function createIsolatedDockerConfig(): {
   };
 }
 
-/** Produce a sanitized minimal host environment for Docker CLI invocations. */
+/**
+Produce a sanitized minimal host environment for Docker CLI invocations.
+*/
 export function getSanitizedHostEnvironment(
   dockerConfigDirectory: string,
-  baseEnv: NodeJS.ProcessEnv = process.env
+  baseEnvironment: NodeJS.ProcessEnv = process.env
 ): NodeJS.ProcessEnv {
-  const safeEnv: NodeJS.ProcessEnv = {
-    PATH: baseEnv.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+  const safeEnvironment: NodeJS.ProcessEnv = {
+    PATH: baseEnvironment.PATH ?? "/usr/local/bin:/usr/bin:/bin",
     HOME: dockerConfigDirectory,
     DOCKER_CONFIG: dockerConfigDirectory,
     TMPDIR: tmpdir()
   };
-  if (baseEnv.SYSTEMROOT) {
-    safeEnv.SYSTEMROOT = baseEnv.SYSTEMROOT;
+  if (baseEnvironment.SYSTEMROOT) {
+    safeEnvironment.SYSTEMROOT = baseEnvironment.SYSTEMROOT;
   }
-  return safeEnv;
+  return safeEnvironment;
 }
 
-/** Confirm that the socket path exists and is an active local Docker endpoint. */
+/**
+Confirm that the socket path exists and is an active local Docker endpoint.
+*/
 export function assertLocalDockerAvailable(
   socket = localDockerSocket(),
   fileSystem = DEFAULT_FILE_SYSTEM
@@ -590,15 +620,17 @@ export function assertLocalDockerAvailable(
   }
 }
 
-/** Verify that the immutable approved image is present locally without pulling. */
+/**
+Verify that the immutable approved image is present locally without pulling.
+*/
 export function verifyLocalDockerImage(
   imageDigest: string,
   socket: string,
   dockerConfigDirectory: string,
-  execFileFn: PlaytestExecFileFn = execFileSync as unknown as PlaytestExecFileFn
+  execFileFunction: PlaytestExecFileFn = execFileSync as unknown as PlaytestExecFileFn
 ): void {
   try {
-    const output = execFileFn(
+    const output = execFileFunction(
       "docker",
       [
         "--host",
@@ -615,9 +647,9 @@ export function verifyLocalDockerImage(
         timeout: 5000
       }
     );
-    const strOutput =
+    const stringOutput =
       typeof output === "string" ? output : output.toString("utf8");
-    const parsed = JSON.parse(strOutput);
+    const parsed = JSON.parse(stringOutput);
     if (!Array.isArray(parsed) || parsed.length === 0) {
       throw new Error("Empty image inspect result");
     }
@@ -628,7 +660,9 @@ export function verifyLocalDockerImage(
   }
 }
 
-/** Build argv without a shell; no workspace-supplied value is interpolated into a command string. */
+/**
+Build argv without a shell; no workspace-supplied value is interpolated into a command string.
+*/
 export function buildDockerRunArguments(
   request: PreparedPlaytestSandbox,
   runId: string,
@@ -684,7 +718,7 @@ export function buildDockerRunArguments(
     `gid=${SANDBOX_GID}`,
     "mode=0700"
   ].join(",");
-  const tempTmpfs = [
+  const temporaryTmpfs = [
     "rw",
     "noexec",
     "nosuid",
@@ -729,7 +763,7 @@ export function buildDockerRunArguments(
           `type=bind,source=${inputArtifactDirectory},target=${CONTAINER_INPUT_ARTIFACTS},readonly`
         ]),
     "--tmpfs",
-    `${CONTAINER_TEMP}:${tempTmpfs}`,
+    `${CONTAINER_TEMP}:${temporaryTmpfs}`,
     "--tmpfs",
     `${CONTAINER_ARTIFACTS}:${artifactTmpfs}`,
     "--workdir",
@@ -804,7 +838,9 @@ function stageInputArtifacts(
   }
 }
 
-/** Read one staged adapter artifact only after rechecking its path, size and SHA. */
+/**
+Read one staged adapter artifact only after rechecking its path, size and SHA.
+*/
 export function readStagedPlaytestArtifact(
   reference: PlaytestArtifactReference,
   stagingDirectory: string | null,
@@ -879,7 +915,9 @@ export function readStagedPlaytestArtifact(
   );
 }
 
-/** Recursively scan mode-0700 staging directory, enforcing quotas and rejecting symlinks/special files. */
+/**
+Recursively scan mode-0700 staging directory, enforcing quotas and rejecting symlinks/special files.
+*/
 export function scanAndValidateStagingDirectory(
   stagingDirectory: string,
   maxBytes: number,
@@ -942,14 +980,16 @@ export function scanAndValidateStagingDirectory(
 }
 
 function appendTailLines(tail: string[], chunk: Buffer | string): void {
-  const str = typeof chunk === "string" ? chunk : chunk.toString("utf8");
-  const lines = str.split(LINE_SPLIT_PATTERN);
+  const string_ = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+  const lines = string_.split(LINE_SPLIT_PATTERN);
   for (const line of lines) {
-    if (line.length > 0) {
-      tail.push(line.slice(0, MAX_TAIL_CHARS_PER_LINE));
-      if (tail.length > MAX_TAIL_LINES) {
-        tail.shift();
-      }
+    if (line.length === 0) {
+      continue;
+    }
+
+    tail.push(line.slice(0, MAX_TAIL_CHARS_PER_LINE));
+    if (tail.length > MAX_TAIL_LINES) {
+      tail.shift();
     }
   }
 }
@@ -966,7 +1006,7 @@ function stageContainerArtifacts(
   containerName: string,
   maxArtifactBytes: number,
   maxArtifactFiles: number,
-  execFileFn: PlaytestExecFileFn
+  execFileFunction: PlaytestExecFileFn
 ): StagedArtifactsResult {
   const stagingCandidate = mkdtempSync(
     path.join(tmpdir(), "autodev-playtest-staging-")
@@ -974,7 +1014,7 @@ function stageContainerArtifacts(
   chmodSync(stagingCandidate, 0o700);
 
   try {
-    execFileFn(
+    execFileFunction(
       "docker",
       [
         "--host",
@@ -1161,7 +1201,7 @@ async function verifyApprovedImage(
   prepared: PreparedPlaytestSandbox,
   socket: string,
   configDirectory: string,
-  execFileFn: PlaytestExecFileFn,
+  execFileFunction: PlaytestExecFileFn,
   options: PlaytestSandboxLaunchOptions | undefined,
   stagedInput: StagedInputArtifacts,
   configCleanup: () => void
@@ -1185,7 +1225,7 @@ async function verifyApprovedImage(
         prepared.imageDigest,
         socket,
         configDirectory,
-        execFileFn
+        execFileFunction
       );
     }
   } catch (error) {
@@ -1255,7 +1295,9 @@ function spawnApprovedDocker(input: {
   }
 }
 
-/** Launch an approved OCI container sandbox with attached adapter streams and lifecycle management. */
+/**
+Launch an approved OCI container sandbox with attached adapter streams and lifecycle management.
+*/
 export async function launchPlaytestSandbox(
   prepared: PreparedPlaytestSandbox,
   options?: PlaytestSandboxLaunchOptions
@@ -1268,24 +1310,24 @@ export async function launchPlaytestSandbox(
 
   const runId = options?.runId ?? `run-${randomUUID()}`;
   const containerName = getPlaytestContainerName(runId);
-  const execFileFn: PlaytestExecFileFn =
+  const execFileFunction: PlaytestExecFileFn =
     options?.execFile ?? (execFileSync as unknown as PlaytestExecFileFn);
-  const spawnFn: PlaytestSpawnFn =
+  const spawnFunction: PlaytestSpawnFn =
     options?.spawn ?? (spawn as unknown as PlaytestSpawnFn);
-  const nowFn = options?.now ?? Date.now;
-  touchSnapshot(prepared.checkoutRoot, nowFn());
+  const nowFunction = options?.now ?? Date.now;
+  touchSnapshot(prepared.checkoutRoot, nowFunction());
   const { staged: stagedInputArtifacts, maxOutputBytes: maxArtifactBytes } =
     prepareStagedInput(prepared, options, configCleanup);
   await verifyApprovedImage(
     prepared,
     socket,
     configDirectory,
-    execFileFn,
+    execFileFunction,
     options,
     stagedInputArtifacts,
     configCleanup
   );
-  const runArgs = buildApprovedRunArguments({
+  const runArguments = buildApprovedRunArguments({
     prepared,
     runId,
     configDirectory,
@@ -1294,16 +1336,16 @@ export async function launchPlaytestSandbox(
     maxOutputBytes: maxArtifactBytes,
     configCleanup
   });
-  const sanitizedEnv = getSanitizedHostEnvironment(
+  const sanitizedEnvironment = getSanitizedHostEnvironment(
     configDirectory,
     options?.env ?? process.env
   );
-  const startTime = nowFn();
-  let timedOut = false;
-  let cancelled = false;
-  let outputLimitExceeded = false;
+  const startTime = nowFunction();
+  let isTimedOut = false;
+  let isCancelled = false;
+  let isOutputLimitExceeded = false;
   let processError: Error | null = null;
-  let exitFired = false;
+  let isExitFired = false;
   let exitCause: PlaytestAdapterExit | null = null;
   let stagingDirectory: string | null = null;
   let stagedArtifacts: readonly StagedPlaytestArtifact[] = [];
@@ -1322,7 +1364,7 @@ export async function launchPlaytestSandbox(
 
   const exitListeners: Array<(cause: PlaytestAdapterExit) => void> = [];
   const onExit = (listener: (cause: PlaytestAdapterExit) => void): void => {
-    if (exitFired && exitCause) {
+    if (isExitFired && exitCause) {
       listener(exitCause);
     } else {
       exitListeners.push(listener);
@@ -1338,7 +1380,7 @@ export async function launchPlaytestSandbox(
 
   function removeContainer(): void {
     try {
-      execFileFn(
+      execFileFunction(
         "docker",
         [
           "--host",
@@ -1357,9 +1399,9 @@ export async function launchPlaytestSandbox(
   }
 
   const child = spawnApprovedDocker({
-    runArgs,
-    env: sanitizedEnv,
-    spawnFn,
+    runArgs: runArguments,
+    env: sanitizedEnvironment,
+    spawnFn: spawnFunction,
     stagedInput: stagedInputArtifacts,
     configCleanup
   });
@@ -1382,7 +1424,7 @@ export async function launchPlaytestSandbox(
       totalStdoutBytes += chunk.length;
       appendTailLines(stdoutTail, chunk);
       if (totalStdoutBytes + totalStderrBytes > maxOutputBytes) {
-        outputLimitExceeded = true;
+        isOutputLimitExceeded = true;
         stdoutStream.destroy();
         killProcess(KILL_SIGNAL);
       } else {
@@ -1402,7 +1444,7 @@ export async function launchPlaytestSandbox(
       totalStderrBytes += chunk.length;
       appendTailLines(stderrTail, chunk);
       if (totalStdoutBytes + totalStderrBytes > maxOutputBytes) {
-        outputLimitExceeded = true;
+        isOutputLimitExceeded = true;
         stderrStream.destroy();
         killProcess(KILL_SIGNAL);
       } else {
@@ -1419,7 +1461,7 @@ export async function launchPlaytestSandbox(
 
   const wallTimeMs = prepared.limits.wallTimeMs;
   const wallTimer = setTimeout(() => {
-    timedOut = true;
+    isTimedOut = true;
     killProcess(KILL_SIGNAL);
   }, wallTimeMs);
 
@@ -1434,10 +1476,10 @@ export async function launchPlaytestSandbox(
   // Prevent unhandled rejection warning if caller only listens to onExit
   resultPromise.catch(() => {});
 
-  let finalized = false;
+  let isFinalized = false;
   function finalize(code: number | null, signal: NodeJS.Signals | null): void {
-    if (finalized) return;
-    finalized = true;
+    if (isFinalized) return;
+    isFinalized = true;
     clearTimeout(wallTimer);
 
     const stagingResult = stageContainerArtifacts(
@@ -1446,7 +1488,7 @@ export async function launchPlaytestSandbox(
       containerName,
       maxArtifactBytes,
       maxArtifactFiles,
-      execFileFn
+      execFileFunction
     );
     stagingDirectory = stagingResult.stagingDirectory;
     stagedArtifacts = stagingResult.stagedArtifacts;
@@ -1454,7 +1496,7 @@ export async function launchPlaytestSandbox(
     removeContainer();
     configCleanup();
 
-    exitFired = true;
+    isExitFired = true;
     exitCause = {
       code,
       signal,
@@ -1469,9 +1511,9 @@ export async function launchPlaytestSandbox(
     }
 
     const failure = determineSandboxFailure({
-      timedOut,
-      cancelled,
-      outputLimitExceeded,
+      timedOut: isTimedOut,
+      cancelled: isCancelled,
+      outputLimitExceeded: isOutputLimitExceeded,
       processError,
       artifactError: stagingResult.artifactError,
       code,
@@ -1495,7 +1537,7 @@ export async function launchPlaytestSandbox(
       signal,
       timedOut: false,
       cancelled: false,
-      durationMs: Math.max(0, nowFn() - startTime),
+      durationMs: Math.max(0, nowFunction() - startTime),
       stdoutTail: [...stdoutTail],
       stderrTail: [...stderrTail],
       stagingDirectory,
@@ -1514,8 +1556,8 @@ export async function launchPlaytestSandbox(
   });
 
   const cancel = (): Promise<void> => {
-    if (!finalized) {
-      cancelled = true;
+    if (!isFinalized) {
+      isCancelled = true;
       killProcess(KILL_SIGNAL);
     }
     return Promise.resolve();
@@ -1554,7 +1596,9 @@ export async function launchPlaytestSandbox(
   };
 }
 
-/** Run an approved sandbox to completion, returning the resulting metadata and staged artifacts. */
+/**
+Run an approved sandbox to completion, returning the resulting metadata and staged artifacts.
+*/
 export async function runPlaytestSandbox(
   prepared: PreparedPlaytestSandbox,
   options?: PlaytestSandboxLaunchOptions

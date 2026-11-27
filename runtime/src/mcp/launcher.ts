@@ -10,7 +10,6 @@ import {
   pathsOverlap
 } from "@simulatorlife/autodev-data/files";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
-import { declaredRoleNames } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import {
   isExecutable,
   resolveCocoIndexBinary,
@@ -18,9 +17,10 @@ import {
   resolveRuntimePackageBin,
   runtimeBinDirectory
 } from "@simulatorlife/autodev-runtime/shared/executables";
+import { declaredRoleNames } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
-import { resolveSkillRoots } from "@simulatorlife/autodev-runtime/shared/skill-reads";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
+import { resolveSkillRoots } from "@simulatorlife/autodev-runtime/shared/skill-reads";
 import {
   MCP_FILESYSTEM_READ_ONLY_ENV,
   MCP_FILESYSTEM_WORKSPACE_ONLY_ENV,
@@ -31,9 +31,12 @@ import {
   MCP_SERVER_PLAYTEST,
   MCP_SERVER_XACPX
 } from "@simulatorlife/autodev-runtime/shared/tool-names";
+
 import { resolveXacpxOrchestrationSocketPath } from "../xacpx/orchestration-ipc.ts";
 
-/** The Runtime source directory this launcher module belongs to. */
+/**
+The Runtime source directory this launcher module belongs to.
+*/
 const RUNTIME_SOURCE_DIRECTORY = path.resolve(import.meta.dirname, "..");
 
 export type McpName =
@@ -47,12 +50,12 @@ export type McpName =
   | typeof MCP_SERVER_PLAYTEST
   | typeof MCP_SERVER_XACPX;
 /**
- * The physical form of `dir`, as ccc sees it: ccc resolves every path it
- * walks, so a symlinked spelling (`/tmp` for `/private/tmp`, an aliased home)
- * has to be compared in that same form or the launcher and ccc disagree about
- * which ancestor is the project, the repository or the home directory. A path
- * that does not exist has no physical form and stays as written.
- */
+The physical form of `dir`, as ccc sees it: ccc resolves every path it
+walks, so a symlinked spelling (`/tmp` for `/private/tmp`, an aliased home)
+has to be compared in that same form or the launcher and ccc disagree about
+which ancestor is the project, the repository or the home directory. A path
+that does not exist has no physical form and stays as written.
+*/
 function physicalPath(dir: string): string {
   const resolved = path.resolve(dir);
   try {
@@ -63,12 +66,12 @@ function physicalPath(dir: string): string {
 }
 
 /**
- * `pathPrepend` holds directories the server needs ahead of the caller's PATH.
- * lsp-mcp-server spawns its language servers (`typescript-language-server`)
- * by bare name, and the environment Codex starts MCP servers in does not carry
- * AutoDev's `node_modules/.bin`: without it every TypeScript request fails with
- * ENOENT and lsp-mcp-server exits, which Codex reports as "Transport closed".
- */
+`pathPrepend` holds directories the server needs ahead of the caller's PATH.
+lsp-mcp-server spawns its language servers (`typescript-language-server`)
+by bare name, and the environment Codex starts MCP servers in does not carry
+AutoDev's `node_modules/.bin`: without it every TypeScript request fails with
+ENOENT and lsp-mcp-server exits, which Codex reports as "Transport closed".
+*/
 export interface McpCommand {
   binary: string;
   args: string[];
@@ -76,18 +79,18 @@ export interface McpCommand {
 }
 
 /**
- * The command an MCP server runs, and the tools it is resolved from.
- *
- * The tool is resolved from the launcher's own environment, so the home that
- * holds the user's install is the one the server runs with. A bridge that
- * isolates HOME -- the Antigravity bridge runs its CLI under a temporary one --
- * has to tell the servers it starts the user's own home, or the launcher looks
- * for `ccc` and `codegraphcontext` in a home that holds neither and reports
- * both as missing.
- */
+The command an MCP server runs, and the tools it is resolved from.
+
+The tool is resolved from the launcher's own environment, so the home that
+holds the user's install is the one the server runs with. A bridge that
+isolates HOME -- the Antigravity bridge runs its CLI under a temporary one --
+has to tell the servers it starts the user's own home, or the launcher looks
+for `ccc` and `codegraphcontext` in a home that holds neither and reports
+both as missing.
+*/
 export function resolveMcpCommand(
   name: string,
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): McpCommand {
   const tool = name as McpName;
   // Every Node-based server runs from the Runtime's own dependency tree with
@@ -109,7 +112,7 @@ export function resolveMcpCommand(
       binary: node,
       args: [
         resolveRuntimePackageBin("@playwright/mcp", "playwright-mcp"),
-        ...(env.AUTODEV_PLAYWRIGHT_HEADED === "1" ? [] : ["--headless"]),
+        ...(environment.AUTODEV_PLAYWRIGHT_HEADED === "1" ? [] : ["--headless"]),
         "--no-sandbox",
         "--isolated"
       ],
@@ -126,12 +129,12 @@ export function resolveMcpCommand(
           "@modelcontextprotocol/server-filesystem",
           "mcp-server-filesystem"
         ),
-        ...(env[MCP_FILESYSTEM_READ_ONLY_ENV] === "1" ? ["--read-only"] : [])
+        ...(environment[MCP_FILESYSTEM_READ_ONLY_ENV] === "1" ? ["--read-only"] : [])
       ],
       pathPrepend: [nodeBin]
     };
   if (tool === "cocoindex-code") {
-    const binary = resolveCocoIndexBinary(env);
+    const binary = resolveCocoIndexBinary(environment);
     if (!binary)
       throw new Error(
         "AutoDev CocoIndex MCP binary is missing; install ccc or set AUTODEV_COCOINDEX_BIN"
@@ -139,7 +142,7 @@ export function resolveMcpCommand(
     return { binary, args: ["mcp"], pathPrepend: [] };
   }
   if (tool === MCP_SERVER_CODEGRAPHCONTEXT) {
-    const binary = resolveCodeGraphContextBinary(env);
+    const binary = resolveCodeGraphContextBinary(environment);
     if (!binary)
       throw new Error(
         "AutoDev CodeGraphContext MCP binary is missing; install codegraphcontext or set AUTODEV_CODEGRAPHCONTEXT_BIN"
@@ -159,19 +162,19 @@ export function resolveMcpCommand(
     };
   }
   if (tool === MCP_SERVER_XACPX) {
-    const args = [
+    const arguments_ = [
       resolveRuntimePackageBin("@ganglion/xacpx", "xacpx"),
       "mcp-stdio"
     ];
-    const coordinatorSession = env.AUTODEV_XACPX_COORDINATOR_SESSION?.trim();
+    const coordinatorSession = environment.AUTODEV_XACPX_COORDINATOR_SESSION?.trim();
     if (coordinatorSession)
-      args.push("--coordinator-session", coordinatorSession);
-    const xacpxWorkspace = env.AUTODEV_XACPX_WORKSPACE?.trim();
-    if (xacpxWorkspace) args.push("--workspace", xacpxWorkspace);
+      arguments_.push("--coordinator-session", coordinatorSession);
+    const xacpxWorkspace = environment.AUTODEV_XACPX_WORKSPACE?.trim();
+    if (xacpxWorkspace) arguments_.push("--workspace", xacpxWorkspace);
     const acpBins = runtimeBinDirectory("@ganglion/xacpx");
     return {
       binary: node,
-      args,
+      args: arguments_,
       pathPrepend: [...(acpBins ? [acpBins] : []), nodeBin]
     };
   }
@@ -195,27 +198,27 @@ export function resolveMcpCommand(
 }
 
 /**
- * The directories the `filesystem` server may touch: the workspace, and the
- * skill roots outside it.
- *
- * Skills are instructions the model reads, and the user-level ones live
- * outside any workspace (`~/.agents/skills`, `~/.codex/skills`), so the one
- * file surface has to reach them to read a skill at all. They are given with
- * `--read-only-dir`: a turn reads a skill, it does not rewrite the user's
- * catalogue. A root inside the workspace is left to the workspace, so a
- * repository's own skills stay as editable as the rest of it.
- *
- * `--confine-roots` keeps an MCP client's Roots from replacing these
- * directories: a client that sends its own roots can narrow them, never widen
- * them past the workspace.
- */
+The directories the `filesystem` server may touch: the workspace, and the
+skill roots outside it.
+
+Skills are instructions the model reads, and the user-level ones live
+outside any workspace (`~/.agents/skills`, `~/.codex/skills`), so the one
+file surface has to reach them to read a skill at all. They are given with
+`--read-only-dir`: a turn reads a skill, it does not rewrite the user's
+catalogue. A root inside the workspace is left to the workspace, so a
+repository's own skills stay as editable as the rest of it.
+
+`--confine-roots` keeps an MCP client's Roots from replacing these
+directories: a client that sends its own roots can narrow them, never widen
+them past the workspace.
+*/
 export function filesystemDirectoryArgs(
   workspace: string,
-  repoRoot: string
+  repositoryRoot: string
 ): string[] {
   const root = physicalPath(workspace);
   const readOnly = [
-    ...new Set(resolveSkillRoots(repoRoot).map(physicalPath))
+    ...new Set(resolveSkillRoots(repositoryRoot).map(physicalPath))
   ].filter((dir) => !pathsOverlap(dir, root));
   return [
     "--confine-roots",
@@ -226,18 +229,18 @@ export function filesystemDirectoryArgs(
 }
 
 /**
- * The directory an MCP server runs in. `ccc mcp` binds its index to the nearest
- * ancestor holding `.cocoindex_code` and refuses to start without one, so a
- * caller that starts servers from its own process directory leaves
- * cocoindex-code with no project and no workspace to bind to. Callers that know
- * the active workspace say so through `AUTODEV_MCP_WORKSPACE`; without it the
- * caller's own directory stays authoritative.
- */
+The directory an MCP server runs in. `ccc mcp` binds its index to the nearest
+ancestor holding `.cocoindex_code` and refuses to start without one, so a
+caller that starts servers from its own process directory leaves
+cocoindex-code with no project and no workspace to bind to. Callers that know
+the active workspace say so through `AUTODEV_MCP_WORKSPACE`; without it the
+caller's own directory stays authoritative.
+*/
 export function resolveMcpWorkspace(
-  env: NodeJS.ProcessEnv = process.env,
+  environment: NodeJS.ProcessEnv = process.env,
   cwd: string = process.cwd()
 ): string {
-  const configured = env.AUTODEV_MCP_WORKSPACE?.trim();
+  const configured = environment.AUTODEV_MCP_WORKSPACE?.trim();
   if (!configured) return cwd;
   if (!path.isAbsolute(configured))
     throw new Error(
@@ -250,18 +253,18 @@ export function resolveMcpWorkspace(
 }
 
 /**
- * The nearest ancestor of `startDir` that holds a cocoindex project, or null
- * when the directory sits outside every initialized cocoindex project.
- *
- * A project is marked by `.cocoindex_code/settings.yml`, not by the directory
- * alone: `~/.cocoindex_code/` is ccc's user-level directory (its
- * `global_settings.yml` and daemon socket), so a walk that stopped at any
- * `.cocoindex_code` directory took the home directory for a project from every
- * workspace under it, skipped initialization, and left `ccc mcp` exiting with
- * "Not in an initialized project directory". `ccc mcp` performs this same walk
- * for this same marker, so the launcher has to agree with it before deciding
- * whether a project needs initializing.
- */
+The nearest ancestor of `startDir` that holds a cocoindex project, or null
+when the directory sits outside every initialized cocoindex project.
+
+A project is marked by `.cocoindex_code/settings.yml`, not by the directory
+alone: `~/.cocoindex_code/` is ccc's user-level directory (its
+`global_settings.yml` and daemon socket), so a walk that stopped at any
+`.cocoindex_code` directory took the home directory for a project from every
+workspace under it, skipped initialization, and left `ccc mcp` exiting with
+"Not in an initialized project directory". `ccc mcp` performs this same walk
+for this same marker, so the launcher has to agree with it before deciding
+whether a project needs initializing.
+*/
 export function findCocoindexProjectRoot(startDir: string): string | null {
   let dir = physicalPath(startDir);
   for (;;) {
@@ -274,17 +277,17 @@ export function findCocoindexProjectRoot(startDir: string): string | null {
 }
 
 /**
- * The directory `ccc init` should run in to give `workspace` a project.
- *
- * `ccc init` refuses to initialize below a directory that already carries a
- * project marker -- a `.git` directory or a project's settings, looked for
- * strictly below the home directory -- and ccc's own auto-init anchors at that
- * marker, so a workspace inside a repository initializes the repository's root.
- * Without a marker the workspace itself is the project. The home directory,
- * its ancestors and the filesystem root are never a project: initializing one
- * would index everything beneath it, so a server started there is refused
- * rather than bound to the wrong tree.
- */
+The directory `ccc init` should run in to give `workspace` a project.
+
+`ccc init` refuses to initialize below a directory that already carries a
+project marker -- a `.git` directory or a project's settings, looked for
+strictly below the home directory -- and ccc's own auto-init anchors at that
+marker, so a workspace inside a repository initializes the repository's root.
+Without a marker the workspace itself is the project. The home directory,
+its ancestors and the filesystem root are never a project: initializing one
+would index everything beneath it, so a server started there is refused
+rather than bound to the wrong tree.
+*/
 export function resolveCocoindexInitRoot(
   workspace: string,
   home: string = homedir()
@@ -370,59 +373,57 @@ workspace this way); they are passed to the server unchanged.
 */
 export function runMcp(
   name: string,
-  repoRoot: string,
-  env: NodeJS.ProcessEnv = process.env,
+  repositoryRoot: string,
+  environment: NodeJS.ProcessEnv = process.env,
   serverArguments: readonly string[] = []
 ): number {
-  const command = resolveMcpCommand(name, env);
-  const workspace = resolveMcpWorkspace(env);
+  const command = resolveMcpCommand(name, environment);
+  const workspace = resolveMcpWorkspace(environment);
   if (!isExecutable(command.binary))
     throw new Error(
       `AutoDev MCP binary is missing or not executable: ${command.binary}`
     );
-  const xacpxEnv: Record<string, string> = {};
+  const xacpxEnvironment: Record<string, string> = {};
   if (name === MCP_SERVER_XACPX) {
-    const home = env.HOME?.trim() || homedir();
-    const codexHome = env.CODEX_HOME?.trim() || path.join(home, ".codex");
+    const home = environment.HOME?.trim() || homedir();
+    const codexHome = environment.CODEX_HOME?.trim() || path.join(home, ".codex");
     const xacpxRunDir = path.join(codexHome, "run", "xacpx");
-    if (!env.XACPX_ORCHESTRATION_SOCKET?.trim()) {
-      xacpxEnv.XACPX_ORCHESTRATION_SOCKET = resolveXacpxOrchestrationSocketPath(
+    if (!environment.XACPX_ORCHESTRATION_SOCKET?.trim()) {
+      xacpxEnvironment.XACPX_ORCHESTRATION_SOCKET = resolveXacpxOrchestrationSocketPath(
         codexHome,
-        env
+        environment
       );
     }
     const configPath =
-      env.XACPX_CONFIG?.trim() || path.join(xacpxRunDir, "config.json");
-    if (!env.XACPX_CONFIG?.trim()) {
-      xacpxEnv.XACPX_CONFIG = configPath;
+      environment.XACPX_CONFIG?.trim() || path.join(xacpxRunDir, "config.json");
+    if (!environment.XACPX_CONFIG?.trim()) {
+      xacpxEnvironment.XACPX_CONFIG = configPath;
     }
-    if (!env.XACPX_STATE?.trim()) {
-      xacpxEnv.XACPX_STATE = path.join(xacpxRunDir, "state.json");
+    if (!environment.XACPX_STATE?.trim()) {
+      xacpxEnvironment.XACPX_STATE = path.join(xacpxRunDir, "state.json");
     }
     ensureXacpxConfig(
       configPath,
-      env.AUTODEV_XACPX_WORKSPACE?.trim(),
+      environment.AUTODEV_XACPX_WORKSPACE?.trim(),
       physicalPath(workspace)
     );
   }
-  const childEnv =
-    command.pathPrepend.length > 0 || Object.keys(xacpxEnv).length > 0
+  const childEnvironment =
+    command.pathPrepend.length > 0 || Object.keys(xacpxEnvironment).length > 0
       ? {
-          ...env,
-          ...xacpxEnv,
-          ...(command.pathPrepend.length > 0
-            ? {
-                PATH: [...command.pathPrepend, env.PATH ?? ""]
+          ...environment,
+          ...xacpxEnvironment,
+          ...((command.pathPrepend.length > 0) && {
+                PATH: [...command.pathPrepend, environment.PATH ?? ""]
                   .filter(Boolean)
                   .join(path.delimiter)
-              }
-            : {})
+              })
         }
-      : env;
+      : environment;
   if (name === "cocoindex-code" && !findCocoindexProjectRoot(workspace)) {
     spawnSync(command.binary, ["init"], {
-      cwd: resolveCocoindexInitRoot(workspace, env.HOME || homedir()),
-      env,
+      cwd: resolveCocoindexInitRoot(workspace, environment.HOME || homedir()),
+      env: environment,
       stdio: ["ignore", "ignore", "inherit"]
     });
     if (!findCocoindexProjectRoot(workspace))
@@ -430,18 +431,18 @@ export function runMcp(
         `AutoDev cocoindex-code has no project under ${workspace}; run \`ccc init\` there or point AUTODEV_MCP_WORKSPACE at an initialized project directory.`
       );
   }
-  const args = [
+  const arguments_ = [
     ...command.args,
     ...serverArguments,
     ...(name === MCP_SERVER_FILESYSTEM
-      ? env[MCP_FILESYSTEM_WORKSPACE_ONLY_ENV] === "1"
+      ? environment[MCP_FILESYSTEM_WORKSPACE_ONLY_ENV] === "1"
         ? ["--confine-roots", "--", physicalPath(workspace)]
-        : filesystemDirectoryArgs(workspace, repoRoot)
+        : filesystemDirectoryArgs(workspace, repositoryRoot)
       : [])
   ];
-  const result = spawnSync(command.binary, args, {
+  const result = spawnSync(command.binary, arguments_, {
     cwd: workspace,
-    env: childEnv,
+    env: childEnvironment,
     stdio: "inherit"
   });
   if (result.error) throw result.error;
@@ -450,13 +451,13 @@ export function runMcp(
 
 if (isEntryPoint(import.meta.url)) {
   try {
-    const repoRoot = resolveRuntimeSourceRoot(
+    const repositoryRoot = resolveRuntimeSourceRoot(
       import.meta.dirname,
       process.env.AUTODEV_REPO_ROOT
     );
     process.exitCode = runMcp(
       process.argv[2] ?? "",
-      repoRoot,
+      repositoryRoot,
       process.env,
       process.argv.slice(3)
     );

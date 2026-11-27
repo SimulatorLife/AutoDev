@@ -92,10 +92,10 @@ function normalizePosixHome(home: string): string {
 }
 
 /**
- * Rewrite `read_file(...)` targets rooted at the throwaway Rulesync staging
- * home back to the caller's real `home` directory. Rulesync expands `~/`
- * against `outputRoot` (`HOME`), which during staged projection is the temp dir.
- */
+Rewrite `read_file(...)` targets rooted at the throwaway Rulesync staging
+home back to the caller's real `home` directory. Rulesync expands `~/`
+against `outputRoot` (`HOME`), which during staged projection is the temp dir.
+*/
 function rewriteProjectedHomeEntry(
   entry: JsonValue,
   projectedHome: string,
@@ -254,7 +254,7 @@ function permissionList(config: JsonObject): JsonValue[] {
   const allow = asObject(config.permissions).allow;
   if (allow === undefined) return [];
   if (!Array.isArray(allow))
-    throw new Error("Antigravity permissions.allow must be an array");
+    throw new TypeError("Antigravity permissions.allow must be an array");
   return [...allow];
 }
 
@@ -300,21 +300,21 @@ export function missingAntigravityPermissions(
   home = process.env.HOME?.trim() || homedir(),
   repositoryRoot?: string
 ): string[] {
-  const obj = readObject(filePath);
-  const allow = permissionList(obj);
+  const object = readObject(filePath);
+  const allow = permissionList(object);
   const baseline = projectedAntigravityBaseline(home, repositoryRoot);
   const missingAllow = expectedPermissionGrants(
     readRoots,
     home,
     repositoryRoot
   ).filter((grant) => !allow.includes(grant));
-  const deny = Array.isArray(asObject(obj.permissions).deny)
-    ? (asObject(obj.permissions).deny as JsonValue[])
+  const deny = Array.isArray(asObject(object.permissions).deny)
+    ? (asObject(object.permissions).deny as JsonValue[])
     : [];
   const missingDeny = baseline.deny.filter((denial) => !deny.includes(denial));
   const missingOverrides = Object.entries(baseline.topLevelOverrides)
     .filter(
-      ([key, expected]) => JSON.stringify(obj[key]) !== JSON.stringify(expected)
+      ([key, expected]) => JSON.stringify(object[key]) !== JSON.stringify(expected)
     )
     .map(([key, expected]) => `${key}=${JSON.stringify(expected)}`);
   return [...missingAllow, ...missingDeny, ...missingOverrides];
@@ -419,14 +419,14 @@ function runSkills(filePath: string, check: boolean, rest: string[]): number {
 
 function cli(argv: string[]): number {
   const [kind, modeOrPath, ...rest] = argv;
-  const check = modeOrPath === "--check";
-  const filePath = check ? rest.shift() : modeOrPath;
+  const isCheck = modeOrPath === "--check";
+  const filePath = isCheck ? rest.shift() : modeOrPath;
   if (!filePath)
     throw new Error(
       "usage: antigravity-settings permissions|skills [--check] <path> ..."
     );
-  if (kind === "permissions") return runPermissions(filePath, check, rest);
-  if (kind === "skills") return runSkills(filePath, check, rest);
+  if (kind === "permissions") return runPermissions(filePath, isCheck, rest);
+  if (kind === "skills") return runSkills(filePath, isCheck, rest);
   throw new Error(
     "usage: antigravity-settings permissions|skills [--check] <path> ..."
   );

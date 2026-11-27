@@ -1,14 +1,14 @@
 /**
- * The `pnpm autodev -- diagnostics` command.
- *
- * The command answers the same questions the Control API's diagnostics routes
- * answer, and it reads them from the same engine. In its default online mode
- * it asks the Control API, because the Runtime holds the live router state
- * that a separate process cannot see. With `--offline`, `--codex-home` or
- * `--router-log` -- or when the Control API is not running -- it runs the same
- * `@simulatorlife/autodev-data/diagnostics` engine directly, so there is one
- * implementation of the reading and not two.
- */
+The `pnpm autodev -- diagnostics` command.
+
+The command answers the same questions the Control API's diagnostics routes
+answer, and it reads them from the same engine. In its default online mode
+it asks the Control API, because the Runtime holds the live router state
+that a separate process cannot see. With `--offline`, `--codex-home` or
+`--router-log` -- or when the Control API is not running -- it runs the same
+`@simulatorlife/autodev-data/diagnostics` engine directly, so there is one
+implementation of the reading and not two.
+*/
 
 import {
   renderFleetScanReport,
@@ -44,7 +44,9 @@ const DEFAULT_RECENT_LIMIT = 10;
 const DEFAULT_HOOK_WINDOW_DAYS = 7;
 const REQUEST_TIMEOUT_MS = 20_000;
 
-/** What the command was asked to do. */
+/**
+What the command was asked to do.
+*/
 export interface DiagnosticsCliOptions {
   readonly id: string;
   readonly codexHome: string;
@@ -61,7 +63,9 @@ export interface DiagnosticsCliOptions {
   readonly hooks: boolean;
   readonly sinceDays: number;
   readonly controlApiUrl: string;
-  /** Whether the caller pointed the command at its own codex home or log. */
+  /**
+  Whether the caller pointed the command at its own codex home or log.
+  */
   readonly customPaths: boolean;
 }
 
@@ -72,75 +76,75 @@ function parsePositiveNumber(raw: string, fallback: number): number {
     : fallback;
 }
 
-function defaultCodexHome(env: NodeJS.ProcessEnv): string {
-  const fromEnv = env.CODEX_HOME?.trim();
-  if (fromEnv) return fromEnv;
-  const home = env.HOME?.trim();
+function defaultCodexHome(environment: NodeJS.ProcessEnv): string {
+  const fromEnvironment = environment.CODEX_HOME?.trim();
+  if (fromEnvironment) return fromEnvironment;
+  const home = environment.HOME?.trim();
   return home ? `${home}/.codex` : ".codex";
 }
 
 /**
- * Read the command's arguments.
- *
- * Returns null when the arguments name nothing to read, which is the one
- * case the command cannot act on.
- */
+Read the command's arguments.
+
+Returns null when the arguments name nothing to read, which is the one
+case the command cannot act on.
+*/
 export function parseDiagnosticsArgs(
   argv: readonly string[],
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): DiagnosticsCliOptions | null {
-  const codexHomeDefault = defaultCodexHome(env);
+  const codexHomeDefault = defaultCodexHome(environment);
   let id = "";
   let codexHome = codexHomeDefault;
   let routerLog = "";
   let sinceDays = DEFAULT_HOOK_WINDOW_DAYS;
   let recent: number | null = null;
   let scanRecent: number | null = null;
-  let offline = false;
-  let json = false;
-  let failures = false;
-  let allFailures = false;
-  let efficiency = false;
-  let items = false;
-  let events = false;
-  let hooks = false;
+  let isOffline = false;
+  let isJson = false;
+  let isFailures = false;
+  let isAllFailures = false;
+  let isEfficiency = false;
+  let isItems = false;
+  let isEvents = false;
+  let isHooks = false;
   let controlApiUrl =
-    env.AUTODEV_CONTROL_API_BASE_URL?.trim() || DEFAULT_CONTROL_API_BASE_URL;
-  let customPaths = false;
+    environment.AUTODEV_CONTROL_API_BASE_URL?.trim() || DEFAULT_CONTROL_API_BASE_URL;
+  let isCustomPaths = false;
 
   for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index]!;
-    switch (arg) {
+    const argument = argv[index]!;
+    switch (argument) {
       case "--items": {
-        items = true;
+        isItems = true;
         break;
       }
       case "--events": {
-        events = true;
+        isEvents = true;
         break;
       }
       case "--failures": {
-        failures = true;
+        isFailures = true;
         break;
       }
       case "--all-failures": {
-        allFailures = true;
+        isAllFailures = true;
         break;
       }
       case "--efficiency": {
-        efficiency = true;
+        isEfficiency = true;
         break;
       }
       case "--json": {
-        json = true;
+        isJson = true;
         break;
       }
       case "--offline": {
-        offline = true;
+        isOffline = true;
         break;
       }
       case "--hooks": {
-        hooks = true;
+        isHooks = true;
         break;
       }
       case "--since": {
@@ -152,12 +156,12 @@ export function parseDiagnosticsArgs(
       }
       case "--codex-home": {
         codexHome = argv[++index] ?? codexHome;
-        customPaths = true;
+        isCustomPaths = true;
         break;
       }
       case "--router-log": {
         routerLog = argv[++index] ?? "";
-        customPaths = true;
+        isCustomPaths = true;
         break;
       }
       case "--control-api-url": {
@@ -177,29 +181,29 @@ export function parseDiagnosticsArgs(
         break;
       }
       default: {
-        if (!arg.startsWith("--")) id = arg;
+        if (!argument.startsWith("--")) id = argument;
         break;
       }
     }
   }
-  if (!id && recent === null && scanRecent === null && !hooks) return null;
+  if (!id && recent === null && scanRecent === null && !isHooks) return null;
   return {
     id,
     codexHome,
     routerLog: routerLog || `${codexHome}/run/${DEFAULT_ROUTER_LOG}`,
-    offline,
-    json,
-    failures: failures || allFailures,
-    allFailures,
-    efficiency,
-    items,
-    events,
+    offline: isOffline,
+    json: isJson,
+    failures: isFailures || isAllFailures,
+    allFailures: isAllFailures,
+    efficiency: isEfficiency,
+    items: isItems,
+    events: isEvents,
     recent,
     scanRecent,
-    hooks,
+    hooks: isHooks,
     sinceDays,
     controlApiUrl: controlApiUrl.replace(TRAILING_SLASHES, ""),
-    customPaths
+    customPaths: isCustomPaths
   };
 }
 
@@ -215,12 +219,12 @@ function usage(): void {
 }
 
 /**
- * Whether the command must run the engine itself rather than ask the API.
- *
- * A caller that pointed the command at its own codex home or its own router
- * log is asking about that machine, not about the running Runtime, so the API
- * would answer a different question.
- */
+Whether the command must run the engine itself rather than ask the API.
+
+A caller that pointed the command at its own codex home or its own router
+log is asking about that machine, not about the running Runtime, so the API
+would answer a different question.
+*/
 function needsLocalEngine(options: DiagnosticsCliOptions): boolean {
   return options.offline || options.customPaths;
 }
@@ -260,7 +264,7 @@ function controlApiQueryPath(options: DiagnosticsCliOptions): string | null {
     return `/control/diagnostics/sessions/recent?limit=${options.recent}&format=${format}`;
   }
   if (!options.id) return null;
-  const params = new URLSearchParams({
+  const parameters = new URLSearchParams({
     format,
     includeEfficiency: options.efficiency ? "1" : "0",
     includeFailures: options.failures ? "1" : "0",
@@ -273,7 +277,7 @@ function controlApiQueryPath(options: DiagnosticsCliOptions): string | null {
     itemsOffset: "0",
     offline: options.offline ? "1" : "0"
   });
-  return `/control/diagnostics/sessions/${encodeURIComponent(options.id)}?${params.toString()}`;
+  return `/control/diagnostics/sessions/${encodeURIComponent(options.id)}?${parameters.toString()}`;
 }
 
 async function runLocalEngine(options: DiagnosticsCliOptions): Promise<string> {
@@ -331,10 +335,10 @@ async function runLocalEngine(options: DiagnosticsCliOptions): Promise<string> {
 }
 
 /**
- * Run the diagnostics command.
- *
- * Returns the process exit code.
- */
+Run the diagnostics command.
+
+Returns the process exit code.
+*/
 export async function runDiagnosticsCommand(
   argv: readonly string[]
 ): Promise<number> {

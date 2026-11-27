@@ -22,22 +22,22 @@ import {
 import { type Browser, chromium } from "playwright-core";
 
 /**
- * The ChatGPT adapter AutoDev patches: how a prompt reaches the site.
- *
- * The prompt reaches ChatGPT as an attachment, so the turn needs the page to
- * show a file input to attach it through. The page does not always keep that
- * input where the adapter looked first -- it may sit beside the composer, or
- * in the portal the attach menu opens -- and it mounts the input a moment
- * after the composer itself is there. A turn that looked once and gave up
- * died with "file input is missing" (session
- * 01a1c6a9-dc62-7a10-ac7e-a20047d5489d), and the attachment was the only
- * way the prompt could reach the site.
- *
- * The adapter is upstream code, patched in this repository
- * (patches/@jackwener__opencli@2.0.3.patch), so it is tested against the
- * installed package: the test fails when the patch and the installed adapter
- * have drifted apart.
- */
+The ChatGPT adapter AutoDev patches: how a prompt reaches the site.
+
+The prompt reaches ChatGPT as an attachment, so the turn needs the page to
+show a file input to attach it through. The page does not always keep that
+input where the adapter looked first -- it may sit beside the composer, or
+in the portal the attach menu opens -- and it mounts the input a moment
+after the composer itself is there. A turn that looked once and gave up
+died with "file input is missing" (session
+01a1c6a9-dc62-7a10-ac7e-a20047d5489d), and the attachment was the only
+way the prompt could reach the site.
+
+The adapter is upstream code, patched in this repository
+(patches/@jackwener__opencli@2.0.3.patch), so it is tested against the
+installed package: the test fails when the patch and the installed adapter
+have drifted apart.
+*/
 
 interface UploadResult {
   readonly ok: boolean;
@@ -55,7 +55,9 @@ const require = createRequire(
   new URL("../../runtime/package.json", import.meta.url)
 );
 
-/** The patched ChatGPT adapter, as the installed package carries it. */
+/**
+The patched ChatGPT adapter, as the installed package carries it.
+*/
 async function chatgptAdapter(): Promise<{
   uploadChatGPTFiles: (
     page: unknown,
@@ -94,9 +96,9 @@ async function chatgptAdapter(): Promise<{
 }
 
 /**
- * A page that answers the adapter's two questions: where the file input is,
- * and whether the attachment chip is ready.
- */
+A page that answers the adapter's two questions: where the file input is,
+and whether the attachment chip is ready.
+*/
 function fakePage(lookups: readonly InputLookup[]) {
   const calls = { input: 0, chip: 0 };
   let attached: readonly string[] = [];
@@ -215,9 +217,9 @@ test("inputs that all refuse the file are not waited on like a page still render
 });
 
 /**
- * A page whose tab is not the visible one: the browser can read it, but it
- * cannot click it.
- */
+A page whose tab is not the visible one: the browser can read it, but it
+cannot click it.
+*/
 function fakeBackgroundTab(before: string, after: string) {
   const calls = { nativeClick: 0, api: 0 };
   let model = before;
@@ -272,7 +274,7 @@ test("the model is switched through the site's own API when the picker cannot be
   if (adapter === null) return;
   const { selectChatGPTModel } = adapter;
   const site = fakeBackgroundTab("balanced", "advanced");
-  const originalFetch = globalThis.fetch;
+  const originalFetch = fetch;
   globalThis.fetch = (async (input: unknown) => {
     const url = String(input);
     if (url.includes("/api/auth/session"))
@@ -307,18 +309,18 @@ test("the model is switched through the site's own API when the picker cannot be
 });
 
 /**
- * The Gemini adapter AutoDev patches: how a thinking level reaches the site.
- *
- * The site renamed its levels: it offered `standard` and `extended` when
- * opencli was written, and offers `low`, `medium` and `high` now. A level
- * the CLI cannot name is a level it cannot select, and `--thinking` with a
- * name the site does not use fails before the prompt is ever sent.
- *
- * The adapter is upstream code, patched in this repository
- * (patches/@jackwener__opencli@2.0.3.patch), so it is tested against the
- * installed package: the test fails when the patch and the installed adapter
- * have drifted apart.
- */
+The Gemini adapter AutoDev patches: how a thinking level reaches the site.
+
+The site renamed its levels: it offered `standard` and `extended` when
+opencli was written, and offers `low`, `medium` and `high` now. A level
+the CLI cannot name is a level it cannot select, and `--thinking` with a
+name the site does not use fails before the prompt is ever sent.
+
+The adapter is upstream code, patched in this repository
+(patches/@jackwener__opencli@2.0.3.patch), so it is tested against the
+installed package: the test fails when the patch and the installed adapter
+have drifted apart.
+*/
 async function geminiAdapter(): Promise<{
   selectGeminiThinking: (
     page: unknown,
@@ -355,12 +357,12 @@ async function geminiAdapter(): Promise<{
 }
 
 /**
- * A page whose thinking submenu takes a moment to expand.
- *
- * The items of the submenu are in the DOM before it has expanded, and an
- * item with no size cannot be clicked: the adapter has to wait for the level
- * to be visible, not for a fixed half second.
- */
+A page whose thinking submenu takes a moment to expand.
+
+The items of the submenu are in the DOM before it has expanded, and an
+item with no size cannot be clicked: the adapter has to wait for the level
+to be visible, not for a fixed half second.
+*/
 function fakeThinkingPage(options: {
   readonly matched: string;
   readonly hiddenProbes?: number;
@@ -442,7 +444,9 @@ test("the picker is looked for where the site keeps it", async () => {
   );
 });
 
-/** One of the installed Gemini adapter's modules, or null without the package. */
+/**
+One of the installed Gemini adapter's modules, or null without the package.
+*/
 async function geminiModule<T>(file: string): Promise<T | null> {
   let entry: string;
   try {
@@ -464,11 +468,11 @@ interface GeminiModelIdentity {
 }
 
 /**
- * The adapter's model identity, run against picker items made of text parts.
- *
- * Each part stands for one element of the item that holds text of its own,
- * the way the page's tree walker reads it.
- */
+The adapter's model identity, run against picker items made of text parts.
+
+Each part stands for one element of the item that holds text of its own,
+the way the page's tree walker reads it.
+*/
 function geminiModelIdentity(logic: string): GeminiModelIdentity {
   interface FakeItem {
     readonly parts: readonly string[];
@@ -500,12 +504,12 @@ test("a Gemini model's id is its own name, whatever the site writes beside it", 
   // `4-argon-complex-tasks`, then `code--analysis-4-argon`, then
   // `4-argon-limit-resets-nov-9-926-pm`, and every route that named the
   // model was told it did not exist.
-  const utils = await geminiModule<{ geminiModelIdentityLogic: () => string }>(
+  const utilities = await geminiModule<{ geminiModelIdentityLogic: () => string }>(
     "utils.js"
   );
-  if (utils === null) return;
+  if (utilities === null) return;
   const { geminiModelEntry, geminiModelIdOf } = geminiModelIdentity(
-    utils.geminiModelIdentityLogic()
+    utilities.geminiModelIdentityLogic()
   );
   const item = (...parts: string[]) => geminiModelEntry({ parts });
 
@@ -573,13 +577,15 @@ test("a Gemini model that is out of usage is refused as its usage limit", async 
   );
 });
 
-interface GeminiPageUtils {
+interface GeminiPageUtilities {
   geminiAppUrl: (path?: string) => string;
   isGeminiAppPath: (pathname: string) => boolean;
   ensureGeminiPage: (page: unknown) => Promise<void>;
 }
 
-/** Run `body` with OPENCLI_GEMINI_ACCOUNT set to `account` (or unset). */
+/**
+Run `body` with OPENCLI_GEMINI_ACCOUNT set to `account` (or unset).
+*/
 async function withGeminiAccount<T>(
   account: string | null,
   body: () => Promise<T>
@@ -596,9 +602,9 @@ async function withGeminiAccount<T>(
 }
 
 /**
- * A Gemini tab that always shows `url` signed in as `email`: the landing page
- * an account without the Gemini app is redirected to, whatever is opened.
- */
+A Gemini tab that always shows `url` signed in as `email`: the landing page
+an account without the Gemini app is redirected to, whatever is opened.
+*/
 function geminiTab(url: string, email: string | null) {
   const visited: string[] = [];
   return {
@@ -628,33 +634,33 @@ test("the Gemini app is opened as the configured Google account", async () => {
   // the site shows its landing page -- no composer, no model picker -- and
   // every listing failed as "model picker button was not found", which left
   // the provider's model choices disabled in the Console.
-  const utils = await geminiModule<GeminiPageUtils>("utils.js");
-  if (utils === null) return;
+  const utilities = await geminiModule<GeminiPageUtilities>("utils.js");
+  if (utilities === null) return;
   await withGeminiAccount(null, async () => {
-    assert.equal(utils.geminiAppUrl(), "https://gemini.google.com/app");
+    assert.equal(utilities.geminiAppUrl(), "https://gemini.google.com/app");
   });
   await withGeminiAccount("someone@example.com", async () => {
     assert.equal(
-      utils.geminiAppUrl(),
+      utilities.geminiAppUrl(),
       "https://gemini.google.com/app?authuser=someone%40example.com"
     );
     assert.equal(
-      utils.geminiAppUrl("/abc123"),
+      utilities.geminiAppUrl("/abc123"),
       "https://gemini.google.com/app/abc123?authuser=someone%40example.com"
     );
   });
-  assert.equal(utils.isGeminiAppPath("/app"), true);
-  assert.equal(utils.isGeminiAppPath("/u/1/app/abc123"), true);
-  assert.equal(utils.isGeminiAppPath("/u/0/"), false);
-  assert.equal(utils.isGeminiAppPath("/"), false);
+  assert.equal(utilities.isGeminiAppPath("/app"), true);
+  assert.equal(utilities.isGeminiAppPath("/u/1/app/abc123"), true);
+  assert.equal(utilities.isGeminiAppPath("/u/0/"), false);
+  assert.equal(utilities.isGeminiAppPath("/"), false);
 });
 
 test("a Gemini tab that shows the landing page is a sign-in to fix, not a changed picker", async () => {
-  const utils = await geminiModule<GeminiPageUtils>("utils.js");
-  if (utils === null) return;
+  const utilities = await geminiModule<GeminiPageUtilities>("utils.js");
+  if (utilities === null) return;
   const tab = geminiTab("https://gemini.google.com/u/0/", "work@example.com");
   const failure = await withGeminiAccount(null, () =>
-    utils.ensureGeminiPage(tab.page).then(
+    utilities.ensureGeminiPage(tab.page).then(
       () => null,
       (error: unknown) => error as Error & { code?: string }
     )
@@ -667,11 +673,11 @@ test("a Gemini tab that shows the landing page is a sign-in to fix, not a change
 });
 
 test("a Gemini tab signed in as another account is reopened as the configured one", async () => {
-  const utils = await geminiModule<GeminiPageUtils>("utils.js");
-  if (utils === null) return;
+  const utilities = await geminiModule<GeminiPageUtilities>("utils.js");
+  if (utilities === null) return;
   const tab = geminiTab("https://gemini.google.com/app", "work@example.com");
   const failure = await withGeminiAccount("someone@example.com", () =>
-    utils.ensureGeminiPage(tab.page).then(
+    utilities.ensureGeminiPage(tab.page).then(
       () => null,
       (error: unknown) => error as Error & { code?: string }
     )
@@ -694,7 +700,7 @@ interface GeminiSnapshot {
   readonly structuredTurnsTrusted: boolean;
 }
 
-interface GeminiReplyUtils {
+interface GeminiReplyUtilities {
   waitForGeminiResponse: (
     page: unknown,
     baseline: {
@@ -714,7 +720,9 @@ interface GeminiReplyUtils {
 
 const GEMINI_CHAT_URL = "https://gemini.google.com/app/c1f94246f36a5126";
 const GEMINI_PROMPT = "# Codex agent turn\n\nReview the codebase.";
-/** What Gemini's side navigation reads as, one line per entry. */
+/**
+What Gemini's side navigation reads as, one line per entry.
+*/
 const GEMINI_SIDEBAR_LINES = [
   "Library",
   "Images",
@@ -722,7 +730,9 @@ const GEMINI_SIDEBAR_LINES = [
   "# Codex agent turn"
 ];
 
-/** A Gemini tab whose snapshot reads, poll by poll, as `snapshots`. */
+/**
+A Gemini tab whose snapshot reads, poll by poll, as `snapshots`.
+*/
 function geminiChat(snapshots: readonly GeminiSnapshot[]) {
   let polls = 0;
   return {
@@ -762,8 +772,8 @@ test("a Gemini reply still coming is waited for, not read from the page around i
   // 01a1d23e-d01e-77b1-a353-70e46311cda7 ended its root turn on "Gemini New
   // chatLibraryImages...# Codex agent turn" while Gemini's actual reply, a
   // tool call, sat in the chat unread.
-  const utils = await geminiModule<GeminiReplyUtils>("utils.js");
-  if (utils === null) return;
+  const utilities = await geminiModule<GeminiReplyUtilities>("utils.js");
+  if (utilities === null) return;
   const user = { Role: "User", Text: GEMINI_PROMPT };
   const reply = '<tool_call name="exec">\ntext("ok")\n</tool_call>';
   const asked = geminiSnapshot([user], [GEMINI_PROMPT]);
@@ -784,7 +794,7 @@ test("a Gemini reply still coming is waited for, not read from the page around i
     answered,
     answered
   ]);
-  const response = await utils.waitForGeminiResponse(
+  const response = await utilities.waitForGeminiResponse(
     chat.page,
     { snapshot: asked, userAnchorTurn: user },
     GEMINI_PROMPT,
@@ -797,8 +807,8 @@ test("a Gemini reply being written is reported on the progress descriptor, not o
   // The bridge shows prose as it is written. Each new reading of the reply
   // while Gemini is still generating is one JSON line on the descriptor
   // OPENCLI_PROGRESS_FD names; the result stays the finished reply alone.
-  const utils = await geminiModule<GeminiReplyUtils>("utils.js");
-  if (utils === null) return;
+  const utilities = await geminiModule<GeminiReplyUtilities>("utils.js");
+  if (utilities === null) return;
   const user = { Role: "User", Text: GEMINI_PROMPT };
   const asked = geminiSnapshot([user], [GEMINI_PROMPT]);
   const writing = (text: string): GeminiSnapshot => ({
@@ -823,7 +833,7 @@ test("a Gemini reply being written is reported on the progress descriptor, not o
   const saved = process.env.OPENCLI_PROGRESS_FD;
   process.env.OPENCLI_PROGRESS_FD = String(fd);
   try {
-    const response = await utils.waitForGeminiResponse(
+    const response = await utilities.waitForGeminiResponse(
       chat.page,
       { snapshot: asked, userAnchorTurn: user },
       GEMINI_PROMPT,
@@ -850,8 +860,8 @@ test("a Gemini reply being written is reported on the progress descriptor, not o
 });
 
 test("a Gemini reply is not reported when no progress descriptor is named", async () => {
-  const utils = await geminiModule<GeminiReplyUtils>("utils.js");
-  if (utils === null) return;
+  const utilities = await geminiModule<GeminiReplyUtilities>("utils.js");
+  if (utilities === null) return;
   const user = { Role: "User", Text: GEMINI_PROMPT };
   const writing: GeminiSnapshot = {
     ...geminiSnapshot([user, { Role: "Assistant", Text: "Part" }], []),
@@ -861,7 +871,7 @@ test("a Gemini reply is not reported when no progress descriptor is named", asyn
   const saved = process.env.OPENCLI_PROGRESS_FD;
   delete process.env.OPENCLI_PROGRESS_FD;
   try {
-    const response = await utils.waitForGeminiResponse(
+    const response = await utilities.waitForGeminiResponse(
       geminiChat([writing, done, done]).page,
       { snapshot: geminiSnapshot([user], []), userAnchorTurn: user },
       GEMINI_PROMPT,
@@ -877,8 +887,8 @@ test("a Gemini chat's changing sidebar is not taken for the prompt being sent", 
   // A new chat appears in the sidebar under its prompt's first words before
   // the chat shows the prompt's turn. On a page with the structured layout
   // only that turn says the prompt was taken.
-  const utils = await geminiModule<GeminiReplyUtils>("utils.js");
-  if (utils === null) return;
+  const utilities = await geminiModule<GeminiReplyUtilities>("utils.js");
+  if (utilities === null) return;
   const before = geminiSnapshot(
     [{ Role: "User", Text: "an earlier prompt" }],
     ["an earlier prompt"]
@@ -893,12 +903,14 @@ test("a Gemini chat's changing sidebar is not taken for the prompt being sent", 
     ["an earlier prompt", ...GEMINI_SIDEBAR_LINES, GEMINI_PROMPT]
   );
   const chat = geminiChat([titled, titled, sent]);
-  const submitted = await utils.waitForGeminiSubmission(chat.page, before, 10);
+  const submitted = await utilities.waitForGeminiSubmission(chat.page, before, 10);
   assert.equal(submitted?.reason, "user_turn");
   assert.equal(chat.polls(), 3);
 });
 
-/** Headless Chromium, or null on a machine without playwright-core's browser. */
+/**
+Headless Chromium, or null on a machine without playwright-core's browser.
+*/
 async function headlessChromium(): Promise<Browser | null> {
   if (!existsSync(chromium.executablePath())) return null;
   return chromium.launch({ headless: true });
@@ -908,8 +920,8 @@ test("a Gemini transcript is read from the chat, never from the sidebar beside i
   // Gemini's <main> holds the side navigation as well as the chat. The
   // transcript was read from all of <main>, and from a detached copy, whose
   // innerText is its textContent: the sidebar came back as one glued line.
-  const utils = await geminiModule<GeminiReplyUtils>("utils.js");
-  if (utils === null) return;
+  const utilities = await geminiModule<GeminiReplyUtilities>("utils.js");
+  if (utilities === null) return;
   // A tree without a Chromium for playwright-core has no page to read.
   const browser = await headlessChromium();
   if (browser === null) return;
@@ -932,7 +944,7 @@ test("a Gemini transcript is read from the chat, never from the sidebar beside i
       </div></chat-window>
     </main></chat-app></body></html>`);
     const snapshot = (await page.evaluate(
-      utils.__test__.readGeminiSnapshotScript()
+      utilities.__test__.readGeminiSnapshotScript()
     )) as GeminiSnapshot;
     assert.deepEqual(snapshot.turns, [
       { Role: "User", Text: "# Codex agent turn\nReview the codebase." }
@@ -946,8 +958,10 @@ test("a Gemini transcript is read from the chat, never from the sidebar beside i
   }
 });
 
-/** The ChatGPT reply reader, as the installed package carries it. */
-interface ChatGPTReplyUtils {
+/**
+The ChatGPT reply reader, as the installed package carries it.
+*/
+interface ChatGPTReplyUtilities {
   waitForChatGPTResponse: (
     page: unknown,
     prompt: string,
@@ -967,25 +981,29 @@ interface ChatGPTReplyUtils {
   } | null;
 }
 
-async function chatgptReplyUtils(): Promise<ChatGPTReplyUtils | null> {
+async function chatgptReplyUtilities(): Promise<ChatGPTReplyUtilities | null> {
   const adapter = (await chatgptAdapter()) as unknown;
-  return adapter as ChatGPTReplyUtils | null;
+  return adapter as ChatGPTReplyUtilities | null;
 }
 
 const CHATGPT_CHAT_ID = "6afb4b8e-1520-83ea-9e27-4a42da8e7425";
 const CHATGPT_PROMPT =
   "Read the attached file turn-54834ad80013.md and respond exactly as it instructs.";
-/** What ChatGPT stored as the worker's reply in session 01a1e592-6349-73a2-8d2f-3d8bea217417. */
+/**
+What ChatGPT stored as the worker's reply in session 01a1e592-6349-73a2-8d2f-3d8bea217417.
+*/
 const CHATGPT_STORED_REPLY =
   '<tool_call name="exec">\nconst names = ALL_TOOLS.filter(x => /exec_command/i.test(x.name)).map(x => ({name:x.name})); text(names);\n</tool_call>';
-/** What the page showed of it: the tags gone, the script cut at its first `{`. */
+/**
+What the page showed of it: the tags gone, the script cut at its first `{`.
+*/
 const CHATGPT_SHOWN_REPLY =
   "const names = ALL_TOOLS.filter(x => /exec_command/i.test(x.name)).map(x => (";
 
 /**
- * A stored conversation shaped like ChatGPT's: the turn's messages hang off
- * one another by `parent`, and the mapping's key order is not their order.
- */
+A stored conversation shaped like ChatGPT's: the turn's messages hang off
+one another by `parent`, and the mapping's key order is not their order.
+*/
 function storedConversation(
   finalEndTurn: boolean | null,
   replyText = CHATGPT_STORED_REPLY,
@@ -1042,10 +1060,10 @@ function storedConversation(
 }
 
 /**
- * A ChatGPT tab that shows `shown` as the reply and stores `stored`.
- * The stored reply is read by running the adapter's own page script against
- * a fetch that serves the session and the conversation.
- */
+A ChatGPT tab that shows `shown` as the reply and stores `stored`.
+The stored reply is read by running the adapter's own page script against
+a fetch that serves the session and the conversation.
+*/
 function chatgptChat(
   shown: string,
   stored: () => Response,
@@ -1089,12 +1107,12 @@ test("a ChatGPT reply is the one the site stored, not the page's rendering of it
   // worker in session 01a1e592-6349-73a2-8d2f-3d8bea217417 wrote a full
   // <tool_call>, the page showed a tagless script cut at its first `{`, and
   // that fragment ended the worker's turn as its answer.
-  const utils = await chatgptReplyUtils();
-  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const utilities = await chatgptReplyUtilities();
+  assert.ok(utilities, "the patched OpenCLI adapter must be installed");
   const chat = chatgptChat(CHATGPT_SHOWN_REPLY, () =>
     Response.json(storedConversation(true))
   );
-  const reply = await utils.waitForChatGPTResponse(
+  const reply = await utilities.waitForChatGPTResponse(
     chat.page,
     CHATGPT_PROMPT,
     30
@@ -1107,23 +1125,23 @@ test("a ChatGPT reply is the one the site stored, not the page's rendering of it
 });
 
 test("a ChatGPT reply whose stored text cannot be read fails instead of using the page's", async () => {
-  const utils = await chatgptReplyUtils();
-  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const utilities = await chatgptReplyUtilities();
+  assert.ok(utilities, "the patched OpenCLI adapter must be installed");
   const chat = chatgptChat(
     CHATGPT_SHOWN_REPLY,
     () => new Response("{}", { status: 404 })
   );
   await assert.rejects(
-    utils.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 1),
+    utilities.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 1),
     /stored reply could not be read: conversation fetch status 404/u
   );
 });
 
 test("a stored ChatGPT turn is read along its current branch and ends only when the site says so", async () => {
-  const utils = await chatgptReplyUtils();
-  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const utilities = await chatgptReplyUtilities();
+  assert.ok(utilities, "the patched OpenCLI adapter must be installed");
   assert.deepEqual(
-    utils.chatgptReplyFromConversation(storedConversation(true)),
+    utilities.chatgptReplyFromConversation(storedConversation(true)),
     {
       text: CHATGPT_STORED_REPLY,
       finished: true,
@@ -1132,7 +1150,7 @@ test("a stored ChatGPT turn is read along its current branch and ends only when 
     }
   );
   assert.deepEqual(
-    utils.chatgptReplyFromConversation(storedConversation(false)),
+    utilities.chatgptReplyFromConversation(storedConversation(false)),
     {
       text: CHATGPT_STORED_REPLY,
       finished: false,
@@ -1141,14 +1159,14 @@ test("a stored ChatGPT turn is read along its current branch and ends only when 
     }
   );
   assert.equal(
-    utils.chatgptReplyFromConversation({ current_node: null, mapping: {} }),
+    utilities.chatgptReplyFromConversation({ current_node: null, mapping: {} }),
     null
   );
 });
 
 test("ChatGPT stored reply progress is written on fd 3, separate from stdout/stderr", async () => {
-  const utils = await chatgptReplyUtils();
-  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const utilities = await chatgptReplyUtilities();
+  assert.ok(utilities, "the patched OpenCLI adapter must be installed");
   const directory = mkdtempSync(resolve(tmpdir(), "autodev-chatgpt-progress-"));
   const file = resolve(directory, "progress");
   const fd = openSync(file, "w");
@@ -1159,7 +1177,7 @@ test("ChatGPT stored reply progress is written on fd 3, separate from stdout/std
     const chat = chatgptChat(CHATGPT_SHOWN_REPLY, () =>
       Response.json(storedConversation(++storedReads > 2))
     );
-    const reply = await utils.waitForChatGPTResponse(
+    const reply = await utilities.waitForChatGPTResponse(
       chat.page,
       CHATGPT_PROMPT,
       30
@@ -1184,8 +1202,8 @@ test("ChatGPT stored reply progress is written on fd 3, separate from stdout/std
 });
 
 test("ChatGPT publishes changing stored text while generation is still active", async () => {
-  const utils = await chatgptReplyUtils();
-  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const utilities = await chatgptReplyUtilities();
+  assert.ok(utilities, "the patched OpenCLI adapter must be installed");
   const directory = mkdtempSync(resolve(tmpdir(), "autodev-chatgpt-live-"));
   const file = resolve(directory, "progress");
   const fd = openSync(file, "w");
@@ -1211,7 +1229,7 @@ test("ChatGPT publishes changing stored text while generation is still active", 
         return true;
       }
     );
-    const reply = await utils.waitForChatGPTResponse(
+    const reply = await utilities.waitForChatGPTResponse(
       chat.page,
       CHATGPT_PROMPT,
       5
@@ -1236,8 +1254,8 @@ test("ChatGPT publishes changing stored text while generation is still active", 
 });
 
 test("a repeated ChatGPT prompt waits for a new stored user node", async () => {
-  const utils = await chatgptReplyUtils();
-  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const utilities = await chatgptReplyUtilities();
+  assert.ok(utilities, "the patched OpenCLI adapter must be installed");
   let reads = 0;
   const chat = chatgptChat("Repeated", () => {
     reads += 1;
@@ -1248,7 +1266,7 @@ test("a repeated ChatGPT prompt waits for a new stored user node", async () => {
         : storedConversation(true, "New reply", CHATGPT_PROMPT, "new-prompt")
     );
   });
-  const reply = await utils.waitForChatGPTResponse(
+  const reply = await utilities.waitForChatGPTResponse(
     chat.page,
     CHATGPT_PROMPT,
     2,
@@ -1259,19 +1277,19 @@ test("a repeated ChatGPT prompt waits for a new stored user node", async () => {
 });
 
 test("the ChatGPT send baseline reads the last persisted user-message ID", async () => {
-  const utils = await chatgptReplyUtils();
-  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const utilities = await chatgptReplyUtilities();
+  assert.ok(utilities, "the patched OpenCLI adapter must be installed");
   const chat = chatgptChat("", () =>
     Response.json(
       storedConversation(true, "Prior answer", CHATGPT_PROMPT, "prior-user")
     )
   );
-  assert.equal(await utils.getChatGPTStoredPromptId(chat.page), "prior-user");
+  assert.equal(await utilities.getChatGPTStoredPromptId(chat.page), "prior-user");
 });
 
 test("ChatGPT waits 12 seconds after generation stops before accepting partial text", async () => {
-  const utils = await chatgptReplyUtils();
-  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const utilities = await chatgptReplyUtilities();
+  assert.ok(utilities, "the patched OpenCLI adapter must be installed");
   const originalNow = Date.now;
   let now = 0;
   let polls = 0;
@@ -1285,7 +1303,7 @@ test("ChatGPT waits 12 seconds after generation stops before accepting partial t
     chat.page.sleep = async () => {
       now += 2000;
     };
-    const result = await utils.waitForChatGPTResponse(
+    const result = await utilities.waitForChatGPTResponse(
       chat.page,
       CHATGPT_PROMPT,
       180
@@ -1298,8 +1316,8 @@ test("ChatGPT waits 12 seconds after generation stops before accepting partial t
 });
 
 test("ChatGPT starts an unreadable-storage grace period only after generation stops", async () => {
-  const utils = await chatgptReplyUtils();
-  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const utilities = await chatgptReplyUtilities();
+  assert.ok(utilities, "the patched OpenCLI adapter must be installed");
   const originalNow = Date.now;
   let now = 0;
   let reads = 0;
@@ -1318,7 +1336,7 @@ test("ChatGPT starts an unreadable-storage grace period only after generation st
     chat.page.sleep = async () => {
       now += 20_000;
     };
-    const result = await utils.waitForChatGPTResponse(
+    const result = await utilities.waitForChatGPTResponse(
       chat.page,
       CHATGPT_PROMPT,
       180
@@ -1331,8 +1349,8 @@ test("ChatGPT starts an unreadable-storage grace period only after generation st
 });
 
 test("missing conversation IDs fail clearly after a bounded wait", async () => {
-  const utils = await chatgptReplyUtils();
-  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const utilities = await chatgptReplyUtilities();
+  assert.ok(utilities, "the patched OpenCLI adapter must be installed");
   const originalNow = Date.now;
   let now = 0;
   Date.now = () => now;
@@ -1347,7 +1365,7 @@ test("missing conversation IDs fail clearly after a bounded wait", async () => {
       now += 2000;
     };
     await assert.rejects(
-      utils.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 120),
+      utilities.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 120),
       /did not create a conversation URL/u
     );
     assert.equal(now, 12_000);
@@ -1357,8 +1375,8 @@ test("missing conversation IDs fail clearly after a bounded wait", async () => {
 });
 
 test("wrong stored prompts fail in 12 seconds despite an active stop button", async () => {
-  const utils = await chatgptReplyUtils();
-  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const utilities = await chatgptReplyUtilities();
+  assert.ok(utilities, "the patched OpenCLI adapter must be installed");
   const originalNow = Date.now;
   let now = 0;
   Date.now = () => now;
@@ -1375,7 +1393,7 @@ test("wrong stored prompts fail in 12 seconds despite an active stop button", as
       now += 2000;
     };
     await assert.rejects(
-      utils.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 120),
+      utilities.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 120),
       /different prompt or turn/u
     );
     assert.ok(now <= 14_000);
@@ -1385,8 +1403,8 @@ test("wrong stored prompts fail in 12 seconds despite an active stop button", as
 });
 
 test("ChatGPT rejects a finished stored answer from another conversation", async () => {
-  const utils = await chatgptReplyUtils();
-  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const utilities = await chatgptReplyUtilities();
+  assert.ok(utilities, "the patched OpenCLI adapter must be installed");
   const otherChat = "00000000-1111-2222-3333-444444444444";
   const chat = chatgptChat(
     "Done",
@@ -1395,7 +1413,7 @@ test("ChatGPT rejects a finished stored answer from another conversation", async
     () => "https://chatgpt.com/c/" + otherChat
   );
   await assert.rejects(
-    utils.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 2, {
+    utilities.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 2, {
       expectedConversationId: CHATGPT_CHAT_ID
     }),
     /navigated away from the submitted conversation/u
@@ -1403,23 +1421,23 @@ test("ChatGPT rejects a finished stored answer from another conversation", async
 });
 
 test("an incomplete stored answer times out rather than becoming an unreadable-reply error", async () => {
-  const utils = await chatgptReplyUtils();
-  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const utilities = await chatgptReplyUtilities();
+  assert.ok(utilities, "the patched OpenCLI adapter must be installed");
   const chat = chatgptChat(
     "Still writing",
     () => Response.json(storedConversation(false)),
     () => true
   );
   await assert.rejects(
-    utils.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 0.1),
+    utilities.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 0.1),
     (error: unknown) =>
       error instanceof Error && /timed out|timeout/iu.test(error.message)
   );
 });
 
 test("the stored reply must belong to the submitted prompt", async () => {
-  const utils = await chatgptReplyUtils();
-  assert.ok(utils, "the patched OpenCLI adapter must be installed");
+  const utilities = await chatgptReplyUtilities();
+  assert.ok(utilities, "the patched OpenCLI adapter must be installed");
   const chat = chatgptChat(
     "Wrong reply",
     () =>
@@ -1429,7 +1447,7 @@ test("the stored reply must belong to the submitted prompt", async () => {
     () => true
   );
   await assert.rejects(
-    utils.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 0.1),
+    utilities.waitForChatGPTResponse(chat.page, CHATGPT_PROMPT, 0.1),
     /different prompt or turn/u
   );
 });
@@ -1461,8 +1479,8 @@ test("a Gemini reply keeps the line breaks the page shows inside a paragraph", a
   // a paragraph whose line breaks show on screen. Reading it as collapsed
   // whitespace put every script of session 01a1e592-6349-73a2-8d2f-3d8bea217417
   // on one line, so `// @exec: {...}` swallowed the script after it.
-  const utils = await geminiModule<GeminiReplyUtils>("utils.js");
-  if (utils === null) return;
+  const utilities = await geminiModule<GeminiReplyUtilities>("utils.js");
+  if (utilities === null) return;
   const browser = await headlessChromium();
   if (browser === null) return;
   const script =
@@ -1483,7 +1501,7 @@ test("a Gemini reply keeps the line breaks the page shows inside a paragraph", a
       script
     );
     const snapshot = (await page.evaluate(
-      utils.__test__.readGeminiSnapshotScript()
+      utilities.__test__.readGeminiSnapshotScript()
     )) as GeminiSnapshot;
     assert.deepEqual(snapshot.turns, [
       { Role: "User", Text: "Run the tests." },

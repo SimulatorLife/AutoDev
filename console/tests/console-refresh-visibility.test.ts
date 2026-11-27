@@ -12,11 +12,11 @@ import {
 } from "../src/components/navigation/visibility.ts";
 
 /**
- * A visibility source the test controls.
- *
- * The rule the refresh follows is a rule about the operator's window, and a
- * rule that can only be proved in a browser is a rule that is never proved.
- */
+A visibility source the test controls.
+
+The rule the refresh follows is a rule about the operator's window, and a
+rule that can only be proved in a browser is a rule that is never proved.
+*/
 function fakeVisibility(visible: boolean): VisibilitySource & {
   readonly becomeVisible: () => void;
 } {
@@ -131,7 +131,7 @@ test("the refresh interval is the Console's live-count cadence", () => {
 test("the visibility source reads the browser's own answer", () => {
   const listeners = new Map<string, () => void>();
   let state = "hidden";
-  const documentRef = {
+  const documentReference = {
     get visibilityState(): string {
       return state;
     },
@@ -143,7 +143,7 @@ test("the visibility source reads the browser's own answer", () => {
     }
   };
 
-  const source = browserVisibilitySource(documentRef);
+  const source = browserVisibilitySource(documentReference);
   assert.equal(source.isVisible(), false, "a hidden page is not visible");
 
   state = "visible";

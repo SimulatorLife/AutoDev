@@ -15,7 +15,7 @@ import {
 
 export const dynamic = "force-dynamic";
 
-type ToolsSearchParams = Readonly<
+type ToolsSearchParameters = Readonly<
   Record<string, string | readonly string[] | undefined>
 >;
 
@@ -26,7 +26,7 @@ export const metadata: Metadata = {
 export default async function ToolsPage({
   searchParams
 }: {
-  readonly searchParams?: Promise<ToolsSearchParams>;
+  readonly searchParams?: Promise<ToolsSearchParameters>;
 }): Promise<React.JSX.Element> {
   const { section, config } = readNodeContext("/tools");
   if (!config) {
@@ -39,7 +39,7 @@ export default async function ToolsPage({
 
   const [result, resolvedSearch] = await Promise.all([
     fetchTools(config),
-    (searchParams ?? Promise.resolve({})) as Promise<ToolsSearchParams>
+    (searchParams ?? Promise.resolve({})) as Promise<ToolsSearchParameters>
   ]);
   const listFilters = readToolsFilters(resolvedSearch);
   if (result.kind !== "ok") {

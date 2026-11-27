@@ -47,7 +47,9 @@ export interface StateProviderTelemetryEntry {
   lastCheck: unknown;
 }
 
-/** A persisted operator check, or null when the saved value is not one. */
+/**
+A persisted operator check, or null when the saved value is not one.
+*/
 function readProviderCheck(value: unknown): unknown {
   if (value === null || typeof value !== "object") return null;
   const check = value as Record<string, unknown>;
@@ -87,9 +89,9 @@ function applyNumericFields(
     "failures",
     "skipped"
   ] as const) {
-    const val = saved[field];
-    if (Number.isInteger(val) && (val as number) >= 0) {
-      current[field] = val as number;
+    const value = saved[field];
+    if (Number.isInteger(value) && (value as number) >= 0) {
+      current[field] = value as number;
     }
   }
 }
@@ -104,9 +106,9 @@ function applyStringFields(
     "lastFailureAt",
     "lastFailureClass"
   ] as const) {
-    const val = saved[field];
-    if (val === null || typeof val === "string") {
-      current[field] = val;
+    const value = saved[field];
+    if (value === null || typeof value === "string") {
+      current[field] = value;
     }
   }
 }
@@ -173,12 +175,16 @@ export interface RouterPersistenceOptions {
   onPostRestore?: ((parsed: Record<string, unknown>) => void) | undefined;
 }
 
-/** How long a state write's temporary file may sit before it counts as abandoned. */
+/**
+How long a state write's temporary file may sit before it counts as abandoned.
+*/
 const ABANDONED_TEMPORARY_FILE_AGE_MS = 10 * 60_000;
 
 const TEMPORARY_FILE_SUFFIX = /^\d+$/u;
 
-/** write-file-atomic names its temporary file "<state>.<number>". */
+/**
+write-file-atomic names its temporary file "<state>.<number>".
+*/
 function isTemporaryStateFile(name: string, stateFileName: string): boolean {
   return (
     name.startsWith(stateFileName + ".") &&
@@ -187,14 +193,14 @@ function isTemporaryStateFile(name: string, stateFileName: string): boolean {
 }
 
 /**
- * Remove the temporary files of state writes that never finished.
- *
- * A write goes to a temporary file beside the state file and is renamed over
- * it. A process that was killed between the two -- a crash, a SIGKILL, a test
- * process -- left its file behind, and nothing else ever removed it. A live
- * write touches its file within milliseconds, so only a file untouched for
- * ABANDONED_TEMPORARY_FILE_AGE_MS is removed.
- */
+Remove the temporary files of state writes that never finished.
+
+A write goes to a temporary file beside the state file and is renamed over
+it. A process that was killed between the two -- a crash, a SIGKILL, a test
+process -- left its file behind, and nothing else ever removed it. A live
+write touches its file within milliseconds, so only a file untouched for
+ABANDONED_TEMPORARY_FILE_AGE_MS is removed.
+*/
 function removeAbandonedTemporaryFiles(stateFile: string): void {
   const directory = path.dirname(stateFile);
   const stateFileName = path.basename(stateFile);
@@ -338,10 +344,12 @@ export class RouterPersistence {
   }
 
   cancelScheduledPersist(): void {
-    if (this.persistTimeout) {
-      clearTimeout(this.persistTimeout);
-      this.persistTimeout = null;
+    if (!this.persistTimeout) {
+      return;
     }
+
+    clearTimeout(this.persistTimeout);
+    this.persistTimeout = null;
   }
 
   getUpdatedAt(): string | null {
@@ -356,17 +364,17 @@ export class RouterPersistence {
 let defaultPersistenceManager: RouterPersistence | null = null;
 
 /**
- * The router's persistence manager, set by the router module (`http.ts`).
- *
- * There is no implicit default. One used to be created on first use, with no
- * snapshot to write: anything that persisted before the router module was
- * loaded -- a Control API test, chiefly -- replaced
- * `$CODEX_HOME/codex-router-state.json` with an empty state. Run from a
- * maintainer's shell, that is the live router's file: every role
- * assignment, disabled provider and limit was gone the next time the router
- * started before it had saved again, and 91 such 94-byte writes were found
- * stranded beside it. A caller with no manager is a bug, and says so.
- */
+The router's persistence manager, set by the router module (`http.ts`).
+
+There is no implicit default. One used to be created on first use, with no
+snapshot to write: anything that persisted before the router module was
+loaded -- a Control API test, chiefly -- replaced
+`$CODEX_HOME/codex-router-state.json` with an empty state. Run from a
+maintainer's shell, that is the live router's file: every role
+assignment, disabled provider and limit was gone the next time the router
+started before it had saved again, and 91 such 94-byte writes were found
+stranded beside it. A caller with no manager is a bug, and says so.
+*/
 export function getDefaultPersistenceManager(): RouterPersistence {
   if (!defaultPersistenceManager)
     throw new Error(
@@ -375,7 +383,9 @@ export function getDefaultPersistenceManager(): RouterPersistence {
   return defaultPersistenceManager;
 }
 
-/** Set the manager, returning the one it replaces so a caller can restore it. */
+/**
+Set the manager, returning the one it replaces so a caller can restore it.
+*/
 export function setDefaultPersistenceManager(
   manager: RouterPersistence | null
 ): RouterPersistence | null {

@@ -227,20 +227,20 @@ export function createApprovedCatalogueGrant(cataloguePath: string): {
   const content = readApprovedCatalogue(cataloguePath);
   const digest = catalogueDigest(content);
   const catalogue = parseCommandCatalogueText(content);
-  let revoked = false;
+  let isRevoked = false;
   return {
     digest,
     catalogue,
     isAuthorized(): boolean {
-      if (!revoked) {
+      if (!isRevoked) {
         try {
-          revoked =
+          isRevoked =
             catalogueDigest(readApprovedCatalogue(cataloguePath)) !== digest;
         } catch {
-          revoked = true;
+          isRevoked = true;
         }
       }
-      return !revoked;
+      return !isRevoked;
     }
   };
 }
@@ -1050,7 +1050,7 @@ async function runCommandsMain(): Promise<void> {
           process.off("SIGTERM", shutdown);
         });
     };
-    running.server.server.server.onclose = shutdown;
+    running.server.server.server.addEventListener('close', shutdown);
     process.stdin.once("end", shutdown);
     process.once("SIGINT", shutdown);
     process.once("SIGTERM", shutdown);

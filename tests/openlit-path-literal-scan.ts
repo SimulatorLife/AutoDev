@@ -1,32 +1,32 @@
 /**
- * Path-literal scanner for the OpenLIT client.
- *
- * `openlit-internal-links.test.ts` only inspects an `href`/`redirect` *shape*,
- * which is not the same as seeing every link: `href={cond ? "/a" : `/b/${id}`}`
- * has no literal href, so a shape-based scan inspects nothing. The tenancy
- * residue this guards — `/organisation/project/${projectId}/connectors`, left
- * behind by the tenancy removal — was exactly that shape, and it survived every
- * review. So every absolute path literal in the client has to resolve as well.
- *
- * This is a module rather than part of the test so that two callers can run it:
- * the standalone guard, and `openlit-patches-apply.test.ts`, which has an
- * applied tree on disk and would otherwise need a guard that only runs when
- * somebody remembers to set an environment variable.
- *
- * Every exclusion below is a measured one, i.e. it was added because it fired
- * on a literal that is genuinely not a route, and each one is scoped as tightly
- * as the finding allowed:
- *   - `matchesApi` wildcard: `/api/evaluation/llm/Hallucination` against
- *     `/api/evaluation/llm/[evalType]`
- *   - the API prefix rule: `pathname.startsWith("/api")` in check-auth
- *   - middleware matchers are *not* excluded — `"/settings/:path*"` is reduced
- *     to `/settings` and matched as a page prefix, which is what makes a stale
- *     `"/exceptions"` entry a finding rather than a suppressed one
- *   - the document-extension rule: `/openlit/${slug(content)}.md` in the Claude
- *     memory adapter
- *   - `utils/validation.ts`, which matches macOS/Linux path roots inside error
- *     message text
- */
+Path-literal scanner for the OpenLIT client.
+
+`openlit-internal-links.test.ts` only inspects an `href`/`redirect` *shape*,
+which is not the same as seeing every link: `href={cond ? "/a" : `/b/${id}`}`
+has no literal href, so a shape-based scan inspects nothing. The tenancy
+residue this guards — `/organisation/project/${projectId}/connectors`, left
+behind by the tenancy removal — was exactly that shape, and it survived every
+review. So every absolute path literal in the client has to resolve as well.
+
+This is a module rather than part of the test so that two callers can run it:
+the standalone guard, and `openlit-patches-apply.test.ts`, which has an
+applied tree on disk and would otherwise need a guard that only runs when
+somebody remembers to set an environment variable.
+
+Every exclusion below is a measured one, i.e. it was added because it fired
+on a literal that is genuinely not a route, and each one is scoped as tightly
+as the finding allowed:
+  - `matchesApi` wildcard: `/api/evaluation/llm/Hallucination` against
+    `/api/evaluation/llm/[evalType]`
+  - the API prefix rule: `pathname.startsWith("/api")` in check-auth
+  - middleware matchers are *not* excluded — `"/settings/:path*"` is reduced
+    to `/settings` and matched as a page prefix, which is what makes a stale
+    `"/exceptions"` entry a finding rather than a suppressed one
+  - the document-extension rule: `/openlit/${slug(content)}.md` in the Claude
+    memory adapter
+  - `utils/validation.ts`, which matches macOS/Linux path roots inside error
+    message text
+*/
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
@@ -38,7 +38,9 @@ function isDir(p: string): boolean {
   }
 }
 
-/** True when `client` looks like an OpenLIT client checkout. */
+/**
+True when `client` looks like an OpenLIT client checkout.
+*/
 export function hasClientTree(client: string): boolean {
   return (
     !!client && isDir(join(client, "src/app")) && isDir(join(client, "src"))
@@ -92,15 +94,17 @@ function readRouteSets(client: string): {
   return { pages, api };
 }
 
-/** `/settings/:path*` matches `/settings` and every page below it. */
+/**
+`/settings/:path*` matches `/settings` and every page below it.
+*/
 function stripMatcher(token: string): string {
   return token.replace(/\/:\w+\*$/u, "");
 }
 
 /**
- * An interpolated suffix names a fixed prefix plus a value only known at
- * runtime, so the target is truncated at the first `${` and wildcard-matched.
- */
+An interpolated suffix names a fixed prefix plus a value only known at
+runtime, so the target is truncated at the first `${` and wildcard-matched.
+*/
 function matches(target: string, routes: Set<string>): boolean {
   const withoutQuery = beforeDelimiter(target, "?");
   const withoutFragment = beforeDelimiter(withoutQuery, "#");
@@ -114,7 +118,7 @@ function matches(target: string, routes: Set<string>): boolean {
     if (catchAll !== -1) {
       if (
         segs.length >= catchAll &&
-        segs.slice(0, catchAll).every((s, i) => routeSegs[i] === s)
+        segs.slice(0, catchAll).every((s, index) => routeSegs[index] === s)
       ) {
         return true;
       }
@@ -123,39 +127,41 @@ function matches(target: string, routes: Set<string>): boolean {
     if (routeSegs.length !== segs.length) {
       if (
         segs.length < routeSegs.length &&
-        segs.every((seg, i) => routeSegs[i] === seg) &&
+        segs.every((seg, index) => routeSegs[index] === seg) &&
         routeSegs.slice(segs.length).every((s) => s.startsWith("["))
       ) {
         return true;
       }
       continue;
     }
-    if (routeSegs.every((seg, i) => seg.startsWith("[") || seg === segs[i])) {
+    if (routeSegs.every((seg, index) => seg.startsWith("[") || seg === segs[index])) {
       return true;
     }
   }
   return false;
 }
 
-/** A middleware matcher is a prefix assertion, so a shorter route resolves it. */
+/**
+A middleware matcher is a prefix assertion, so a shorter route resolves it.
+*/
 function matchesAsMatcherPrefix(target: string, routes: Set<string>): boolean {
   const base = normalise(stripMatcher(target));
   if (routes.has(base)) return true;
   const baseSegs = base.split("/").filter(Boolean);
   for (const route of routes) {
     const routeSegs = normalise(route).split("/").filter(Boolean);
-    if (baseSegs.every((seg, i) => routeSegs[i] === seg)) return true;
+    if (baseSegs.every((seg, index) => routeSegs[index] === seg)) return true;
   }
   return false;
 }
 
 /**
- * API paths are routinely built by appending parameters to a prefix, so a
- * segment-wise prefix against `[param]` routes is the correct test rather than
- * the wildcard rule. `pathname.startsWith("/api")` is an idiom here, hence the
- * `baseSegs` prefix case — scoped to API targets, because a *page* literal
- * that is only a prefix of another page (e.g. `/agents`) is a dead link.
- */
+API paths are routinely built by appending parameters to a prefix, so a
+segment-wise prefix against `[param]` routes is the correct test rather than
+the wildcard rule. `pathname.startsWith("/api")` is an idiom here, hence the
+`baseSegs` prefix case — scoped to API targets, because a *page* literal
+that is only a prefix of another page (e.g. `/agents`) is a dead link.
+*/
 function matchesApi(target: string, routes: Set<string>): boolean {
   const withoutQuery = beforeDelimiter(target, "?");
   const withoutInterpolation = beforeDelimiter(withoutQuery, "${");
@@ -168,7 +174,7 @@ function matchesApi(target: string, routes: Set<string>): boolean {
     if (catchAll !== -1) {
       if (
         segs.length >= catchAll &&
-        segs.slice(0, catchAll).every((s, i) => routeSegs[i] === s)
+        segs.slice(0, catchAll).every((s, index) => routeSegs[index] === s)
       ) {
         return true;
       }
@@ -176,11 +182,11 @@ function matchesApi(target: string, routes: Set<string>): boolean {
     }
     if (
       routeSegs.length >= segs.length &&
-      segs.every((s, i) => routeSegs[i]?.startsWith("[") || routeSegs[i] === s)
+      segs.every((s, index) => routeSegs[index]?.startsWith("[") || routeSegs[index] === s)
     ) {
       return true;
     }
-    if (segs.every((s, i) => routeSegs[i] === s)) return true;
+    if (segs.every((s, index) => routeSegs[index] === s)) return true;
   }
   return false;
 }
@@ -225,11 +231,11 @@ function literalHasRoute(
 
 function deadPathLiteralsInFile(
   file: string,
-  src: string,
+  source: string,
   pages: Set<string>,
   api: Set<string>
 ): string[] {
-  const rel = relative(src, file);
+  const rel = relative(source, file);
   if (rel in FILE_NOT_ABOUT_ROUTES) return [];
 
   const body = stripComments(readFileSync(file, "utf8"));
@@ -245,40 +251,42 @@ function deadPathLiteralsInFile(
   return dead;
 }
 
-/** Every path literal under `client/src` that resolves to no route. */
+/**
+Every path literal under `client/src` that resolves to no route.
+*/
 export function deadPathLiterals(client: string): string[] {
-  const src = join(client, "src");
+  const source = join(client, "src");
   const { pages, api } = readRouteSets(client);
-  const files = walk(src).filter(
+  const files = walk(source).filter(
     (file) => /\.tsx?$/u.test(file) && !file.includes("__tests__")
   );
-  return files.flatMap((file) => deadPathLiteralsInFile(file, src, pages, api));
+  return files.flatMap((file) => deadPathLiteralsInFile(file, source, pages, api));
 }
 
 /**
- * Every client source module under `src/` (tests excluded), as paths relative
- * to `src/`.
- *
- * Callers must derive their scope from this rather than transcribe a file list:
- * a hand-written list is green for the files it names and blind to everything
- * added after it, which is exactly how a guard ends up passing forever without
- * ever examining the code it governs.
- */
+Every client source module under `src/` (tests excluded), as paths relative
+to `src/`.
+
+Callers must derive their scope from this rather than transcribe a file list:
+a hand-written list is green for the files it names and blind to everything
+added after it, which is exactly how a guard ends up passing forever without
+ever examining the code it governs.
+*/
 export function clientSourceModules(client: string): string[] {
-  const src = join(client, "src");
-  if (!isDir(src)) throw new Error(`no client source tree at ${src}`);
-  return walk(src)
+  const source = join(client, "src");
+  if (!isDir(source)) throw new Error(`no client source tree at ${source}`);
+  return walk(source)
     .filter((file) => /\.tsx?$/u.test(file))
     .filter((file) => !file.includes(`${sep}__tests__${sep}`))
-    .map((file) => relative(src, file))
+    .map((file) => relative(source, file))
     .sort();
 }
 
 /**
- * The middleware chain (CSRF, auth, demo-account) only runs on
- * `config.matcher`, so a page outside it is silently ungated. `/` is the one
- * exception: it is a redirect with no request of its own.
- */
+The middleware chain (CSRF, auth, demo-account) only runs on
+`config.matcher`, so a page outside it is silently ungated. `/` is the one
+exception: it is a redirect with no request of its own.
+*/
 export function pagesOutsideMiddleware(client: string): string[] {
   const { pages } = readRouteSets(client);
   const middleware = readFileSync(join(client, "src/middleware.ts"), "utf8");
@@ -295,7 +303,7 @@ export function pagesOutsideMiddleware(client: string): string[] {
     .filter((page) => page !== "/")
     .filter(
       (page) =>
-        !patterns.some((p) => matchesAsMatcherPrefix(p, new Set([page])))
+        patterns.every((p) => !matchesAsMatcherPrefix(p, new Set([page])))
     )
     .sort();
 }

@@ -19,13 +19,13 @@ import {
 import { responseRecorder } from "./support/control-api-harness.ts";
 
 /**
- * The concurrency limit is a mutable resource like every other one the
- * Console writes, and it was the last one whose write answered with the
- * applied value alone -- so "the write was accepted" and "the Runtime is
- * enforcing this limit" were the same claim. These tests pin the two apart:
- * the write publishes the shared reconciliation view, and the generations it
- * publishes are the limit that was asked for and the limit that is enforced.
- */
+The concurrency limit is a mutable resource like every other one the
+Console writes, and it was the last one whose write answered with the
+applied value alone -- so "the write was accepted" and "the Runtime is
+enforcing this limit" were the same claim. These tests pin the two apart:
+the write publishes the shared reconciliation view, and the generations it
+publishes are the limit that was asked for and the limit that is enforced.
+*/
 
 const SERVICE_TOKEN = "concurrency-reconciliation-secret-token-0123456789";
 const OPERATOR_ACTOR = "concurrency-operator";
@@ -109,7 +109,7 @@ function harness(): {
   });
   setDefaultConcurrencyManager(manager);
 
-  const restoreEnv = (name: string, previous: string | undefined): void => {
+  const restoreEnvironment = (name: string, previous: string | undefined): void => {
     if (previous === undefined) delete process.env[name];
     else process.env[name] = previous;
   };
@@ -118,8 +118,8 @@ function harness(): {
     restore: () => {
       setDefaultConcurrencyManager(null);
       setDefaultPersistenceManager(originalPersistence);
-      restoreEnv("AUTODEV_CONTROL_API_TOKEN", previousToken);
-      restoreEnv("AUTODEV_CONTROL_OPERATORS", previousOperators);
+      restoreEnvironment("AUTODEV_CONTROL_API_TOKEN", previousToken);
+      restoreEnvironment("AUTODEV_CONTROL_OPERATORS", previousOperators);
     },
     call: async (method, pathname, body) => {
       const response = responseRecorder();

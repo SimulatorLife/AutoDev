@@ -17,7 +17,9 @@ export interface PlaytestGameConfiguration {
   };
   readonly modes: readonly PlaytestGameMode[];
   readonly scenarios: readonly string[];
-  /** Explicit game-owned scenario-id to scenario-family mapping. */
+  /**
+  Explicit game-owned scenario-id to scenario-family mapping.
+  */
   readonly scenarioFamilies: Readonly<Record<string, string>>;
   readonly policies: readonly string[];
   readonly budget: {
@@ -33,13 +35,15 @@ export interface PlaytestGameConfiguration {
     readonly critic: string;
     readonly maxReviewedSessions: number;
     /**
-     * Explicit game-owned critique allocation. There is no default split;
-     * surveillanceSessions + discoverySessions <= maxReviewedSessions.
-     */
+    Explicit game-owned critique allocation. There is no default split;
+    surveillanceSessions + discoverySessions <= maxReviewedSessions.
+    */
     readonly reviewSelection: {
       readonly surveillanceSessions: number;
       readonly discoverySessions: number;
-      /** Null means discovery is reported unavailable, never randomized. */
+      /**
+      Null means discovery is reported unavailable, never randomized.
+      */
       readonly discoverySignal: PlaytestDiscoverySignal | null;
     };
     readonly visualCapture: "off" | "on-anomaly" | "sampled" | "all";
@@ -235,7 +239,9 @@ function assertReviewSelection(
   );
 }
 
-/** Validate the target-owned playtest.config.json contract without executing commands. */
+/**
+Validate the target-owned playtest.config.json contract without executing commands.
+*/
 export function assertPlaytestGameConfiguration(
   value: unknown
 ): asserts value is PlaytestGameConfiguration {

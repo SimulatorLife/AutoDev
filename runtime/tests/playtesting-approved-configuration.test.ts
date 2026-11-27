@@ -26,7 +26,7 @@ import {
 } from "@simulatorlife/autodev-core";
 
 import {
-  ApprovedPlaytestConfigurationError,
+  ApprovedPlaytestConfigurationError as ApprovedPlaytestConfigError,
   loadApprovedPlaytestDefinition
 } from "../src/playtesting/approved-configuration.ts";
 import { playtestManifestHash } from "../src/playtesting/hash-chain.ts";
@@ -206,7 +206,9 @@ function approval(
   };
 }
 
-/** Load the approval's committed-build snapshot; fixtures stand in for the snapshot root. */
+/**
+Load the approval's committed-build snapshot; fixtures stand in for the snapshot root.
+*/
 function load(approved: WorkspacePlaytestApproval) {
   return loadApprovedPlaytestDefinition(approved, approved.checkoutRoot);
 }
@@ -215,7 +217,9 @@ const SAMPLE_FIXTURE_ROOT = fileURLToPath(
   new URL("fixtures/playtesting/", import.meta.url)
 );
 
-/** A target game checks its integration into `.autodev/` inside the checkout. */
+/**
+A target game checks its integration into `.autodev/` inside the checkout.
+*/
 function autodev(root: string): string {
   return path.join(root, ".autodev");
 }
@@ -283,10 +287,10 @@ function setup(): { readonly root: string; readonly cleanup: () => void } {
 
 function expectCategory(
   run: () => unknown,
-  category: ApprovedPlaytestConfigurationError["category"]
+  category: ApprovedPlaytestConfigError["category"]
 ): void {
   assert.throws(run, (error: unknown) => {
-    assert.ok(error instanceof ApprovedPlaytestConfigurationError);
+    assert.ok(error instanceof ApprovedPlaytestConfigError);
     assert.equal(error.category, category);
     return true;
   });

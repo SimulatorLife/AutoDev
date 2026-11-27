@@ -120,14 +120,14 @@ test("filesystem MCP calls are the investigation's reads, searches and first edi
   try {
     const dir = path.join(home, "sessions", "2026", "09", "18");
     const file = path.join(dir, `rollout-2026-09-18T17-00-00-${CHILD}.jsonl`);
-    const mcp = (at: string, tool: string, args: Record<string, unknown>) =>
+    const mcp = (at: string, tool: string, arguments_: Record<string, unknown>) =>
       rolloutLine(at, "event_msg", {
         type: "item_completed",
         item: {
           type: "McpToolCall",
           server: "filesystem",
           tool,
-          arguments: args
+          arguments: arguments_
         }
       });
     writeFileSync(
@@ -427,15 +427,15 @@ test("a code point count treats a surrogate pair as one and an unpaired surrogat
     "",
     "plain",
     "😀",
-    "a\uD800b",
-    "\uDC00\uD83D\uDE00",
-    "trailing\uD83D",
-    "e\u0301"
+    "a\u{D800}b",
+    "\u{DC00}\u{1F600}",
+    "trailing\u{D83D}",
+    "e\u{301}"
   ];
   for (const sample of samples)
     assert.equal(countCodePoints(sample), Array.from(sample).length, sample);
-  assert.equal(countCodePoints("a\uD800b"), 3);
-  assert.equal(countCodePoints("e\u0301"), 2, "not a grapheme count");
+  assert.equal(countCodePoints("a\u{D800}b"), 3);
+  assert.equal(countCodePoints("e\u{301}"), 2, "not a grapheme count");
 });
 
 test("traceThread derives clientSurface from each thread session_meta originator without inheriting", () => {

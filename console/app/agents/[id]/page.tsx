@@ -24,11 +24,11 @@ import {
 export const dynamic = "force-dynamic";
 
 /**
- * The resource's own name, taken from the route parameter rather than from a
- * second fetch of the resource. The page body already reads the same
- * parameter, and a metadata function that fetched would double every
- * detail-page request.
- */
+The resource's own name, taken from the route parameter rather than from a
+second fetch of the resource. The page body already reads the same
+parameter, and a metadata function that fetched would double every
+detail-page request.
+*/
 export async function generateMetadata({
   params
 }: {

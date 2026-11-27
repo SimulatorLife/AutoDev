@@ -16,13 +16,13 @@ const ACCEPTANCE_SPEC = join(
 );
 
 /**
- * The routes the playtesting session owns.
- *
- * The playtesting session detail is the one detail surface that presents no
- * trail, and it is another session's work, so it is named here rather than
- * quietly skipped: a guard that skipped every route it did not like would
- * skip this one too, and for the wrong reason.
- */
+The routes the playtesting session owns.
+
+The playtesting session detail is the one detail surface that presents no
+trail, and it is another session's work, so it is named here rather than
+quietly skipped: a guard that skipped every route it did not like would
+skip this one too, and for the wrong reason.
+*/
 const PLAYTESTING_ROUTE_PREFIX = "/playtesting";
 
 function filesUnder(root: string): readonly string[] {
@@ -38,11 +38,17 @@ function filesUnder(root: string): readonly string[] {
   return found;
 }
 
-/** One route of the Console, as its path segments. */
+/**
+One route of the Console, as its path segments.
+*/
 interface Route {
-  /** The route's segments, with the dynamic ones as `[name]`. */
+  /**
+  The route's segments, with the dynamic ones as `[name]`.
+  */
   readonly segments: readonly string[];
-  /** The page file that serves it. */
+  /**
+  The page file that serves it.
+  */
   readonly page: string;
 }
 
@@ -55,7 +61,9 @@ function routes(): readonly Route[] {
     }));
 }
 
-/** The routes that address one resource rather than a collection. */
+/**
+The routes that address one resource rather than a collection.
+*/
 function detailRoutes(): readonly Route[] {
   return routes().filter((route) =>
     route.segments.some((segment) => segment.startsWith("["))
@@ -67,11 +75,11 @@ function routePath(route: Route): string {
 }
 
 /**
- * The feature modules a route's page renders.
- *
- * The page is the route's own file, so the modules it imports from
- * `src/features` are the views that decide what the route presents.
- */
+The feature modules a route's page renders.
+
+The page is the route's own file, so the modules it imports from
+`src/features` are the views that decide what the route presents.
+*/
 function featureModules(route: Route): readonly string[] {
   const source = readFileSync(route.page, "utf8");
   const pattern = /from\s+"((?:\.\.\/)+src\/features\/[^"]+)"/gu;
@@ -85,15 +93,15 @@ function featureModules(route: Route): readonly string[] {
 }
 
 /**
- * The modules a feature's entrypoint publishes.
- *
- * A route imports a feature through its entrypoint rather than through the
- * modules behind it, so the guard has to look through the entrypoint: the
- * view that renders the trail is one of the modules the entrypoint
- * publishes. Reading only the entrypoint would report every such route as
- * having no trail at all, which is the guard failing on the shape of the
- * import rather than on the behaviour it guards.
- */
+The modules a feature's entrypoint publishes.
+
+A route imports a feature through its entrypoint rather than through the
+modules behind it, so the guard has to look through the entrypoint: the
+view that renders the trail is one of the modules the entrypoint
+publishes. Reading only the entrypoint would report every such route as
+having no trail at all, which is the guard failing on the shape of the
+import rather than on the behaviour it guards.
+*/
 function publishedModules(modules: readonly string[]): readonly string[] {
   const published: string[] = [];
   const seen = new Set<string>();
@@ -125,11 +133,11 @@ test("every detail route presents the shared breadcrumb landmark", () => {
 
   for (const route of detail) {
     const modules = featureModules(route);
-    const renders = modules.some((module) =>
+    const isRenders = modules.some((module) =>
       readFileSync(module, "utf8").includes("React.createElement(Breadcrumbs")
     );
     assert.ok(
-      renders,
+      isRenders,
       `${routePath(route)} renders no trail: neither ${modules.join(" nor ")} presents the shared Breadcrumbs`
     );
   }

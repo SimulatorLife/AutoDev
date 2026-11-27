@@ -63,14 +63,14 @@ test("the not-observed variant is spelled once, in the module that owns it", () 
   const redeclaring = /^export\s+const\s+NOT_OBSERVED_STATUS\b/m;
 
   for (const file of sourceFiles(SRC)) {
-    const src = readFileSync(file, "utf8");
+    const source = readFileSync(file, "utf8");
     const at = relative(SRC, file);
     // The owning module is the one declaration allowed to exist.
     if (at.endsWith("components/status/StatusBadge.ts")) continue;
-    if (declaring.test(src) || redeclaring.test(src)) {
+    if (declaring.test(source) || redeclaring.test(source)) {
       offenders.push(`${at}: re-declares NOT_OBSERVED_STATUS`);
     }
-    if (/status:\s*["']not-observed["']/.test(src)) {
+    if (/status:\s*["']not-observed["']/.test(source)) {
       offenders.push(`${at}: passes the bare "not-observed" literal`);
     }
   }

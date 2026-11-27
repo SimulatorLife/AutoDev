@@ -75,11 +75,11 @@ test("the installed manifest rejects a package manifest without a name", () => {
 });
 
 /**
- * The failure this guards: the installed tree imported a Runtime module
- * through the package name while another module imported the same file
- * relatively. The two imports resolved to different files, the Runtime loaded
- * two copies of the module, and module-scoped state split across them.
- */
+The failure this guards: the installed tree imported a Runtime module
+through the package name while another module imported the same file
+relatively. The two imports resolved to different files, the Runtime loaded
+two copies of the module, and module-scoped state split across them.
+*/
 test("a module imported by package name and by path is one module in the installed tree", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "autodev-mirror-"));
   const installed = path.join(root, "src");

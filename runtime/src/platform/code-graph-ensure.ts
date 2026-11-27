@@ -1,15 +1,15 @@
 /**
- * Keeps the active repository's CodeGraphContext graph present and current.
- *
- * Session start owns graph creation and refresh so agents never index a
- * repository themselves: CGC answers structural queries against a repository
- * it has not indexed with a successful, empty result, which reads as "no
- * callers" rather than as missing context. Session start spawns a detached
- * worker and returns at once; the worker indexes a repository the graph does
- * not know, refreshes one whose checkout changed since the last successful
- * run, and otherwise does nothing. Its lock, freshness stamp, and log live in
- * AutoDev's own state directory, never in the repository.
- */
+Keeps the active repository's CodeGraphContext graph present and current.
+
+Session start owns graph creation and refresh so agents never index a
+repository themselves: CGC answers structural queries against a repository
+it has not indexed with a successful, empty result, which reads as "no
+callers" rather than as missing context. Session start spawns a detached
+worker and returns at once; the worker indexes a repository the graph does
+not know, refreshes one whose checkout changed since the last successful
+run, and otherwise does nothing. Its lock, freshness stamp, and log live in
+AutoDev's own state directory, never in the repository.
+*/
 
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -48,7 +48,9 @@ export interface CodeGraphState {
 export type CodeGraphWorkerResult =
   "indexed" | "updated" | "fresh" | "locked" | "failed";
 
-/** The repository's git top level, or null outside a git checkout. */
+/**
+The repository's git top level, or null outside a git checkout.
+*/
 export function gitRoot(cwd: string): string | null {
   try {
     return execFileSync("git", ["rev-parse", "--show-toplevel"], {
@@ -61,26 +63,30 @@ export function gitRoot(cwd: string): string | null {
   }
 }
 
-/** AutoDev's per-repository CGC state directory. */
+/**
+AutoDev's per-repository CGC state directory.
+*/
 export function codeGraphStateDir(
   root: string,
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): string {
   const codexHome =
-    env.CODEX_HOME ?? path.join(env.HOME ?? homedir(), ".codex");
+    environment.CODEX_HOME ?? path.join(environment.HOME ?? homedir(), ".codex");
   const key = createHash("sha256").update(root).digest("hex").slice(0, 16);
   return path.join(codexHome, "provider-runtime", "code-graph", key);
 }
 
-function git(root: string, args: string[]): string {
-  return execFileSync("git", args, {
+function git(root: string, arguments_: string[]): string {
+  return execFileSync("git", arguments_, {
     cwd: root,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"]
   });
 }
 
-/** Identifies the checkout's content: the commit plus every uncommitted change. */
+/**
+Identifies the checkout's content: the commit plus every uncommitted change.
+*/
 export function checkoutStamp(root: string): string {
   const hash = createHash("sha256")
     .update(git(root, ["rev-parse", "HEAD"]))
@@ -140,7 +146,9 @@ function processAlive(pid: number): boolean {
   }
 }
 
-/** Take the per-repository lock, replacing one whose owner has exited. */
+/**
+Take the per-repository lock, replacing one whose owner has exited.
+*/
 function acquireLock(lock: string): boolean {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
@@ -162,13 +170,15 @@ function acquireLock(lock: string): boolean {
   return false;
 }
 
-/** The repository paths the graph has indexed, parsed from `query`'s JSON. */
-function indexedRepositories(binary: string, env: NodeJS.ProcessEnv): string[] {
+/**
+The repository paths the graph has indexed, parsed from `query`'s JSON.
+*/
+function indexedRepositories(binary: string, environment: NodeJS.ProcessEnv): string[] {
   let output: string;
   try {
     output = execFileSync(binary, ["query", REPOSITORIES_QUERY], {
       encoding: "utf8",
-      env,
+      env: environment,
       stdio: ["ignore", "pipe", "pipe"]
     });
   } catch (error) {
@@ -184,18 +194,18 @@ function indexedRepositories(binary: string, env: NodeJS.ProcessEnv): string[] {
 }
 
 /**
- * The child's own account of a failed CodeGraphContext command.
- *
- * Node's message for a command that exited non-zero is "Command failed: <path>
- * <args>", which names the command and nothing else. The reason is in the
- * child's output: which database it was using, and why the connection did not
- * hold. A graph that cannot be reached is a graph whose reason has to be read
- * out of it rather than inferred from the fact that it failed.
- *
- * A traceback's frames are dropped: they say which line of which library
- * failed, not why. The cause is the last unindented line, and the database the
- * command reached is named by the first.
- */
+The child's own account of a failed CodeGraphContext command.
+
+Node's message for a command that exited non-zero is "Command failed: <path>
+<args>", which names the command and nothing else. The reason is in the
+child's output: which database it was using, and why the connection did not
+hold. A graph that cannot be reached is a graph whose reason has to be read
+out of it rather than inferred from the fact that it failed.
+
+A traceback's frames are dropped: they say which line of which library
+failed, not why. The cause is the last unindented line, and the database the
+command reached is named by the first.
+*/
 function failureReason(error: unknown): string {
   const failure = error as {
     readonly stdout?: Buffer | string;
@@ -217,20 +227,20 @@ function failureReason(error: unknown): string {
 }
 
 /**
- * Whether the graph database answers a query.
- *
- * The MCP server and the indexing worker read the same graph, and a database
- * that is down takes both with it: the MCP server exits before it answers its
- * first request, so the client reports "Connection closed" and names nothing,
- * and the session-start refresh fails into a log the operator does not read.
- *
- * The graph is a dependency this repository's own tooling needs, so the check
- * that names it belongs beside the check that says the executable is there.
- */
+Whether the graph database answers a query.
+
+The MCP server and the indexing worker read the same graph, and a database
+that is down takes both with it: the MCP server exits before it answers its
+first request, so the client reports "Connection closed" and names nothing,
+and the session-start refresh fails into a log the operator does not read.
+
+The graph is a dependency this repository's own tooling needs, so the check
+that names it belongs beside the check that says the executable is there.
+*/
 export function checkCodeGraphDatabase(
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): number {
-  const binary = resolveCodeGraphContextBinary(env);
+  const binary = resolveCodeGraphContextBinary(environment);
   if (!binary) {
     writeErrorLine(
       "missing CodeGraphContext executable, so its graph database cannot be reached"
@@ -238,7 +248,7 @@ export function checkCodeGraphDatabase(
     return 1;
   }
   try {
-    indexedRepositories(binary, env);
+    indexedRepositories(binary, environment);
     writeLine("ok CodeGraphContext graph database");
     return 0;
   } catch (error) {
@@ -249,30 +259,32 @@ export function checkCodeGraphDatabase(
   }
 }
 
-/** Index or refresh `root`'s graph unless it is current or another run holds it. */
+/**
+Index or refresh `root`'s graph unless it is current or another run holds it.
+*/
 export function runCodeGraphWorker(
   root: string,
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): CodeGraphWorkerResult {
-  const stateDir = codeGraphStateDir(root, env);
+  const stateDir = codeGraphStateDir(root, environment);
   mkdirSync(stateDir, { recursive: true });
   const lock = path.join(stateDir, "lock");
   const stateFile = path.join(stateDir, "state.json");
   if (!acquireLock(lock)) return "locked";
   try {
     const stamp = checkoutStamp(root);
-    const binary = resolveCodeGraphContextBinary(env);
+    const binary = resolveCodeGraphContextBinary(environment);
     if (!binary)
       throw new Error(
         "CodeGraphContext binary is missing; install codegraphcontext or set AUTODEV_CODEGRAPHCONTEXT_BIN"
       );
-    const indexed = indexedRepositories(binary, env).includes(root);
-    if (indexed && readState(stateFile)?.stamp === stamp) return "fresh";
-    const action = indexed ? "update" : "index";
+    const isIndexed = indexedRepositories(binary, environment).includes(root);
+    if (isIndexed && readState(stateFile)?.stamp === stamp) return "fresh";
+    const action = isIndexed ? "update" : "index";
     execFileSync(
       binary,
-      indexed ? ["update", "--quiet", root] : ["index", "--no-progress", root],
-      { cwd: root, env, stdio: ["ignore", "inherit", "inherit"] }
+      isIndexed ? ["update", "--quiet", root] : ["index", "--no-progress", root],
+      { cwd: root, env: environment, stdio: ["ignore", "inherit", "inherit"] }
     );
     const state: CodeGraphState = {
       stamp,
@@ -280,7 +292,7 @@ export function runCodeGraphWorker(
       action
     };
     atomicWriteSync(stateFile, `${JSON.stringify(state, null, 2)}\n`);
-    return indexed ? "updated" : "indexed";
+    return isIndexed ? "updated" : "indexed";
   } catch (error) {
     writeErrorLine(
       `code-graph-ensure: ${root}: ${error instanceof Error ? error.message : error}`
@@ -307,17 +319,17 @@ function spawnDetachedWorker(root: string, log: string): void {
 }
 
 /**
- * Start the background worker for the checkout containing `cwd`. Returns the
- * repository root it was started for, or null outside a git checkout.
- */
+Start the background worker for the checkout containing `cwd`. Returns the
+repository root it was started for, or null outside a git checkout.
+*/
 export function ensureCodeGraph(
   cwd: string,
-  env: NodeJS.ProcessEnv = process.env,
+  environment: NodeJS.ProcessEnv = process.env,
   spawnWorker: SpawnCodeGraphWorker = spawnDetachedWorker
 ): string | null {
   const root = gitRoot(cwd);
   if (!root) return null;
-  const stateDir = codeGraphStateDir(root, env);
+  const stateDir = codeGraphStateDir(root, environment);
   mkdirSync(stateDir, { recursive: true });
   spawnWorker(root, path.join(stateDir, "worker.log"));
   return root;
@@ -325,12 +337,12 @@ export function ensureCodeGraph(
 
 if (isEntryPoint(import.meta.url)) {
   const [flag, root] = process.argv.slice(2);
-  if (flag !== WORKER_FLAG || !root) {
-    writeErrorLine(`usage: code-graph-ensure.ts ${WORKER_FLAG} <repo-root>`);
-    process.exitCode = 2;
-  } else {
+  if (flag === WORKER_FLAG && root) {
     const result = runCodeGraphWorker(root);
     writeLine(`${new Date().toISOString()} ${root}: ${result}`);
     process.exitCode = result === "failed" ? 1 : 0;
+  } else {
+    writeErrorLine(`usage: code-graph-ensure.ts ${WORKER_FLAG} <repo-root>`);
+    process.exitCode = 2;
   }
 }

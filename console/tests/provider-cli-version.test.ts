@@ -10,9 +10,9 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
-  ProviderCliVersionText,
   providerCliVersionLabel,
   type ProviderCliVersionState,
+  ProviderCliVersionText,
   providerCliVersionView
 } from "../src/features/providers/provider-cli-version.ts";
 import { ProviderDetailView } from "../src/features/providers/ProviderDetailView.ts";

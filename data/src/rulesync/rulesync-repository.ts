@@ -54,19 +54,19 @@ const DEFAULT_REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const COLLATOR = new Intl.Collator();
 
 /**
- * The canonical MCP declaration's path, in the repository.
- *
- * One spelling of it: the declaration is read, written and digested under
- * this name, and a second spelling would be a second file to keep in step.
- */
+The canonical MCP declaration's path, in the repository.
+
+One spelling of it: the declaration is read, written and digested under
+this name, and a second spelling would be a second file to keep in step.
+*/
 const MCP_SOURCE = ".rulesync/mcp.jsonc" as const;
 
 /**
- * The canonical hook declaration's path, in the repository.
- *
- * One spelling of it: the declaration is read, written and digested under this
- * name, and a second spelling would be a second file to keep in step.
- */
+The canonical hook declaration's path, in the repository.
+
+One spelling of it: the declaration is read, written and digested under this
+name, and a second spelling would be a second file to keep in step.
+*/
 const HOOKS_SOURCE = ".rulesync/hooks.jsonc" as const;
 const MD_EXTENSION_PATTERN = /\.md$/u;
 const COMMAND_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u;
@@ -76,15 +76,17 @@ const SKILL_SOURCE_UNSAFE_MESSAGE =
   "Canonical RuleSync skill source could not be accessed safely.";
 const COMMAND_DIFF_MAX_BYTES = 196_608;
 /**
- * How many committed versions one page of a command's history carries when a
- * request names no size, and the largest page a request may ask for. Both are
- * part of the contract the Control API answers with, so they are exported
- * rather than kept private to this file.
- */
+How many committed versions one page of a command's history carries when a
+request names no size, and the largest page a request may ask for. Both are
+part of the contract the Control API answers with, so they are exported
+rather than kept private to this file.
+*/
 export const RULE_SYNC_COMMAND_HISTORY_PAGE_SIZE = 20;
 export const RULE_SYNC_COMMAND_HISTORY_MAX_PAGE_SIZE = 100;
 
-/** The page a request that names no page gets: the newest history. */
+/**
+The page a request that names no page gets: the newest history.
+*/
 const FIRST_COMMAND_HISTORY_PAGE: RuleSyncCommandHistoryPage = {
   offset: 0,
   limit: RULE_SYNC_COMMAND_HISTORY_PAGE_SIZE
@@ -139,12 +141,12 @@ async function withSourceUpdateLock<T>(
 }
 
 /**
- * Why one skill's frontmatter cannot be applied, or `null` when it can.
- *
- * Split from the walk so the checks stay a readable list rather than a wall of
- * conditions, and so each one can say what is wrong instead of contributing to a
- * single boolean.
- */
+Why one skill's frontmatter cannot be applied, or `null` when it can.
+
+Split from the walk so the checks stay a readable list rather than a wall of
+conditions, and so each one can say what is wrong instead of contributing to a
+single boolean.
+*/
 function skillFrontmatterProblem(
   metadata: unknown,
   directoryName: string
@@ -172,7 +174,9 @@ function skillFrontmatterProblem(
   return null;
 }
 
-/** One located fault in the skill catalog. */
+/**
+One located fault in the skill catalog.
+*/
 function invalidSkills(location: string, message: string): RuleSyncSkillsState {
   return {
     source: SKILLS_SOURCE,
@@ -201,7 +205,9 @@ function skillDirectoryError(directory: CanonicalRuleSyncDirectory): Error {
 }
 
 type SkillEntry =
-  /** An entry that is not a skill at all, and not a fault. */
+  /**
+  An entry that is not a skill at all, and not a fault.
+  */
   | { readonly kind: "ignored" }
   | { readonly kind: "skill"; readonly skill: SkillDefinition }
   | {
@@ -210,13 +216,13 @@ type SkillEntry =
     };
 
 /**
- * One `.rulesync/skills` entry, judged on its own.
- *
- * Split out of the walk so each fault stays a single named reason rather than a
- * branch in a growing loop, and so the rules live in one place instead of being
- * scattered between the walk and its caller. The walk reports the first fault it
- * meets; this says why that one entry is a fault.
- */
+One `.rulesync/skills` entry, judged on its own.
+
+Split out of the walk so each fault stays a single named reason rather than a
+branch in a growing loop, and so the rules live in one place instead of being
+scattered between the walk and its caller. The walk reports the first fault it
+meets; this says why that one entry is a fault.
+*/
 function readSkillEntry(skillsDir: string, entry: Dirent): SkillEntry {
   const skillLocation = `.rulesync/skills/${entry.name}/SKILL.md`;
   const unreadable = (error: unknown): SkillEntry => ({
@@ -318,21 +324,23 @@ function readSkillEntry(skillsDir: string, entry: Dirent): SkillEntry {
 export interface RuleSyncCommandsState {
   readonly source: typeof COMMANDS_SOURCE;
   readonly valid: boolean | null;
-  /** Why the source is invalid; empty when valid or not observed. */
+  /**
+  Why the source is invalid; empty when valid or not observed.
+  */
   readonly issues: readonly RuleSyncValidationIssue[];
   readonly commands: readonly RuleSyncCommand[];
 }
 
 /**
- * The outcome of reading one canonical command.
- *
- * "The command does not exist" and "the command could not be read" are two
- * different claims, and a caller that answers "unknown prompt" for both tells
- * an operator their prompt is gone when it is there and unreadable. The
- * catalogue's own read already tells them apart -- an unreadable file makes
- * the whole catalogue invalid and names the fault -- so the detail read names
- * the same fault rather than swallowing it.
- */
+The outcome of reading one canonical command.
+
+"The command does not exist" and "the command could not be read" are two
+different claims, and a caller that answers "unknown prompt" for both tells
+an operator their prompt is gone when it is there and unreadable. The
+catalogue's own read already tells them apart -- an unreadable file makes
+the whole catalogue invalid and names the fault -- so the detail read names
+the same fault rather than swallowing it.
+*/
 export type RuleSyncCommandRead =
   | {
       readonly status: "found";
@@ -343,20 +351,22 @@ export type RuleSyncCommandRead =
     }
   | {
       readonly status: "unreadable";
-      /** Why the command could not be read, in the operator's terms. */
+      /**
+      Why the command could not be read, in the operator's terms.
+      */
       readonly reason: string;
     };
 
 /**
- * The outcome of reading one committed revision of a command.
- *
- * The three outcomes are the point, for the same reason the command read has
- * them: a revision nobody committed, a revision that is not a version of this
- * command, and a source that could not be read are three different answers,
- * and a caller that collapses the last two tells an operator their revision
- * does not exist when the truth is that nobody could read the catalogue that
- * names the command.
- */
+The outcome of reading one committed revision of a command.
+
+The three outcomes are the point, for the same reason the command read has
+them: a revision nobody committed, a revision that is not a version of this
+command, and a source that could not be read are three different answers,
+and a caller that collapses the last two tells an operator their revision
+does not exist when the truth is that nobody could read the catalogue that
+names the command.
+*/
 export type RuleSyncCommandVersionRead =
   | {
       readonly status: "found";
@@ -367,7 +377,9 @@ export type RuleSyncCommandVersionRead =
     }
   | {
       readonly status: "unreadable";
-      /** Why the revision could not be read, in the operator's terms. */
+      /**
+      Why the revision could not be read, in the operator's terms.
+      */
       readonly reason: string;
     };
 
@@ -377,13 +389,13 @@ export interface RuleSyncCommandVersionReference {
 }
 
 /**
- * Which slice of a command's committed history to read.
- *
- * `offset` counts the versions already passed over and `limit` says how many
- * this page asks for. The slice is a window onto one ordered history, so
- * `hasMore` on a page answers "is there a version after this page", not "is
- * this the end of the history".
- */
+Which slice of a command's committed history to read.
+
+`offset` counts the versions already passed over and `limit` says how many
+this page asks for. The slice is a window onto one ordered history, so
+`hasMore` on a page answers "is there a version after this page", not "is
+this the end of the history".
+*/
 export interface RuleSyncCommandHistoryPage {
   readonly offset: number;
   readonly limit: number;
@@ -406,14 +418,14 @@ export interface RuleSyncCommandVersion extends PromptVersion {
 }
 
 /**
- * The one "this repository's command history cannot be read" answer.
- *
- * `loadCommandHistory` used to spell this object out at five separate exits --
- * one per `catch` in a nest of them -- so a reader comparing the branches had
- * to diff the five literals to learn they were the same. Every field is
- * `readonly`, and `versions` is typed `readonly []`, so one shared instance is
- * as safe as five copies.
- */
+The one "this repository's command history cannot be read" answer.
+
+`loadCommandHistory` used to spell this object out at five separate exits --
+one per `catch` in a nest of them -- so a reader comparing the branches had
+to diff the five literals to learn they were the same. Every field is
+`readonly`, and `versions` is typed `readonly []`, so one shared instance is
+as safe as five copies.
+*/
 const UNAVAILABLE_COMMAND_HISTORY: RuleSyncCommandHistory = {
   status: "unavailable",
   versions: [],
@@ -421,13 +433,13 @@ const UNAVAILABLE_COMMAND_HISTORY: RuleSyncCommandHistory = {
 };
 
 /**
- * Whether a requested page is one this repository can answer.
- *
- * The page is a transport-level window, so a page that is not a whole offset
- * of zero or more, or a limit outside the bounded range, is refused rather
- * than clamped: a clamped page would answer a different question than the one
- * that was asked.
- */
+Whether a requested page is one this repository can answer.
+
+The page is a transport-level window, so a page that is not a whole offset
+of zero or more, or a limit outside the bounded range, is refused rather
+than clamped: a clamped page would answer a different question than the one
+that was asked.
+*/
 function isCommandHistoryPage(page: RuleSyncCommandHistoryPage): boolean {
   return (
     Number.isInteger(page.offset) &&
@@ -439,17 +451,17 @@ function isCommandHistoryPage(page: RuleSyncCommandHistoryPage): boolean {
 }
 
 /**
- * A reader for this repository's Git.
- *
- * Every Git answer in this file is bounded and time-limited the same way, so
- * the runner is written once: a reader that forgot the timeout would let one
- * hung command hold a request open.
- */
+A reader for this repository's Git.
+
+Every Git answer in this file is bounded and time-limited the same way, so
+the runner is written once: a reader that forgot the timeout would let one
+hung command hold a request open.
+*/
 function gitRunner(
   repositoryRoot: string
-): (args: readonly string[], maxBuffer: number) => string {
-  return (args, maxBuffer) =>
-    execFileSync("git", ["-C", repositoryRoot, ...args], {
+): (arguments_: readonly string[], maxBuffer: number) => string {
+  return (arguments_, maxBuffer) =>
+    execFileSync("git", ["-C", repositoryRoot, ...arguments_], {
       encoding: "utf8",
       maxBuffer,
       stdio: ["ignore", "pipe", "ignore"],
@@ -457,40 +469,42 @@ function gitRunner(
     });
 }
 
-/** Runs `git`, or reports that it could not answer. */
+/**
+Runs `git`, or reports that it could not answer.
+*/
 function tryGit(
-  git: (args: readonly string[], maxBuffer: number) => string,
-  args: readonly string[],
+  git: (arguments_: readonly string[], maxBuffer: number) => string,
+  arguments_: readonly string[],
   maxBuffer: number
 ): string | null {
   try {
-    return git(args, maxBuffer).trim();
+    return git(arguments_, maxBuffer).trim();
   } catch {
     return null;
   }
 }
 
 /**
- * Why there is no command history to report, when `git log` could not produce
- * any.
- *
- * `git log` fails for reasons a caller must not conflate, and the previous
- * three nested `catch` blocks -- one retyped "unavailable" object in each --
- * made the distinction something you had to reconstruct from control flow:
- *
- * - **not a repository.** Git answers `--is-inside-work-tree` with anything but
- *   `true`. There is no history and no repository to have it in.
- * - **a repository, but this command file has no history.** `--verify HEAD`
- *   succeeds, so the repository is real and simply has nothing for this path.
- * - **a real repository with no commits yet.** `--verify HEAD` fails, but
- *   `--porcelain` still answers, so this is a healthy repository with an empty
- *   history: reported *available* with no versions, which is what a freshly
- *   initialised repository genuinely is.
- * - **git cannot answer at all.** Everything above fails. Nothing is known, so
- *   this is unavailable.
- */
+Why there is no command history to report, when `git log` could not produce
+any.
+
+`git log` fails for reasons a caller must not conflate, and the previous
+three nested `catch` blocks -- one retyped "unavailable" object in each --
+made the distinction something you had to reconstruct from control flow:
+
+- **not a repository.** Git answers `--is-inside-work-tree` with anything but
+  `true`. There is no history and no repository to have it in.
+- **a repository, but this command file has no history.** `--verify HEAD`
+  succeeds, so the repository is real and simply has nothing for this path.
+- **a real repository with no commits yet.** `--verify HEAD` fails, but
+  `--porcelain` still answers, so this is a healthy repository with an empty
+  history: reported *available* with no versions, which is what a freshly
+  initialised repository genuinely is.
+- **git cannot answer at all.** Everything above fails. Nothing is known, so
+  this is unavailable.
+*/
 function commandHistoryFallback(
-  git: (args: readonly string[], maxBuffer: number) => string
+  git: (arguments_: readonly string[], maxBuffer: number) => string
 ): RuleSyncCommandHistory {
   const insideWorkTree = tryGit(
     git,
@@ -511,9 +525,9 @@ function commandHistoryFallback(
   // Either git could not answer about the tree, or this is a repository with no
   // commits yet. `--porcelain` is what tells those apart: it answers in the
   // second case and fails in the first.
-  const workingTreeAnswers =
+  const isWorkingTreeAnswers =
     tryGit(git, ["status", "--porcelain"], 8192) !== null;
-  return workingTreeAnswers
+  return isWorkingTreeAnswers
     ? { status: "available", versions: [], hasMore: false }
     : UNAVAILABLE_COMMAND_HISTORY;
 }
@@ -521,7 +535,9 @@ function commandHistoryFallback(
 export interface RuleSyncSkillsState {
   readonly source: typeof SKILLS_SOURCE;
   readonly valid: boolean | null;
-  /** Why the source is invalid; empty when valid or not observed. */
+  /**
+  Why the source is invalid; empty when valid or not observed.
+  */
   readonly issues: readonly RuleSyncValidationIssue[];
   readonly skills: readonly SkillDefinition[];
 }
@@ -555,12 +571,12 @@ export class RuleSyncSkillSourceUnavailableError extends Error {
 }
 
 /**
- * The canonical MCP declaration changed since it was loaded.
- *
- * A conflict is not a failure of the write: it means another writer changed
- * the declaration first, and the caller has to load it again to see what it
- * now says.
- */
+The canonical MCP declaration changed since it was loaded.
+
+A conflict is not a failure of the write: it means another writer changed
+the declaration first, and the caller has to load it again to see what it
+now says.
+*/
 export class RuleSyncMcpConflictError extends Error {
   constructor(message: string) {
     super(message);
@@ -568,7 +584,9 @@ export class RuleSyncMcpConflictError extends Error {
   }
 }
 
-/** The requested MCP declaration change cannot be expressed. */
+/**
+The requested MCP declaration change cannot be expressed.
+*/
 export class RuleSyncMcpValidationError extends Error {
   constructor(message: string) {
     super(message);
@@ -577,19 +595,19 @@ export class RuleSyncMcpValidationError extends Error {
 }
 
 /**
- * The canonical hook declaration changed since it was loaded.
- *
- * A conflict is not a failure of the write: it means another writer changed the
- * declaration first, and the caller has to load it again to see what it now
- * says.
- */
+The canonical hook declaration changed since it was loaded.
+
+A conflict is not a failure of the write: it means another writer changed the
+declaration first, and the caller has to load it again to see what it now
+says.
+*/
 /**
- * The launch configuration one write sets.
- *
- * A key that is absent is left as the declaration has it; a key that is `null`
- * is removed. The write owns these keys and nothing else, so the target's own
- * enablement, approval mode and tool allowlist survive it.
- */
+The launch configuration one write sets.
+
+A key that is absent is left as the declaration has it; a key that is `null`
+is removed. The write owns these keys and nothing else, so the target's own
+enablement, approval mode and tool allowlist survive it.
+*/
 export interface RuleSyncMcpLaunchUpdate {
   readonly command?: string | null;
   readonly args?: readonly string[] | null;
@@ -600,12 +618,18 @@ export interface RuleSyncMcpLaunchUpdate {
 }
 
 export interface RuleSyncMcpLaunchUpdateInput {
-  /** The server whose launch configuration is written. */
+  /**
+  The server whose launch configuration is written.
+  */
   readonly name: string;
-  /** The target whose own declaration is written. */
+  /**
+  The target whose own declaration is written.
+  */
   readonly target: string;
   readonly launch: RuleSyncMcpLaunchUpdate;
-  /** The revision of the canonical declaration the caller loaded. */
+  /**
+  The revision of the canonical declaration the caller loaded.
+  */
   readonly expectedRevision: string;
 }
 
@@ -613,9 +637,13 @@ export interface RuleSyncMcpLaunchUpdateResult {
   readonly source: ".rulesync/mcp.jsonc";
   readonly name: string;
   readonly target: string;
-  /** The revision of the declaration after the write. */
+  /**
+  The revision of the declaration after the write.
+  */
   readonly revision: string;
-  /** The launch configuration the target now declares. */
+  /**
+  The launch configuration the target now declares.
+  */
   readonly launch: McpServerLaunchConfiguration;
 }
 
@@ -649,12 +677,12 @@ function isMcpConfig(value: unknown): value is Record<string, unknown> {
 function projectBaseMcpServer(
   config: Record<string, unknown>
 ): MutableMcpServer {
-  const args =
+  const arguments_ =
     Array.isArray(config.args) &&
-    config.args.every((arg) => typeof arg === "string")
+    config.args.every((argument) => typeof argument === "string")
       ? (config.args as string[])
       : undefined;
-  const envKeys = isRecord(config.env)
+  const environmentKeys = isRecord(config.env)
     ? Object.keys(config.env).sort(COLLATOR.compare)
     : undefined;
   const defaultToolsApprovalMode =
@@ -666,23 +694,23 @@ function projectBaseMcpServer(
     enabled: config.disabled !== true,
     transport: mcpTransport(config),
     targetOverrides: [],
-    ...(typeof config.command === "string" ? { command: config.command } : {}),
-    ...(args ? { args } : {}),
-    ...(typeof config.url === "string" ? { url: config.url } : {}),
-    ...(envKeys ? { envKeys } : {}),
-    ...(typeof config.cwd === "string" ? { cwd: config.cwd } : {}),
-    ...(defaultToolsApprovalMode ? { defaultToolsApprovalMode } : {})
+    ...((typeof config.command === "string") && { command: config.command }),
+    ...(arguments_ && { args: arguments_ }),
+    ...((typeof config.url === "string") && { url: config.url }),
+    ...(environmentKeys && { envKeys: environmentKeys }),
+    ...((typeof config.cwd === "string") && { cwd: config.cwd }),
+    ...(defaultToolsApprovalMode && { defaultToolsApprovalMode })
   };
 }
 
 /**
- * The base servers, or the first declaration that could not be read.
- *
- * Returning the offending key rather than a bare `null` is what lets the caller
- * name it. The alternative -- a second pass that re-walks the same structures
- * to find the fault -- is a second copy of the rules, and a second copy of a
- * validation rule drifts toward accepting what the first one refuses.
- */
+The base servers, or the first declaration that could not be read.
+
+Returning the offending key rather than a bare `null` is what lets the caller
+name it. The alternative -- a second pass that re-walks the same structures
+to find the fault -- is a second copy of the rules, and a second copy of a
+validation rule drifts toward accepting what the first one refuses.
+*/
 function parseBaseMcpServers(declarations: Record<string, unknown>):
   | {
       readonly servers: Map<string, MutableMcpServer>;
@@ -693,11 +721,11 @@ function parseBaseMcpServers(declarations: Record<string, unknown>):
       readonly invalid: {
         readonly name: string;
         /**
-         * Which half is at fault. A server name that cannot be addressed and a
-         * declaration that is not an MCP server are different edits in the same
-         * file, and reporting one as the other sends an operator to fix the line
-         * that was already correct.
-         */
+        Which half is at fault. A server name that cannot be addressed and a
+        declaration that is not an MCP server are different edits in the same
+        file, and reporting one as the other sends an operator to fix the line
+        that was already correct.
+        */
         readonly reason: "name" | "declaration";
       };
     } {
@@ -727,13 +755,13 @@ function isTargetMcpConfig(
 }
 
 /**
- * Apply every target's overrides, or name the target and server that failed.
- *
- * The base declaration and an override can both be malformed, and they are
- * different edits in the same file -- `mcpServers.lsp` against the top-level
- * `mcpServers` against `codex.cli.mcpServers.lsp` -- so the report carries both
- * halves of the location rather than one of them.
- */
+Apply every target's overrides, or name the target and server that failed.
+
+The base declaration and an override can both be malformed, and they are
+different edits in the same file -- `mcpServers.lsp` against the top-level
+`mcpServers` against `codex.cli.mcpServers.lsp` -- so the report carries both
+halves of the location rather than one of them.
+*/
 function applyMcpTargetOverrides(
   document: Record<string, unknown>,
   servers: Map<string, MutableMcpServer>
@@ -748,7 +776,9 @@ function applyMcpTargetOverrides(
   return null;
 }
 
-/** The first server whose override could not be read, or `null` when all applied. */
+/**
+The first server whose override could not be read, or `null` when all applied.
+*/
 function applyMcpOverridesForTarget(
   target: string,
   overrides: Record<string, unknown>,
@@ -776,7 +806,7 @@ function projectMcpTargetOverride(
 ): McpTargetOverride {
   const definition =
     config === null ? null : (config as Record<string, unknown>);
-  const enabled = definition !== null && definition.disabled !== true;
+  const isEnabled = definition !== null && definition.disabled !== true;
   const defaultToolsApprovalMode =
     typeof definition?.default_tools_approval_mode === "string"
       ? definition.default_tools_approval_mode
@@ -789,9 +819,9 @@ function projectMcpTargetOverride(
 
   return {
     target,
-    enabled,
-    ...(defaultToolsApprovalMode ? { defaultToolsApprovalMode } : {}),
-    ...(enabledTools ? { enabledTools } : {})
+    enabled: isEnabled,
+    ...(defaultToolsApprovalMode && { defaultToolsApprovalMode }),
+    ...(enabledTools && { enabledTools })
   };
 }
 
@@ -805,14 +835,12 @@ function projectMcpDefinitions(
     targetOverrides: definition.targetOverrides.sort((left, right) =>
       COLLATOR.compare(left.target, right.target)
     ),
-    ...(definition.command ? { command: definition.command } : {}),
-    ...(definition.args ? { args: definition.args } : {}),
-    ...(definition.url ? { url: definition.url } : {}),
-    ...(definition.envKeys ? { envKeys: definition.envKeys } : {}),
-    ...(definition.cwd ? { cwd: definition.cwd } : {}),
-    ...(definition.defaultToolsApprovalMode
-      ? { defaultToolsApprovalMode: definition.defaultToolsApprovalMode }
-      : {})
+    ...(definition.command && { command: definition.command }),
+    ...(definition.args && { args: definition.args }),
+    ...(definition.url && { url: definition.url }),
+    ...(definition.envKeys && { envKeys: definition.envKeys }),
+    ...(definition.cwd && { cwd: definition.cwd }),
+    ...(definition.defaultToolsApprovalMode && { defaultToolsApprovalMode: definition.defaultToolsApprovalMode })
   })).sort((left, right) => COLLATOR.compare(left.name, right.name));
 }
 
@@ -903,21 +931,21 @@ function parseMcpState(content: string): RuleSyncMcpState | null {
 }
 
 /**
- * The launch keys one MCP declaration carries.
- *
- * These are the keys the applied projection keeps, so a projection can be
- * compared against the declaration key by key. A key that is not a launch key
- * -- `disabled`, `default_tools_approval_mode`, `enabled_tools` -- says how a
- * server is *governed*, not how it is started, and the applied launch
- * configuration does not carry it.
- */
+The launch keys one MCP declaration carries.
+
+These are the keys the applied projection keeps, so a projection can be
+compared against the declaration key by key. A key that is not a launch key
+-- `disabled`, `default_tools_approval_mode`, `enabled_tools` -- says how a
+server is *governed*, not how it is started, and the applied launch
+configuration does not carry it.
+*/
 /**
- * The keys that say how a target governs a server rather than how it starts.
- *
- * A write owns the launch keys and leaves these alone: the enablement, the
- * approval mode and the tool allowlist are the target's own settings, and a
- * launch edit has no business changing them.
- */
+The keys that say how a target governs a server rather than how it starts.
+
+A write owns the launch keys and leaves these alone: the enablement, the
+approval mode and the tool allowlist are the target's own settings, and a
+launch edit has no business changing them.
+*/
 const MCP_GOVERNANCE_KEYS = [
   "disabled",
   "default_tools_approval_mode",
@@ -934,30 +962,30 @@ type McpLaunchKeys = {
 };
 
 /**
- * Whether a server is started as a subprocess rather than reached over HTTP.
- *
- * RuleSync drops the canonical `headers` key for a subprocess server, because
- * Codex accepts HTTP headers only on a URL server. Reading the same rule here
- * keeps the declared launch configuration equal to the projected one.
- */
+Whether a server is started as a subprocess rather than reached over HTTP.
+
+RuleSync drops the canonical `headers` key for a subprocess server, because
+Codex accepts HTTP headers only on a URL server. Reading the same rule here
+keeps the declared launch configuration equal to the projected one.
+*/
 function mcpServerIsStdio(config: Record<string, unknown>): boolean {
   return typeof config.command === "string";
 }
 
 /**
- * The launch configuration one declaration entry carries.
- *
- * The keys are the ones the Codex projection keeps. RuleSync spells HTTP
- * headers `headers` and writes them to Codex as `http_headers`; both spellings
- * are read here so the declared configuration matches the projected one
- * whichever one the declaration uses.
- */
+The launch configuration one declaration entry carries.
+
+The keys are the ones the Codex projection keeps. RuleSync spells HTTP
+headers `headers` and writes them to Codex as `http_headers`; both spellings
+are read here so the declared configuration matches the projected one
+whichever one the declaration uses.
+*/
 function mcpLaunchKeys(config: Record<string, unknown>): McpLaunchKeys {
   const keys: McpLaunchKeys = {};
   if (typeof config.command === "string") keys.command = config.command;
   if (
     Array.isArray(config.args) &&
-    config.args.every((arg) => typeof arg === "string")
+    config.args.every((argument) => typeof argument === "string")
   ) {
     keys.args = config.args as string[];
   }
@@ -979,19 +1007,19 @@ function mcpLaunchKeys(config: Record<string, unknown>): McpLaunchKeys {
 }
 
 /**
- * One server's effective declaration for one target.
- *
- * RuleSync's rule is wholesale: a target's own entry *replaces* the shared
- * entry for that server, key for key, rather than merging with it. A server
- * the target does not mention keeps the shared entry; an entry the target
- * sets to `null` is not declared for that target at all.
- *
- * The per-key merge this replaces reported a launch configuration RuleSync
- * would never generate -- a target that overrides one key of a server was
- * read as keeping the shared entry's other keys, while the generator drops
- * them -- so a comparison against the applied projection could report drift
- * that was not there.
- */
+One server's effective declaration for one target.
+
+RuleSync's rule is wholesale: a target's own entry *replaces* the shared
+entry for that server, key for key, rather than merging with it. A server
+the target does not mention keeps the shared entry; an entry the target
+sets to `null` is not declared for that target at all.
+
+The per-key merge this replaces reported a launch configuration RuleSync
+would never generate -- a target that overrides one key of a server was
+read as keeping the shared entry's other keys, while the generator drops
+them -- so a comparison against the applied projection could report drift
+that was not there.
+*/
 function effectiveMcpEntry(
   base: Record<string, unknown> | undefined,
   override: unknown
@@ -1001,7 +1029,9 @@ function effectiveMcpEntry(
   return base ?? null;
 }
 
-/** The keys a declaration spells a launch key with, in either spelling. */
+/**
+The keys a declaration spells a launch key with, in either spelling.
+*/
 const MCP_LAUNCH_FILE_KEYS = [
   "command",
   "args",
@@ -1016,18 +1046,18 @@ const MCP_SERVER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const MCP_TARGET_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 
 /**
- * How the canonical declaration is written back.
- *
- * The library formats the edited region rather than the whole document, so
- * the comments and the layout outside the edited server entry survive.
- */
+How the canonical declaration is written back.
+
+The library formats the edited region rather than the whole document, so
+the comments and the layout outside the edited server entry survive.
+*/
 /**
- * How a canonical JSONC document is written back.
- *
- * One setting for every canonical document this repository writes, so a
- * declaration that is edited in place keeps the same shape as one that was
- * never edited.
- */
+How a canonical JSONC document is written back.
+
+One setting for every canonical document this repository writes, so a
+declaration that is edited in place keeps the same shape as one that was
+never edited.
+*/
 const JSONC_FORMATTING: FormattingOptions = {
   insertSpaces: true,
   tabSize: 2,
@@ -1035,21 +1065,21 @@ const JSONC_FORMATTING: FormattingOptions = {
 };
 
 /**
- * The normalized launch keys one write sets.
- *
- * `null` means the key is removed. A key the update does not mention is left
- * as the declaration has it.
- */
+The normalized launch keys one write sets.
+
+`null` means the key is removed. A key the update does not mention is left
+as the declaration has it.
+*/
 type NormalizedMcpLaunchUpdate = Readonly<
   Record<string, string | readonly string[] | Record<string, string> | null>
 >;
 
 /**
- * One launch key's value in a write.
- *
- * `absent` is a key the write does not mention, `remove` is a key the write
- * takes away, and `invalid` is a value this write does not accept.
- */
+One launch key's value in a write.
+
+`absent` is a key the write does not mention, `remove` is a key the write
+takes away, and `invalid` is a value this write does not accept.
+*/
 type McpLaunchKeyValue =
   | { readonly kind: "absent" }
   | { readonly kind: "remove" }
@@ -1063,7 +1093,7 @@ function mcpLaunchTextValue(raw: unknown): McpLaunchKeyValue {
   return { kind: "set", value: raw };
 }
 
-function mcpLaunchArgsValue(
+function mcpLaunchArgumentsValue(
   raw: unknown
 ):
   | { readonly kind: "absent" }
@@ -1072,7 +1102,7 @@ function mcpLaunchArgsValue(
   | { readonly kind: "invalid" } {
   if (raw === undefined) return { kind: "absent" };
   if (raw === null) return { kind: "remove" };
-  if (!Array.isArray(raw) || !raw.every((arg) => typeof arg === "string"))
+  if (!Array.isArray(raw) || raw.some((argument) => typeof argument !== "string"))
     return { kind: "invalid" };
   return { kind: "set", value: raw as string[] };
 }
@@ -1114,10 +1144,10 @@ function mcpLaunchUpdate(
     if (text.kind === "absent") continue;
     normalized[key] = text.kind === "remove" ? null : text.value;
   }
-  const args = mcpLaunchArgsValue(update.args);
-  if (args.kind === "invalid") return null;
-  if (args.kind !== "absent") {
-    normalized.args = args.kind === "remove" ? null : args.value;
+  const arguments_ = mcpLaunchArgumentsValue(update.args);
+  if (arguments_.kind === "invalid") return null;
+  if (arguments_.kind !== "absent") {
+    normalized.args = arguments_.kind === "remove" ? null : arguments_.value;
   }
   const headers = mcpLaunchHeadersValue(update.httpHeaders);
   if (headers.kind === "invalid") return null;
@@ -1128,12 +1158,12 @@ function mcpLaunchUpdate(
 }
 
 /**
- * The key the declaration spells HTTP headers with.
- *
- * RuleSync's canonical spelling is `headers` and Codex's is `http_headers`;
- * a declaration that already uses one of them keeps it, so a write does not
- * leave two spellings of the same header table behind.
- */
+The key the declaration spells HTTP headers with.
+
+RuleSync's canonical spelling is `headers` and Codex's is `http_headers`;
+a declaration that already uses one of them keeps it, so a write does not
+leave two spellings of the same header table behind.
+*/
 function mcpHttpHeadersKey(effective: Record<string, unknown>): string {
   return Object.hasOwn(effective, "headers") &&
     !Object.hasOwn(effective, "http_headers")
@@ -1142,13 +1172,13 @@ function mcpHttpHeadersKey(effective: Record<string, unknown>): string {
 }
 
 /**
- * The entry a target that does not declare the server receives.
- *
- * RuleSync replaces a server wholesale for the target that declares one, so
- * the entry is written complete: the shared entry's launch configuration and
- * the target's own governance keys are carried over, and the write's own keys
- * are applied on top.
- */
+The entry a target that does not declare the server receives.
+
+RuleSync replaces a server wholesale for the target that declares one, so
+the entry is written complete: the shared entry's launch configuration and
+the target's own governance keys are carried over, and the write's own keys
+are applied on top.
+*/
 function mcpCreatedEntry(
   effective: Record<string, unknown>,
   update: NormalizedMcpLaunchUpdate
@@ -1171,15 +1201,15 @@ function mcpCreatedEntry(
 }
 
 /**
- * The edits that write one server's launch configuration.
- *
- * A target that already declares the server gets its launch keys edited one
- * by one, so the rest of the entry -- its enablement, its approval mode, its
- * tool allowlist, and any comment inside it -- is left as it is. A target
- * that does not declare the server gets a complete entry: RuleSync replaces
- * a server wholesale for the target that declares one, so an entry carrying
- * only the changed key would take the server's launch configuration with it.
- */
+The edits that write one server's launch configuration.
+
+A target that already declares the server gets its launch keys edited one
+by one, so the rest of the entry -- its enablement, its approval mode, its
+tool allowlist, and any comment inside it -- is left as it is. A target
+that does not declare the server gets a complete entry: RuleSync replaces
+a server wholesale for the target that declares one, so an entry carrying
+only the changed key would take the server's launch configuration with it.
+*/
 function mcpLaunchEdits(
   content: string,
   input: {
@@ -1216,14 +1246,14 @@ function mcpLaunchEdits(
 }
 
 /**
- * The launch configuration one server declares for one target, read from a
- * document's text.
- *
- * Used to report what a write produced: the answer comes from the written
- * document rather than from what the write intended, so a write that did not
- * land says so.
- */
-function mcpLaunchConfiguration(
+The launch configuration one server declares for one target, read from a
+document's text.
+
+Used to report what a write produced: the answer comes from the written
+document rather than from what the write intended, so a write that did not
+land says so.
+*/
+function mcpLaunchConfig(
   name: string,
   content: string,
   target: string
@@ -1246,11 +1276,13 @@ function mcpLaunchConfiguration(
       : undefined
   );
   if (entry === null) return { name };
-  return publishMcpLaunchConfiguration(name, mcpLaunchKeys(entry));
+  return publishMcpLaunchConfig(name, mcpLaunchKeys(entry));
 }
 
-/** Publish launch keys under their Control API names, preserving absent keys. */
-function publishMcpLaunchConfiguration(
+/**
+Publish launch keys under their Control API names, preserving absent keys.
+*/
+function publishMcpLaunchConfig(
   name: string,
   launch: ReturnType<typeof mcpLaunchKeys>
 ): McpServerLaunchConfiguration {
@@ -1274,7 +1306,9 @@ function publishMcpLaunchConfiguration(
   return published;
 }
 
-/** One action, or `null` when it cannot be applied. The single rule set. */
+/**
+One action, or `null` when it cannot be applied. The single rule set.
+*/
 function parseHookAction(value: unknown): HookAction | null {
   if (
     !isRecord(value) ||
@@ -1290,10 +1324,8 @@ function parseHookAction(value: unknown): HookAction | null {
   return {
     type: "command",
     command: value.command,
-    ...(typeof value.matcher === "string" ? { matcher: value.matcher } : {}),
-    ...(typeof value.statusMessage === "string"
-      ? { statusMessage: value.statusMessage }
-      : {})
+    ...((typeof value.matcher === "string") && { matcher: value.matcher }),
+    ...((typeof value.statusMessage === "string") && { statusMessage: value.statusMessage })
   };
 }
 
@@ -1309,14 +1341,14 @@ function parseHookActions(value: unknown): HookAction[] | null {
 }
 
 /**
- * The first action that cannot be applied, or `null` when every one can.
- *
- * The index is carried rather than swallowed because "an action under
- * SessionStart is malformed" and "action 2 under SessionStart is malformed"
- * send an operator to different lines of the same file, and only this loader
- * knows which. Shares `parseHookAction` with the applying path so the diagnosis
- * and the decision cannot drift apart.
- */
+The first action that cannot be applied, or `null` when every one can.
+
+The index is carried rather than swallowed because "an action under
+SessionStart is malformed" and "action 2 under SessionStart is malformed"
+send an operator to different lines of the same file, and only this loader
+knows which. Shares `parseHookAction` with the applying path so the diagnosis
+and the decision cannot drift apart.
+*/
 function firstInvalidHookActionIndex(value: unknown): number | null {
   if (!Array.isArray(value)) return null;
   for (const [index, entry] of value.entries()) {
@@ -1326,17 +1358,17 @@ function firstInvalidHookActionIndex(value: unknown): number | null {
 }
 
 /**
- * A human sentence for one parse error, shared by every RuleSync source.
- *
- * The code name comes from the parser's own `printParseErrorCode` rather than a
- * local switch, so an error code this build of `jsonc-parser` adds later is
- * described by name instead of falling through to a generic sentence that would
- * make two different faults look identical.
- *
- * `offset` is a character offset, not a line. Counting the newlines before it is
- * what makes the message actionable: an operator editing `hooks.jsonc` needs the
- * line, not a byte count they would have to convert themselves.
- */
+A human sentence for one parse error, shared by every RuleSync source.
+
+The code name comes from the parser's own `printParseErrorCode` rather than a
+local switch, so an error code this build of `jsonc-parser` adds later is
+described by name instead of falling through to a generic sentence that would
+make two different faults look identical.
+
+`offset` is a character offset, not a line. Counting the newlines before it is
+what makes the message actionable: an operator editing `hooks.jsonc` needs the
+line, not a byte count they would have to convert themselves.
+*/
 function jsoncParseIssue(
   content: string,
   error: ParseError
@@ -1360,13 +1392,13 @@ function sentenceCase(value: string): string {
 }
 
 /**
- * Turn what the parser and the event checks observed into operator-facing issues.
- *
- * Everything here was already known when the loader decided the source was
- * invalid; returning it is the whole point. `issues` is empty only when the
- * source is valid or was never found, so a caller that receives `valid: false`
- * always receives a reason too.
- */
+Turn what the parser and the event checks observed into operator-facing issues.
+
+Everything here was already known when the loader decided the source was
+invalid; returning it is the whole point. `issues` is empty only when the
+source is valid or was never found, so a caller that receives `valid: false`
+always receives a reason too.
+*/
 function hookValidationIssues(
   source: string,
   content: string,
@@ -1420,18 +1452,18 @@ function hookValidationIssues(
 }
 
 /**
- * The issues one hook event block holds.
- *
- * The block is the shared declaration or a target's own declaration of it,
- * and `location` names which: the shared block's events are located by their
- * own name, because that is where an operator looks for them, and a target's
- * own events are located under the block they are in.
- *
- * An event the Runtime cannot install is named here rather than dropped. A
- * declaration the console cannot describe is a declaration the operator
- * cannot act on, and dropping it would leave the console showing fewer hooks
- * than the declaration holds.
- */
+The issues one hook event block holds.
+
+The block is the shared declaration or a target's own declaration of it,
+and `location` names which: the shared block's events are located by their
+own name, because that is where an operator looks for them, and a target's
+own events are located under the block they are in.
+
+An event the Runtime cannot install is named here rather than dropped. A
+declaration the console cannot describe is a declaration the operator
+cannot act on, and dropping it would leave the console showing fewer hooks
+than the declaration holds.
+*/
 function hookEventIssues(
   location: string,
   events: Record<string, unknown>
@@ -1479,15 +1511,15 @@ interface CanonicalRuleSyncDirectory {
   readonly valid: boolean | null;
   readonly path: string | null;
   /**
-   * Why the directory could not be used, empty when it could.
-   *
-   * The resolver distinguishes four outcomes the loaders were collapsing into
-   * one flag: the repository root is unreadable, `.rulesync` is a symlink or not
-   * a directory, the child is a symlink or not a directory, or the child is
-   * simply absent. Only the last is "not observed"; the first three are
-   * different repairs, and reporting one flag for all of them sent an operator
-   * to whichever of the three they happened to guess first.
-   */
+  Why the directory could not be used, empty when it could.
+  
+  The resolver distinguishes four outcomes the loaders were collapsing into
+  one flag: the repository root is unreadable, `.rulesync` is a symlink or not
+  a directory, the child is a symlink or not a directory, or the child is
+  simply absent. Only the last is "not observed"; the first three are
+  different repairs, and reporting one flag for all of them sent an operator
+  to whichever of the three they happened to guess first.
+  */
   readonly issues: readonly RuleSyncValidationIssue[];
 }
 
@@ -1547,12 +1579,12 @@ function resolveCanonicalRuleSyncDirectory(
 }
 
 /**
- * A path that could not be inspected at all.
- *
- * Absent is not observed and is not a fault, so it carries no issue and answers
- * `null`. Anything else failed in a way the operator has to know about, and the
- * errno is what separates "permission denied" from "the path is not there".
- */
+A path that could not be inspected at all.
+
+Absent is not observed and is not a fault, so it carries no issue and answers
+`null`. Anything else failed in a way the operator has to know about, and the
+errno is what separates "permission denied" from "the path is not there".
+*/
 function unresolvableRuleSyncDirectory(
   error: unknown,
   location: string
@@ -1572,7 +1604,9 @@ function unresolvableRuleSyncDirectory(
   };
 }
 
-/** A filesystem errno as a short phrase, without the absolute path it repeats. */
+/**
+A filesystem errno as a short phrase, without the absolute path it repeats.
+*/
 function describeFileSystemError(error: unknown): string {
   if (!isNodeError(error)) return "unknown error";
   switch (error.code) {
@@ -1721,14 +1755,14 @@ export class RuleSyncRepository {
   }
 
   /**
-   * Reads one canonical command.
-   *
-   * The three outcomes are the point: a command that is absent, a command
-   * that could not be read, and a command that was read are three different
-   * answers, and a caller that collapses them into "no such command" tells an
-   * operator to look for a renamed prompt when the real fault is a file that
-   * cannot be parsed.
-   */
+  Reads one canonical command.
+  
+  The three outcomes are the point: a command that is absent, a command
+  that could not be read, and a command that was read are three different
+  answers, and a caller that collapses them into "no such command" tells an
+  operator to look for a renamed prompt when the real fault is a file that
+  cannot be parsed.
+  */
   loadCommand(name: string): RuleSyncCommandRead {
     if (!COMMAND_NAME_PATTERN.test(name)) return { status: "not-found" };
     const directory = resolveCanonicalRuleSyncDirectory(
@@ -1796,13 +1830,13 @@ export class RuleSyncRepository {
   }
 
   /**
-   * Reads one page of a command's committed history.
-   *
-   * The page is a window onto one ordered history: `offset` versions are
-   * passed over and `limit` versions are read. `hasMore` on the result
-   * answers "is there a version after this page", so a caller can walk back
-   * through the history one page at a time.
-   */
+  Reads one page of a command's committed history.
+  
+  The page is a window onto one ordered history: `offset` versions are
+  passed over and `limit` versions are read. `hasMore` on the result
+  answers "is there a version after this page", so a caller can walk back
+  through the history one page at a time.
+  */
   loadCommandHistory(
     name: string,
     page: RuleSyncCommandHistoryPage = FIRST_COMMAND_HISTORY_PAGE
@@ -1828,7 +1862,7 @@ export class RuleSyncRepository {
     if (state.valid === false) return UNAVAILABLE_COMMAND_HISTORY;
     if (
       state.valid !== true ||
-      !state.commands.some((item) => item.name === name)
+      state.commands.every((item) => item.name !== name)
     )
       return null;
 
@@ -1867,7 +1901,7 @@ export class RuleSyncRepository {
     const entries: { versionHash: string; updatedAt: string }[] = [];
     for (const entry of output.split(COMMAND_HISTORY_LINE_SPLIT_PATTERN)) {
       if (!entry) continue;
-      const [versionHash, updatedAt] = entry.split("\0");
+      const [versionHash, updatedAt] = entry.split("\0", 2);
       if (
         !versionHash ||
         !GIT_REVISION_PATTERN.test(versionHash) ||
@@ -1890,16 +1924,16 @@ export class RuleSyncRepository {
   }
 
   /**
-   * Reads one committed revision of a command.
-   *
-   * The revision is resolved from Git itself rather than from a page of
-   * history, because a revision the operator reached by paging back is older
-   * than the newest page and would otherwise be refused as "not in the
-   * history". Git answers three separate questions here: whether the
-   * repository can answer at all, whether the revision is a commit, and
-   * whether that commit changed *this* command -- a commit that never touched
-   * the command file is not a version of it, however well-formed its hash is.
-   */
+  Reads one committed revision of a command.
+  
+  The revision is resolved from Git itself rather than from a page of
+  history, because a revision the operator reached by paging back is older
+  than the newest page and would otherwise be refused as "not in the
+  history". Git answers three separate questions here: whether the
+  repository can answer at all, whether the revision is a commit, and
+  whether that commit changed *this* command -- a commit that never touched
+  the command file is not a version of it, however well-formed its hash is.
+  */
   loadCommandVersion(
     name: string,
     versionHash: string
@@ -2035,15 +2069,15 @@ export class RuleSyncRepository {
   }
 
   /**
-   * The canonical hook declaration, read as one target receives it.
-   *
-   * RuleSync merges the shared declaration with the target's own declaration
-   * one event at a time, so the target's effective declaration is the shared
-   * one with the target's own merged over it, and a target that declares an
-   * event replaces the shared declaration of that event rather than adding to
-   * it. The events are published with the origin they come from, because the
-   * origin is what decides who else an edit reaches.
-   */
+  The canonical hook declaration, read as one target receives it.
+  
+  RuleSync merges the shared declaration with the target's own declaration
+  one event at a time, so the target's effective declaration is the shared
+  one with the target's own merged over it, and a target that declares an
+  event replaces the shared declaration of that event rather than adding to
+  it. The events are published with the origin they come from, because the
+  origin is what decides who else an edit reaches.
+  */
   loadHooksState(target: string): RuleSyncHooksState {
     const source = HOOKS_SOURCE;
     const hooksPath = path.join(this.repositoryRoot, source);
@@ -2167,18 +2201,18 @@ export class RuleSyncRepository {
   }
 
   /**
-   * The canonical launch configuration one target would receive.
-   *
-   * This is the declaration side of the MCP reconciliation: the applied
-   * projection is compared against it key by key, so it has to carry the
-   * launch keys losslessly rather than the summary the server list publishes.
-   * A target's own declaration wins over the base declaration for the same
-   * key.
-   *
-   * `valid: null` means the canonical source was not read at all, which is a
-   * different fact from `valid: false`, which means it was read and could not
-   * be applied. Neither ever produces a server list.
-   */
+  The canonical launch configuration one target would receive.
+  
+  This is the declaration side of the MCP reconciliation: the applied
+  projection is compared against it key by key, so it has to carry the
+  launch keys losslessly rather than the summary the server list publishes.
+  A target's own declaration wins over the base declaration for the same
+  key.
+  
+  `valid: null` means the canonical source was not read at all, which is a
+  different fact from `valid: false`, which means it was read and could not
+  be applied. Neither ever produces a server list.
+  */
   loadMcpLaunchState(target: string): RuleSyncMcpLaunchState {
     const source = MCP_SOURCE;
     const mcpPath = path.join(this.repositoryRoot, source);
@@ -2223,9 +2257,7 @@ export class RuleSyncRepository {
     const base = isRecord(document.mcpServers) ? document.mcpServers : {};
     const overrides: Record<string, unknown> = {};
     for (const [name, value] of Object.entries(document)) {
-      if (name === "$schema" || name === "mcpServers") continue;
-      if (!isRecord(value)) continue;
-      if (!isRecord(value.mcpServers)) continue;
+      if (name === "$schema" || name === "mcpServers" || !isRecord(value) || !isRecord(value.mcpServers)) continue;
       overrides[name] = value.mcpServers;
     }
     const targetOverrides = isRecord(overrides[target])
@@ -2254,7 +2286,7 @@ export class RuleSyncRepository {
         // here would report a difference the projection never had.
         if (Object.keys(launch).length === 0 && entry.disabled !== true)
           return null;
-        return publishMcpLaunchConfiguration(name, launch);
+        return publishMcpLaunchConfig(name, launch);
       })
       .filter(
         (server): server is McpServerLaunchConfiguration => server !== null
@@ -2263,13 +2295,13 @@ export class RuleSyncRepository {
   }
 
   /**
-   * The revision of the canonical MCP declaration.
-   *
-   * The revision is the digest of the whole document, so it changes when any
-   * part of the declaration changes -- including a part this write does not
-   * own. That is the point: it is the handle a caller compares against to
-   * know that the declaration it read is still the declaration on disk.
-   */
+  The revision of the canonical MCP declaration.
+  
+  The revision is the digest of the whole document, so it changes when any
+  part of the declaration changes -- including a part this write does not
+  own. That is the point: it is the handle a caller compares against to
+  know that the declaration it read is still the declaration on disk.
+  */
   loadMcpRevision(): {
     readonly source: ".rulesync/mcp.jsonc";
     readonly revision: string | null;
@@ -2296,21 +2328,21 @@ export class RuleSyncRepository {
   }
 
   /**
-   * Write one server's launch configuration for one target.
-   *
-   * The write owns the launch keys of the target's own declaration and nothing
-   * else: the target's enablement, approval mode and tool allowlist stay as
-   * they are, and the shared declaration is left alone. RuleSync replaces a
-   * server wholesale for a target that declares one, so the target's entry is
-   * written complete -- when the target had no entry for the server, the
-   * shared entry's launch configuration and governance keys are carried over
-   * first, because an entry that carried only the changed key would take the
-   * server's launch configuration with it.
-   *
-   * The write is a compare-and-swap on the document's revision, and it edits
-   * the document in place: the comments and the formatting outside the edited
-   * server entry are preserved.
-   */
+  Write one server's launch configuration for one target.
+  
+  The write owns the launch keys of the target's own declaration and nothing
+  else: the target's enablement, approval mode and tool allowlist stay as
+  they are, and the shared declaration is left alone. RuleSync replaces a
+  server wholesale for a target that declares one, so the target's entry is
+  written complete -- when the target had no entry for the server, the
+  shared entry's launch configuration and governance keys are carried over
+  first, because an entry that carried only the changed key would take the
+  server's launch configuration with it.
+  
+  The write is a compare-and-swap on the document's revision, and it edits
+  the document in place: the comments and the formatting outside the edited
+  server entry are preserved.
+  */
   updateMcpLaunch(
     input: RuleSyncMcpLaunchUpdateInput
   ): Promise<RuleSyncMcpLaunchUpdateResult> {
@@ -2414,7 +2446,7 @@ export class RuleSyncRepository {
           name,
           target,
           revision,
-          launch: mcpLaunchConfiguration(name, content, target)
+          launch: mcpLaunchConfig(name, content, target)
         };
       }
 
@@ -2431,7 +2463,7 @@ export class RuleSyncRepository {
         name,
         target,
         revision: createHash("sha256").update(persisted, "utf8").digest("hex"),
-        launch: mcpLaunchConfiguration(name, persisted, target)
+        launch: mcpLaunchConfig(name, persisted, target)
       };
     });
   }
@@ -2466,7 +2498,7 @@ export class RuleSyncRepository {
 
     const state = this.loadSkills();
     if (state.valid !== true) throw skillCatalogError(state);
-    if (!state.skills.some((skill) => skill.name === name)) {
+    if (state.skills.every((skill) => skill.name !== name)) {
       throw new RuleSyncSkillConflictError(
         `Canonical skill "${name}" does not exist.`
       );

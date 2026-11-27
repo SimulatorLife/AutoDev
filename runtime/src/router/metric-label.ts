@@ -17,9 +17,9 @@ function stripAsciiControlCharacters(value: string): string {
 }
 
 /**
- * Reduce an arbitrary value to a bounded, control-character-free label that
- * is safe to use as an OpenTelemetry dimension or aggregation key.
- */
+Reduce an arbitrary value to a bounded, control-character-free label that
+is safe to use as an OpenTelemetry dimension or aggregation key.
+*/
 export function safeMetricLabel(value: unknown, fallback = "unknown"): string {
   if (typeof value !== "string" || !value.trim()) return fallback;
   return stripAsciiControlCharacters(value.trim()).slice(0, 100) || fallback;

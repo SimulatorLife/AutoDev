@@ -12,22 +12,22 @@ const CONSOLE_ROOT = join(import.meta.dirname, "..");
 const STYLESHEET = join(CONSOLE_ROOT, "app", "globals.css");
 
 /**
- * The navigation's narrow-viewport default.
- *
- * The sidebar's default depends on the viewport: a rail on a narrow screen, the
- * full navigation on a wide one. That default was decided in a post-hydration
- * effect, so the server-rendered page painted the *expanded* navigation first.
- * Measured in Chromium at 390x844, that first paint is 256px of opaque panel
- * over a 390px viewport -- 66% of the screen -- with the page's own `h1` at
- * x=175, underneath it. The stat cards were cut in half, and without
- * JavaScript the panel stayed: 134px of page visible, and the page's title
- * unreachable.
- *
- * The default is a stylesheet decision now. JavaScript carries only the
- * operator's explicit choice, and the stylesheet decides the rest at first
- * paint -- so there is no flash on a phone, and the page is usable without
- * JavaScript at all.
- */
+The navigation's narrow-viewport default.
+
+The sidebar's default depends on the viewport: a rail on a narrow screen, the
+full navigation on a wide one. That default was decided in a post-hydration
+effect, so the server-rendered page painted the *expanded* navigation first.
+Measured in Chromium at 390x844, that first paint is 256px of opaque panel
+over a 390px viewport -- 66% of the screen -- with the page's own `h1` at
+x=175, underneath it. The stat cards were cut in half, and without
+JavaScript the panel stayed: 134px of page visible, and the page's title
+unreachable.
+
+The default is a stylesheet decision now. JavaScript carries only the
+operator's explicit choice, and the stylesheet decides the rest at first
+paint -- so there is no flash on a phone, and the page is usable without
+JavaScript at all.
+*/
 test("the server-rendered navigation says the viewport decides, not the component", () => {
   const markup = renderToStaticMarkup(
     React.createElement(AppNav, { activeSection: "Agents" })

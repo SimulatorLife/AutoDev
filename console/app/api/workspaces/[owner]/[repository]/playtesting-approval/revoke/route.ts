@@ -1,24 +1,24 @@
 /**
- * Server-only Console workspace playtesting-approval revocation route.
- *
- * Receives the bounded form submission from a workspace's Revoke form,
- * validates its same-origin browser context, and forwards a typed POST to
- * Runtime's `/control/workspaces/:id/playtesting-approval/revoke` route using
- * the server-side Control API credential. Unlike approval, revocation is not
- * blocked by a disabled workspace -- an operator must be able to retire a
- * risky approval whether or not the workspace is currently enabled -- so this
- * route forwards the request and lets Runtime decide.
- *
- * The approval id and expected revision ride as hidden fields set from the
- * approval the operator was looking at when they submitted, so a revocation
- * aimed at an approval that has since changed comes back a conflict rather
- * than silently retiring a different one.
- *
- * Only POST is exported. In-place Console submissions receive a bounded JSON
- * result and, on revision conflict, the latest server-read approval state.
- * Native no-JavaScript form submissions use a redirect fallback; the Console
- * never claims a mutation succeeded before receiving the Runtime response.
- */
+Server-only Console workspace playtesting-approval revocation route.
+
+Receives the bounded form submission from a workspace's Revoke form,
+validates its same-origin browser context, and forwards a typed POST to
+Runtime's `/control/workspaces/:id/playtesting-approval/revoke` route using
+the server-side Control API credential. Unlike approval, revocation is not
+blocked by a disabled workspace -- an operator must be able to retire a
+risky approval whether or not the workspace is currently enabled -- so this
+route forwards the request and lets Runtime decide.
+
+The approval id and expected revision ride as hidden fields set from the
+approval the operator was looking at when they submitted, so a revocation
+aimed at an approval that has since changed comes back a conflict rather
+than silently retiring a different one.
+
+Only POST is exported. In-place Console submissions receive a bounded JSON
+result and, on revision conflict, the latest server-read approval state.
+Native no-JavaScript form submissions use a redirect fallback; the Console
+never claims a mutation succeeded before receiving the Runtime response.
+*/
 
 import type { ControlApiWorkspacePlaytestApprovalResponse } from "@simulatorlife/autodev-core";
 import { type NextRequest, NextResponse } from "next/server.js";
@@ -142,7 +142,7 @@ export async function POST(
       {
         kind: "refused",
         refusal,
-        ...(currentApproval === undefined ? {} : { currentApproval })
+        ...(currentApproval !== undefined && { currentApproval })
       },
       responseStatus(result)
     );

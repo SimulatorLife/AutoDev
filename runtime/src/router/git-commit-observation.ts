@@ -1,11 +1,11 @@
 /**
- * Router-event integration for source-confirmed Git output metrics.
- *
- * The provider process executes Git and receives the bounded commit
- * identity from `gitCommitIdentityEnv`. The Router only discovers changed
- * commit objects at selected/result boundaries; identity and all actor
- * dimensions are read back from each commit by the telemetry observer.
- */
+Router-event integration for source-confirmed Git output metrics.
+
+The provider process executes Git and receives the bounded commit
+identity from `gitCommitIdentityEnv`. The Router only discovers changed
+commit objects at selected/result boundaries; identity and all actor
+dimensions are read back from each commit by the telemetry observer.
+*/
 
 import path from "node:path";
 
@@ -44,7 +44,7 @@ function workspaceContext(
 function observerFor(
   workspace: WorkspaceContext
 ): WorkspaceCommitObserver | null {
-  const key = `${workspace.key}\u0000${workspace.repositoryRoot}`;
+  const key = `${workspace.key}\0${workspace.repositoryRoot}`;
   const existing = observers.get(key);
   if (existing) return existing;
   if (observers.size >= MAX_WORKSPACE_OBSERVERS) return null;
@@ -62,7 +62,7 @@ function reportObservationFailure(
   error: WorkspaceCommitError,
   routerInstanceId: string
 ): void {
-  const key = `${workspace.key}\u0000${workspace.repositoryRoot}`;
+  const key = `${workspace.key}\0${workspace.repositoryRoot}`;
   if (reportedFailures.get(key) === error.kind) return;
   if (
     !reportedFailures.has(key) &&
@@ -85,33 +85,35 @@ function reportObservationFailure(
 }
 
 /**
- * Observe one source-owned workspace boundary without delaying the provider
- * response. The observer serializes events for the same working tree; the
- * shared metric emitter owns cross-observer SHA idempotency.
- */
+Observe one source-owned workspace boundary without delaying the provider
+response. The observer serializes events for the same working tree; the
+shared metric emitter owns cross-observer SHA idempotency.
+*/
 export function createRouterWorkspaceGitCommitObserver(
   recordGitCommit: (options: RecordGitCommitOptions) => boolean
-): (args: {
+): (arguments_: {
   readonly phase: string;
-  /** Canonical bounded workspace identity from the Router event. */
+  /**
+  Canonical bounded workspace identity from the Router event.
+  */
   readonly workspaceKey: string | null;
   /**
-   * The session the event belongs to.
-   *
-   * The observer reads the workspace's repository, and the session is what
-   * knows which directory that is: the Router resolved it from the
-   * request's own structured workspace fields and remembered it. A session
-   * with no remembered workspace has no directory to read, and there is
-   * nothing to observe.
-   */
+  The session the event belongs to.
+  
+  The observer reads the workspace's repository, and the session is what
+  knows which directory that is: the Router resolved it from the
+  request's own structured workspace fields and remembered it. A session
+  with no remembered workspace has no directory to read, and there is
+  nothing to observe.
+  */
   readonly sessionKey: string | null | undefined;
   readonly routerInstanceId: string;
 }) => Promise<void> {
-  return (args) => {
-    if (!OBSERVABLE_PHASES.has(args.phase)) return Promise.resolve();
+  return (arguments_) => {
+    if (!OBSERVABLE_PHASES.has(arguments_.phase)) return Promise.resolve();
     const workspace = workspaceContext(
-      args.workspaceKey,
-      getWorkspacePath(args.sessionKey)
+      arguments_.workspaceKey,
+      getWorkspacePath(arguments_.sessionKey)
     );
     if (!workspace) return Promise.resolve();
     const observer = observerFor(workspace);
@@ -122,7 +124,7 @@ export function createRouterWorkspaceGitCommitObserver(
           kind: "observer_limit",
           reason: "active workspace observer bound was reached"
         },
-        args.routerInstanceId
+        arguments_.routerInstanceId
       );
       return Promise.resolve();
     }
@@ -139,11 +141,11 @@ export function createRouterWorkspaceGitCommitObserver(
           reportObservationFailure(
             workspace,
             observation.error,
-            args.routerInstanceId
+            arguments_.routerInstanceId
           );
         } else {
           reportedFailures.delete(
-            `${workspace.key}\u0000${workspace.repositoryRoot}`
+            `${workspace.key}\0${workspace.repositoryRoot}`
           );
         }
         return undefined;
@@ -155,13 +157,15 @@ export function createRouterWorkspaceGitCommitObserver(
             kind: "head_unreadable",
             reason: "workspace Git observation failed"
           },
-          args.routerInstanceId
+          arguments_.routerInstanceId
         );
       });
   };
 }
 
-/** Test seam for the bounded process-local observer registry. */
+/**
+Test seam for the bounded process-local observer registry.
+*/
 export function resetRouterWorkspaceGitObserversForTest(): void {
   observers.clear();
   reportedFailures.clear();

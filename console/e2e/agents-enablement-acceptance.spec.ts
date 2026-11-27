@@ -17,22 +17,22 @@ const CONFLICT_DETAIL = "Reload it and decide again.";
 const STATUS_ATTRIBUTE = "data-status";
 
 /**
- * The enablement control of one agent.
- *
- * The control is the same one on the list row and on the detail view, so it
- * is addressed by the agent it acts on rather than by where it is rendered.
- */
+The enablement control of one agent.
+
+The control is the same one on the list row and on the detail view, so it
+is addressed by the agent it acts on rather than by where it is rendered.
+*/
 function enablementControl(page: Page, role: string): Locator {
   return page.locator(`[data-enablement-target="${role}"]`);
 }
 
 /**
- * Put the fixture's agent enablement back where a test that writes starts.
- *
- * The write is real, so the fixture keeps the enablement the last write left
- * behind. This puts it back without touching the rest of the fixture's state,
- * which another session's specs also use.
- */
+Put the fixture's agent enablement back where a test that writes starts.
+
+The write is real, so the fixture keeps the enablement the last write left
+behind. This puts it back without touching the rest of the fixture's state,
+which another session's specs also use.
+*/
 async function resetAgentEnablement(request: APIRequestContext): Promise<void> {
   const response = await request.post(
     `${FIXTURE_BASE_URL}/fixture/agents/state?state=enabled`
@@ -41,20 +41,20 @@ async function resetAgentEnablement(request: APIRequestContext): Promise<void> {
 }
 
 /**
- * Leave the fixture the way the rest of the suite finds it.
- *
- * The agent enablement is shared state: a spec that reads the Agents list
- * expects the agent to be enabled, and this one leaves it disabled because
- * that is the write it is making. Putting it back is what keeps the two
- * specs from answering for each other.
- */
+Leave the fixture the way the rest of the suite finds it.
+
+The agent enablement is shared state: a spec that reads the Agents list
+expects the agent to be enabled, and this one leaves it disabled because
+that is the write it is making. Putting it back is what keeps the two
+specs from answering for each other.
+*/
 test.afterEach(async ({ request }) => {
   await resetAgentEnablement(request);
 });
 
 /**
- * The enablement the Runtime currently holds for one agent.
- */
+The enablement the Runtime currently holds for one agent.
+*/
 async function readAgentEnablement(
   request: APIRequestContext
 ): Promise<{ enabled: boolean; revision: string }> {

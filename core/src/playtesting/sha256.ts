@@ -1,7 +1,7 @@
 /**
- * Pure TypeScript implementation of FIPS 180-4 SHA-256.
- * Zero external dependencies and no Node.js built-ins, allowing use in any runtime environment.
- */
+Pure TypeScript implementation of FIPS 180-4 SHA-256.
+Zero external dependencies and no Node.js built-ins, allowing use in any runtime environment.
+*/
 
 const K = new Uint32Array([
   0x42_8a_2f_98, 0x71_37_44_91, 0xb5_c0_fb_cf, 0xe9_b5_db_a5, 0x39_56_c2_5b,
@@ -58,9 +58,9 @@ export function sha256Hex(input: string | Uint8Array): string {
 
   const w = new Uint32Array(64);
 
-  for (let i = 0; i < paddedLength; i += 64) {
+  for (let index = 0; index < paddedLength; index += 64) {
     for (let t = 0; t < 16; t++) {
-      w[t] = view.getUint32(i + t * 4, false);
+      w[t] = view.getUint32(index + t * 4, false);
     }
     for (let t = 16; t < 64; t++) {
       const s0 =
@@ -81,19 +81,19 @@ export function sha256Hex(input: string | Uint8Array): string {
     for (let t = 0; t < 64; t++) {
       const s1 = rotr(6, e) ^ rotr(11, e) ^ rotr(25, e);
       const ch = (e & f) ^ (~e & g);
-      const temp1 = (h + s1 + ch + K[t]! + w[t]!) >>> 0;
+      const temporary1 = (h + s1 + ch + K[t]! + w[t]!) >>> 0;
       const s0 = rotr(2, a) ^ rotr(13, a) ^ rotr(22, a);
       const maj = (a & b) ^ (a & c) ^ (b & c);
-      const temp2 = (s0 + maj) >>> 0;
+      const temporary2 = (s0 + maj) >>> 0;
 
       h = g;
       g = f;
       f = e;
-      e = (d + temp1) >>> 0;
+      e = (d + temporary1) >>> 0;
       d = c;
       c = b;
       b = a;
-      a = (temp1 + temp2) >>> 0;
+      a = (temporary1 + temporary2) >>> 0;
     }
 
     h0 = (h0 + a) >>> 0;

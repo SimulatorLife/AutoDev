@@ -15,16 +15,16 @@ import {
 import { ROUTING_POLICY } from "@simulatorlife/autodev-runtime/router/routing";
 
 /**
- * An operator's provider check re-runs what routing would before using a
- * provider -- its live probe, then its model listing -- and records the
- * result as health evidence. Copilot is the fixture: its route has a health
- * endpoint and a bridge credential, so the probe is a real HTTP check.
- */
+An operator's provider check re-runs what routing would before using a
+provider -- its live probe, then its model listing -- and records the
+result as health evidence. Copilot is the fixture: its route has a health
+endpoint and a bridge credential, so the probe is a real HTTP check.
+*/
 const PROVIDER = "copilot";
 const CREDENTIAL = "CODEX_ROUTER_COPILOT_API_KEY";
 
 function withProbe(answers: boolean, body: () => Promise<void>): Promise<void> {
-  const originalFetch = globalThis.fetch;
+  const originalFetch = fetch;
   const originalCredential = process.env[CREDENTIAL];
   process.env[CREDENTIAL] = "test-bridge-key";
   globalThis.fetch = (async () => {
@@ -188,13 +188,13 @@ test("unavailable model discovery is reported separately from successful provide
   }));
 
 /**
- * A provider can be configured without a route: it is listed, it holds
- * priorities, models and limits, and no request can reach it.
- *
- * The Console's re-check control is on every verdict, so the Runtime has to
- * answer for such a provider rather than throw and leave the operator with a
- * failed request that says nothing about the provider.
- */
+A provider can be configured without a route: it is listed, it holds
+priorities, models and limits, and no request can reach it.
+
+The Console's re-check control is on every verdict, so the Runtime has to
+answer for such a provider rather than throw and leave the operator with a
+failed request that says nothing about the provider.
+*/
 test("a provider with no route answers its check instead of throwing", async () => {
   const ROUTELESS = "routeless-fixture";
   ROUTING_POLICY.config.providers[ROUTELESS] = { models: {} };
@@ -221,7 +221,7 @@ test("a bridge whose account is signed out fails its check as a sign-in", async 
   // A web-chat bridge answers its health check with `sign_in_required` while
   // the site is signed out in the browser it drives. That is an action for
   // the operator, and the check says so instead of "the probe failed".
-  const originalFetch = globalThis.fetch;
+  const originalFetch = fetch;
   const originalCredential = process.env[CREDENTIAL];
   process.env[CREDENTIAL] = "test-bridge-key";
   globalThis.fetch = (async () =>

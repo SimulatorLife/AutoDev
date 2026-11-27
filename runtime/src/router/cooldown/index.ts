@@ -12,9 +12,13 @@ export interface CooldownEntry {
   failureClass: string | null;
   resetsAt: string | null;
   since: number;
-  /** Set when the cooldown covers one model rather than the whole provider. */
+  /**
+  Set when the cooldown covers one model rather than the whole provider.
+  */
   model?: string;
-  /** The provider's own explanation, for failures only the user can fix. */
+  /**
+  The provider's own explanation, for failures only the user can fix.
+  */
   detail?: string | null;
 }
 
@@ -32,7 +36,9 @@ export interface CooldownOptions {
   failureClass?: string | null;
   resetsAt?: string | null;
   structured?: boolean;
-  /** The model that failed; an `invalid_model` failure cools down only it. */
+  /**
+  The model that failed; an `invalid_model` failure cools down only it.
+  */
   model?: string | null;
   detail?: string | null;
 }
@@ -59,13 +65,15 @@ export interface PersistedCooldownEntry {
 export interface CooldownConfig {
   providerCooldownMs: number;
   providerCooldownMaxMs: number;
-  /** The floor of the hard ladder a limit with no stated reset climbs. */
+  /**
+  The floor of the hard ladder a limit with no stated reset climbs.
+  */
   hardCooldownMs: number;
   /**
-   * The ceiling of that same ladder. It bounds only a limit that carried no
-   * reset of its own: a provider that stated a reset is held to exactly that
-   * reset, which no router-chosen ceiling may shorten.
-   */
+  The ceiling of that same ladder. It bounds only a limit that carried no
+  reset of its own: a provider that stated a reset is held to exactly that
+  reset, which no router-chosen ceiling may shorten.
+  */
   hardCooldownMaxMs: number;
   probeCooldownMs: number;
   probeCooldownMaxMs: number;
@@ -142,7 +150,9 @@ export class ProviderCooldowns {
     this.runtime = runtime;
   }
 
-  /** Resolve the provider-wide or exact-model cooldown. */
+  /**
+  Resolve the provider-wide or exact-model cooldown.
+  */
   get(
     provider: string,
     now = Date.now(),
@@ -208,18 +218,20 @@ export class ProviderCooldowns {
   }
 
   /**
-   * Clear what a passing live probe disproves: the probe-failure streak and a
-   * provider cooldown that a failed probe set. A cooldown the provider declared
-   * (a quota, a rate limit) or that request failures set is evidence a probe
-   * cannot answer, so it stays until it lapses or a request succeeds.
-   */
+  Clear what a passing live probe disproves: the probe-failure streak and a
+  provider cooldown that a failed probe set. A cooldown the provider declared
+  (a quota, a rate limit) or that request failures set is evidence a probe
+  cannot answer, so it stays until it lapses or a request succeeds.
+  */
   clearProbeFailures(provider: string): void {
     this.probeStreaks.delete(provider);
     if (this.cooldowns.get(provider)?.kind === "probe")
       this.cooldowns.delete(provider);
   }
 
-  /** Clear provider health and the model that just succeeded. */
+  /**
+  Clear provider health and the model that just succeeded.
+  */
   clearAfterSuccess(provider: string, model: string): void {
     this.cooldowns.delete(provider);
     this.modelCooldowns.delete(modelKey(provider, model));
@@ -313,7 +325,7 @@ export class ProviderCooldowns {
       // the way the bridge boundary normalizes it, so the stored value is
       // always an ISO-8601 UTC instant the router can compare with its clock.
       const statedReset = normalizeResetsAt(resetsAt);
-      const declared = statedReset ? Date.parse(statedReset) : Number.NaN;
+      const declared = statedReset ? Date.parse(statedReset) : NaN;
       const hasFutureReset = Number.isFinite(declared) && declared > now;
       if (structured || hasFutureReset) {
         if (Number.isNaN(declared)) {
@@ -379,9 +391,7 @@ export class ProviderCooldowns {
 
   allowsLastResort(entry: CooldownEntry | null, now = Date.now()): boolean {
     if (!entry) return true;
-    if (entry.kind === "config") return false;
-    if (hardCooldownBlocksAttempt(entry, now)) return false;
-    return true;
+    return entry.kind !== "config" && !hardCooldownBlocksAttempt(entry, now);
   }
 
   summary(
@@ -462,30 +472,29 @@ export class ProviderCooldowns {
 }
 
 /**
- * Whether a cooldown makes the route ineligible for any attempt.
- *
- * A provider that declared it is out of usage until a reset time still in the
- * future cannot serve before then, so no path may attempt it: the fallback
- * chain skips such a route (see `allowsLastResort`), and a direct concrete
- * request, which has no alternative candidate to fall back to, has to refuse
- * it locally instead of asking the provider again. The rule lives here so the
- * two paths cannot drift.
- *
- * A `hard` cooldown with no known reset stays attemptable: the provider named
- * no window, so a bounded probe is the only way to learn whether it recovered.
- */
+Whether a cooldown makes the route ineligible for any attempt.
+
+A provider that declared it is out of usage until a reset time still in the
+future cannot serve before then, so no path may attempt it: the fallback
+chain skips such a route (see `allowsLastResort`), and a direct concrete
+request, which has no alternative candidate to fall back to, has to refuse
+it locally instead of asking the provider again. The rule lives here so the
+two paths cannot drift.
+
+A `hard` cooldown with no known reset stays attemptable: the provider named
+no window, so a bounded probe is the only way to learn whether it recovered.
+*/
 export function hardCooldownBlocksAttempt(
   entry: CooldownEntry | null,
   now = Date.now()
 ): entry is CooldownEntry {
-  if (!entry || entry.kind !== "hard") return false;
-  if (!entry.resetsAt) return false;
+  if (!entry || entry.kind !== "hard" || !entry.resetsAt) return false;
   const resetsAt = Date.parse(entry.resetsAt);
   return Number.isFinite(resetsAt) && resetsAt > now;
 }
 
 function modelKey(provider: string, model: string): string {
-  return `${provider}\u0000${model}`;
+  return `${provider}\0${model}`;
 }
 
 function liveEntry(

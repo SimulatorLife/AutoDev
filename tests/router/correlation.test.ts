@@ -12,13 +12,13 @@ import {
 import { UsageTracker } from "@simulatorlife/autodev-runtime/router/usage";
 
 /**
- * The router's live correlation with the agents it serves.
- *
- * The OTLP receiver that used to feed this module is gone: the agents export
- * their telemetry to OpenLIT, and the router keeps only what it observes
- * itself -- the calls the bridges report, the servers they called, and the
- * skills they used.
- */
+The router's live correlation with the agents it serves.
+
+The OTLP receiver that used to feed this module is gone: the agents export
+their telemetry to OpenLIT, and the router keeps only what it observes
+itself -- the calls the bridges report, the servers they called, and the
+skills they used.
+*/
 
 function createMockUsageTracker(): UsageTracker {
   return new UsageTracker();

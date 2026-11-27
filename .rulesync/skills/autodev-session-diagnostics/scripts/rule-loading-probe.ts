@@ -1,28 +1,28 @@
 #!/usr/bin/env node
 
 /**
- * Probe how Codex loads the command rules in "$CODEX_HOME/rules".
- *
- * Codex loads a rules entry only when it resolves to a file that sits
- * directly in the rules directory. An entry that resolves anywhere else -- a
- * symlink into the repository checkout, for example -- is skipped without a
- * word: every rule in that file turns inert, so an "allow" rule stops
- * lifting the workspace-write sandbox and a "forbidden" rule stops blocking
- * anything. "codex execpolicy check" cannot see this: it resolves the path
- * itself and reports the decision the skipped file would have produced.
- *
- * The probe proves that with a real Codex run against a throwaway
- * CODEX_HOME and a scripted fake provider, so it needs no API key and no
- * network. It writes one "forbidden" rule (touch), has the fake model run
- * "touch probe-marker", and reads the tool result: a policy rejection means
- * the rules file was loaded, anything else means it was skipped.
- *
- *   node rule-loading-probe.ts [--codex <binary>] [--keep]
- *
- * "--keep" leaves the throwaway CODEX_HOME and workdir behind and prints
- * their path. The probe runs from the repository checkout: it reads the
- * local model catalog and the request-capture skill's scripted turns.
- */
+Probe how Codex loads the command rules in "$CODEX_HOME/rules".
+
+Codex loads a rules entry only when it resolves to a file that sits
+directly in the rules directory. An entry that resolves anywhere else -- a
+symlink into the repository checkout, for example -- is skipped without a
+word: every rule in that file turns inert, so an "allow" rule stops
+lifting the workspace-write sandbox and a "forbidden" rule stops blocking
+anything. "codex execpolicy check" cannot see this: it resolves the path
+itself and reports the decision the skipped file would have produced.
+
+The probe proves that with a real Codex run against a throwaway
+CODEX_HOME and a scripted fake provider, so it needs no API key and no
+network. It writes one "forbidden" rule (touch), has the fake model run
+"touch probe-marker", and reads the tool result: a policy rejection means
+the rules file was loaded, anything else means it was skipped.
+
+  node rule-loading-probe.ts [--codex <binary>] [--keep]
+
+"--keep" leaves the throwaway CODEX_HOME and workdir behind and prints
+their path. The probe runs from the repository checkout: it reads the
+local model catalog and the request-capture skill's scripted turns.
+*/
 
 import { spawn } from "node:child_process";
 import {
@@ -71,11 +71,17 @@ const PROBE_RULES = [
 export type ProbeCase = "regular" | "symlink";
 
 export interface RuleEntryVerdict {
-  /** The rules directory entry Codex reads, for example ".../rules/default.rules". */
+  /**
+  The rules directory entry Codex reads, for example ".../rules/default.rules".
+  */
   readonly entry: string;
-  /** What that entry resolves to on disk. */
+  /**
+  What that entry resolves to on disk.
+  */
   readonly resolved: string;
-  /** Whether Codex loads it. */
+  /**
+  Whether Codex loads it.
+  */
   readonly loads: boolean;
   readonly reason: string;
 }
@@ -83,7 +89,9 @@ export interface RuleEntryVerdict {
 export interface ProbeCaseResult {
   readonly case: ProbeCase;
   readonly verdict: RuleEntryVerdict;
-  /** Whether the rule in the file was enforced, which is the loader's decision. */
+  /**
+  Whether the rule in the file was enforced, which is the loader's decision.
+  */
   readonly enforced: boolean;
   readonly detail: string;
 }
@@ -94,13 +102,13 @@ export interface ProbeOptions {
 }
 
 /**
- * Decide whether Codex loads a rules directory entry.
- *
- * The entry is loaded only when it resolves to a file directly in the rules
- * directory: a symlink whose target sits elsewhere -- in the repository
- * checkout, in CODEX_HOME but outside "rules/", or in a subdirectory of
- * "rules/" -- resolves outside that directory and is skipped silently.
- */
+Decide whether Codex loads a rules directory entry.
+
+The entry is loaded only when it resolves to a file directly in the rules
+directory: a symlink whose target sits elsewhere -- in the repository
+checkout, in CODEX_HOME but outside "rules/", or in a subdirectory of
+"rules/" -- resolves outside that directory and is skipped silently.
+*/
 export function ruleEntryLoads(
   rulesDir: string,
   entry: string
@@ -108,12 +116,12 @@ export function ruleEntryLoads(
   const resolvedDir = realpathSync(rulesDir);
   const resolved = realpathSync(entry);
   const parent = path.dirname(resolved);
-  const loads = parent === resolvedDir;
+  const isLoads = parent === resolvedDir;
   return {
     entry,
     resolved,
-    loads,
-    reason: loads
+    loads: isLoads,
+    reason: isLoads
       ? "resolves to a file directly in the rules directory"
       : "resolves to " +
         parent +
@@ -123,7 +131,9 @@ export function ruleEntryLoads(
   };
 }
 
-/** The scripted turns the fake provider serves: one command, then one message. */
+/**
+The scripted turns the fake provider serves: one command, then one message.
+*/
 export function probeTurns(command = PROBE_COMMAND): SseEvent[][] {
   const raw = readFileSync(EXAMPLE_TURNS, "utf8")
     .split("echo autodev-probe")
@@ -149,7 +159,9 @@ function configToml(port: number): string {
   ].join("\n");
 }
 
-/** The tool result the model saw, which is where a policy rejection shows up. */
+/**
+The tool result the model saw, which is where a policy rejection shows up.
+*/
 export function recordedToolOutput(record: string): string | null {
   if (!existsSync(record)) return null;
   const lines = readFileSync(record, "utf8")
@@ -292,7 +304,7 @@ function codexVersion(binary: string): Promise<string> {
 
 async function main(argv: readonly string[]): Promise<number> {
   let codex = "codex";
-  let keep = false;
+  let isKeep = false;
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--codex") {
@@ -303,14 +315,14 @@ async function main(argv: readonly string[]): Promise<number> {
       }
       codex = value;
       index += 1;
-    } else if (argument === "--keep") keep = true;
+    } else if (argument === "--keep") isKeep = true;
     else {
       process.stderr.write("unknown argument " + argument + "\n");
       return 2;
     }
   }
   process.stdout.write("codex: " + (await codexVersion(codex)) + "\n\n");
-  const results = await probeRuleLoading({ codex, keep });
+  const results = await probeRuleLoading({ codex, keep: isKeep });
   for (const result of results) process.stdout.write(describe(result) + "\n\n");
   const regular = results.find((result) => result.case === "regular");
   const symlink = results.find((result) => result.case === "symlink");

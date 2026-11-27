@@ -348,7 +348,7 @@ test("reject incompatible transports, credentials, workspace, HTTP options and c
 });
 
 test("Supergateway receives an explicit credential-free role-aware process environment", () => {
-  const orchestratorEnv = chatgptSupergatewayEnvironment(
+  const orchestratorEnvironment = chatgptSupergatewayEnvironment(
     {
       home: "/home/test",
       codexHome: "/home/test/.codex",
@@ -358,7 +358,7 @@ test("Supergateway receives an explicit credential-free role-aware process envir
     "/bin/node",
     "/bin"
   );
-  assert.deepEqual(orchestratorEnv, {
+  assert.deepEqual(orchestratorEnvironment, {
     HOME: "/home/test",
     CODEX_HOME: "/home/test/.codex",
     PATH: "/bin",
@@ -373,10 +373,10 @@ test("Supergateway receives an explicit credential-free role-aware process envir
     XACPX_CONFIG: "/home/test/.codex/run/xacpx/config.json",
     XACPX_STATE: "/home/test/.codex/run/xacpx/state.json"
   });
-  assert.equal("AUTODEV_MCP_READ_ONLY" in orchestratorEnv, false);
-  assert.equal("AUTODEV_MCP_WORKSPACE_ONLY" in orchestratorEnv, false);
+  assert.equal("AUTODEV_MCP_READ_ONLY" in orchestratorEnvironment, false);
+  assert.equal("AUTODEV_MCP_WORKSPACE_ONLY" in orchestratorEnvironment, false);
 
-  const explorerEnv = chatgptSupergatewayEnvironment(
+  const explorerEnvironment = chatgptSupergatewayEnvironment(
     {
       home: "/home/test",
       codexHome: "/home/test/.codex",
@@ -387,10 +387,10 @@ test("Supergateway receives an explicit credential-free role-aware process envir
     "/bin",
     { role: "explorer" }
   );
-  assert.equal(explorerEnv.AUTODEV_AGENT_ROLE, "explorer");
+  assert.equal(explorerEnvironment.AUTODEV_AGENT_ROLE, "explorer");
   // Read-only confinement belongs to the published surface, not to the shared
   // gateway process, so one role's read-only grant never reaches another's.
-  assert.equal("AUTODEV_MCP_READ_ONLY" in explorerEnv, false);
+  assert.equal("AUTODEV_MCP_READ_ONLY" in explorerEnvironment, false);
   assert.deepEqual(chatgptRoleEnvironment("explorer", "/project"), {
     AUTODEV_AGENT_ROLE: "explorer",
     AUTODEV_XACPX_COORDINATOR_SESSION: "chatgpt:explorer:project",

@@ -1,28 +1,28 @@
 /**
- * Dependency guard for the patched OpenLIT client.
- *
- * The fork's client is installed from a committed `package-lock.json`, so the
- * lockfile -- not the manifest -- decides which packages the image actually
- * gets. Two things can therefore go wrong without any test in the fork
- * noticing, because the fork's own suite runs against a tree installed from
- * that same lockfile:
- *
- * 1. A source file imports a package the lockfile does not install. The
- *    import cannot resolve at build or run time, and nothing in the fork can
- *    see it because the fork never installs a tree that differs from its lock.
- * 2. The manifest declares a package the lockfile does not install. `npm ci`
- *    refuses a tree whose manifest and lock disagree, so the image build
- *    breaks on a disagreement rather than on a missing import.
- *
- * Both are questions about a *tree*, not about a single file, so they live
- * here rather than in the patch-apply test body: the apply test owns the
- * patches, this module owns the dependency contract they have to satisfy.
- *
- * The import scan uses the TypeScript parser rather than a regular
- * expression. A regex that mistakes a string literal for an import produces
- * false positives, and a regex that misses `export ... from` or a dynamic
- * `import()` produces false negatives; both would make this guard lie.
- */
+Dependency guard for the patched OpenLIT client.
+
+The fork's client is installed from a committed `package-lock.json`, so the
+lockfile -- not the manifest -- decides which packages the image actually
+gets. Two things can therefore go wrong without any test in the fork
+noticing, because the fork's own suite runs against a tree installed from
+that same lockfile:
+
+1. A source file imports a package the lockfile does not install. The
+   import cannot resolve at build or run time, and nothing in the fork can
+   see it because the fork never installs a tree that differs from its lock.
+2. The manifest declares a package the lockfile does not install. `npm ci`
+   refuses a tree whose manifest and lock disagree, so the image build
+   breaks on a disagreement rather than on a missing import.
+
+Both are questions about a *tree*, not about a single file, so they live
+here rather than in the patch-apply test body: the apply test owns the
+patches, this module owns the dependency contract they have to satisfy.
+
+The import scan uses the TypeScript parser rather than a regular
+expression. A regex that mistakes a string literal for an import produces
+false positives, and a regex that misses `export ... from` or a dynamic
+`import()` produces false negatives; both would make this guard lie.
+*/
 
 import { readdirSync, readFileSync } from "node:fs";
 import { builtinModules } from "node:module";
@@ -30,25 +30,29 @@ import { join } from "node:path";
 
 import ts from "typescript";
 
-/** The result of auditing one client tree against its own lockfile. */
+/**
+The result of auditing one client tree against its own lockfile.
+*/
 export interface ClientDependencyAudit {
   /**
-   * Import specifiers whose package the lockfile does not install, sorted.
-   * Each entry is the specifier as written, so the report names the file's
-   * own text rather than a normalised package name.
-   */
+  Import specifiers whose package the lockfile does not install, sorted.
+  Each entry is the specifier as written, so the report names the file's
+  own text rather than a normalised package name.
+  */
   readonly unresolved: readonly string[];
-  /** Manifest dependencies the lockfile does not install, sorted. */
+  /**
+  Manifest dependencies the lockfile does not install, sorted.
+  */
   readonly uninstalled: readonly string[];
 }
 
 const SOURCE_FILE = /\.[cm]?[jt]sx?$/u;
 
 /**
- * Directories that never hold the client's own source. `node_modules` is
- * absent from a freshly patched checkout but is excluded so the same scan
- * works against an installed tree.
- */
+Directories that never hold the client's own source. `node_modules` is
+absent from a freshly patched checkout but is excluded so the same scan
+works against an installed tree.
+*/
 const IGNORED_DIRECTORIES = new Set([
   ".git",
   ".next",
@@ -59,13 +63,15 @@ const IGNORED_DIRECTORIES = new Set([
 ]);
 
 /**
- * The fork's path alias. Every `paths` entry in the client's tsconfig and
- * every entry in its Jest `moduleNameMapper` starts with `@/`, so this one
- * prefix covers all of them.
- */
+The fork's path alias. Every `paths` entry in the client's tsconfig and
+every entry in its Jest `moduleNameMapper` starts with `@/`, so this one
+prefix covers all of them.
+*/
 const PATH_ALIAS_PREFIX = "@/";
 
-/** Node built-ins, with and without the `node:` scheme. */
+/**
+Node built-ins, with and without the `node:` scheme.
+*/
 const NODE_BUILTINS = new Set(
   builtinModules.flatMap((name) => [name, name.replace(/^node:/u, "")])
 );
@@ -79,7 +85,9 @@ interface Manifest {
   devDependencies?: Record<string, string>;
 }
 
-/** Every source file in the client, excluding build and install output. */
+/**
+Every source file in the client, excluding build and install output.
+*/
 function clientSourceFiles(root: string): string[] {
   const files: string[] = [];
   for (const entry of readdirSync(root, { withFileTypes: true })) {
@@ -93,7 +101,9 @@ function clientSourceFiles(root: string): string[] {
   return files;
 }
 
-/** The module specifier of one import-like node, if it has one. */
+/**
+The module specifier of one import-like node, if it has one.
+*/
 function moduleSpecifierOf(node: ts.Node): string | null {
   if (
     ts.isImportDeclaration(node) &&
@@ -124,7 +134,9 @@ function moduleSpecifierOf(node: ts.Node): string | null {
   return argument && ts.isStringLiteral(argument) ? argument.text : null;
 }
 
-/** Every module specifier one source file imports. */
+/**
+Every module specifier one source file imports.
+*/
 function importSpecifiers(file: string): string[] {
   const text = readFileSync(file, "utf8");
   const source = ts.createSourceFile(
@@ -144,13 +156,11 @@ function importSpecifiers(file: string): string[] {
 }
 
 /**
- * The package a specifier resolves to, or null when it is not a package:
- * a relative path, the fork's own path alias, or a Node built-in.
- */
+The package a specifier resolves to, or null when it is not a package:
+a relative path, the fork's own path alias, or a Node built-in.
+*/
 function packageNameOf(specifier: string): string | null {
-  if (specifier.startsWith(".") || specifier.startsWith("/")) return null;
-  if (specifier.startsWith(PATH_ALIAS_PREFIX)) return null;
-  if (specifier.startsWith("node:")) return null;
+  if (specifier.startsWith(".") || specifier.startsWith("/") || specifier.startsWith(PATH_ALIAS_PREFIX) || specifier.startsWith("node:")) return null;
   const segments = specifier.split("/");
   const name = specifier.startsWith("@")
     ? segments.slice(0, 2).join("/")
@@ -159,7 +169,9 @@ function packageNameOf(specifier: string): string | null {
   return name;
 }
 
-/** The package names the lockfile installs. */
+/**
+The package names the lockfile installs.
+*/
 function installedPackages(lock: Lockfile): Set<string> {
   const installed = new Set<string>();
   for (const key of Object.keys(lock.packages ?? {})) {
@@ -170,11 +182,11 @@ function installedPackages(lock: Lockfile): Set<string> {
 }
 
 /**
- * Audit one client tree against its own lockfile.
- *
- * @param clientRoot The client's root directory, holding `package.json` and
- * `package-lock.json`.
- */
+Audit one client tree against its own lockfile.
+
+@param clientRoot The client's root directory, holding `package.json` and
+`package-lock.json`.
+*/
 export function auditClientDependencies(
   clientRoot: string
 ): ClientDependencyAudit {

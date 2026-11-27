@@ -3,23 +3,23 @@ import { expect, test } from "@playwright/test";
 import { waitForPageContent } from "./acceptance-helpers.ts";
 
 /**
- * Every provider's Status badge offers a re-check, and the re-check asks
- * Runtime to check that provider.
- *
- * The control used to ride only on a failing verdict, on the reasoning that a
- * provider nobody has looked at is not worth looking at. That reasoning is
- * wrong in both directions: routing re-probes a provider only when a request
- * is about to use it, so a verdict nobody has re-checked is only as current as
- * the moment it was observed, and a provider that has recovered reads
- * `Unavailable` until somebody looks at it again. The operator who wants to
- * know whether a provider is serving now should not have to wait for it to
- * fail first.
- *
- * So this measures the control where it happens: on every row of the Status
- * column, in the browser, as a control that is actually on the page and
- * actually reached when it is pressed. A control that renders but cannot be
- * pressed is not a control.
- */
+Every provider's Status badge offers a re-check, and the re-check asks
+Runtime to check that provider.
+
+The control used to ride only on a failing verdict, on the reasoning that a
+provider nobody has looked at is not worth looking at. That reasoning is
+wrong in both directions: routing re-probes a provider only when a request
+is about to use it, so a verdict nobody has re-checked is only as current as
+the moment it was observed, and a provider that has recovered reads
+`Unavailable` until somebody looks at it again. The operator who wants to
+know whether a provider is serving now should not have to wait for it to
+fail first.
+
+So this measures the control where it happens: on every row of the Status
+column, in the browser, as a control that is actually on the page and
+actually reached when it is pressed. A control that renders but cannot be
+pressed is not a control.
+*/
 test("every provider row offers a re-check control that asks Runtime to re-check it", async ({
   page
 }) => {

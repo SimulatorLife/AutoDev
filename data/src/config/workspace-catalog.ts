@@ -6,67 +6,73 @@ import { fileURLToPath } from "node:url";
 import { atomicWriteSync } from "../files/atomic-write.ts";
 
 /**
- * The canonical workspace catalog's schema, and the one place it is decided.
- *
- * `config/workspaces.json` is the target's owner for workspace identity,
- * enablement and scope, and every reader of that file -- the Console, the
- * Runtime, and the workflows that dispatch work to a workspace -- has to
- * agree on what the file means. Four readers once did not: the Data
- * repository, the CI's catalog script, the scheduler and the metrics
- * dashboard each decided validity on their own, and a catalog could be
- * refused by one and accepted by another.
- *
- * So the rules live here, once, and the readers call them.
- *
- * The rules are:
- *
- *   - the document declares `schema: "autodev-workspaces-v1"` and a
- *     `workspaces` array;
- *   - every entry carries all four of `id`, `baseBranch`, `enabled` and
- *     `agentRoles` -- a canonical file has one shape, not two;
- *   - `id` is an `owner/name` pair with no whitespace in either half;
- *   - `enabled` is a boolean;
- *   - `baseBranch` is a non-empty branch name;
- *   - `agentRoles` is either `null` (the workspace declares no role scope)
- *     or a list of distinct role names;
- *   - the ids are unique.
- *
- * Every string is normalised by trimming it, so two readers cannot disagree
- * about the *value* of a workspace even when they agree about its validity.
- *
- * The module is deliberately free of imports beyond Node's own: the CI runs
- * it straight out of a checkout of this repository, where no package is
- * installed.
- */
+The canonical workspace catalog's schema, and the one place it is decided.
 
-/** The schema the canonical catalog declares. */
+`config/workspaces.json` is the target's owner for workspace identity,
+enablement and scope, and every reader of that file -- the Console, the
+Runtime, and the workflows that dispatch work to a workspace -- has to
+agree on what the file means. Four readers once did not: the Data
+repository, the CI's catalog script, the scheduler and the metrics
+dashboard each decided validity on their own, and a catalog could be
+refused by one and accepted by another.
+
+So the rules live here, once, and the readers call them.
+
+The rules are:
+
+  - the document declares `schema: "autodev-workspaces-v1"` and a
+    `workspaces` array;
+  - every entry carries all four of `id`, `baseBranch`, `enabled` and
+    `agentRoles` -- a canonical file has one shape, not two;
+  - `id` is an `owner/name` pair with no whitespace in either half;
+  - `enabled` is a boolean;
+  - `baseBranch` is a non-empty branch name;
+  - `agentRoles` is either `null` (the workspace declares no role scope)
+    or a list of distinct role names;
+  - the ids are unique.
+
+Every string is normalised by trimming it, so two readers cannot disagree
+about the *value* of a workspace even when they agree about its validity.
+
+The module is deliberately free of imports beyond Node's own: the CI runs
+it straight out of a checkout of this repository, where no package is
+installed.
+*/
+
+/**
+The schema the canonical catalog declares.
+*/
 export const WORKSPACE_CATALOG_SCHEMA = "autodev-workspaces-v1";
 
-/** The identity form a workspace key takes: an owner and a name. */
+/**
+The identity form a workspace key takes: an owner and a name.
+*/
 export const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
 
 /**
- * One workspace as the catalog declares it.
- */
+One workspace as the catalog declares it.
+*/
 export interface WorkspaceCatalogEntry {
   readonly id: string;
   readonly baseBranch: string;
   readonly enabled: boolean;
-  /** Null means the workspace declares no role scope. */
+  /**
+  Null means the workspace declares no role scope.
+  */
   readonly agentRoles: readonly string[] | null;
 }
 
 /**
- * The validated catalog.
- */
+The validated catalog.
+*/
 export interface WorkspaceCatalog {
   readonly workspaces: ReadonlyMap<string, WorkspaceCatalogEntry>;
   readonly list: readonly WorkspaceCatalogEntry[];
 }
 
 /**
- * Why the catalog could not be used.
- */
+Why the catalog could not be used.
+*/
 export class WorkspaceCatalogError extends Error {
   constructor(message: string) {
     super(message);
@@ -79,12 +85,12 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * One entry's role scope.
- *
- * `null` is a scope of "no roles declared", and a list of names is a scope of
- * "these roles". A list that repeats a role is a scope that cannot be read:
- * the same role twice says nothing about which agents may run.
- */
+One entry's role scope.
+
+`null` is a scope of "no roles declared", and a list of names is a scope of
+"these roles". A list that repeats a role is a scope that cannot be read:
+the same role twice says nothing about which agents may run.
+*/
 function readAgentRoles(value: unknown, id: string): readonly string[] | null {
   if (value === null) return null;
   if (!Array.isArray(value)) {
@@ -116,12 +122,12 @@ function readAgentRoles(value: unknown, id: string): readonly string[] | null {
 }
 
 /**
- * One entry, normalised.
- *
- * Every fault is named, because a catalog that is refused is a file an
- * operator has to fix, and "the catalog is invalid" does not say which entry
- * or which field.
- */
+One entry, normalised.
+
+Every fault is named, because a catalog that is refused is a file an
+operator has to fix, and "the catalog is invalid" does not say which entry
+or which field.
+*/
 function readWorkspaceEntry(value: unknown): WorkspaceCatalogEntry {
   if (!isPlainRecord(value)) {
     throw new WorkspaceCatalogError(
@@ -149,12 +155,12 @@ function readWorkspaceEntry(value: unknown): WorkspaceCatalogEntry {
 }
 
 /**
- * The catalog a parsed document declares.
- *
- * The document is validated rather than coerced: a catalog that is not the
- * shape it claims to be is refused, because a reader that carried on would
- * be reporting a workspace the workflows cannot act on.
- */
+The catalog a parsed document declares.
+
+The document is validated rather than coerced: a catalog that is not the
+shape it claims to be is refused, because a reader that carried on would
+be reporting a workspace the workflows cannot act on.
+*/
 export function parseWorkspaceCatalog(raw: unknown): WorkspaceCatalog {
   if (
     !isPlainRecord(raw) ||
@@ -175,26 +181,26 @@ export function parseWorkspaceCatalog(raw: unknown): WorkspaceCatalog {
 }
 
 /**
- * The result of reading the catalog from disk.
- *
- * A catalog that is not there and a catalog that is there and is wrong are
- * different facts, and a reader that reported them the same way would say a
- * repository has no workspaces when it has a broken one.
- */
+The result of reading the catalog from disk.
+
+A catalog that is not there and a catalog that is there and is wrong are
+different facts, and a reader that reported them the same way would say a
+repository has no workspaces when it has a broken one.
+*/
 export interface WorkspaceCatalogRead {
   readonly status: "valid" | "invalid" | "unavailable";
   readonly workspaces: readonly WorkspaceCatalogEntry[];
   readonly reason?: string;
   /**
-   * The revision of the file the catalog was read from: the sha256 of its
-   * exact bytes, or null when the file could not be read at all.
-   */
+  The revision of the file the catalog was read from: the sha256 of its
+  exact bytes, or null when the file could not be read at all.
+  */
   readonly revision: string | null;
 }
 
 /**
- * The catalog at a path, or why it could not be read.
- */
+The catalog at a path, or why it could not be read.
+*/
 type CatalogLoad =
   | {
       readonly ok: true;
@@ -263,13 +269,13 @@ function loadCatalogFile(catalogPath: string): CatalogLoad {
 }
 
 /**
- * The catalog at a path, or why it could not be read.
- *
- * This is the reader for a surface that has to *report* the catalog rather
- * than act on it: it says which of the three facts is true -- the file is
- * there and valid, the file is there and wrong, or the file is not there --
- * instead of refusing to answer.
- */
+The catalog at a path, or why it could not be read.
+
+This is the reader for a surface that has to *report* the catalog rather
+than act on it: it says which of the three facts is true -- the file is
+there and valid, the file is there and wrong, or the file is not there --
+instead of refusing to answer.
+*/
 export function readWorkspaceCatalogFile(
   catalogPath: string
 ): WorkspaceCatalogRead {
@@ -290,12 +296,12 @@ export function readWorkspaceCatalogFile(
 }
 
 /**
- * The catalog at a path, or the reason it could not be read.
- *
- * This is the reader for a surface that has to *act* on the catalog: a
- * dispatch that cannot name its target fails closed rather than dispatching
- * into a catalog nobody validated.
- */
+The catalog at a path, or the reason it could not be read.
+
+This is the reader for a surface that has to *act* on the catalog: a
+dispatch that cannot name its target fails closed rather than dispatching
+into a catalog nobody validated.
+*/
 export function loadWorkspaceCatalog(catalogPath: string): WorkspaceCatalog {
   const load = loadCatalogFile(catalogPath);
   if (load.ok) return load.catalog;
@@ -303,21 +309,21 @@ export function loadWorkspaceCatalog(catalogPath: string): WorkspaceCatalog {
 }
 
 /**
- * The revision of a catalog file: the sha256 of its exact bytes.
- *
- * A revision is a handle, not a summary. Two readers that read the same bytes
- * get the same string, and a writer that was handed the revision from an
- * earlier read can tell that the file moved before its write landed. It is
- * the same handle the Console's other canonical-source writes compare
- * against, so one write surface speaks one vocabulary.
- */
+The revision of a catalog file: the sha256 of its exact bytes.
+
+A revision is a handle, not a summary. Two readers that read the same bytes
+get the same string, and a writer that was handed the revision from an
+earlier read can tell that the file moved before its write landed. It is
+the same handle the Console's other canonical-source writes compare
+against, so one write surface speaks one vocabulary.
+*/
 export function workspaceCatalogRevision(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
 /**
- * The revision of the catalog file at a path, or null when it cannot be read.
- */
+The revision of the catalog file at a path, or null when it cannot be read.
+*/
 export function readWorkspaceCatalogRevision(
   catalogPath: string
 ): string | null {
@@ -329,13 +335,13 @@ export function readWorkspaceCatalogRevision(
 }
 
 /**
- * The fields one workspace update may change.
- *
- * `id` is not among them: a workspace's identity is what the catalog is
- * indexed by, and renaming one is a different operation from configuring it.
- * A field that is absent is not written; a field that is present replaces the
- * value the catalog holds.
- */
+The fields one workspace update may change.
+
+`id` is not among them: a workspace's identity is what the catalog is
+indexed by, and renaming one is a different operation from configuring it.
+A field that is absent is not written; a field that is present replaces the
+value the catalog holds.
+*/
 export interface WorkspaceCatalogUpdate {
   readonly enabled?: boolean | undefined;
   readonly baseBranch?: string | undefined;
@@ -343,42 +349,48 @@ export interface WorkspaceCatalogUpdate {
 }
 
 /**
- * One field of a workspace's canonical configuration.
- *
- * The names are the catalog's own, so the write reports what it changed in the
- * vocabulary the file uses rather than in a second vocabulary the caller has to
- * translate.
- */
+One field of a workspace's canonical configuration.
+
+The names are the catalog's own, so the write reports what it changed in the
+vocabulary the file uses rather than in a second vocabulary the caller has to
+translate.
+*/
 export type WorkspaceCatalogField = "enabled" | "baseBranch" | "agentRoles";
 
 /**
- * What a write to the catalog did.
- */
+What a write to the catalog did.
+*/
 export interface WorkspaceCatalogWrite {
-  /** The revision of the catalog after the write. */
+  /**
+  The revision of the catalog after the write.
+  */
   readonly revision: string;
-  /** The workspace as the catalog now declares it. */
+  /**
+  The workspace as the catalog now declares it.
+  */
   readonly workspace: WorkspaceCatalogEntry;
-  /** Whether the write moved the catalog. */
+  /**
+  Whether the write moved the catalog.
+  */
   readonly changed: boolean;
   /**
-   * The fields whose value the write actually changed.
-   *
-   * A write that sets a field to the value the catalog already holds changed
-   * nothing, so it is not reported as a change: the operator is told what moved,
-   * not what they asked for. The fields are the catalog's own names, because
-   * the write is the only place that knows which of them moved.
-   */
+  The fields whose value the write actually changed.
+  
+  A write that sets a field to the value the catalog already holds changed
+  nothing, so it is not reported as a change: the operator is told what moved,
+  not what they asked for. The fields are the catalog's own names, because
+  the write is the only place that knows which of them moved.
+  */
   readonly changedFields: readonly WorkspaceCatalogField[];
 }
 
 /**
- * The write was decided on a catalog that has since moved.
- *
- * The write is refused rather than applied over the newer catalog, because a
- * write that overwrites a change it never saw is how two operators lose each
- * other's work.
- */
+The write was decided on a catalog that has since moved.
+
+The write is refused rather than applied over the newer catalog, because a
+write that overwrites a change it never saw is how two operators lose each
+other's work.
+*/
 export class WorkspaceCatalogConflictError extends Error {
   constructor(message: string) {
     super(message);
@@ -387,8 +399,8 @@ export class WorkspaceCatalogConflictError extends Error {
 }
 
 /**
- * The write could not be expressed, or the catalog could not be written.
- */
+The write could not be expressed, or the catalog could not be written.
+*/
 export class WorkspaceCatalogValidationError extends Error {
   constructor(message: string) {
     super(message);
@@ -397,8 +409,8 @@ export class WorkspaceCatalogValidationError extends Error {
 }
 
 /**
- * The catalog does not declare the workspace the write names.
- */
+The catalog does not declare the workspace the write names.
+*/
 export class WorkspaceCatalogUnknownWorkspaceError extends Error {
   constructor(message: string) {
     super(message);
@@ -406,10 +418,14 @@ export class WorkspaceCatalogUnknownWorkspaceError extends Error {
   }
 }
 
-/** The shape of a revision a write may name. */
+/**
+The shape of a revision a write may name.
+*/
 const REVISION_PATTERN = /^[a-f0-9]{64}$/u;
 
-/** The change a write asks for, validated against the catalog's own rules. */
+/**
+The change a write asks for, validated against the catalog's own rules.
+*/
 interface WorkspaceCatalogChange {
   readonly enabled?: boolean | undefined;
   readonly baseBranch?: string | undefined;
@@ -417,11 +433,11 @@ interface WorkspaceCatalogChange {
 }
 
 /**
- * The enablement flag a write asks for.
- *
- * The rules are the ones `parseWorkspaceCatalog` enforces, checked here so a
- * write that could not be expressed is refused before it touches the file.
- */
+The enablement flag a write asks for.
+
+The rules are the ones `parseWorkspaceCatalog` enforces, checked here so a
+write that could not be expressed is refused before it touches the file.
+*/
 function readEnabledFlag(value: unknown): boolean {
   if (typeof value !== "boolean") {
     throw new WorkspaceCatalogValidationError(
@@ -431,7 +447,9 @@ function readEnabledFlag(value: unknown): boolean {
   return value;
 }
 
-/** The base branch a write asks for. */
+/**
+The base branch a write asks for.
+*/
 function readBaseBranch(value: unknown): string {
   if (typeof value !== "string") {
     throw new WorkspaceCatalogValidationError(
@@ -448,12 +466,12 @@ function readBaseBranch(value: unknown): string {
 }
 
 /**
- * The role scope a write asks for.
- *
- * A scope that is not configured and a scope that names no role are different
- * facts, and a scope that names the same role twice is not a scope at all:
- * the catalog's own parser refuses all three, and so does this.
- */
+The role scope a write asks for.
+
+A scope that is not configured and a scope that names no role are different
+facts, and a scope that names the same role twice is not a scope at all:
+the catalog's own parser refuses all three, and so does this.
+*/
 function readRoleScope(value: unknown): readonly string[] | null {
   if (value === null) return null;
   if (!Array.isArray(value)) {
@@ -485,11 +503,11 @@ function readRoleScope(value: unknown): readonly string[] | null {
 }
 
 /**
- * The change a write asks for, validated against the catalog's own rules.
- *
- * The rules are the ones `parseWorkspaceCatalog` enforces, checked here so a
- * write that could not be expressed is refused before it touches the file.
- */
+The change a write asks for, validated against the catalog's own rules.
+
+The rules are the ones `parseWorkspaceCatalog` enforces, checked here so a
+write that could not be expressed is refused before it touches the file.
+*/
 function readCatalogUpdate(
   update: WorkspaceCatalogUpdate
 ): WorkspaceCatalogChange {
@@ -519,7 +537,9 @@ function readCatalogUpdate(
   return change;
 }
 
-/** The catalog's bytes, or the reason they could not be read. */
+/**
+The catalog's bytes, or the reason they could not be read.
+*/
 function readCatalogBytes(catalogPath: string): Buffer {
   try {
     return readFileSync(catalogPath);
@@ -533,12 +553,12 @@ function readCatalogBytes(catalogPath: string): Buffer {
 }
 
 /**
- * The catalog's document, checked against the catalog's own rules.
- *
- * A catalog that cannot be read as a catalog is not written: the write would
- * land in a file the catalog's own parser refuses, and the next reader would
- * find a broken catalog where a working one was.
- */
+The catalog's document, checked against the catalog's own rules.
+
+A catalog that cannot be read as a catalog is not written: the write would
+land in a file the catalog's own parser refuses, and the next reader would
+find a broken catalog where a working one was.
+*/
 function readCatalogDocument(bytes: Buffer): Record<string, unknown> {
   let raw: unknown;
   try {
@@ -565,7 +585,9 @@ function readCatalogDocument(bytes: Buffer): Record<string, unknown> {
   return raw;
 }
 
-/** The catalog's entry for one workspace. */
+/**
+The catalog's entry for one workspace.
+*/
 function findCatalogEntry(
   document: Record<string, unknown>,
   workspaceId: string
@@ -587,13 +609,13 @@ function findCatalogEntry(
 }
 
 /**
- * Replace the catalog with the document the write produced.
- *
- * The atomic replacement means a reader never sees a half-written catalog.
- * The catalog keeps the permissions it had: a replacement is a new file, and a
- * file that came back with different permissions would be a change the
- * operator never asked for.
- */
+Replace the catalog with the document the write produced.
+
+The atomic replacement means a reader never sees a half-written catalog.
+The catalog keeps the permissions it had: a replacement is a new file, and a
+file that came back with different permissions would be a change the
+operator never asked for.
+*/
 function replaceCatalogFile(catalogPath: string, text: string): void {
   try {
     atomicWriteSync(catalogPath, text, {
@@ -609,18 +631,18 @@ function replaceCatalogFile(catalogPath: string, text: string): void {
 }
 
 /**
- * Write one workspace's configuration to the canonical catalog.
- *
- * The write is a compare-and-swap on the catalog's revision: the caller names
- * the revision it decided on, and a catalog that has moved since is refused
- * rather than overwritten. The file is rewritten in place -- same shape, same
- * key order, same indentation -- and replaced atomically, so a reader never
- * sees a half-written catalog and a diff shows the fields that changed.
- *
- * The catalog's own rules are the rules this write obeys: an update that
- * could not be expressed is refused before the file is touched, and the
- * document the write produces is validated again before it lands.
- */
+Write one workspace's configuration to the canonical catalog.
+
+The write is a compare-and-swap on the catalog's revision: the caller names
+the revision it decided on, and a catalog that has moved since is refused
+rather than overwritten. The file is rewritten in place -- same shape, same
+key order, same indentation -- and replaced atomically, so a reader never
+sees a half-written catalog and a diff shows the fields that changed.
+
+The catalog's own rules are the rules this write obeys: an update that
+could not be expressed is refused before the file is touched, and the
+document the write produces is validated again before it lands.
+*/
 export function updateWorkspaceCatalogEntry(
   catalogPath: string,
   workspaceId: string,
@@ -694,13 +716,13 @@ export function updateWorkspaceCatalogEntry(
 }
 
 /**
- * Whether two role scopes name the same roles in the same order.
- *
- * A scope is a list, and the list is the scope: a scope that names the same
- * roles in a different order is a different list, and the write reports it as
- * the change it is. The current scope is read from the document as it stands,
- * so it is whatever the catalog holds -- a list of names, or null.
- */
+Whether two role scopes name the same roles in the same order.
+
+A scope is a list, and the list is the scope: a scope that names the same
+roles in a different order is a different list, and the write reports it as
+the change it is. The current scope is read from the document as it stands,
+so it is whatever the catalog holds -- a list of names, or null.
+*/
 function sameRoleScope(
   current: unknown,
   next: readonly string[] | null
@@ -714,14 +736,14 @@ function sameRoleScope(
 }
 
 /**
- * Whether a workspace's role scope admits an agent.
- *
- * A scope of `null` means the workspace declares no role scope, so every
- * agent may work there; a scope that names roles admits only those. The
- * catalog's own type says so ("null means workspace role scope has not been
- * configured"), and the scheduler and the runtime's configuration health
- * already read it that way.
- */
+Whether a workspace's role scope admits an agent.
+
+A scope of `null` means the workspace declares no role scope, so every
+agent may work there; a scope that names roles admits only those. The
+catalog's own type says so ("null means workspace role scope has not been
+configured"), and the scheduler and the runtime's configuration health
+already read it that way.
+*/
 export function workspaceAdmitsRole(
   workspace: WorkspaceCatalogEntry,
   agentRole: string
@@ -731,15 +753,15 @@ export function workspaceAdmitsRole(
 }
 
 /**
- * The workspace a target repository names, when it may be worked on.
- *
- * Every reason is a refusal: an unknown repository, a disabled one, a base
- * branch that does not match the registry and a role the workspace does not
- * allow are all "not this workspace".
- */
+The workspace a target repository names, when it may be worked on.
+
+Every reason is a refusal: an unknown repository, a disabled one, a base
+branch that does not match the registry and a role the workspace does not
+allow are all "not this workspace".
+*/
 export function resolveTarget(
   catalog: WorkspaceCatalog,
-  repoId: string,
+  repositoryId: string,
   options: {
     readonly baseBranch?: string | undefined;
     readonly agentRole?: string | undefined;
@@ -750,20 +772,20 @@ export function resolveTarget(
       readonly ok: false;
       readonly reason: string;
     } {
-  if (typeof repoId !== "string" || !WORKSPACE_ID_PATTERN.test(repoId)) {
+  if (typeof repositoryId !== "string" || !WORKSPACE_ID_PATTERN.test(repositoryId)) {
     return {
       ok: false,
       reason: "target_repository must use the owner/name form."
     };
   }
-  const workspace = catalog.workspaces.get(repoId);
+  const workspace = catalog.workspaces.get(repositoryId);
   if (!workspace) {
-    return { ok: false, reason: `Unconfigured target repository: ${repoId}` };
+    return { ok: false, reason: `Unconfigured target repository: ${repositoryId}` };
   }
   if (!workspace.enabled) {
     return {
       ok: false,
-      reason: `target_repository is disabled in the canonical workspace catalog: ${repoId}`
+      reason: `target_repository is disabled in the canonical workspace catalog: ${repositoryId}`
     };
   }
   const { baseBranch, agentRole } = options;
@@ -774,7 +796,7 @@ export function resolveTarget(
   ) {
     return {
       ok: false,
-      reason: `base_branch must match the Workspace registry for ${repoId}.`
+      reason: `base_branch must match the Workspace registry for ${repositoryId}.`
     };
   }
   if (
@@ -784,49 +806,49 @@ export function resolveTarget(
   ) {
     return {
       ok: false,
-      reason: `agent '${agentRole}' is not allowed for workspace ${repoId}.`
+      reason: `agent '${agentRole}' is not allowed for workspace ${repositoryId}.`
     };
   }
   return { ok: true, workspace };
 }
 
 /**
- * The workspace a prompt repository names, when it may be read from.
- */
+The workspace a prompt repository names, when it may be read from.
+*/
 export function resolvePrompt(
   catalog: WorkspaceCatalog,
-  repoId: string
+  repositoryId: string
 ):
   | { readonly ok: true; readonly workspace: WorkspaceCatalogEntry }
   | {
       readonly ok: false;
       readonly reason: string;
     } {
-  if (typeof repoId !== "string" || !WORKSPACE_ID_PATTERN.test(repoId)) {
+  if (typeof repositoryId !== "string" || !WORKSPACE_ID_PATTERN.test(repositoryId)) {
     return {
       ok: false,
       reason: "prompt_repository must use the owner/name form."
     };
   }
-  const workspace = catalog.workspaces.get(repoId);
+  const workspace = catalog.workspaces.get(repositoryId);
   if (!workspace) {
     return {
       ok: false,
-      reason: `prompt_repository is not present in the canonical workspace catalog: ${repoId}`
+      reason: `prompt_repository is not present in the canonical workspace catalog: ${repositoryId}`
     };
   }
   if (!workspace.enabled) {
     return {
       ok: false,
-      reason: `prompt_repository is not enabled in the canonical workspace catalog: ${repoId}`
+      reason: `prompt_repository is not enabled in the canonical workspace catalog: ${repositoryId}`
     };
   }
   return { ok: true, workspace };
 }
 
 /**
- * The ids of the workspaces a scheduled run may dispatch to.
- */
+The ids of the workspaces a scheduled run may dispatch to.
+*/
 export function listEnabled(catalog: WorkspaceCatalog): readonly string[] {
   return catalog.list
     .filter((workspace) => workspace.enabled)
@@ -865,8 +887,8 @@ function runCli(argv: readonly string[]): void {
       return;
     }
     case "resolve-target": {
-      const [catalogPath, repoId, ...optionTokens] = rest;
-      if (!catalogPath || !repoId) {
+      const [catalogPath, repositoryId, ...optionTokens] = rest;
+      if (!catalogPath || !repositoryId) {
         throw new WorkspaceCatalogError(
           "resolve-target requires <catalogPath> <repoId>"
         );
@@ -874,7 +896,7 @@ function runCli(argv: readonly string[]): void {
       const catalog = loadWorkspaceCatalog(catalogPath);
       const result = resolveTarget(
         catalog,
-        repoId,
+        repositoryId,
         parseCliOptions(optionTokens)
       );
       if (!result.ok) {
@@ -884,14 +906,14 @@ function runCli(argv: readonly string[]): void {
       return;
     }
     case "resolve-prompt": {
-      const [catalogPath, repoId] = rest;
-      if (!catalogPath || !repoId) {
+      const [catalogPath, repositoryId] = rest;
+      if (!catalogPath || !repositoryId) {
         throw new WorkspaceCatalogError(
           "resolve-prompt requires <catalogPath> <repoId>"
         );
       }
       const catalog = loadWorkspaceCatalog(catalogPath);
-      const result = resolvePrompt(catalog, repoId);
+      const result = resolvePrompt(catalog, repositoryId);
       if (!result.ok) {
         throw new WorkspaceCatalogError(result.reason);
       }

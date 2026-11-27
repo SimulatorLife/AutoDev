@@ -3,56 +3,68 @@ import React from "react";
 import { EMPTY_INLINE_CLASS, EmptyState } from "../status/EmptyState.ts";
 
 /**
- * Console horizontal bar chart.
- *
- * The target state requires a charts primitive and says charts belong on
- * usage, history and observability surfaces. This chart needs no client island:
- * the server can render its values and proportional bar geometry directly.
- *
- * The bars are elements rather than SVG paths, which is what makes that
- * possible: the value encoding is a percentage width, and the label and the
- * value stay real text — selectable, translatable, and readable by assistive
- * technology in order, instead of being geometry a screen reader has to be told
- * about. The list is the chart's own semantics; the bar is the shape on top of
- * it, so no `role="img"` summary is needed and nothing is hidden behind an
- * accessible name.
- *
- * The bar width is the one length here that cannot be a Tailwind class, because
- * it comes from the data. It is written as an inline percentage style, the same
- * way `DataTable` writes a column's resolved weight.
- */
+Console horizontal bar chart.
+
+The target state requires a charts primitive and says charts belong on
+usage, history and observability surfaces. This chart needs no client island:
+the server can render its values and proportional bar geometry directly.
+
+The bars are elements rather than SVG paths, which is what makes that
+possible: the value encoding is a percentage width, and the label and the
+value stay real text — selectable, translatable, and readable by assistive
+technology in order, instead of being geometry a screen reader has to be told
+about. The list is the chart's own semantics; the bar is the shape on top of
+it, so no `role="img"` summary is needed and nothing is hidden behind an
+accessible name.
+
+The bar width is the one length here that cannot be a Tailwind class, because
+it comes from the data. It is written as an inline percentage style, the same
+way `DataTable` writes a column's resolved weight.
+*/
 
 export interface BarChartDatum {
-  /** Dimension value, already rendered for display (e.g. "Not attributed"). */
+  /**
+  Dimension value, already rendered for display (e.g. "Not attributed").
+  */
   readonly label: string;
-  /** Optional interactive label when the dimension is itself an instant. */
+  /**
+  Optional interactive label when the dimension is itself an instant.
+  */
   readonly displayLabel?: React.ReactNode | undefined;
-  /** Drives the bar length. Never used as a label — the label is `label`. */
+  /**
+  Drives the bar length. Never used as a label — the label is `label`.
+  */
   readonly value: number;
-  /** Pre-formatted so the caller's own formatting rules stay authoritative. */
+  /**
+  Pre-formatted so the caller's own formatting rules stay authoritative.
+  */
   readonly valueText: string;
 }
 
 export interface BarChartProps {
   /**
-   * `null` means the source was not observed, which is different from "observed
-   * and empty". The two never collapse into an empty chart, because an empty
-   * chart reads as a measurement of zero.
-   */
+  `null` means the source was not observed, which is different from "observed
+  and empty". The two never collapse into an empty chart, because an empty
+  chart reads as a measurement of zero.
+  */
   readonly data: readonly BarChartDatum[] | null;
   readonly label: string;
   readonly notObservedMessage: string;
   readonly emptyMessage: string;
-  /** Bar fill, e.g. `bg-chart-1`. One series, so one colour for every bar. */
+  /**
+  Bar fill, e.g. `bg-chart-1`. One series, so one colour for every bar.
+  */
   readonly barClass: string;
-  /** Applied to the value text; defaults to the foreground token. */
+  /**
+  Applied to the value text; defaults to the foreground token.
+  */
   readonly valueClass?: string | undefined;
 }
 
 /**
- * A bar narrower than this is invisible and reads as a missing bar rather than a
- * small one, so it is floored — the exact value is printed beside it either way.
- */
+A bar narrower than this is invisible and reads as a missing bar rather than a
+small one, so it is floored — the exact value is printed beside it either way.
+*/
 const MIN_BAR_WIDTH_PERCENT = 1.5;
 
 export function BarChart({

@@ -13,7 +13,7 @@ import {
   writeLine
 } from "@simulatorlife/autodev-runtime/shared/output";
 
-import { parseArgs, requiredArg } from "./cli-args.ts";
+import { parseArgs as parseArguments, requiredArg as requiredArgument } from "./cli-args.ts";
 import { ConfigError, parseTomlFile, type TomlTable } from "./config-files.ts";
 
 const LAUNCH_KEYS = [
@@ -63,7 +63,7 @@ function renderServerEntry(
     }
     const headers = launch.http_headers;
     launch.http_headers = {
-      ...(isRecord(headers) ? (headers as Record<string, string>) : {}),
+      ...(isRecord(headers) && (headers as Record<string, string>)),
       ...environmentHeaders
     };
   }
@@ -71,9 +71,9 @@ function renderServerEntry(
 }
 
 /**
- * Render the canonical MCP server catalogue directly from `.rulesync/mcp.jsonc`
- * (without routing through a temporary Codex `config.toml` projection).
- */
+Render the canonical MCP server catalogue directly from `.rulesync/mcp.jsonc`
+(without routing through a temporary Codex `config.toml` projection).
+*/
 export function renderBridgeMcpCatalogue(source: string): string {
   let servers: Record<string, unknown>;
   if (source.endsWith(".jsonc") || source.endsWith(".json")) {
@@ -169,10 +169,10 @@ export function runBridgeMcpCatalogue(
 
 if (isEntryPoint(import.meta.url)) {
   try {
-    const { values, flags } = parseArgs(process.argv.slice(2));
+    const { values, flags } = parseArguments(process.argv.slice(2));
     process.exitCode = runBridgeMcpCatalogue(
-      requiredArg(values, "mcp-source"),
-      requiredArg(values, "output"),
+      requiredArgument(values, "mcp-source"),
+      requiredArgument(values, "output"),
       flags.has("check")
     );
   } catch (error) {

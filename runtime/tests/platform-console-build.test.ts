@@ -15,11 +15,11 @@ import test from "node:test";
 import {
   buildConsole,
   computeConsoleBuildFingerprint,
-  type ConsoleBuildDeps,
+  type ConsoleBuildDeps as ConsoleBuildDependencies,
   runConsoleBuildCli
 } from "../src/platform/console-build.ts";
 
-function withTempRepo<T>(run: (repositoryRoot: string) => T): T {
+function withTemporaryRepository<T>(run: (repositoryRoot: string) => T): T {
   const repositoryRoot = mkdtempSync(
     path.join(tmpdir(), "autodev-console-build-")
   );
@@ -31,8 +31,8 @@ function withTempRepo<T>(run: (repositoryRoot: string) => T): T {
 }
 
 function dependencies(
-  overrides: Partial<ConsoleBuildDeps> = {}
-): ConsoleBuildDeps {
+  overrides: Partial<ConsoleBuildDependencies> = {}
+): ConsoleBuildDependencies {
   return {
     fileExists: existsSync,
     remove: (filePath) => rmSync(filePath, { recursive: true, force: true }),
@@ -60,7 +60,7 @@ function createConsoleLayout(repositoryRoot: string): string {
 }
 
 test("Console build publishes a complete staged build after preserving the old artifact", () =>
-  withTempRepo((repositoryRoot) => {
+  withTemporaryRepository((repositoryRoot) => {
     const consoleRoot = createConsoleLayout(repositoryRoot);
     const current = path.join(consoleRoot, ".next");
     mkdirSync(current);
@@ -75,9 +75,9 @@ test("Console build publishes a complete staged build after preserving the old a
     buildConsole(
       { repositoryRoot, nodeBin: "/fixture/node" },
       dependencies({
-        run: (executable, args, cwd, env) => {
-          commands.push({ executable, args, cwd, env });
-          const staging = env.AUTODEV_CONSOLE_BUILD_DIST_DIR;
+        run: (executable, arguments_, cwd, environment) => {
+          commands.push({ executable, args: arguments_, cwd, env: environment });
+          const staging = environment.AUTODEV_CONSOLE_BUILD_DIST_DIR;
           assert.match(staging ?? "", /^\.next-staging-\d+$/u);
           const stagingRoot = path.join(consoleRoot, staging ?? "");
           mkdirSync(path.join(stagingRoot, "types"), { recursive: true });
@@ -132,7 +132,7 @@ test("Console build publishes a complete staged build after preserving the old a
   }));
 
 test("a failed Next build leaves the serving artifact intact and removes its staging output", () =>
-  withTempRepo((repositoryRoot) => {
+  withTemporaryRepository((repositoryRoot) => {
     const consoleRoot = createConsoleLayout(repositoryRoot);
     const current = path.join(consoleRoot, ".next");
     mkdirSync(current);
@@ -149,8 +149,8 @@ test("a failed Next build leaves the serving artifact intact and removes its sta
         buildConsole(
           { repositoryRoot },
           dependencies({
-            run: (_executable, _args, cwd, env) => {
-              const staging = env.AUTODEV_CONSOLE_BUILD_DIST_DIR ?? "";
+            run: (_executable, _arguments, cwd, environment) => {
+              const staging = environment.AUTODEV_CONSOLE_BUILD_DIST_DIR ?? "";
               mkdirSync(path.join(cwd, staging), { recursive: true });
               writeFileSync(
                 path.join(cwd, "next-env.d.ts"),
@@ -179,7 +179,7 @@ test("a failed Next build leaves the serving artifact intact and removes its sta
   }));
 
 test("Next must emit a BUILD_ID before the staged artifact can replace production", () =>
-  withTempRepo((repositoryRoot) => {
+  withTemporaryRepository((repositoryRoot) => {
     const consoleRoot = createConsoleLayout(repositoryRoot);
     const current = path.join(consoleRoot, ".next");
     mkdirSync(current);
@@ -196,7 +196,7 @@ test("Next must emit a BUILD_ID before the staged artifact can replace productio
   }));
 
 test("Console build normalizes tsconfig.json, cleans dead staging dirs, and seeds incremental caches", () =>
-  withTempRepo((repositoryRoot) => {
+  withTemporaryRepository((repositoryRoot) => {
     const consoleRoot = createConsoleLayout(repositoryRoot);
     const current = path.join(consoleRoot, ".next");
     mkdirSync(path.join(current, "cache", "webpack"), { recursive: true });
@@ -236,24 +236,24 @@ test("Console build normalizes tsconfig.json, cleans dead staging dirs, and seed
     );
 
     let observedPreBuildTsconfig = "";
-    let observedSeededWebpackCache = false;
-    let observedSeededTsbuildinfo = false;
-    let observedSeededRscinfo = false;
+    let isObservedSeededWebpackCache = false;
+    let isObservedSeededTsbuildinfo = false;
+    let isObservedSeededRscinfo = false;
 
     buildConsole(
       { repositoryRoot, nodeBin: "/fixture/node" },
       dependencies({
-        run: (_executable, _args, cwd, env) => {
+        run: (_executable, _arguments, cwd, environment) => {
           observedPreBuildTsconfig = readFileSync(tsconfigPath, "utf8");
-          const staging = env.AUTODEV_CONSOLE_BUILD_DIST_DIR ?? "";
+          const staging = environment.AUTODEV_CONSOLE_BUILD_DIST_DIR ?? "";
           const stagingRoot = path.join(cwd, staging);
-          observedSeededWebpackCache = existsSync(
+          isObservedSeededWebpackCache = existsSync(
             path.join(stagingRoot, "cache", "webpack", "pack.gz")
           );
-          observedSeededTsbuildinfo = existsSync(
+          isObservedSeededTsbuildinfo = existsSync(
             path.join(stagingRoot, "cache", ".tsbuildinfo")
           );
-          observedSeededRscinfo = existsSync(
+          isObservedSeededRscinfo = existsSync(
             path.join(stagingRoot, "cache", ".rscinfo")
           );
           mkdirSync(path.join(stagingRoot, "types"), { recursive: true });
@@ -288,9 +288,9 @@ test("Console build normalizes tsconfig.json, cleans dead staging dirs, and seed
       false,
       "tsconfig.json must be cleaned of stale staging type paths before Next runs"
     );
-    assert.equal(observedSeededWebpackCache, true);
-    assert.equal(observedSeededTsbuildinfo, true);
-    assert.equal(observedSeededRscinfo, true);
+    assert.equal(isObservedSeededWebpackCache, true);
+    assert.equal(isObservedSeededTsbuildinfo, true);
+    assert.equal(isObservedSeededRscinfo, true);
     const finalTsconfig = JSON.parse(readFileSync(tsconfigPath, "utf8")) as {
       include: string[];
     };
@@ -306,7 +306,7 @@ test("Console build normalizes tsconfig.json, cleans dead staging dirs, and seed
   }));
 
 test("a failed Next build restores seeded caches and tsconfig.json to the serving artifact", () =>
-  withTempRepo((repositoryRoot) => {
+  withTemporaryRepository((repositoryRoot) => {
     const consoleRoot = createConsoleLayout(repositoryRoot);
     const current = path.join(consoleRoot, ".next");
     mkdirSync(path.join(current, "cache", "webpack"), { recursive: true });
@@ -335,8 +335,8 @@ test("a failed Next build restores seeded caches and tsconfig.json to the servin
         buildConsole(
           { repositoryRoot },
           dependencies({
-            run: (_executable, _args, cwd, env) => {
-              const staging = env.AUTODEV_CONSOLE_BUILD_DIST_DIR ?? "";
+            run: (_executable, _arguments, cwd, environment) => {
+              const staging = environment.AUTODEV_CONSOLE_BUILD_DIST_DIR ?? "";
               writeFileSync(
                 tsconfigPath,
                 JSON.stringify({ include: [`${staging}/types/**/*.ts`] })
@@ -361,20 +361,20 @@ test("a failed Next build restores seeded caches and tsconfig.json to the servin
   }));
 
 test("Console build skips Next compilation when tracked inputs and stamp are unchanged, and rebuilds on change or force", () =>
-  withTempRepo((repositoryRoot) => {
+  withTemporaryRepository((repositoryRoot) => {
     const consoleRoot = createConsoleLayout(repositoryRoot);
-    const consoleSrc = path.join(consoleRoot, "src");
-    mkdirSync(consoleSrc, { recursive: true });
-    const entryFile = path.join(consoleSrc, "index.ts");
+    const consoleSource = path.join(consoleRoot, "src");
+    mkdirSync(consoleSource, { recursive: true });
+    const entryFile = path.join(consoleSource, "index.ts");
     writeFileSync(entryFile, "export const consoleVersion = 1;\n");
 
     let buildCount = 0;
-    const deps = dependencies({
-      run: (_executable, _args, cwd, env) => {
+    const dependencies_ = dependencies({
+      run: (_executable, _arguments, cwd, environment) => {
         buildCount += 1;
         const stagingRoot = path.join(
           cwd,
-          env.AUTODEV_CONSOLE_BUILD_DIST_DIR ?? ""
+          environment.AUTODEV_CONSOLE_BUILD_DIST_DIR ?? ""
         );
         mkdirSync(stagingRoot, { recursive: true });
         writeFileSync(
@@ -384,13 +384,13 @@ test("Console build skips Next compilation when tracked inputs and stamp are unc
       }
     });
 
-    buildConsole({ repositoryRoot }, deps);
+    buildConsole({ repositoryRoot }, dependencies_);
     assert.equal(buildCount, 1);
     const stampPath = path.join(consoleRoot, ".next", ".autodev-build-stamp");
     assert.equal(existsSync(stampPath), true);
     const firstStamp = readFileSync(stampPath, "utf8");
 
-    buildConsole({ repositoryRoot }, deps);
+    buildConsole({ repositoryRoot }, dependencies_);
     assert.equal(
       buildCount,
       1,
@@ -398,7 +398,7 @@ test("Console build skips Next compilation when tracked inputs and stamp are unc
     );
 
     writeFileSync(entryFile, "export const consoleVersion = 2;\n");
-    buildConsole({ repositoryRoot }, deps);
+    buildConsole({ repositoryRoot }, dependencies_);
     assert.equal(
       buildCount,
       2,
@@ -406,12 +406,12 @@ test("Console build skips Next compilation when tracked inputs and stamp are unc
     );
     assert.notEqual(readFileSync(stampPath, "utf8"), firstStamp);
 
-    buildConsole({ repositoryRoot, forceRebuild: true }, deps);
+    buildConsole({ repositoryRoot, forceRebuild: true }, dependencies_);
     assert.equal(buildCount, 3, "forceRebuild must bypass the build stamp");
   }));
 
 test("Console build clears a stale build lock from a dead process and releases the lock", () =>
-  withTempRepo((repositoryRoot) => {
+  withTemporaryRepository((repositoryRoot) => {
     const consoleRoot = createConsoleLayout(repositoryRoot);
     const lockDir = path.join(consoleRoot, ".next-build.lock");
     mkdirSync(lockDir, { recursive: true });
@@ -422,11 +422,11 @@ test("Console build clears a stale build lock from a dead process and releases t
       { repositoryRoot },
       dependencies({
         isProcessAlive: () => false,
-        run: (_executable, _args, cwd, env) => {
+        run: (_executable, _arguments, cwd, environment) => {
           buildCount += 1;
           const stagingRoot = path.join(
             cwd,
-            env.AUTODEV_CONSOLE_BUILD_DIST_DIR ?? ""
+            environment.AUTODEV_CONSOLE_BUILD_DIST_DIR ?? ""
           );
           mkdirSync(stagingRoot, { recursive: true });
           writeFileSync(
@@ -446,7 +446,7 @@ test("Console build clears a stale build lock from a dead process and releases t
   }));
 
 test("Console build waits for an active lock and reuses the published stamp", () =>
-  withTempRepo((repositoryRoot) => {
+  withTemporaryRepository((repositoryRoot) => {
     const consoleRoot = createConsoleLayout(repositoryRoot);
     const lockDir = path.join(consoleRoot, ".next-build.lock");
     mkdirSync(lockDir, { recursive: true });
@@ -487,7 +487,7 @@ test("Console build waits for an active lock and reuses the published stamp", ()
   }));
 
 test("Console build normalizes Next 16 dev/types staging entries in tsconfig.json", () =>
-  withTempRepo((repositoryRoot) => {
+  withTemporaryRepository((repositoryRoot) => {
     const consoleRoot = createConsoleLayout(repositoryRoot);
     const tsconfigPath = path.join(consoleRoot, "tsconfig.json");
     writeFileSync(
@@ -511,8 +511,8 @@ test("Console build normalizes Next 16 dev/types staging entries in tsconfig.jso
     buildConsole(
       { repositoryRoot, nodeBin: "/fixture/node" },
       dependencies({
-        run: (_executable, _args, cwd, env) => {
-          const staging = env.AUTODEV_CONSOLE_BUILD_DIST_DIR ?? "";
+        run: (_executable, _arguments, cwd, environment) => {
+          const staging = environment.AUTODEV_CONSOLE_BUILD_DIST_DIR ?? "";
           preBuildInclude = (
             JSON.parse(readFileSync(tsconfigPath, "utf8")) as {
               include: string[];
@@ -561,9 +561,9 @@ test("Console build normalizes Next 16 dev/types staging entries in tsconfig.jso
   }));
 
 test("console package build routes through the staged runtime builder unless a custom distDir is set", () => {
-  const repoRoot = path.resolve(import.meta.dirname, "..", "..");
+  const repositoryRoot = path.resolve(import.meta.dirname, "..", "..");
   const consolePackage = JSON.parse(
-    readFileSync(path.join(repoRoot, "console", "package.json"), "utf8")
+    readFileSync(path.join(repositoryRoot, "console", "package.json"), "utf8")
   ) as { scripts: { build: string } };
   assert.equal(
     consolePackage.scripts.build,

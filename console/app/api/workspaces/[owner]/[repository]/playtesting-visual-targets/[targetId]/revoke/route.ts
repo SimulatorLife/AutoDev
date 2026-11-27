@@ -1,4 +1,6 @@
-/** Server-only revocation route for a Workspaces-owned visual target. */
+/**
+Server-only revocation route for a Workspaces-owned visual target.
+*/
 import type { ControlApiWorkspaceVisualPlaytestTargetsResponse } from "@simulatorlife/autodev-core";
 import { type NextRequest, NextResponse } from "next/server.js";
 
@@ -151,7 +153,7 @@ export async function POST(
     {
       kind: "refused",
       refusal,
-      ...(currentTargets === undefined ? {} : { currentTargets })
+      ...(currentTargets !== undefined && { currentTargets })
     },
     responseStatus(result)
   );

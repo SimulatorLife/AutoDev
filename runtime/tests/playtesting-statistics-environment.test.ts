@@ -1,10 +1,10 @@
 /**
- * Tests for the Playtesting statistical-analysis environment resolver.
- *
- * These tests check that the Runtime correctly detects a missing or
- * drift pyproject.toml/uv.lock without ever reaching out to the Python
- * worker; the worker behavior is exercised by `playtesting-statistics.test.ts`.
- */
+Tests for the Playtesting statistical-analysis environment resolver.
+
+These tests check that the Runtime correctly detects a missing or
+drift pyproject.toml/uv.lock without ever reaching out to the Python
+worker; the worker behavior is exercised by `playtesting-statistics.test.ts`.
+*/
 
 import assert from "node:assert/strict";
 import {
@@ -143,24 +143,24 @@ test("assertDeclaredPinsMatchContract rejects drifted pins", () => {
 });
 
 test("resolvePlaytestStatEnvironment exposes a stable fingerprint for the on-disk project", () => {
-  const env = resolvePlaytestStatEnvironment();
-  assert.equal(env.declaredPins.scipy, EXPECTED_SCIENTIFIC_LOCK.scipy);
-  assert.equal(env.declaredPins.numpy, EXPECTED_SCIENTIFIC_LOCK.numpy);
+  const environment = resolvePlaytestStatEnvironment();
+  assert.equal(environment.declaredPins.scipy, EXPECTED_SCIENTIFIC_LOCK.scipy);
+  assert.equal(environment.declaredPins.numpy, EXPECTED_SCIENTIFIC_LOCK.numpy);
   assert.equal(
-    env.declaredPins.statsmodels,
+    environment.declaredPins.statsmodels,
     EXPECTED_SCIENTIFIC_LOCK.statsmodels
   );
-  assert.match(env.contentHash, /^[a-f0-9]{64}$/u);
+  assert.match(environment.contentHash, /^[a-f0-9]{64}$/u);
   // Repeated resolves within a healthy project must agree.
   const second = resolvePlaytestStatEnvironment();
-  assert.equal(second.contentHash, env.contentHash);
+  assert.equal(second.contentHash, environment.contentHash);
 });
 
 test("PlaytestStatEnvironmentError is the contract error type", () => {
-  const err = new PlaytestStatEnvironmentError("test message");
-  assert.equal(err.name, "PlaytestStatEnvironmentError");
-  assert.equal(err.message, "test message");
-  assert.ok(err instanceof Error);
+  const error = new PlaytestStatEnvironmentError("test message");
+  assert.equal(error.name, "PlaytestStatEnvironmentError");
+  assert.equal(error.message, "test message");
+  assert.ok(error instanceof Error);
 });
 
 test("permission denial surfaces a clear refusal", () => {

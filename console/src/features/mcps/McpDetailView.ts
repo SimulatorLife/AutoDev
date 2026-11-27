@@ -45,7 +45,7 @@ import {
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
-import { McpAppliedConfiguration } from "./applied-configuration.ts";
+import { McpAppliedConfiguration as McpAppliedConfig } from "./applied-configuration.ts";
 import { McpDeclarationEditor } from "./declaration-editor.ts";
 import {
   McpConnectionBadge,
@@ -54,12 +54,12 @@ import {
 } from "./runtime-evidence.ts";
 
 /**
- * How a write to the canonical MCP declaration ended.
- *
- * A conflict and a refused declaration are different facts, and so is a write
- * whose result could not be confirmed: the page says which one happened rather
- * than reporting one generic failure for all of them.
- */
+How a write to the canonical MCP declaration ended.
+
+A conflict and a refused declaration are different facts, and so is a write
+whose result could not be confirmed: the page says which one happened rather
+than reporting one generic failure for all of them.
+*/
 export type McpDeclarationSaveOutcome =
   "conflict" | "validation" | "apply-failed" | "failed";
 
@@ -67,15 +67,15 @@ const CONFIGURED_STATUS = "configured" as const;
 const FLEX_COLUMN_DETAILS_CLASS = "flex flex-col gap-2";
 
 /**
- * The operator-approved catalogue a backend serves.
- *
- * The catalogue is a proposal in the checkout and an approved copy outside
- * every workspace, and the backend serves the approved copy. The state is
- * therefore the operator's answer to "which revision is live?", and the four
- * states are four different facts: a home with no approved copy serves
- * nothing, a home whose proposal cannot be read cannot be compared, and only
- * a home whose two copies differ is pending approval.
- */
+The operator-approved catalogue a backend serves.
+
+The catalogue is a proposal in the checkout and an approved copy outside
+every workspace, and the backend serves the approved copy. The state is
+therefore the operator's answer to "which revision is live?", and the four
+states are four different facts: a home with no approved copy serves
+nothing, a home whose proposal cannot be read cannot be compared, and only
+a home whose two copies differ is pending approval.
+*/
 function ApprovedCataloguePanel({
   catalogues
 }: {
@@ -153,9 +153,9 @@ function ApprovedCataloguePanel({
 }
 
 /**
- * MCP detail tabs in the target-state-mandated order. The id values are the
- * `?tab=` query values; the labels are the visible tab text.
- */
+MCP detail tabs in the target-state-mandated order. The id values are the
+`?tab=` query values; the labels are the visible tab text.
+*/
 export const MCP_DETAIL_TABS: readonly TabDefinition[] = [
   { id: "overview", label: "Overview" },
   { id: "configuration", label: "Configuration" },
@@ -169,14 +169,14 @@ export const MCP_DETAIL_TABS: readonly TabDefinition[] = [
 ];
 
 /**
- * The tabs of one MCP server, named for that server.
- *
- * "Tools" and "Prompts" are also top-level page names, and the navigation
- * carries both on every page. A tab named "Tools" and the Tools catalog are
- * two different destinations under one name, so the tab says which server's
- * tools it opens. The visible label does not change, and the name still
- * contains it.
- */
+The tabs of one MCP server, named for that server.
+
+"Tools" and "Prompts" are also top-level page names, and the navigation
+carries both on every page. A tab named "Tools" and the Tools catalog are
+two different destinations under one name, so the tab says which server's
+tools it opens. The visible label does not change, and the name still
+contains it.
+*/
 export function mcpDetailTabs(serverName: string): readonly TabDefinition[] {
   return MCP_DETAIL_TABS.map((tab) =>
     tab.id === "tools" || tab.id === "prompts"
@@ -190,76 +190,76 @@ const DEFAULT_MCP_DETAIL_TAB = "overview";
 export interface McpDetailViewProps {
   readonly server: McpServerResource;
   /**
-   * What the Runtime has observed of the MCP servers it has seen.
-   *
-   * `null` covers the state where the observation read could not be read at
-   * all, and a read that carried no record for this server covers the state
-   * where the Runtime has simply never seen it. Neither is a verdict, so
-   * neither is rendered as one, and the page says which of the two it is.
-   */
+  What the Runtime has observed of the MCP servers it has seen.
+  
+  `null` covers the state where the observation read could not be read at
+  all, and a read that carried no record for this server covers the state
+  where the Runtime has simply never seen it. Neither is a verdict, so
+  neither is rendered as one, and the page says which of the two it is.
+  */
   readonly runtime: ControlApiMcpRuntimeResponse | null;
   /**
-   * The MCP configuration the Runtime applied, against the canonical
-   * declaration.
-   *
-   * `null` means the applied read could not be read at all, which is a
-   * different state from an applied configuration that holds no servers.
-   */
+  The MCP configuration the Runtime applied, against the canonical
+  declaration.
+  
+  `null` means the applied read could not be read at all, which is a
+  different state from an applied configuration that holds no servers.
+  */
   readonly applied: ControlApiMcpAppliedResponse | null;
   /**
-   * The revision of the canonical MCP declaration.
-   *
-   * A write is compared against it, so the editor has to be filled from the
-   * revision it was read at. `null` means the declaration could not be read,
-   * and the editor stays disabled with the reason rather than offering a write
-   * that has nothing to compare.
-   */
+  The revision of the canonical MCP declaration.
+  
+  A write is compared against it, so the editor has to be filled from the
+  revision it was read at. `null` means the declaration could not be read,
+  and the editor stays disabled with the reason rather than offering a write
+  that has nothing to compare.
+  */
   readonly revision: string | null;
   /**
-   * The revision the editor's fields are based on.
-   *
-   * A write is compared against the revision it was read at, so a refused write
-   * keeps the editor on the revision the operator's edit was written for rather
-   * than moving it to the revision the declaration has reached. It is the
-   * declaration's own revision unless a refused write named the one the edit
-   * was written against.
-   */
+  The revision the editor's fields are based on.
+  
+  A write is compared against the revision it was read at, so a refused write
+  keeps the editor on the revision the operator's edit was written for rather
+  than moving it to the revision the declaration has reached. It is the
+  declaration's own revision unless a refused write named the one the edit
+  was written against.
+  */
   readonly editorRevision?: string | null | undefined;
   /**
-   * How the last write ended, when the page was redirected back by one.
-   *
-   * A conflict and a refused declaration are different facts, and the page
-   * says which one happened rather than reporting one generic failure.
-   */
+  How the last write ended, when the page was redirected back by one.
+  
+  A conflict and a refused declaration are different facts, and the page
+  says which one happened rather than reporting one generic failure.
+  */
   readonly saveOutcome?: McpDeclarationSaveOutcome | undefined;
   /**
-   * How the canonical MCP declaration read.
-   *
-   * `true` when it was read and applied, `false` when it was read and found
-   * broken, and `null` when nothing about it was read. The three are different
-   * claims, and the detail page draws the same badge the list page's card
-   * draws: a declaration nobody read is not an invalid one.
-   */
+  How the canonical MCP declaration read.
+  
+  `true` when it was read and applied, `false` when it was read and found
+  broken, and `null` when nothing about it was read. The three are different
+  claims, and the detail page draws the same badge the list page's card
+  draws: a declaration nobody read is not an invalid one.
+  */
   readonly sourceValidity: boolean | null;
   /**
-   * Partial projection of explicitly enumerated role MCP/plugin allowlist
-   * tools joined from the Tools capability catalog. These entries describe
-   * what is configured for role access -- they are NOT a live server-discovered
-   * tool inventory, and they do NOT prove the remote server is connected.
-   *
-   * - `null`: the tools source was unavailable or unknown (Control API
-   *   unreadable, coverage not `partial`). Render explicit "Unknown".
-   * - `[]`: the partial projection contained no enumerated tool entries whose
-   *   `server` matches this MCP. This does not prove the server has no tools;
-   *   render "No allowlist entries enumerated" and keep live inventory unknown.
-   * - non-empty: render the configured tool names and exposed roles.
-   */
+  Partial projection of explicitly enumerated role MCP/plugin allowlist
+  tools joined from the Tools capability catalog. These entries describe
+  what is configured for role access -- they are NOT a live server-discovered
+  tool inventory, and they do NOT prove the remote server is connected.
+  
+  - `null`: the tools source was unavailable or unknown (Control API
+    unreadable, coverage not `partial`). Render explicit "Unknown".
+  - `[]`: the partial projection contained no enumerated tool entries whose
+    `server` matches this MCP. This does not prove the server has no tools;
+    render "No allowlist entries enumerated" and keep live inventory unknown.
+  - non-empty: render the configured tool names and exposed roles.
+  */
   readonly configuredTools: readonly ToolCatalogItem[] | null;
   /**
-   * Raw `?tab=` query value, if any. An unknown or missing value falls back
-   * to the Overview tab; this resolution happens here so the component is
-   * safe to call directly with untrusted input.
-   */
+  Raw `?tab=` query value, if any. An unknown or missing value falls back
+  to the Overview tab; this resolution happens here so the component is
+  safe to call directly with untrusted input.
+  */
   readonly activeTab?: string | undefined;
 }
 
@@ -280,19 +280,19 @@ function DesiredState({
 }
 
 /**
- * Renders the partial configured tool allowlist projection.
- *
- * Three explicit cases:
- * - `null` source: the Tools projection was unavailable (Control API
- *   unreachable or coverage not `partial`). Report "Not observed" and never
- *   fabricate a connected/ready state.
- * - empty list: the partial projection had no enumerated tools for this
- *   server. This does not prove the server exposes no tools, so report that
- *   no allowlist entries were enumerated while keeping live inventory unknown.
- * - populated list: render each configured tool name and its exposed
- *   roles under a "Configured tool allowlist" section so it is clearly
- *   distinct from the (unobserved) live tool inventory.
- */
+Renders the partial configured tool allowlist projection.
+
+Three explicit cases:
+- `null` source: the Tools projection was unavailable (Control API
+  unreachable or coverage not `partial`). Report "Not observed" and never
+  fabricate a connected/ready state.
+- empty list: the partial projection had no enumerated tools for this
+  server. This does not prove the server exposes no tools, so report that
+  no allowlist entries were enumerated while keeping live inventory unknown.
+- populated list: render each configured tool name and its exposed
+  roles under a "Configured tool allowlist" section so it is clearly
+  distinct from the (unobserved) live tool inventory.
+*/
 function ConfiguredToolAllowlist({
   configuredTools
 }: {
@@ -392,11 +392,11 @@ function ConfiguredToolAllowlist({
 }
 
 /**
- * The activity the Runtime has observed on one server.
- *
- * Every count here is the Runtime's own. A server the Runtime has not
- * observed reports no activity at all rather than reporting zeroes.
- */
+The activity the Runtime has observed on one server.
+
+Every count here is the Runtime's own. A server the Runtime has not
+observed reports no activity at all rather than reporting zeroes.
+*/
 function ObservedActivity({
   observation,
   observationAvailable
@@ -453,12 +453,12 @@ function ObservedActivity({
 }
 
 /**
- * The failures the Runtime has observed on one server.
- *
- * The failure count is the Runtime's own, and a server it has never observed
- * reports no failures because nothing has been observed, not because nothing
- * has failed.
- */
+The failures the Runtime has observed on one server.
+
+The failure count is the Runtime's own, and a server it has never observed
+reports no failures because nothing has been observed, not because nothing
+has failed.
+*/
 function ObservedFailures({
   observation,
   observationAvailable
@@ -505,17 +505,17 @@ function ObservedFailures({
 }
 
 /**
- * How the last write ended, when the page was redirected back by one.
- *
- * A conflict is a warning and not an error: the operator's edit was not lost,
- * and the declaration moved under it. A refused declaration is an error, and
- * so is a write whose result could not be confirmed.
- */
+How the last write ended, when the page was redirected back by one.
+
+A conflict is a warning and not an error: the operator's edit was not lost,
+and the declaration moved under it. A refused declaration is an error, and
+so is a write whose result could not be confirmed.
+*/
 function saveNotice(
   outcome: McpDeclarationSaveOutcome | undefined
 ): React.JSX.Element | null {
   if (outcome === undefined) return null;
-  const warning = outcome === "conflict" || outcome === "validation";
+  const isWarning = outcome === "conflict" || outcome === "validation";
   const message = {
     conflict:
       "The canonical MCP declaration changed after the editor was filled, so your edit was not saved. The edit is still here; reload the editor to start from the current declaration before saving again.",
@@ -529,8 +529,8 @@ function saveNotice(
   return React.createElement(
     "p",
     {
-      className: warning ? CALLOUT_WARNING_CLASS : CALLOUT_ERROR_CLASS,
-      role: warning ? "status" : "alert",
+      className: isWarning ? CALLOUT_WARNING_CLASS : CALLOUT_ERROR_CLASS,
+      role: isWarning ? "status" : "alert",
       "data-mcp-declaration-save": outcome
     },
     message
@@ -538,13 +538,13 @@ function saveNotice(
 }
 
 /**
- * The canonical declaration's edit surface, or the reason there is none.
- *
- * An unreadable declaration has no revision to compare a write against and no
- * fields to fill the editor from, so there is nothing to offer. The control
- * stays in place and says why, rather than the tab quietly losing the edit
- * surface it had.
- */
+The canonical declaration's edit surface, or the reason there is none.
+
+An unreadable declaration has no revision to compare a write against and no
+fields to fill the editor from, so there is nothing to offer. The control
+stays in place and says why, rather than the tab quietly losing the edit
+surface it had.
+*/
 function declarationEditor(
   serverName: string,
   applied: ControlApiMcpAppliedResponse | null,
@@ -591,7 +591,7 @@ export function McpDetailView({
   // empty verdict.
   const observation =
     runtime?.servers.find((entry) => entry.name === server.name) ?? null;
-  const observationAvailable = runtime !== null;
+  const isObservationAvailable = runtime !== null;
 
   const targetOverrides =
     server.targetOverrides.length === 0
@@ -767,7 +767,7 @@ export function McpDetailView({
       React.createElement(
         "div",
         { className: "mt-4" },
-        React.createElement(McpAppliedConfiguration, {
+        React.createElement(McpAppliedConfig, {
           applied,
           serverName: server.name
         })
@@ -807,7 +807,7 @@ export function McpDetailView({
       ),
       React.createElement(McpRuntimeEvidence, {
         evidence: observation,
-        observationAvailable
+        observationAvailable: isObservationAvailable
       })
     ),
     tools: React.createElement(
@@ -930,7 +930,7 @@ export function McpDetailView({
       ),
       React.createElement(ObservedActivity, {
         observation,
-        observationAvailable
+        observationAvailable: isObservationAvailable
       })
     ),
     "errors-logs": React.createElement(
@@ -947,7 +947,7 @@ export function McpDetailView({
       ),
       React.createElement(ObservedFailures, {
         observation,
-        observationAvailable
+        observationAvailable: isObservationAvailable
       })
     )
   };

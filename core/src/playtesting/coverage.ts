@@ -1,4 +1,6 @@
-/** Frozen per-batch coverage plans and counts for game-owned metric cells. */
+/**
+Frozen per-batch coverage plans and counts for game-owned metric cells.
+*/
 
 import { isCount, isRecord } from "../shared/object-guards.ts";
 import { SHA256_PATTERN } from "../shared/sha256.ts";
@@ -101,7 +103,9 @@ export type PlaytestCoverageManifestDraft = Omit<
   "contentHash"
 >;
 
-/** Narrow read model: only the episode facts needed to aggregate coverage. */
+/**
+Narrow read model: only the episode facts needed to aggregate coverage.
+*/
 export interface PlaytestCoverageEpisode {
   readonly episodeId: string;
   readonly batchId: string;
@@ -154,14 +158,18 @@ function addCount(total: number, value: number, field: string): number {
   return sum;
 }
 
-/** Canonical hash projection; excludes only contentHash. */
+/**
+Canonical hash projection; excludes only contentHash.
+*/
 export function playtestCoverageManifestHashInput(
   manifest: PlaytestCoverageManifestDraft
 ): string {
   return canonicalPlaytestJson(manifest);
 }
 
-/** Freeze the registry's metric metadata into its exact coverage plan. */
+/**
+Freeze the registry's metric metadata into its exact coverage plan.
+*/
 export function playtestCoveragePlanForRegistry(
   registry: PlaytestMetricRegistry
 ): readonly PlaytestCoveragePlanCell[] {
@@ -183,7 +191,9 @@ export function playtestCoveragePlanForRegistry(
   });
 }
 
-/** Fail batch admission when an eligible assignment has no declared cells. */
+/**
+Fail batch admission when an eligible assignment has no declared cells.
+*/
 export function assertPlaytestCoveragePlanCoversAssignments(input: {
   readonly registry: PlaytestMetricRegistry;
   readonly plan: readonly PlaytestCoveragePlanCell[];
@@ -224,12 +234,12 @@ function metricForEpisode(
   );
 }
 
-function coverageCellFor(params: {
+function coverageCellFor(parameters: {
   readonly plan: PlaytestCoveragePlanCell;
   readonly input: BuildPlaytestCoverageManifestInput;
   readonly assignmentEpisodes: ReadonlyMap<string, PlaytestCoverageEpisode>;
 }): PlaytestCoverageManifestCell {
-  const { plan, input, assignmentEpisodes } = params;
+  const { plan, input, assignmentEpisodes } = parameters;
   const candidates = input.assignments.filter(
     (assignment) =>
       assignment.scenarioFamily === plan.scenarioFamily &&
@@ -249,7 +259,7 @@ function coverageCellFor(params: {
   let eligibleOpportunities = 0;
   let missingOpportunities = 0;
   let observedIndependentUnits = 0;
-  const independentUnitsKnown = plan.analysisUnit === "episode";
+  const isIndependentUnitsKnown = plan.analysisUnit === "episode";
   const missingReasons = new Set<PlaytestMissingReason>();
 
   for (const assignment of matching) {
@@ -287,7 +297,7 @@ function coverageCellFor(params: {
       result.missing,
       "missing opportunity count"
     );
-    if (independentUnitsKnown) {
+    if (isIndependentUnitsKnown) {
       observedIndependentUnits = addCount(
         observedIndependentUnits,
         result.independentUnits,
@@ -312,7 +322,7 @@ function coverageCellFor(params: {
     status = "partial";
   } else if (
     observedOpportunities >= plan.requiredOpportunities &&
-    independentUnitsKnown &&
+    isIndependentUnitsKnown &&
     observedIndependentUnits >= plan.requiredIndependentUnits
   ) {
     status = "covered";
@@ -341,7 +351,7 @@ function coverageCellFor(params: {
     observedOpportunities,
     eligibleOpportunities,
     missingOpportunities,
-    observedIndependentUnits: independentUnitsKnown
+    observedIndependentUnits: isIndependentUnitsKnown
       ? observedIndependentUnits
       : null,
     missingReasons: [...missingReasons].sort(),
@@ -349,7 +359,9 @@ function coverageCellFor(params: {
   };
 }
 
-/** Aggregate only matching frozen assignment cells and game-owned episode rows. */
+/**
+Aggregate only matching frozen assignment cells and game-owned episode rows.
+*/
 export function buildPlaytestCoverageManifestDraft(
   input: BuildPlaytestCoverageManifestInput
 ): PlaytestCoverageManifestDraft {
@@ -508,7 +520,7 @@ function assertCoverageCellCounts(
 ): void {
   const outcomeCounts =
     cell.observedEpisodes + cell.missingAssignments + cell.missingMetricResults;
-  const independentUnitsInvalid =
+  const isIndependentUnitsInvalid =
     cell.analysisUnit === "episode"
       ? cell.observedIndependentUnits === null ||
         cell.observedIndependentUnits > cell.observedEpisodes
@@ -520,7 +532,7 @@ function assertCoverageCellCounts(
     outcomeCounts > cell.assignedEpisodes ||
     cell.eligibleOpportunities + cell.missingOpportunities >
       cell.observedOpportunities ||
-    independentUnitsInvalid ||
+    isIndependentUnitsInvalid ||
     (cell.unsupportedReason === null &&
       (cell.requiredOpportunities < 1 || cell.requiredIndependentUnits < 1)) ||
     cell.status !== coverageCellStatus(cell, mode)
@@ -582,7 +594,9 @@ function assertCoverageCell(
   assertCoverageCellCounts(cell, mode);
 }
 
-/** Validate structure and counts; Data verifies the content-addressed hash. */
+/**
+Validate structure and counts; Data verifies the content-addressed hash.
+*/
 export function assertPlaytestCoverageManifest(
   value: unknown
 ): asserts value is PlaytestCoverageManifest {

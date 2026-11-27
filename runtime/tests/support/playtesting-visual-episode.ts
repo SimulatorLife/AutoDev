@@ -1,11 +1,11 @@
 /**
- * The harness for a visual episode that runs against a scripted browser.
- *
- * The Runtime's episode loop is exercised through the same MCP run control the
- * product uses, with the browser and the model Router replaced by fixtures.
- * What is left is the product's own machinery: the launch request, the
- * approval, the budgets, the loop, the trace and the persisted episode.
- */
+The harness for a visual episode that runs against a scripted browser.
+
+The Runtime's episode loop is exercised through the same MCP run control the
+product uses, with the browser and the model Router replaced by fixtures.
+What is left is the product's own machinery: the launch request, the
+approval, the budgets, the loop, the trace and the persisted episode.
+*/
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
@@ -43,7 +43,9 @@ const WORKSPACE_ID = "fixture/visual-episode";
 const TARGET_ID = "racing-game-local";
 const ORIGIN = "http://127.0.0.1:5173";
 
-/** An approval with the budgets the harness runs against. */
+/**
+An approval with the budgets the harness runs against.
+*/
 function approval(
   limits: WorkspaceVisualPlaytestTargetApproval["limits"],
   progressPolicy?: WorkspaceVisualPlaytestTargetApproval["progressPolicy"]
@@ -63,7 +65,7 @@ function approval(
     sandboxProfile: "transient-browser-profile",
     capturePolicy: "screenshots-only-redact-or-refuse",
     limits,
-    ...(progressPolicy === undefined ? {} : { progressPolicy }),
+    ...(progressPolicy !== undefined && { progressPolicy }),
     approvedAt: "2026-10-20T00:00:00.000Z",
     approvedBy: "operator-1",
     revokedAt: null,
@@ -72,7 +74,9 @@ function approval(
   };
 }
 
-/** The budgets the harness runs against. */
+/**
+The budgets the harness runs against.
+*/
 function targetLimits(
   overrides: Partial<WorkspaceVisualPlaytestTargetApproval["limits"]> = {}
 ): WorkspaceVisualPlaytestTargetApproval["limits"] {
@@ -111,20 +115,26 @@ function session(): PlaytestMcpSession {
 }
 
 /**
- * A browser the test drives by hand.
- *
- * The driver refuses the actions the test scripts, in order, and dispatches
- * the rest. Every observation is a real stored frame, so the episode's own
- * accounting is exercised rather than stubbed. The phase is scripted per
- * observation, because whether the game advanced is what the episode's guard
- * measures.
- */
+A browser the test drives by hand.
+
+The driver refuses the actions the test scripts, in order, and dispatches
+the rest. Every observation is a real stored frame, so the episode's own
+accounting is exercised rather than stubbed. The phase is scripted per
+observation, because whether the game advanced is what the episode's guard
+measures.
+*/
 class ScriptedVisualDriver implements PlaytestVisualEpisodeDriver {
-  /** The refusal reason for each action attempt, in order; a gap dispatches. */
+  /**
+  The refusal reason for each action attempt, in order; a gap dispatches.
+  */
   readonly script: readonly (PlaytestVisualActionRefusalReason | null)[];
-  /** The phase each observation reports; the last one repeats. */
+  /**
+  The phase each observation reports; the last one repeats.
+  */
   readonly phases: readonly (string | null)[];
-  /** Whether each observation reports a loading page; the last one repeats. */
+  /**
+  Whether each observation reports a loading page; the last one repeats.
+  */
   readonly loading: readonly boolean[];
   readonly attempts: { readonly kind: string }[] = [];
   observations = 0;
@@ -244,7 +254,9 @@ export interface DecisionRequest {
   }[];
 }
 
-/** A local stand-in for the model Router, so no provider is ever contacted. */
+/**
+A local stand-in for the model Router, so no provider is ever contacted.
+*/
 async function startFakeRouter(decisions: readonly unknown[]): Promise<{
   readonly port: number;
   readonly close: () => Promise<void>;
@@ -282,7 +294,9 @@ async function startFakeRouter(decisions: readonly unknown[]): Promise<{
   };
 }
 
-/** The decision that dispatches the visible control. */
+/**
+The decision that dispatches the visible control.
+*/
 export const ACT_DECISION = {
   decision: "act",
   intention: "Start the race from the title screen.",
@@ -293,7 +307,9 @@ export const ACT_DECISION = {
   focusReport: null
 };
 
-/** The decision that ends the episode. */
+/**
+The decision that ends the episode.
+*/
 export const STOP_DECISION = {
   decision: "stop",
   intention: "The race screen has no further visible progress to make.",
@@ -321,9 +337,9 @@ export interface EpisodeRun {
 }
 
 /**
- * Runs one autonomous-visual episode against the scripted browser and the
- * fake Router, and returns the persisted episode with the trace it recorded.
- */
+Runs one autonomous-visual episode against the scripted browser and the
+fake Router, and returns the persisted episode with the trace it recorded.
+*/
 export async function runVisualEpisode(options: {
   readonly script: readonly (PlaytestVisualActionRefusalReason | null)[];
   readonly decisions: readonly unknown[];
@@ -447,7 +463,9 @@ export async function runVisualEpisode(options: {
   }
 }
 
-/** The episode's own trace window, as the recorded lines. */
+/**
+The episode's own trace window, as the recorded lines.
+*/
 function readTraceSteps(
   artifactRoot: string,
   episode: PlaytestEpisode
@@ -465,7 +483,9 @@ function readTraceSteps(
     .map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
-/** The visible state the decision backend was asked to read. */
+/**
+The visible state the decision backend was asked to read.
+*/
 export function visibleStateOf(request: DecisionRequest): {
   readonly recentHistory: readonly {
     readonly step: number;

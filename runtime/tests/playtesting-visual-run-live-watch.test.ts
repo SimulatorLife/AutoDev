@@ -100,7 +100,9 @@ async function closeServer(
   });
 }
 
-/** A gate the fixture router opens when the expected decision request arrives. */
+/**
+A gate the fixture router opens when the expected decision request arrives.
+*/
 interface FixtureRequestSignal {
   readonly requested: Promise<void>;
   readonly release: () => void;
@@ -119,7 +121,9 @@ function createRequestSignal(): FixtureRequestSignal {
   };
 }
 
-/** Wait for the expected request, and fail the wait when it never arrives. */
+/**
+Wait for the expected request, and fail the wait when it never arrives.
+*/
 function withTimeout<T>(
   requested: Promise<T>,
   message: string,
@@ -135,7 +139,9 @@ function withTimeout<T>(
   ]);
 }
 
-/** The fixture game page the visual run drives. */
+/**
+The fixture game page the visual run drives.
+*/
 function createGameFixtureServer(): Server {
   return createServer((_request, response) => {
     response.writeHead(200, { "content-type": "text/html" });
@@ -145,7 +151,9 @@ function createGameFixtureServer(): Server {
   });
 }
 
-/** The fixture model router that answers the Smart-direct decision requests. */
+/**
+The fixture model router that answers the Smart-direct decision requests.
+*/
 interface FixtureRouter {
   readonly server: Server;
   readonly responses: ServerResponse[];
@@ -179,7 +187,9 @@ function createFixtureRouter(
   return { server, responses, bodies };
 }
 
-/** Wait until the persisted episode satisfies the fixture's expectation. */
+/**
+Wait until the persisted episode satisfies the fixture's expectation.
+*/
 async function waitForEpisode(
   episodeRows: ReadonlyMap<string, PlaytestEpisode>,
   episodeId: string,
@@ -196,7 +206,9 @@ async function waitForEpisode(
   return observed;
 }
 
-/** The control id the decision request offered to the model. */
+/**
+The control id the decision request offered to the model.
+*/
 function readFirstVisibleControlId(
   request: Record<string, unknown>
 ): string | undefined {
@@ -209,7 +221,9 @@ function readFirstVisibleControlId(
   return visibleState.controls[0]?.controlId;
 }
 
-/** Answer every router response the fixture still holds open. */
+/**
+Answer every router response the fixture still holds open.
+*/
 function releaseHeldRouterResponses(
   responses: readonly ServerResponse[]
 ): void {
@@ -244,7 +258,9 @@ function releaseHeldRouterResponses(
   }
 }
 
-/** Put one environment variable back the way the test found it. */
+/**
+Put one environment variable back the way the test found it.
+*/
 function restoreEnvironment(name: string, value: string | undefined): void {
   if (value === undefined) delete process.env[name];
   else process.env[name] = value;
@@ -275,8 +291,8 @@ test(
     process.env.CODEX_MODEL_ROUTER_PORT = String(routerPort);
     process.env.CODEX_ROUTER_AUTH_TOKEN = "fixture-router-token";
 
-    const tempRoot = mkdtempSync(path.join(tmpdir(), "visual-run-live-watch-"));
-    const artifactRoot = path.join(tempRoot, "artifacts");
+    const temporaryRoot = mkdtempSync(path.join(tmpdir(), "visual-run-live-watch-"));
+    const artifactRoot = path.join(temporaryRoot, "artifacts");
     mkdirSync(artifactRoot, { mode: 0o700 });
     const artifacts = new PlaytestArtifactStore({
       workspaceId: WORKSPACE,
@@ -831,7 +847,7 @@ test(
       await restartedRunControl?.shutdown();
       await closeServer(gameServer);
       await closeServer(routerServer);
-      rmSync(tempRoot, { recursive: true, force: true });
+      rmSync(temporaryRoot, { recursive: true, force: true });
     }
   }
 );

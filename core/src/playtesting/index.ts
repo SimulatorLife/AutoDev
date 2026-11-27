@@ -1,12 +1,12 @@
 export * from "./launch-request.ts";
 /**
- * Barrel for the Core-owned playtesting contract.
- *
- * Infrastructure-free: no Runtime/Data/Console imports, no network, no
- * filesystem. See docs/playtesting-target-state.md and
- * docs/playtesting-measurement-contract.md for the normative design this
- * module implements.
- */
+Barrel for the Core-owned playtesting contract.
+
+Infrastructure-free: no Runtime/Data/Console imports, no network, no
+filesystem. See docs/playtesting-target-state.md and
+docs/playtesting-measurement-contract.md for the normative design this
+module implements.
+*/
 
 export * from "./adapter-binding.ts";
 export * from "./analysis-cost.ts";

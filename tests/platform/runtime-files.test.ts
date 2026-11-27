@@ -238,15 +238,15 @@ test("resolveCommandOnPath locates executable binaries without spawning a shell"
     writeFileSync(nonExec, "#!/bin/sh\n", { mode: 0o644 });
     writeFileSync(realExec, "#!/bin/sh\n", { mode: 0o755 });
 
-    const env = { PATH: `${binA}:${binB}` };
+    const environment = { PATH: `${binA}:${binB}` };
     assert.equal(
-      resolveCommandOnPath("my-tool", env),
+      resolveCommandOnPath("my-tool", environment),
       realExec,
       "non-executable shadows in earlier PATH entries must be skipped"
     );
-    assert.equal(resolveCommandOnPath("missing-tool", env), null);
-    assert.equal(resolveCommandOnPath(realExec, env), realExec);
-    assert.equal(resolveCommandOnPath(nonExec, env), null);
+    assert.equal(resolveCommandOnPath("missing-tool", environment), null);
+    assert.equal(resolveCommandOnPath(realExec, environment), realExec);
+    assert.equal(resolveCommandOnPath(nonExec, environment), null);
   }));
 
 test("repo install cache persists across reads and fingerprints detect file modifications", () =>

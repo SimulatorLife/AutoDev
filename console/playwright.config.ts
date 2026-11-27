@@ -63,14 +63,14 @@ process.env.AUTODEV_OPENLIT_USAGE_FIXTURE_PORT = String(usageFixturePort);
 process.env.AUTODEV_STATE_PROXY_PORT = String(stateProxyPort);
 const e2eDistDir = `.next-staging-e2e-${process.pid}-${consolePort}`;
 /**
- * Where the Console server's own output is kept.
- *
- * The acceptance's failures are browser-side observations -- a page that never
- * moved, a field that never took the value -- and the server's output is
- * where the reason for them is. The file is written outside the Playwright
- * output directory, which the runner empties when it starts, and is published
- * with the failure evidence so one artifact carries both.
- */
+Where the Console server's own output is kept.
+
+The acceptance's failures are browser-side observations -- a page that never
+moved, a field that never took the value -- and the server's output is
+where the reason for them is. The file is written outside the Playwright
+output directory, which the runner empties when it starts, and is published
+with the failure evidence so one artifact carries both.
+*/
 const serverLogPath = "acceptance-logs/console-server.log";
 const serviceToken =
   "playtesting-browser-fixture-token-0000000000000000000000000000000000000000000000000000000000000000";
@@ -95,8 +95,7 @@ export default defineConfig({
   },
   use: {
     ...devices["Desktop Chrome"],
-    ...(process.env.AUTODEV_ACCEPTANCE_SINGLE_PROCESS === "1"
-      ? {
+    ...((process.env.AUTODEV_ACCEPTANCE_SINGLE_PROCESS === "1") && {
           // A sandbox that cannot register a Mach port cannot start the
           // browser's multi-process rendezvous, and the launch dies before the
           // first page. One process is the way past it. It is opt-in because
@@ -104,8 +103,7 @@ export default defineConfig({
           // acceptance is meant to run, and because a single-process browser
           // is not stable across specs -- run one spec at a time with it.
           launchOptions: { args: ["--single-process", "--no-sandbox"] }
-        }
-      : {}),
+        }),
     baseURL: `http://localhost:${consolePort}`,
     trace: "retain-on-failure",
     screenshot: "only-on-failure"

@@ -86,8 +86,8 @@ if (routing.providerGroups && typeof routing.providerGroups === "object") {
   )) {
     const groupDesc = (Array.isArray(groups) ? (groups as unknown[]) : [])
       .map(
-        (g, idx) =>
-          `P${idx + 1}: [${(Array.isArray(g) ? (g as unknown[]) : [g]).join(", ")}]`
+        (g, index) =>
+          `P${index + 1}: [${(Array.isArray(g) ? (g as unknown[]) : [g]).join(", ")}]`
       )
       .join(" -> ");
     writeLine(`  ${tier}: ${groupDesc}`);
@@ -124,10 +124,10 @@ const configuredGroupPriorities = (providerName: string): string[] => {
     asRecord(routing.providerGroups)
   )) {
     if (!Array.isArray(groups)) continue;
-    const gIdx = (groups as unknown[]).findIndex((group) =>
+    const gIndex = (groups as unknown[]).findIndex((group) =>
       groupContainsProvider(group, providerName)
     );
-    if (gIdx !== -1) tierPrios.push(`${tier}: P${gIdx + 1}`);
+    if (gIndex !== -1) tierPrios.push(`${tier}: P${gIndex + 1}`);
   }
   return tierPrios;
 };
@@ -174,12 +174,12 @@ const COOLDOWN_LIMIT_KEYS = new Set([
 ]);
 
 /**
- * A provider's cooldown as the status report needs it: every field the router
- * may publish under `limits` (the live view) or directly on the provider
- * status (the last observed snapshot), resolved to one value per field. The
- * two surfaces drift in lockstep, so each field prefers `limits` and falls back
- * to the provider snapshot, and the caller never has to repeat that choice.
- */
+A provider's cooldown as the status report needs it: every field the router
+may publish under `limits` (the live view) or directly on the provider
+status (the last observed snapshot), resolved to one value per field. The
+two surfaces drift in lockstep, so each field prefers `limits` and falls back
+to the provider snapshot, and the caller never has to repeat that choice.
+*/
 type ProviderCooldown = {
   readonly remainingMs: number;
   readonly resetsAt: unknown;
@@ -207,7 +207,9 @@ const resolveCooldown = (
   };
 };
 
-/** The cooldown annotation appended to the provider's status column. */
+/**
+The cooldown annotation appended to the provider's status column.
+*/
 const formatCooldownSuffix = (cooldown: ProviderCooldown): string =>
   cooldown.remainingMs > 0 || cooldown.resetsAt
     ? cooldown.resetsAt
@@ -215,7 +217,9 @@ const formatCooldownSuffix = (cooldown: ProviderCooldown): string =>
       : ` (${cooldown.kind ?? "cooldown"} ${Math.ceil(cooldown.remainingMs / 1000)}s)`
     : "";
 
-/** Why a provider is unavailable right now, when it is cooling down at all. */
+/**
+Why a provider is unavailable right now, when it is cooling down at all.
+*/
 const cooldownDetailLines = (cooldown: ProviderCooldown): string[] => {
   if (!cooldown.remainingMs && !cooldown.resetsAt && !cooldown.kind) return [];
   const kind = cooldown.kind ?? "transient";
@@ -232,10 +236,10 @@ const cooldownDetailLines = (cooldown: ProviderCooldown): string[] => {
 };
 
 /**
- * The live limits in force for a provider, or null when there are none. A
- * published effective-limit block is reported verbatim; failing that, the
- * caller's own `limits` table contributes anything the router did not claim.
- */
+The live limits in force for a provider, or null when there are none. A
+published effective-limit block is reported verbatim; failing that, the
+caller's own `limits` table contributes anything the router did not claim.
+*/
 const formatLiveLimits = (
   state: RouterProviderRuntimeStatus
 ): string | null => {
@@ -280,12 +284,12 @@ const describeScopedCooldowns = (
 };
 
 /**
- * The models of a provider that are out, when the provider itself is not.
- *
- * A rejected model cools one model: the provider keeps serving its other
- * models, so its own status still reads "ready" and the models that are out
- * are named here.
- */
+The models of a provider that are out, when the provider itself is not.
+
+A rejected model cools one model: the provider keeps serving its other
+models, so its own status still reads "ready" and the models that are out
+are named here.
+*/
 const scopedCooldownDetailLines = (
   state: RouterProviderRuntimeStatus
 ): string[] => [
@@ -293,11 +297,11 @@ const scopedCooldownDetailLines = (
 ];
 
 /**
- * The indented explanation printed under a provider row: what it is cooling
- * down from, how its failure streaks stand, and any live limits in force. These
- * only appear when there is something to say, so the caller prints nothing for
- * an empty list.
- */
+The indented explanation printed under a provider row: what it is cooling
+down from, how its failure streaks stand, and any live limits in force. These
+only appear when there is something to say, so the caller prints nothing for
+an empty list.
+*/
 const providerDetailLines = (
   state: RouterProviderRuntimeStatus,
   cooldown: ProviderCooldown

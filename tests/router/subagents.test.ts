@@ -177,7 +177,7 @@ test("SubagentRegistry tracks bridge request and session contexts", () => {
   const registry = new SubagentRegistry();
 
   registry.noteBridgeRequest("req-100", {
-    activitySubject: `req:${"req-100"}`,
+    activitySubject: `req:req-100`,
     provider: "claude",
     model: "sonnet",
     role: "worker"
@@ -197,9 +197,9 @@ test("SubagentRegistry tracks bridge request and session contexts", () => {
     model: "sonnet"
   });
   assert.equal(registry.recallBridgeSessionRequestId("sess-100"), "req-100");
-  const sessionCtx = registry.lookupBridgeSessionContext("sess-100");
-  assert.equal(sessionCtx?.provider, "claude");
-  assert.equal(sessionCtx?.requestId, undefined); // requestId stripped
+  const sessionContext = registry.lookupBridgeSessionContext("sess-100");
+  assert.equal(sessionContext?.provider, "claude");
+  assert.equal(sessionContext?.requestId, undefined); // requestId stripped
 });
 
 test("SubagentRegistry records and restores spawn failures", () => {
@@ -335,7 +335,7 @@ test("capabilities and telemetry headers resolve properly", () => {
   assert.equal(roleReqs.webResearch.fetch, false);
 
   // Missing, empty, and unknown roles all fail closed (never inherit default).
-  for (const unknownRole of [null, undefined, "", "   ", "nonexistent"]) {
+  for (const unknownRole of [null, undefined, "", ' '.repeat(3), "nonexistent"]) {
     const unknownRequirements = roleCapabilityRequirements(
       unknownRole,
       mockExecutionContract
@@ -406,7 +406,7 @@ test("convenience functions delegate to default SubagentRegistry", async () => {
   assert.ok(getWorkspaceMetadata("sess-default")?.includes("/test/workspace"));
 
   noteBridgeRequest("req-def", {
-    activitySubject: `req:${"req-def"}`,
+    activitySubject: `req:req-def`,
     provider: "antigravity",
     model: "flash"
   });

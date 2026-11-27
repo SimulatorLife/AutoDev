@@ -25,11 +25,11 @@ import {
 import { responseRecorder } from "./support/control-api-harness.ts";
 
 /**
- * A skill's reachability comes from where it is installed, and the assignment
- * follows it: a skill inside a repository belongs to that repository's
- * workspace alone. These tests are about the read that says where a skill is
- * and the write that refuses to put it anywhere else.
- */
+A skill's reachability comes from where it is installed, and the assignment
+follows it: a skill inside a repository belongs to that repository's
+workspace alone. These tests are about the read that says where a skill is
+and the write that refuses to put it anywhere else.
+*/
 
 const SERVICE_TOKEN = "s".repeat(64);
 const OPERATOR_ACTOR = "test-operator";
@@ -87,14 +87,16 @@ interface Harness {
 }
 
 interface HarnessOptions {
-  /** Whether the repository names a workspace through its own git remote. */
+  /**
+  Whether the repository names a workspace through its own git remote.
+  */
   readonly remote?: boolean;
 }
 
 /**
- * A repository with two catalogue skills -- one installed inside it, one
- * installed nowhere -- and the execution contract the assignment writes.
- */
+A repository with two catalogue skills -- one installed inside it, one
+installed nowhere -- and the execution contract the assignment writes.
+*/
 function harness(options: HarnessOptions = {}): Harness {
   // The temporary directory is resolved before use: the machine's own temporary
   // directory is a symlink on macOS, and a path that resolves through one is
@@ -184,7 +186,7 @@ function harness(options: HarnessOptions = {}): Harness {
   reloadExecutionContract();
   getDefaultUsageTracker().resetUsageTelemetry();
 
-  const restoreEnv = (name: string, value: string | undefined): void => {
+  const restoreEnvironment = (name: string, value: string | undefined): void => {
     if (value === undefined) delete process.env[name];
     else process.env[name] = value;
   };
@@ -203,11 +205,11 @@ function harness(options: HarnessOptions = {}): Harness {
         >;
       },
     restore: () => {
-      restoreEnv("CODEX_EXECUTION_CONTRACT_FILE", previous.contract);
-      restoreEnv("AUTODEV_CONTROL_API_TOKEN", previous.token);
-      restoreEnv("AUTODEV_CONTROL_OPERATORS", previous.operators);
-      restoreEnv("HOME", previous.home);
-      restoreEnv("CODEX_HOME", previous.codexHome);
+      restoreEnvironment("CODEX_EXECUTION_CONTRACT_FILE", previous.contract);
+      restoreEnvironment("AUTODEV_CONTROL_API_TOKEN", previous.token);
+      restoreEnvironment("AUTODEV_CONTROL_OPERATORS", previous.operators);
+      restoreEnvironment("HOME", previous.home);
+      restoreEnvironment("CODEX_HOME", previous.codexHome);
       reloadExecutionContract();
       getDefaultUsageTracker().resetUsageTelemetry();
     },
@@ -246,13 +248,13 @@ test("the read says where a skill is installed and which workspace it belongs to
     const response = await h.call("GET", "/control/skills");
     assert.equal(response.status, 200);
 
-    const repoOnly = skillRow(response.body, "repo-only");
-    assert.equal(repoOnly?.scope, "repo");
+    const repositoryOnly = skillRow(response.body, "repo-only");
+    assert.equal(repositoryOnly?.scope, "repo");
     assert.equal(
-      repoOnly?.scopeLocation,
+      repositoryOnly?.scopeLocation,
       join(h.repositoryRoot, ".agents", "skills", "repo-only")
     );
-    assert.equal(repoOnly?.workspace, WORKSPACE);
+    assert.equal(repositoryOnly?.workspace, WORKSPACE);
 
     // In the catalogue and installed nowhere: a skill no agent can reach.
     const uninstalled = skillRow(response.body, "release-checklist");

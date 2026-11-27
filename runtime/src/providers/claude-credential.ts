@@ -16,12 +16,12 @@ const KEYCHAIN_SERVICE = "com.codex.claude-bridge.oauth-token";
 The Claude Code account's OAuth token, or an empty string when absent.
 */
 export function readClaudeOAuthToken(
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): string {
-  const direct = env.CLAUDE_CODE_OAUTH_TOKEN?.trim();
+  const direct = environment.CLAUDE_CODE_OAUTH_TOKEN?.trim();
   if (direct) return direct;
   return (
-    readKeychainSecret(KEYCHAIN_SERVICE, env, { exactAccount: true }) ?? ""
+    readKeychainSecret(KEYCHAIN_SERVICE, environment, { exactAccount: true }) ?? ""
   );
 }
 
@@ -31,12 +31,12 @@ environment so its read-only Claude quota request can authenticate. The
 child report does not contain the token.
 */
 export function claudeQuotaAxiEnvironment(
-  baseEnv: NodeJS.ProcessEnv = process.env
+  baseEnvironment: NodeJS.ProcessEnv = process.env
 ): NodeJS.ProcessEnv {
-  const token = readClaudeOAuthToken(baseEnv);
-  if (!token) return { ...baseEnv };
+  const token = readClaudeOAuthToken(baseEnvironment);
+  if (!token) return { ...baseEnvironment };
   return {
-    ...baseEnv,
+    ...baseEnvironment,
     CLAUDE_CODE_OAUTH_TOKEN: token
   };
 }

@@ -37,11 +37,11 @@ function request(
 }
 
 /**
- * Options whose run-control owner records every read. The route resolves the
- * owner with `options.playtestingRunControl ?? getDefaultPlaytestRunControl()`,
- * so a read here marks the exact point at which a request would otherwise
- * construct the default owner and its on-disk repositories.
- */
+Options whose run-control owner records every read. The route resolves the
+owner with `options.playtestingRunControl ?? getDefaultPlaytestRunControl()`,
+so a read here marks the exact point at which a request would otherwise
+construct the default owner and its on-disk repositories.
+*/
 function ownerReadCounter(): {
   readonly options: ControlApiRequestOptions;
   readonly reads: () => number;

@@ -1,26 +1,26 @@
 /**
- * The Console's read-only Usage telemetry endpoint.
- *
- * The Console's surfaces want small answers about the Usage telemetry: the
- * request breakdown a workspace row shows, the provider attempts one
- * provider's panel shows, the tool calls one tool's panel shows. This route
- * is where the browser asks for them.
- *
- * It does not proxy the Usage dashboard to the browser. The dashboard is an
- * enormous payload -- every widget the service computes -- and the surfaces
- * that read it want one number from it, so handing the whole thing over
- * would move a very large body to answer a small question.
- *
- * It does not hold the Usage credential either. The credential stays in the
- * server's environment, the reads happen on the server, and the browser
- * receives only the scoped answer. The credential is never part of a
- * response, an error message, or a query string.
- *
- * The reads behind it are the cached ones in
- * `src/lib/server/usage-telemetry.ts`, because one read of the Usage
- * telemetry costs a fan-out of contended queries and the answer is a
- * historical aggregation rather than a live fact.
- */
+The Console's read-only Usage telemetry endpoint.
+
+The Console's surfaces want small answers about the Usage telemetry: the
+request breakdown a workspace row shows, the provider attempts one
+provider's panel shows, the tool calls one tool's panel shows. This route
+is where the browser asks for them.
+
+It does not proxy the Usage dashboard to the browser. The dashboard is an
+enormous payload -- every widget the service computes -- and the surfaces
+that read it want one number from it, so handing the whole thing over
+would move a very large body to answer a small question.
+
+It does not hold the Usage credential either. The credential stays in the
+server's environment, the reads happen on the server, and the browser
+receives only the scoped answer. The credential is never part of a
+response, an error message, or a query string.
+
+The reads behind it are the cached ones in
+`src/lib/server/usage-telemetry.ts`, because one read of the Usage
+telemetry costs a fan-out of contended queries and the answer is a
+historical aggregation rather than a live fact.
+*/
 
 import { type NextRequest, NextResponse } from "next/server.js";
 
@@ -38,31 +38,37 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 /**
- * The date the tool scope's window may name.
- *
- * The bound is the shape of a calendar date and nothing else: a date that
- * does not look like one is not a window, and asking the telemetry store
- * about a window it cannot read would be answered as an empty interval.
- */
+The date the tool scope's window may name.
+
+The bound is the shape of a calendar date and nothing else: a date that
+does not look like one is not a window, and asking the telemetry store
+about a window it cannot read would be answered as an empty interval.
+*/
 const USAGE_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/u;
 
-/** What a source that could not be read is reported as. */
+/**
+What a source that could not be read is reported as.
+*/
 const UNAVAILABLE = { kind: "unavailable" } as const;
 
-/** What a source that is not set up is reported as. */
+/**
+What a source that is not set up is reported as.
+*/
 const NOT_CONFIGURED = { kind: "not-configured" } as const;
 
-/** Every answer the route gives is a live read that must not be cached downstream. */
+/**
+Every answer the route gives is a live read that must not be cached downstream.
+*/
 const NO_STORE_HEADERS = { "Cache-Control": "no-store" };
 
 /**
- * The refusal a request the route cannot scope receives.
- *
- * The refusal names the request and nothing else. It does not echo the
- * value that was refused back to the caller, because the value is
- * untrusted input and the route's answer to untrusted input is not a
- * channel for reflecting it.
- */
+The refusal a request the route cannot scope receives.
+
+The refusal names the request and nothing else. It does not echo the
+value that was refused back to the caller, because the value is
+untrusted input and the route's answer to untrusted input is not a
+channel for reflecting it.
+*/
 function refuse(message: string): NextResponse {
   return NextResponse.json(
     { error: message },
@@ -78,14 +84,14 @@ function ok(body: UsageApiPayload): NextResponse {
 }
 
 /**
- * The workspace request breakdown, as the Console's own vocabulary.
- *
- * A source that could not be read is unavailable, and a source that read
- * without a breakdown is not observed. The two are kept apart: the first
- * says the Console does not know, and the second says the source knows and
- * reported no breakdown, and a workspace missing from the second is a
- * measurement of nothing rather than an absence of measurement.
- */
+The workspace request breakdown, as the Console's own vocabulary.
+
+A source that could not be read is unavailable, and a source that read
+without a breakdown is not observed. The two are kept apart: the first
+says the Console does not know, and the second says the source knows and
+reported no breakdown, and a workspace missing from the second is a
+measurement of nothing rather than an absence of measurement.
+*/
 async function workspaceRequestSource(): Promise<UsageWorkspaceRequestSource> {
   const result = await readUsageTelemetry({ range: "24H", values: {} });
   if (result.kind !== "ok") return UNAVAILABLE;
@@ -95,13 +101,13 @@ async function workspaceRequestSource(): Promise<UsageWorkspaceRequestSource> {
 }
 
 /**
- * One provider's attempts, as the Console's own vocabulary.
- *
- * Only the provider-attempt breakdowns are carried over. Logical requests
- * can span several providers, so their totals belong to the shared Usage
- * view rather than to this provider, and a panel that showed them here
- * would attribute a request to a provider that never served it.
- */
+One provider's attempts, as the Console's own vocabulary.
+
+Only the provider-attempt breakdowns are carried over. Logical requests
+can span several providers, so their totals belong to the shared Usage
+view rather than to this provider, and a panel that showed them here
+would attribute a request to a provider that never served it.
+*/
 async function providerAttemptSource(
   provider: string
 ): Promise<UsageProviderAttemptSource> {
@@ -119,12 +125,12 @@ async function providerAttemptSource(
 }
 
 /**
- * The tool calls the source recorded, as the Console's own vocabulary.
- *
- * The rows are the whole breakdown: which of them are this tool's calls is
- * a question about the catalogue's identity for the tool, and the
- * catalogue owns that identity rather than the telemetry store.
- */
+The tool calls the source recorded, as the Console's own vocabulary.
+
+The rows are the whole breakdown: which of them are this tool's calls is
+a question about the catalogue's identity for the tool, and the
+catalogue owns that identity rather than the telemetry store.
+*/
 async function toolCallSource(
   startDate: string,
   endDate: string
@@ -140,8 +146,8 @@ async function toolCallSource(
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const params = request.nextUrl.searchParams;
-  const scope = params.get("scope");
+  const parameters = request.nextUrl.searchParams;
+  const scope = parameters.get("scope");
 
   if (scope === "workspace-requests") {
     return ok({
@@ -152,7 +158,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
 
   if (scope === "provider-usage") {
-    const provider = params.get("provider") ?? "";
+    const provider = parameters.get("provider") ?? "";
     // The provider id names the scope of the read, so an id that is empty,
     // oversized, or not shaped like an identifier is refused rather than
     // answered: the telemetry store would answer a scope it does not know
@@ -170,8 +176,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
 
   if (scope === "tool-usage") {
-    const startDate = params.get("startDate") ?? "";
-    const endDate = params.get("endDate") ?? "";
+    const startDate = parameters.get("startDate") ?? "";
+    const endDate = parameters.get("endDate") ?? "";
     if (
       (startDate !== "" && !USAGE_DATE_PATTERN.test(startDate)) ||
       (endDate !== "" && !USAGE_DATE_PATTERN.test(endDate))

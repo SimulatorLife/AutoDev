@@ -1,4 +1,6 @@
-/** Bounded Smart-tier decision policy for discrete visual playtest turns. */
+/**
+Bounded Smart-tier decision policy for discrete visual playtest turns.
+*/
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
@@ -29,33 +31,33 @@ const SMART_MODEL_ALIAS = "autodev/smart" as const;
 export const SMART_DIRECT_POLICY_VERSION = "1" as const;
 const DEFAULT_ROUTER_PORT = 4100;
 /**
- * Hard ceiling on a single decision. The Router ends its own turn on the same
- * deadline, so a decision cannot usefully outlast it.
- */
+Hard ceiling on a single decision. The Router ends its own turn on the same
+deadline, so a decision cannot usefully outlast it.
+*/
 const MAX_DECISION_TIMEOUT_MS = 120_000;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_REQUEST_BYTES = 12 * 1024 * 1024;
 const MAX_FRAME_BYTES = 8 * 1024 * 1024;
 /**
- * The decision's answer plus the reasoning the provider spends reaching it.
- *
- * The cap has to hold the reasoning a real decision costs, because a turn
- * cut off mid-reasoning arrives with no answer at all and the episode ends
- * on a provider that answered perfectly well.
- *
- * Measured on the RacingGame screen -- a betting screen whose visible names
- * are whole sentences -- a completed decision spent 2,105 output tokens, of
- * which 1,987 were reasoning, and a turn at the previous 2,048 cap was cut
- * off with `incomplete_details.reason = "max_output_tokens"` and no answer
- * at all. The cap below is twice that measured need, so a decision that can
- * finish can finish, and the approved per-episode token budget stays the
- * real ceiling: the request asks for the smaller of this cap and the tokens
- * the episode has left.
- *
- * The bound does not save a turn that reasons without end: one measured turn
- * spent 8,192 tokens and 177 seconds without answering, which the episode's
- * own wall-time budget ends before the cap does.
- */
+The decision's answer plus the reasoning the provider spends reaching it.
+
+The cap has to hold the reasoning a real decision costs, because a turn
+cut off mid-reasoning arrives with no answer at all and the episode ends
+on a provider that answered perfectly well.
+
+Measured on the RacingGame screen -- a betting screen whose visible names
+are whole sentences -- a completed decision spent 2,105 output tokens, of
+which 1,987 were reasoning, and a turn at the previous 2,048 cap was cut
+off with `incomplete_details.reason = "max_output_tokens"` and no answer
+at all. The cap below is twice that measured need, so a decision that can
+finish can finish, and the approved per-episode token budget stays the
+real ceiling: the request asks for the smaller of this cap and the tokens
+the episode has left.
+
+The bound does not save a turn that reasons without end: one measured turn
+spent 8,192 tokens and 177 seconds without answering, which the episode's
+own wall-time budget ends before the cap does.
+*/
 const MAX_OUTPUT_TOKENS = 4096;
 const MAX_HISTORY_ITEMS = 8;
 const MAX_TEXT_LENGTH = 512;
@@ -77,12 +79,12 @@ const RESPONSE_INVALID_CODE = "response-invalid" as const;
 const DECISION_DEADLINE_EXCEEDED = "decision-deadline-exceeded" as const;
 
 /**
- * What the Smart-directed backend reports about itself.
- *
- * The Router returns an intention, a predicted visible effect and a reflective
- * self-report, but no calibrated confidence for the action it chose, so
- * `confidence` on the decision stays null rather than a made-up number.
- */
+What the Smart-directed backend reports about itself.
+
+The Router returns an intention, a predicted visible effect and a reflective
+self-report, but no calibrated confidence for the action it chose, so
+`confidence` on the decision stays null rather than a made-up number.
+*/
 const SMART_DIRECT_CAPABILITIES: PlaytestVisualDecisionCapabilities = {
   emitsIntent: true,
   emitsPrediction: true,
@@ -118,61 +120,69 @@ export class SmartDirectPolicyError extends Error {
 }
 
 /**
- * The Core decision contract owns the history's shape; this is the Runtime's
- * name for it.
- */
+The Core decision contract owns the history's shape; this is the Runtime's
+name for it.
+*/
 export type SmartDirectHistoryEntry = PlaytestVisualHistoryEntry;
 
 /**
- * Bounded model self-report returned only when Smart-direct stops.
- *
- * The Core decision contract owns the shape; this is the Runtime's name for
- * it.
- */
+Bounded model self-report returned only when Smart-direct stops.
+
+The Core decision contract owns the shape; this is the Runtime's name for
+it.
+*/
 export type SmartDirectFocusReport = PlaytestVisualDecisionSelfReport;
 
 export interface SmartDirectDecisionInput {
   readonly target: WorkspaceVisualPlaytestTargetApproval;
   readonly observation: PlaytestVisualObservation;
-  /** Exact verified PNG bytes for observation.frame; never a local path. */
+  /**
+  Exact verified PNG bytes for observation.frame; never a local path.
+  */
   readonly frameBytes: Uint8Array;
   readonly areasOfFocus: string | null;
   readonly history: readonly SmartDirectHistoryEntry[];
   /**
-   * The actions the Runtime offers for this observation.
-   *
-   * Smart-direct grounds its own answer against the observation and does not
-   * choose from this set; the field is here so both backends receive the same
-   * request shape.
-   */
+  The actions the Runtime offers for this observation.
+  
+  Smart-direct grounds its own answer against the observation and does not
+  choose from this set; the field is here so both backends receive the same
+  request shape.
+  */
   readonly candidates: readonly PlaytestVisualCandidate[];
   /**
-   * Monotonic deadline owned by the visual batch/session runner. It encodes the
-   * approved per-episode wall-time budget, and it is the operative bound on a
-   * decision: the policy never lets a request outlast it.
-   */
+  Monotonic deadline owned by the visual batch/session runner. It encodes the
+  approved per-episode wall-time budget, and it is the operative bound on a
+  decision: the policy never lets a request outlast it.
+  */
   readonly deadlineMonotonicMs: number;
   /**
-   * What the Runtime measured about the game's progress.
-   *
-   * The backend is told, so a game that stopped advancing does not get the
-   * same action proposed again and again.
-   */
+  What the Runtime measured about the game's progress.
+  
+  The backend is told, so a game that stopped advancing does not get the
+  same action proposed again and again.
+  */
   readonly progress: PlaytestVisualDecisionProgress;
 }
 
-/** The fields every Smart-direct decision carries, whatever it decided. */
+/**
+The fields every Smart-direct decision carries, whatever it decided.
+*/
 export interface SmartDirectDecisionCommon {
   readonly intention: string;
   readonly predictedVisibleEffect: string;
   readonly reasonCode: string;
   readonly modelId: string | null;
-  /** The Router reports no model revision for a decision. */
+  /**
+  The Router reports no model revision for a decision.
+  */
   readonly modelRevision: string | null;
   readonly backendId: "smart-direct";
   readonly fallback: false;
   readonly fallbackReason: null;
-  /** The Router returns no calibrated confidence for the decision. */
+  /**
+  The Router returns no calibrated confidence for the decision.
+  */
   readonly confidence: null;
   readonly capabilities: PlaytestVisualDecisionCapabilities;
   readonly counters: PlaytestVisualDecisionCounters;
@@ -187,7 +197,9 @@ export type SmartDirectDecision =
       readonly status: "act";
       readonly action: PlaytestVisualAction;
       readonly stopReason: null;
-      /** An action is not a self-report. */
+      /**
+      An action is not a self-report.
+      */
       readonly selfReport: null;
     })
   | (SmartDirectDecisionCommon & {
@@ -198,12 +210,12 @@ export type SmartDirectDecision =
     });
 
 /**
- * The policy's running counters.
- *
- * The Core decision contract reports the same counters; `requestsAttempted` is
- * the Runtime's existing name for the logical request count and stays for the
- * callers that already read it.
- */
+The policy's running counters.
+
+The Core decision contract reports the same counters; `requestsAttempted` is
+the Runtime's existing name for the logical request count and stays for the
+callers that already read it.
+*/
 export interface SmartDirectPolicyUsage {
   readonly requestsAttempted: number;
   readonly logicalRequests: number;
@@ -211,9 +223,13 @@ export interface SmartDirectPolicyUsage {
   readonly decisionsReturned: number;
   readonly tokensUsed: number;
   readonly tokenUsageComplete: boolean;
-  /** Proposed actions the policy refused because they were not grounded. */
+  /**
+  Proposed actions the policy refused because they were not grounded.
+  */
   readonly groundingRejections: number;
-  /** Null until the policy has made a decision; zero is a real latency. */
+  /**
+  Null until the policy has made a decision; zero is a real latency.
+  */
   readonly lastLatencyMs: number | null;
 }
 
@@ -221,24 +237,24 @@ export interface SmartDirectPolicyOptions {
   readonly endpoint?: string;
   readonly authToken?: string | undefined;
   /**
-   * Optional tighter bound on a single decision. The operative bound is the
-   * caller's deadline — the approved per-episode wall-time budget — and this
-   * only lowers it. A decision that outlasts the Router's own turn deadline
-   * can never be served, so the default imposes no second, competing cap.
-   */
+  Optional tighter bound on a single decision. The operative bound is the
+  caller's deadline — the approved per-episode wall-time budget — and this
+  only lowers it. A decision that outlasts the Router's own turn deadline
+  can never be served, so the default imposes no second, competing cap.
+  */
   readonly timeoutMs?: number;
   readonly maxResponseBytes?: number;
   readonly maxRequestBytes?: number;
   readonly maxFrameBytes?: number;
   readonly maxOutputTokens?: number;
   /**
-   * Absolute path of the private workspace this policy's Router requests are
-   * bound to. The Router refuses to guess a workspace, and the providers behind
-   * it need one to resolve the turn at all, so a decision request without this
-   * binding is rejected before it is sent. The caller owns the directory: it is
-   * a private, source-empty root -- never the game checkout, because the
-   * Smart-direct policy plays a game and must not be able to edit it.
-   */
+  Absolute path of the private workspace this policy's Router requests are
+  bound to. The Router refuses to guess a workspace, and the providers behind
+  it need one to resolve the turn at all, so a decision request without this
+  binding is rejected before it is sent. The caller owns the directory: it is
+  a private, source-empty root -- never the game checkout, because the
+  Smart-direct policy plays a game and must not be able to edit it.
+  */
   readonly workspacePath?: string | null;
   readonly fetchImpl?: typeof fetch;
   readonly now?: () => number;
@@ -283,12 +299,12 @@ function routerEndpoint(
 }
 
 /**
- * Cheap, non-network readiness probe: true when the Smart-direct router
- * endpoint this policy would construct is well-formed and credential-free
- * local AutoDev router endpoint. This never performs a network call; it
- * mirrors exactly the configuration {@link SmartDirectVisualPolicy}'s
- * constructor requires before it can dispatch a single decision.
- */
+Cheap, non-network readiness probe: true when the Smart-direct router
+endpoint this policy would construct is well-formed and credential-free
+local AutoDev router endpoint. This never performs a network call; it
+mirrors exactly the configuration {@link SmartDirectVisualPolicy}'s
+constructor requires before it can dispatch a single decision.
+*/
 export function isSmartDirectVisualPolicyConfigured(
   portValue = process.env.CODEX_MODEL_ROUTER_PORT,
   authToken = process.env.CODEX_ROUTER_AUTH_TOKEN
@@ -311,35 +327,37 @@ interface SmartDirectAvailabilityCache {
 }
 
 /**
- * The cached reachability answer, per endpoint and credential.
- *
- * The cache is keyed so that a probe for one Router never reads another's
- * answer, and so that a probe which overlaps another probe writes its own
- * entry rather than reassigning a shared binding.
- */
+The cached reachability answer, per endpoint and credential.
+
+The cache is keyed so that a probe for one Router never reads another's
+answer, and so that a probe which overlaps another probe writes its own
+entry rather than reassigning a shared binding.
+*/
 const smartDirectAvailabilityCache = new Map<
   string,
   SmartDirectAvailabilityCache
 >();
 
-/** The key one probe's answer is cached under. */
+/**
+The key one probe's answer is cached under.
+*/
 function smartDirectAvailabilityKey(
   endpoint: string,
   authFingerprint: string
 ): string {
-  return `${endpoint}\u0000${authFingerprint}`;
+  return `${endpoint}\0${authFingerprint}`;
 }
 
 /**
- * The reachability probe has to tell an unreachable Router from a busy one.
- * The Router answers this loopback read in milliseconds while it is idle, but
- * it also serves every model turn, and a Router that is mid-turn answers the
- * same read seconds later. A deadline shorter than that reports a busy Router
- * as an unreachable one, which takes the autonomous visual mode offline while
- * the route is in fact reachable and a decision would still be dispatched. The
- * budget that actually bounds a decision is the policy's own timeout, not this
- * probe's deadline.
- */
+The reachability probe has to tell an unreachable Router from a busy one.
+The Router answers this loopback read in milliseconds while it is idle, but
+it also serves every model turn, and a Router that is mid-turn answers the
+same read seconds later. A deadline shorter than that reports a busy Router
+as an unreachable one, which takes the autonomous visual mode offline while
+the route is in fact reachable and a decision would still be dispatched. The
+budget that actually bounds a decision is the policy's own timeout, not this
+probe's deadline.
+*/
 const SMART_DIRECT_AVAILABILITY_TIMEOUT_MS = 10_000;
 
 export interface SmartDirectAvailabilityProbeOptions {
@@ -348,15 +366,17 @@ export interface SmartDirectAvailabilityProbeOptions {
   readonly fetchImpl?: typeof fetch;
   readonly now?: () => number;
   readonly cacheMs?: number;
-  /** Deadline for the reachability read itself, independent of the cache. */
+  /**
+  Deadline for the reachability read itself, independent of the cache.
+  */
   readonly timeoutMs?: number;
 }
 
 /**
- * Check the actual local AutoDev router health contract, with a short cache so
- * capability reads do not add a network request per render. This probes only
- * loopback and authenticates using the same token the decision client uses.
- */
+Check the actual local AutoDev router health contract, with a short cache so
+capability reads do not add a network request per render. This probes only
+loopback and authenticates using the same token the decision client uses.
+*/
 export async function isSmartDirectVisualPolicyAvailable(
   options: SmartDirectAvailabilityProbeOptions = {}
 ): Promise<boolean> {
@@ -396,13 +416,13 @@ export async function isSmartDirectVisualPolicyAvailable(
     Math.max(100, options.timeoutMs ?? SMART_DIRECT_AVAILABILITY_TIMEOUT_MS)
   );
   timeout.unref?.();
-  let available = false;
+  let isAvailable = false;
   try {
     const headers: Record<string, string> = {
       accept: "application/json",
       authorization: "Bearer " + normalizedToken
     };
-    const response = await fetchImpl(new URL("/health", endpoint).toString(), {
+    const response = await fetchImpl(new URL("/health", endpoint).href, {
       method: "GET",
       headers,
       signal: controller.signal
@@ -412,19 +432,19 @@ export async function isSmartDirectVisualPolicyAvailable(
       if (Buffer.byteLength(body, "utf8") <= 4096) {
         try {
           const parsed: unknown = JSON.parse(body);
-          available =
+          isAvailable =
             typeof parsed === "object" &&
             parsed !== null &&
             !Array.isArray(parsed) &&
             (parsed as Record<string, unknown>).status === "ok" &&
             (parsed as Record<string, unknown>).router === "codex-model-router";
         } catch {
-          available = false;
+          isAvailable = false;
         }
       }
     }
   } catch {
-    available = false;
+    isAvailable = false;
   } finally {
     clearTimeout(timeout);
   }
@@ -434,13 +454,15 @@ export async function isSmartDirectVisualPolicyAvailable(
       endpoint,
       authFingerprint,
       expiresAt: current + Math.max(0, options.cacheMs ?? 1500),
-      available
+      available: isAvailable
     }
   );
-  return available;
+  return isAvailable;
 }
 
-/** Test seam to isolate readiness probe cache lifetimes. */
+/**
+Test seam to isolate readiness probe cache lifetimes.
+*/
 export function resetSmartDirectVisualPolicyAvailabilityCache(): void {
   smartDirectAvailabilityCache.clear();
 }
@@ -538,9 +560,9 @@ function isFocusReport(value: unknown): value is SmartDirectFocusReport {
     value.summary.length > 200 ||
     !Array.isArray(value.evidenceSteps) ||
     value.evidenceSteps.length > 3 ||
-    !value.evidenceSteps.every(
+    value.evidenceSteps.some(
       (step) =>
-        Number.isSafeInteger(step) && typeof step === "number" && step >= 0
+        !Number.isSafeInteger(step) || typeof step !== "number" || !(step >= 0)
     ) ||
     new Set(value.evidenceSteps).size !== value.evidenceSteps.length
   ) {
@@ -573,7 +595,7 @@ function parseDecision(value: unknown): ParsedDecision {
       "Smart-direct returned an invalid decision object."
     );
   }
-  const allowedKeys = [
+  const allowedKeys = new Set([
     "decision",
     "intention",
     "prediction",
@@ -581,10 +603,10 @@ function parseDecision(value: unknown): ParsedDecision {
     "action",
     "stopReason",
     "focusReport"
-  ];
+  ]);
   if (
-    Object.keys(value).length !== allowedKeys.length ||
-    Object.keys(value).some((key) => !allowedKeys.includes(key)) ||
+    Object.keys(value).length !== allowedKeys.size ||
+    Object.keys(value).some((key) => !allowedKeys.has(key)) ||
     (value.decision !== "act" && value.decision !== "stop") ||
     !isBoundedText(value.intention) ||
     !isBoundedText(value.prediction) ||
@@ -703,18 +725,16 @@ function responseText(value: unknown): string | null {
 }
 
 /**
- * Whether the provider's answer was cut off at the Runtime's output bound.
- *
- * A provider that runs out of output room says so in the response it
- * returns: the turn is incomplete and the reason names the bound. That is a
- * different fact from a provider that answered with something that is not a
- * decision, and the two are reported under two different codes so an
- * operator can tell them apart.
- */
+Whether the provider's answer was cut off at the Runtime's output bound.
+
+A provider that runs out of output room says so in the response it
+returns: the turn is incomplete and the reason names the bound. That is a
+different fact from a provider that answered with something that is not a
+decision, and the two are reported under two different codes so an
+operator can tell them apart.
+*/
 function isOutputTruncated(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  if (value.status !== "incomplete") return false;
-  if (!isRecord(value.incomplete_details)) return false;
+  if (!isRecord(value) || (value.status !== "incomplete") || !isRecord(value.incomplete_details)) return false;
   return value.incomplete_details.reason === "max_output_tokens";
 }
 
@@ -911,11 +931,11 @@ function validPositiveInteger(value: number, maximum: number): boolean {
 }
 
 /**
- * Normalize the private workspace a decision request is bound to. The Router
- * resolves the workspace from structured request metadata and refuses to guess
- * one, so a request without an existing absolute directory is rejected before
- * it reaches a provider.
- */
+Normalize the private workspace a decision request is bound to. The Router
+resolves the workspace from structured request metadata and refuses to guess
+one, so a request without an existing absolute directory is rejected before
+it reaches a provider.
+*/
 function normalizedWorkspacePath(
   value: string | null | undefined
 ): string | null {
@@ -936,10 +956,10 @@ function normalizedWorkspacePath(
 }
 
 /**
- * Canonical Codex turn metadata for one workspace, keyed by its absolute path.
- * The Router and every provider bridge behind it read the turn's workspace
- * from exactly this structure.
- */
+Canonical Codex turn metadata for one workspace, keyed by its absolute path.
+The Router and every provider bridge behind it read the turn's workspace
+from exactly this structure.
+*/
 function turnMetadataForWorkspace(workspacePath: string): string {
   return JSON.stringify({ workspaces: { [workspacePath]: {} } });
 }
@@ -1127,7 +1147,7 @@ export class SmartDirectVisualPolicy implements PlaytestVisualPolicy {
   ): Promise<RoutedDecisionResponse> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), request.timeoutMs);
-    let usageRecorded = false;
+    let isUsageRecorded = false;
     try {
       // One logical decision costs one call to the Router: the policy does not
       // retry, so a provider attempt and a logical request are the same count.
@@ -1144,7 +1164,7 @@ export class SmartDirectVisualPolicy implements PlaytestVisualPolicy {
         this.maxResponseBytes
       );
       const usage = tokenUsage(responseBody);
-      usageRecorded = true;
+      isUsageRecorded = true;
       this.tokensUsed += usage.totalTokens;
       if (!isRecord(responseBody) || typeof responseBody.model !== "string") {
         throw new SmartDirectPolicyError(
@@ -1200,7 +1220,7 @@ export class SmartDirectVisualPolicy implements PlaytestVisualPolicy {
       }
       return { parsed, modelId, usage };
     } catch (error) {
-      if (!usageRecorded) this.tokenUsageComplete = false;
+      if (!isUsageRecorded) this.tokenUsageComplete = false;
       if (error instanceof SmartDirectPolicyError) throw error;
       if (controller.signal.aborted) {
         throw new SmartDirectPolicyError(
@@ -1303,10 +1323,10 @@ export class SmartDirectVisualPolicy implements PlaytestVisualPolicy {
           "Smart-direct focus report referenced a step outside its visible history."
         );
       }
-      const noOperatorFocus =
+      const isNoOperatorFocus =
         input.areasOfFocus === null || input.areasOfFocus.trim().length === 0;
       if (
-        noOperatorFocus &&
+        isNoOperatorFocus &&
         (parsed.focusReport.objective !== null ||
           parsed.focusReport.inScope.length > 0 ||
           parsed.focusReport.forbiddenScope.length > 0 ||
@@ -1411,17 +1431,19 @@ export class SmartDirectVisualPolicy implements PlaytestVisualPolicy {
   }
 
   /**
-   * Refuse an action the policy could not ground in the observation.
-   *
-   * The refusal is behaviour the policy already had; the count is what the
-   * decision contract reports, so it is recorded where the refusal happens.
-   */
+  Refuse an action the policy could not ground in the observation.
+  
+  The refusal is behaviour the policy already had; the count is what the
+  decision contract reports, so it is recorded where the refusal happens.
+  */
   private rejectGrounding(message: string): never {
     this.groundingRejections += 1;
     throw new SmartDirectPolicyError("action-not-grounded", message);
   }
 
-  /** The policy's running counters, as the decision contract reports them. */
+  /**
+  The policy's running counters, as the decision contract reports them.
+  */
   private counters(): PlaytestVisualDecisionCounters {
     return {
       logicalRequests: this.requestsAttempted,

@@ -47,7 +47,9 @@ interface RecordedRequest {
 
 interface FakeControlApi {
   readonly url: string;
-  /** The requests the wrapper made, read from the server's own log. */
+  /**
+  The requests the wrapper made, read from the server's own log.
+  */
   readonly requests: () => RecordedRequest[];
   readonly close: () => void;
 }
@@ -78,11 +80,11 @@ server.listen(0, "127.0.0.1", () => {
 `;
 
 /**
- * A Control API that answers one diagnostics route and records the request.
- *
- * The server runs in its own process: the wrapper is a child process too, and
- * a child cannot always reach a socket this process opened.
- */
+A Control API that answers one diagnostics route and records the request.
+
+The server runs in its own process: the wrapper is a child process too, and
+a child cannot always reach a socket this process opened.
+*/
 async function fakeControlApi(body: string): Promise<FakeControlApi> {
   const directory = mkdtempSync(join(tmpdir(), "autodev-fake-api-"));
   const serverFile = join(directory, "server.mjs");
@@ -177,12 +179,12 @@ function fixture(): { home: string; cleanup: () => void } {
 }
 
 function runWrapper(
-  args: string[],
-  env: NodeJS.ProcessEnv = {}
+  arguments_: string[],
+  environment: NodeJS.ProcessEnv = {}
 ): SpawnSyncReturns<string> {
-  return spawnSync(process.execPath, [SCRIPT, ...args], {
+  return spawnSync(process.execPath, [SCRIPT, ...arguments_], {
     encoding: "utf8",
-    env: { ...process.env, ...env }
+    env: { ...process.env, ...environment }
   });
 }
 
@@ -215,7 +217,7 @@ test("comparison rejects malformed thread records and investigation values", () 
   assert.throws(
     () =>
       compareInvestigations(
-        [{ investigation: { observed: true, toolCalls: Number.NaN } } as never],
+        [{ investigation: { observed: true, toolCalls: NaN } } as never],
         [{ investigation: { observed: true } }]
       ),
     /finite number/u

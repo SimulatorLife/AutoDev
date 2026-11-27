@@ -1,15 +1,15 @@
 /**
- * Focused tests for the one owner of AutoDev's OTLP exporter configuration.
- *
- * The Router and the Codex tools MCP shim are separate processes that install
- * the official OTLP HTTP exporter, and they read the same operator-facing
- * environment: a generic endpoint or a signal-specific endpoint, plus the
- * headers that authenticate the export. The parsing of that environment has
- * exactly one implementation, so these tests pin the owner's behavior and pin
- * the ownership itself -- no other module under `runtime/src` may read an
- * OTLP exporter variable, because a second copy is exactly how the two
- * producers would drift apart.
- */
+Focused tests for the one owner of AutoDev's OTLP exporter configuration.
+
+The Router and the Codex tools MCP shim are separate processes that install
+the official OTLP HTTP exporter, and they read the same operator-facing
+environment: a generic endpoint or a signal-specific endpoint, plus the
+headers that authenticate the export. The parsing of that environment has
+exactly one implementation, so these tests pin the owner's behavior and pin
+the ownership itself -- no other module under `runtime/src` may read an
+OTLP exporter variable, because a second copy is exactly how the two
+producers would drift apart.
+*/
 
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";

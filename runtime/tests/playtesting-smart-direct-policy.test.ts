@@ -75,11 +75,11 @@ function target(
 }
 
 /**
- * The progress reading a decision request carries.
- *
- * A request that says the game advanced is the ordinary one; the tests that
- * care about the reading pass their own.
- */
+The progress reading a decision request carries.
+
+A request that says the game advanced is the ordinary one; the tests that
+care about the reading pass their own.
+*/
 function progressReading(
   overrides: Partial<PlaytestVisualDecisionProgress> = {}
 ): PlaytestVisualDecisionProgress {
@@ -147,7 +147,7 @@ function response(
   return Response.json({
     model: "fixture-smart-model",
     output_text: JSON.stringify(decision),
-    ...(actualUsage === null ? {} : { usage: actualUsage })
+    ...(actualUsage !== null && { usage: actualUsage })
   });
 }
 
@@ -200,10 +200,8 @@ function createPolicy(options: {
         options.workspacePath === undefined
           ? POLICY_WORKSPACE
           : options.workspacePath,
-      ...(options.authToken === undefined
-        ? {}
-        : { authToken: options.authToken }),
-      ...(options.now === undefined ? {} : { now: options.now })
+      ...(options.authToken !== undefined && { authToken: options.authToken }),
+      ...(options.now !== undefined && { now: options.now })
     }
   );
 }
@@ -709,7 +707,7 @@ test("Smart-direct readiness checks auth without exposing its token", () => {
     if (ambientToken === undefined) delete process.env.CODEX_ROUTER_AUTH_TOKEN;
     else process.env.CODEX_ROUTER_AUTH_TOKEN = ambientToken;
   }
-  assert.equal(isSmartDirectVisualPolicyConfigured("4100", "   "), false);
+  assert.equal(isSmartDirectVisualPolicyConfigured("4100", ' '.repeat(3)), false);
   assert.equal(isSmartDirectVisualPolicyConfigured("4100", "configured"), true);
   assert.equal(isSmartDirectVisualPolicyConfigured("", "configured"), true);
   assert.equal(

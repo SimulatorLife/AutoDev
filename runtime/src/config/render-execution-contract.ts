@@ -13,7 +13,7 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/output";
 import { parse as parseToml } from "smol-toml";
 
-import { parseArgs, requiredArg } from "./cli-args.ts";
+import { parseArgs as parseArguments, requiredArg as requiredArgument } from "./cli-args.ts";
 import { ConfigError, readJsonFile } from "./config-files.ts";
 
 const MCP_ORDER: Record<string, number> = {
@@ -155,7 +155,7 @@ function readRole(source: string): RoleProjection {
   );
   const mcpTools: Record<string, string[]> = {};
   const mcpApprovalMode: Record<string, string> = {};
-  const mcpEnvVars: Record<string, string[]> = {};
+  const mcpEnvironmentVariables: Record<string, string[]> = {};
   for (const [name, value] of enabledServers) {
     const serverConfig = record(value);
     const tools = stringArray(serverConfig.enabled_tools);
@@ -166,8 +166,8 @@ function readRole(source: string): RoleProjection {
     ) {
       mcpApprovalMode[name] = serverConfig.default_tools_approval_mode.trim();
     }
-    const envVars = stringArray(serverConfig.env_vars);
-    if (envVars.length > 0) mcpEnvVars[name] = envVars;
+    const environmentVariables = stringArray(serverConfig.env_vars);
+    if (environmentVariables.length > 0) mcpEnvironmentVariables[name] = environmentVariables;
   }
 
   const skillsTable = record(config.skills);
@@ -189,8 +189,8 @@ function readRole(source: string): RoleProjection {
   }
 
   const features = record(config.features);
-  const shell = features.shell_tool !== false;
-  const hooks = features.hooks !== false;
+  const isShell = features.shell_tool !== false;
+  const isHooks = features.hooks !== false;
 
   const reasoning: NonNullable<RoleProjection["reasoning"]> = {};
   if (
@@ -230,12 +230,12 @@ function readRole(source: string): RoleProjection {
   const readOnly =
     lines.some((line) => line.trim() === "# role-access: read-only") ||
     record(record(servers.filesystem).env).AUTODEV_MCP_READ_ONLY === "1" ||
-    mcpEnvVars.filesystem?.includes("AUTODEV_MCP_READ_ONLY") === true;
+    mcpEnvironmentVariables.filesystem?.includes("AUTODEV_MCP_READ_ONLY") === true;
   const projection: RoleProjection = {
     kind,
     readOnly,
-    shell,
-    hooks,
+    shell: isShell,
+    hooks: isHooks,
     mcp,
     skills: sortedByOrder(skills, SKILL_ORDER)
   };
@@ -243,7 +243,7 @@ function readRole(source: string): RoleProjection {
   if (Object.keys(mcpApprovalMode).length > 0) {
     projection.mcpApprovalMode = mcpApprovalMode;
   }
-  if (Object.keys(mcpEnvVars).length > 0) projection.mcpEnvVars = mcpEnvVars;
+  if (Object.keys(mcpEnvironmentVariables).length > 0) projection.mcpEnvVars = mcpEnvironmentVariables;
   if (Object.keys(skillsPolicy).length > 0) {
     projection.skillsPolicy = skillsPolicy;
   }
@@ -341,12 +341,12 @@ export function runExecutionContract(
 
 if (isEntryPoint(import.meta.url)) {
   try {
-    const { values } = parseArgs(process.argv.slice(2));
+    const { values } = parseArguments(process.argv.slice(2));
     process.exitCode = runExecutionContract(
-      requiredArg(values, "source-dir"),
-      requiredArg(values, "root-config"),
-      requiredArg(values, "contract"),
-      requiredArg(values, "output")
+      requiredArgument(values, "source-dir"),
+      requiredArgument(values, "root-config"),
+      requiredArgument(values, "contract"),
+      requiredArgument(values, "output")
     );
   } catch (error) {
     writeErrorLine(`render-execution-contract: ${errorMessage(error)}`);

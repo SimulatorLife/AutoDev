@@ -11,11 +11,11 @@ import {
 } from "../src/agents/read-only-policy.ts";
 
 /**
- * The policy is an allowlist, so a test asserts both sides of every rule: the
- * command that reads is allowed, and the command that writes next to it is
- * refused. A test that only asserted the refusal would pass against a policy
- * that refused everything.
- */
+The policy is an allowlist, so a test asserts both sides of every rule: the
+command that reads is allowed, and the command that writes next to it is
+refused. A test that only asserted the refusal would pass against a policy
+that refused everything.
+*/
 function assertAllowed(command: string): void {
   const decision = evaluateReadOnlyCommand(command);
   assert.equal(
@@ -353,7 +353,7 @@ test("a native tool the policy does not know is refused when its name says it wr
 });
 
 test("harmless null/fd redirects, quoted arrows, and escaped regex quotes are allowed while real redirects fail closed", () => {
-  for (const cmd of [
+  for (const command of [
     String.raw`rg "from ['\"]a|b['\"]" src 2>/dev/null || true`,
     "rg foo src 2>&1 | head -n 20",
     "git branch >/dev/null",
@@ -365,11 +365,11 @@ test("harmless null/fd redirects, quoted arrows, and escaped regex quotes are al
     "sed -n '1,120p' src/app.ts",
     "sed -n -e '10,40p;80q' src/app.ts"
   ]) {
-    const decision = evaluateReadOnlyCommand(cmd);
+    const decision = evaluateReadOnlyCommand(command);
     assert.equal(
       decision.allowed,
       true,
-      `expected allowed: ${cmd} (${decision.reason ?? ""})`
+      `expected allowed: ${command} (${decision.reason ?? ""})`
     );
   }
 
@@ -393,10 +393,10 @@ test("harmless null/fd redirects, quoted arrows, and escaped regex quotes are al
 });
 
 test("refused command message interpolates the actual command name rather than literal ${name}", () => {
-  const unknownCmd = evaluateReadOnlyCommand("python3 script.py");
-  assert.equal(unknownCmd.allowed, false);
-  assert.doesNotMatch(unknownCmd.reason ?? "", /\$\{name\}/u);
-  assert.match(unknownCmd.reason ?? "", /`python3`/u);
+  const unknownCommand = evaluateReadOnlyCommand("python3 script.py");
+  assert.equal(unknownCommand.allowed, false);
+  assert.doesNotMatch(unknownCommand.reason ?? "", /\$\{name\}/u);
+  assert.match(unknownCommand.reason ?? "", /`python3`/u);
 
   const bareShell = evaluateReadOnlyCommand("bash");
   assert.equal(bareShell.allowed, false);

@@ -4,13 +4,13 @@ import test from "node:test";
 import { CONTROL_API_REVISION_PATTERN } from "../src/control-api/types.ts";
 
 /**
- * The revision a Control API compare-and-swap is decided on.
- *
- * The Runtime and the Console both read a revision out of a request and
- * compare it with the one the canonical file is at. They have to agree on
- * what a revision looks like, so the shape lives in Core once and both sides
- * read it from there: a sha256 digest, lowercase, exactly 64 characters.
- */
+The revision a Control API compare-and-swap is decided on.
+
+The Runtime and the Console both read a revision out of a request and
+compare it with the one the canonical file is at. They have to agree on
+what a revision looks like, so the shape lives in Core once and both sides
+read it from there: a sha256 digest, lowercase, exactly 64 characters.
+*/
 test("a revision is a lowercase sha256 digest", () => {
   assert.equal(CONTROL_API_REVISION_PATTERN.test("a".repeat(64)), true);
   assert.equal(

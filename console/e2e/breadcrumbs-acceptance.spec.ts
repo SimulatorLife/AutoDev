@@ -3,7 +3,9 @@ import { expect, type Locator, type Page, test } from "@playwright/test";
 import { documentFitsViewport } from "./acceptance-helpers.ts";
 
 const MOUNTED_DOCUMENT_TOKEN = "mounted-document-1";
-/** The list the Agent trail's ancestor names. */
+/**
+The list the Agent trail's ancestor names.
+*/
 const AGENTS_LIST_URL = /\/agents$/u;
 const AGENT_ROLE = "default";
 const SKILL_NAME = "code-review";
@@ -16,21 +18,21 @@ const MODEL_ID = "sonnet";
 const HOOK_EVENT = "preToolUse";
 
 /**
- * One entry of a breadcrumb trail.
- *
- * An ancestor is a destination the operator can go back to, so it carries an
- * `href`. The current page is where the operator already is, so it carries
- * none: a trail that links to the page it is on offers a navigation that
- * goes nowhere.
- */
+One entry of a breadcrumb trail.
+
+An ancestor is a destination the operator can go back to, so it carries an
+`href`. The current page is where the operator already is, so it carries
+none: a trail that links to the page it is on offers a navigation that
+goes nowhere.
+*/
 interface TrailEntry {
   readonly label: string;
   readonly href: string | null;
 }
 
 /**
- * One detail surface and the trail it presents.
- */
+One detail surface and the trail it presents.
+*/
 interface DetailSurface {
   readonly url: string;
   readonly trail: readonly TrailEntry[];
@@ -110,27 +112,27 @@ const HOOK_SURFACE: DetailSurface = {
 };
 
 /**
- * The breadcrumb landmark of one page.
- *
- * The landmark is named, so it is found by its own name rather than by being
- * the first `<nav>` on the page: the detail pages carry other navigation
- * (the MCP tab bar, the Providers tab bar), and a trail that silently
- * borrowed another's name would still pass an unnamed search.
- */
+The breadcrumb landmark of one page.
+
+The landmark is named, so it is found by its own name rather than by being
+the first `<nav>` on the page: the detail pages carry other navigation
+(the MCP tab bar, the Providers tab bar), and a trail that silently
+borrowed another's name would still pass an unnamed search.
+*/
 function breadcrumbTrail(page: Page): Locator {
   return page.getByRole("navigation", { name: "Breadcrumb" });
 }
 
 /**
- * The trail of a page that has finished loading.
- *
- * The Console streams a page: the route's shell arrives first with the
- * section's loading state, and the page's own content is swapped in once the
- * server has the data. Until that swap the trail is in the document but is
- * not in the accessibility tree, so reading it then reads nothing. Waiting
- * for the trail to be visible is also the claim worth making: a trail the
- * operator cannot see is not a trail.
- */
+The trail of a page that has finished loading.
+
+The Console streams a page: the route's shell arrives first with the
+section's loading state, and the page's own content is swapped in once the
+server has the data. Until that swap the trail is in the document but is
+not in the accessibility tree, so reading it then reads nothing. Waiting
+for the trail to be visible is also the claim worth making: a trail the
+operator cannot see is not a trail.
+*/
 async function visibleBreadcrumbTrail(page: Page): Promise<Locator> {
   const landmark = breadcrumbTrail(page);
   await expect(landmark).toBeVisible();
@@ -138,13 +140,13 @@ async function visibleBreadcrumbTrail(page: Page): Promise<Locator> {
 }
 
 /**
- * The trail of one surface, read as the operator reads it.
- *
- * The separators are decoration and are hidden from assistive technology, so
- * they are removed before the labels are read: a trail that reads
- * "Agents / default" is a sentence with a slash in it rather than a list of
- * places.
- */
+The trail of one surface, read as the operator reads it.
+
+The separators are decoration and are hidden from assistive technology, so
+they are removed before the labels are read: a trail that reads
+"Agents / default" is a sentence with a slash in it rather than a list of
+places.
+*/
 function readTrail(landmark: Locator): Promise<readonly string[]> {
   return landmark.locator("ol > li").evaluateAll((nodes) =>
     nodes.map((node) => {
@@ -157,13 +159,13 @@ function readTrail(landmark: Locator): Promise<readonly string[]> {
   );
 }
 /**
- * One detail surface's trail, asserted in full.
- *
- * The claims are the ones the shared component makes: one landmark, an
- * ordered list, every ancestor a native link to the place it names, the
- * current page marked as the current page and not linked, and no
- * placeholder destination anywhere in the trail.
- */
+One detail surface's trail, asserted in full.
+
+The claims are the ones the shared component makes: one landmark, an
+ordered list, every ancestor a native link to the place it names, the
+current page marked as the current page and not linked, and no
+placeholder destination anywhere in the trail.
+*/
 async function assertTrail(page: Page, surface: DetailSurface): Promise<void> {
   await page.goto(surface.url);
 

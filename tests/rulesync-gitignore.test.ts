@@ -4,20 +4,21 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
-import { runRulesyncGitignore } from "../runtime/src/platform/runtime-files.ts";
 import { parseJsoncObject } from "@simulatorlife/autodev-data/files";
+
+import { runRulesyncGitignore } from "../runtime/src/platform/runtime-files.ts";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
 
 /**
- * The generated-output exclusions belong to stock Rulesync.
- *
- * `rulesync gitignore` derives the paths the configured targets own and, with
- * `"gitignoreDestination": "gitexclude"`, writes them to the repository's
- * exclude file. That keeps them out of the tracked `.gitignore`, which is what
- * lets Antigravity read the generated `.agents/skills/` tree: a tree listed in
- * `.gitignore` is a tree Antigravity refuses to load.
- */
+The generated-output exclusions belong to stock Rulesync.
+
+`rulesync gitignore` derives the paths the configured targets own and, with
+`"gitignoreDestination": "gitexclude"`, writes them to the repository's
+exclude file. That keeps them out of the tracked `.gitignore`, which is what
+lets Antigravity read the generated `.agents/skills/` tree: a tree listed in
+`.gitignore` is a tree Antigravity refuses to load.
+*/
 function excludePath(): string {
   return execFileSync(
     "git",

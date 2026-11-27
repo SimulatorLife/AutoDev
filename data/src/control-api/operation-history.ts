@@ -1,18 +1,18 @@
 /**
- * Typed adapter that converts the existing Control API audit envelope into
- * the reusable `OperationHistoryEntry` shape.
- *
- * The audit owner is `auditMutation` in `runtime/src/control-api/request-handler.ts`,
- * which already keeps its redacted audit records consistent with the
- * privacy requirements of section 5 of the target state doc. This module
- * deliberately does NOT create a parallel audit store: it reads the same
- * redacted audit envelope shape and projects only the bounded fields the
- * Console renders on its operation history panel.
- *
- * No raw prompt text, tokens, or mutation bodies ever appear in the result;
- * the audit envelope already strips those, and this adapter asserts the
- * shape before forwarding.
- */
+Typed adapter that converts the existing Control API audit envelope into
+the reusable `OperationHistoryEntry` shape.
+
+The audit owner is `auditMutation` in `runtime/src/control-api/request-handler.ts`,
+which already keeps its redacted audit records consistent with the
+privacy requirements of section 5 of the target state doc. This module
+deliberately does NOT create a parallel audit store: it reads the same
+redacted audit envelope shape and projects only the bounded fields the
+Console renders on its operation history panel.
+
+No raw prompt text, tokens, or mutation bodies ever appear in the result;
+the audit envelope already strips those, and this adapter asserts the
+shape before forwarding.
+*/
 
 import {
   isRecord,
@@ -38,14 +38,14 @@ function readOutcome(value: unknown): "ok" | "denied" | "error" | null {
 }
 
 /**
- * Single audit envelope emitted by `auditMutation`. Only the bounded fields
- * used for Console history need to round-trip; everything else stays in stderr.
- *
- * The shape mirrors exactly what `auditMutation` writes: `reason` is omitted
- * entirely when there is none, and the reconciliation generations plus
- * `restartRequired` sit at the top level rather than nested under `changes`.
- * `changes` stays the opaque redacted diff summary the audit owner produced.
- */
+Single audit envelope emitted by `auditMutation`. Only the bounded fields
+used for Console history need to round-trip; everything else stays in stderr.
+
+The shape mirrors exactly what `auditMutation` writes: `reason` is omitted
+entirely when there is none, and the reconciliation generations plus
+`restartRequired` sit at the top level rather than nested under `changes`.
+`changes` stays the opaque redacted diff summary the audit owner produced.
+*/
 export interface ControlApiAuditEnvelope {
   readonly schema: typeof AUDIT_SCHEMA;
   readonly timestamp: string;
@@ -59,15 +59,13 @@ export interface ControlApiAuditEnvelope {
   readonly restartRequired: boolean;
 }
 
-/** Type guard for the redacted audit envelope. */
+/**
+Type guard for the redacted audit envelope.
+*/
 export function isControlApiAuditEnvelope(
   value: unknown
 ): value is ControlApiAuditEnvelope {
-  if (!isRecord(value)) return false;
-  if (value.schema !== AUDIT_SCHEMA) return false;
-  if (typeof value.timestamp !== "string") return false;
-  if (typeof value.action !== "string") return false;
-  if (typeof value.resource !== "string") return false;
+  if (!isRecord(value) || (value.schema !== AUDIT_SCHEMA) || (typeof value.timestamp !== "string") || (typeof value.action !== "string") || (typeof value.resource !== "string")) return false;
   if (typeof value.actor !== "string" && value.actor !== null) return false;
   if (readOutcome(value.outcome) === null) return false;
   // `auditMutation` only adds `reason` when one exists, so an absent key is
@@ -92,11 +90,11 @@ export function isControlApiAuditEnvelope(
 }
 
 /**
- * Keys whose presence in `changes` means the envelope is carrying document or
- * prompt content rather than a redacted field summary. The audit owner is
- * expected to never emit these; refusing the whole envelope is a deliberate
- * fail-closed response so raw bodies can never reach the Console history.
- */
+Keys whose presence in `changes` means the envelope is carrying document or
+prompt content rather than a redacted field summary. The audit owner is
+expected to never emit these; refusing the whole envelope is a deliberate
+fail-closed response so raw bodies can never reach the Console history.
+*/
 const RAW_CONTENT_KEYS: ReadonlySet<string> = new Set([
   "body",
   "content",
@@ -114,11 +112,11 @@ function carriesRawContent(changes: unknown): boolean {
 }
 
 /**
- * Project one audit envelope into the reusable `OperationHistoryEntry`
- * shape. The function is pure and never returns raw prompt text, tokens,
- * or bodies; the reconciliation generations are the only change detail that
- * crosses this boundary, and each is bounded.
- */
+Project one audit envelope into the reusable `OperationHistoryEntry`
+shape. The function is pure and never returns raw prompt text, tokens,
+or bodies; the reconciliation generations are the only change detail that
+crosses this boundary, and each is bounded.
+*/
 export function auditEnvelopeToHistoryEntry(
   envelope: ControlApiAuditEnvelope
 ): OperationHistoryEntry {
@@ -138,10 +136,10 @@ export function auditEnvelopeToHistoryEntry(
 }
 
 /**
- * Convert and bound a list of raw envelopes into the history shape the
- * Console expects. Newest entries come first; the result is trimmed to the
- * shared Console cap.
- */
+Convert and bound a list of raw envelopes into the history shape the
+Console expects. Newest entries come first; the result is trimmed to the
+shared Console cap.
+*/
 export function auditEnvelopesToHistory(
   envelopes: readonly unknown[]
 ): readonly OperationHistoryEntry[] {
@@ -154,10 +152,10 @@ export function auditEnvelopesToHistory(
 }
 
 /**
- * Normalize a free-form summary into a bounded diff summary string. The
- * Runtime forwards a short label like "Prompt command updated; projection
- * applied" so Console renders the same vocabulary the audit emits.
- */
+Normalize a free-form summary into a bounded diff summary string. The
+Runtime forwards a short label like "Prompt command updated; projection
+applied" so Console renders the same vocabulary the audit emits.
+*/
 export function reconcileDiffSummary(input: {
   readonly summary: string;
 }): ReconciliationDiff {
@@ -168,10 +166,10 @@ export function reconcileDiffSummary(input: {
 }
 
 /**
- * Same as above but with a stable identifier. Used by the patch responses
- * to attach the desired generation hash (e.g. revision) to the diff so the
- * Console can render "what changed and which generation it represents".
- */
+Same as above but with a stable identifier. Used by the patch responses
+to attach the desired generation hash (e.g. revision) to the diff so the
+Console can render "what changed and which generation it represents".
+*/
 export function reconcileDiffWithIdentifier(input: {
   readonly summary: string;
   readonly identifier: string;
@@ -183,9 +181,9 @@ export function reconcileDiffWithIdentifier(input: {
 }
 
 /**
- * Bound the redacted last-error string before it travels into the
- * reconciliation status.
- */
+Bound the redacted last-error string before it travels into the
+reconciliation status.
+*/
 export function boundReconciliationError(value: string | null): string | null {
   return bound(value, ERROR_MAX_LEN);
 }

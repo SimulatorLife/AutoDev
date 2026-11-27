@@ -1,9 +1,9 @@
 /**
- * Pure decisions behind the live batch view, kept separate from the hook so
- * each rule can be tested directly. Every value here is derived from a server
- * response; nothing infers batch state, and nothing treats a failed read as
- * an up-to-date one.
- */
+Pure decisions behind the live batch view, kept separate from the hook so
+each rule can be tested directly. Every value here is derived from a server
+response; nothing infers batch state, and nothing treats a failed read as
+an up-to-date one.
+*/
 import {
   type ControlApiPlaytestingRunRecord,
   isCount,
@@ -18,7 +18,9 @@ import {
   playtestVisualEpisodeRecordId
 } from "@simulatorlife/autodev-core";
 
-/** Terminal states are read once, then that batch stops being polled. */
+/**
+Terminal states are read once, then that batch stops being polled.
+*/
 const TERMINAL_RUN_STATES = new Set([
   "completed",
   "failed",
@@ -31,11 +33,17 @@ export const MAX_POLL_INTERVAL_MS = 30_000;
 const MAX_TRACKED_RUNS = 64;
 
 export type PlaytestingActiveRunsFreshness =
-  /** At least one nonterminal batch is being watched and reads are succeeding. */
+  /**
+  At least one nonterminal batch is being watched and reads are succeeding.
+  */
   | "live"
-  /** No batch is known nonterminal, so nothing is being watched. */
+  /**
+  No batch is known nonterminal, so nothing is being watched.
+  */
   | "idle"
-  /** A read failed; no displayed value is being claimed as current. */
+  /**
+  A read failed; no displayed value is being claimed as current.
+  */
   | "unavailable";
 
 export interface PlaytestingActiveRun {
@@ -92,10 +100,10 @@ function parseSessionReferences(
 }
 
 /**
- * Read the active-runs envelope for exactly one workspace. Returns null rather
- * than a partial list: one malformed entry fails the whole read, so the view
- * can never show a subset that looks complete.
- */
+Read the active-runs envelope for exactly one workspace. Returns null rather
+than a partial list: one malformed entry fails the whole read, so the view
+can never show a subset that looks complete.
+*/
 export function readActiveRuns(
   value: unknown,
   workspaceId: string
@@ -148,12 +156,12 @@ export function isTerminal(record: ControlApiPlaytestingRunRecord): boolean {
 }
 
 /**
- * A missing episode is pending only when its ID belongs to a currently active
- * batch. Both execution modes derive their episode IDs deterministically from
- * that owner ID; completed outcomes are also checked for persisted/recovered
- * runs. An unrelated active batch must never turn an arbitrary missing URL
- * into a perpetual "initializing" state.
- */
+A missing episode is pending only when its ID belongs to a currently active
+batch. Both execution modes derive their episode IDs deterministically from
+that owner ID; completed outcomes are also checked for persisted/recovered
+runs. An unrelated active batch must never turn an arbitrary missing URL
+into a perpetual "initializing" state.
+*/
 export function activeRunOwnsEpisode(
   run: PlaytestingActiveRun,
   episodeId: string
@@ -169,7 +177,9 @@ export function activeRunOwnsEpisode(
   );
 }
 
-/** Only a positively observed role restriction hides the cancel action. */
+/**
+Only a positively observed role restriction hides the cancel action.
+*/
 export function cancellationAvailability(
   operatorActionsAvailable: boolean | null
 ): { readonly allowed: boolean; readonly reason: string | null } {
@@ -182,10 +192,10 @@ export function cancellationAvailability(
 }
 
 /**
- * Read one run-status envelope for exactly this workspace and batch. The
- * active-runs read lists only nonterminal batches, so a batch that finished
- * between polls is resolved through this status read rather than dropped.
- */
+Read one run-status envelope for exactly this workspace and batch. The
+active-runs read lists only nonterminal batches, so a batch that finished
+between polls is resolved through this status read rather than dropped.
+*/
 export function readRunStatus(
   value: unknown,
   workspaceId: string,
@@ -204,7 +214,9 @@ export function readRunStatus(
     : null;
 }
 
-/** Watched batches the latest active read no longer lists: they finished. */
+/**
+Watched batches the latest active read no longer lists: they finished.
+*/
 export function departedRuns(
   previous: readonly PlaytestingActiveRun[],
   next: readonly PlaytestingActiveRun[]
@@ -216,10 +228,10 @@ export function departedRuns(
 }
 
 /**
- * Seed the single status owner with the exact start acknowledgement before its
- * first active-list read. A very short batch may already be terminal by then,
- * so the next poll must resolve the seeded run through its status route.
- */
+Seed the single status owner with the exact start acknowledgement before its
+first active-list read. A very short batch may already be terminal by then,
+so the next poll must resolve the seeded run through its status route.
+*/
 export function trackStartedRun(
   previous: readonly PlaytestingActiveRun[],
   started: PlaytestingActiveRun
@@ -231,11 +243,11 @@ export function trackStartedRun(
 }
 
 /**
- * The tracked set after one read: the active list, then departed batches with
- * their server-read status, then batches already resolved terminal earlier.
- * A finished batch therefore stays visible with its final status instead of
- * vanishing at the moment it completes.
- */
+The tracked set after one read: the active list, then departed batches with
+their server-read status, then batches already resolved terminal earlier.
+A finished batch therefore stays visible with its final status instead of
+vanishing at the moment it completes.
+*/
 export function mergeRunsRead(
   previous: readonly PlaytestingActiveRun[],
   next: readonly PlaytestingActiveRun[],
@@ -252,55 +264,67 @@ export function mergeRunsRead(
   return merged.slice(0, MAX_TRACKED_RUNS);
 }
 
-/** Polling continues only while some batch is genuinely nonterminal. */
+/**
+Polling continues only while some batch is genuinely nonterminal.
+*/
 export function isWatching(runs: readonly PlaytestingActiveRun[]): boolean {
   return runs.some((run) => !isTerminal(run.record));
 }
 
-/** A successful read is `live` or `idle` by whether anything remains to watch. */
+/**
+A successful read is `live` or `idle` by whether anything remains to watch.
+*/
 export function freshnessForSuccess(
   runs: readonly PlaytestingActiveRun[]
 ): PlaytestingActiveRunsFreshness {
   return isWatching(runs) ? "live" : "idle";
 }
 
-/** A failed read is `unavailable`, never the previous frame's `live`. */
+/**
+A failed read is `unavailable`, never the previous frame's `live`.
+*/
 export function freshnessForFailure(): PlaytestingActiveRunsFreshness {
   return "unavailable";
 }
 
 interface PollLoopHandle {
-  /** Poll once immediately, then re-arm after each completed poll. */
+  /**
+  Poll once immediately, then re-arm after each completed poll.
+  */
   readonly start: () => void;
-  /** Cancel the pending arm. No further poll is issued. */
+  /**
+  Cancel the pending arm. No further poll is issued.
+  */
   readonly stop: () => void;
 }
 
 /**
- * Drive a self-scheduling poll loop.
- *
- * Each completed poll re-arms the next one. Arming once per effect run instead
- * is the defect this exists to make impossible: the effect only re-runs when
- * `watching` flips, so a view whose subject stays nonterminal polled twice and
- * then froze while still showing a live badge. The operator had to click
- * Refresh for the numbers to move — exactly what the live view promises never
- * to require.
- *
- * `shouldContinue` is read *after* every poll rather than captured up front, so
- * reaching a terminal state or pausing ends the loop promptly.
- */
+Drive a self-scheduling poll loop.
+
+Each completed poll re-arms the next one. Arming once per effect run instead
+is the defect this exists to make impossible: the effect only re-runs when
+`watching` flips, so a view whose subject stays nonterminal polled twice and
+then froze while still showing a live badge. The operator had to click
+Refresh for the numbers to move — exactly what the live view promises never
+to require.
+
+`shouldContinue` is read *after* every poll rather than captured up front, so
+reaching a terminal state or pausing ends the loop promptly.
+*/
 export function createPollLoop(options: {
   readonly poll: () => Promise<void>;
   readonly shouldContinue: () => boolean;
-  /** Backoff for the arm following the poll that just completed. */
+  /**
+  Backoff for the arm following the poll that just completed.
+  */
   readonly delayFor: () => number;
 }): PollLoopHandle {
-  let stopped = false;
+  let isStopped = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
   const step = async (): Promise<void> => {
-    if (stopped) return;
+    if (isStopped) return;
     await options.poll();
-    if (stopped || !options.shouldContinue()) return;
+    if (isStopped || !options.shouldContinue()) return;
     timer = setTimeout(() => {
       void step();
     }, options.delayFor());
@@ -310,13 +334,15 @@ export function createPollLoop(options: {
       void step();
     },
     stop: () => {
-      stopped = true;
+      isStopped = true;
       if (timer !== null) clearTimeout(timer);
     }
   };
 }
 
-/** Exponential backoff, capped, so a failing Runtime is not hammered. */
+/**
+Exponential backoff, capped, so a failing Runtime is not hammered.
+*/
 export function nextPollDelayMs(consecutiveFailures: number): number {
   const exponent = Math.max(0, Math.floor(consecutiveFailures));
   if (exponent >= 16) return MAX_POLL_INTERVAL_MS;
@@ -327,15 +353,15 @@ export function nextPollDelayMs(consecutiveFailures: number): number {
 }
 
 /**
- * Batch counts, read verbatim from the owner's result. The Console never
- * recomputes assignment outcomes from a subset it happened to receive.
- *
- * The keys are the owner's own `PlaytestCompletionCounts`. Naming them here as
- * that type's keys means a renamed or removed field is a compile error rather
- * than a tile that silently renders "not observed" forever — which is exactly
- * what happened when the panel read `succeeded`/`failed`/`quota-blocked`/
- * `episodes`, none of which the Runtime ever writes.
- */
+Batch counts, read verbatim from the owner's result. The Console never
+recomputes assignment outcomes from a subset it happened to receive.
+
+The keys are the owner's own `PlaytestCompletionCounts`. Naming them here as
+that type's keys means a renamed or removed field is a compile error rather
+than a tile that silently renders "not observed" forever — which is exactly
+what happened when the panel read `succeeded`/`failed`/`quota-blocked`/
+`episodes`, none of which the Runtime ever writes.
+*/
 export function assignmentCounts(
   record: ControlApiPlaytestingRunRecord
 ): Readonly<Record<keyof PlaytestCompletionCounts, PlaytestJsonValue>> | null {
@@ -348,10 +374,10 @@ export function assignmentCounts(
 }
 
 /**
- * Read each recorded assignment from the run owner's result without inferring
- * game outcomes from Runtime execution state. A malformed row invalidates the
- * whole list; silently dropping one would make the visible results incomplete.
- */
+Read each recorded assignment from the run owner's result without inferring
+game outcomes from Runtime execution state. A malformed row invalidates the
+whole list; silently dropping one would make the visible results incomplete.
+*/
 export function assignmentOutcomes(
   record: ControlApiPlaytestingRunRecord
 ): readonly PlaytestRunAssignmentOutcome[] | null {

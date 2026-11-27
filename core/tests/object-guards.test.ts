@@ -4,13 +4,13 @@ import test from "node:test";
 import { isCount, isRecord } from "../src/shared/object-guards.ts";
 
 /**
- * The one owner of "this value is a keyed object" and "this value is a count".
- *
- * The Runtime, the Data layer and the Console all read JSON out of requests,
- * model responses, tool calls and stored records. Every one of those readers
- * needs the same answer, and these tests hold the single owner to its
- * structural and numeric contract.
- */
+The one owner of "this value is a keyed object" and "this value is a count".
+
+The Runtime, the Data layer and the Console all read JSON out of requests,
+model responses, tool calls and stored records. Every one of those readers
+needs the same answer, and these tests hold the single owner to its
+structural and numeric contract.
+*/
 test("isRecord accepts non-null, non-array objects", () => {
   assert.equal(isRecord({}), true);
   assert.equal(isRecord({ key: "value" }), true);
@@ -54,8 +54,8 @@ test("isCount rejects negative, fractional, unsafe, exceeding-max, and non-numbe
   assert.equal(isCount(-1), false);
   assert.equal(isCount(-0.5), false);
   assert.equal(isCount(1.5), false);
-  assert.equal(isCount(Number.NaN), false);
-  assert.equal(isCount(Number.POSITIVE_INFINITY), false);
+  assert.equal(isCount(NaN), false);
+  assert.equal(isCount(Infinity), false);
   assert.equal(isCount(Number.NEGATIVE_INFINITY), false);
   assert.equal(isCount(Number.MAX_SAFE_INTEGER + 1), false);
   assert.equal(isCount(11, 10), false);

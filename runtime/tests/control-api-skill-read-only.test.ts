@@ -13,16 +13,16 @@ import { reloadExecutionContract } from "../src/router/subagents.ts";
 import { responseRecorder } from "./support/control-api-harness.ts";
 
 /**
- * The skill catalogue is repository-owned, so the Control API reads it and
- * nothing more.
- *
- * The role assignments live in the execution contract and the canonical source
- * lives in the RuleSync catalogue; both are changed in the repository and
- * reconciled by the standard workflow. A write path on this API would be an
- * alternate way to change them, and one that no product surface uses, so the
- * routes that carried it are gone: the assignment route is absent, and the
- * source route refuses every verb but its read.
- */
+The skill catalogue is repository-owned, so the Control API reads it and
+nothing more.
+
+The role assignments live in the execution contract and the canonical source
+lives in the RuleSync catalogue; both are changed in the repository and
+reconciled by the standard workflow. A write path on this API would be an
+alternate way to change them, and one that no product surface uses, so the
+routes that carried it are gone: the assignment route is absent, and the
+source route refuses every verb but its read.
+*/
 
 const SERVICE_TOKEN = "s".repeat(64);
 const OPERATOR_ACTOR = "test-operator";
@@ -65,10 +65,10 @@ interface Harness {
 }
 
 /**
- * A repository with one real RuleSync skill and one real execution contract, so
- * the routes are exercised against the files they actually read rather than
- * against stubs of them.
- */
+A repository with one real RuleSync skill and one real execution contract, so
+the routes are exercised against the files they actually read rather than
+against stubs of them.
+*/
 function harness(): Harness {
   const root = mkdtempSync(join(tmpdir(), "autodev-skill-readonly-"));
   const repositoryRoot = join(root, "repo");
@@ -108,7 +108,7 @@ function harness(): Harness {
   process.env.AUTODEV_CONTROL_OPERATORS = OPERATOR_ACTOR;
   reloadExecutionContract();
 
-  const restoreEnv = (name: string, previous: string | undefined): void => {
+  const restoreEnvironment = (name: string, previous: string | undefined): void => {
     if (previous === undefined) delete process.env[name];
     else process.env[name] = previous;
   };
@@ -125,9 +125,9 @@ function harness(): Harness {
       return parsed.roles[role]?.skills ?? [];
     },
     restore: () => {
-      restoreEnv("CODEX_EXECUTION_CONTRACT_FILE", previousContract);
-      restoreEnv("AUTODEV_CONTROL_API_TOKEN", previousToken);
-      restoreEnv("AUTODEV_CONTROL_OPERATORS", previousOperators);
+      restoreEnvironment("CODEX_EXECUTION_CONTRACT_FILE", previousContract);
+      restoreEnvironment("AUTODEV_CONTROL_API_TOKEN", previousToken);
+      restoreEnvironment("AUTODEV_CONTROL_OPERATORS", previousOperators);
       reloadExecutionContract();
     },
     call: async (method, pathname, body, role = "operator") => {

@@ -11,7 +11,9 @@ export type ControlApiJsonObjectResult =
 
 const MAX_CONTROL_BODY_BYTES = 65_536;
 
-/** Shared bounded JSON-object reader for Control API mutation routes. */
+/**
+Shared bounded JSON-object reader for Control API mutation routes.
+*/
 export async function readControlApiJsonObject(
   request: IncomingMessage,
   maximumBytes = MAX_CONTROL_BODY_BYTES

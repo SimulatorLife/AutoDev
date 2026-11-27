@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  assertPlaytestAdapterParams,
+  assertPlaytestAdapterParams as assertPlaytestAdapterParameters,
   assertPlaytestAdapterResult,
   assertPlaytestAssignmentBranch,
   assertPlaytestBranchLineage,
@@ -109,7 +109,7 @@ test("snapshot digest and retained artifact have distinct strict wire shapes", (
     stateHash: checkpoint.stateHash,
     rngCheckpoint: rng
   };
-  assertPlaytestAdapterParams("game.snapshot", {
+  assertPlaytestAdapterParameters("game.snapshot", {
     episodeId: "episode-1",
     expectedRevision: 4,
     includeArtifact: false
@@ -149,12 +149,12 @@ test("snapshot digest and retained artifact have distinct strict wire shapes", (
 });
 
 test("replay must stop at the requested pre-action decision with state/RNG evidence", () => {
-  const params = {
+  const parameters = {
     trace,
     expectedBuildSha: digest("1"),
     throughStep: 7
   };
-  assertPlaytestAdapterParams("game.replay", params);
+  assertPlaytestAdapterParameters("game.replay", parameters);
   const result = {
     episodeId: "replay-1",
     revision: 8,
@@ -166,10 +166,10 @@ test("replay must stop at the requested pre-action decision with state/RNG evide
     rngCheckpoint: rng,
     diagnostics: []
   } as const;
-  assertPlaytestAdapterResult("game.replay", params, result);
+  assertPlaytestAdapterResult("game.replay", parameters, result);
   assert.throws(
     () =>
-      assertPlaytestAdapterResult("game.replay", params, {
+      assertPlaytestAdapterResult("game.replay", parameters, {
         ...result,
         replayedThroughStep: 8
       }),

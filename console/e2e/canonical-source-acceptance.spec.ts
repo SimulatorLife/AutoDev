@@ -1,4 +1,6 @@
-/** Read-only source and rendered content share one loaded revision. */
+/**
+Read-only source and rendered content share one loaded revision.
+*/
 
 import { type APIRequestContext, expect, test } from "@playwright/test";
 
@@ -31,12 +33,12 @@ async function resetCanonicalSources(
 }
 
 /**
- * Moves a canonical source without the Console knowing.
- *
- * The page that has the source open holds the revision it was rendered with,
- * so moving the source here is what makes its next write a conflict rather
- * than a silent overwrite of somebody else's edit.
- */
+Moves a canonical source without the Console knowing.
+
+The page that has the source open holds the revision it was rendered with,
+so moving the source here is what makes its next write a conflict rather
+than a silent overwrite of somebody else's edit.
+*/
 async function moveCanonicalSource(
   request: APIRequestContext,
   kind: "prompt" | "skill",
@@ -49,12 +51,12 @@ async function moveCanonicalSource(
 }
 
 /**
- * The canonical source as the service holds it.
- *
- * This is the source itself rather than the page's copy of it: a write that
- * was refused must leave the source as it was, and only the service can say
- * what it holds.
- */
+The canonical source as the service holds it.
+
+This is the source itself rather than the page's copy of it: a write that
+was refused must leave the source as it was, and only the service can say
+what it holds.
+*/
 async function storedCanonicalSource(
   request: APIRequestContext,
   kind: "prompt" | "skill",

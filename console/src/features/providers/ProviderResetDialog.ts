@@ -6,46 +6,46 @@ import { Button } from "../../components/forms/Button.ts";
 import { MUTED_BODY_CLASS } from "../../components/ui/text-classes.ts";
 
 /**
- * What a provider reset clears, stated once for the dialog and its tests.
- */
+What a provider reset clears, stated once for the dialog and its tests.
+*/
 export const PROVIDER_RESET_SCOPE =
   "Runtime provider overrides: role assignments, provider disables, model disables, and provider agent limits, reset to static-config defaults.";
 
 /**
- * What a provider reset leaves untouched, shown beside the cleared scope.
- */
+What a provider reset leaves untouched, shown beside the cleared scope.
+*/
 export const PROVIDER_RESET_PRESERVES =
   "It does not edit config/model-routing.json and preserves Agent admission, provider discovery snapshots, live health/cooldown, and Runtime concurrency limits.";
 
 /**
- * The Reset to defaults control and the confirmation it opens.
- *
- * The reset is a destructive write, so the control only opens a native modal
- * dialog; nothing is posted until the operator presses the explicit confirm
- * button inside it. The native modal gives the focus containment, Escape
- * dismissal and inert background the operator relies on, and the form it
- * submits is the same same-origin route with the same `confirm` field, so the
- * route's authorization and CSRF checks are unchanged.
- */
+The Reset to defaults control and the confirmation it opens.
+
+The reset is a destructive write, so the control only opens a native modal
+dialog; nothing is posted until the operator presses the explicit confirm
+button inside it. The native modal gives the focus containment, Escape
+dismissal and inert background the operator relies on, and the form it
+submits is the same same-origin route with the same `confirm` field, so the
+route's authorization and CSRF checks are unchanged.
+*/
 export function ProviderResetDialog({
   returnTo
 }: {
   readonly returnTo: string;
 }): React.JSX.Element {
-  const dialogRef = React.useRef<HTMLDialogElement | null>(null);
-  const openerRef = React.useRef<HTMLElement | null>(null);
+  const dialogReference = React.useRef<HTMLDialogElement | null>(null);
+  const openerReference = React.useRef<HTMLElement | null>(null);
   const titleId = React.useId();
   const descriptionId = React.useId();
 
   const open = (): void => {
-    openerRef.current =
+    openerReference.current =
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
-    dialogRef.current?.showModal();
+    dialogReference.current?.showModal();
   };
   const close = (): void => {
-    dialogRef.current?.close();
+    dialogReference.current?.close();
   };
 
   return React.createElement(
@@ -65,14 +65,14 @@ export function ProviderResetDialog({
       "dialog",
       {
         id: "provider-reset-dialog",
-        ref: dialogRef,
+        ref: dialogReference,
         "aria-labelledby": titleId,
         "aria-describedby": descriptionId,
         "data-provider-reset-dialog": "true",
         className:
           "m-auto w-[min(28rem,calc(100vw-2rem))] rounded border border-border-strong bg-surface p-4 text-fg backdrop:bg-black/50",
         // Dismissal returns the focus to the control that opened the dialog.
-        onClose: () => openerRef.current?.focus(),
+        onClose: () => openerReference.current?.focus(),
         // A click on the backdrop lands on the dialog element itself.
         onClick: (event: React.MouseEvent<HTMLDialogElement>) => {
           if (event.target === event.currentTarget) close();

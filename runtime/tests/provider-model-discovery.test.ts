@@ -53,11 +53,11 @@ function fakeAgy(body: string): {
 }
 
 async function geminiListing(
-  env: NodeJS.ProcessEnv,
+  environment: NodeJS.ProcessEnv,
   signal: AbortSignal = new AbortController().signal,
   timeoutMs?: number
 ): Promise<unknown> {
-  const adapter = createAntigravityModelDiscoveryAdapters(env, timeoutMs)[
+  const adapter = createAntigravityModelDiscoveryAdapters(environment, timeoutMs)[
     "antigravity-gemini"
   ];
   return adapter.discover(signal).then(
@@ -256,21 +256,21 @@ test("each opencli provider discovers its own site's models from the shared brid
 });
 
 test("MiniMax model discovery refuses a missing credential before network access", async () => {
-  let called = false;
+  let isCalled = false;
   await assert.rejects(
     discoverMiniMaxModels({} as NodeJS.ProcessEnv, async () => {
-      called = true;
+      isCalled = true;
       return Response.json({ object: "list", data: [] });
     }),
     /MINIMAX_API_KEY is not configured/u
   );
-  assert.equal(called, false);
+  assert.equal(isCalled, false);
 });
 
 test("MiniMax model discovery refuses malformed and oversized listings", async () => {
-  const env = { MINIMAX_API_KEY: "fixture-token" } as NodeJS.ProcessEnv;
+  const environment = { MINIMAX_API_KEY: "fixture-token" } as NodeJS.ProcessEnv;
   await assert.rejects(
-    discoverMiniMaxModels(env, async () =>
+    discoverMiniMaxModels(environment, async () =>
       Response.json({ object: "list", data: [{ id: "invalid/id" }] })
     ),
     /invalid or duplicate model ID/u
@@ -280,7 +280,7 @@ test("MiniMax model discovery refuses malformed and oversized listings", async (
     headers: { "content-type": "application/json" }
   });
   await assert.rejects(
-    discoverMiniMaxModels(env, async () => oversized),
+    discoverMiniMaxModels(environment, async () => oversized),
     /size bound/u
   );
 });
@@ -341,12 +341,12 @@ test("Codex discovery queries the authenticated account model endpoint", async (
 });
 
 /**
- * The account model list is filtered by the client version the caller
- * declares. The Runtime drives the Codex backend directly, so the installed
- * CLI's release is not a bound on what the Runtime can use: declaring it
- * hid the models the Runtime's own routing configuration selects, while the
- * Runtime drove them successfully all the same.
- */
+The account model list is filtered by the client version the caller
+declares. The Runtime drives the Codex backend directly, so the installed
+CLI's release is not a bound on what the Runtime can use: declaring it
+hid the models the Runtime's own routing configuration selects, while the
+Runtime drove them successfully all the same.
+*/
 test("Codex discovery does not narrow the account list by the installed CLI version", async () => {
   const requested: string[] = [];
   await discoverCodexModels(
@@ -365,10 +365,10 @@ test("Codex discovery does not narrow the account list by the installed CLI vers
 });
 
 /**
- * The account keeps platform-internal models out of a model picker and marks
- * the ones it does not serve through the API. Offering them as role
- * assignments would offer a choice the provider itself does not offer.
- */
+The account keeps platform-internal models out of a model picker and marks
+the ones it does not serve through the API. Offering them as role
+assignments would offer a choice the provider itself does not offer.
+*/
 test("Codex discovery offers only the models the account lists for a picker", () => {
   assert.deepEqual(
     parseCodexModelList({
@@ -509,11 +509,11 @@ test("discovery snapshots distinguish observed-empty, unavailable, and unsupport
 });
 
 test("a failed refresh retains the last observed list as stale, not as current", async () => {
-  let fail = false;
+  let isFail = false;
   const adapter: ProviderModelDiscoveryAdapter = {
     source: "fixture provider list",
     discover: async () => {
-      if (fail) throw new Error("fixture failure");
+      if (isFail) throw new Error("fixture failure");
       return parseAntigravityModelList(AGY_MODELS);
     }
   };
@@ -525,7 +525,7 @@ test("a failed refresh retains the last observed list as stale, not as current",
   });
 
   await service.refresh();
-  fail = true;
+  isFail = true;
   await service.refresh();
 
   const discovery = service.snapshot().providers[0]?.discovery;
@@ -545,20 +545,20 @@ test("a failed refresh retains the last observed list as stale, not as current",
 
 test("an empty listing keeps the provider's last non-empty models", async () => {
   restoreProviderModelDiscoveryPersistence(null);
-  let empty = false;
+  let isEmpty = false;
   const service = new ProviderModelDiscoveryService({
     providerIds: () => ["antigravity-gemini"],
     adapters: {
       "antigravity-gemini": {
         source: "fixture provider list",
         discover: async () =>
-          empty ? [] : parseAntigravityModelList(AGY_MODELS)
+          isEmpty ? [] : parseAntigravityModelList(AGY_MODELS)
       }
     },
     retryBaseMs: 60_000
   });
   await service.refresh();
-  empty = true;
+  isEmpty = true;
   await service.refresh();
   const discovery = service.snapshot().providers[0]?.discovery;
   assert.equal(discovery?.status, "stale");
@@ -814,7 +814,7 @@ test("Copilot drops a persisted placeholder when no provider-owned listing is co
 
 test("a bridge listing refused for a signed-out account is reported as a sign-in", async () => {
   const signIns: Array<[string, string | null]> = [];
-  let signedIn = false;
+  let isSignedIn = false;
   const service = new ProviderModelDiscoveryService({
     providerIds: () => ["opencli-gemini"],
     adapters: {
@@ -824,7 +824,7 @@ test("a bridge listing refused for a signed-out account is reported as a sign-in
           discoverBridgeModels(
             opencliModelSource("opencli-gemini", {} as NodeJS.ProcessEnv),
             async () =>
-              signedIn
+              isSignedIn
                 ? Response.json({
                     object: "list",
                     data: [{ id: "opencli-gemini-3.1-pro", object: "model" }]
@@ -851,7 +851,7 @@ test("a bridge listing refused for a signed-out account is reported as a sign-in
       refused?.status === "unavailable" ? refused.reason : "",
       /Not logged in/u
     );
-    signedIn = true;
+    isSignedIn = true;
     await service.refreshProvider("opencli-gemini");
     assert.deepEqual(signIns, [
       ["opencli-gemini", "Not logged in to gemini.google.com"],

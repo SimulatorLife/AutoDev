@@ -1,21 +1,21 @@
 /**
- * Game-neutral, read-only discovery evidence packets for autonomous-visual
- * episodes.
- *
- * A discovery packet is the only legal analyst input for a session that does
- * not have a rubric, a coverage plan or confirmed engine identity. It
- * preserves exactly what the player actually saw (visible observations,
- * selected/rejected actions, pre-action predictions, frame references and
- * missingness); it intentionally omits every scored/confirmatory field
- * (rubric hashes, metric definitions, coverage cells, cross-session numeric
- * aggregates, complete confirmatory episode comparisons). It is refused by
- * any scored/confirmatory path.
- *
- * The packet is content-addressed (sha256 over canonical JSON) and reuses
- * the same trace-step, window-selection, locator-index and supplied/omitted
- * artifact mechanics as the confirmatory packet so an analyst can cite
- * observations by {kind,id} across packet families.
- */
+Game-neutral, read-only discovery evidence packets for autonomous-visual
+episodes.
+
+A discovery packet is the only legal analyst input for a session that does
+not have a rubric, a coverage plan or confirmed engine identity. It
+preserves exactly what the player actually saw (visible observations,
+selected/rejected actions, pre-action predictions, frame references and
+missingness); it intentionally omits every scored/confirmatory field
+(rubric hashes, metric definitions, coverage cells, cross-session numeric
+aggregates, complete confirmatory episode comparisons). It is refused by
+any scored/confirmatory path.
+
+The packet is content-addressed (sha256 over canonical JSON) and reuses
+the same trace-step, window-selection, locator-index and supplied/omitted
+artifact mechanics as the confirmatory packet so an analyst can cite
+observations by {kind,id} across packet families.
+*/
 import { isCount, isRecord } from "../shared/object-guards.ts";
 import { SHA256_PATTERN } from "../shared/sha256.ts";
 import {
@@ -82,30 +82,30 @@ import {
 export const PLAYTESTS_DISCOVERY_EVIDENCE_PACKET_MAX_TOKENS = 32_768;
 const MAX_SUMMARY_TEXT = 4096;
 /**
- * Maximum length of a visible control's accessible name in the packet.
- *
- * A game puts a sentence into every control's accessible name, and the
- * player's visible state is the analyst's evidence. The name is capped so
- * that one game's verbose names cannot decide how many steps of a session
- * the analyst can read; a capped name ends in an ellipsis and the step
- * records how many names were capped.
- */
+Maximum length of a visible control's accessible name in the packet.
+
+A game puts a sentence into every control's accessible name, and the
+player's visible state is the analyst's evidence. The name is capped so
+that one game's verbose names cannot decide how many steps of a session
+the analyst can read; a capped name ends in an ellipsis and the step
+records how many names were capped.
+*/
 export const PLAYTESTS_DISCOVERY_CONTROL_NAME_MAX_LENGTH = 120;
 /**
- * Maximum number of visible controls the packet carries for one step.
- *
- * The game decides how many controls it shows; the packet decides how many
- * it can carry. A step that shows more controls than this keeps the control
- * the player acted on plus the first controls in their recorded order, and
- * the step records how many controls it did not carry.
- */
+Maximum number of visible controls the packet carries for one step.
+
+The game decides how many controls it shows; the packet decides how many
+it can carry. A step that shows more controls than this keeps the control
+the player acted on plus the first controls in their recorded order, and
+the step records how many controls it did not carry.
+*/
 export const PLAYTESTS_DISCOVERY_MAX_CONTROLS_PER_STEP = 32;
 /**
- * Upper bound (in UTF-16 code units) for the operator-requested focus
- * context copied from the frozen visual assignment manifest. Mirrors the
- * manifest's own validation in batch-run.ts and Smart-direct's contract,
- * so a packet can never widen the focus budget the launch request allowed.
- */
+Upper bound (in UTF-16 code units) for the operator-requested focus
+context copied from the frozen visual assignment manifest. Mirrors the
+manifest's own validation in batch-run.ts and Smart-direct's contract,
+so a packet can never widen the focus budget the launch request allowed.
+*/
 export const PLAYTESTS_DISCOVERY_AREAS_OF_FOCUS_MAX_LENGTH = 2000;
 
 export const PLAYTESTS_DISCOVERY_HYPOTHESIS_STATUSES = [
@@ -137,14 +137,14 @@ export interface PlaytestDiscoveryObservationNote {
 }
 
 /**
- * One visible affordance of a step.
- *
- * The note is the flat index of the visible affordances: a stable id for
- * citation and the control it points at. The control's name, role and
- * enabled state live in the step's visible observation, under the same
- * control id, and repeating them here would put the visible state of every
- * step into the packet a second time.
- */
+One visible affordance of a step.
+
+The note is the flat index of the visible affordances: a stable id for
+citation and the control it points at. The control's name, role and
+enabled state live in the step's visible observation, under the same
+control id, and repeating them here would put the visible state of every
+step into the packet a second time.
+*/
 export interface PlaytestDiscoveryAffordanceNote {
   readonly noteId: string;
   readonly step: number;
@@ -183,12 +183,12 @@ export interface PlaytestDiscoveryEvidenceFrame {
 }
 
 /**
- * One visible affordance, in the bounded form the packet carries.
- *
- * The control keeps its identity, its role, its enabled state and the
- * accessible name the player saw. The on-screen geometry is not carried:
- * the captured frame is the record of where the control was.
- */
+One visible affordance, in the bounded form the packet carries.
+
+The control keeps its identity, its role, its enabled state and the
+accessible name the player saw. The on-screen geometry is not carried:
+the captured frame is the record of where the control was.
+*/
 export interface PlaytestDiscoveryVisibleControl {
   readonly controlId: string;
   readonly role: string;
@@ -197,14 +197,14 @@ export interface PlaytestDiscoveryVisibleControl {
 }
 
 /**
- * The player's visible state for one step, in bounded form.
- *
- * This is a projection of the recorded observation, never the recording
- * itself: the trace artifact stays the full record. The projection is
- * explicit about what it condensed -- how many controls the player saw,
- * how many the packet did not carry and how many names it capped -- so an
- * analyst never reads a bounded state as the whole screen.
- */
+The player's visible state for one step, in bounded form.
+
+This is a projection of the recorded observation, never the recording
+itself: the trace artifact stays the full record. The projection is
+explicit about what it condensed -- how many controls the player saw,
+how many the packet did not carry and how many names it capped -- so an
+analyst never reads a bounded state as the whole screen.
+*/
 export interface PlaytestDiscoveryVisibleState {
   readonly capturedAt: string;
   readonly viewport: {
@@ -217,11 +217,17 @@ export interface PlaytestDiscoveryVisibleState {
   readonly progress: unknown;
   readonly warnings: readonly string[];
   readonly controls: readonly PlaytestDiscoveryVisibleControl[];
-  /** How many controls the player actually saw. */
+  /**
+  How many controls the player actually saw.
+  */
   readonly observedControlCount: number;
-  /** How many of those controls the packet did not carry. */
+  /**
+  How many of those controls the packet did not carry.
+  */
   readonly omittedControlCount: number;
-  /** How many carried names the packet capped. */
+  /**
+  How many carried names the packet capped.
+  */
   readonly truncatedNameCount: number;
 }
 
@@ -243,10 +249,10 @@ export interface PlaytestDiscoveryStepEvidence {
 }
 
 /**
- * The v1/v2 step record: the recorded visible observation as it was, plus
- * the per-control affordance index. Historical packets keep this shape and
- * stay readable; a builder no longer emits it.
- */
+The v1/v2 step record: the recorded visible observation as it was, plus
+the per-control affordance index. Historical packets keep this shape and
+stay readable; a builder no longer emits it.
+*/
 export interface PlaytestDiscoveryStepEvidenceV2 {
   readonly step: number;
   readonly phaseId: string | null;
@@ -266,15 +272,15 @@ export interface PlaytestDiscoveryStepEvidenceV2 {
 }
 
 /**
- * One step inside a selected window.
- *
- * The step's evidence is carried once, in the packet's step evidence. A
- * window repeats only what the selection needs: which step it covers, which
- * events that step recorded and which frames it captured. Repeating the
- * observation as well would put every step's visible state into the packet
- * twice, and a session of a real game does not fit the analyst's packet
- * budget when it is counted twice.
- */
+One step inside a selected window.
+
+The step's evidence is carried once, in the packet's step evidence. A
+window repeats only what the selection needs: which step it covers, which
+events that step recorded and which frames it captured. Repeating the
+observation as well would put every step's visible state into the packet
+twice, and a session of a real game does not fit the analyst's packet
+budget when it is counted twice.
+*/
 export interface PlaytestDiscoveryEvidenceWindowStep {
   readonly step: number;
   readonly phaseId: string | null;
@@ -282,7 +288,9 @@ export interface PlaytestDiscoveryEvidenceWindowStep {
   readonly frameRefs: readonly PlaytestEvidenceLocator[];
 }
 
-/** The selection record of one selected window of the source trace. */
+/**
+The selection record of one selected window of the source trace.
+*/
 export interface PlaytestDiscoveryEvidenceWindow {
   readonly startStep: number;
   readonly endStep: number;
@@ -291,11 +299,11 @@ export interface PlaytestDiscoveryEvidenceWindow {
 }
 
 /**
- * The session context every discovery packet carries.
- *
- * A discovery session reviews one session rather than one analyst review, so
- * the packet states that scope once instead of naming a review selection.
- */
+The session context every discovery packet carries.
+
+A discovery session reviews one session rather than one analyst review, so
+the packet states that scope once instead of naming a review selection.
+*/
 const VISUAL_DISCOVERY_SESSION_LEVEL = "visual-discovery-session-level";
 
 export interface PlaytestDiscoveryEvidenceSessionContext {
@@ -319,12 +327,12 @@ export interface PlaytestDiscoveryEvidencePacketV1 {
   readonly episodeRevision: number;
   readonly assignmentId: string;
   /**
-   * Operator-requested focus context copied verbatim from the frozen
-   * autonomous-visual assignment manifest. This is author intent for what
-   * the autonomous player should look at; it is NOT evidence that any
-   * visual objective, hypothesis, or finding was actually achieved. The
-   * packet never derives scored/confirmatory claims from it.
-   */
+  Operator-requested focus context copied verbatim from the frozen
+  autonomous-visual assignment manifest. This is author intent for what
+  the autonomous player should look at; it is NOT evidence that any
+  visual objective, hypothesis, or finding was actually achieved. The
+  packet never derives scored/confirmatory claims from it.
+  */
   readonly areasOfFocus: string | null;
   readonly target: {
     readonly targetId: string;
@@ -370,7 +378,9 @@ export interface PlaytestDiscoveryEvidencePacketV1 {
   readonly generatedAt: string;
 }
 
-/** Historical v1 packets predate the operator-focus context field. */
+/**
+Historical v1 packets predate the operator-focus context field.
+*/
 export type PlaytestDiscoveryEvidencePacketV1Historical = Omit<
   PlaytestDiscoveryEvidencePacketV1,
   "areasOfFocus"
@@ -385,12 +395,12 @@ export interface PlaytestDiscoveryEvidencePacketV2 extends Omit<
 }
 
 /**
- * v3 of the discovery evidence packet.
- *
- * v3 carries the bounded visible state and the selected steps; the top-level
- * fields are unchanged from v2, so a v3 packet differs from a v2 packet in
- * what it says about the session, not in what it is about.
- */
+v3 of the discovery evidence packet.
+
+v3 carries the bounded visible state and the selected steps; the top-level
+fields are unchanged from v2, so a v3 packet differs from a v2 packet in
+what it says about the session, not in what it is about.
+*/
 export interface PlaytestDiscoveryEvidencePacketV3 extends Omit<
   PlaytestDiscoveryEvidencePacketV2,
   "schema" | "stepEvidence"
@@ -573,10 +583,10 @@ function assertFrameHashBinding(input: {
 }
 
 /**
- * The packet's frames and the packet's step records must describe the same
- * evidence: every carried frame is cited by a step record, and every frame a
- * step record cites is carried.
- */
+The packet's frames and the packet's step records must describe the same
+evidence: every carried frame is cited by a step record, and every frame a
+step record cites is carried.
+*/
 function assertFrameCitationBinding(input: {
   readonly stepEvidence: readonly PlaytestDiscoveryStepEvidence[];
   readonly frames: readonly PlaytestDiscoveryEvidenceFrame[];
@@ -732,15 +742,15 @@ function buildDiscoveryPacketValue(input: {
 }
 
 /**
- * The selection record of a window.
- *
- * The packet carries each step's visible evidence once, in its step
- * evidence. A window says which steps it covers and which frames and events
- * those steps recorded, and nothing more: repeating the observation here
- * would put every step's visible state into the packet a second time, and a
- * session of a real game does not fit the analyst's packet budget when it is
- * counted twice.
- */
+The selection record of a window.
+
+The packet carries each step's visible evidence once, in its step
+evidence. A window says which steps it covers and which frames and events
+those steps recorded, and nothing more: repeating the observation here
+would put every step's visible state into the packet a second time, and a
+session of a real game does not fit the analyst's packet budget when it is
+counted twice.
+*/
 function discoveryWindowValue(
   window: PlaytestEvidenceWindow
 ): PlaytestDiscoveryEvidenceWindow {
@@ -1180,7 +1190,9 @@ export function assertPlaytestDiscoveryEvidencePacket(
   }
 }
 
-/** Which packet schema a value claims, and the field set that schema allows. */
+/**
+Which packet schema a value claims, and the field set that schema allows.
+*/
 interface DiscoveryPacketFlags {
   readonly isV2: boolean;
   readonly isV3: boolean;
@@ -1384,23 +1396,23 @@ function assertPlayerSelfReportFrameReferences(
   frames: readonly PlaytestDiscoveryEvidenceFrame[],
   omittedFrames: readonly { readonly frameId: string; readonly step: number }[]
 ): void {
-  const refs =
+  const references =
     report.status === "complete"
       ? report.focusInterpretation.evidence
       : report.status === "partial"
         ? [report.checkpoint.evidence]
         : [];
-  for (const ref of refs) {
-    const included = frames.some(
+  for (const reference of references) {
+    const isIncluded = frames.some(
       (frame) =>
-        frame.frameId === ref.id &&
-        frame.step === ref.step &&
-        frame.frameIndex === ref.frameIndex
+        frame.frameId === reference.id &&
+        frame.step === reference.step &&
+        frame.frameIndex === reference.frameIndex
     );
-    const omitted = omittedFrames.some(
-      (frame) => frame.frameId === ref.id && frame.step === ref.step
+    const isOmitted = omittedFrames.some(
+      (frame) => frame.frameId === reference.id && frame.step === reference.step
     );
-    if (!included && !omitted) {
+    if (!isIncluded && !isOmitted) {
       throw new TypeError(
         "Player self-report frame reference does not resolve to packet frame evidence or omission receipt."
       );
@@ -1544,8 +1556,8 @@ function assertSelectedWindow(
     value.endStep < value.startStep ||
     !Array.isArray(value.selectionReasons) ||
     value.selectionReasons.length === 0 ||
-    !value.selectionReasons.every((reason) =>
-      ["event-bearing-step", "terminal", "ordinary-sample"].includes(
+    value.selectionReasons.some((reason) =>
+      !["event-bearing-step", "terminal", "ordinary-sample"].includes(
         String(reason)
       )
     ) ||
@@ -1594,7 +1606,9 @@ function assertDiscoveryWindowStep(
   }
 }
 
-/** Validate the fields shared by the supported discovery step versions. */
+/**
+Validate the fields shared by the supported discovery step versions.
+*/
 function assertCommonStepEvidence(
   value: unknown
 ): asserts value is Omit<PlaytestDiscoveryStepEvidenceV2, "affordanceNotes"> &
@@ -1660,7 +1674,9 @@ function assertCommonStepEvidence(
   }
 }
 
-/** The v1/v2 step record: the recorded observation plus the affordance index. */
+/**
+The v1/v2 step record: the recorded observation plus the affordance index.
+*/
 function assertStepEvidenceV2(
   value: unknown
 ): asserts value is PlaytestDiscoveryStepEvidenceV2 {
@@ -1683,11 +1699,11 @@ function assertStepEvidenceV2(
 }
 
 /**
- * The v3 step record: the bounded visible state, the action the player took
- * and the evidence around it. There is no affordance index any more: the
- * visible state indexes the affordances by control id, and the note ids were
- * never citable.
- */
+The v3 step record: the bounded visible state, the action the player took
+and the evidence around it. There is no affordance index any more: the
+visible state indexes the affordances by control id, and the note ids were
+never citable.
+*/
 function assertStepEvidence(
   value: unknown
 ): asserts value is PlaytestDiscoveryStepEvidence {
@@ -1696,12 +1712,12 @@ function assertStepEvidence(
 }
 
 /**
- * The bounded visible state of one step.
- *
- * The bounds are the contract: a capped name, a capped control count and an
- * explicit record of what the projection condensed. A state that carries
- * more than the contract allows is refused rather than silently shipped.
- */
+The bounded visible state of one step.
+
+The bounds are the contract: a capped name, a capped control count and an
+explicit record of what the projection condensed. A state that carries
+more than the contract allows is refused rather than silently shipped.
+*/
 export function assertPlaytestDiscoveryVisibleState(
   value: unknown
 ): asserts value is PlaytestDiscoveryVisibleState {
@@ -1981,7 +1997,9 @@ const DISCOVERY_SESSION_REVIEW_KEYS = new Set([
   "status"
 ]);
 
-/** Strict stored discovery review codec guard; metric/rubric fields are forbidden. */
+/**
+Strict stored discovery review codec guard; metric/rubric fields are forbidden.
+*/
 export function assertPlaytestDiscoverySessionReview(
   value: unknown
 ): asserts value is PlaytestDiscoverySessionReview {

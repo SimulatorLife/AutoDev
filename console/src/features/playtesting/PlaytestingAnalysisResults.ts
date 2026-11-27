@@ -1,4 +1,6 @@
-/** Runtime-owned analyst task state and links to persisted review details. */
+/**
+Runtime-owned analyst task state and links to persisted review details.
+*/
 import type {
   ControlApiPlaytestingAnalysesResponse,
   ControlApiPlaytestingAnalysisDispatchResponse,
@@ -478,8 +480,8 @@ export function PlaytestingAnalysisResults({
       )
     );
 
-  const noAnalysisStarted = result !== null && result.analysis === null;
-  const noRunMessage = noAnalysisStarted
+  const isNoAnalysisStarted = result !== null && result.analysis === null;
+  const noRunMessage = isNoAnalysisStarted
     ? React.createElement(
         "p",
         {
@@ -491,7 +493,7 @@ export function PlaytestingAnalysisResults({
           : "Runtime returned prepared packets but did not start an analyst process."
       )
     : null;
-  const dispatchReceipts = noAnalysisStarted
+  const dispatchReceipts = isNoAnalysisStarted
     ? analysisReceiptList(
         result.receipts,
         scope,

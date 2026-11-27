@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-/** Descriptive comparison of investigation metrics in session-trace --json files. */
+/**
+Descriptive comparison of investigation metrics in session-trace --json files.
+*/
 import { readFileSync } from "node:fs";
 
 const metricNames = [
@@ -34,7 +36,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 function validateThreads(value: unknown, label: string): Trace[] {
   if (!Array.isArray(value))
-    throw new Error(
+    throw new TypeError(
       `${label}: expected a session-trace JSON object with a threads array`
     );
   return value.map((thread, index) => {
@@ -44,7 +46,7 @@ function validateThreads(value: unknown, label: string): Trace[] {
       throw new Error(`${where}.investigation must be an object`);
     const raw = thread.investigation;
     if (typeof raw.observed !== "boolean")
-      throw new Error(`${where}.investigation.observed must be a boolean`);
+      throw new TypeError(`${where}.investigation.observed must be a boolean`);
     for (const key of [
       "toolCalls",
       "filesRead",
@@ -52,10 +54,10 @@ function validateThreads(value: unknown, label: string): Trace[] {
       "searches",
       "repeatedSearches"
     ] as const) {
-      const val = raw[key];
+      const value_ = raw[key];
       if (
-        val !== undefined &&
-        (typeof val !== "number" || !Number.isFinite(val))
+        value_ !== undefined &&
+        (typeof value_ !== "number" || !Number.isFinite(value_))
       )
         throw new Error(
           `${where}.investigation.${key} must be a finite number when present`
@@ -75,10 +77,10 @@ function validateThreads(value: unknown, label: string): Trace[] {
           `${where}.investigation.context must be an object when present`
         );
       for (const key of ["ccc", "cgc", "lsp"] as const) {
-        const val = raw.context[key];
+        const value_ = raw.context[key];
         if (
-          val !== undefined &&
-          (typeof val !== "number" || !Number.isFinite(val))
+          value_ !== undefined &&
+          (typeof value_ !== "number" || !Number.isFinite(value_))
         )
           throw new Error(
             `${where}.investigation.context.${key} must be a finite number when present`

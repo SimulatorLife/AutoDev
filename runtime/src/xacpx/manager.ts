@@ -47,24 +47,23 @@ import {
   ROUTING_POLICY,
   type RoutingPolicy
 } from "@simulatorlife/autodev-runtime/router/routing";
+import { runtimeBinDirectory } from "@simulatorlife/autodev-runtime/shared/executables";
 import {
   hasRoleContract,
   providerContract,
   roleContract
 } from "@simulatorlife/autodev-runtime/shared/execution-contract";
-import { runtimeBinDirectory } from "@simulatorlife/autodev-runtime/shared/executables";
 import { resolveChatgptMcpApp } from "@simulatorlife/autodev-runtime/shared/opencli-mcp-app";
 import { composeRoleSystemPrompt } from "@simulatorlife/autodev-runtime/shared/role-prompts";
-import { mcpToolName } from "@simulatorlife/autodev-runtime/shared/tool-names";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
-import { execa } from "execa";
+import { mcpToolName } from "@simulatorlife/autodev-runtime/shared/tool-names";
 
 import {
   buildOpencliRoleTaskSpec,
   isOpencliProvider,
   type OpencliRoleTaskSpec,
-  type OpencliRunResult,
   type OpencliRunner,
+  type OpencliRunResult,
   runOpencliRoleTurn
 } from "../providers/opencli-role.ts";
 
@@ -279,7 +278,7 @@ export function resolveAcpPermissionResponse(
   }
   const mcpTool = parseQualifiedMcpTool(toolName);
   let policyToolName = toolName;
-  if (toolName.trim().startsWith("mcp__") && !mcpTool) {
+  if (toolName.trimStart().startsWith("mcp__") && !mcpTool) {
     return rejectPermissionResponse(request);
   }
   if (mcpTool) {
@@ -352,10 +351,10 @@ function defaultAcpTransportFactory(
 }
 
 /**
- * A Runtime dependency's bin shim, from the dependency tree this module
- * resolves through -- the installed Runtime's protected closure, never a
- * configured repository root.
- */
+A Runtime dependency's bin shim, from the dependency tree this module
+resolves through -- the installed Runtime's protected closure, never a
+configured repository root.
+*/
 function resolvePackageBinary(
   packageName: string,
   name: string,
@@ -598,8 +597,7 @@ export class XacpxSessionManager {
           `its transport cannot reach the MCP surface of role '${role}'`
         );
       }
-      const details = [...reasons]
-        .map(([provider, reason]) => `${provider}: ${reason}`)
+      const details = Array.from(reasons, ([provider, reason]) => `${provider}: ${reason}`)
         .join("; ");
       throw new Error(
         `No eligible provider candidate found for role '${role}'.${details ? ` ${details}.` : ""}`
@@ -746,7 +744,7 @@ export class XacpxSessionManager {
       throw new Error("Session turn cancelled before dispatch.");
     }
     const plan = this.planDispatch(request, environment);
-    let opencliCancelled = false;
+    let isOpencliCancelled = false;
     let opencli: LiveOpencliSessionHandle | undefined;
     if (plan.kind === "opencli") {
       opencli = this.opencliSessions.get(request.sessionId) ?? {
@@ -784,7 +782,7 @@ export class XacpxSessionManager {
           }
           opencli.conversationId = result.conversationId;
         } catch (error) {
-          opencliCancelled = controller.signal.aborted;
+          isOpencliCancelled = controller.signal.aborted;
           opencli.uncertain = true;
           throw error;
         } finally {
@@ -859,7 +857,7 @@ export class XacpxSessionManager {
       };
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      if (!signal?.aborted && !opencliCancelled) {
+      if (!signal?.aborted && !isOpencliCancelled) {
         COOLDOWNS.cooldownProvider(plan.session.provider, {
           failureClass: "upstream_error",
           detail,

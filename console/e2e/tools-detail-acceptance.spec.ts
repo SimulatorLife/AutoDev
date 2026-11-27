@@ -8,13 +8,13 @@ const MCP_TOOL_ID = "mcp__lsp__lsp_goto_definition";
 const MCP_SERVER = "lsp";
 
 /**
- * The value cell of one labelled field inside a detail section.
- *
- * `FieldBox` renders a `<dt>` label and its `<dd>` value as siblings, so the
- * value is the label's next sibling rather than a positional index: a field
- * added above another one cannot silently move the wrong value onto the wrong
- * label.
- */
+The value cell of one labelled field inside a detail section.
+
+`FieldBox` renders a `<dt>` label and its `<dd>` value as siblings, so the
+value is the label's next sibling rather than a positional index: a field
+added above another one cannot silently move the wrong value onto the wrong
+label.
+*/
 function fieldValue(page: Page, section: string, label: string): Locator {
   return page.locator(
     `[data-section="${section}"] dt:text-is("${label}") + dd`
@@ -22,13 +22,13 @@ function fieldValue(page: Page, section: string, label: string): Locator {
 }
 
 /**
- * Console errors seen while the page was open.
- *
- * A page can render correctly on the server and still be broken in the
- * browser: a stale build serves markup whose JavaScript chunks no longer
- * exist, and the result is a page that reads right in a fetch and throws on
- * hydration. Watching the console is the only way to see that.
- */
+Console errors seen while the page was open.
+
+A page can render correctly on the server and still be broken in the
+browser: a stale build serves markup whose JavaScript chunks no longer
+exist, and the result is a page that reads right in a fetch and throws on
+hydration. Watching the console is the only way to see that.
+*/
 function collectConsoleErrors(page: Page): string[] {
   const errors: string[] = [];
   page.on("console", (message) => {

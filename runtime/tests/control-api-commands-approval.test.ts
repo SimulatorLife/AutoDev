@@ -10,14 +10,14 @@ import { handleControlApiRequest } from "../src/control-api/request-handler.ts";
 import { responseRecorder } from "./support/control-api-harness.ts";
 
 /**
- * The Commands backend serves an operator-approved catalogue, and the approval
- * is the operator's answer to "which revision is live?".
- *
- * The catalogue exists twice: as a proposal in the checkout and as an approved
- * copy outside every workspace. The approved copy is the one the backend
- * serves, so the state published on the backend's own entry is what an
- * operator needs to see it.
- */
+The Commands backend serves an operator-approved catalogue, and the approval
+is the operator's answer to "which revision is live?".
+
+The catalogue exists twice: as a proposal in the checkout and as an approved
+copy outside every workspace. The approved copy is the one the backend
+serves, so the state published on the backend's own entry is what an
+operator needs to see it.
+*/
 
 const SERVICE_TOKEN = "s".repeat(64);
 const OPERATOR_ACTOR = "test-operator";
@@ -29,7 +29,7 @@ const CATALOGUE = {
       description: "Run project type checking.",
       executable: "pnpm",
       args: ["run", "typecheck"],
-      timeoutMs: 300000,
+      timeoutMs: 300_000,
       executionClass: "validation",
       concurrency: "exclusive"
     }
@@ -63,9 +63,9 @@ interface Harness {
 }
 
 /**
- * A checkout that proposes one catalogue and two Runtime homes that may or may
- * not hold an approved copy of it.
- */
+A checkout that proposes one catalogue and two Runtime homes that may or may
+not hold an approved copy of it.
+*/
 function harness(
   options: {
     readonly proposal?: unknown;
@@ -115,7 +115,7 @@ function harness(
   }
 
   const previousHome = process.env.HOME;
-  const previousAutoDevHome = process.env.AUTODEV_HOME;
+  const previousAutoDevelopmentHome = process.env.AUTODEV_HOME;
   const previousCodexHome = process.env.CODEX_HOME;
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   const previousOperators = process.env.AUTODEV_CONTROL_OPERATORS;
@@ -130,15 +130,15 @@ function harness(
     autodevHome,
     codexHome,
     restore: () => {
-      const restoreEnv = (name: string, previous: string | undefined): void => {
+      const restoreEnvironment = (name: string, previous: string | undefined): void => {
         if (previous === undefined) delete process.env[name];
         else process.env[name] = previous;
       };
-      restoreEnv("HOME", previousHome);
-      restoreEnv("AUTODEV_HOME", previousAutoDevHome);
-      restoreEnv("CODEX_HOME", previousCodexHome);
-      restoreEnv("AUTODEV_CONTROL_API_TOKEN", previousToken);
-      restoreEnv("AUTODEV_CONTROL_OPERATORS", previousOperators);
+      restoreEnvironment("HOME", previousHome);
+      restoreEnvironment("AUTODEV_HOME", previousAutoDevelopmentHome);
+      restoreEnvironment("CODEX_HOME", previousCodexHome);
+      restoreEnvironment("AUTODEV_CONTROL_API_TOKEN", previousToken);
+      restoreEnvironment("AUTODEV_CONTROL_OPERATORS", previousOperators);
     },
     call: async (method, pathname) => {
       const response = responseRecorder();
@@ -198,12 +198,12 @@ test("the Commands backend publishes the approval state of each Runtime home", a
     // same revision, so it is approved. The Codex home holds none, so the
     // backend there serves no catalogue at all.
     assert.deepEqual(states, ["approved", "unavailable"]);
-    const autoDev = publications(response.body)[0];
-    assert.equal(autoDev?.home, h.autodevHome);
-    assert.equal(typeof autoDev?.approvedDigest, "string");
-    assert.equal(autoDev?.approvedDigest, autoDev?.proposedDigest);
+    const autoDevelopment = publications(response.body)[0];
+    assert.equal(autoDevelopment?.home, h.autodevHome);
+    assert.equal(typeof autoDevelopment?.approvedDigest, "string");
+    assert.equal(autoDevelopment?.approvedDigest, autoDevelopment?.proposedDigest);
     assert.equal(
-      autoDev?.approvedPath,
+      autoDevelopment?.approvedPath,
       join(h.autodevHome, "config", "commands.json")
     );
     const codex = publications(response.body)[1];
@@ -235,9 +235,9 @@ test("an installed catalogue that is not the checkout's proposal is pending appr
   try {
     const response = await h.call("GET", "/control/mcps");
     assert.equal(response.status, 200);
-    const autoDev = publications(response.body)[0];
-    assert.equal(autoDev?.state, "pending");
-    assert.notEqual(autoDev?.approvedDigest, autoDev?.proposedDigest);
+    const autoDevelopment = publications(response.body)[0];
+    assert.equal(autoDevelopment?.state, "pending");
+    assert.notEqual(autoDevelopment?.approvedDigest, autoDevelopment?.proposedDigest);
   } finally {
     h.restore();
   }
@@ -251,13 +251,13 @@ test("a proposal that cannot be read is not observed, not pending", async () => 
   try {
     const response = await h.call("GET", "/control/mcps");
     assert.equal(response.status, 200);
-    const autoDev = publications(response.body)[0];
+    const autoDevelopment = publications(response.body)[0];
     // The proposal is not a valid catalogue, so the two revisions cannot be
     // compared: the installed copy is running, and whether it is the one the
     // checkout proposes is not known.
-    assert.equal(autoDev?.state, "unknown");
-    assert.equal(autoDev?.proposedDigest, null);
-    assert.equal(typeof autoDev?.approvedDigest, "string");
+    assert.equal(autoDevelopment?.state, "unknown");
+    assert.equal(autoDevelopment?.proposedDigest, null);
+    assert.equal(typeof autoDevelopment?.approvedDigest, "string");
   } finally {
     h.restore();
   }

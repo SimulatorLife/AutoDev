@@ -1,19 +1,19 @@
 /**
- * A local Unix socket a test can hand the sandbox.
- *
- * The sandbox's argv builder refuses a socket that is not a socket, because a
- * container started against a path that is not one cannot reach the daemon.
- * A test that measures the arguments rather than a running daemon stands a
- * socket up for the builder to accept.
- *
- * The socket path is budgeted: `sun_path` is 104 bytes on macOS and 108 on
- * Linux, and the operating system's temporary directory is sometimes longer
- * than that (a CI runner's session directories, a sandbox's own working
- * root). The directory is therefore created in the shortest root that fits,
- * and every rejected root is reported so a genuine failure says which roots
- * were unusable and why, rather than surfacing as an opaque `EINVAL` from
- * `listen()`.
- */
+A local Unix socket a test can hand the sandbox.
+
+The sandbox's argv builder refuses a socket that is not a socket, because a
+container started against a path that is not one cannot reach the daemon.
+A test that measures the arguments rather than a running daemon stands a
+socket up for the builder to accept.
+
+The socket path is budgeted: `sun_path` is 104 bytes on macOS and 108 on
+Linux, and the operating system's temporary directory is sometimes longer
+than that (a CI runner's session directories, a sandbox's own working
+root). The directory is therefore created in the shortest root that fits,
+and every rejected root is reported so a genuine failure says which roots
+were unusable and why, rather than surfacing as an opaque `EINVAL` from
+`listen()`.
+*/
 import { mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -25,21 +25,23 @@ const SUN_PATH_LIMIT = process.platform === "darwin" ? 104 : 108;
 const SOCKET_DIR_PREFIX = "agy-";
 const SOCKET_NAME = "engine.sock";
 
-/** Standard temporary roots, shortest-fitting first; `tmpdir` is preferred. */
-function socketTempRoots(): string[] {
+/**
+Standard temporary roots, shortest-fitting first; `tmpdir` is preferred.
+*/
+function socketTemporaryRoots(): string[] {
   const roots = [tmpdir()];
   if (process.platform !== "win32") roots.push("/tmp", "/var/tmp");
   return roots;
 }
 
 /**
- * Create the directory that will hold the socket, preferring `tmpdir()` but
- * falling back to shorter standard roots when `tmpdir()` alone would overflow
- * `sun_path`.
- */
+Create the directory that will hold the socket, preferring `tmpdir()` but
+falling back to shorter standard roots when `tmpdir()` alone would overflow
+`sun_path`.
+*/
 function createSocketDirectory(): string {
   const rejected: string[] = [];
-  for (const root of socketTempRoots()) {
+  for (const root of socketTemporaryRoots()) {
     const directory = path.join(root, `${SOCKET_DIR_PREFIX}XXXXXX`);
     // mkdtemp replaces the six X characters with random ones.
     const projected = path.join(directory, SOCKET_NAME);
@@ -63,11 +65,11 @@ function createSocketDirectory(): string {
 }
 
 /**
- * Run a body against a local socket that exists for the body's duration.
- *
- * The socket is removed with the directory that holds it, so a test leaves
- * nothing behind.
- */
+Run a body against a local socket that exists for the body's duration.
+
+The socket is removed with the directory that holds it, so a test leaves
+nothing behind.
+*/
 export async function withLocalSocket<T>(
   run: (socket: string) => Promise<T>
 ): Promise<T> {

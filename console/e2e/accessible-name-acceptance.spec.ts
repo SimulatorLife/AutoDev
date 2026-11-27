@@ -3,23 +3,23 @@ import { expect, test } from "@playwright/test";
 import { SWEEP_ROUTES, waitForPageContent } from "./acceptance-helpers.ts";
 
 /**
- * Every control has a name.
- *
- * The label-in-name acceptance checks that a control's name *contains* what the
- * control shows. That is the other half of the rule, and it needs its own
- * guard: a control with no name at all has nothing to contain, so it passes a
- * name comparison vacuously, and a control the operator can see but a screen
- * reader cannot name is invisible to the person using one.
- *
- * The name is read from the browser's accessibility tree rather than from the
- * markup, because the markup is not what a screen reader says. An `aria-label`
- * replaces a control's own content, so a button whose text is "Enabled" can
- * be named something else entirely, and a control whose name comes from a
- * hidden label has no name in the source to find.
- *
- * The roles are the ones an operator reaches for: the things that take a
- * click, a focus, a keystroke or a selection.
- */
+Every control has a name.
+
+The label-in-name acceptance checks that a control's name *contains* what the
+control shows. That is the other half of the rule, and it needs its own
+guard: a control with no name at all has nothing to contain, so it passes a
+name comparison vacuously, and a control the operator can see but a screen
+reader cannot name is invisible to the person using one.
+
+The name is read from the browser's accessibility tree rather than from the
+markup, because the markup is not what a screen reader says. An `aria-label`
+replaces a control's own content, so a button whose text is "Enabled" can
+be named something else entirely, and a control whose name comes from a
+hidden label has no name in the source to find.
+
+The roles are the ones an operator reaches for: the things that take a
+click, a focus, a keystroke or a selection.
+*/
 const CONTROL_ROLES = new Set([
   "button",
   "link",

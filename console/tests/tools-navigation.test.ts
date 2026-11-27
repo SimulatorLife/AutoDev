@@ -9,18 +9,18 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ToolsView } from "../src/features/tools/index.ts";
 
 /**
- * Same-origin internal links on `/tools` must go through the shared
- * NavigationLink (Next Link), so the filter clicks and the row/edit/usage
- * pivots are client-side transitions rather than full document loads.
- *
- * These guard the migration. Six categories of link live on this view --
- * the source filter buttons (All / Native / MCP / Plugin), the role filter
- * buttons, the role filter chips in the Exposed Roles column, the row link
- * to each tool's detail page, the canonical edit-surface link, and the
- * usage route -- and each one has to preserve the URL/query state it was
- * built to express, render the data-* marker an audit can hook onto, and
- * keep the styling the rest of the Console renders.
- */
+Same-origin internal links on `/tools` must go through the shared
+NavigationLink (Next Link), so the filter clicks and the row/edit/usage
+pivots are client-side transitions rather than full document loads.
+
+These guard the migration. Six categories of link live on this view --
+the source filter buttons (All / Native / MCP / Plugin), the role filter
+buttons, the role filter chips in the Exposed Roles column, the row link
+to each tool's detail page, the canonical edit-surface link, and the
+usage route -- and each one has to preserve the URL/query state it was
+built to express, render the data-* marker an audit can hook onto, and
+keep the styling the rest of the Console renders.
+*/
 
 const MCP_TOOL: ToolCatalogItem = {
   name: "do_thing",
@@ -88,8 +88,10 @@ function escapeForRegex(value: string): string {
   return value.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
 }
 
-/** Reverse the HTML escaping the renderer applied to attribute values. */
-function unescapeAttr(value: string): string {
+/**
+Reverse the HTML escaping the renderer applied to attribute values.
+*/
+function unescapeAttribute(value: string): string {
   return value
     .replaceAll("&amp;", "&")
     .replaceAll("&quot;", '"')
@@ -98,7 +100,9 @@ function unescapeAttr(value: string): string {
     .replaceAll("&gt;", ">");
 }
 
-/** Every href paired with the data-* marker that names this anchor. */
+/**
+Every href paired with the data-* marker that names this anchor.
+*/
 function anchorsWith(
   markup: string,
   marker: string
@@ -109,22 +113,22 @@ function anchorsWith(
     "gu"
   );
   for (const m of markup.matchAll(reHrefFirst)) {
-    out.push({ href: unescapeAttr(m[1]!), value: unescapeAttr(m[2] ?? m[3]!) });
+    out.push({ href: unescapeAttribute(m[1]!), value: unescapeAttribute(m[2] ?? m[3]!) });
   }
   const reMarkerFirst = new RegExp(
     String.raw`<a\b[^>]*\b${marker}=(?:"([^"]*)"|([^\s>]+))(?=[\s>])[^>]*\bhref="([^"]+)"[^>]*>`,
     "gu"
   );
   for (const m of markup.matchAll(reMarkerFirst)) {
-    out.push({ href: unescapeAttr(m[3]!), value: unescapeAttr(m[1] ?? m[2]!) });
+    out.push({ href: unescapeAttribute(m[3]!), value: unescapeAttribute(m[1] ?? m[2]!) });
   }
   return out;
 }
 
 /**
- * Every link's accessible name, the way a browser computes it: the
- * `aria-label` when the anchor carries one, otherwise the text it renders.
- */
+Every link's accessible name, the way a browser computes it: the
+`aria-label` when the anchor carries one, otherwise the text it renders.
+*/
 function linkNames(markup: string): { name: string; href: string }[] {
   const out: { name: string; href: string }[] = [];
   for (const m of markup.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gu)) {

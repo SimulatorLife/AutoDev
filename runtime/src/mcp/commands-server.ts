@@ -21,11 +21,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 
 import { roleContract } from "../shared/execution-contract.ts";
+import { DurableCommandTaskStore } from "./command-task-store.ts";
 import {
   type CommandCatalogue,
   type CommandDefinition,
-  type CommandResult,
   commandInputSchema,
+  type CommandResult,
   commandResultSchema,
   parseCommandCatalogue,
   resolveCommandArguments
@@ -35,14 +36,15 @@ import {
   prepareCommand,
   runApprovedCommand
 } from "./commands-execution.ts";
-import { DurableCommandTaskStore } from "./command-task-store.ts";
 import { recordCommandExecutionSpan } from "./mcp-telemetry.ts";
 
 /**
 How long a finished task's result is kept before the store drops it.
 */
 const RETENTION_MS = 120_000;
-/** Bound the active revocation detection interval without another protocol. */
+/**
+Bound the active revocation detection interval without another protocol.
+*/
 const REVOCATION_CHECK_MS = 250;
 
 interface ActiveCommand {
@@ -175,20 +177,20 @@ export function createCommandsMcpServer(
 ): CommandsServer {
   let isClosed = false;
   let closing: Promise<void> | undefined;
-  let revoked = false;
+  let isRevoked = false;
   const active = new Map<string, ActiveCommand>();
   const isAuthorized = (): boolean => {
-    if (!revoked) {
+    if (!isRevoked) {
       try {
-        revoked = !grant.isAuthorized();
+        isRevoked = !grant.isAuthorized();
       } catch {
-        revoked = true;
+        isRevoked = true;
       }
-      if (revoked) {
+      if (isRevoked) {
         for (const execution of active.values()) execution.controller.abort();
       }
     }
-    return !isClosed && !revoked;
+    return !isClosed && !isRevoked;
   };
   const authorize = (): void => {
     if (!isAuthorized()) {
@@ -323,15 +325,7 @@ export function createCommandsMcpServer(
                 if (execution.cancelling) {
                   // The client cancelled the task, and the SDK's cancel path
                   // owns the terminal state it reports.
-                } else if (!isAuthorized()) {
-                  // The grant ended while the command ran. Its outcome is
-                  // unknown, so the task is failed rather than left running
-                  // or reported as completed.
-                  store.interrupt(
-                    task.taskId,
-                    "The command was aborted when the execution grant ended."
-                  );
-                } else {
+                } else if (isAuthorized()) {
                   // Only a command that succeeded is a completed task. Every
                   // other outcome keeps its own reason in the payload, and
                   // the task itself never claims a success it did not have.
@@ -339,6 +333,14 @@ export function createCommandsMcpServer(
                     task.taskId,
                     result.status === "succeeded" ? "completed" : "failed",
                     resultPayload(result)
+                  );
+                } else {
+                  // The grant ended while the command ran. Its outcome is
+                  // unknown, so the task is failed rather than left running
+                  // or reported as completed.
+                  store.interrupt(
+                    task.taskId,
+                    "The command was aborted when the execution grant ended."
                   );
                 }
               } catch {

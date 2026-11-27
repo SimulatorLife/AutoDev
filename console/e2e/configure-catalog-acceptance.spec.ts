@@ -10,25 +10,25 @@ const SKILL_NAME = "code-review";
 const NOT_OBSERVED = "Not observed";
 const STAT_GRID = "[data-stat-grid]";
 /**
- * The live agent count, read as the label and the value it carries.
- *
- * The list page renders the pair as one string ("Active instances: Not
- * observed") and the detail page as a definition list -- an "Active instances"
- * term beside a "Not observed" value -- so the assertion has to accept both
- * shapes rather than one of them.
- */
+The live agent count, read as the label and the value it carries.
+
+The list page renders the pair as one string ("Active instances: Not
+observed") and the detail page as a definition list -- an "Active instances"
+term beside a "Not observed" value -- so the assertion has to accept both
+shapes rather than one of them.
+*/
 const ACTIVE_INSTANCES_NOT_OBSERVED = /Active instances:?\s*Not observed/u;
 const SKILL_SOURCE_PATTERN = /Review a diff for defects\./u;
 const PROMPT_SOURCE_PATTERN =
   /Review the pending diff and report what changed\./u;
 
 /**
- * The skill assignment the fixture starts from.
- *
- * The write is real, so the fixture's catalog keeps the roles the last write
- * left behind. Resetting it puts the catalog back without touching the rest
- * of the fixture's state, which another session's specs also use.
- */
+The skill assignment the fixture starts from.
+
+The write is real, so the fixture's catalog keeps the roles the last write
+left behind. Resetting it puts the catalog back without touching the rest
+of the fixture's state, which another session's specs also use.
+*/
 async function resetSkillAssignment(request: APIRequestContext): Promise<void> {
   const response = await request.post(
     `${FIXTURE_BASE_URL}/fixture/skills/reset`

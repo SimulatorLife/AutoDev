@@ -14,12 +14,14 @@ export const OTEL_RESOURCE_ATTRIBUTES_ENV = "OTEL_RESOURCE_ATTRIBUTES";
 const AUTODEV_WORKSPACE_ATTRIBUTE = "autodev.workspace";
 const AUTODEV_AGENT_ROLE_ATTRIBUTE = "autodev.agent.role";
 
-/** Validate an opaque workspace key without accepting a filesystem path or URL. */
+/**
+Validate an opaque workspace key without accepting a filesystem path or URL.
+*/
 export function safeAutoDevWorkspaceKey(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const key = value.trim();
-  const canonicalWorkspaceKey = CANONICAL_WORKSPACE_KEY_PATTERN.test(key);
-  const maxLength = canonicalWorkspaceKey
+  const isCanonicalWorkspaceKey = CANONICAL_WORKSPACE_KEY_PATTERN.test(key);
+  const maxLength = isCanonicalWorkspaceKey
     ? MAX_CANONICAL_WORKSPACE_KEY_LENGTH
     : MAX_PATH_WORKSPACE_LABEL_LENGTH;
   if (
@@ -38,7 +40,9 @@ export function safeAutoDevWorkspaceKey(value: unknown): string | null {
   return key;
 }
 
-/** Validate bounded agent-role context before it becomes telemetry metadata. */
+/**
+Validate bounded agent-role context before it becomes telemetry metadata.
+*/
 export function safeAutoDevAgentRole(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const role = value.trim();
@@ -55,11 +59,11 @@ export function safeAutoDevAgentRole(value: unknown): string | null {
 }
 
 /**
- * Clone a child process environment and attach only validated per-request
- * AutoDev resource identity. Existing non-AutoDev resource attributes are
- * preserved; stale workspace/role values are replaced or removed so a reused
- * parent environment cannot misattribute a later turn.
- */
+Clone a child process environment and attach only validated per-request
+AutoDev resource identity. Existing non-AutoDev resource attributes are
+preserved; stale workspace/role values are replaced or removed so a reused
+parent environment cannot misattribute a later turn.
+*/
 export function withAutoDevOtelResourceContext(
   environment: NodeJS.ProcessEnv,
   workspace: unknown,
@@ -98,10 +102,10 @@ export function withAutoDevOtelResourceContext(
 }
 
 /**
- * Return only validated AutoDev identity attributes for a child MCP process.
- * Other resource attributes can contain unrelated local configuration and are
- * intentionally not copied into the MCP server command configuration.
- */
+Return only validated AutoDev identity attributes for a child MCP process.
+Other resource attributes can contain unrelated local configuration and are
+intentionally not copied into the MCP server command configuration.
+*/
 export function validatedAutoDevOtelResourceAttributes(
   environment: NodeJS.ProcessEnv
 ): string | null {

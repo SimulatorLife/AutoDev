@@ -48,7 +48,7 @@ test("no router module re-exports a symbol owned by another module", () => {
   const offenders = typescriptFiles(
     path.join(repositoryRoot, "runtime/src/router")
   )
-    .filter((file) => !aggregators.some((name) => file.endsWith(name)))
+    .filter((file) => aggregators.every((name) => !file.endsWith(name)))
     .filter((file) => oneOffAlias.test(source(file)));
 
   assert.deepEqual(offenders, []);

@@ -4,23 +4,27 @@ import test from "node:test";
 import { runMain } from "@simulatorlife/autodev-runtime/cli";
 
 /**
- * What a caller is told when they get a command wrong.
- *
- * These paths are the CLI's most-used failure modes and used to be its least
- * informative. Every family declared its accepted values twice -- once as a
- * TypeScript union, once as a chain of `!==` comparisons in the dispatcher --
- * and the hand-typed `--help` string spelled them a third time. Nothing tied
- * the three together, which is why the messages could only ever name the value
- * the caller got wrong: the lists were already written down, three times, and
- * none of them reached the message.
- */
+What a caller is told when they get a command wrong.
 
-/** The rejection's message, without the `Error: ` prefix `String` prepends. */
+These paths are the CLI's most-used failure modes and used to be its least
+informative. Every family declared its accepted values twice -- once as a
+TypeScript union, once as a chain of `!==` comparisons in the dispatcher --
+and the hand-typed `--help` string spelled them a third time. Nothing tied
+the three together, which is why the messages could only ever name the value
+the caller got wrong: the lists were already written down, three times, and
+none of them reached the message.
+*/
+
+/**
+The rejection's message, without the `Error: ` prefix `String` prepends.
+*/
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Runs `runMain` with the CLI's own argument separator and returns stdout. */
+/**
+Runs `runMain` with the CLI's own argument separator and returns stdout.
+*/
 async function capture(argv: string[]): Promise<string> {
   const output: string[] = [];
   const originalWrite = process.stdout.write;
@@ -37,15 +41,15 @@ async function capture(argv: string[]): Promise<string> {
 }
 
 /**
- * The `--help` rows, as `command -> advertised subcommands`.
- *
- * Parsed by indentation rather than a pattern: the rows are exactly two spaces
- * deep, and a regex over them trips `security/detect-unsafe-regex` for no gain.
- */
+The `--help` rows, as `command -> advertised subcommands`.
+
+Parsed by indentation rather than a pattern: the rows are exactly two spaces
+deep, and a regex over them trips `security/detect-unsafe-regex` for no gain.
+*/
 function advertisedCommands(help: string): Map<string, string[]> {
   const rows = new Map<string, string[]>();
   for (const line of help.split("\n")) {
-    if (!line.startsWith("  ") || line.startsWith("   ")) continue;
+    if (!line.startsWith("  ") || line.startsWith(' '.repeat(3))) continue;
     const parts = line.trim().split(" ");
     const name = parts.at(0);
     if (name === undefined) continue;
@@ -55,7 +59,9 @@ function advertisedCommands(help: string): Map<string, string[]> {
   return rows;
 }
 
-/** Backends that satisfy every family, so dispatch is reached without side effects. */
+/**
+Backends that satisfy every family, so dispatch is reached without side effects.
+*/
 const STUBS = {
   router: {
     run: () => 0,
@@ -138,7 +144,9 @@ test("an unusable value reports what was accepted, not just what was typed", () 
   }
 });
 
-/** The values each command family accepts, spelled the way the CLI prints them. */
+/**
+The values each command family accepts, spelled the way the CLI prints them.
+*/
 function acceptedList(command: string): string {
   switch (command) {
     case "render": {

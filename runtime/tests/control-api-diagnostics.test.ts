@@ -25,16 +25,16 @@ const SERVICE_TOKEN = "s".repeat(64);
 const SESSION_ID = "01a0ba14-d54c-78f2-9367-3f80e9a8f75f";
 
 /**
- * The diagnostics family joins the dispatcher's routing table through a
- * registration, exactly as the router's own server does. The test registers
- * it here so the dispatcher answers the routes it owns.
- */
+The diagnostics family joins the dispatcher's routing table through a
+registration, exactly as the router's own server does. The test registers
+it here so the dispatcher answers the routes it owns.
+*/
 function registerDiagnostics(): void {
   setControlApiDiagnosticsHandler(
     (incoming, response, pathname, codexHome, repositoryRoot) =>
       handleControlApiDiagnosticsRequest(incoming, response, pathname, {
-        ...(codexHome === undefined ? {} : { codexHome }),
-        ...(repositoryRoot === undefined ? {} : { repositoryRoot })
+        ...(codexHome !== undefined && { codexHome }),
+        ...(repositoryRoot !== undefined && { repositoryRoot })
       })
   );
 }

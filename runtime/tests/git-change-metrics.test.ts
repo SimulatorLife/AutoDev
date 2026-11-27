@@ -18,21 +18,21 @@ import {
 
 function execGit(
   root: string,
-  args: readonly string[],
+  arguments_: readonly string[],
   options: { readonly env?: NodeJS.ProcessEnv } = {}
 ): string {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  for (const key of Object.keys(env)) {
-    if (key.startsWith("GIT_")) delete env[key];
+  const environment: NodeJS.ProcessEnv = { ...process.env };
+  for (const key of Object.keys(environment)) {
+    if (key.startsWith("GIT_")) delete environment[key];
   }
   for (const [key, value] of Object.entries(options.env ?? {})) {
-    if (value === undefined) delete env[key];
-    else env[key] = value;
+    if (value === undefined) delete environment[key];
+    else environment[key] = value;
   }
-  return execFileSync("git", ["-C", root, ...args], {
+  return execFileSync("git", ["-C", root, ...arguments_], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
-    env
+    env: environment
   }).trim();
 }
 
@@ -167,21 +167,21 @@ test("commit measurements bound independent Git reads and preserve commit order"
   const changes = await measureGitCommitChanges({
     repositoryRoot: "/synthetic/repository",
     commits,
-    runGit: async (_root, args) => {
+    runGit: async (_root, arguments_) => {
       active += 1;
       peak = Math.max(peak, active);
       await new Promise((resolve) => setTimeout(resolve, 5));
       active -= 1;
-      const commit = args.at(-1) ?? "";
-      if (args[0] === "log")
+      const commit = arguments_.at(-1) ?? "";
+      if (arguments_[0] === "log")
         return { exitCode: 0, stdout: "human@example.test" };
-      if (args[0] === "show" && args.includes("--name-status")) {
+      if (arguments_[0] === "show" && arguments_.includes("--name-status")) {
         return { exitCode: 0, stdout: `A\t${commit}.txt` };
       }
-      if (args[0] === "show" && args.includes("--numstat")) {
+      if (arguments_[0] === "show" && arguments_.includes("--numstat")) {
         return { exitCode: 0, stdout: `1\t0\t${commit}.txt` };
       }
-      throw new Error(`Unexpected Git operation: ${String(args[0])}`);
+      throw new Error(`Unexpected Git operation: ${String(arguments_[0])}`);
     }
   });
 

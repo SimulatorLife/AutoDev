@@ -14,33 +14,33 @@ test("the Keychain account falls back to the OS account when USER is missing", (
 });
 
 test("claudeQuotaAxiEnvironment preserves existing environment when no token is available", () => {
-  const env: NodeJS.ProcessEnv = {
+  const environment: NodeJS.ProcessEnv = {
     PATH: "/bin:/usr/bin",
     HOME: "/Users/test",
     USER: "testuser"
   };
-  const result = claudeQuotaAxiEnvironment(env);
+  const result = claudeQuotaAxiEnvironment(environment);
   assert.equal(result.PATH, "/bin:/usr/bin");
   assert.equal(result.HOME, "/Users/test");
   assert.equal(result.CLAUDE_CODE_OAUTH_TOKEN, undefined);
 });
 
 test("claudeQuotaAxiEnvironment injects CLAUDE_CODE_OAUTH_TOKEN when present in environment", () => {
-  const env: NodeJS.ProcessEnv = {
+  const environment: NodeJS.ProcessEnv = {
     PATH: "/bin:/usr/bin",
     CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-test-token-12345"
   };
-  const result = claudeQuotaAxiEnvironment(env);
+  const result = claudeQuotaAxiEnvironment(environment);
   assert.equal(result.CLAUDE_CODE_OAUTH_TOKEN, "sk-ant-test-token-12345");
   assert.equal(result.PATH, "/bin:/usr/bin");
 });
 
 test("claudeQuotaAxiEnvironment does not mutate the input environment object", () => {
-  const env: NodeJS.ProcessEnv = Object.freeze({
+  const environment: NodeJS.ProcessEnv = Object.freeze({
     PATH: "/bin:/usr/bin",
     CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-test-token-immutable"
   });
-  const result = claudeQuotaAxiEnvironment(env);
+  const result = claudeQuotaAxiEnvironment(environment);
   assert.equal(result.CLAUDE_CODE_OAUTH_TOKEN, "sk-ant-test-token-immutable");
-  assert.notEqual(result, env);
+  assert.notEqual(result, environment);
 });

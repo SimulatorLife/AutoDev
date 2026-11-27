@@ -26,69 +26,68 @@ import {
   hookAppliedUnavailableNotice,
   type HooksAppliedUnavailable
 } from "./applied.ts";
-
 import { hookOriginLabel } from "./declaration.ts";
 import { HookActionsView } from "./HookActionsView.ts";
 import { HOOKS_PATH } from "./paths.ts";
 
 export interface HookEventDetailViewProps {
   /**
-   * The event's declaration, as the target receives it.
-   *
-   * It is the same declaration the list shows on the event's card, read from
-   * the same place, so the two surfaces cannot describe two different
-   * declarations.
-   */
+  The event's declaration, as the target receives it.
+  
+  It is the same declaration the list shows on the event's card, read from
+  the same place, so the two surfaces cannot describe two different
+  declarations.
+  */
   readonly hook: HookDefinition;
   /**
-   * Where the canonical declaration lives.
-   */
+  Where the canonical declaration lives.
+  */
   readonly source: string;
   /**
-   * Whether the canonical declaration was read and found sound.
-   *
-   * A declaration that could not be read is a different fact from one that was
-   * read and found invalid, and the page says which one it is looking at
-   * instead of showing the actions of a source it could not confirm.
-   */
+  Whether the canonical declaration was read and found sound.
+  
+  A declaration that could not be read is a different fact from one that was
+  read and found invalid, and the page says which one it is looking at
+  instead of showing the actions of a source it could not confirm.
+  */
   readonly sourceValidity: boolean | null;
   /**
-   * The revision of the canonical declaration.
-   *
-   * `null` means the declaration could not be read, so there is no revision to
-   * name. The revision identifies the exact source this page describes, which
-   * is the same revision a source view would show.
-   */
+  The revision of the canonical declaration.
+  
+  `null` means the declaration could not be read, so there is no revision to
+  name. The revision identifies the exact source this page describes, which
+  is the same revision a source view would show.
+  */
   readonly revision: string | null;
   /**
-   * The canonical declaration's exact text, or null when it was not read.
-   *
-   * The declaration is one source and the event is one of the events it holds,
-   * so the raw view shows the whole declaration rather than a document
-   * assembled around the event.
-   */
+  The canonical declaration's exact text, or null when it was not read.
+  
+  The declaration is one source and the event is one of the events it holds,
+  so the raw view shows the whole declaration rather than a document
+  assembled around the event.
+  */
   readonly sourceText: string | null;
   /**
-   * The hook projection the Runtime published.
-   *
-   * `null` means the applied read could not be read at all, which is a
-   * different state from a projection that holds no hooks.
-   */
+  The hook projection the Runtime published.
+  
+  `null` means the applied read could not be read at all, which is a
+  different state from a projection that holds no hooks.
+  */
   readonly applied: ControlApiHooksAppliedResponse | null;
   /**
-   * Why the applied projection could not be read, when it could not be read.
-   */
+  Why the applied projection could not be read, when it could not be read.
+  */
   readonly appliedUnavailable?: HooksAppliedUnavailable | null | undefined;
 }
 
 /**
- * What the Runtime published for this event.
- *
- * The projection is published for the whole declaration, so the question this
- * page answers is which of it belongs to this event. An event the Runtime
- * published nothing for is a different fact from a projection that could not
- * be read, and the page says which one it is looking at.
- */
+What the Runtime published for this event.
+
+The projection is published for the whole declaration, so the question this
+page answers is which of it belongs to this event. An event the Runtime
+published nothing for is a different fact from a projection that could not
+be read, and the page says which one it is looking at.
+*/
 function appliedEventPanel(
   event: string,
   applied: ControlApiHooksAppliedResponse | null,
@@ -124,13 +123,13 @@ function appliedEventPanel(
 }
 
 /**
- * One hook event's own page.
- *
- * It is the second placement of the one control the Hooks resource owns. The
- * list already carries the event's actions on its card; this page carries the
- * same read-only actions for the same event, so the operator who opens one
- * event gets the same facts as the operator working down the list.
- */
+One hook event's own page.
+
+It is the second placement of the one control the Hooks resource owns. The
+list already carries the event's actions on its card; this page carries the
+same read-only actions for the same event, so the operator who opens one
+event gets the same facts as the operator working down the list.
+*/
 export function HookEventDetailView({
   hook,
   source,

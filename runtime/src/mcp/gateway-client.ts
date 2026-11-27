@@ -136,28 +136,28 @@ export async function runGatewayClient(
     requestInit: { headers: { Authorization: `Bearer ${key}` } }
   });
   const local = new StdioServerTransport();
-  let stopping = false;
+  let isStopping = false;
   let initializeId: RequestId | undefined;
   const { promise: closed, resolve: resolveClosed } =
     Promise.withResolvers<void>();
   const stop = (): void => {
-    stopping = true;
+    isStopping = true;
     resolveClosed();
   };
   const sendLocal = (message: JSONRPCMessage): void => {
-    if (!stopping) {
+    if (!isStopping) {
       void Promise.resolve()
         .then(() => {
-          if (!stopping) return local.send(message);
+          if (!isStopping) return local.send(message);
         })
         .catch(stop);
     }
   };
-  upstream.onclose = stop;
-  local.onclose = stop;
+  upstream.addEventListener('close', stop);
+  local.addEventListener('close', stop);
   local.onerror = stop;
   upstream.onerror = (error) => {
-    if (!stopping) {
+    if (!isStopping) {
       writeErrorLine(
         `autodev mcp gateway: ${remoteTransportErrorMessage(error)}`
       );
@@ -175,7 +175,7 @@ export async function runGatewayClient(
     sendLocal(message);
   };
   local.onmessage = (message) => {
-    if (stopping) return;
+    if (isStopping) return;
     if (isInitializeRequest(message) && "id" in message) {
       initializeId = message.id as RequestId;
     }
@@ -208,7 +208,7 @@ export async function runGatewayClient(
     if (process.stdin.readableEnded || process.stdin.destroyed) stop();
     await closed;
   } finally {
-    stopping = true;
+    isStopping = true;
     process.stdin.off("end", stop);
     process.stdin.off("close", stop);
     process.off("SIGINT", stop);

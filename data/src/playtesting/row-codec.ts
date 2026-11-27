@@ -1,4 +1,6 @@
-/** Private projection codecs; public artifact contracts remain Core-owned. */
+/**
+Private projection codecs; public artifact contracts remain Core-owned.
+*/
 
 import { createHash } from "node:crypto";
 
@@ -98,7 +100,9 @@ import type {
   PlaytestReviewSummary
 } from "./types.ts";
 
-/** Keep indexed records bounded; bulk trace/frame bytes belong to Runtime artifacts. */
+/**
+Keep indexed records bounded; bulk trace/frame bytes belong to Runtime artifacts.
+*/
 const MAX_PLAYTEST_PAYLOAD_BYTES = 512 * 1024;
 const MAX_ARTIFACT_REF_LENGTH = 512;
 
@@ -253,7 +257,7 @@ function payloadJson(artifact: object): string {
   return payload;
 }
 
-function requiredRef(value: string, field: string): string {
+function requiredReference(value: string, field: string): string {
   if (value.length === 0 || value.length > MAX_ARTIFACT_REF_LENGTH) {
     throw new TypeError(`${field} must be a non-empty bounded identifier`);
   }
@@ -301,8 +305,8 @@ function numericCounts(
 export function encodeBatch(artifact: PlaytestBatch): PlaytestIndexedBatchRow {
   assertBatchAssignmentInventory(artifact);
   return {
-    workspace_id: requiredRef(artifact.workspaceId, "workspaceId"),
-    batch_id: requiredRef(artifact.batchId, "batchId"),
+    workspace_id: requiredReference(artifact.workspaceId, "workspaceId"),
+    batch_id: requiredReference(artifact.batchId, "batchId"),
     revision: artifact.revision,
     build_sha: artifact.buildSha ?? "",
     measurement_version: artifact.measurementVersion,
@@ -334,22 +338,22 @@ export function encodeEpisode(
       );
     }
   }
-  const traceRef = artifact.trace?.id ?? "";
-  if (traceRef.length > MAX_ARTIFACT_REF_LENGTH) {
+  const traceReference = artifact.trace?.id ?? "";
+  if (traceReference.length > MAX_ARTIFACT_REF_LENGTH) {
     throw new TypeError(
       "Episode trace reference exceeds the bounded identifier limit"
     );
   }
-  const frameRef = artifact.frames[0]?.id ?? null;
-  if (frameRef !== null && frameRef.length > MAX_ARTIFACT_REF_LENGTH) {
+  const frameReference = artifact.frames[0]?.id ?? null;
+  if (frameReference !== null && frameReference.length > MAX_ARTIFACT_REF_LENGTH) {
     throw new TypeError(
       "Episode frame reference exceeds the bounded identifier limit"
     );
   }
   return {
-    workspace_id: requiredRef(artifact.identity.workspaceId, "workspaceId"),
-    batch_id: requiredRef(artifact.batchId, "batchId"),
-    episode_id: requiredRef(artifact.episodeId, "episodeId"),
+    workspace_id: requiredReference(artifact.identity.workspaceId, "workspaceId"),
+    batch_id: requiredReference(artifact.batchId, "batchId"),
+    episode_id: requiredReference(artifact.episodeId, "episodeId"),
     revision: artifact.revision,
     scenario: artifact.identity.scenarioId ?? "",
     policy: artifact.identity.policyId,
@@ -365,8 +369,8 @@ export function encodeEpisode(
     started_at: nullableDateTime(artifact.startedAt),
     completed_at: nullableDateTime(artifact.completedAt),
     step_count: artifact.stepCount,
-    trace_hash_manifest: traceRef,
-    frame_manifest_ref: frameRef,
+    trace_hash_manifest: traceReference,
+    frame_manifest_ref: frameReference,
     replay_status: artifact.replayStatus,
     created_at: toClickHouseDateTime(artifact.assignedAt),
     payload_json: payloadJson(artifact)
@@ -378,12 +382,12 @@ const PLAYTEST_VISUAL_EXECUTION_MODE = "autonomous-visual" as const;
 const VISUAL_ASSIGNMENT_INVENTORY_STATUS = "frozen-visual" as const;
 
 /**
- * Recompute the SHA-256 fingerprint Runtime promises to set on every
- * persisted finding. Data enforces it on the way in and on the way out so
- * a tampered payload, a stale import, or a row produced by a buggy
- * writer cannot reach a reader claiming a fingerprint Runtime never agreed
- * to.
- */
+Recompute the SHA-256 fingerprint Runtime promises to set on every
+persisted finding. Data enforces it on the way in and on the way out so
+a tampered payload, a stale import, or a row produced by a buggy
+writer cannot reach a reader claiming a fingerprint Runtime never agreed
+to.
+*/
 function assertFindingFingerprint(artifact: PlaytestFinding): string {
   const expected = createHash("sha256")
     .update(playtestFindingIdentityHashInput(artifact.identity))
@@ -401,7 +405,9 @@ function assertFindingFingerprint(artifact: PlaytestFinding): string {
   return expected;
 }
 
-/** Validate optional finding counts without treating unknown as zero. */
+/**
+Validate optional finding counts without treating unknown as zero.
+*/
 function assertFindingFrequency(artifact: PlaytestFinding): void {
   const values = [
     artifact.affectedEpisodes,
@@ -432,7 +438,9 @@ function assertFindingFrequency(artifact: PlaytestFinding): void {
   }
 }
 
-/** Verify a finding's stable id is derivable from its full fingerprint. */
+/**
+Verify a finding's stable id is derivable from its full fingerprint.
+*/
 function assertStableFindingId(artifact: PlaytestFinding): void {
   const expected = playtestFindingIdFromFingerprint(artifact.fingerprint);
   if (artifact.findingId !== expected) {
@@ -460,8 +468,8 @@ export function encodeFinding(
     );
   }
   return {
-    workspace_id: requiredRef(workspaceId, "workspaceId"),
-    finding_id: requiredRef(artifact.findingId, "findingId"),
+    workspace_id: requiredReference(workspaceId, "workspaceId"),
+    finding_id: requiredReference(artifact.findingId, "findingId"),
     version: artifact.version,
     fingerprint,
     severity: artifact.severity,
@@ -563,9 +571,9 @@ export function encodeDiscoveryReview(
   }
   assertDiscoveryEvidencePacketReference(artifact.evidencePacket);
   return {
-    workspace_id: requiredRef(workspaceId, "workspaceId"),
-    episode_id: requiredRef(artifact.episodeId, "episodeId"),
-    review_id: requiredRef(artifact.reviewId, "reviewId"),
+    workspace_id: requiredReference(workspaceId, "workspaceId"),
+    episode_id: requiredReference(artifact.episodeId, "episodeId"),
+    review_id: requiredReference(artifact.reviewId, "reviewId"),
     version: artifact.version,
     author_role: artifact.authorRole,
     // The required ClickHouse string index is deliberately empty: discovery
@@ -632,9 +640,9 @@ export function encodeReview(
   assertEvidencePacketReference(artifact.evidencePacket);
   assertPlaytestSessionReviewHasEvidence(artifact);
   return {
-    workspace_id: requiredRef(workspaceId, "workspaceId"),
-    episode_id: requiredRef(artifact.episodeId, "episodeId"),
-    review_id: requiredRef(artifact.reviewId, "reviewId"),
+    workspace_id: requiredReference(workspaceId, "workspaceId"),
+    episode_id: requiredReference(artifact.episodeId, "episodeId"),
+    review_id: requiredReference(artifact.reviewId, "reviewId"),
     version: artifact.version,
     author_role: artifact.authorRole,
     rubric_hash: artifact.rubricHash,
@@ -655,9 +663,9 @@ export function encodeCrossSessionSynthesis(
     );
   }
   return {
-    workspace_id: requiredRef(workspaceId, "workspaceId"),
-    synthesis_id: requiredRef(artifact.synthesisId, "synthesisId"),
-    analysis_id: requiredRef(artifact.analysisId, "analysisId"),
+    workspace_id: requiredReference(workspaceId, "workspaceId"),
+    synthesis_id: requiredReference(artifact.synthesisId, "synthesisId"),
+    analysis_id: requiredReference(artifact.analysisId, "analysisId"),
     version: artifact.version,
     created_at: toClickHouseDateTime(artifact.generatedAt),
     payload_json: payloadJson(artifact)
@@ -674,8 +682,8 @@ export function encodeComparison(
     );
   }
   return {
-    workspace_id: requiredRef(artifact.provenance.workspaceId, "workspaceId"),
-    comparison_id: requiredRef(artifact.comparisonId, "comparisonId"),
+    workspace_id: requiredReference(artifact.provenance.workspaceId, "workspaceId"),
+    comparison_id: requiredReference(artifact.comparisonId, "comparisonId"),
     version: artifact.version,
     benchmark_id: artifact.benchmarkId,
     experiment_id: artifact.experimentId,
@@ -696,8 +704,8 @@ export function encodeBenchmark(
   assertPlaytestBenchmark(artifact);
   assertBenchmarkContentHash(artifact);
   return {
-    workspace_id: requiredRef(artifact.workspaceId, "workspaceId"),
-    benchmark_id: requiredRef(artifact.benchmarkId, "benchmarkId"),
+    workspace_id: requiredReference(artifact.workspaceId, "workspaceId"),
+    benchmark_id: requiredReference(artifact.benchmarkId, "benchmarkId"),
     version: artifact.version,
     reference_build_sha: artifact.referenceBuildSha,
     measurement_version: artifact.measurementVersion,
@@ -712,8 +720,8 @@ export function encodeExperiment(
   assertPlaytestExperiment(artifact);
   assertExperimentContentHash(artifact);
   return {
-    workspace_id: requiredRef(artifact.workspaceId, "workspaceId"),
-    experiment_id: requiredRef(artifact.experimentId, "experimentId"),
+    workspace_id: requiredReference(artifact.workspaceId, "workspaceId"),
+    experiment_id: requiredReference(artifact.experimentId, "experimentId"),
     version: artifact.version,
     benchmark_id: artifact.benchmarkId,
     state: artifact.state,
@@ -726,8 +734,8 @@ export function encodeHumanStudy(
   artifact: HumanPlaytestStudy
 ): PlaytestIndexedHumanStudyRow {
   return {
-    workspace_id: requiredRef(artifact.workspaceId, "workspaceId"),
-    study_id: requiredRef(artifact.studyId, "studyId"),
+    workspace_id: requiredReference(artifact.workspaceId, "workspaceId"),
+    study_id: requiredReference(artifact.studyId, "studyId"),
     version: artifact.version,
     benchmark_id: artifact.benchmarkId,
     instrument: artifact.instrument,
@@ -768,8 +776,8 @@ export function encodeHumanSummary(
   }
 
   return {
-    workspace_id: requiredRef(artifact.workspaceId, "workspaceId"),
-    study_id: requiredRef(artifact.studyId, "studyId"),
+    workspace_id: requiredReference(artifact.workspaceId, "workspaceId"),
+    study_id: requiredReference(artifact.studyId, "studyId"),
     revision: artifact.revision,
     benchmark_id: artifact.benchmarkId ?? null,
     build_sha: artifact.buildSha ?? null,
@@ -1049,10 +1057,10 @@ function assertCompletePacketInventory(
     packetReceipts.length !== selected.length ||
     selected.some(
       (session) =>
-        !packetReceipts.some(
+        packetReceipts.every(
           (receipt) =>
-            receipt.assignmentId === session.assignmentId &&
-            receipt.episodeId === session.episodeId
+            receipt.assignmentId !== session.assignmentId ||
+            receipt.episodeId !== session.episodeId
         )
     )
   ) {
@@ -1082,12 +1090,12 @@ function assertBatchManifestIdentity(
         !assignmentIds.has(receipt.assignmentId) ||
         selectedReviews.get(receipt.assignmentId) !== receipt.episodeId ||
         (receipt.packetId !== null &&
-          !packetReceipts.some(
+          packetReceipts.every(
             (packet) =>
-              packet.status === "prepared" &&
-              packet.packetId === receipt.packetId &&
-              packet.assignmentId === receipt.assignmentId &&
-              packet.episodeId === receipt.episodeId
+              packet.status !== "prepared" ||
+              packet.packetId !== receipt.packetId ||
+              packet.assignmentId !== receipt.assignmentId ||
+              packet.episodeId !== receipt.episodeId
           ))
     ) ||
     (artifact.reviewSelection.status === "selected" &&
@@ -1244,10 +1252,10 @@ function assertBatchCoverageManifest(artifact: PlaytestBatch): void {
 }
 
 /**
- * One-way migration for records persisted before batch assignment manifests
- * existed. Pre-change history stays honest inventory-unavailable history; no
- * assignment is fabricated from seed text.
- */
+One-way migration for records persisted before batch assignment manifests
+existed. Pre-change history stays honest inventory-unavailable history; no
+assignment is fabricated from seed text.
+*/
 function migrateAssignmentManifest(
   value: Record<string, unknown>
 ): PlaytestAssignmentManifest {
@@ -1302,14 +1310,14 @@ function migrateAssignmentManifest(
       "ClickHouse legacy assignment manifest has malformed assignment inventory"
     );
   }
-  const predatesCohortCoverage =
+  const isPredatesCohortCoverage =
     value.schema === PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V1 ||
     value.schema === PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA_V2;
   if (
     value.assignments.some(
       (assignment) =>
         !isRecord(assignment) ||
-        (predatesCohortCoverage
+        (isPredatesCohortCoverage
           ? assignment.cohort !== undefined
           : !Object.hasOwn(assignment, "cohort"))
     )
@@ -1322,7 +1330,7 @@ function migrateAssignmentManifest(
     ...value,
     schema: PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,
     mode: PLAYTEST_ADAPTER_EXECUTION_MODE,
-    assignments: predatesCohortCoverage
+    assignments: isPredatesCohortCoverage
       ? value.assignments.map((assignment) => ({
           ...(assignment as Record<string, unknown>),
           cohort: null
@@ -1397,12 +1405,12 @@ function migrateAssignmentInventory(
 }
 
 /**
- * Assignment-manifest promotions change the manifest hash even when the
- * recorded assignments remain identical. Preserve an attached coverage plan
- * by verifying its legacy binding first, then rebinding and rehashing it to
- * the canonical manifest. Never repair a coverage record that was already
- * inconsistent with the batch it claims to describe.
- */
+Assignment-manifest promotions change the manifest hash even when the
+recorded assignments remain identical. Preserve an attached coverage plan
+by verifying its legacy binding first, then rebinding and rehashing it to
+the canonical manifest. Never repair a coverage record that was already
+inconsistent with the batch it claims to describe.
+*/
 function migrateBatchCoverageManifest(
   artifact: Readonly<Record<string, unknown>>,
   assignmentInventory: PlaytestBatch["assignmentInventory"]
@@ -1505,9 +1513,9 @@ function migrateBatchCoverageManifest(
 }
 
 /**
- * One-way migration for batch, assignment and coverage fields. Missing legacy
- * evidence stays unavailable; malformed frozen state never becomes history.
- */
+One-way migration for batch, assignment and coverage fields. Missing legacy
+evidence stays unavailable; malformed frozen state never becomes history.
+*/
 function migrateBatchArtifact(
   artifact: Readonly<Record<string, unknown>>
 ): PlaytestBatch {
@@ -1676,7 +1684,9 @@ function migrateLegacyPacketReceipts(input: {
   });
 }
 
-/** One-way migration: pre-change episodes carry no batch-local assignment id. */
+/**
+One-way migration: pre-change episodes carry no batch-local assignment id.
+*/
 function assertEpisodeAssignmentIdentity(
   artifact: Readonly<Record<string, unknown>>,
   version: string
@@ -1803,7 +1813,9 @@ function readLegacyEpisodeArtifact(
   }
 }
 
-/** One-time persisted-row migration; normal reads accept only the current schema. */
+/**
+One-time persisted-row migration; normal reads accept only the current schema.
+*/
 export function migrateLegacyEpisodeForStorage(
   row: Record<string, unknown>
 ): PlaytestEpisode {
@@ -2171,27 +2183,33 @@ export function decodeReview(
   return artifact;
 }
 
-/** Review list rows surface bounded text; the archive keeps the full payload. */
+/**
+Review list rows surface bounded text; the archive keeps the full payload.
+*/
 const MAX_PLAYTEST_REVIEW_HEADLINE_CHARS = 240;
 const MAX_PLAYTEST_REVIEW_SUMMARY_CHARS = 600;
 const MAX_PLAYTEST_REVIEW_EVIDENCE_REFS = 8;
-/** One claim is a sentence the analyst wrote; the drawer shows it whole. */
+/**
+One claim is a sentence the analyst wrote; the drawer shows it whole.
+*/
 const MAX_PLAYTEST_REVIEW_CLAIM_CHARS = 600;
-/** How many claims one review row carries. */
+/**
+How many claims one review row carries.
+*/
 const MAX_PLAYTEST_REVIEW_CLAIMS = 50;
 
 /**
- * Bound a free-text field to the length a list row may carry. This is the
- * one bounded-text helper the Playtesting codecs use; a longer value is
- * truncated rather than dropped so the row still says something.
- *
- * The cut lands on a word boundary and is marked. A raw `slice` cut the
- * review's conclusion in the middle of a word -- "The step 1 pred" -- which
- * reads as a corrupted record rather than a shortened one, and left the
- * reader unable to tell a truncation from a mistake.
- *
- * The ellipsis is inside the bound: the result is never longer than `max`.
- */
+Bound a free-text field to the length a list row may carry. This is the
+one bounded-text helper the Playtesting codecs use; a longer value is
+truncated rather than dropped so the row still says something.
+
+The cut lands on a word boundary and is marked. A raw `slice` cut the
+review's conclusion in the middle of a word -- "The step 1 pred" -- which
+reads as a corrupted record rather than a shortened one, and left the
+reader unable to tell a truncation from a mistake.
+
+The ellipsis is inside the bound: the result is never longer than `max`.
+*/
 function boundPlaytestText(value: string, max: number): string {
   if (value.length <= max) return value;
   if (max <= 1) return value.slice(0, max);
@@ -2202,10 +2220,10 @@ function boundPlaytestText(value: string, max: number): string {
 }
 
 /**
- * Read a ClickHouse `DateTime64(3)` column value as an ISO-8601 timestamp.
- * The inverse of {@link toClickHouseDateTime}; an unreadable value yields an
- * empty string so the caller's own validation decides what that means.
- */
+Read a ClickHouse `DateTime64(3)` column value as an ISO-8601 timestamp.
+The inverse of {@link toClickHouseDateTime}; an unreadable value yields an
+empty string so the caller's own validation decides what that means.
+*/
 export function clickHouseDateTimeAsIso(value: unknown): string {
   if (typeof value !== "string") return "";
   const isoValue = value.includes("T") ? value : `${value.replace(" ", "T")}Z`;
@@ -2213,7 +2231,9 @@ export function clickHouseDateTimeAsIso(value: unknown): string {
   return Number.isNaN(date.getTime()) ? "" : date.toISOString();
 }
 
-/** The claim text of a review entry, tolerating the plain-string legacy shape. */
+/**
+The claim text of a review entry, tolerating the plain-string legacy shape.
+*/
 function reviewClaimText(value: unknown): string {
   if (typeof value === "string") return value.trim();
   if (isRecord(value) && typeof value.text === "string") {
@@ -2222,42 +2242,46 @@ function reviewClaimText(value: unknown): string {
   return "";
 }
 
-/** The text of the first entry of a claim array, or an empty string. */
+/**
+The text of the first entry of a claim array, or an empty string.
+*/
 function firstReviewClaimText(value: unknown): string {
   if (!Array.isArray(value) || value.length === 0) return "";
   return reviewClaimText(value[0]);
 }
 
-/** The length of a claim array, counting an absent array as no claims. */
+/**
+The length of a claim array, counting an absent array as no claims.
+*/
 function reviewClaimCount(value: unknown): number {
   return Array.isArray(value) ? value.length : 0;
 }
 
 /**
- * The status a claim or a finding carries when nothing was confirmed.
- *
- * It is the honest reading of a payload that says nothing: not "verified",
- * and not "there was no finding".
- */
+The status a claim or a finding carries when nothing was confirmed.
+
+It is the honest reading of a payload that says nothing: not "verified",
+and not "there was no finding".
+*/
 const REVIEW_NOT_OBSERVED = "not observed";
 
 /**
- * The evidence statuses a finding may carry.
- *
- * A status outside this set is not a status the product knows, and it is
- * read as "not observed" rather than as anything stronger: an unknown label
- * must never upgrade a finding into a verified defect.
- */
+The evidence statuses a finding may carry.
+
+A status outside this set is not a status the product knows, and it is
+read as "not observed" rather than as anything stronger: an unknown label
+must never upgrade a finding into a verified defect.
+*/
 const REVIEW_FINDING_EVIDENCE_STATUSES = new Set<
   PlaytestFinding["evidenceStatus"]
 >(["verified", "corroborated", "hypothesis", REVIEW_NOT_OBSERVED]);
 
 /**
- * The findings the review carries, with the evidence status each one holds.
- *
- * The status is read from the payload rather than assumed: a finding with no
- * readable status is a candidate, not a verified defect.
- */
+The findings the review carries, with the evidence status each one holds.
+
+The status is read from the payload rather than assumed: a finding with no
+readable status is a candidate, not a verified defect.
+*/
 function decodeReviewFindings(
   value: unknown
 ): readonly PlaytestReviewFindingSummary[] {
@@ -2283,17 +2307,17 @@ function decodeReviewFindings(
 }
 
 /**
- * The analyst's claims, in the order the review recorded them.
- *
- * The payload keeps them as claims -- an id, a status and the text -- and
- * this projects them to the three fields a reader needs. The status is kept
- * because a review also records what the analyst could *not* confirm, and
- * reading that as an asserted conclusion would turn an explicit null into a
- * finding.
- *
- * A claim with no text contributes nothing to read and is skipped; the
- * payload's own count of claims is not changed by this projection.
- */
+The analyst's claims, in the order the review recorded them.
+
+The payload keeps them as claims -- an id, a status and the text -- and
+this projects them to the three fields a reader needs. The status is kept
+because a review also records what the analyst could *not* confirm, and
+reading that as an asserted conclusion would turn an explicit null into a
+finding.
+
+A claim with no text contributes nothing to read and is skipped; the
+payload's own count of claims is not changed by this projection.
+*/
 function decodeReviewClaims(
   value: unknown
 ): readonly PlaytestReviewClaimSummary[] {
@@ -2321,20 +2345,22 @@ function decodeReviewClaims(
 }
 
 /**
- * The headline: the first claim the analyst asserted.
- *
- * The first *asserted* claim, not simply the first one. A review records
- * what it could not confirm alongside what it claims, and a headline that
- * leads with an explicit null would state the opposite of what the analyst
- * concluded.
- */
+The headline: the first claim the analyst asserted.
+
+The first *asserted* claim, not simply the first one. A review records
+what it could not confirm alongside what it claims, and a headline that
+leads with an explicit null would state the opposite of what the analyst
+concluded.
+*/
 function firstAssertedReviewClaimText(value: unknown): string {
   const claims = decodeReviewClaims(value);
   const asserted = claims.find((claim) => claim.status === "hypothesis");
   return asserted?.text ?? claims[0]?.text ?? "";
 }
 
-/** The workspace a review payload claims, wherever that payload keeps it. */
+/**
+The workspace a review payload claims, wherever that payload keeps it.
+*/
 function reviewPayloadWorkspaceId(
   payload: Readonly<Record<string, unknown>>
 ): string | null {
@@ -2347,11 +2373,11 @@ function reviewPayloadWorkspaceId(
 }
 
 /**
- * Decode the evidence a review cites. Locators are deduplicated and capped,
- * because a list row may not carry a review's whole citation ledger. A
- * malformed locator is a real defect and stays loud.
- */
-function decodeReviewEvidenceRefs(
+Decode the evidence a review cites. Locators are deduplicated and capped,
+because a list row may not carry a review's whole citation ledger. A
+malformed locator is a real defect and stays loud.
+*/
+function decodeReviewEvidenceReferences(
   value: unknown
 ): readonly PlaytestEvidenceLocator[] {
   if (value === undefined || value === null) return [];
@@ -2360,7 +2386,7 @@ function decodeReviewEvidenceRefs(
       "ClickHouse review payload has a malformed evidenceRefs array"
     );
   }
-  const refs: PlaytestEvidenceLocator[] = [];
+  const references: PlaytestEvidenceLocator[] = [];
   const seen = new Set<string>();
   for (const entry of value) {
     try {
@@ -2381,21 +2407,21 @@ function decodeReviewEvidenceRefs(
     ].join("|");
     if (seen.has(key)) continue;
     seen.add(key);
-    refs.push(entry);
-    if (refs.length === MAX_PLAYTEST_REVIEW_EVIDENCE_REFS) break;
+    references.push(entry);
+    if (references.length === MAX_PLAYTEST_REVIEW_EVIDENCE_REFS) break;
   }
-  return refs;
+  return references;
 }
 
 /**
- * Project one persisted review row into the summary a list may show.
- *
- * The derivation is shape-tolerant on purpose: discovery and confirmatory
- * reviews keep their claims in different shapes, and a payload that lacks a
- * key degrades to an empty or zero value instead of failing the read. Only
- * a genuinely broken payload -- unparsable JSON, a missing identity, a
- * malformed locator -- raises.
- */
+Project one persisted review row into the summary a list may show.
+
+The derivation is shape-tolerant on purpose: discovery and confirmatory
+reviews keep their claims in different shapes, and a payload that lacks a
+key degrades to an empty or zero value instead of failing the read. Only
+a genuinely broken payload -- unparsable JSON, a missing identity, a
+malformed locator -- raises.
+*/
 export function decodeReviewSummary(
   row: Record<string, unknown>
 ): PlaytestReviewSummary {
@@ -2464,7 +2490,7 @@ export function decodeReviewSummary(
     summary,
     hypotheses: decodeReviewClaims(payload.interpretations),
     findings: decodeReviewFindings(payload.findings),
-    evidenceRefs: decodeReviewEvidenceRefs(payload.evidenceRefs)
+    evidenceRefs: decodeReviewEvidenceReferences(payload.evidenceRefs)
   };
 }
 

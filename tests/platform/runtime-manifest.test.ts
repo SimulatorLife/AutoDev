@@ -112,14 +112,14 @@ function assertInstalledSourceDependencies(
   runtimePackageName: string
 ): void {
   if (!modulePath.endsWith(".ts")) return;
-  const runtimeSource = modulePath.startsWith("runtime/");
-  const dependencies = runtimeSource ? runtimeDependencies : rootDependencies;
-  const modulesRoot = runtimeSource ? "runtime/node_modules" : "node_modules";
+  const isRuntimeSource = modulePath.startsWith("runtime/");
+  const dependencies = isRuntimeSource ? runtimeDependencies : rootDependencies;
+  const modulesRoot = isRuntimeSource ? "runtime/node_modules" : "node_modules";
   for (const packageName of packageImports(
     readFileSync(join(repositoryRoot, modulePath), "utf8")
   )) {
-    const selfImport = runtimeSource && packageName === runtimePackageName;
-    if (!selfImport) {
+    const isSelfImport = isRuntimeSource && packageName === runtimePackageName;
+    if (!isSelfImport) {
       assert.ok(
         dependencies.has(packageName),
         `${modulePath} imports "${packageName}" without declaring it in its owning package`
@@ -127,7 +127,7 @@ function assertInstalledSourceDependencies(
     }
     assert.ok(
       existsSync(join(repositoryRoot, modulesRoot, packageName)) ||
-        (selfImport &&
+        (isSelfImport &&
           existsSync(join(repositoryRoot, "node_modules", packageName))),
       `workspace dependency "${packageName}" is missing from its package resolution path`
     );
@@ -146,10 +146,10 @@ test("every manifest entry exists in the repository", () => {
 });
 
 /**
- * The installed tree is rebuilt whole on every install and swapped in, so it
- * holds exactly the manifest's `runtime/src` modules and its package manifest:
- * a module removed from the manifest has no stale copy left to clean up.
- */
+The installed tree is rebuilt whole on every install and swapped in, so it
+holds exactly the manifest's `runtime/src` modules and its package manifest:
+a module removed from the manifest has no stale copy left to clean up.
+*/
 test("the installed source tree is exactly the manifest's runtime/src modules", () => {
   const tree = runtimeSourceTree(repositoryRoot, "/codex-home");
   const expected = (RUNTIME_MODULES as readonly string[])
@@ -214,12 +214,12 @@ test("runtime manifest is closed under relative imports", () => {
 });
 
 /**
- * The Runtime imports its own modules through the workspace package name as
- * well as by path. The installed tree resolves those imports through its own
- * manifest, so a package import whose target is not materialized loads a
- * second copy of the module from the repository checkout -- and module-scoped
- * state splits across the two copies.
- */
+The Runtime imports its own modules through the workspace package name as
+well as by path. The installed tree resolves those imports through its own
+manifest, so a package import whose target is not materialized loads a
+second copy of the module from the repository checkout -- and module-scoped
+state splits across the two copies.
+*/
 function packageSelfImports(modulePath: string): string[] {
   const runtimePackage = JSON.parse(
     readFileSync(join(repositoryRoot, "runtime/package.json"), "utf8")
@@ -297,11 +297,11 @@ test("runtime manifest is closed under package imports", () => {
 });
 
 /**
- * The installed tree resolves some Runtime modules by path instead of by
- * package import. Those modules are spawned as child processes, so a missing
- * manifest entry is a runtime failure with no static symptom: the child exits
- * before it can report anything.
- */
+The installed tree resolves some Runtime modules by path instead of by
+package import. Those modules are spawned as child processes, so a missing
+manifest entry is a runtime failure with no static symptom: the child exits
+before it can report anything.
+*/
 function pathResolvedModules(modulePath: string): string[] {
   const file = ts.createSourceFile(
     modulePath,
@@ -1124,7 +1124,7 @@ test("AutoDev standalone OTel Collector is decommissioned with no replacement si
 
   // Repository no longer contains any AutoDev-owned standalone Collector
   // implementation, provisioning, configuration, scripts, or LaunchAgent.
-  const removedAutoDevFiles = [
+  const removedAutoDevelopmentFiles = [
     "runtime/src/platform/otel-collector.ts",
     "runtime/src/platform/otel-provision.ts",
     "config/otel/collector.yaml",
@@ -1135,7 +1135,7 @@ test("AutoDev standalone OTel Collector is decommissioned with no replacement si
     "scripts/otel/run-autodev-otel-collector.sh",
     "config/launchagents/com.codex.otel-collector.plist"
   ];
-  for (const filePath of removedAutoDevFiles) {
+  for (const filePath of removedAutoDevelopmentFiles) {
     assert.equal(
       existsSync(join(repositoryRoot, filePath)),
       false,

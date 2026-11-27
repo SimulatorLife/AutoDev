@@ -1,4 +1,6 @@
-/** Data-owned Playtesting ClickHouse persistence/query API. */
+/**
+Data-owned Playtesting ClickHouse persistence/query API.
+*/
 export * from "./cursor.ts";
 export * from "./errors.ts";
 export * from "./human-response-repository.ts";

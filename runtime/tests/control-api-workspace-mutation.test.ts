@@ -19,12 +19,12 @@ const OPERATOR_ACTOR = "workspace-mutation-operator";
 const VIEWER_ACTOR = "workspace-mutation-viewer";
 
 /**
- * The canonical catalog the write starts from.
- *
- * It declares two workspaces so a write that lands in the wrong place is
- * visible: the entry that changed and the entry that did not are told apart
- * by the file itself.
- */
+The canonical catalog the write starts from.
+
+It declares two workspaces so a write that lands in the wrong place is
+visible: the entry that changed and the entry that did not are told apart
+by the file itself.
+*/
 const CATALOG = `{
   "schema": "autodev-workspaces-v1",
   "workspaces": [

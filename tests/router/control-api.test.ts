@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
   cpSync,
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -61,7 +60,6 @@ import {
   setTelemetryExporter
 } from "@simulatorlife/autodev-runtime/router/telemetry";
 import type { ExecutionContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
-import { parse } from "smol-toml";
 
 import { useNonDelegatingContract } from "./non-delegating-contract.ts";
 
@@ -85,11 +83,11 @@ const SERVICE_TOKEN = "unit-test-secret-token-0123456789abcdef";
 const telemetryExporter = new InMemorySpanExporter();
 setTelemetryExporter(telemetryExporter);
 
-function saveEnv(): Record<string, string | undefined> {
+function saveEnvironment(): Record<string, string | undefined> {
   return Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
 }
 
-function restoreEnv(saved: Record<string, string | undefined>): void {
+function restoreEnvironment(saved: Record<string, string | undefined>): void {
   for (const key of ENV_KEYS) {
     const value = saved[key];
     if (value === undefined) delete process.env[key];
@@ -218,14 +216,14 @@ async function captureAudit<T>(action: () => Promise<T>): Promise<{
 }
 
 /**
- * Persistence for a test that does not stub its own: memory only.
- *
- * Every Control API mutation persists. Persisting with no manager is an
- * error, and the router module's manager writes
- * `$CODEX_HOME/codex-router-state.json`, which on a maintainer's machine is
- * the live router's file -- the concurrency tests once replaced it with an
- * empty state on every run.
- */
+Persistence for a test that does not stub its own: memory only.
+
+Every Control API mutation persists. Persisting with no manager is an
+error, and the router module's manager writes
+`$CODEX_HOME/codex-router-state.json`, which on a maintainer's machine is
+the live router's file -- the concurrency tests once replaced it with an
+empty state on every run.
+*/
 setDefaultPersistenceManager({
   async persistNow() {
     return true;
@@ -233,7 +231,7 @@ setDefaultPersistenceManager({
 } as unknown as RouterPersistence);
 
 test("Control API does not turn an unavailable evaluation store into empty history", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   try {
     configure();
     process.env.CLICKHOUSE_URL = "http://127.0.0.1:1";
@@ -247,12 +245,12 @@ test("Control API does not turn an unavailable evaluation store into empty histo
     );
     assert.doesNotMatch(result.response.body, /ECONNREFUSED/u);
   } finally {
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("Control API requires a service credential and rejects missing or untrusted actors", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   try {
     for (const key of ENV_KEYS) delete process.env[key];
     const disabled = await call("GET", CONTROL_API_PATHS.providers, {
@@ -275,12 +273,12 @@ test("Control API requires a service credential and rejects missing or untrusted
     });
     assert.equal(unknownActor.response.statusCode, 403);
   } finally {
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("Control API grants local single-user operator access only when no external actor allowlist is configured", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   try {
     process.env.AUTODEV_CONTROL_API_TOKEN = SERVICE_TOKEN;
     delete process.env.AUTODEV_CONTROL_VIEWERS;
@@ -304,12 +302,12 @@ test("Control API grants local single-user operator access only when no external
     );
     assert.equal(localWithExternalPolicy.response.statusCode, 403);
   } finally {
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("provider model discovery is an authenticated read-only snapshot, separate from routing assignments", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const priorState = ROUTING_POLICY.runtimeState();
   try {
     configure();
@@ -386,12 +384,12 @@ test("provider model discovery is an authenticated read-only snapshot, separate 
     assert.deepEqual(ROUTING_POLICY.runtimeState(), priorState);
   } finally {
     setControlApiProviderModelDiscoverySource(null);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("unobserved provider discovery publishes every known provider exactly once", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   try {
     configure();
     setControlApiProviderModelDiscoverySource(null);
@@ -413,12 +411,12 @@ test("unobserved provider discovery publishes every known provider exactly once"
     );
   } finally {
     setControlApiProviderModelDiscoverySource(null);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("viewer reads control resources; MCP and Skills views contain configuration, not OTel history", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const priorContract = getDefaultExecutionContract();
   const quotaAxi: NonNullable<ControlApiProvidersResponse["quotaAxi"]> = {
     generatedAt: "2026-11-13T12:00:00.000Z",
@@ -571,12 +569,12 @@ test("viewer reads control resources; MCP and Skills views contain configuration
   } finally {
     setControlApiProviderQuotaAxiSource(null);
     setExecutionContractForTests(priorContract);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("Control API publishes the Runtime's MCP observations on their own read path", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const observation = {
     name: "lsp",
     health: "ready" as const,
@@ -624,12 +622,12 @@ test("Control API publishes the Runtime's MCP observations on their own read pat
     );
   } finally {
     setControlApiMcpObservationsSource(null);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("Control API reports per-workspace configuration health and runtime availability", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   interface WorkspaceFact {
     readonly id: string;
     readonly configuration: { readonly status: string };
@@ -686,12 +684,12 @@ test("Control API reports per-workspace configuration health and runtime availab
     assert.equal(idle?.runtime.liveAgents, 0);
   } finally {
     setControlApiLiveAgentCountsSource(null);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("role headers cannot grant access and viewers cannot mutate", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   try {
     configure();
     const noActor = await call(
@@ -717,12 +715,12 @@ test("role headers cannot grant access and viewers cannot mutate", async () => {
     assert.equal(audit.reason, "viewer_cannot_mutate");
     assert.equal(JSON.stringify(audit).includes(SERVICE_TOKEN), false);
   } finally {
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("operator PATCH validates fields, persists provider state, and audits the action", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   let persistCalls = 0;
   let previous: ProviderRoleAssignment | null = null;
   const originalPersistence = setDefaultPersistenceManager({
@@ -830,12 +828,12 @@ test("operator PATCH validates fields, persists provider state, and audits the a
       ROUTING_POLICY.setProviderAssignment("claude", "subagent", previous);
     else ROUTING_POLICY.clearProviderAssignment("claude", "subagent");
     setDefaultPersistenceManager(originalPersistence);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("POST /control/providers/:provider/check runs the router's check for an operator", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const checked: string[] = [];
   try {
     configure();
@@ -895,12 +893,12 @@ test("POST /control/providers/:provider/check runs the router's check for an ope
     );
   } finally {
     setControlApiProviderCheckSource(null);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("a provider with no delegation path cannot be assigned the orchestrator role, and the view says why", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   // Every shipped provider can delegate; this contract says MiniMax cannot.
   const restoreContract = useNonDelegatingContract("minimax");
   let persistCalls = 0;
@@ -976,13 +974,13 @@ test("a provider with no delegation path cannot be assigned the orchestrator rol
       ROUTING_POLICY.setProviderAssignment("minimax", "orchestrator", previous);
     else ROUTING_POLICY.clearProviderAssignment("minimax", "orchestrator");
     setDefaultPersistenceManager(originalPersistence);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
     restoreContract();
   }
 });
 
 test("operator role PATCH configures and validates reasoning effort, respecting model catalogs and Antigravity fixed suffixes", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       return true;
@@ -1084,12 +1082,12 @@ test("operator role PATCH configures and validates reasoning effort, respecting 
     else
       ROUTING_POLICY.clearProviderAssignment("antigravity-gemini", "subagent");
     setDefaultPersistenceManager(originalPersistence);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("failed persistence rolls back the in-memory provider policy", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const previous = ROUTING_POLICY.assignmentFor("claude", "subagent");
   const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
@@ -1120,12 +1118,12 @@ test("failed persistence rolls back the in-memory provider policy", async () => 
       ROUTING_POLICY.setProviderAssignment("claude", "subagent", previous);
     else ROUTING_POLICY.clearProviderAssignment("claude", "subagent");
     setDefaultPersistenceManager(originalPersistence);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("provider enablement disables globally while preserving its roles and limits", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       return true;
@@ -1252,12 +1250,12 @@ test("provider enablement disables globally while preserving its roles and limit
     ROUTING_POLICY.clearProviderAssignment("claude", "orchestrator");
     ROUTING_POLICY.clearProviderAssignment("claude", "subagent");
     setDefaultPersistenceManager(originalPersistence);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("provider agent limits accept Unlimited and reject values that are not limits", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       return true;
@@ -1317,12 +1315,12 @@ test("provider agent limits accept Unlimited and reject values that are not limi
   } finally {
     ROUTING_POLICY.clearProviderLimits("claude");
     setDefaultPersistenceManager(originalPersistence);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("a failed provider limits persist leaves no limits behind", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       throw new Error("disk failure");
@@ -1347,12 +1345,12 @@ test("a failed provider limits persist leaves no limits behind", async () => {
   } finally {
     ROUTING_POLICY.clearProviderLimits("claude");
     setDefaultPersistenceManager(originalPersistence);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("a failed persist cannot leave behind an assignment that had none before", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       throw new Error("disk failure");
@@ -1385,12 +1383,12 @@ test("a failed persist cannot leave behind an assignment that had none before", 
   } finally {
     ROUTING_POLICY.clearProviderAssignment("claude", "subagent");
     setDefaultPersistenceManager(originalPersistence);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("provider reset requires an operator actor and a body of exactly { confirm: true }", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       return true;
@@ -1437,12 +1435,12 @@ test("provider reset requires an operator actor and a body of exactly { confirm:
     );
   } finally {
     setDefaultPersistenceManager(originalPersistence);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("provider reset clears only role assignments, provider disables, model disables, and provider limits, and preserves everything else", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const priorState = ROUTING_POLICY.runtimeState();
   const priorDiscoveredModels = ROUTING_POLICY.discoveredModels();
   const manager = getDefaultConcurrencyManager();
@@ -1612,12 +1610,12 @@ test("provider reset clears only role assignments, provider disables, model disa
     }
     manager.restorePersistence(priorConcurrencyState);
     setDefaultPersistenceManager(originalPersistence);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("a failed provider reset persist restores the exact prior provider state", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const priorState = ROUTING_POLICY.runtimeState();
   const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
@@ -1654,12 +1652,12 @@ test("a failed provider reset persist restores the exact prior provider state", 
   } finally {
     ROUTING_POLICY.restoreRuntimeState(priorState);
     setDefaultPersistenceManager(originalPersistence);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("provider reset serializes with a concurrent provider role mutation on the shared router-state queue", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const priorState = ROUTING_POLICY.runtimeState();
   const { promise: firstPersist, resolve: releaseFirstPersist } =
     Promise.withResolvers<boolean>();
@@ -1728,12 +1726,12 @@ test("provider reset serializes with a concurrent provider role mutation on the 
     await Promise.all([resetCall, roleCall].filter(Boolean));
     ROUTING_POLICY.restoreRuntimeState(priorState);
     setDefaultPersistenceManager(originalPersistence);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("providers v2 reports routes, credential presence, tier models, priorities, and router health only when observed", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   try {
     configure();
     const unobserved = await call("GET", CONTROL_API_PATHS.providers, {
@@ -1840,12 +1838,12 @@ test("providers v2 reports routes, credential presence, tier models, priorities,
     );
   } finally {
     setControlApiProviderHealthSource(null);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("models v2 lists each routed model once with its provider, tiers, and enablement", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   try {
     configure();
     const result = await call("GET", CONTROL_API_PATHS.models, {
@@ -1891,12 +1889,12 @@ test("models v2 lists each routed model once with its provider, tiers, and enabl
     );
     assert.equal(sonnet?.displayName, "Claude Sonnet subscription");
   } finally {
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("model enablement becomes mutable only for an observed routeable provider model", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const entry = ROUTING_POLICY.configuredModels()[0]!;
   const previousDiscovered = ROUTING_POLICY.discoveredModels()
     .filter((model) => model.provider === entry.provider)
@@ -1951,14 +1949,13 @@ test("model enablement becomes mutable only for an observed routeable provider m
       entry.provider,
       previousDiscovered
     );
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("operator model PATCH validates, persists, audits, and rolls back on persistence failure", async () => {
-  const saved = saveEnv();
-  const configured = ROUTING_POLICY.configuredModels()[0]!;
-  const { model, provider } = configured;
+  const saved = saveEnvironment();
+  const { model, provider } = ROUTING_POLICY.configuredModels()[0]!;
   const path = CONTROL_API_PATHS.models + "/" + model;
   const previousDiscovered = ROUTING_POLICY.discoveredModels()
     .filter((entry) => entry.provider === provider)
@@ -1968,11 +1965,11 @@ test("operator model PATCH validates, persists, audits, and rolls back on persis
       routeability
     }));
   let persistCalls = 0;
-  let failPersist = false;
+  let isFailPersist = false;
   const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       persistCalls += 1;
-      if (failPersist) throw new Error("disk failure");
+      if (isFailPersist) throw new Error("disk failure");
       return true;
     }
   } as unknown as RouterPersistence);
@@ -2080,7 +2077,7 @@ test("operator model PATCH validates, persists, audits, and rolls back on persis
       "ok"
     );
 
-    failPersist = true;
+    isFailPersist = true;
     const failed = await call("PATCH", path, {
       actor: "operator-a",
       body: { enabled: true }
@@ -2097,12 +2094,12 @@ test("operator model PATCH validates, persists, audits, and rolls back on persis
     setControlApiProviderModelDiscoverySource(null);
     ROUTING_POLICY.setDiscoveredProviderModels(provider, previousDiscovered);
     setDefaultPersistenceManager(originalPersistence);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("operator cannot change model enablement without current routeable availability", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const configured = ROUTING_POLICY.configuredModels()[0]!;
   const previousDiscovered = ROUTING_POLICY.discoveredModels()
     .filter((entry) => entry.provider === configured.provider)
@@ -2156,12 +2153,12 @@ test("operator cannot change model enablement without current routeable availabi
       previousDiscovered
     );
     setDefaultPersistenceManager(originalPersistence);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("provider role edits preserve an unavailable current model but accept new models only from current routeable discovery", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const provider = "claude";
   const role = "subagent" as const;
   const previousAssignment = ROUTING_POLICY.assignmentFor(provider, role);
@@ -2281,12 +2278,12 @@ test("provider role edits preserve an unavailable current model but accept new m
       ROUTING_POLICY.setProviderAssignment(provider, role, previousAssignment);
     else ROUTING_POLICY.clearProviderAssignment(provider, role);
     setDefaultPersistenceManager(originalPersistence);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("read-only collections reject mutations and the removed admin route stays absent", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   try {
     configure();
     const readonly = await call("PATCH", CONTROL_API_PATHS.mcps, {
@@ -2306,12 +2303,12 @@ test("read-only collections reject mutations and the removed admin route stays a
     });
     assert.notEqual(legacy.response.statusCode, 200);
   } finally {
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("Tools catalog stays authoritative when the role projection is empty but the RuleSync MCP source is valid", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const priorContract = getDefaultExecutionContract();
   try {
     configure();
@@ -2343,12 +2340,12 @@ test("Tools catalog stays authoritative when the role projection is empty but th
     assert.equal(tools.body.readOnly, true);
   } finally {
     setExecutionContractForTests(priorContract);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("the tool catalogue's count is not observed when the execution contract was not read", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const priorContract = getDefaultExecutionContract();
   const priorContractFile = process.env.CODEX_EXECUTION_CONTRACT_FILE;
   try {
@@ -2393,12 +2390,12 @@ test("the tool catalogue's count is not observed when the execution contract was
       process.env.CODEX_EXECUTION_CONTRACT_FILE = priorContractFile;
     }
     setExecutionContractForTests(priorContract);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("a prompt detail whose command could not be read is not an unknown prompt", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const repositoryRoot = mkdtempSync(join(tmpdir(), "autodev-prompt-source-"));
   try {
     configure();
@@ -2428,13 +2425,13 @@ test("a prompt detail whose command could not be read is not an unknown prompt",
       /must have valid YAML frontmatter/u
     );
   } finally {
-    restoreEnv(saved);
+    restoreEnvironment(saved);
     rmSync(repositoryRoot, { recursive: true, force: true });
   }
 });
 
 test("a prompt that is not there is still an unknown prompt", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const repositoryRoot = mkdtempSync(join(tmpdir(), "autodev-prompt-absent-"));
   try {
     configure();
@@ -2451,13 +2448,13 @@ test("a prompt that is not there is still an unknown prompt", async () => {
     assert.equal(detail.response.statusCode, 404);
     assert.equal(detail.body.error.code, "autodev_control_api_unknown_prompt");
   } finally {
-    restoreEnv(saved);
+    restoreEnvironment(saved);
     rmSync(repositoryRoot, { recursive: true, force: true });
   }
 });
 
 test("a prompt version whose catalogue could not be read is not an unknown version", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const repositoryRoot = mkdtempSync(join(tmpdir(), "autodev-prompt-version-"));
   try {
     configure();
@@ -2486,13 +2483,13 @@ test("a prompt version whose catalogue could not be read is not an unknown versi
       /must have valid YAML frontmatter/u
     );
   } finally {
-    restoreEnv(saved);
+    restoreEnvironment(saved);
     rmSync(repositoryRoot, { recursive: true, force: true });
   }
 });
 
 test("a skill whose catalogue could not be read is not an unknown skill", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const repositoryRoot = mkdtempSync(
     join(tmpdir(), "autodev-skill-catalogue-")
   );
@@ -2534,13 +2531,13 @@ test("a skill whose catalogue could not be read is not an unknown skill", async 
     assert.equal(skill.body.error.code, "autodev_control_skill_source_invalid");
     assert.match(skill.body.error.message, /catalog is invalid/u);
   } finally {
-    restoreEnv(saved);
+    restoreEnvironment(saved);
     rmSync(repositoryRoot, { recursive: true, force: true });
   }
 });
 
 test("an agent detail whose role prompt could not be read does not publish an empty prompt", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const priorContract = getDefaultExecutionContract();
   const repositoryRoot = mkdtempSync(join(tmpdir(), "autodev-agent-prompt-"));
   try {
@@ -2574,13 +2571,13 @@ test("an agent detail whose role prompt could not be read does not publish an em
     assert.equal(detail.body.reconciliation.status.convergence, "not-observed");
   } finally {
     setExecutionContractForTests(priorContract);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
     rmSync(repositoryRoot, { recursive: true, force: true });
   }
 });
 
 test("a permissions response says whether the execution contract was read", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const priorContract = getDefaultExecutionContract();
   const priorContractFile = process.env.CODEX_EXECUTION_CONTRACT_FILE;
   try {
@@ -2611,12 +2608,12 @@ test("a permissions response says whether the execution contract was read", asyn
       process.env.CODEX_EXECUTION_CONTRACT_FILE = priorContractFile;
     }
     setExecutionContractForTests(priorContract);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("an agent detail whose contract was not read is not an unknown role", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const priorContract = getDefaultExecutionContract();
   const priorContractFile = process.env.CODEX_EXECUTION_CONTRACT_FILE;
   try {
@@ -2648,16 +2645,16 @@ test("an agent detail whose contract was not read is not an unknown role", async
       process.env.CODEX_EXECUTION_CONTRACT_FILE = priorContractFile;
     }
     setExecutionContractForTests(priorContract);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("Agent enablement is Runtime-owned, revision-bound, and independent of provider assignments", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const priorContract = getDefaultExecutionContract();
   const previousPolicyState = ROUTING_POLICY.runtimeState();
   const previousAssignment = ROUTING_POLICY.assignmentFor("claude", "subagent");
-  let failPersistence = false;
+  let isFailPersistence = false;
   let persistCalls = 0;
   let persistedDisabledAgentRoles: readonly string[] = [];
   const originalPersistence = setDefaultPersistenceManager({
@@ -2665,7 +2662,7 @@ test("Agent enablement is Runtime-owned, revision-bound, and independent of prov
       persistCalls += 1;
       persistedDisabledAgentRoles =
         ROUTING_POLICY.runtimeState().disabledAgentRoles;
-      if (failPersistence) throw new Error("disk failure");
+      if (isFailPersistence) throw new Error("disk failure");
       return true;
     }
   } as unknown as RouterPersistence);
@@ -2816,7 +2813,7 @@ test("Agent enablement is Runtime-owned, revision-bound, and independent of prov
     ROUTING_POLICY.setAgentEnabled("worker", false);
 
     const disabled = await call("GET", path, { actor: "viewer-a" });
-    failPersistence = true;
+    isFailPersistence = true;
     const failed = await call("PATCH", path, {
       actor: "operator-a",
       body: {
@@ -2831,12 +2828,12 @@ test("Agent enablement is Runtime-owned, revision-bound, and independent of prov
     setExecutionContractForTests(priorContract);
     ROUTING_POLICY.restoreRuntimeState(previousPolicyState);
     setDefaultPersistenceManager(originalPersistence);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("Agent detail and mutation paths canonicalize role aliases before applying policy", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const previousPolicyState = ROUTING_POLICY.runtimeState();
   const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
@@ -2864,12 +2861,12 @@ test("Agent detail and mutation paths canonicalize role aliases before applying 
   } finally {
     ROUTING_POLICY.restoreRuntimeState(previousPolicyState);
     setDefaultPersistenceManager(originalPersistence);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("concurrent Agent enablement writes compare revisions after the prior persist completes", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const previousPolicyState = ROUTING_POLICY.runtimeState();
   const { promise: firstPersist, resolve: releaseFirstPersist } =
     Promise.withResolvers<boolean>();
@@ -2929,12 +2926,12 @@ test("concurrent Agent enablement writes compare revisions after the prior persi
     await Promise.all([firstPatch, secondPatch].filter(Boolean));
     ROUTING_POLICY.restoreRuntimeState(previousPolicyState);
     setDefaultPersistenceManager(originalPersistence);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("Control API surfaces all 13 typed resource families", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   try {
     configure();
 
@@ -3354,12 +3351,12 @@ test("Control API surfaces all 13 typed resource families", async () => {
     });
     assert.equal(githubMutation.response.statusCode, 405);
   } finally {
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("Agent readiness uses observed provider health rather than configuration alone", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const previousPolicyState = ROUTING_POLICY.runtimeState();
   const routeCredentialKeys: string[] = [
     ...new Set(
@@ -3448,12 +3445,12 @@ test("Agent readiness uses observed provider health rather than configuration al
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("Control API prompts listing projects the canonical RuleSyncRepository.loadCommands output", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   try {
     configure();
     const commandState = new RuleSyncRepository().loadCommands();
@@ -3461,9 +3458,7 @@ test("Control API prompts listing projects the canonical RuleSyncRepository.load
     const expectedCommands = commandState.commands.map((command) => ({
       name: command.name,
       path: command.path,
-      ...(command.description === undefined
-        ? {}
-        : { description: command.description })
+      ...(command.description !== undefined && { description: command.description })
     }));
     assert.ok(expectedCommands.length > 0);
 
@@ -3492,12 +3487,12 @@ test("Control API prompts listing projects the canonical RuleSyncRepository.load
       ]);
     }
   } finally {
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("the prompts catalogue says when its role prompts were not read", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const repositoryRoot = mkdtempSync(
     join(tmpdir(), "autodev-prompts-role-source-control-")
   );
@@ -3542,12 +3537,12 @@ test("the prompts catalogue says when its role prompts were not read", async () 
     assert.equal(unreadable.body.totalCommands, 1);
   } finally {
     rmSync(repositoryRoot, { recursive: true, force: true });
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("Control API exposes bounded Git prompt history and selected-version diff as read-only data", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const repositoryRoot = mkdtempSync(
     join(tmpdir(), "autodev-prompt-history-control-")
   );
@@ -3654,7 +3649,7 @@ test("Control API exposes bounded Git prompt history and selected-version diff a
       rmSync(unavailableRepository, { recursive: true, force: true });
     }
   } finally {
-    restoreEnv(saved);
+    restoreEnvironment(saved);
     rmSync(repositoryRoot, { recursive: true, force: true });
   }
 });
@@ -3664,7 +3659,7 @@ test("Control API pages prompt history and opens a revision from an older page",
   // revision the operator reached by paging back is older than the newest
   // page, and it has to open: the page is how the operator found it, not a
   // limit on which revisions exist.
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const repositoryRoot = mkdtempSync(
     join(tmpdir(), "autodev-prompt-history-page-control-")
   );
@@ -3776,13 +3771,13 @@ test("Control API pages prompt history and opens a revision from an older page",
       );
     }
   } finally {
-    restoreEnv(saved);
+    restoreEnvironment(saved);
     rmSync(repositoryRoot, { recursive: true, force: true });
   }
 });
 
 test("Control API prompt detail serves the canonical command content from RuleSyncRepository.loadCommands", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   try {
     configure();
     const assets = new RuleSyncRepository().loadCommands();
@@ -3819,12 +3814,12 @@ test("Control API prompt detail serves the canonical command content from RuleSy
       "type"
     ]);
   } finally {
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("a canonical command is read-only: a write is refused and the source is untouched", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const repositoryRoot = mkdtempSync(
     join(tmpdir(), "autodev-prompt-control-repository-")
   );
@@ -3878,14 +3873,14 @@ test("a canonical command is read-only: a write is refused and the source is unt
     assert.equal(after?.revision, current.revision);
     assert.equal(after?.description, current.description);
   } finally {
-    restoreEnv(saved);
+    restoreEnvironment(saved);
     rmSync(repositoryRoot, { recursive: true, force: true });
     rmSync(codexHome, { recursive: true, force: true });
   }
 });
 
 test("Control API prompt detail serves an unshadowed role prompt from its canonical source file", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   try {
     configure();
     const prompts = await call("GET", CONTROL_API_PATHS.prompts, {
@@ -3920,12 +3915,12 @@ test("Control API prompt detail serves an unshadowed role prompt from its canoni
     );
     assert.equal(detail.body.preview, detail.body.content);
   } finally {
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("Control API /control/github surfaces authoritative read-only GitHub Actions runtime state and scoped stats when configured", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   try {
     configure();
     process.env.AUTODEV_GITHUB_TOKEN = "ghp_mock_token_123";
@@ -4108,7 +4103,7 @@ test("Control API /control/github surfaces authoritative read-only GitHub Action
     assert.equal(agentInvoke.lastRunConclusion, null);
   } finally {
     setGithubActionsAdapterForTests(null);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
@@ -4199,7 +4194,7 @@ test("GitHub snapshot cache TTL starts after a slow upstream read completes", as
 });
 
 test("Control API /control/github rejects unconfigured workspace repositories", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   try {
     configure();
     process.env.AUTODEV_GITHUB_TOKEN = "ghp_mock_token_123";
@@ -4226,7 +4221,7 @@ test("Control API /control/github rejects unconfigured workspace repositories", 
       assert.equal(workflow.actionsState, "unavailable");
     }
   } finally {
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
@@ -4285,7 +4280,7 @@ test("GitHub runtime state rejects disabled workspaces before calling GitHub", a
 });
 
 test("Control API /control/github reads public repository Actions data without a token", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const authorizationHeaders: (string | null)[] = [];
   try {
     configure();
@@ -4361,12 +4356,12 @@ test("Control API /control/github reads public repository Actions data without a
     assert.equal(scheduler.lastRunStatus, "completed");
   } finally {
     setGithubActionsAdapterForTests(null);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("Control API /control/github remains unavailable when no repository is bound", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   let fetchCalls = 0;
   try {
     configure();
@@ -4393,12 +4388,12 @@ test("Control API /control/github remains unavailable when no repository is boun
     assert.equal(fetchCalls, 0);
   } finally {
     setGithubActionsAdapterForTests(null);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("Control API /control/github treats a GitHub 403 as unavailable, not invalid", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   try {
     configure();
     delete process.env.AUTODEV_GITHUB_TOKEN;
@@ -4419,12 +4414,12 @@ test("Control API /control/github treats a GitHub 403 as unavailable, not invali
     assert.match(String(res.body.runtimeMessage), /403 Forbidden/u);
   } finally {
     setGithubActionsAdapterForTests(null);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("Control API /control/github handles API failure without leaking token", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const SECRET_TOKEN = "ghp_SUPER_SECRET_TOKEN_NEVER_LOG";
   try {
     configure();
@@ -4454,12 +4449,12 @@ test("Control API /control/github handles API failure without leaking token", as
     assert.ok(res.body.runtimeMessage.includes("[REDACTED]"));
   } finally {
     setGithubActionsAdapterForTests(null);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("Control API /control/runtime/concurrency mutates orchestrator concurrency limit with revision checking and persistence", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   try {
     configure();
     const manager = getDefaultConcurrencyManager();
@@ -4547,12 +4542,12 @@ test("Control API /control/runtime/concurrency mutates orchestrator concurrency 
     );
   } finally {
     getDefaultConcurrencyManager().clearStoredLimit();
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("queued provider role patches revalidate an unchanged model after reset clears its assignment", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const priorState = ROUTING_POLICY.runtimeState();
   const { promise: firstPersist, resolve: releaseFirstPersist } =
     Promise.withResolvers<boolean>();
@@ -4626,12 +4621,12 @@ test("queued provider role patches revalidate an unchanged model after reset cle
     await Promise.all([firstCall, resetCall, staleRoleCall].filter(Boolean));
     ROUTING_POLICY.restoreRuntimeState(priorState);
     setDefaultPersistenceManager(originalPersistence);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("queued provider role patches recheck provider enablement after a disable commits", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const priorState = ROUTING_POLICY.runtimeState();
   const { promise: firstPersist, resolve: releaseFirstPersist } =
     Promise.withResolvers<boolean>();
@@ -4702,7 +4697,7 @@ test("queued provider role patches recheck provider enablement after a disable c
     await Promise.all([firstCall, disableCall, roleCall].filter(Boolean));
     ROUTING_POLICY.restoreRuntimeState(priorState);
     setDefaultPersistenceManager(originalPersistence);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
@@ -4713,7 +4708,7 @@ test("a provider role accepts a model no catalog declares, and keeps the effort 
   // effort it carried could not be checked against levels that no catalog
   // states, which left the Claude provider's orchestrator role with no model
   // the operator could choose.
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const originalPersistence = setDefaultPersistenceManager({
     async persistNow() {
       return true;
@@ -4822,21 +4817,21 @@ test("a provider role accepts a model no catalog declares, and keeps the effort 
       );
     else ROUTING_POLICY.clearProviderAssignment("claude", "orchestrator");
     setDefaultPersistenceManager(originalPersistence);
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });
 
 test("Control API /control/chatgpt-tunnel exposes status and enforces operator and body guards", async () => {
-  const saved = saveEnv();
+  const saved = saveEnvironment();
   const root = mkdtempSync(join(tmpdir(), "autodev-control-tunnel-"));
   try {
     configure();
-    const repo = fileURLToPath(new URL("../../", import.meta.url));
+    const repository = fileURLToPath(new URL("../../", import.meta.url));
     const home = join(root, "home");
     const codexHome = join(home, ".codex");
     mkdirSync(codexHome, { recursive: true });
     const options: ControlApiRequestOptions = {
-      repositoryRoot: repo,
+      repositoryRoot: repository,
       codexHome
     };
 
@@ -4888,6 +4883,6 @@ test("Control API /control/chatgpt-tunnel exposes status and enforces operator a
     assert.equal(methodNotAllowed.response.headers.allow, "GET, POST");
   } finally {
     rmSync(root, { recursive: true, force: true });
-    restoreEnv(saved);
+    restoreEnvironment(saved);
   }
 });

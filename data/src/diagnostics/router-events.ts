@@ -1,14 +1,14 @@
 /**
- * The router log reader.
- *
- * The router writes one structured event per request to its stderr log, and
- * launchd rotates that log: the live file becomes empty and the events move
- * to `.err.log.1`, then `.2`, and so on. Reading only the live file therefore
- * reads as "the router saw no request at all" for exactly the sessions that
- * are worth investigating.
- *
- * This module reads the rotated series and summarizes it per thread.
- */
+The router log reader.
+
+The router writes one structured event per request to its stderr log, and
+launchd rotates that log: the live file becomes empty and the events move
+to `.err.log.1`, then `.2`, and so on. Reading only the live file therefore
+reads as "the router saw no request at all" for exactly the sessions that
+are worth investigating.
+
+This module reads the rotated series and summarizes it per thread.
+*/
 
 import { createReadStream, existsSync } from "node:fs";
 import path from "node:path";
@@ -28,7 +28,9 @@ const COLLATOR = new Intl.Collator();
 const TIMESTAMP_REGEX = /"timestamp":"([^"]+)"/u;
 const UNKNOWN_LABEL = "unknown";
 
-/** The router-event fields this module projects into the per-thread summary. */
+/**
+The router-event fields this module projects into the per-thread summary.
+*/
 interface RouterEventFields {
   requestId?: string;
   thread?: string;
@@ -82,15 +84,17 @@ function parseRouterEvent(raw: unknown): RouterEventFields | null {
   return result;
 }
 
-function strOrNull(value: unknown): string | null {
+function stringOrNull(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
-function numOrNull(value: unknown): number | null {
+function numberOrNull(value: unknown): number | null {
   return typeof value === "number" ? value : null;
 }
 
-/** Every router event in a time window, read from one log line. */
+/**
+Every router event in a time window, read from one log line.
+*/
 function routerEventFromLine(
   line: string,
   start: string,
@@ -114,37 +118,33 @@ function routerEventFromLine(
   if (!event) return null;
   return {
     at: stamp,
-    requestId: strOrNull(event.requestId) ?? "",
-    thread: strOrNull(event.thread),
-    phase: strOrNull(event.phase) ?? "",
-    role: strOrNull(event.role),
-    requestedModel: strOrNull(event.requestedModel),
-    provider: strOrNull(event.provider),
-    model: strOrNull(event.model),
-    outcome: strOrNull(event.outcome),
-    status: numOrNull(event.status),
-    failureClass: strOrNull(event.failureClass),
-    ...(typeof event.reason === "string" ? { reason: event.reason } : {}),
-    spawnFailureReason: strOrNull(event.spawnFailureReason),
-    denialReason: strOrNull(event.denialReason),
-    elapsedMs: numOrNull(event.elapsedMs),
-    toolCalls: numOrNull(event.toolCalls),
-    selection: strOrNull(event.selection),
-    ...(typeof event.errorName === "string"
-      ? { errorName: event.errorName }
-      : {}),
-    ...(typeof event.errorCode === "string"
-      ? { errorCode: event.errorCode }
-      : {})
+    requestId: stringOrNull(event.requestId) ?? "",
+    thread: stringOrNull(event.thread),
+    phase: stringOrNull(event.phase) ?? "",
+    role: stringOrNull(event.role),
+    requestedModel: stringOrNull(event.requestedModel),
+    provider: stringOrNull(event.provider),
+    model: stringOrNull(event.model),
+    outcome: stringOrNull(event.outcome),
+    status: numberOrNull(event.status),
+    failureClass: stringOrNull(event.failureClass),
+    ...((typeof event.reason === "string") && { reason: event.reason }),
+    spawnFailureReason: stringOrNull(event.spawnFailureReason),
+    denialReason: stringOrNull(event.denialReason),
+    elapsedMs: numberOrNull(event.elapsedMs),
+    toolCalls: numberOrNull(event.toolCalls),
+    selection: stringOrNull(event.selection),
+    ...((typeof event.errorName === "string") && { errorName: event.errorName }),
+    ...((typeof event.errorCode === "string") && { errorCode: event.errorCode })
   };
 }
 
 /**
- * Every log that can hold the router's events, newest first.
- *
- * launchd rotates the router's stderr log: the live file becomes empty and
- * the events move to `.err.log.1`, then `.2`, and so on.
- */
+Every log that can hold the router's events, newest first.
+
+launchd rotates the router's stderr log: the live file becomes empty and
+the events move to `.err.log.1`, then `.2`, and so on.
+*/
 export function routerLogFiles(logFile: string): string[] {
   if (!existsSync(logFile)) return [];
   const dir = path.dirname(logFile);
@@ -160,7 +160,9 @@ export function routerLogFiles(logFile: string): string[] {
   return files;
 }
 
-/** Every router event in a time window, read in one pass over the logs. */
+/**
+Every router event in a time window, read in one pass over the logs.
+*/
 export async function readRouterEvents(
   logFile: string,
   start: string,
@@ -199,9 +201,9 @@ interface RouterSummaryAccumulator {
 
 function recordRouterResult(
   row: SessionRouterEventRow,
-  acc: RouterSummaryAccumulator
+  accumulator: RouterSummaryAccumulator
 ): void {
-  const entry = (acc.byProvider[row.provider ?? "?"] ??= {
+  const entry = (accumulator.byProvider[row.provider ?? "?"] ??= {
     requests: 0,
     failures: 0,
     elapsedMs: 0,
@@ -210,35 +212,37 @@ function recordRouterResult(
   entry.requests += 1;
   entry.elapsedMs += row.elapsedMs ?? 0;
   entry.toolCalls += row.toolCalls ?? 0;
-  if (row.outcome === "failure") {
-    entry.failures += 1;
-    acc.failures.push({
-      at: row.at,
-      requestId: row.requestId,
-      provider: row.provider,
-      status: row.status,
-      failureClass: row.failureClass ?? row.denialReason ?? null,
-      elapsedMs: row.elapsedMs
-    });
+  if (row.outcome !== "failure") {
+    return;
   }
+
+  entry.failures += 1;
+  accumulator.failures.push({
+    at: row.at,
+    requestId: row.requestId,
+    provider: row.provider,
+    status: row.status,
+    failureClass: row.failureClass ?? row.denialReason ?? null,
+    elapsedMs: row.elapsedMs
+  });
 }
 
 function recordRouterEvent(
   row: SessionRouterEventRow,
-  acc: RouterSummaryAccumulator
+  accumulator: RouterSummaryAccumulator
 ): void {
   switch (row.phase) {
     case "selected": {
-      acc.requests.add(row.requestId);
+      accumulator.requests.add(row.requestId);
       const provider = row.provider ?? "?";
-      if (acc.providerSequence.at(-1) !== provider)
-        acc.providerSequence.push(provider);
-      if (row.model && acc.modelSequence.at(-1) !== row.model)
-        acc.modelSequence.push(row.model);
+      if (accumulator.providerSequence.at(-1) !== provider)
+        accumulator.providerSequence.push(provider);
+      if (row.model && accumulator.modelSequence.at(-1) !== row.model)
+        accumulator.modelSequence.push(row.model);
       return;
     }
     case "spawn_failed": {
-      acc.failures.push({
+      accumulator.failures.push({
         at: row.at,
         requestId: row.requestId,
         provider: row.provider,
@@ -246,14 +250,12 @@ function recordRouterEvent(
         failureClass:
           row.failureClass ?? row.spawnFailureReason ?? "spawn_failed",
         elapsedMs: row.elapsedMs,
-        ...(row.spawnFailureReason
-          ? { spawnFailureReason: row.spawnFailureReason }
-          : {})
+        ...(row.spawnFailureReason && { spawnFailureReason: row.spawnFailureReason })
       });
       return;
     }
     case "skipped": {
-      acc.skipped.push({
+      accumulator.skipped.push({
         at: row.at,
         requestId: row.requestId,
         provider: row.provider,
@@ -264,20 +266,20 @@ function recordRouterEvent(
       return;
     }
     case "retry": {
-      acc.retries += 1;
+      accumulator.retries += 1;
       return;
     }
     case "exhaustion_wait": {
-      acc.exhaustionWaitCount += 1;
-      acc.exhaustionWaitMs += row.elapsedMs ?? 0;
+      accumulator.exhaustionWaitCount += 1;
+      accumulator.exhaustionWaitMs += row.elapsedMs ?? 0;
       return;
     }
     case "transport_error": {
-      acc.transportErrors += 1;
+      accumulator.transportErrors += 1;
       return;
     }
     case "result": {
-      recordRouterResult(row, acc);
+      recordRouterResult(row, accumulator);
       break;
     }
     default: {
@@ -286,17 +288,19 @@ function recordRouterEvent(
   }
 }
 
-/** Shift an ISO timestamp by a number of seconds. */
+/**
+Shift an ISO timestamp by a number of seconds.
+*/
 export function shift(iso: string, seconds: number): string {
   return new Date(Date.parse(iso) + seconds * 1000).toISOString();
 }
 
 /**
- * The router events that belong to one thread.
- *
- * Events that name the thread match exactly; older ones that predate the
- * thread field fall back to the model and the time window.
- */
+The router events that belong to one thread.
+
+Events that name the thread match exactly; older ones that predate the
+thread field fall back to the model and the time window.
+*/
 export function routerEventsForThread(
   thread: SessionThreadTrace,
   rows: readonly SessionRouterEventRow[]
@@ -317,19 +321,19 @@ export function routerEventsForThread(
 }
 
 /**
- * One thread's requests, summarized.
- *
- * Events that name threads match exactly; older ones fall back to the model
- * and the time window, and the summary says which of the two it used.
- */
+One thread's requests, summarized.
+
+Events that name threads match exactly; older ones fall back to the model
+and the time window, and the summary says which of the two it used.
+*/
 export function summarizeRouter(
   thread: SessionThreadTrace,
   rows: readonly SessionRouterEventRow[],
   withEvents: boolean
 ): SessionRouterSummary {
   const mine = routerEventsForThread(thread, rows);
-  const guessed = mine.some((row) => row.thread === null);
-  const acc: RouterSummaryAccumulator = {
+  const isGuessed = mine.some((row) => row.thread === null);
+  const accumulator: RouterSummaryAccumulator = {
     requests: new Set<string>(),
     providerSequence: [],
     modelSequence: [],
@@ -341,29 +345,25 @@ export function summarizeRouter(
     exhaustionWaitMs: 0,
     transportErrors: 0
   };
-  for (const row of mine) recordRouterEvent(row, acc);
+  for (const row of mine) recordRouterEvent(row, accumulator);
   return {
     thread: thread.id,
     model: thread.model,
-    matchedBy: guessed ? "model-window" : "thread",
-    requests: acc.requests.size,
-    byProvider: acc.byProvider,
-    failures: acc.failures,
-    providerSequence: acc.providerSequence,
-    modelSequence: acc.modelSequence,
-    ...(acc.skipped.length > 0 ? { skipped: acc.skipped } : {}),
-    ...(acc.retries > 0 ? { retries: acc.retries } : {}),
-    ...(acc.exhaustionWaitCount > 0
-      ? {
+    matchedBy: isGuessed ? "model-window" : "thread",
+    requests: accumulator.requests.size,
+    byProvider: accumulator.byProvider,
+    failures: accumulator.failures,
+    providerSequence: accumulator.providerSequence,
+    modelSequence: accumulator.modelSequence,
+    ...((accumulator.skipped.length > 0) && { skipped: accumulator.skipped }),
+    ...((accumulator.retries > 0) && { retries: accumulator.retries }),
+    ...((accumulator.exhaustionWaitCount > 0) && {
           exhaustionWaits: {
-            count: acc.exhaustionWaitCount,
-            totalMs: acc.exhaustionWaitMs
+            count: accumulator.exhaustionWaitCount,
+            totalMs: accumulator.exhaustionWaitMs
           }
-        }
-      : {}),
-    ...(acc.transportErrors > 0
-      ? { transportErrors: acc.transportErrors }
-      : {}),
-    ...(withEvents ? { events: mine } : {})
+        }),
+    ...((accumulator.transportErrors > 0) && { transportErrors: accumulator.transportErrors }),
+    ...(withEvents && { events: mine })
   };
 }

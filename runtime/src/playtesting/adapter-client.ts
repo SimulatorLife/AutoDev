@@ -1,28 +1,28 @@
 /**
- * Runtime-owned v1 JSON-RPC stdio client for a Core-defined game adapter.
- *
- * The wire format, error vocabulary, capability advertisement and request /
- * notification envelopes are all defined in `core/src/playtesting/protocol.ts`
- * and `core/src/playtesting/types.ts`. This module is the only place in
- * Runtime that parses and emits those envelopes, and it never invents a
- * parallel protocol: a Core validator failure is propagated verbatim to the
- * caller and the transport is failed closed.
- *
- * The client deliberately does not spawn a host process. It owns the
- * `JSON-RPC over separate UTF-8 stdin/stdout/stderr streams` transport and
- * accepts whatever stream triplet the caller provides (Docker sandbox,
- * direct test fixture, future authenticated HTTP transport, etc.). The
- * caller is responsible for sourcing, isolating and killing the process;
- * this module is responsible for protocol correctness, ordering,
- * revision binding, cancellation, duplicate detection, oversize rejection
- * and graceful drain on EOF.
- *
- * Concurrency model: the public API is a single state machine
- * (`init` -> `capabilities` -> `ready` -> `failClosed`). All public methods
- * are safe to call only after the appropriate state has been reached. The
- * client never re-uses a request id, never retries a possibly-executed
- * step in place, and never completes a reused id with a late response.
- */
+Runtime-owned v1 JSON-RPC stdio client for a Core-defined game adapter.
+
+The wire format, error vocabulary, capability advertisement and request /
+notification envelopes are all defined in `core/src/playtesting/protocol.ts`
+and `core/src/playtesting/types.ts`. This module is the only place in
+Runtime that parses and emits those envelopes, and it never invents a
+parallel protocol: a Core validator failure is propagated verbatim to the
+caller and the transport is failed closed.
+
+The client deliberately does not spawn a host process. It owns the
+`JSON-RPC over separate UTF-8 stdin/stdout/stderr streams` transport and
+accepts whatever stream triplet the caller provides (Docker sandbox,
+direct test fixture, future authenticated HTTP transport, etc.). The
+caller is responsible for sourcing, isolating and killing the process;
+this module is responsible for protocol correctness, ordering,
+revision binding, cancellation, duplicate detection, oversize rejection
+and graceful drain on EOF.
+
+Concurrency model: the public API is a single state machine
+(`init` -> `capabilities` -> `ready` -> `failClosed`). All public methods
+are safe to call only after the appropriate state has been reached. The
+client never re-uses a request id, never retries a possibly-executed
+step in place, and never completes a reused id with a late response.
+*/
 import { randomUUID } from "node:crypto";
 import type { Readable, Writable } from "node:stream";
 
@@ -52,7 +52,9 @@ import {
 import { playtestManifestHash } from "./hash-chain.ts";
 import { JsonLineFrameError, JsonLineFramer } from "./jsonl-framer.ts";
 
-/** Method names used by stateful request handling; Core owns the vocabulary. */
+/**
+Method names used by stateful request handling; Core owns the vocabulary.
+*/
 const GAME_RESET_METHOD: PlaytestAdapterMethod = "game.reset";
 const GAME_STEP_METHOD: PlaytestAdapterMethod = "game.step";
 const GAME_REPLAY_METHOD: PlaytestAdapterMethod = "game.replay";
@@ -63,24 +65,36 @@ const EPISODE_START_METHODS: ReadonlySet<PlaytestAdapterMethod> = new Set([
   GAME_FORK_METHOD
 ]);
 
-/** Local reason for refusing work once the adapter request ceiling is reached. */
+/**
+Local reason for refusing work once the adapter request ceiling is reached.
+*/
 const QUEUE_FULL_DISPOSITION = "queue-full" as const;
 
-/** Maximum bytes of one LF-terminated line; never above the v1 default. */
+/**
+Maximum bytes of one LF-terminated line; never above the v1 default.
+*/
 const MAX_LINE_BYTES = PLAYTESTS_ADAPTER_DEFAULT_QUOTAS.maxMessageBytes;
 
-/** Hard ceiling on simultaneously outstanding requests. */
+/**
+Hard ceiling on simultaneously outstanding requests.
+*/
 const MAX_QUEUED_REQUESTS = PLAYTESTS_ADAPTER_DEFAULT_QUOTAS.maxQueuedRequests;
 
-/** Default ordinary-call deadline. */
+/**
+Default ordinary-call deadline.
+*/
 const DEFAULT_ORDINARY_TIMEOUT_MS =
   PLAYTESTS_ADAPTER_DEFAULT_QUOTAS.ordinaryCallTimeoutMs;
 
-/** Default reset/replay deadline. */
+/**
+Default reset/replay deadline.
+*/
 const DEFAULT_RESET_REPLAY_TIMEOUT_MS =
   PLAYTESTS_ADAPTER_DEFAULT_QUOTAS.resetReplayTimeoutMs;
 
-/** Two-second grace before declaring a cancel lost. */
+/**
+Two-second grace before declaring a cancel lost.
+*/
 const CANCEL_GRACE_MS = PLAYTESTS_ADAPTER_DEFAULT_QUOTAS.cancelGraceMs;
 const MAX_ISSUED_REQUEST_IDS = 1_000_000;
 const MAX_EPISODE_IDS = 100_000;
@@ -96,13 +110,19 @@ const STANDARD_INVALID_PARAMS =
   PLAYTESTS_JSON_RPC_STANDARD_ERROR_CODES.invalidParams;
 const STANDARD_METHOD_NOT_FOUND =
   PLAYTESTS_JSON_RPC_STANDARD_ERROR_CODES.methodNotFound;
-/** Splits stderr chunks on CRLF or LF; hoisted to avoid per-call recompilation. */
+/**
+Splits stderr chunks on CRLF or LF; hoisted to avoid per-call recompilation.
+*/
 const STDERR_LINE_SPLIT_PATTERN = /\r?\n/u;
 
-/** Strips a trailing CR from a line; hoisted to avoid per-call recompilation. */
+/**
+Strips a trailing CR from a line; hoisted to avoid per-call recompilation.
+*/
 const TRAILING_CR_PATTERN = /\r$/u;
 
-/** Methods whose effective deadline is `resetReplayTimeoutMs`. */
+/**
+Methods whose effective deadline is `resetReplayTimeoutMs`.
+*/
 const RESET_REPLAY_METHODS: ReadonlySet<PlaytestAdapterMethod> = new Set([
   GAME_RESET_METHOD,
   GAME_REPLAY_METHOD,
@@ -122,7 +142,9 @@ const NOTIFICATION_METHODS: ReadonlySet<PlaytestAdapterNotification> = new Set(
   PLAYTESTS_ADAPTER_NOTIFICATIONS
 );
 
-/** Methods that need a typed `expectedRevision` in their params. */
+/**
+Methods that need a typed `expectedRevision` in their params.
+*/
 const REVISION_BOUND_METHODS: ReadonlySet<PlaytestAdapterMethod> = new Set([
   "game.observe",
   "game.legalActions",
@@ -131,34 +153,52 @@ const REVISION_BOUND_METHODS: ReadonlySet<PlaytestAdapterMethod> = new Set([
   "game.invariants"
 ]);
 
-/** Stream triplet + exit signal the client operates on. */
+/**
+Stream triplet + exit signal the client operates on.
+*/
 export interface PlaytestAdapterStreams {
   readonly stdin: Writable;
   readonly stdout: Readable;
   readonly stderr: Readable;
-  /** Fires exactly once when the process is gone for any reason. */
+  /**
+  Fires exactly once when the process is gone for any reason.
+  */
   readonly onExit: (listener: (cause: PlaytestAdapterExit) => void) => void;
 }
 
-/** A captured process exit signal. */
+/**
+A captured process exit signal.
+*/
 export interface PlaytestAdapterExit {
   readonly code: number | null;
   readonly signal: NodeJS.Signals | null;
   readonly stderrTail: readonly string[];
 }
 
-/** Options for creating a client. */
+/**
+Options for creating a client.
+*/
 export interface PlaytestAdapterClientOptions {
-  /** Inject a deterministic id source. */
+  /**
+  Inject a deterministic id source.
+  */
   readonly mintId?: () => string;
-  /** Inject a clock for tests; defaults to `Date.now`. */
+  /**
+  Inject a clock for tests; defaults to `Date.now`.
+  */
   readonly now?: () => number;
-  /** Number of stderr lines preserved on EOF; default 64. */
+  /**
+  Number of stderr lines preserved on EOF; default 64.
+  */
   readonly stderrTailLines?: number;
 }
 
-/** Result of a single request call. */
-/** Local disposition classification attached to every failed call result. */
+/**
+Result of a single request call.
+*/
+/**
+Local disposition classification attached to every failed call result.
+*/
 export type PlaytestAdapterDisposition =
   | "unchanged"
   | "aborted"
@@ -185,26 +225,37 @@ export type PlaytestAdapterFailure = {
 };
 
 export type PlaytestAdapterCallResult =
-  | { readonly ok: true; readonly result: unknown; readonly id: string }
-  | PlaytestAdapterFailure;
+  PlaytestAdapterFailure | { readonly ok: true; readonly result: unknown; readonly id: string };
 
-/** Summary of protocol cancellation attempts. */
+/**
+Summary of protocol cancellation attempts.
+*/
 export interface PlaytestAdapterCancellationReport {
-  /** Typed acknowledgements/errors returned by game.cancel calls. */
+  /**
+  Typed acknowledgements/errors returned by game.cancel calls.
+  */
   readonly results: readonly PlaytestAdapterCallResult[];
-  /** Original request IDs still active after the v1 cancellation grace. */
+  /**
+  Original request IDs still active after the v1 cancellation grace.
+  */
   readonly unresolvedRequestIds: readonly string[];
 }
 
-/** A buffered, ordered notification delivered to listeners. */
+/**
+A buffered, ordered notification delivered to listeners.
+*/
 export interface PlaytestAdapterNotificationEvent {
   readonly method: PlaytestAdapterNotification;
   readonly params: Readonly<Record<string, unknown>>;
-  /** Monotonic, adapter-supplied sequence; `null` when the adapter omits one. */
+  /**
+  Monotonic, adapter-supplied sequence; `null` when the adapter omits one.
+  */
   readonly sequence: number | null;
 }
 
-/** Diagnostic record preserved on EOF / fail-closed transitions. */
+/**
+Diagnostic record preserved on EOF / fail-closed transitions.
+*/
 export interface PlaytestAdapterDiagnostic {
   readonly kind:
     | "stderr"
@@ -223,7 +274,9 @@ export interface PlaytestAdapterDiagnostic {
   readonly id?: string;
 }
 
-/** Notification listener registration. */
+/**
+Notification listener registration.
+*/
 export type PlaytestAdapterListener = (
   event: PlaytestAdapterNotificationEvent
 ) => void;
@@ -272,27 +325,33 @@ function isBoundedRevision(value: unknown): value is number {
   );
 }
 
-/** Inflight request record. */
+/**
+Inflight request record.
+*/
 interface InflightRequest {
   readonly id: string;
   readonly method: PlaytestAdapterMethod;
   readonly params: Readonly<Record<string, unknown>>;
   readonly timeoutAt: number;
   readonly listener: (result: PlaytestAdapterCallResult) => void;
-  /** Set when the caller has explicitly asked to cancel. */
+  /**
+  Set when the caller has explicitly asked to cancel.
+  */
   cancelRequested: boolean;
-  /** Filled with the original disposition once the request resolves. */
+  /**
+  Filled with the original disposition once the request resolves.
+  */
   settled: boolean;
 }
 
 /**
- * Single-instance JSON-RPC v1 stdio client.
- *
- * The client is bound to a single transport and a single capability
- * negotiation. Re-negotiating requires closing the transport and creating a
- * new client, which matches the "process isolation per attempt" boundary the
- * adapter contract requires.
- */
+Single-instance JSON-RPC v1 stdio client.
+
+The client is bound to a single transport and a single capability
+negotiation. Re-negotiating requires closing the transport and creating a
+new client, which matches the "process isolation per attempt" boundary the
+adapter contract requires.
+*/
 export class PlaytestAdapterClient {
   private readonly streams: PlaytestAdapterStreams;
   private readonly mintId: () => string;
@@ -300,14 +359,18 @@ export class PlaytestAdapterClient {
   private readonly stderrTailLines: number;
   private state: "init" | "capabilities" | "ready" | "failClosed" = "init";
   private capabilities: PlaytestCapabilityAdvertisement | null = null;
-  /** Original advertised quotas; the client narrows them with defaults. */
+  /**
+  Original advertised quotas; the client narrows them with defaults.
+  */
   private quotas: PlaytestAdapterQuotas = {
     maxMessageBytes: MAX_LINE_BYTES,
     maxQueuedRequests: MAX_QUEUED_REQUESTS,
     ordinaryCallTimeoutMs: DEFAULT_ORDINARY_TIMEOUT_MS,
     resetReplayTimeoutMs: DEFAULT_RESET_REPLAY_TIMEOUT_MS
   };
-  /** Optional operations the adapter declared. */
+  /**
+  Optional operations the adapter declared.
+  */
   private optionalOperations: ReadonlySet<PlaytestAdapterMethod> = new Set();
   private readonly inflight = new Map<string, InflightRequest>();
   private readonly issuedIds = new Set<string>();
@@ -315,12 +378,18 @@ export class PlaytestAdapterClient {
   private currentEpisodeId: string | null = null;
   private readonly eventIdsByEpisode = new Map<string, Set<string>>();
   private resetInFlight = false;
-  /** Ids this client has explicitly asked the adapter to cancel; ids are never reused. */
+  /**
+  Ids this client has explicitly asked the adapter to cancel; ids are never reused.
+  */
   private readonly canceledIds = new Set<string>();
   private readonly lateCanceledResponseIds = new Set<string>();
-  /** Event ordering is tracked per episode as specified by game.event. */
+  /**
+  Event ordering is tracked per episode as specified by game.event.
+  */
   private readonly lastEventSequenceByEpisode = new Map<string, number>();
-  /** Progress counts are monotonic and retain a stable total per request. */
+  /**
+  Progress counts are monotonic and retain a stable total per request.
+  */
   private readonly progressByRequest = new Map<
     string,
     { readonly completed: number; readonly total: number }
@@ -331,7 +400,9 @@ export class PlaytestAdapterClient {
   private readonly diagnostics: PlaytestAdapterDiagnostic[] = [];
   private readonly listeners = new Set<PlaytestAdapterListener>();
   private exitFired = false;
-  /** Bounded, amortized-linear line framing for stdout. */
+  /**
+  Bounded, amortized-linear line framing for stdout.
+  */
   private readonly lineFramer = new JsonLineFramer(MAX_LINE_BYTES);
   private exitCause: PlaytestAdapterExit | null = null;
   private stderrOff: (() => void) | null = null;
@@ -349,56 +420,72 @@ export class PlaytestAdapterClient {
     this.attachTransport();
   }
 
-  /** Detach listeners and fail-closed all in-flight requests. */
+  /**
+  Detach listeners and fail-closed all in-flight requests.
+  */
   close(): void {
     if (this.state === "failClosed") return;
     this.detachTransport();
     this.failClosed("Caller closed the client.", undefined);
   }
 
-  /** Read-only access to the negotiated capability advertisement. */
+  /**
+  Read-only access to the negotiated capability advertisement.
+  */
   getCapabilities(): PlaytestCapabilityAdvertisement | null {
     return this.capabilities;
   }
 
-  /** All diagnostics captured so far. The list is append-only. */
+  /**
+  All diagnostics captured so far. The list is append-only.
+  */
   getDiagnostics(): readonly PlaytestAdapterDiagnostic[] {
     return this.diagnostics;
   }
 
-  /** Stderr lines preserved (most recent at the end). */
+  /**
+  Stderr lines preserved (most recent at the end).
+  */
   getStderrTail(): readonly string[] {
     return this.stderrTail;
   }
 
-  /** Incomplete trailing stdout bytes retained on EOF for partial-evidence storage. */
+  /**
+  Incomplete trailing stdout bytes retained on EOF for partial-evidence storage.
+  */
   getUnterminatedLineBytes(): Buffer {
     return this.lineFramer.pendingLine();
   }
 
-  /** Current effective state. */
+  /**
+  Current effective state.
+  */
   getState(): "init" | "capabilities" | "ready" | "failClosed" {
     return this.state;
   }
 
-  /** True once the transport has failed closed; reads a fresh value every call. */
+  /**
+  True once the transport has failed closed; reads a fresh value every call.
+  */
   private isFailClosed(): boolean {
     const state: "init" | "capabilities" | "ready" | "failClosed" = this.state;
     return state === "failClosed";
   }
 
-  /** Add a notification listener; returns the unsubscribe function. */
+  /**
+  Add a notification listener; returns the unsubscribe function.
+  */
   onNotification(listener: PlaytestAdapterListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 
   /**
-   * Perform the initial capability negotiation. Must be called before any
-   * other method. The caller's deadline is reduced by any lower advertised
-   * `resetReplayTimeoutMs` so a misbehaving adapter cannot extend its
-   * own timeouts beyond the Core defaults.
-   */
+  Perform the initial capability negotiation. Must be called before any
+  other method. The caller's deadline is reduced by any lower advertised
+  `resetReplayTimeoutMs` so a misbehaving adapter cannot extend its
+  own timeouts beyond the Core defaults.
+  */
   async negotiateCapabilities(
     deadlineMs: number = DEFAULT_ORDINARY_TIMEOUT_MS
   ): Promise<PlaytestCapabilityAdvertisement> {
@@ -447,28 +534,28 @@ export class PlaytestAdapterClient {
   }
 
   /**
-   * Issue a typed `game.step` request. The caller passes the
-   * `expectedRevision` observed on the matching `game.observe`; the client
-   * records it on the wire and the response's `revision` must match before
-   * the call resolves as success. A revision mismatch resolves as a typed
-   * `staleRevision` rejection without any retry.
-   */
-  step(params: PlaytestStepParams): Promise<PlaytestAdapterCallResult> {
+  Issue a typed `game.step` request. The caller passes the
+  `expectedRevision` observed on the matching `game.observe`; the client
+  records it on the wire and the response's `revision` must match before
+  the call resolves as success. A revision mismatch resolves as a typed
+  `staleRevision` rejection without any retry.
+  */
+  step(parameters: PlaytestStepParams): Promise<PlaytestAdapterCallResult> {
     return this.call(GAME_STEP_METHOD, {
-      episodeId: params.episodeId,
-      actionId: params.actionId,
-      expectedRevision: params.expectedRevision
+      episodeId: parameters.episodeId,
+      actionId: parameters.actionId,
+      expectedRevision: parameters.expectedRevision
     });
   }
 
   /**
-   * Issue a request against any method (mandatory or optional). Methods
-   * declared unsupported by the adapter are rejected locally with the
-   * `unsupportedCapability` code without going on the wire.
-   */
+  Issue a request against any method (mandatory or optional). Methods
+  declared unsupported by the adapter are rejected locally with the
+  `unsupportedCapability` code without going on the wire.
+  */
   call(
     method: PlaytestAdapterMethod,
-    params: Readonly<Record<string, unknown>> = {},
+    parameters: Readonly<Record<string, unknown>> = {},
     options: { readonly deadlineMs?: number } = {}
   ): Promise<PlaytestAdapterCallResult> {
     if (this.state !== "ready") {
@@ -533,7 +620,7 @@ export class PlaytestAdapterClient {
       );
     }
     if (REVISION_BOUND_METHODS.has(method)) {
-      if (params.expectedRevision === undefined) {
+      if (parameters.expectedRevision === undefined) {
         return Promise.resolve(
           this.transportErrorResult(
             PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES.staleRevision,
@@ -542,7 +629,7 @@ export class PlaytestAdapterClient {
           )
         );
       }
-      if (!isBoundedRevision(params.expectedRevision)) {
+      if (!isBoundedRevision(parameters.expectedRevision)) {
         return Promise.resolve(
           this.transportErrorResult(
             PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES.illegalAction,
@@ -554,21 +641,21 @@ export class PlaytestAdapterClient {
     }
     const deadline = options.deadlineMs ?? this.defaultDeadlineFor(method);
     if (!EPISODE_START_METHODS.has(method)) {
-      return this.sendRequest(method, params, deadline);
+      return this.sendRequest(method, parameters, deadline);
     }
     this.resetInFlight = true;
-    return this.sendRequest(method, params, deadline).finally(() => {
+    return this.sendRequest(method, parameters, deadline).finally(() => {
       this.resetInFlight = false;
     });
   }
 
   /**
-   * Cancel an in-flight request. The named id is the only id the server may
-   * identify in the response; the local disposition of the original request
-   * is kept as `unknown` until the original request resolves. A late
-   * response to a canceled id is recorded as a diagnostic and never
-   * completes a new request - ids are never reused.
-   */
+  Cancel an in-flight request. The named id is the only id the server may
+  identify in the response; the local disposition of the original request
+  is kept as `unknown` until the original request resolves. A late
+  response to a canceled id is recorded as a diagnostic and never
+  completes a new request - ids are never reused.
+  */
   async cancel(inflightId: string): Promise<PlaytestAdapterCallResult> {
     assertBoundedId(inflightId);
     if (this.state === "failClosed") {
@@ -610,10 +697,10 @@ export class PlaytestAdapterClient {
   }
 
   /**
-   * Request protocol-level cancellation for every currently active operation.
-   * The caller must terminate the sandbox if any request remains unresolved or
-   * if the process must not continue after cancellation.
-   */
+  Request protocol-level cancellation for every currently active operation.
+  The caller must terminate the sandbox if any request remains unresolved or
+  if the process must not continue after cancellation.
+  */
   async cancelInflightRequests(): Promise<PlaytestAdapterCancellationReport> {
     const requestIds = [...this.inflight.values()]
       .filter((entry) => entry.method !== "game.cancel")
@@ -714,17 +801,17 @@ export class PlaytestAdapterClient {
     try {
       lines = this.lineFramer.push(chunk);
     } catch (error) {
-      const oversized = error instanceof JsonLineFrameError;
+      const isOversized = error instanceof JsonLineFrameError;
       this.recordDiagnostic({
-        kind: oversized ? "oversized" : "malformed",
-        message: oversized
+        kind: isOversized ? "oversized" : "malformed",
+        message: isOversized
           ? "Inbound adapter line exceeded the negotiated byte ceiling."
           : "Inbound adapter line framing failed.",
         at: this.now()
       });
       this.failClosed(
-        oversized ? "Oversized inbound line." : "Invalid inbound line framing.",
-        oversized
+        isOversized ? "Oversized inbound line." : "Invalid inbound line framing.",
+        isOversized
           ? PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES.quota
           : STANDARD_INVALID_REQUEST
       );
@@ -822,13 +909,13 @@ export class PlaytestAdapterClient {
   private handleGameEventNotification(
     notification: PlaytestJsonRpcNotification
   ): void {
-    const params = notification.params;
-    const episodeId = params.episodeId;
-    const revision = params.revision;
-    const sequence = params.eventSequence;
-    const event = params.event;
+    const parameters = notification.params;
+    const episodeId = parameters.episodeId;
+    const revision = parameters.revision;
+    const sequence = parameters.eventSequence;
+    const event = parameters.event;
     if (
-      Object.keys(params).some(
+      Object.keys(parameters).some(
         (key) =>
           !["episodeId", "revision", "eventSequence", "event"].includes(key)
       ) ||
@@ -884,7 +971,7 @@ export class PlaytestAdapterClient {
     eventIds.add(event.eventId as string);
     this.deliverNotification({
       method: "game.event",
-      params,
+      params: parameters,
       sequence
     });
   }
@@ -892,12 +979,12 @@ export class PlaytestAdapterClient {
   private handleGameProgressNotification(
     notification: PlaytestJsonRpcNotification
   ): void {
-    const params = notification.params;
-    const requestId = params.requestId;
-    const completed = params.completed;
-    const total = params.total;
+    const parameters = notification.params;
+    const requestId = parameters.requestId;
+    const completed = parameters.completed;
+    const total = parameters.total;
     if (
-      Object.keys(params).some(
+      Object.keys(parameters).some(
         (key) => !["requestId", "completed", "total"].includes(key)
       ) ||
       typeof requestId !== "string" ||
@@ -911,7 +998,7 @@ export class PlaytestAdapterClient {
         message:
           "game.progress must name an issued request and bounded completed/total counts.",
         at: this.now(),
-        ...(typeof requestId === "string" ? { id: requestId } : {})
+        ...((typeof requestId === "string") && { id: requestId })
       });
       this.failClosed(
         "Malformed game.progress notification.",
@@ -952,7 +1039,7 @@ export class PlaytestAdapterClient {
     this.progressByRequest.set(requestId, { completed, total });
     this.deliverNotification({
       method: "game.progress",
-      params,
+      params: parameters,
       sequence: null
     });
   }
@@ -977,7 +1064,7 @@ export class PlaytestAdapterClient {
         kind: "malformed",
         message: "Response received after fail-closed transition.",
         at: this.now(),
-        ...(typeof value.id === "string" ? { id: value.id } : {})
+        ...((typeof value.id === "string") && { id: value.id })
       });
       return;
     }
@@ -988,7 +1075,7 @@ export class PlaytestAdapterClient {
         kind: "malformed",
         message: "Response envelope rejected: " + (error as Error).message,
         at: this.now(),
-        ...(typeof value.id === "string" ? { id: value.id } : {})
+        ...((typeof value.id === "string") && { id: value.id })
       });
       this.failClosed("Malformed response envelope.", STANDARD_INVALID_REQUEST);
       return;
@@ -1062,7 +1149,7 @@ export class PlaytestAdapterClient {
     this.inflight.delete(inflight.id);
     this.progressByRequest.delete(inflight.id);
     const data = response.error.data;
-    const isApplicationError = Object.values(
+    const isAppError = Object.values(
       PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES
     ).includes(
       response.error
@@ -1075,7 +1162,7 @@ export class PlaytestAdapterClient {
         data.episodeDisposition === "unknown")
         ? data.episodeDisposition
         : "unknown";
-    const disposition: PlaytestAdapterDisposition = isApplicationError
+    const disposition: PlaytestAdapterDisposition = isAppError
       ? dataDisposition
       : "unchanged";
     inflight.listener({
@@ -1083,7 +1170,7 @@ export class PlaytestAdapterClient {
       id: inflight.id,
       code: response.error.code,
       message: response.error.message,
-      ...(data === undefined ? {} : { data }),
+      ...(data !== undefined && { data }),
       disposition
     });
   }
@@ -1100,8 +1187,8 @@ export class PlaytestAdapterClient {
       );
     } catch (error) {
       const message = "Adapter result rejected: " + (error as Error).message;
-      const capabilityRejected = inflight.method === "game.capabilities";
-      const code = capabilityRejected
+      const isCapabilityRejected = inflight.method === "game.capabilities";
+      const code = isCapabilityRejected
         ? PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES.unsupportedCapability
         : STANDARD_INVALID_REQUEST;
       this.recordDiagnostic({
@@ -1118,7 +1205,7 @@ export class PlaytestAdapterClient {
         id: inflight.id,
         code,
         message,
-        disposition: capabilityRejected ? "unsupported-capability" : "unknown"
+        disposition: isCapabilityRejected ? "unsupported-capability" : "unknown"
       });
       this.failClosed(message, code);
       return;
@@ -1238,7 +1325,7 @@ export class PlaytestAdapterClient {
 
   private sendRequest(
     method: PlaytestAdapterMethod,
-    params: Readonly<Record<string, unknown>>,
+    parameters: Readonly<Record<string, unknown>>,
     deadlineMs: number
   ): Promise<PlaytestAdapterCallResult> {
     if (this.state === "failClosed") {
@@ -1251,7 +1338,7 @@ export class PlaytestAdapterClient {
       );
     }
     try {
-      assertPlaytestAdapterParams(method, params);
+      assertPlaytestAdapterParams(method, parameters);
     } catch (error) {
       return Promise.resolve(
         this.transportErrorResult(
@@ -1313,7 +1400,7 @@ export class PlaytestAdapterClient {
       jsonrpc: "2.0",
       id,
       method,
-      params: { ...params }
+      params: { ...parameters }
     };
     try {
       assertPlaytestJsonRpcRequest(envelope);
@@ -1344,7 +1431,7 @@ export class PlaytestAdapterClient {
       const inflight: InflightRequest = {
         id,
         method,
-        params: { ...params },
+        params: { ...parameters },
         timeoutAt: this.now() + Math.max(1, deadlineMs),
         listener: (result) => resolve(result),
         cancelRequested: false,
@@ -1352,26 +1439,28 @@ export class PlaytestAdapterClient {
       };
       this.inflight.set(id, inflight);
       const written = this.streams.stdin.write(line, "utf8", (error) => {
-        if (error) {
-          this.recordDiagnostic({
-            kind: "eof",
-            message: `stdin write failed: ${error.message}`,
-            at: this.now(),
-            id
-          });
-          if (this.inflight.has(id)) {
-            const target = this.inflight.get(id);
-            this.inflight.delete(id);
-            if (target && !target.settled) {
-              target.settled = true;
-              target.listener(
-                this.transportErrorResult(
-                  PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES.engineFailure,
-                  `stdin write failed: ${error.message}`,
-                  "infrastructure"
-                )
-              );
-            }
+        if (!error) {
+          return;
+        }
+
+        this.recordDiagnostic({
+          kind: "eof",
+          message: `stdin write failed: ${error.message}`,
+          at: this.now(),
+          id
+        });
+        if (this.inflight.has(id)) {
+          const target = this.inflight.get(id);
+          this.inflight.delete(id);
+          if (target && !target.settled) {
+            target.settled = true;
+            target.listener(
+              this.transportErrorResult(
+                PLAYTESTS_ADAPTER_APPLICATION_ERROR_CODES.engineFailure,
+                `stdin write failed: ${error.message}`,
+                "infrastructure"
+              )
+            );
           }
         }
       });
@@ -1490,7 +1579,9 @@ function attachReadable(
   };
 }
 
-/** Public error class for protocol-level negotiation failures. */
+/**
+Public error class for protocol-level negotiation failures.
+*/
 export class PlaytestAdapterProtocolError extends Error {
   readonly code: PlaytestAdapterErrorCode;
   readonly data: unknown;
@@ -1502,7 +1593,9 @@ export class PlaytestAdapterProtocolError extends Error {
   }
 }
 
-/** Parameters accepted by {@link PlaytestAdapterClient.step}. */
+/**
+Parameters accepted by {@link PlaytestAdapterClient.step}.
+*/
 export interface PlaytestStepParams {
   readonly episodeId: string;
   readonly actionId: string;

@@ -7,29 +7,29 @@ import * as revokeRoute from "../app/api/workspaces/[owner]/[repository]/playtes
 import * as approvalRoute from "../app/api/workspaces/[owner]/[repository]/playtesting-approval/route.ts";
 
 /**
- * The Console-side form routes for the Workspaces-owned checkout
- * playtesting approval boundary.
- *
- * Every case here is one the operator-facing form can actually produce:
- * a well-formed approval or revocation, a Runtime refusal because the
- * credential is not an operator, a Runtime refusal because the workspace is
- * disabled, a revision conflict from a stale page, and a malformed
- * submission the route must refuse before contacting Runtime at all. The
- * route never decides whether an approval is accepted -- only Runtime does
- * -- so each case is pinned by what the route *sent*, not by inventing an
- * outcome.
- */
+The Console-side form routes for the Workspaces-owned checkout
+playtesting approval boundary.
+
+Every case here is one the operator-facing form can actually produce:
+a well-formed approval or revocation, a Runtime refusal because the
+credential is not an operator, a Runtime refusal because the workspace is
+disabled, a revision conflict from a stale page, and a malformed
+submission the route must refuse before contacting Runtime at all. The
+route never decides whether an approval is accepted -- only Runtime does
+-- so each case is pinned by what the route *sent*, not by inventing an
+outcome.
+*/
 
 const WORKSPACE_ID = "SimulatorLife/FixtureGame";
-const [WORKSPACE_OWNER, WORKSPACE_REPOSITORY] = WORKSPACE_ID.split("/");
+const [WORKSPACE_OWNER, WORKSPACE_REPOSITORY] = WORKSPACE_ID.split("/", 2);
 const RETURN_TO = `/workspaces/${WORKSPACE_OWNER}/${WORKSPACE_REPOSITORY}`;
 const APPROVAL_PATH = `/api/workspaces/${WORKSPACE_OWNER}/${WORKSPACE_REPOSITORY}/playtesting-approval`;
 const REVOKE_PATH = `${APPROVAL_PATH}/revoke`;
 
-function params(workspaceId: string = WORKSPACE_ID): {
+function parameters(workspaceId: string = WORKSPACE_ID): {
   params: Promise<{ owner: string; repository: string }>;
 } {
-  const [owner, repository] = workspaceId.split("/");
+  const [owner, repository] = workspaceId.split("/", 2);
   return {
     params: Promise.resolve({
       owner: owner ?? "",
@@ -43,7 +43,7 @@ function request(
   fields: Record<string, string>,
   accept = "*/*"
 ): NextRequest {
-  return new NextRequest(`http://console.test${path}`, {
+  return new NextRequest(`https://console.test${path}`, {
     method: "POST",
     headers: {
       accept,
@@ -66,7 +66,7 @@ async function withMockedFetch<T>(
   respond: () => Response,
   run: () => Promise<T>
 ): Promise<{ readonly sent: Sent[]; readonly result: T }> {
-  const previousFetch = globalThis.fetch;
+  const previousFetch = fetch;
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   process.env.AUTODEV_CONTROL_API_TOKEN = "p".repeat(64);
   const sent: Sent[] = [];
@@ -166,7 +166,7 @@ test("a well-formed approval reaches the exact playtesting-approval endpoint", a
       request(APPROVAL_PATH, {
         ...APPROVE_FIELDS
       }),
-      params()
+      parameters()
     )
   );
 
@@ -184,7 +184,7 @@ test("approval route returns a typed JSON result for in-place Console submission
   const { result } = await withMockedFetch(okApprovalResponse, () =>
     approvalRoute.POST(
       request(APPROVAL_PATH, { ...APPROVE_FIELDS }, "application/json"),
-      params()
+      parameters()
     )
   );
   assert.equal(result.status, 200);
@@ -224,7 +224,7 @@ test("an in-place revision conflict returns the freshly read approval state", as
     () =>
       approvalRoute.POST(
         request(APPROVAL_PATH, { ...APPROVE_FIELDS }, "application/json"),
-        params()
+        parameters()
       )
   );
 
@@ -242,7 +242,7 @@ test("the sent approval body carries the whole checkout grant, and no pinned com
       request(APPROVAL_PATH, {
         ...APPROVE_FIELDS
       }),
-      params()
+      parameters()
     )
   );
   const body = JSON.parse(sent[0]?.body ?? "{}") as Record<string, unknown>;
@@ -287,7 +287,7 @@ test("a re-approval carries the prior revision as the optimistic-concurrency tok
         ...APPROVE_FIELDS,
         expectedRevision: "3"
       }),
-      params()
+      parameters()
     )
   );
   const body = JSON.parse(sent[0]?.body ?? "{}") as Record<string, unknown>;
@@ -301,7 +301,7 @@ test("a missing identity field is refused before the request, with no reason inv
         ...APPROVE_FIELDS,
         checkoutRoot: ""
       }),
-      params()
+      parameters()
     )
   );
 
@@ -340,7 +340,7 @@ test("a non-operator credential is reported as forbidden", async () => {
         request(APPROVAL_PATH, {
           ...APPROVE_FIELDS
         }),
-        params()
+        parameters()
       )
   );
 
@@ -367,7 +367,7 @@ test("a disabled workspace's approval attempt is reported as forbidden, not a co
         request(APPROVAL_PATH, {
           ...APPROVE_FIELDS
         }),
-        params()
+        parameters()
       )
   );
 
@@ -395,7 +395,7 @@ test("a stale approval is reported as a revision conflict", async () => {
           ...APPROVE_FIELDS,
           expectedRevision: "1"
         }),
-        params()
+        parameters()
       )
   );
 
@@ -456,7 +456,7 @@ function okRevokeResponse(): Response {
 
 test("a well-formed revocation reaches the exact revoke endpoint", async () => {
   const { sent, result } = await withMockedFetch(okRevokeResponse, () =>
-    revokeRoute.POST(request(REVOKE_PATH, { ...REVOKE_FIELDS }), params())
+    revokeRoute.POST(request(REVOKE_PATH, { ...REVOKE_FIELDS }), parameters())
   );
 
   assert.equal(sent.length, 1);
@@ -478,7 +478,7 @@ test("revocation route returns a typed JSON result for in-place Console submissi
   const { result } = await withMockedFetch(okRevokeResponse, () =>
     revokeRoute.POST(
       request(REVOKE_PATH, { ...REVOKE_FIELDS }, "application/json"),
-      params()
+      parameters()
     )
   );
   assert.equal(result.status, 200);
@@ -492,7 +492,7 @@ test("a revoke with no reason is refused before the request", async () => {
   const { sent, result } = await withMockedFetch(okRevokeResponse, () =>
     revokeRoute.POST(
       request(REVOKE_PATH, { ...REVOKE_FIELDS, reason: "" }),
-      params()
+      parameters()
     )
   );
 
@@ -518,7 +518,7 @@ test("a revoked approval that already changed is reported as a conflict", async 
         },
         { status: 409 }
       ),
-    () => revokeRoute.POST(request(REVOKE_PATH, { ...REVOKE_FIELDS }), params())
+    () => revokeRoute.POST(request(REVOKE_PATH, { ...REVOKE_FIELDS }), parameters())
   );
 
   assert.equal(sent.length, 1);
@@ -528,7 +528,7 @@ test("a revoked approval that already changed is reported as a conflict", async 
 
 test("a cross-origin submission is refused before any request is made", async () => {
   const crossOriginRequest = new NextRequest(
-    `http://console.test${APPROVAL_PATH}`,
+    `https://console.test${APPROVAL_PATH}`,
     {
       method: "POST",
       headers: {
@@ -541,7 +541,7 @@ test("a cross-origin submission is refused before any request is made", async ()
     }
   );
   const { sent, result } = await withMockedFetch(okApprovalResponse, () =>
-    approvalRoute.POST(crossOriginRequest, params())
+    approvalRoute.POST(crossOriginRequest, parameters())
   );
 
   assert.equal(

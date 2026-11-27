@@ -1,4 +1,6 @@
-/** Server-only recovery of a launch whose POST acknowledgement was uncertain. */
+/**
+Server-only recovery of a launch whose POST acknowledgement was uncertain.
+*/
 import type { NextRequest, NextResponse } from "next/server.js";
 
 import {
@@ -15,15 +17,15 @@ const WORKSPACE_ID_PATTERN = /^[^/\\\s]+\/[^/\\\s]+$/u;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const params = request.nextUrl.searchParams;
-  const workspaceId = params.get("workspaceId")?.trim() ?? "";
-  const requestId = params.get("requestId")?.trim() ?? "";
+  const parameters = request.nextUrl.searchParams;
+  const workspaceId = parameters.get("workspaceId")?.trim() ?? "";
+  const requestId = parameters.get("requestId")?.trim() ?? "";
   if (
-    [...params.keys()].some(
+    [...parameters.keys()].some(
       (key) => key !== "workspaceId" && key !== "requestId"
     ) ||
-    params.getAll("workspaceId").length !== 1 ||
-    params.getAll("requestId").length !== 1 ||
+    parameters.getAll("workspaceId").length !== 1 ||
+    parameters.getAll("requestId").length !== 1 ||
     !WORKSPACE_ID_PATTERN.test(workspaceId) ||
     !REQUEST_ID_PATTERN.test(requestId)
   ) {

@@ -1,19 +1,19 @@
 /**
- * The version of the CLI that serves each provider.
- *
- * A provider is served by a CLI, and the CLI's release is the first thing an
- * operator needs when a provider behaves differently than it used to: a
- * release note names a version, and a bug report needs one. The Runtime
- * already knows which CLI serves which provider -- it spawns them -- so the
- * version is read from the same binary the bridge would run, and the number
- * the Console shows is the number in use.
- *
- * The reading is off the request path. A version does not change while a
- * request is in flight, and spawning a process per page view would make the
- * page wait on six CLIs to answer a question about six numbers. The service
- * refreshes in the background and the Control API answers from the snapshot
- * it holds.
- */
+The version of the CLI that serves each provider.
+
+A provider is served by a CLI, and the CLI's release is the first thing an
+operator needs when a provider behaves differently than it used to: a
+release note names a version, and a bug report needs one. The Runtime
+already knows which CLI serves which provider -- it spawns them -- so the
+version is read from the same binary the bridge would run, and the number
+the Console shows is the number in use.
+
+The reading is off the request path. A version does not change while a
+request is in flight, and spawning a process per page view would make the
+page wait on six CLIs to answer a question about six numbers. The service
+refreshes in the background and the Control API answers from the snapshot
+it holds.
+*/
 
 import {
   ANTIGRAVITY_PROVIDERS,
@@ -33,83 +33,97 @@ import { execa } from "execa";
 import { ROUTING_POLICY } from "../router/routing.ts";
 
 /**
- * How long a CLI gets to answer `--version`.
- *
- * A version print is a start, a read and an exit: the observed commands take
- * well under a second. The bound is generous because it is the *slow* case
- * that matters -- a CLI that has to warm something up before it prints -- and
- * because a version is not worth a stalled page load.
- */
+How long a CLI gets to answer `--version`.
+
+A version print is a start, a read and an exit: the observed commands take
+well under a second. The bound is generous because it is the *slow* case
+that matters -- a CLI that has to warm something up before it prints -- and
+because a version is not worth a stalled page load.
+*/
 const CLI_VERSION_TIMEOUT_MS = 5000;
-/** The bound on combined stdout and stderr before a CLI's output is refused. */
+/**
+The bound on combined stdout and stderr before a CLI's output is refused.
+*/
 const MAX_VERSION_OUTPUT_BYTES = 8 * 1024;
 /**
- * How often the versions are read again.
- *
- * A CLI is upgraded by a person, rarely, and the operator finds out from a
- * release note rather than from a poll. Ten minutes is short enough that an
- * upgraded CLI is visible within a working session and long enough that the
- * refresh costs six process starts an hour.
- */
+How often the versions are read again.
+
+A CLI is upgraded by a person, rarely, and the operator finds out from a
+release note rather than from a poll. Ten minutes is short enough that an
+upgraded CLI is visible within a working session and long enough that the
+refresh costs six process starts an hour.
+*/
 const CLI_VERSION_REFRESH_INTERVAL_MS = 10 * 60_000;
 /**
- * A version, as the CLIs that serve providers print them.
- *
- * The CLIs do not agree on a shape: `claude --version` prints
- * `2.1.280 (Claude Code)`, `codex --version` prints `codex-cli 0.154.0`, and
- * `agy --version` prints `1.5.3`. The first dotted number in the output is
- * the version in every one of them, so the parser reads that rather than
- * demanding one shape and reporting the rest as unreadable.
- */
+A version, as the CLIs that serve providers print them.
+
+The CLIs do not agree on a shape: `claude --version` prints
+`2.1.280 (Claude Code)`, `codex --version` prints `codex-cli 0.154.0`, and
+`agy --version` prints `1.5.3`. The first dotted number in the output is
+the version in every one of them, so the parser reads that rather than
+demanding one shape and reporting the rest as unreadable.
+*/
 const VERSION_PATTERN = /\d+\.\d+/u;
 
-/** The patch number, read only where major.minor ends. */
+/**
+The patch number, read only where major.minor ends.
+*/
 const VERSION_PATCH_PATTERN = /\.\d+/uy;
 
-/** A pre-release or build suffix, read only where the version number ends. */
+/**
+A pre-release or build suffix, read only where the version number ends.
+*/
 const VERSION_SUFFIX_PATTERN = /[-+][0-9A-Za-z.-]+/uy;
 
 /**
- * How one provider's CLI is run.
- *
- * `command` is the name an operator would type, which is what the Console
- * shows beside the version. `program` and `args` are what is actually
- * executed: opencli is a package dependency rather than a global install, so
- * it runs as the current Node with the package's entry point.
- */
+How one provider's CLI is run.
+
+`command` is the name an operator would type, which is what the Console
+shows beside the version. `program` and `args` are what is actually
+executed: opencli is a package dependency rather than a global install, so
+it runs as the current Node with the package's entry point.
+*/
 export interface ProviderCliCommand {
   readonly command: string;
   readonly program: string;
   readonly args: readonly string[];
 }
 
-/** The CLIs that serve providers, and how each one is found. */
+/**
+The CLIs that serve providers, and how each one is found.
+*/
 interface ProviderCliDefinition {
-  /** The name an operator would type. */
+  /**
+  The name an operator would type.
+  */
   readonly command: string;
-  /** The provider's name in the product. */
+  /**
+  The provider's name in the product.
+  */
   readonly label: string;
-  /** Where the CLI is, or null when it is not installed. */
-  readonly locate: (env: NodeJS.ProcessEnv) => ProviderCliCommand | null;
+  /**
+  Where the CLI is, or null when it is not installed.
+  */
+  readonly locate: (environment: NodeJS.ProcessEnv) => ProviderCliCommand | null;
 }
 
 function located(
   command: string,
   program: string,
-  args: readonly string[] = []
+  arguments_: readonly string[] = []
 ): ProviderCliCommand {
-  return { command, program, args };
+  return { command, program, args: arguments_ };
 }
 
 /**
- * The Codex CLI, which is resolved by the shared lookup the role bridge uses.
- * A CLI that is not installed, and a `CODEX_BIN` that names something
- * unusable, are both facts to report rather than errors to throw while the
- * page is being built.
- */
-function locateCodex(env: NodeJS.ProcessEnv): ProviderCliCommand | null {
+The Codex CLI, which is resolved by the shared lookup the role bridge uses.
+A CLI that is not installed, and a `CODEX_BIN` that names something
+unusable, are both facts to report rather than errors to throw while the
+page is being built.
+*/
+function locateCodex(environment: NodeJS.ProcessEnv): ProviderCliCommand | null {
   try {
-    const binary = findCodexBinary(env);
+    const binary = findCodexBinary(environment);
     return binary ? located("codex", binary) : null;
   } catch {
     return null;
@@ -120,8 +134,8 @@ const PROVIDER_CLIS: Readonly<Record<string, ProviderCliDefinition>> = {
   claude: {
     command: "claude",
     label: "Claude Code",
-    locate: (env) => {
-      const binary = findClaudeBinary(env);
+    locate: (environment) => {
+      const binary = findClaudeBinary(environment);
       return binary ? located("claude", binary) : null;
     }
   },
@@ -144,16 +158,16 @@ const PROVIDER_CLIS: Readonly<Record<string, ProviderCliDefinition>> = {
   minimax: {
     command: "mcode",
     label: "MiniMax",
-    locate: (env) => {
-      const binary = findMcodeBinary(env);
+    locate: (environment) => {
+      const binary = findMcodeBinary(environment);
       return binary ? located("mcode", binary) : null;
     }
   },
   copilot: {
     command: "copilot",
     label: "Copilot",
-    locate: (env) => {
-      const binary = findCopilotBinary(env);
+    locate: (environment) => {
+      const binary = findCopilotBinary(environment);
       return binary ? located("copilot", binary) : null;
     }
   },
@@ -169,55 +183,55 @@ const PROVIDER_CLIS: Readonly<Record<string, ProviderCliDefinition>> = {
   }
 };
 
-function locateAgy(env: NodeJS.ProcessEnv): ProviderCliCommand | null {
-  const binary = findAgyBinary(env);
+function locateAgy(environment: NodeJS.ProcessEnv): ProviderCliCommand | null {
+  const binary = findAgyBinary(environment);
   return binary ? located("agy", binary) : null;
 }
 
 /**
- * opencli is a package dependency rather than a global install, so it runs
- * as the current Node with the package's entry point. The version it prints
- * is the version the lockfile pins, which is the version the bridge talks to
- * its daemon with.
- */
-function locateOpencli(env: NodeJS.ProcessEnv): ProviderCliCommand | null {
-  const command = findOpencliCommand(env);
+opencli is a package dependency rather than a global install, so it runs
+as the current Node with the package's entry point. The version it prints
+is the version the lockfile pins, which is the version the bridge talks to
+its daemon with.
+*/
+function locateOpencli(environment: NodeJS.ProcessEnv): ProviderCliCommand | null {
+  const command = findOpencliCommand(environment);
   if (!command) return null;
   return located("opencli", command.command, command.args);
 }
 
 /**
- * The name of the CLI that serves a provider, or null when the provider has
- * no CLI.
- *
- * The name is known whether or not the CLI is installed: an operator asking
- * "which CLI serves this provider" is answered by the name, and a provider
- * whose CLI is missing is still served by that CLI in every sense but the
- * one where it is on this machine.
- */
+The name of the CLI that serves a provider, or null when the provider has
+no CLI.
+
+The name is known whether or not the CLI is installed: an operator asking
+"which CLI serves this provider" is answered by the name, and a provider
+whose CLI is missing is still served by that CLI in every sense but the
+one where it is on this machine.
+*/
 export function providerCliName(provider: string): string | null {
   return PROVIDER_CLIS[provider]?.command ?? null;
 }
 
 /**
- * The CLI a provider is served by, or null when the provider has no CLI or
- * the CLI is not installed.
- */
+The CLI a provider is served by, or null when the provider has no CLI or
+the CLI is not installed.
+*/
 export function providerCliCommand(
   provider: string,
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): ProviderCliCommand | null {
-  return PROVIDER_CLIS[provider]?.locate(env) ?? null;
+  return PROVIDER_CLIS[provider]?.locate(environment) ?? null;
 }
 
 /**
- * The version in a CLI's output, or null when the output carries none.
- *
- * The first dotted number is the version in every CLI that serves a
- * provider, and taking the first one matters: `agy --version` prints only a
- * number, while `claude --version` prints the number and then the product
- * name in parentheses.
- */
+The version in a CLI's output, or null when the output carries none.
+
+The first dotted number is the version in every CLI that serves a
+provider, and taking the first one matters: `agy --version` prints only a
+number, while `claude --version` prints the number and then the product
+name in parentheses.
+*/
 export function parseCliVersion(output: string): string | null {
   const match = VERSION_PATTERN.exec(output);
   if (!match) return null;
@@ -230,26 +244,28 @@ export function parseCliVersion(output: string): string | null {
   return version;
 }
 
-/** The outcome of reading one CLI's version. */
+/**
+The outcome of reading one CLI's version.
+*/
 export type CliVersionCapture =
   | { readonly ok: true; readonly version: string }
   | { readonly ok: false; readonly reason: string };
 
 /**
- * Read one CLI's version.
- *
- * The read is bounded twice over: the CLI has a deadline, and its output has
- * a size bound. A CLI that hangs on `--version` would otherwise leave the
- * refresh waiting forever, and one that prints without end would fill the
- * Runtime's memory with a version string. Execa owns the subprocess lifecycle;
- * this function only translates its result into the provider-version contract.
- */
+Read one CLI's version.
+
+The read is bounded twice over: the CLI has a deadline, and its output has
+a size bound. A CLI that hangs on `--version` would otherwise leave the
+refresh waiting forever, and one that prints without end would fill the
+Runtime's memory with a version string. Execa owns the subprocess lifecycle;
+this function only translates its result into the provider-version contract.
+*/
 export async function captureCliVersion(
   command: ProviderCliCommand,
   timeoutMs: number = CLI_VERSION_TIMEOUT_MS
 ): Promise<CliVersionCapture> {
   let outputBytes = 0;
-  let exceededOutputBound = false;
+  let isExceededOutputBound = false;
   let result;
   try {
     const subprocess = execa(command.program, [...command.args, "--version"], {
@@ -265,10 +281,12 @@ export async function captureCliVersion(
     // existing combined bound when a CLI splits its output across both.
     subprocess.all?.on("data", (chunk: Uint8Array) => {
       outputBytes += chunk.length;
-      if (!exceededOutputBound && outputBytes > MAX_VERSION_OUTPUT_BYTES) {
-        exceededOutputBound = true;
-        subprocess.kill();
+      if (isExceededOutputBound || !(outputBytes > MAX_VERSION_OUTPUT_BYTES)) {
+        return;
       }
+
+      isExceededOutputBound = true;
+      subprocess.kill();
     });
     result = await subprocess;
   } catch {
@@ -284,7 +302,7 @@ export async function captureCliVersion(
       reason: `Reading the ${command.command} CLI's version timed out.`
     };
   }
-  if (result.isMaxBuffer || exceededOutputBound) {
+  if (result.isMaxBuffer || isExceededOutputBound) {
     return {
       ok: false,
       reason: `The ${command.command} CLI's version output exceeded the size bound.`
@@ -317,28 +335,28 @@ export interface ProviderCliVersionOptions {
   readonly capture?:
     ((command: ProviderCliCommand) => Promise<CliVersionCapture>) | undefined;
   /**
-   * Where each provider's CLI is.
-   *
-   * The default is the shared lookup the bridges use. It is injectable so a
-   * test can say which CLI a provider has without installing one: the suite
-   * runs on machines that carry different CLIs, and a test that depended on
-   * what happened to be installed would fail for a reason that has nothing
-   * to do with the code under test.
-   */
+  Where each provider's CLI is.
+  
+  The default is the shared lookup the bridges use. It is injectable so a
+  test can say which CLI a provider has without installing one: the suite
+  runs on machines that carry different CLIs, and a test that depended on
+  what happened to be installed would fail for a reason that has nothing
+  to do with the code under test.
+  */
   readonly locate?:
-    | ((provider: string, env: NodeJS.ProcessEnv) => ProviderCliCommand | null)
+    | ((provider: string, environment: NodeJS.ProcessEnv) => ProviderCliCommand | null)
     | undefined;
 }
 
 /**
- * The versions this machine has, and the reasons it does not have them.
- *
- * The snapshot is what the Control API answers from. Every provider gets an
- * entry, including the ones with no CLI and the ones whose CLI is missing:
- * "this provider is served by a CLI that is not installed" is an answer, and
- * leaving the provider out would make the page say nothing where it could
- * say that.
- */
+The versions this machine has, and the reasons it does not have them.
+
+The snapshot is what the Control API answers from. Every provider gets an
+entry, including the ones with no CLI and the ones whose CLI is missing:
+"this provider is served by a CLI that is not installed" is an answer, and
+leaving the provider out would make the page say nothing where it could
+say that.
+*/
 export class ProviderCliVersionService {
   private readonly providerIds: () => readonly string[];
   private readonly env: NodeJS.ProcessEnv;
@@ -349,7 +367,7 @@ export class ProviderCliVersionService {
   ) => Promise<CliVersionCapture>;
   private readonly locate: (
     provider: string,
-    env: NodeJS.ProcessEnv
+    environment: NodeJS.ProcessEnv
   ) => ProviderCliCommand | null;
   private readonly states = new Map<string, ControlApiProviderCliVersion>();
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
@@ -365,7 +383,7 @@ export class ProviderCliVersionService {
       options.refreshIntervalMs ?? CLI_VERSION_REFRESH_INTERVAL_MS;
     this.capture = options.capture ?? captureCliVersion;
     this.locate =
-      options.locate ?? ((provider, env) => providerCliCommand(provider, env));
+      options.locate ?? ((provider, environment) => providerCliCommand(provider, environment));
     for (const provider of this.providerIds()) {
       this.states.set(provider, {
         status: "unavailable",
@@ -377,7 +395,9 @@ export class ProviderCliVersionService {
     }
   }
 
-  /** The versions as the Control API reports them. */
+  /**
+  The versions as the Control API reports them.
+  */
   snapshot(): ControlApiProviderVersionsResponse {
     return {
       schema: "autodev-control-provider-versions-v1",
@@ -416,12 +436,12 @@ export class ProviderCliVersionService {
   }
 
   /**
-   * Read every provider's CLI version.
-   *
-   * One refresh at a time: a second refresh arriving while the first is
-   * still waiting on a slow CLI would read the same versions twice and race
-   * the first one's results into the snapshot.
-   */
+  Read every provider's CLI version.
+  
+  One refresh at a time: a second refresh arriving while the first is
+  still waiting on a slow CLI would read the same versions twice and race
+  the first one's results into the snapshot.
+  */
   refresh(): Promise<void> {
     if (this.stopped) return Promise.resolve();
     if (this.refreshInFlight) return this.refreshInFlight;

@@ -6,13 +6,13 @@ import { TextField } from "../../components/forms/TextField.ts";
 import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
 
 /**
- * One server's launch configuration, as the canonical declaration gives it.
- *
- * The header map is not in this form: a header is a name and a value, and a
- * form field cannot carry both without an encoding an operator has to learn.
- * The write leaves the headers the declaration already has alone, so an edit
- * here never drops one.
- */
+One server's launch configuration, as the canonical declaration gives it.
+
+The header map is not in this form: a header is a name and a value, and a
+form field cannot carry both without an encoding an operator has to learn.
+The write leaves the headers the declaration already has alone, so an edit
+here never drops one.
+*/
 type McpDeclaredLaunch = Pick<
   ControlApiMcpDeclaredServer,
   "command" | "args" | "cwd" | "url" | "bearerTokenEnvVar"
@@ -22,27 +22,27 @@ export interface McpDeclarationEditorProps {
   readonly name: string;
   readonly declared: McpDeclaredLaunch;
   /**
-   * The revision the declaration was read at.
-   *
-   * The write is a compare-and-swap on it, so the form carries the revision
-   * the operator's edit was written against rather than the revision the
-   * declaration may have moved to while the page was open.
-   */
+  The revision the declaration was read at.
+  
+  The write is a compare-and-swap on it, so the form carries the revision
+  the operator's edit was written against rather than the revision the
+  declaration may have moved to while the page was open.
+  */
   readonly revision: string;
 }
 
 /**
- * The canonical MCP declaration's own edit surface.
- *
- * It is a plain form, and that is the whole point. The Console's navigation
- * owner is the only thing that may drive its router, and a feature that
- * refreshes the page itself brings back the strand the owner exists to end: the
- * reducer applies the destination, React renders it, and the commit that would
- * move the address bar never runs. The owner also keeps what an operator
- * typed, because a browser restores the text in a form control when the write
- * it submitted is redirected back to the page. So the edit survives a refused
- * write without the Console having to hold on to it.
- */
+The canonical MCP declaration's own edit surface.
+
+It is a plain form, and that is the whole point. The Console's navigation
+owner is the only thing that may drive its router, and a feature that
+refreshes the page itself brings back the strand the owner exists to end: the
+reducer applies the destination, React renders it, and the commit that would
+move the address bar never runs. The owner also keeps what an operator
+typed, because a browser restores the text in a form control when the write
+it submitted is redirected back to the page. So the edit survives a refused
+write without the Console having to hold on to it.
+*/
 export function McpDeclarationEditor({
   name,
   declared,

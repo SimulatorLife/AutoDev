@@ -35,7 +35,7 @@ import {
 } from "@simulatorlife/autodev-data/playtesting";
 
 import {
-  PlaytestArtifactConfigurationError,
+  PlaytestArtifactConfigurationError as PlaytestArtifactConfigError,
   PlaytestArtifactExpiredError,
   PlaytestArtifactFormatError,
   PlaytestArtifactIntegrityError,
@@ -91,7 +91,9 @@ const RESOURCE_FILTERS: Readonly<
   reviews: ["episodeId", "kind"]
 };
 const REVIEW_STATUSES = ["reviewed", "unreviewed"] as const;
-/** The two analyst review contracts; told apart by the schema they carry. */
+/**
+The two analyst review contracts; told apart by the schema they carry.
+*/
 const REVIEW_KINDS = ["discovery", "confirmatory"] as const;
 const WORKSPACE_ID_REQUIRED =
   "A valid workspaceId query parameter is required.";
@@ -107,7 +109,9 @@ let defaultPlaytestingRepositorySchema: Promise<PlaytestRepository> | undefined;
 let defaultPlaytestingRepositorySchemaState:
   "idle" | "initializing" | "ready" | "unavailable" = "idle";
 
-/** Start the Data-owned schema initialization, sharing it with default reads. */
+/**
+Start the Data-owned schema initialization, sharing it with default reads.
+*/
 export function warmupDefaultPlaytestingRepository(): Promise<PlaytestRepository> {
   const repository = (defaultPlaytestingRepository ??=
     new PlaytestRepository());
@@ -142,7 +146,9 @@ function defaultPlaytestingRepositoryReadiness():
       : "initializing";
 }
 
-/** Initialize the Data-owned tables once before the Runtime's first default read. */
+/**
+Initialize the Data-owned tables once before the Runtime's first default read.
+*/
 function getDefaultPlaytestingRepository(): Promise<PlaytestRepository> {
   return warmupDefaultPlaytestingRepository();
 }
@@ -150,12 +156,12 @@ function getDefaultPlaytestingRepository(): Promise<PlaytestRepository> {
 type FilterName = (typeof RESOURCE_FILTERS)[PlaytestingReadResource][number];
 
 /**
- * The resources this Control API can read.
- *
- * `reviews` is not one of the paginated entity resources: a review is not
- * an entity the Console selects and edits, it is the analyst's durable
- * record about an episode. It has its own response envelope.
- */
+The resources this Control API can read.
+
+`reviews` is not one of the paginated entity resources: a review is not
+an entity the Console selects and edits, it is the analyst's durable
+record about an episode. It has its own response envelope.
+*/
 type PlaytestingReadResource = ControlApiPlaytestingResource | "reviews";
 
 export type PlaytestingReadRepository = Pick<
@@ -174,19 +180,21 @@ export type PlaytestingReadRepository = Pick<
 >;
 
 /**
- * The persisted-review read.
- *
- * It is separate from the entity reads because the MCP has no use for it:
- * the analyst dispatches a review by episode, it does not list the
- * workspace's reviews. Only the Control API answers "what has the analyst
- * concluded so far", and only that answer has to survive a restart.
- */
+The persisted-review read.
+
+It is separate from the entity reads because the MCP has no use for it:
+the analyst dispatches a review by episode, it does not list the
+workspace's reviews. Only the Control API answers "what has the analyst
+concluded so far", and only that answer has to survive a restart.
+*/
 type PlaytestingReviewRepository = Pick<
   PlaytestRepository,
   "listReviews" | "countReviews"
 >;
 
-/** Everything the Control API reads from the Playtesting store. */
+/**
+Everything the Control API reads from the Playtesting store.
+*/
 export type PlaytestingControlRepository = PlaytestingReadRepository &
   PlaytestingReviewRepository;
 
@@ -301,11 +309,11 @@ function routeFor(pathname: string): ParsedRoute | null {
 }
 
 function oneValue(
-  params: URLSearchParams,
+  parameters: URLSearchParams,
   key: string,
   maximum = FILTER_VALUE_MAX_CHARS
 ): string | undefined {
-  const values = params.getAll(key);
+  const values = parameters.getAll(key);
   if (values.length > 1)
     throw new TypeError(`Duplicate '${key}' query parameter.`);
   const value = values[0]?.trim();
@@ -384,23 +392,23 @@ function validateFilters(
 }
 
 function pageRequest(
-  params: URLSearchParams,
+  parameters: URLSearchParams,
   resource: PlaytestingReadResource
 ): PageRequest {
   const permitted = new Set<string>([
     ...COMMON_FILTERS,
     ...RESOURCE_FILTERS[resource]
   ]);
-  for (const key of params.keys()) {
+  for (const key of parameters.keys()) {
     if (!permitted.has(key))
       throw new TypeError(`Unknown '${key}' query parameter.`);
   }
 
-  const workspaceId = oneValue(params, "workspaceId");
+  const workspaceId = oneValue(parameters, "workspaceId");
   if (!workspaceId || !WORKSPACE_ID_PATTERN.test(workspaceId)) {
     throw new TypeError(WORKSPACE_ID_REQUIRED);
   }
-  const limitText = oneValue(params, "limit");
+  const limitText = oneValue(parameters, "limit");
   const limit =
     limitText === undefined ? DEFAULT_PAGE_LIMIT : Number(limitText);
   if (
@@ -409,34 +417,34 @@ function pageRequest(
   ) {
     throw new TypeError("'limit' must be an integer between 1 and 500.");
   }
-  const cursor = oneValue(params, "cursor", CURSOR_MAX_CHARS);
+  const cursor = oneValue(parameters, "cursor", CURSOR_MAX_CHARS);
   const filters: Partial<Record<FilterName, string>> = {};
   for (const name of RESOURCE_FILTERS[resource]) {
-    const value = oneValue(params, name);
+    const value = oneValue(parameters, name);
     if (value !== undefined) filters[name as FilterName] = value;
   }
   validateFilters(resource, filters);
   return {
     workspaceId,
     limit,
-    ...(cursor === undefined ? {} : { cursor }),
+    ...(cursor !== undefined && { cursor }),
     filters
   };
 }
 
-function episodeDetailWorkspace(params: URLSearchParams): string {
-  for (const key of params.keys()) {
+function episodeDetailWorkspace(parameters: URLSearchParams): string {
+  for (const key of parameters.keys()) {
     if (key !== "workspaceId")
       throw new TypeError(`Unknown '${key}' query parameter.`);
   }
-  const workspaceId = oneValue(params, "workspaceId");
+  const workspaceId = oneValue(parameters, "workspaceId");
   if (!workspaceId || !WORKSPACE_ID_PATTERN.test(workspaceId)) {
     throw new TypeError(WORKSPACE_ID_REQUIRED);
   }
   return workspaceId;
 }
 
-function requestParams(
+function requestParameters(
   request: IncomingMessage,
   pathname: string
 ): { readonly pathname: string; readonly params: URLSearchParams } {
@@ -454,18 +462,18 @@ function workspaceExists(
   );
 }
 
-function windowRequest(params: URLSearchParams): WindowRequest {
-  for (const key of params.keys()) {
+function windowRequest(parameters: URLSearchParams): WindowRequest {
+  for (const key of parameters.keys()) {
     if (!["workspaceId", "startStep", "endStep"].includes(key)) {
       throw new TypeError(`Unknown '${key}' query parameter.`);
     }
   }
-  const workspaceId = oneValue(params, "workspaceId");
+  const workspaceId = oneValue(parameters, "workspaceId");
   if (!workspaceId || !WORKSPACE_ID_PATTERN.test(workspaceId)) {
     throw new TypeError(WORKSPACE_ID_REQUIRED);
   }
-  const startText = oneValue(params, "startStep");
-  const endText = oneValue(params, "endStep");
+  const startText = oneValue(parameters, "startStep");
+  const endText = oneValue(parameters, "endStep");
   if (
     startText === undefined ||
     endText === undefined ||
@@ -510,7 +518,7 @@ function pageEnvelope<K extends ControlApiPlaytestingResource>(
 function pageOptions(query: PageRequest) {
   return {
     limit: query.limit,
-    ...(query.cursor === undefined ? {} : { cursor: query.cursor })
+    ...(query.cursor !== undefined && { cursor: query.cursor })
   };
 }
 
@@ -522,10 +530,8 @@ function readBatchPage(
   return repository.listBatches(
     {
       workspaceId: query.workspaceId,
-      ...(f.buildSha === undefined ? {} : { buildSha: f.buildSha }),
-      ...(f.status === undefined
-        ? {}
-        : { status: f.status as (typeof PLAYTESTS_BATCH_STATES)[number] })
+      ...(f.buildSha !== undefined && { buildSha: f.buildSha }),
+      ...(f.status !== undefined && { status: f.status as (typeof PLAYTESTS_BATCH_STATES)[number] })
     },
     pageOptions(query)
   );
@@ -539,28 +545,20 @@ function readEpisodePage(
   return repository.listEpisodes(
     {
       workspaceId: query.workspaceId,
-      ...(f.q === undefined ? {} : { query: f.q }),
-      ...(f.batchId === undefined ? {} : { batchId: f.batchId }),
-      ...(f.buildSha === undefined ? {} : { buildSha: f.buildSha }),
-      ...(f.scenario === undefined ? {} : { scenario: f.scenario }),
-      ...(f.policy === undefined ? {} : { policy: f.policy }),
-      ...(f.cohort === undefined ? {} : { cohort: f.cohort }),
-      ...(f.status === undefined
-        ? {}
-        : { status: f.status as (typeof PLAYTESTS_EPISODE_STATES)[number] }),
-      ...(f.gameOutcome === undefined
-        ? {}
-        : {
+      ...(f.q !== undefined && { query: f.q }),
+      ...(f.batchId !== undefined && { batchId: f.batchId }),
+      ...(f.buildSha !== undefined && { buildSha: f.buildSha }),
+      ...(f.scenario !== undefined && { scenario: f.scenario }),
+      ...(f.policy !== undefined && { policy: f.policy }),
+      ...(f.cohort !== undefined && { cohort: f.cohort }),
+      ...(f.status !== undefined && { status: f.status as (typeof PLAYTESTS_EPISODE_STATES)[number] }),
+      ...(f.gameOutcome !== undefined && {
             gameOutcome:
               f.gameOutcome as (typeof PLAYTESTS_GAME_OUTCOMES)[number]
           }),
-      ...(f.reviewStatus === undefined
-        ? {}
-        : { reviewStatus: f.reviewStatus as "reviewed" | "unreviewed" }),
-      ...(f.startedAtFrom === undefined
-        ? {}
-        : { startedAtFrom: f.startedAtFrom }),
-      ...(f.startedAtTo === undefined ? {} : { startedAtTo: f.startedAtTo })
+      ...(f.reviewStatus !== undefined && { reviewStatus: f.reviewStatus as "reviewed" | "unreviewed" }),
+      ...(f.startedAtFrom !== undefined && { startedAtFrom: f.startedAtFrom }),
+      ...(f.startedAtTo !== undefined && { startedAtTo: f.startedAtTo })
     },
     pageOptions(query)
   );
@@ -574,22 +572,14 @@ function readFindingPage(
   return repository.listFindings(
     {
       workspaceId: query.workspaceId,
-      ...(f.findingId === undefined ? {} : { findingId: f.findingId }),
-      ...(f.severity === undefined
-        ? {}
-        : { severity: f.severity as PlaytestFinding["severity"] }),
-      ...(f.status === undefined
-        ? {}
-        : { status: f.status as PlaytestFinding["status"] }),
-      ...(f.verificationStage === undefined
-        ? {}
-        : {
+      ...(f.findingId !== undefined && { findingId: f.findingId }),
+      ...(f.severity !== undefined && { severity: f.severity as PlaytestFinding["severity"] }),
+      ...(f.status !== undefined && { status: f.status as PlaytestFinding["status"] }),
+      ...(f.verificationStage !== undefined && {
             verificationStage:
               f.verificationStage as PlaytestFinding["verificationStage"]
           }),
-      ...(f.evidenceStatus === undefined
-        ? {}
-        : {
+      ...(f.evidenceStatus !== undefined && {
             evidenceStatus:
               f.evidenceStatus as PlaytestFinding["evidenceStatus"]
           })
@@ -606,11 +596,9 @@ function readComparisonPage(
   return repository.listComparisons(
     {
       workspaceId: query.workspaceId,
-      ...(f.benchmarkId === undefined ? {} : { benchmarkId: f.benchmarkId }),
-      ...(f.experimentId === undefined ? {} : { experimentId: f.experimentId }),
-      ...(f.decision === undefined
-        ? {}
-        : {
+      ...(f.benchmarkId !== undefined && { benchmarkId: f.benchmarkId }),
+      ...(f.experimentId !== undefined && { experimentId: f.experimentId }),
+      ...(f.decision !== undefined && {
             decision: f.decision as (typeof PLAYTESTS_DECISION_STATUSES)[number]
           })
     },
@@ -626,12 +614,8 @@ function readBenchmarkPage(
   return repository.listBenchmarks(
     {
       workspaceId: query.workspaceId,
-      ...(f.referenceBuildSha === undefined
-        ? {}
-        : { referenceBuildSha: f.referenceBuildSha }),
-      ...(f.measurementVersion === undefined
-        ? {}
-        : { measurementVersion: f.measurementVersion })
+      ...(f.referenceBuildSha !== undefined && { referenceBuildSha: f.referenceBuildSha }),
+      ...(f.measurementVersion !== undefined && { measurementVersion: f.measurementVersion })
     },
     pageOptions(query)
   );
@@ -645,10 +629,8 @@ function readExperimentPage(
   return repository.listExperiments(
     {
       workspaceId: query.workspaceId,
-      ...(f.benchmarkId === undefined ? {} : { benchmarkId: f.benchmarkId }),
-      ...(f.state === undefined
-        ? {}
-        : { state: f.state as (typeof PLAYTESTS_EXPERIMENT_STATES)[number] })
+      ...(f.benchmarkId !== undefined && { benchmarkId: f.benchmarkId }),
+      ...(f.state !== undefined && { state: f.state as (typeof PLAYTESTS_EXPERIMENT_STATES)[number] })
     },
     pageOptions(query)
   );
@@ -662,14 +644,12 @@ function readHumanStudyPage(
   return repository.listHumanStudies(
     {
       workspaceId: query.workspaceId,
-      ...(f.benchmarkId === undefined ? {} : { benchmarkId: f.benchmarkId }),
-      ...(f.instrument === undefined
-        ? {}
-        : {
+      ...(f.benchmarkId !== undefined && { benchmarkId: f.benchmarkId }),
+      ...(f.instrument !== undefined && {
             instrument:
               f.instrument as (typeof PLAYTESTS_HUMAN_INSTRUMENTS)[number]
           }),
-      ...(f.approved === undefined ? {} : { approved: f.approved === "true" })
+      ...(f.approved !== undefined && { approved: f.approved === "true" })
     },
     pageOptions(query)
   );
@@ -749,21 +729,21 @@ function respondQueryFailure(response: ServerResponse, error: unknown): true {
 
 function parseQuery(
   route: ParsedRoute,
-  params: URLSearchParams,
+  parameters: URLSearchParams,
   response: ServerResponse
 ): PageRequest | WindowRequest | null {
   try {
-    if (route.windowId !== null) return windowRequest(params);
+    if (route.windowId !== null) return windowRequest(parameters);
     if (route.mediaId !== null) {
       return {
-        workspaceId: episodeDetailWorkspace(params),
+        workspaceId: episodeDetailWorkspace(parameters),
         limit: 1,
         filters: {}
       };
     }
-    if (route.id === null) return pageRequest(params, route.resource);
+    if (route.id === null) return pageRequest(parameters, route.resource);
     return {
-      workspaceId: episodeDetailWorkspace(params),
+      workspaceId: episodeDetailWorkspace(parameters),
       limit: 1,
       filters: {}
     };
@@ -774,14 +754,16 @@ function parseQuery(
 }
 
 /**
- * Fail-closed when an autonomous-visual episode's manifest cannot be read or
- * does not bind to the requested workspace, batch, assignment, execution
- * mode, and recorded target provenance. There is no placeholder value for
- * these faults: a Console cannot act on a visual target that might be wrong.
- */
+Fail-closed when an autonomous-visual episode's manifest cannot be read or
+does not bind to the requested workspace, batch, assignment, execution
+mode, and recorded target provenance. There is no placeholder value for
+these faults: a Console cannot act on a visual target that might be wrong.
+*/
 class PlaytestVisualAssignmentUnavailableError extends Error {}
 
-/** The episode's visual batch exists but fails the exact-binding check. */
+/**
+The episode's visual batch exists but fails the exact-binding check.
+*/
 class PlaytestVisualAssignmentMismatchError extends Error {}
 
 function resolveVisualAssignment(
@@ -997,7 +979,7 @@ async function readEpisodeFrame(
   const episode = await repository.getEpisode(workspaceId, episodeId);
   if (
     episode === null ||
-    !episode.frames.some((frame) => frame.id === mediaId)
+    episode.frames.every((frame) => frame.id !== mediaId)
   ) {
     return null;
   }
@@ -1039,13 +1021,13 @@ function sendFrame(
 }
 
 /**
- * The workspace's persisted analyst reviews.
- *
- * The analyst-run envelope the Console also reads lives in the Runtime
- * process, so it is lost on restart. A review is persisted, so this read
- * is what lets a reader see what the analyst concluded after the Runtime
- * that produced it has been replaced.
- */
+The workspace's persisted analyst reviews.
+
+The analyst-run envelope the Console also reads lives in the Runtime
+process, so it is lost on restart. A review is persisted, so this read
+is what lets a reader see what the analyst concluded after the Runtime
+that produced it has been replaced.
+*/
 async function readReviews(
   repository: PlaytestingControlRepository,
   query: PageRequest
@@ -1055,14 +1037,12 @@ async function readReviews(
   const page = await repository.listReviews(
     {
       workspaceId: query.workspaceId,
-      ...(f.episodeId === undefined ? {} : { episodeId: f.episodeId }),
-      ...(kind === undefined
-        ? {}
-        : { kind: kind as "discovery" | "confirmatory" })
+      ...(f.episodeId !== undefined && { episodeId: f.episodeId }),
+      ...(kind !== undefined && { kind: kind as "discovery" | "confirmatory" })
     },
     {
       limit: query.limit,
-      ...(query.cursor === undefined ? {} : { cursor: query.cursor })
+      ...(query.cursor !== undefined && { cursor: query.cursor })
     }
   );
   return {
@@ -1152,7 +1132,7 @@ function respondDataFailure(response: ServerResponse, error: unknown): boolean {
   }
   if (
     error instanceof PlaytestArtifactIntegrityError ||
-    error instanceof PlaytestArtifactConfigurationError ||
+    error instanceof PlaytestArtifactConfigError ||
     error instanceof PlaytestArtifactFormatError
   ) {
     sendPlaytestingError(
@@ -1194,16 +1174,16 @@ function respondDataFailure(response: ServerResponse, error: unknown): boolean {
 }
 
 function parseReadinessWorkspace(
-  params: URLSearchParams,
+  parameters: URLSearchParams,
   response: ServerResponse
 ): string | null {
   try {
-    for (const key of params.keys()) {
+    for (const key of parameters.keys()) {
       if (key !== "workspaceId") {
         throw new TypeError(`Unknown '${key}' query parameter.`);
       }
     }
-    const workspaceId = oneValue(params, "workspaceId");
+    const workspaceId = oneValue(parameters, "workspaceId");
     if (!workspaceId || !WORKSPACE_ID_PATTERN.test(workspaceId)) {
       throw new TypeError(WORKSPACE_ID_REQUIRED);
     }
@@ -1220,11 +1200,11 @@ function parseReadinessWorkspace(
 }
 
 function readinessWorkspaceId(
-  params: URLSearchParams,
+  parameters: URLSearchParams,
   response: ServerResponse,
   options: PlaytestingControlApiOptions
 ): string | null {
-  const workspaceId = parseReadinessWorkspace(params, response);
+  const workspaceId = parseReadinessWorkspace(parameters, response);
   if (workspaceId === null) return null;
   const readWorkspaceCatalog =
     options.readWorkspaceCatalog ??
@@ -1266,7 +1246,7 @@ function sendPlaytestingReadiness(
     },
     {
       "cache-control": "no-store",
-      ...(status === "initializing" ? { "retry-after": "1" } : {})
+      ...((status === "initializing") && { "retry-after": "1" })
     }
   );
 }
@@ -1274,7 +1254,7 @@ function sendPlaytestingReadiness(
 function handlePlaytestingReadinessRequest(
   request: IncomingMessage,
   response: ServerResponse,
-  params: URLSearchParams,
+  parameters: URLSearchParams,
   actor: PlaytestingControlActor,
   options: PlaytestingControlApiOptions
 ): boolean {
@@ -1298,7 +1278,7 @@ function handlePlaytestingReadinessRequest(
     );
     return true;
   }
-  const workspaceId = readinessWorkspaceId(params, response, options);
+  const workspaceId = readinessWorkspaceId(parameters, response, options);
   if (workspaceId === null) return true;
 
   if (options.repository !== undefined) {
@@ -1325,7 +1305,7 @@ function handlePlaytestingReadinessRequest(
 function handlePlaytestingInitializationRequest(
   request: IncomingMessage,
   response: ServerResponse,
-  params: URLSearchParams,
+  parameters: URLSearchParams,
   actor: PlaytestingControlActor,
   options: PlaytestingControlApiOptions
 ): boolean {
@@ -1364,7 +1344,7 @@ function handlePlaytestingInitializationRequest(
     );
     return true;
   }
-  const workspaceId = readinessWorkspaceId(params, response, options);
+  const workspaceId = readinessWorkspaceId(parameters, response, options);
   if (workspaceId === null) return true;
   if (options.repository !== undefined) {
     sendPlaytestingReadiness(response, workspaceId, "ready");
@@ -1388,10 +1368,10 @@ function handlePlaytestingInitializationRequest(
 function playtestingReadQuery(
   response: ServerResponse,
   route: ParsedRoute,
-  params: URLSearchParams,
+  parameters: URLSearchParams,
   options: PlaytestingControlApiOptions
 ): PageRequest | WindowRequest | null {
-  const query = parseQuery(route, params, response);
+  const query = parseQuery(route, parameters, response);
   if (query === null) return null;
   const readWorkspaceCatalog =
     options.readWorkspaceCatalog ??
@@ -1479,7 +1459,7 @@ async function servePlaytestingResourceRead(
     );
     return true;
   }
-  const parsed = requestParams(request, pathname);
+  const parsed = requestParameters(request, pathname);
   const query = playtestingReadQuery(response, route, parsed.params, options);
   if (query === null || !defaultRepositoryReadyForRead(response, options)) {
     return true;
@@ -1533,7 +1513,9 @@ async function servePlaytestingResourceRead(
   }
 }
 
-/** Authenticated, workspace-scoped Playtesting read API. */
+/**
+Authenticated, workspace-scoped Playtesting read API.
+*/
 export function handlePlaytestingControlApiRequest(
   request: IncomingMessage,
   response: ServerResponse,
@@ -1541,7 +1523,7 @@ export function handlePlaytestingControlApiRequest(
   actor: PlaytestingControlActor,
   options: PlaytestingControlApiOptions = {}
 ): Promise<boolean> {
-  const parsed = requestParams(request, pathname);
+  const parsed = requestParameters(request, pathname);
   if (!parsed.pathname.startsWith(CONTROL_PATH)) return Promise.resolve(false);
   if (parsed.pathname === `${CONTROL_PATH}readiness`) {
     return Promise.resolve(

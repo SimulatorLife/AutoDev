@@ -4,37 +4,39 @@ import type {
 } from "@simulatorlife/autodev-core";
 
 /**
- * The one owner of the GitHub page's list state.
- *
- * The recent-runs table is the largest list on the page: thirty observed runs
- * in the live instance, over two and a half screenfuls, and the page raises
- * the question it cannot answer. The stat card reads "N succeeded, N failed,
- * N running" -- but it counts them without showing which, so finding the
- * twelve failures among the thirteen cancellations meant reading the status
- * cell of every row.
- *
- * So the runs are narrowed by outcome, on the vocabulary the page's own
- * statistics already use: the target state names four counters over the
- * sampled runs -- successful, failed, in progress and cancelled -- and the
- * filter uses the same four, so the count on the card and the rows on the
- * page are the same numbers.
- *
- * The control is a single choice, and it applies on selection rather than on
- * an Apply, because the target state says a safe single-choice setting
- * applies without a second Apply control. That also keeps the page free of a
- * submit button, and the narrowing is a normal GET navigation, so the
- * narrowed list is a URL state like every other filtered view.
- */
+The one owner of the GitHub page's list state.
 
-/** The route the GitHub page lives at. */
+The recent-runs table is the largest list on the page: thirty observed runs
+in the live instance, over two and a half screenfuls, and the page raises
+the question it cannot answer. The stat card reads "N succeeded, N failed,
+N running" -- but it counts them without showing which, so finding the
+twelve failures among the thirteen cancellations meant reading the status
+cell of every row.
+
+So the runs are narrowed by outcome, on the vocabulary the page's own
+statistics already use: the target state names four counters over the
+sampled runs -- successful, failed, in progress and cancelled -- and the
+filter uses the same four, so the count on the card and the rows on the
+page are the same numbers.
+
+The control is a single choice, and it applies on selection rather than on
+an Apply, because the target state says a safe single-choice setting
+applies without a second Apply control. That also keeps the page free of a
+submit button, and the narrowing is a normal GET navigation, so the
+narrowed list is a URL state like every other filtered view.
+*/
+
+/**
+The route the GitHub page lives at.
+*/
 const GITHUB_LIST_PATH = "/github";
 
 /**
- * The outcome a run can be narrowed to.
- *
- * `all` is every observed run. The other four are the counters the target
- * state computes over the sampled runs.
- */
+The outcome a run can be narrowed to.
+
+`all` is every observed run. The other four are the counters the target
+state computes over the sampled runs.
+*/
 export type RunOutcomeFilter =
   "all" | "succeeded" | "failed" | "cancelled" | "in-progress";
 
@@ -47,12 +49,12 @@ export const RUN_OUTCOME_FILTERS: readonly RunOutcomeFilter[] = [
 ];
 
 /**
- * How each outcome reads in the filter.
- *
- * The words are the page's own: the success-rate card says "succeeded",
- * "failed" and "running", and the counts it reports are named
- * `successfulRuns`, `failedRuns`, `inProgressRuns` and `cancelledRuns`.
- */
+How each outcome reads in the filter.
+
+The words are the page's own: the success-rate card says "succeeded",
+"failed" and "running", and the counts it reports are named
+`successfulRuns`, `failedRuns`, `inProgressRuns` and `cancelledRuns`.
+*/
 export const RUN_OUTCOME_LABELS: Readonly<Record<RunOutcomeFilter, string>> = {
   all: "All outcomes",
   succeeded: "Succeeded",
@@ -61,20 +63,24 @@ export const RUN_OUTCOME_LABELS: Readonly<Record<RunOutcomeFilter, string>> = {
   "in-progress": "In progress"
 };
 
-/** Everything the page's list state can carry. */
+/**
+Everything the page's list state can carry.
+*/
 export interface GithubListFilters {
   readonly outcome: RunOutcomeFilter;
-  /** Optional, and `undefined` means every state. */
+  /**
+  Optional, and `undefined` means every state.
+  */
   readonly state?: WorkflowStateFilter | undefined;
 }
 
 /**
- * The state a workflow can be narrowed to.
- *
- * `all` is every workflow the page knows about. The others are the states the
- * "GitHub Actions State" column renders, so the filter's buckets and the
- * badges in the rows are the same thing.
- */
+The state a workflow can be narrowed to.
+
+`all` is every workflow the page knows about. The others are the states the
+"GitHub Actions State" column renders, so the filter's buckets and the
+badges in the rows are the same thing.
+*/
 export type WorkflowStateFilter =
   "all" | "active" | "disabled" | "deleted" | "unavailable" | "not-observed";
 
@@ -88,12 +94,12 @@ export const WORKFLOW_STATE_FILTERS: readonly WorkflowStateFilter[] = [
 ];
 
 /**
- * How each state reads in the filter.
- *
- * The words are the column's own: "Active" and "Deleted" are what the badge
- * says, and the two ways a workflow can be disabled are one question to an
- * operator -- "is it disabled?" -- so they share a bucket.
- */
+How each state reads in the filter.
+
+The words are the column's own: "Active" and "Deleted" are what the badge
+says, and the two ways a workflow can be disabled are one question to an
+operator -- "is it disabled?" -- so they share a bucket.
+*/
 export const WORKFLOW_STATE_LABELS: Readonly<
   Record<WorkflowStateFilter, string>
 > = {
@@ -106,11 +112,11 @@ export const WORKFLOW_STATE_LABELS: Readonly<
 };
 
 /**
- * The value of a query parameter.
- *
- * A repeated parameter takes its first value, which is what the browser's own
- * form submission produces and what the other list surfaces read.
- */
+The value of a query parameter.
+
+A repeated parameter takes its first value, which is what the browser's own
+form submission produces and what the other list surfaces read.
+*/
 function firstValue(value: string | readonly string[] | undefined): string {
   if (typeof value === "string") return value;
   if (value === undefined) return "";
@@ -118,18 +124,18 @@ function firstValue(value: string | readonly string[] | undefined): string {
 }
 
 /**
- * The filters an address asks for.
- *
- * An outcome the page does not have is reported rather than quietly answered
- * with everything: the same rule the tool catalogue applies to a source it
- * cannot honour.
- */
+The filters an address asks for.
+
+An outcome the page does not have is reported rather than quietly answered
+with everything: the same rule the tool catalogue applies to a source it
+cannot honour.
+*/
 export function readGithubFilters(
-  params: Readonly<Record<string, string | readonly string[] | undefined>>
+  parameters: Readonly<Record<string, string | readonly string[] | undefined>>
 ): GithubListFilters {
-  const requested = firstValue(params.outcome).trim();
+  const requested = firstValue(parameters.outcome).trim();
   const outcome = RUN_OUTCOME_FILTERS.find((value) => value === requested);
-  const requestedState = firstValue(params.state).trim();
+  const requestedState = firstValue(parameters.state).trim();
   const state = WORKFLOW_STATE_FILTERS.find(
     (value) => value === requestedState
   );
@@ -139,37 +145,39 @@ export function readGithubFilters(
   };
 }
 
-/** The list's query string, without the route. */
+/**
+The list's query string, without the route.
+*/
 function githubListQuery(filters: GithubListFilters): string {
-  const params = new URLSearchParams();
-  if (filters.outcome !== "all") params.set("outcome", filters.outcome);
+  const parameters = new URLSearchParams();
+  if (filters.outcome !== "all") parameters.set("outcome", filters.outcome);
   if (filters.state && filters.state !== "all") {
-    params.set("state", filters.state);
+    parameters.set("state", filters.state);
   }
-  return params.toString();
+  return parameters.toString();
 }
 
 /**
- * The address of the list.
- *
- * An unfiltered list is written without a query at all rather than with an
- * empty one: a bare `?outcome=` is a different address from no address, and
- * the list should have one address.
- */
+The address of the list.
+
+An unfiltered list is written without a query at all rather than with an
+empty one: a bare `?outcome=` is a different address from no address, and
+the list should have one address.
+*/
 export function githubListHref(filters: GithubListFilters): string {
   const query = githubListQuery(filters);
   return query ? `${GITHUB_LIST_PATH}?${query}` : GITHUB_LIST_PATH;
 }
 
 /**
- * Whether a run's outcome is one this page counts.
- *
- * The same predicates the Status column renders its badge from, so the
- * filter's categories and the badges on the rows are the same thing. A
- * conclusion the page does not count -- a skipped or neutral run -- is
- * outside all four, and so it stays visible only under "All outcomes": it
- * is in the sample's total, and it is in nobody's counter.
- */
+Whether a run's outcome is one this page counts.
+
+The same predicates the Status column renders its badge from, so the
+filter's categories and the badges on the rows are the same thing. A
+conclusion the page does not count -- a skipped or neutral run -- is
+outside all four, and so it stays visible only under "All outcomes": it
+is in the sample's total, and it is in nobody's counter.
+*/
 export function runOutcome(run: GithubWorkflowRun): RunOutcomeFilter {
   if (run.conclusion === "success") return "succeeded";
   if (run.conclusion === "failure" || run.conclusion === "timed_out") {
@@ -187,8 +195,8 @@ export function runOutcome(run: GithubWorkflowRun): RunOutcomeFilter {
 }
 
 /**
- * The runs a set of filters keeps.
- */
+The runs a set of filters keeps.
+*/
 export function filterRuns(
   runs: readonly GithubWorkflowRun[],
   filters: GithubListFilters
@@ -198,15 +206,15 @@ export function filterRuns(
 }
 
 /**
- * The state a workflow is in, as the "GitHub Actions State" column renders it.
- *
- * The same predicates the column's badge uses, so the filter's buckets and
- * the badges in the rows are the same thing. A workflow the Runtime has not
- * been asked about is "unavailable" rather than missing, and one whose state
- * is not a state the page knows is "not observed" -- the same distinction the
- * column draws between a state it could not read and a state it read and did
- * not recognise.
- */
+The state a workflow is in, as the "GitHub Actions State" column renders it.
+
+The same predicates the column's badge uses, so the filter's buckets and
+the badges in the rows are the same thing. A workflow the Runtime has not
+been asked about is "unavailable" rather than missing, and one whose state
+is not a state the page knows is "not observed" -- the same distinction the
+column draws between a state it could not read and a state it read and did
+not recognise.
+*/
 export function workflowState(
   workflow: GithubWorkflowDefinition,
   runtimeFactsAvailable: boolean
@@ -223,8 +231,8 @@ export function workflowState(
 }
 
 /**
- * The workflows a set of filters keeps.
- */
+The workflows a set of filters keeps.
+*/
 export function filterWorkflows(
   workflows: readonly GithubWorkflowDefinition[],
   filters: GithubListFilters,
@@ -238,12 +246,12 @@ export function filterWorkflows(
 }
 
 /**
- * How many workflows each state holds.
- *
- * The counts are over the whole catalogue, not over the narrowed list, so the
- * count for the state the operator is looking at stays true when another state
- * is selected.
- */
+How many workflows each state holds.
+
+The counts are over the whole catalogue, not over the narrowed list, so the
+count for the state the operator is looking at stays true when another state
+is selected.
+*/
 export function countWorkflowStates(
   workflows: readonly GithubWorkflowDefinition[],
   runtimeFactsAvailable: boolean
@@ -263,12 +271,12 @@ export function countWorkflowStates(
 }
 
 /**
- * How many runs each outcome holds.
- *
- * The counts are over the whole sample, not over the narrowed list, so the
- * count for the outcome the operator is looking at stays true when another
- * outcome is selected.
- */
+How many runs each outcome holds.
+
+The counts are over the whole sample, not over the narrowed list, so the
+count for the outcome the operator is looking at stays true when another
+outcome is selected.
+*/
 export function countRunOutcomes(
   runs: readonly GithubWorkflowRun[]
 ): Record<RunOutcomeFilter, number> {

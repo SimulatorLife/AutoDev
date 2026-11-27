@@ -64,15 +64,11 @@ export async function GET(
   );
   if (result.kind !== "ok") {
     const status =
-      result.kind === "unauthorized"
-        ? result.status
-        : result.kind === "http-error"
-          ? result.status
-          : result.kind === "unreachable"
+      (result.kind === "unauthorized") || (result.kind === "http-error") ? result.status : (result.kind === "unreachable"
             ? result.timedOut === true
               ? 504
               : 503
-            : 502;
+            : 502);
     return errorResponse(status, controlApiFailureCode(result), result.message);
   }
   return new Response(Buffer.from(result.data.bytes), {

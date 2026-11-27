@@ -15,17 +15,17 @@ export type ProviderUsageSummary =
     };
 
 /**
- * What the provider's usage panel shows.
- *
- * The summary is the measured answer, and the pending state is the answer
- * that has not arrived yet. The pending state is its own state rather than
- * one of the summary's, because a panel that is still waiting must not look
- * like a panel that measured nothing: the summary's states are all claims
- * about what the source did or did not report, and none of them is a claim
- * about a read that has not happened.
- */
+What the provider's usage panel shows.
+
+The summary is the measured answer, and the pending state is the answer
+that has not arrived yet. The pending state is its own state rather than
+one of the summary's, because a panel that is still waiting must not look
+like a panel that measured nothing: the summary's states are all claims
+about what the source did or did not report, and none of them is a claim
+about a read that has not happened.
+*/
 export type ProviderUsageReading =
-  { readonly status: "pending" } | ProviderUsageSummary;
+  ProviderUsageSummary | { readonly status: "pending" };
 
 function countForProvider(
   rows: readonly { readonly provider: string; readonly count: number }[] | null,
@@ -43,10 +43,10 @@ function countForProvider(
 }
 
 /**
- * Provider detail may show only provider-attempt telemetry. Logical requests
- * can span multiple providers, so their totals must remain in the shared Usage
- * view instead of being attributed to this provider.
- */
+Provider detail may show only provider-attempt telemetry. Logical requests
+can span multiple providers, so their totals must remain in the shared Usage
+view instead of being attributed to this provider.
+*/
 export function summarizeProviderUsage(
   source: UsageProviderAttemptSource,
   provider: string
@@ -63,6 +63,6 @@ export function summarizeProviderUsage(
 }
 
 export function providerUsagePath(provider: string): string {
-  const params = new URLSearchParams({ range: "7D", provider });
-  return `/usage?${params.toString()}`;
+  const parameters = new URLSearchParams({ range: "7D", provider });
+  return `/usage?${parameters.toString()}`;
 }

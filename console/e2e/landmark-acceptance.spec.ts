@@ -3,29 +3,29 @@ import { expect, test } from "@playwright/test";
 import { SWEEP_ROUTES, waitForPageContent } from "./acceptance-helpers.ts";
 
 /**
- * Every landmark the Console renders is named.
- *
- * A landmark is a region an operator can jump to, and they find it by its
- * name: the breadcrumb trail is found as "Breadcrumb" rather than as the first
- * navigation on the page, and the filter bars are found as "Usage filters" or
- * "Skill filters". The Console's own filter bar says why it names its form --
- * "an accessible name, so the form is a named landmark rather than an
- * anonymous one" -- and that rule was not held everywhere.
- *
- * The write surfaces inside table cells are where it was not held. Each row
- * of the providers table, the agents table and the skills table carries a form
- * that submits a write, and Chromium exposes an unnamed `<form>` as a
- * landmark: nineteen of them on the providers page, each one called "form",
- * each one naming nothing. A landmark list of thirty-four anonymous entries
- * is not a list an operator can use, and the cells those forms live in are
- * already groups.
- *
- * So a write surface is a group of controls rather than a landmark, and the
- * landmarks that are left are the ones an operator would want to jump to.
- *
- * The names are also unique within a kind, because a name that two landmarks
- * share is a name that finds the wrong one.
- */
+Every landmark the Console renders is named.
+
+A landmark is a region an operator can jump to, and they find it by its
+name: the breadcrumb trail is found as "Breadcrumb" rather than as the first
+navigation on the page, and the filter bars are found as "Usage filters" or
+"Skill filters". The Console's own filter bar says why it names its form --
+"an accessible name, so the form is a named landmark rather than an
+anonymous one" -- and that rule was not held everywhere.
+
+The write surfaces inside table cells are where it was not held. Each row
+of the providers table, the agents table and the skills table carries a form
+that submits a write, and Chromium exposes an unnamed `<form>` as a
+landmark: nineteen of them on the providers page, each one called "form",
+each one naming nothing. A landmark list of thirty-four anonymous entries
+is not a list an operator can use, and the cells those forms live in are
+already groups.
+
+So a write surface is a group of controls rather than a landmark, and the
+landmarks that are left are the ones an operator would want to jump to.
+
+The names are also unique within a kind, because a name that two landmarks
+share is a name that finds the wrong one.
+*/
 const NAMED_LANDMARK_ROLES = new Set([
   "banner",
   "complementary",
@@ -78,7 +78,7 @@ for (const path of ROUTES) {
       names.push((landmark.name?.value ?? "").trim());
       byRole.set(role, names);
     }
-    const ambiguous = [...byRole.entries()]
+    const ambiguous = [...byRole]
       .filter(([, names]) => new Set(names).size < names.length)
       .map(([role, names]) => `${role}: ${names.join(" | ")}`);
 

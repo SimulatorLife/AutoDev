@@ -19,7 +19,7 @@ import { LiveCountRefresh } from "../../components/navigation/LiveCountRefresh.t
 import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
 import {
   ControlFailureNotice,
-  type ControlFailureNoticeProps
+  type ControlFailureNoticeProps as ControlFailureNoticeProperties
 } from "../../components/status/ControlFailureNotice.ts";
 import { ReconciliationPanel } from "../../components/status/ConvergenceBadge.ts";
 import {
@@ -41,22 +41,22 @@ import { agentPath } from "./paths.ts";
 export interface AgentDetailViewProps {
   readonly agent: AgentDefinition;
   /**
-   * Desired-vs-actual state for this agent.
-   *
-   * The response guard makes this field a precondition of the page: without a
-   * well-formed reconciliation bundle the whole detail page fails closed rather
-   * than rendering half an agent. It was then dropped by the view mapper, so the
-   * page fetched it, validated it, and rendered none of it -- the only trace of
-   * a desired-vs-actual contract on the page was the agent's own `convergence`
-   * field, which is a different fact. `/prompts/[id]` renders the same panel
-   * from the same bundle; two detail pages for two mutable resources answered
-   * the same question differently.
-   */
+  Desired-vs-actual state for this agent.
+  
+  The response guard makes this field a precondition of the page: without a
+  well-formed reconciliation bundle the whole detail page fails closed rather
+  than rendering half an agent. It was then dropped by the view mapper, so the
+  page fetched it, validated it, and rendered none of it -- the only trace of
+  a desired-vs-actual contract on the page was the agent's own `convergence`
+  field, which is a different fact. `/prompts/[id]` renders the same panel
+  from the same bundle; two detail pages for two mutable resources answered
+  the same question differently.
+  */
   readonly reconciliation: ControlApiAgentDetailResponse["reconciliation"];
   readonly providers?: ControlApiProvidersResponse | undefined;
   readonly runtime?: ControlApiRuntimeResponse | undefined;
   readonly controlFailed?: boolean | undefined;
-  readonly controlRefusal?: ControlFailureNoticeProps["refusal"];
+  readonly controlRefusal?: ControlFailureNoticeProperties["refusal"];
 }
 
 export function AgentDetailView({

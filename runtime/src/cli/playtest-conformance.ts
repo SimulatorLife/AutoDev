@@ -1,21 +1,21 @@
 /**
- * `autodev playtest conformance` — prove the game's declarations work.
- *
- * `check` reads files and compares digests, which is the right gate for
- * approval: it answers "is this integration internally consistent". It cannot
- * answer "does this game actually run", because nothing in a binding file
- * proves that a declared `entry` resolves, that the named factory exists, or
- * that the five required methods produce protocol-shaped results.
- *
- * That gap is why a game could pass `check` and fail its first approved batch,
- * with the operator meeting the failure as a container timeout. Conformance
- * loads the game's real entry module and drives one real episode through the
- * real generic adapter and the real Runtime client, so a broken declaration is
- * a named message at onboarding instead of an unexplained run failure.
- *
- * It is read-only with respect to the game: nothing is written, and the episode
- * runs against the game's own code in-process.
- */
+`autodev playtest conformance` — prove the game's declarations work.
+
+`check` reads files and compares digests, which is the right gate for
+approval: it answers "is this integration internally consistent". It cannot
+answer "does this game actually run", because nothing in a binding file
+proves that a declared `entry` resolves, that the named factory exists, or
+that the five required methods produce protocol-shaped results.
+
+That gap is why a game could pass `check` and fail its first approved batch,
+with the operator meeting the failure as a container timeout. Conformance
+loads the game's real entry module and drives one real episode through the
+real generic adapter and the real Runtime client, so a broken declaration is
+a named message at onboarding instead of an unexplained run failure.
+
+It is read-only with respect to the game: nothing is written, and the episode
+runs against the game's own code in-process.
+*/
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { PassThrough } from "node:stream";
@@ -34,22 +34,30 @@ import { resolveEntryModule } from "../playtesting/entry-module-boundary.ts";
 import { startGenericAdapterHost } from "../playtesting/generic-adapter-host.ts";
 import { readAdapterContext } from "../playtesting/generic-adapter-main.ts";
 
-/** Bound so a game that never answers cannot hold the command open. */
+/**
+Bound so a game that never answers cannot hold the command open.
+*/
 const CONFORMANCE_DEADLINE_MS = 15_000;
 
 interface ConformanceFailure {
-  /** The protocol method, or `entry`/`factory`/`binding` for a load failure. */
+  /**
+  The protocol method, or `entry`/`factory`/`binding` for a load failure.
+  */
   readonly stage: string;
   readonly message: string;
 }
 
 export interface ConformanceReport {
   readonly ok: boolean;
-  /** The declared binding that was exercised, for the operator to confirm. */
+  /**
+  The declared binding that was exercised, for the operator to confirm.
+  */
   readonly tier: PlaytestAdapterBinding["tier"] | null;
   readonly methodsExercised: readonly PlaytestBindableMethod[];
   readonly failures: readonly ConformanceFailure[];
-  /** Episode id the game issued, so a run can be matched to this check. */
+  /**
+  Episode id the game issued, so a run can be matched to this check.
+  */
   readonly episodeId: string | null;
 }
 
@@ -98,11 +106,11 @@ async function beforeDeadline<T>(
 }
 
 /**
- * Read the game's schemas and declared tier.
- *
- * A binding that does not parse is reported here rather than thrown, so the
- * operator gets one message naming the file rather than a stack trace.
- */
+Read the game's schemas and declared tier.
+
+A binding that does not parse is reported here rather than thrown, so the
+operator gets one message naming the file rather than a stack trace.
+*/
 function readDeclaredContext(
   integrationDir: string
 ):
@@ -132,12 +140,12 @@ function readDeclaredContext(
 }
 
 /**
- * Drive one episode against the game's own code.
- *
- * Every call goes through the production client against the production host, so
- * a method that returns a loosely-shaped result is rejected here exactly as an
- * approved batch would reject it — with the same validator and the same message.
- */
+Drive one episode against the game's own code.
+
+Every call goes through the production client against the production host, so
+a method that returns a loosely-shaped result is rejected here exactly as an
+approved batch would reject it — with the same validator and the same message.
+*/
 export async function runPlaytestConformance(
   checkoutRoot: string
 ): Promise<ConformanceReport> {
@@ -177,7 +185,7 @@ export async function runPlaytestConformance(
   let episodeId: string | null = null;
 
   let host: Awaited<ReturnType<typeof startGenericAdapterHost>>;
-  let abandonedHostStart = false;
+  let isAbandonedHostStart = false;
   try {
     const startingHost = startGenericAdapterHost({
       binding,
@@ -192,7 +200,7 @@ export async function runPlaytestConformance(
       output: hostToClient
     });
     const closingLateHost = startingHost.then(async (started) => {
-      if (abandonedHostStart) await started.close();
+      if (isAbandonedHostStart) await started.close();
       return started;
     });
     host = await beforeDeadline(
@@ -201,7 +209,7 @@ export async function runPlaytestConformance(
       "loading the game entry"
     );
   } catch (error) {
-    abandonedHostStart = true;
+    isAbandonedHostStart = true;
     return {
       ok: false,
       tier: binding.tier,
@@ -221,9 +229,9 @@ export async function runPlaytestConformance(
 
   const call = async (
     method: PlaytestBindableMethod,
-    params: Readonly<Record<string, unknown>>
+    parameters: Readonly<Record<string, unknown>>
   ): Promise<Record<string, unknown> | null> => {
-    const result = await client.call(`game.${method}` as never, params, {
+    const result = await client.call(`game.${method}` as never, parameters, {
       deadlineMs: remainingDeadlineMs(deadlineAt, `game.${method}`)
     });
     if (!result.ok) {
@@ -325,11 +333,11 @@ export async function runPlaytestConformance(
 }
 
 /**
- * Load the game's entry the same way the adapter image does.
- *
- * Kept here rather than imported so `check`/`conformance` never depends on the
- * adapter entrypoint's module-level side effects.
- */
+Load the game's entry the same way the adapter image does.
+
+Kept here rather than imported so `check`/`conformance` never depends on the
+adapter entrypoint's module-level side effects.
+*/
 function createConformanceEntryLoader(
   integrationDir: string,
   checkoutRoot: string
@@ -357,11 +365,11 @@ function createConformanceEntryLoader(
 }
 
 /**
- * Render the report for an operator.
- *
- * A failure names the stage it happened at, because "conformance failed" is the
- * one message that helps nobody.
- */
+Render the report for an operator.
+
+A failure names the stage it happened at, because "conformance failed" is the
+one message that helps nobody.
+*/
 export function formatConformanceReport(report: ConformanceReport): string {
   if (report.ok) {
     return `playtest conformance passed (${report.tier} tier; exercised ${report.methodsExercised.join(", ")})`;

@@ -137,7 +137,7 @@ export default async function WorkspaceDetailPage({
       revision: basedOn ?? workspacesResult.data.revision,
       catalogStatus: workspacesResult.data.catalogStatus,
       reconciliation: workspacesResult.data.reconciliation,
-      ...(saveOutcome === undefined ? {} : { saveOutcome })
+      ...(saveOutcome !== undefined && { saveOutcome })
     })
   );
 }

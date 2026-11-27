@@ -1,13 +1,13 @@
 /**
- * `playtest.triageFindings`, driven through the real MCP server.
- *
- * Triage was a Core policy with no executor: §9's ordering existed, was tested
- * in Core, and nothing in Runtime or Console ever ran it over the findings the
- * system actually stores. This crosses the MCP boundary with a findings
- * repository so the ranked output and its explanations are the real handler's.
- *
- * The repository is the only substituted seam.
- */
+`playtest.triageFindings`, driven through the real MCP server.
+
+Triage was a Core policy with no executor: §9's ordering existed, was tested
+in Core, and nothing in Runtime or Console ever ran it over the findings the
+system actually stores. This crosses the MCP boundary with a findings
+repository so the ranked output and its explanations are the real handler's.
+
+The repository is the only substituted seam.
+*/
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -75,9 +75,11 @@ interface RankedRow {
 }
 
 interface Harness {
-  readonly call: (args: unknown) => Promise<Record<string, unknown>>;
-  /** Refusals arrive as `isError` payloads rather than thrown errors. */
-  readonly callExpectingRefusal: (args: unknown) => Promise<string>;
+  readonly call: (arguments_: unknown) => Promise<Record<string, unknown>>;
+  /**
+  Refusals arrive as `isError` payloads rather than thrown errors.
+  */
+  readonly callExpectingRefusal: (arguments_: unknown) => Promise<string>;
   readonly cleanup: () => void;
 }
 
@@ -85,10 +87,10 @@ async function harness(
   rows: readonly PlaytestFinding[],
   role: PlaytestMcpSession["role"] = "operator"
 ): Promise<Harness> {
-  const tmpRoot = realpathSync(
+  const temporaryRoot = realpathSync(
     mkdtempSync(path.join(tmpdir(), "playtest-triage-run-"))
   );
-  const artifactsDir = path.join(tmpRoot, "artifacts");
+  const artifactsDir = path.join(temporaryRoot, "artifacts");
   mkdirSync(artifactsDir, { recursive: true });
   const artifacts = new PlaytestArtifactStore({
     workspaceId: WORKSPACE_ID,
@@ -129,7 +131,7 @@ async function harness(
     playtestRunControl
   });
 
-  const invoke = async (args: unknown) => {
+  const invoke = async (arguments_: unknown) => {
     const tools = (
       server as unknown as {
         _registeredTools: Record<
@@ -138,21 +140,21 @@ async function harness(
         >;
       }
     )._registeredTools;
-    return (await tools["playtest.triageFindings"]!.handler(args)) as {
+    return (await tools["playtest.triageFindings"]!.handler(arguments_)) as {
       isError?: boolean;
       content: { type: string; text?: string }[];
     };
   };
 
   return {
-    call: async (args: unknown) => {
-      const result = await invoke(args);
+    call: async (arguments_: unknown) => {
+      const result = await invoke(arguments_);
       assert.equal(result.isError, undefined, "triage must not error");
       const text = result.content.find((part) => part.text)?.text ?? "{}";
       return JSON.parse(text) as Record<string, unknown>;
     },
-    callExpectingRefusal: async (args: unknown) => {
-      const result = await invoke(args);
+    callExpectingRefusal: async (arguments_: unknown) => {
+      const result = await invoke(arguments_);
       assert.equal(
         result.isError,
         true,
@@ -160,7 +162,7 @@ async function harness(
       );
       return result.content.find((part) => part.text)?.text ?? "";
     },
-    cleanup: () => rmSync(tmpRoot, { recursive: true, force: true })
+    cleanup: () => rmSync(temporaryRoot, { recursive: true, force: true })
   };
 }
 

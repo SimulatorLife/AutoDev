@@ -131,7 +131,7 @@ test("target-owned scored policy has deterministic ties and rejects non-finite s
     version: "1",
     cohort: "fixture",
     strategy: "bad",
-    score: () => Number.NaN
+    score: () => NaN
   });
   await assert.rejects(async () => {
     await invalid.chooseAction({

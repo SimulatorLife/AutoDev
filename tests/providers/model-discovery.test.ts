@@ -8,10 +8,10 @@ import {
 } from "@simulatorlife/autodev-runtime/providers/model-discovery";
 
 /**
- * The Anthropic listing reports the models the signed-in Claude account can
- * run. A model the account cannot run is not a choice an operator may assign
- * to a role, so the Runtime has to observe the account's own list.
- */
+The Anthropic listing reports the models the signed-in Claude account can
+run. A model the account cannot run is not a choice an operator may assign
+to a role, so the Runtime has to observe the account's own list.
+*/
 test("the Claude model list reports the account's models", () => {
   const models = parseAnthropicModelList({
     data: [
@@ -47,7 +47,7 @@ test("Claude discovery authenticates with the account's own OAuth token", async 
   const models = await discoverClaudeModels(
     { CLAUDE_CODE_OAUTH_TOKEN: "account-oauth-token" },
     (async (url: string, init: { headers: Record<string, string> }) => {
-      requests.push({ url: String(url), headers: init.headers });
+      requests.push({ url: url, headers: init.headers });
       return Response.json({
         data: [{ id: "claude-opus-5-5", display_name: "Opus" }]
       });
@@ -77,11 +77,11 @@ test("Claude discovery reports a missing account credential instead of guessing"
 });
 
 /**
- * The Codex account listing carries each model's base instructions, tool
- * descriptors and message payloads. A six-model account response is already
- * around 310 KB, so a bound that only fits a compact ID list rejects every
- * refresh and leaves the Runtime with a stale Codex model list.
- */
+The Codex account listing carries each model's base instructions, tool
+descriptors and message payloads. A six-model account response is already
+around 310 KB, so a bound that only fits a compact ID list rejects every
+refresh and leaves the Runtime with a stale Codex model list.
+*/
 test("the Codex model list tolerates an account-sized metadata payload", () => {
   const filler = "x".repeat(60_000);
   const models = parseCodexModelList({

@@ -21,14 +21,14 @@ export const UNATTRIBUTED_DIMENSION = "unattributed";
 export const MAX_UNKNOWN_WORKSPACE_IDS = 100;
 
 /**
- * Records `id` as the most recent entry, dropping the oldest beyond `limit`.
- *
- * This is the retention policy for the bounded sample of ids the router could
- * not attribute, which is an operator-visible diagnostic: the newest ids are
- * the useful ones, and the ring must not grow with the number of unknown
- * workspaces. Re-recording an id moves it to the newest position rather than
- * duplicating it.
- */
+Records `id` as the most recent entry, dropping the oldest beyond `limit`.
+
+This is the retention policy for the bounded sample of ids the router could
+not attribute, which is an operator-visible diagnostic: the newest ids are
+the useful ones, and the ring must not grow with the number of unknown
+workspaces. Re-recording an id moves it to the newest position rather than
+duplicating it.
+*/
 export function rememberRecentId<T>(ids: Set<T>, id: T, limit: number): void {
   ids.delete(id);
   ids.add(id);
@@ -95,11 +95,11 @@ export interface WorkspaceSkill {
   total: number;
   uses: number;
   /**
-   * How often a skill operation did not succeed: the read was refused or
-   * cancelled, or it ran and failed. It is counted beside the uses rather
-   * than folded into them, because "the skill was tried and failed" and
-   * "the skill was never tried" are different facts about the same skill.
-   */
+  How often a skill operation did not succeed: the read was refused or
+  cancelled, or it ran and failed. It is counted beside the uses rather
+  than folded into them, because "the skill was tried and failed" and
+  "the skill was never tried" are different facts about the same skill.
+  */
   errors: number;
   byStatus: Record<string, number>;
   byInvokeType: Record<string, number>;
@@ -142,32 +142,32 @@ export interface WorkspaceUsageBucket extends UsageBucket {
 }
 
 /**
- * Why an observation could not be attributed to a workspace.
- *
- * The reasons are the ones the router can actually hit on the live path: the
- * observation carried no workspace at all, or it carried an id the router was
- * never told about.
- */
+Why an observation could not be attributed to a workspace.
+
+The reasons are the ones the router can actually hit on the live path: the
+observation carried no workspace at all, or it carried an id the router was
+never told about.
+*/
 export interface AttributionReasons {
   missing_workspace: number;
   unknown_workspace_id: number;
 }
 
 /**
- * How the router attributed the observations it was given to a workspace.
- *
- * Every observation the router attributes is counted here, and the counts
- * agree with each other: `total` is what was attributed plus what was not,
- * and `byReason` says why an observation was not attributed. An observation
- * that was not attributed always carries exactly one reason, so the reasons
- * account for every unattributed observation.
- *
- * The provider/model identity gaps of the agents the router was told about
- * are not counted here: an agent is a turn or a spawn, while an attribution
- * diagnostic counts an observation, and one total that added the two
- * together would answer neither question. The registry that sees the agents
- * owns those gaps.
- */
+How the router attributed the observations it was given to a workspace.
+
+Every observation the router attributes is counted here, and the counts
+agree with each other: `total` is what was attributed plus what was not,
+and `byReason` says why an observation was not attributed. An observation
+that was not attributed always carries exactly one reason, so the reasons
+account for every unattributed observation.
+
+The provider/model identity gaps of the agents the router was told about
+are not counted here: an agent is a turn or a spawn, while an attribution
+diagnostic counts an observation, and one total that added the two
+together would answer neither question. The registry that sees the agents
+owns those gaps.
+*/
 export interface AttributionDiagnostics {
   total: number;
   attributed: number;
@@ -185,14 +185,14 @@ export interface AttributionDiagnosticsStatus {
 }
 
 /**
- * One attribution decision.
- *
- * An observation the router attributed to a workspace, or an observation it
- * could not, carrying the reason it could not. The reason is required
- * whenever the observation was not attributed, so the reasons always account
- * for every unattributed observation, and an unknown workspace id is required
- * whenever that is the reason.
- */
+One attribution decision.
+
+An observation the router attributed to a workspace, or an observation it
+could not, carrying the reason it could not. The reason is required
+whenever the observation was not attributed, so the reasons always account
+for every unattributed observation, and an unknown workspace id is required
+whenever that is the reason.
+*/
 export type AttributionDecision =
   | { attributed: true }
   | { attributed: false; reason: "missing_workspace" }
@@ -223,9 +223,13 @@ export interface LiveAgentsProjection {
   byRole: Record<string, number>;
   byOrigin: Record<string, number>;
   byWorkspace: Record<string, number>;
-  /** Live agents per provider, split by the role each agent serves. */
+  /**
+  Live agents per provider, split by the role each agent serves.
+  */
   byProviderRole: Record<string, Record<string, number>>;
-  /** Live agents per `<provider>/<model>`, split by role. */
+  /**
+  Live agents per `<provider>/<model>`, split by role.
+  */
   byModelRole: Record<string, Record<string, number>>;
 }
 
@@ -360,10 +364,10 @@ export function emptyUsageBucket(): UsageBucket {
 }
 
 /**
- * The origin a role implies. A request with no role is direct: the provider
- * that served it says nothing about where it sits in the agent tree, so a
- * caller that knows the request's thread passes its origin explicitly.
- */
+The origin a role implies. A request with no role is direct: the provider
+that served it says nothing about where it sits in the agent tree, so a
+caller that knows the request's thread passes its origin explicitly.
+*/
 export function usageOrigin(
   role?: string | null
 ): "orchestrator" | "subagent" | "direct" {
@@ -380,7 +384,9 @@ export function usageKey(
   return `${requestId}\0${provider}\0${model}`;
 }
 
-/** Keep path-like identities out of metric dimensions with stable, scoped hashes. */
+/**
+Keep path-like identities out of metric dimensions with stable, scoped hashes.
+*/
 function safePrivateIdentity(
   value: unknown,
   prefix: "ws" | "agent",
@@ -429,12 +435,12 @@ export function extractWorkspaceIdWithAmbiguity(attributes: unknown): {
 } {
   if (!attributes || typeof attributes !== "object")
     return { id: null, ambiguous: false };
-  const attrs = attributes as Record<string, unknown>;
+  const attributes_ = attributes as Record<string, unknown>;
   const found: string[] = [];
   for (const key of ["workspace_id", "workspace.id", "workspaceId"]) {
-    const val = attrs[key];
-    if (typeof val === "string" && val.trim()) {
-      found.push(val.trim());
+    const value = attributes_[key];
+    if (typeof value === "string" && value.trim()) {
+      found.push(value.trim());
     }
   }
   const unique = [...new Set(found)];
@@ -720,9 +726,7 @@ export function workspaceDimensionBuckets(
   }: { role?: string | null; provider: string; model: string }
 ): UsageBucket[] {
   return [
-    role
-      ? usageBucket(bucket.byRole, role)
-      : usageBucket(bucket.byRole, "unattributed"),
+    usageBucket(bucket.byRole, role ? role : "unattributed"),
     usageBucket(bucket.byModel, `${provider}/${model}`),
     usageBucket(bucket.byProvider, provider)
   ];
@@ -940,16 +944,15 @@ export class UsageTracker {
   }
 
   /**
-   * Record the client surface a session was started from. First observed wins:
-   * later requests for the same session never overwrite the recorded surface.
-   */
+  Record the client surface a session was started from. First observed wins:
+  later requests for the same session never overwrite the recorded surface.
+  */
   noteSessionClientSurface(
     sessionId: string | null | undefined,
     clientSurface: ClientSurface | null | undefined
   ): void {
     const validSessionId = safeAutoDevSessionId(sessionId);
-    if (!validSessionId || !isClientSurface(clientSurface)) return;
-    if (this.sessionClientSurfaces.has(validSessionId)) return;
+    if (!validSessionId || !isClientSurface(clientSurface) || this.sessionClientSurfaces.has(validSessionId)) return;
     this.sessionClientSurfaces.set(validSessionId, clientSurface);
     while (this.sessionClientSurfaces.size > 4096) {
       const oldest = this.sessionClientSurfaces.keys().next().value;
@@ -958,7 +961,9 @@ export class UsageTracker {
     }
   }
 
-  /** Return the first observed client surface for a session, or null. */
+  /**
+  Return the first observed client surface for a session, or null.
+  */
   sessionClientSurface(
     sessionId: string | null | undefined
   ): ClientSurface | null {
@@ -968,9 +973,9 @@ export class UsageTracker {
   }
 
   /**
-   * Project live session identities from the activity tracker, attaching each
-   * session's first observed client surface (or null when absent).
-   */
+  Project live session identities from the activity tracker, attaching each
+  session's first observed client surface (or null when absent).
+  */
   listLiveSessions(
     now: number = Date.now(),
     tracker?: AgentActivityTracker
@@ -1069,14 +1074,14 @@ export class UsageTracker {
   }
 
   /**
-   * Records one attribution decision.
-   *
-   * The counters are the whole point of the record: an observation the router
-   * could not attribute is counted once as unattributed and once under the
-   * reason it could not, so the reasons account for every unattributed
-   * observation. A diagnostic whose reasons disagree with its totals is worse
-   * than no diagnostic.
-   */
+  Records one attribution decision.
+  
+  The counters are the whole point of the record: an observation the router
+  could not attribute is counted once as unattributed and once under the
+  reason it could not, so the reasons account for every unattributed
+  observation. A diagnostic whose reasons disagree with its totals is worse
+  than no diagnostic.
+  */
   recordAttributionDiagnostic(decision: AttributionDecision): void {
     this.attributionDiagnostics.total += 1;
     if (decision.attributed) {
@@ -1091,13 +1096,13 @@ export class UsageTracker {
   }
 
   /**
-   * Adds an unresolvable workspace id to the bounded diagnostic ring.
-   *
-   * The ring is a sample of the ids the router could not attribute, kept here
-   * rather than exposed as `attributionDiagnostics.unknownWorkspaceIds` so that
-   * the bound and the insertion policy have one owner. A caller observing the
-   * id must not have to know how many are retained to add one correctly.
-   */
+  Adds an unresolvable workspace id to the bounded diagnostic ring.
+  
+  The ring is a sample of the ids the router could not attribute, kept here
+  rather than exposed as `attributionDiagnostics.unknownWorkspaceIds` so that
+  the bound and the insertion policy have one owner. A caller observing the
+  id must not have to know how many are retained to add one correctly.
+  */
   private rememberUnknownWorkspaceId(id: string): void {
     rememberRecentId(
       this.attributionDiagnostics.unknownWorkspaceIds,
@@ -1272,7 +1277,9 @@ export class UsageTracker {
     return workspaceAccumulator;
   }
 
-  /** Add a confirmed skill use to the exact live thread/workspace projection. */
+  /**
+  Add a confirmed skill use to the exact live thread/workspace projection.
+  */
   recordAgentSkillUse(
     subject: unknown,
     workspace: unknown,
@@ -1402,8 +1409,8 @@ export class UsageTracker {
     if (outcome !== "success") {
       bucket.lastFailure = {
         timestamp,
-        ...(failureClass === undefined ? {} : { class: failureClass }),
-        ...(status === undefined ? {} : { status })
+        ...(failureClass !== undefined && { class: failureClass }),
+        ...(status !== undefined && { status })
       };
     }
   }
@@ -1435,13 +1442,13 @@ export class UsageTracker {
   }
 
   /**
-   * Returns a merged route/skill usage projection for the currently live
-   * `subjects` (router thread identities). This ephemeral view survives
-   * eviction from global event rings while an agent remains live; it is never
-   * persisted and does not affect All/lifetime usage or wall-clock lookbacks.
-   * Any tracked subject not present in `subjects` is pruned as part of this
-   * call.
-   */
+  Returns a merged route/skill usage projection for the currently live
+  `subjects` (router thread identities). This ephemeral view survives
+  eviction from global event rings while an agent remains live; it is never
+  persisted and does not affect All/lifetime usage or wall-clock lookbacks.
+  Any tracked subject not present in `subjects` is pruned as part of this
+  call.
+  */
   activeUsageSnapshot(subjects: readonly string[]): UsageActiveSnapshot {
     const live = new Set(
       subjects.flatMap((subject) => [subject, safeAgentIdentity(subject)])
@@ -1622,7 +1629,9 @@ export class UsageTracker {
     ).length;
   }
 
-  /** Every live agent-kind activity record matching the filter. */
+  /**
+  Every live agent-kind activity record matching the filter.
+  */
   listLiveAgentActivity(
     filter: Parameters<AgentActivityTracker["listLive"]>[0] = {},
     at: number = Date.now(),
@@ -1719,7 +1728,7 @@ export class UsageTracker {
           mcpCapable: _mcpCapable,
           ...publicBucket
         } = bucket;
-        const skillsCapable =
+        const isSkillsCapable =
           bucket.skillsCapable === true || (bucket.skillsExposed ?? 0) > 0;
         const formatBridgeTools = (
           map: Map<string, WorkspaceBridgeTool> | undefined
@@ -1769,17 +1778,13 @@ export class UsageTracker {
             toolsRequested: bucket.toolsRequested ?? 0,
             toolsUnavailable: bucket.toolsUnavailable ?? 0,
             skillsExposed: bucket.skillsExposed ?? 0,
-            ...(skillsCapable
-              ? { bySkill: formatWorkspaceSkills(skills) }
-              : { bySkill: null }),
+             bySkill: isSkillsCapable ? formatWorkspaceSkills(skills) : null ,
             ...(bridgeObservations &&
             (bridgeObservations.tools?.size > 0 ||
-              bridgeObservations.skills?.size > 0)
-              ? {
+              bridgeObservations.skills?.size > 0) && {
                   bridgeTools: formatBridgeTools(bridgeObservations.tools),
                   bridgeSkills: formatBridgeSkills(bridgeObservations.skills)
-                }
-              : {})
+                })
           }
         ];
       })
@@ -1983,10 +1988,12 @@ function restoreWorkspaceMcp(
 ): void {
   if (isPlainRecord(saved.byMcp)) {
     for (const [mcp, count] of Object.entries(saved.byMcp)) {
-      if (typeof count === "number" && Number.isFinite(count) && count >= 0) {
-        current.byMcp[safeMetricLabel(mcp)] = count;
-        current.mcpCapable = true;
+      if (typeof count !== "number" || !Number.isFinite(count) || !(count >= 0)) {
+        continue;
       }
+
+      current.byMcp[safeMetricLabel(mcp)] = count;
+      current.mcpCapable = true;
     }
   }
   const mcpExposed = saved.mcpExposed;

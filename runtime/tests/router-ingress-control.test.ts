@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { startRouterIngressProcess } from "../src/router/ingress-main.ts";
 
@@ -18,19 +19,17 @@ function controlRequest(
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   return new Promise((resolve, reject) => {
     const contents = body === undefined ? undefined : JSON.stringify(body);
-    const req = httpRequest(
+    const request = httpRequest(
       {
         socketPath,
         path: pathname,
         method,
         headers: {
-          ...(token ? { authorization: "Bearer " + token } : {}),
-          ...(contents
-            ? {
+          ...(token && { authorization: "Bearer " + token }),
+          ...(contents && {
                 "content-type": "application/json",
                 "content-length": Buffer.byteLength(contents)
-              }
-            : {})
+              })
         }
       },
       async (response) => {
@@ -49,12 +48,31 @@ function controlRequest(
         }
       }
     );
-    req.once("error", reject);
-    req.end(contents);
+    request.once("error", reject);
+    request.end(contents);
   });
 }
 
-test("private control API spawns verified generations and rejects arbitrary endpoints", async () => {
+async function waitForWorkerRetirement(
+  socket: string,
+  generationId: string
+): Promise<Record<string, unknown>> {
+  const deadline = performance.now() + 10_000;
+  do {
+    const result = await controlRequest(
+      socket,
+      "GET",
+      "/v1/generations/" + generationId + "/retirement",
+      TOKEN
+    );
+    if (result.status === 200) return result.body;
+    assert.equal(result.status, 202);
+    await delay(25);
+  } while (performance.now() < deadline);
+  assert.fail("Worker did not retire: " + generationId);
+}
+
+test("private control API spawns verified generations and rejects arbitrary endpoints", { timeout: 20_000 }, async () => {
   const directory = await mkdtemp(
     path.join(tmpdir(), "autodev-ingress-control-")
   );
@@ -65,6 +83,7 @@ test("private control API spawns verified generations and rejects arbitrary endp
   const socket = path.join(directory, "control.sock");
   const workerCode = [
     'import { createServer } from "node:http";',
+    'import { writeFileSync } from "node:fs";',
     "const id = process.env.AUTODEV_ROUTER_WORKER_GENERATION;",
     "const server = createServer((req, res) => {",
     '  if (req.url === "/health/readiness") {',
@@ -73,12 +92,21 @@ test("private control API spawns verified generations and rejects arbitrary endp
     '      lifecycle:{ state:"ready", draining:false, changedAt:"fixture", activeResponseRequests:0 } }));',
     "    return;",
     "  }",
+    '  if (req.url === "/pid") { res.end(String(process.pid)); return; }',
+    '  if (req.url === "/stream") {',
+    '    res.writeHead(200, { "content-type": "text/event-stream" });',
+    '    res.write("data: " + id + "-first\\n\\n");',
+    "    return;",
+    "  }",
     "  res.end(id);",
     "});",
     'server.listen(0, "127.0.0.1", () => {',
     '  process.send?.({ type:"autodev-router-worker-listening", generationId:id, port:server.address().port });',
     "});",
-    'process.on("SIGTERM", () => server.close());'
+    'process.on("SIGTERM", () => {',
+    '  writeFileSync(new URL(id + ".sigterm", import.meta.url), "received");',
+    '  if (id !== "generation-b") server.close();',
+    "});"
   ].join("\n");
   await Promise.all([
     writeFile(entry, workerCode),
@@ -88,6 +116,8 @@ test("private control API spawns verified generations and rejects arbitrary endp
     AUTODEV_ROUTER_INGRESS_CONTROL_SOCKET: socket,
     AUTODEV_ROUTER_INGRESS_CONTROL_TOKEN: TOKEN,
     AUTODEV_ROUTER_RELEASES_DIRECTORY: releases,
+    AUTODEV_ROUTER_INGRESS_DRAIN_MS: "750",
+    AUTODEV_ROUTER_INGRESS_WORKER_SHUTDOWN_MS: "1000",
     CODEX_MODEL_ROUTER_HOST: "127.0.0.1",
     CODEX_MODEL_ROUTER_PORT: "0"
   });
@@ -153,15 +183,60 @@ test("private control API spawns verified generations and rejects arbitrary endp
     assert.equal(replaced.status, 200);
     assert.equal(replaced.body.retiringGenerationId, "generation-a");
     assert.equal(await (await fetch(base)).text(), "generation-b");
-    const retired = await controlRequest(
-      socket,
-      "GET",
-      "/v1/generations/generation-a/retirement",
-      TOKEN
+    assert.deepEqual(await waitForWorkerRetirement(socket, "generation-a"), {
+      id: "generation-a",
+      state: "retired",
+      inFlight: 0
+    });
+    assert.equal(
+      await readFile(path.join(releases, "generation-a.sigterm"), "utf8"),
+      "received"
     );
-    assert.ok(retired.status === 200 || retired.status === 202);
+
+    // B stalls an admitted stream and deliberately ignores SIGTERM. C must
+    // remain available while B drains, then B must be reaped by escalation.
+    const pid = Number(await (await fetch(base + "/pid")).text());
+    assert.ok(Number.isSafeInteger(pid) && pid > 0);
+    const stream = await fetch(base + "/stream");
+    const reader = stream.body!.getReader();
+    assert.match(
+      new TextDecoder().decode((await reader.read()).value),
+      /generation-b-first/
+    );
+    const aborted = assert.rejects(reader.read());
+    const third = await controlRequest(
+      socket,
+      "POST",
+      "/v1/generations",
+      TOKEN,
+      { id: "generation-c", entry }
+    );
+    assert.equal(third.status, 200);
+    assert.equal(third.body.retiringGenerationId, "generation-b");
+    assert.equal(await (await fetch(base)).text(), "generation-c");
+    assert.equal(
+      (await controlRequest(
+        socket,
+        "GET",
+        "/v1/generations/generation-b/retirement",
+        TOKEN
+      )).status,
+      202
+    );
+    await aborted;
+    assert.deepEqual(await waitForWorkerRetirement(socket, "generation-b"), {
+      id: "generation-b",
+      state: "retired",
+      inFlight: 0
+    });
+    assert.equal(
+      await readFile(path.join(releases, "generation-b.sigterm"), "utf8"),
+      "received"
+    );
+    assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
     const status = await controlRequest(socket, "GET", "/v1/status", TOKEN);
-    assert.equal(status.body.activeGenerationId, "generation-b");
+    assert.equal(status.body.activeGenerationId, "generation-c");
+    assert.equal(await (await fetch(base)).text(), "generation-c");
     const mode = (await import("node:fs/promises")).stat(socket);
     assert.equal((await mode).mode & 0o777, 0o600);
   } finally {

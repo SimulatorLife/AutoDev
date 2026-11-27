@@ -11,27 +11,27 @@ import {
 } from "./acceptance-helpers.ts";
 
 /**
- * Every page says what its resource is for.
- *
- * The header names the surface -- "Providers", "Playtesting" -- and a name on
- * its own does not tell an operator what the surface owns. The target state
- * asks for both: "The page header names the surface and states its purpose".
- *
- * The purpose line used to be a prop each page passed to the shell, and that
- * is how Playtesting came to be the one resource whose header named a surface
- * without saying what it owns: the sentence was written seven times over on
- * that page's seven render paths, and none of the seven was the happy one.
- * The sentence now belongs to the resource, in the canonical navigation
- * registry, and the shell resolves it -- so the line is on every route for a
- * resource, including its detail pages and the states where the read failed.
- *
- * This is the guard for the other half of that: the sentence has to be
- * *rendered*, on every canonical route, and it has to be the canonical one.
- */
+Every page says what its resource is for.
+
+The header names the surface -- "Providers", "Playtesting" -- and a name on
+its own does not tell an operator what the surface owns. The target state
+asks for both: "The page header names the surface and states its purpose".
+
+The purpose line used to be a prop each page passed to the shell, and that
+is how Playtesting came to be the one resource whose header named a surface
+without saying what it owns: the sentence was written seven times over on
+that page's seven render paths, and none of the seven was the happy one.
+The sentence now belongs to the resource, in the canonical navigation
+registry, and the shell resolves it -- so the line is on every route for a
+resource, including its detail pages and the states where the read failed.
+
+This is the guard for the other half of that: the sentence has to be
+*rendered*, on every canonical route, and it has to be the canonical one.
+*/
 
 /**
- * The purpose line in the header, and the section it belongs to.
- */
+The purpose line in the header, and the section it belongs to.
+*/
 async function statedPurpose(page: Page): Promise<{
   readonly section: string;
   readonly text: string;
@@ -47,12 +47,12 @@ async function statedPurpose(page: Page): Promise<{
 const ROUTES = [...CANONICAL_ROUTES, ...DETAIL_ROUTES];
 
 /**
- * A page that says the resource does not exist, or that the read failed.
- *
- * Those pages explain their own state rather than the resource's purpose, and
- * they say so in the header. They are the one case where the line in the
- * header is not the resource's sentence.
- */
+A page that says the resource does not exist, or that the read failed.
+
+Those pages explain their own state rather than the resource's purpose, and
+they say so in the header. They are the one case where the line in the
+header is not the resource's sentence.
+*/
 const STATE_PAGES =
   '[data-testid="not-found-page"], [data-testid="console-error-boundary"]';
 

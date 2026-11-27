@@ -1,14 +1,14 @@
 /**
- * Patch-set integrity test.
- *
- * Verifies the ordered AutoDev patch series applies cleanly to a fresh clone of
- * the pinned upstream OpenLIT revision (openlit-2.1.0, commit
- * 9938c66638666ca5d3bcb850350faa82e510924b).
- *
- * The full ordered series is applied to pinned OpenLIT, including patches 15-21,
- * then checked for expected additions and removals. Upstream drift requires
- * regenerating the patch series.
- */
+Patch-set integrity test.
+
+Verifies the ordered AutoDev patch series applies cleanly to a fresh clone of
+the pinned upstream OpenLIT revision (openlit-2.1.0, commit
+9938c66638666ca5d3bcb850350faa82e510924b).
+
+The full ordered series is applied to pinned OpenLIT, including patches 15-21,
+then checked for expected additions and removals. Upstream drift requires
+regenerating the patch series.
+*/
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -47,14 +47,14 @@ const PINNED_IMAGE_DIGEST =
 const PATCHES_DIR = join(repositoryRoot, "patches/openlit");
 
 function run(
-  cmd: string,
-  args: string[],
+  command: string,
+  arguments_: string[],
   cwd: string,
-  env?: NodeJS.ProcessEnv
+  environment?: NodeJS.ProcessEnv
 ) {
-  const res = spawnSync(cmd, args, {
+  const res = spawnSync(command, arguments_, {
     cwd,
-    ...(env ? { env } : {}),
+    ...(environment && { env: environment }),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -151,12 +151,12 @@ function freshClone(): string {
 }
 
 /**
- * Assert that every listed path is gone from the fork.
- *
- * Each retired OpenLIT product repeated this loop with its own path list and
- * its own wording, and the repetition is what pushed the removal assertions
- * past the complexity ceiling. One loop, so a retired product is one call.
- */
+Assert that every listed path is gone from the fork.
+
+Each retired OpenLIT product repeated this loop with its own path list and
+its own wording, and the repetition is what pushed the removal assertions
+past the complexity ceiling. One loop, so a retired product is one call.
+*/
 function assertPathsRemoved(
   dir: string,
   paths: readonly string[],
@@ -172,12 +172,12 @@ function assertPathsRemoved(
 }
 
 /**
- * Assert that every listed path survives in the fork.
- *
- * A removal is only half a subtraction: the read paths the remaining product
- * depends on have to still be there, and they were checked with the same
- * loop written out again.
- */
+Assert that every listed path survives in the fork.
+
+A removal is only half a subtraction: the read paths the remaining product
+depends on have to still be there, and they were checked with the same
+loop written out again.
+*/
 function assertPathsSurvive(
   dir: string,
   paths: readonly string[],
@@ -189,11 +189,11 @@ function assertPathsSurvive(
 }
 
 /**
- * The OpenLIT board-authoring and Vault administration products are gone;
- * their surviving read paths are not. Kept out of the apply test body so the
- * per-patch removals stay readable and the callback stays under the
- * complexity ceiling.
- */
+The OpenLIT board-authoring and Vault administration products are gone;
+their surviving read paths are not. Kept out of the apply test body so the
+per-patch removals stay readable and the callback stays under the
+complexity ceiling.
+*/
 function assertRemovedOpenlitAdminSurfaces(dir: string) {
   // The board-authoring product is gone: there is no board,
   // folder, widget or board-widget module, and no ClickHouse table
@@ -959,7 +959,7 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
   for (const column of ["canShare", "canEdit", "canDelete"]) {
     assert.match(
       sharingSql,
-      new RegExp(String.raw`DROP COLUMN "${column}"`),
+      new RegExp(`DROP COLUMN "${column}"`),
       `${column} must be dropped from existing installs`
     );
   }
@@ -998,17 +998,17 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
 
   // Ownership replaces grants: the caller's own link is the check now, and it
   // must refuse a config that is not the caller's.
-  const dbConfigModule = readFileSync(
+  const databaseConfigModule = readFileSync(
     join(dir, "src/client/src/lib/db-config.ts"),
     "utf8"
   );
   assert.doesNotMatch(
-    dbConfigModule,
+    databaseConfigModule,
     /shareDBConfig|moveSharedDBConfigToDBUser|checkPermissionForDbAction/u,
     "the sharing and grant-gate functions must be gone from the db-config owner"
   );
   assert.match(
-    dbConfigModule,
+    databaseConfigModule,
     /async function requireOwnedDBConfig\(/u,
     "mutating a config must be gated on ownership"
   );
@@ -1041,7 +1041,7 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     /GET \/api\/providers\/providers/u,
     "the doc comment naming the wrong path is what misled both callers"
   );
-  const evaluationConfiguration = readFileSync(
+  const evaluationConfig_ = readFileSync(
     join(
       dir,
       "src/client/src/components/(playground)/evaluations/evaluation-configuration.tsx"
@@ -1049,7 +1049,7 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     "utf8"
   );
   assert.doesNotMatch(
-    evaluationConfiguration,
+    evaluationConfig_,
     /"\/api\/providers\/providers"/u,
     "the evaluation configuration must not request a nonexistent provider route"
   );
@@ -1296,12 +1296,12 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
 
   // A framework error page is a document, not a message. Passing the body
   // through put a literal "<!DOCTYPE html>..." into every error toast.
-  const apiUtils = readFileSync(
+  const apiUtilities = readFileSync(
     join(dir, "src/client/src/utils/api.ts"),
     "utf8"
   );
   assert.match(
-    apiUtils,
+    apiUtilities,
     /\/\^\\s\*<\/\.test\(raw\)/u,
     "an HTML error body must not become the error message"
   );
@@ -1678,7 +1678,7 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
   // The scope is derived from the client tree, not transcribed: a literal list
   // would be green for the files it names and blind to any module added later,
   // which is how this gate survived across four patches.
-  const clientSrc = join(dir, "src/client/src");
+  const clientSource_ = join(dir, "src/client/src");
   const modules = clientSourceModules(join(dir, "src/client"));
   assert.ok(
     modules.length > 200,
@@ -1692,7 +1692,7 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     "components/(playground)/context/header.tsx"
   ]);
   const gatedReads = modules.filter((rel) => {
-    const body = readFileSync(join(clientSrc, rel), "utf8");
+    const body = readFileSync(join(clientSource_, rel), "utf8");
     return (
       body.includes('pingStatus === "success"') &&
       !AFFORDANCE_GATES.has(rel.replaceAll("\\", "/"))
@@ -1720,7 +1720,7 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     "app/(playground)/dashboard/llm/token-charts.tsx",
     "app/(playground)/dashboard/vector/operations.tsx"
   ]) {
-    const source = readFileSync(join(clientSrc, site), "utf8");
+    const source = readFileSync(join(clientSource_, site), "utf8");
     // The surface must BRANCH on the state, not merely name it. A bare
     // identifier matches a renamed or unused declaration too, which is how a
     // guard ends up passing on code that reports an unreadable read as empty.
@@ -1740,7 +1740,7 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
   // "unavailable" and "nothing matched these filters" both rendered — the page
   // contradicted itself. The empty arm must defer to the failed read.
   const signalRecords = readFileSync(
-    join(clientSrc, "components/(playground)/observability/signal-records.tsx"),
+    join(clientSource_, "components/(playground)/observability/signal-records.tsx"),
     "utf8"
   );
   assert.match(
@@ -1750,7 +1750,7 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
   );
   assert.match(
     readFileSync(
-      join(clientSrc, "components/(playground)/observability/signal-list.tsx"),
+      join(clientSource_, "components/(playground)/observability/signal-list.tsx"),
       "utf8"
     ),
     /unreadable=\{[^}]*\b(listError|error)\b/u,
@@ -1761,7 +1761,7 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
   // surface grows its own second empty-state component.
   assert.match(
     readFileSync(
-      join(clientSrc, "components/(playground)/intermediate-state.tsx"),
+      join(clientSource_, "components/(playground)/intermediate-state.tsx"),
       "utf8"
     ),
     /props\.children \?\? "No data to display"/u,
@@ -1773,7 +1773,7 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
   // ("2026-10-05 20:18:07.020"). Drawn verbatim, six ticks collide into
   // "20:18:07.0202026-10-05 23:18:07.020" across a card's width. One shared
   // formatter owns the tick text so four charts cannot drift apart.
-  const axisHelper = join(clientSrc, "helpers/client/chart-axis.ts");
+  const axisHelper = join(clientSource_, "helpers/client/chart-axis.ts");
   assert.ok(
     existsSync(axisHelper),
     "the chart tick formatter must exist; four time-series axes depend on it"
@@ -1788,7 +1788,7 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     "app/(playground)/dashboard/llm/token-charts.tsx",
     "app/(playground)/dashboard/evaluations/metrics-per-time.tsx"
   ]) {
-    const source = readFileSync(join(clientSrc, site), "utf8");
+    const source = readFileSync(join(clientSource_, site), "utf8");
     const compactSource = source.replaceAll(/\s+/gu, " ");
     const axes = compactSource.match(/<XAxis\s+dataKey="request_time"/gu) ?? [];
     assert.ok(
@@ -1805,31 +1805,31 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
 }
 
 /**
- * The fork's dead client modules are gone, and so are the dependency and the
- * unresolvable import that came with them.
- *
- * `60-remove-dead-client-modules.patch` deletes six modules that nothing
- * imports any more, drops the Radix alert-dialog package the deleted dialog
- * owned, and removes a `tiny-cookie` import that no source file used and that
- * the manifest never declared. That import could not resolve: `tiny-cookie`
- * survived in the lockfile only as a stale entry, and the fork's own suite
- * installs from that lockfile, so nothing inside the fork could see the
- * break.
- *
- * The dependency contract is checked against the patched tree rather than
- * against the patch's own diff, so a later patch that introduces an import
- * the lockfile does not install fails here as well.
- */
+The fork's dead client modules are gone, and so are the dependency and the
+unresolvable import that came with them.
+
+`60-remove-dead-client-modules.patch` deletes six modules that nothing
+imports any more, drops the Radix alert-dialog package the deleted dialog
+owned, and removes a `tiny-cookie` import that no source file used and that
+the manifest never declared. That import could not resolve: `tiny-cookie`
+survived in the lockfile only as a stale entry, and the fork's own suite
+installs from that lockfile, so nothing inside the fork could see the
+break.
+
+The dependency contract is checked against the patched tree rather than
+against the patch's own diff, so a later patch that introduces an import
+the lockfile does not install fails here as well.
+*/
 /**
- * The fork's ClickHouse client has to state its own request timeout.
- *
- * The library's default was 30 seconds, and it was the reason the widest
- * Usage range reported no metrics: the queries at the back of the fan-out
- * were still running when the default ceiling fired, and the client closed
- * the socket on them. A ceiling the service inherits silently is a ceiling
- * nobody chose, and the Console's own client is written against the number
- * the service states -- so the two have to be the same number.
- */
+The fork's ClickHouse client has to state its own request timeout.
+
+The library's default was 30 seconds, and it was the reason the widest
+Usage range reported no metrics: the queries at the back of the fan-out
+were still running when the default ceiling fired, and the client closed
+the socket on them. A ceiling the service inherits silently is a ceiling
+nobody chose, and the Console's own client is written against the number
+the service states -- so the two have to be the same number.
+*/
 function assertClickHouseRequestTimeoutStated(dir: string): void {
   const client = readFileSync(
     join(dir, "src/client/src/lib/platform/clickhouse/clickhouse-client.ts"),
@@ -1973,18 +1973,18 @@ function assertDeadClientModulesRemoved(dir: string): void {
 }
 
 /**
- * The fork's provider and model administration is gone, and the read that
- * survives is the one the evaluations page actually uses.
- *
- * `61-remove-provider-model-administration.patch` deletes the write half of
- * the provider route and the whole `/api/providers/models` tree. Both wrote
- * straight into the provider metadata and per-provider model tables that
- * AutoDev's Control API owns, and neither had a page, a caller or an SDK --
- * a provider created that way would have existed in OpenLIT and nowhere
- * else. The read stays because the evaluations configuration page lists
- * providers and their models to pick a judge from, and the migrations still
- * seed both tables, so the picker still has a catalog.
- */
+The fork's provider and model administration is gone, and the read that
+survives is the one the evaluations page actually uses.
+
+`61-remove-provider-model-administration.patch` deletes the write half of
+the provider route and the whole `/api/providers/models` tree. Both wrote
+straight into the provider metadata and per-provider model tables that
+AutoDev's Control API owns, and neither had a page, a caller or an SDK --
+a provider created that way would have existed in OpenLIT and nowhere
+else. The read stays because the evaluations configuration page lists
+providers and their models to pick a judge from, and the migrations still
+seed both tables, so the picker still has a catalog.
+*/
 function assertProviderModelAdministrationRemoved(dir: string): void {
   assertPathsRemoved(
     dir,
@@ -2147,7 +2147,7 @@ test(
       "src/client/src/lib/platform/connectors/memory/autodev/adapter.ts",
       "src/client/src/__tests__/lib/platform/connectors/memory-autodev-adapter.test.ts"
     ];
-    const removedAutoDevProductFiles = [
+    const removedAutoDevelopmentProductFiles = [
       "src/client/src/app/(playground)/autodev/layout.tsx",
       "src/client/src/app/(playground)/autodev/page.tsx",
       "src/client/src/app/(playground)/autodev/providers/page.tsx",
@@ -2160,7 +2160,7 @@ test(
       "src/client/src/app/(playground)/autodev/api/runtime/route.ts",
       "src/client/src/app/(playground)/autodev/api/providers/[provider]/roles/[role]/route.ts"
     ];
-    for (const rel of removedAutoDevProductFiles) {
+    for (const rel of removedAutoDevelopmentProductFiles) {
       assert.equal(
         existsSync(join(dir, rel)),
         false,
@@ -2190,29 +2190,29 @@ test(
       const full = join(dir, rel);
       assert.ok(statSync(full).isFile(), `expected file after patch: ${rel}`);
     }
-    const autoDevMemoryAdapter = readFileSync(
+    const autoDevelopmentMemoryAdapter = readFileSync(
       join(
         dir,
         "src/client/src/lib/platform/connectors/memory/autodev/adapter.ts"
       ),
       "utf8"
     );
-    assert.match(autoDevMemoryAdapter, /forwardToControlApi/u);
+    assert.match(autoDevelopmentMemoryAdapter, /forwardToControlApi/u);
     assert.match(
-      autoDevMemoryAdapter,
+      autoDevelopmentMemoryAdapter,
       /add: false[\s\S]*update: false[\s\S]*delete: false/u
     );
-    assert.match(autoDevMemoryAdapter, /workspaceId/u);
-    assert.match(autoDevMemoryAdapter, /actionsFor\(memory/u);
-    assert.match(autoDevMemoryAdapter, /id: "invalidate"/u);
-    assert.match(autoDevMemoryAdapter, /id: "verify"/u);
-    assert.match(autoDevMemoryAdapter, /id: "revise"/u);
-    assert.match(autoDevMemoryAdapter, /id: "supersede"/u);
-    assert.match(autoDevMemoryAdapter, /id: "promote-skill"/u);
-    assert.match(autoDevMemoryAdapter, /\/why\?/u);
-    assert.match(autoDevMemoryAdapter, /presentExperience\(experience\)/u);
+    assert.match(autoDevelopmentMemoryAdapter, /workspaceId/u);
+    assert.match(autoDevelopmentMemoryAdapter, /actionsFor\(memory/u);
+    assert.match(autoDevelopmentMemoryAdapter, /id: "invalidate"/u);
+    assert.match(autoDevelopmentMemoryAdapter, /id: "verify"/u);
+    assert.match(autoDevelopmentMemoryAdapter, /id: "revise"/u);
+    assert.match(autoDevelopmentMemoryAdapter, /id: "supersede"/u);
+    assert.match(autoDevelopmentMemoryAdapter, /id: "promote-skill"/u);
+    assert.match(autoDevelopmentMemoryAdapter, /\/why\?/u);
+    assert.match(autoDevelopmentMemoryAdapter, /presentExperience\(experience\)/u);
     assert.doesNotMatch(
-      autoDevMemoryAdapter,
+      autoDevelopmentMemoryAdapter,
       /from ["']pg["']|postgres-memory-repository/u
     );
     // 23-autodev-memory-visible-connector adds the read-only AutoDev
@@ -2565,21 +2565,21 @@ test(
     );
 
     assertRemovedOpenlitAdminSurfaces(dir);
-    const seedLib = readFileSync(
+    const seedLibrary = readFileSync(
       join(dir, "src/client/prisma/seed-lib.js"),
       "utf8"
     );
-    const databaseConfigUserUpsertStart = seedLib.indexOf(
+    const databaseConfigUserUpsertStart = seedLibrary.indexOf(
       "await prisma.databaseConfigUser.upsert("
     );
     assert.notEqual(databaseConfigUserUpsertStart, -1);
-    const databaseConfigUserUpsertEnd = seedLib.indexOf(
+    const databaseConfigUserUpsertEnd = seedLibrary.indexOf(
       "\n\t});",
       databaseConfigUserUpsertStart
     );
     assert.notEqual(databaseConfigUserUpsertEnd, -1);
     assert.doesNotMatch(
-      seedLib.slice(databaseConfigUserUpsertStart, databaseConfigUserUpsertEnd),
+      seedLibrary.slice(databaseConfigUserUpsertStart, databaseConfigUserUpsertEnd),
       /can(?:Edit|Delete|Share):/u,
       "patch 39 removes deleted permission columns from the seed upsert"
     );
@@ -2815,32 +2815,32 @@ test(
     // connector consumers after patch 80 retires the page-only proxy route.
     assert.match(messagesEn, /MEMORY_SESSION_COHORTS_TITLE/u);
     assert.match(messagesEn, /MEMORY_SESSION_COHORTS_NOTE/u);
-    assert.match(autoDevMemoryAdapter, /readSessionOutcomeCohorts/u);
+    assert.match(autoDevelopmentMemoryAdapter, /readSessionOutcomeCohorts/u);
     assert.match(
-      autoDevMemoryAdapter,
+      autoDevelopmentMemoryAdapter,
       /autodev-memory-session-outcome-cohorts-v1/u
     );
-    assert.match(autoDevMemoryAdapter, /conflictingOutcomeSessionCount/u);
+    assert.match(autoDevelopmentMemoryAdapter, /conflictingOutcomeSessionCount/u);
 
     // Patch 22 extends the same CE AutoDev Control API adapter with
     // curator-authored injection-use assessment reads/writes and a bounded,
     // count-only use cohort query. It does not add percentages or any rate
     // or causal metric.
-    assert.match(autoDevMemoryAdapter, /readInjectionUseAssessments\(/u);
-    assert.match(autoDevMemoryAdapter, /reportInjectionUse\(/u);
-    assert.match(autoDevMemoryAdapter, /readInjectionUseCohorts\(/u);
+    assert.match(autoDevelopmentMemoryAdapter, /readInjectionUseAssessments\(/u);
+    assert.match(autoDevelopmentMemoryAdapter, /reportInjectionUse\(/u);
+    assert.match(autoDevelopmentMemoryAdapter, /readInjectionUseCohorts\(/u);
     assert.match(
-      autoDevMemoryAdapter,
+      autoDevelopmentMemoryAdapter,
       /USE_COHORT_ASSIGNED_MODES[\s\S]*?"disabled"/u
     );
-    assert.match(autoDevMemoryAdapter, /USE_COHORT_ELIGIBLE_MODES/u);
-    assert.match(autoDevMemoryAdapter, /injection\.id/u);
+    assert.match(autoDevelopmentMemoryAdapter, /USE_COHORT_ELIGIBLE_MODES/u);
+    assert.match(autoDevelopmentMemoryAdapter, /injection\.id/u);
     assert.match(
-      autoDevMemoryAdapter,
+      autoDevelopmentMemoryAdapter,
       /injectionResult !== "injected"[\s\S]*?memoryIds/u
     );
     assert.doesNotMatch(
-      autoDevMemoryAdapter,
+      autoDevelopmentMemoryAdapter,
       /correlationToken\s*:\s*(?:injection|joined|value)|reporterId\s*:/u,
       "patch 22 must not project opaque correlation tokens or reporter identity to the UI"
     );
@@ -2928,7 +2928,7 @@ test(
       const compose = readFileSync(join(dir, "docker-compose.yml"), "utf8");
       assert.doesNotMatch(
         compose,
-        /^\u0020{2}(?:otel-collector|otelcol|autodev-collector):/mu,
+        /^\u{20}{2}(?:otel-collector|otelcol|autodev-collector):/mu,
         "patch 19 must not introduce a separate Collector service"
       );
     }
@@ -3347,9 +3347,7 @@ test("27-remove-otter-chat-docs-onboarding-chrome removes Otter/chat/docs/onboar
     for (const line of docsGrep.stdout.split("")) {
       if (!line) continue;
       const rel = line.slice(dir.length + 1);
-      if (rel.includes("__tests__")) continue;
-      if (rel.endsWith("openground/sdk-usage-dialog.tsx")) continue;
-      if (rel.endsWith("agents/no-coding-agents.tsx")) continue;
+      if (rel.includes("__tests__") || rel.endsWith("openground/sdk-usage-dialog.tsx") || rel.endsWith("agents/no-coding-agents.tsx")) continue;
       docsOffenders.push(rel);
     }
     assert.deepEqual(
@@ -3388,40 +3386,40 @@ test("27-remove-otter-chat-docs-onboarding-chrome removes Otter/chat/docs/onboar
   }
 });
 test("openlit pin metadata matches the published digest and image tag", () => {
-  const env = readFileSync(
+  const environment = readFileSync(
     join(repositoryRoot, "config/openlit/openlit.env"),
     "utf8"
   );
   assert.ok(
-    env.includes(PINNED_IMAGE_DIGEST),
+    environment.includes(PINNED_IMAGE_DIGEST),
     `openlit.env must pin image digest ${PINNED_IMAGE_DIGEST}`
   );
   assert.ok(
-    env.includes(PINNED_IMAGE_TAG),
+    environment.includes(PINNED_IMAGE_TAG),
     `openlit.env must include image tag ${PINNED_IMAGE_TAG} (NOT the source release tag ${PINNED_TAG})`
   );
   assert.doesNotMatch(
-    env,
+    environment,
     /^OTLP_REQUIRE_API_KEY=/mu,
     "OpenLIT 2.1.0 does not consume an OTLP_REQUIRE_API_KEY setting"
   );
   assert.doesNotMatch(
-    env,
+    environment,
     /^(?:OPENLIT_DB_PASSWORD|AUTODEV_CONTROL_API_TOKEN|OPENLIT_OTLP_API_KEY)=/mu,
     "tracked openlit.env must never contain generated secrets"
   );
   assert.doesNotMatch(
-    env,
+    environment,
     /^OPENLIT_DB_PASSWORD=(?:openlit|replace-me)/mu,
     "openlit.env must not commit a runnable weak default for OPENLIT_DB_PASSWORD"
   );
   assert.doesNotMatch(
-    env,
+    environment,
     /^AUTODEV_CONTROL_API_TOKEN=(?:openlit|replace-me)/mu,
     "openlit.env must not commit a runnable weak default for AUTODEV_CONTROL_API_TOKEN"
   );
   assert.match(
-    env,
+    environment,
     /OPENLIT_IMAGE=autodev-openlit:[^\s]+-patched/u,
     "openlit.env must default OPENLIT_IMAGE to the local patched image"
   );

@@ -132,7 +132,9 @@ function observationContract(): PlaytestObservationContract {
   };
 }
 
-/** The committed build a batch resolved from the approved checkout. */
+/**
+The committed build a batch resolved from the approved checkout.
+*/
 function build(
   overrides: Partial<WorkspacePlaytestBuild> = {}
 ): WorkspacePlaytestBuild {
@@ -217,7 +219,7 @@ function sandboxFixture(
   const sentMethods: string[] = [];
   const snapshotBytes = Buffer.from("synthetic checkpoint bytes", "utf8");
   const snapshotSha = createHash("sha256").update(snapshotBytes).digest("hex");
-  const snapshotRef = {
+  const snapshotReference = {
     artifactId: "adapter-snapshot-1",
     sha256: snapshotSha,
     bytes: snapshotBytes.byteLength,
@@ -262,13 +264,13 @@ function sandboxFixture(
       JSON.stringify({ jsonrpc: "2.0", id, result: response }) + "\n"
     );
   };
-  const notify = (method: string, params: unknown): void => {
-    stdout.write(JSON.stringify({ jsonrpc: "2.0", method, params }) + "\n");
+  const notify = (method: string, parameters: unknown): void => {
+    stdout.write(JSON.stringify({ jsonrpc: "2.0", method, params: parameters }) + "\n");
   };
   const handleBranchRequest = (
     method: string,
     id: string,
-    params: Record<string, unknown>
+    parameters: Record<string, unknown>
   ): boolean => {
     if (method === "game.replay") {
       revision = options.branchStep ?? 2;
@@ -279,7 +281,7 @@ function sandboxFixture(
         replayStatus: "verified",
         transitionHash: "d".repeat(64),
         firstDivergentStep: null,
-        replayedThroughStep: params.throughStep,
+        replayedThroughStep: parameters.throughStep,
         stateHash:
           mismatch === "hidden-state" ? "a".repeat(64) : "f".repeat(64),
         rngCheckpoint: {
@@ -293,9 +295,9 @@ function sandboxFixture(
       return true;
     }
     if (method === "game.snapshot") {
-      const withArtifact = params.includeArtifact === true;
+      const isWithArtifact = parameters.includeArtifact === true;
       respond(id, {
-        episodeId: params.episodeId,
+        episodeId: parameters.episodeId,
         revision,
         stateHash: "f".repeat(64),
         rngCheckpoint: {
@@ -304,8 +306,8 @@ function sandboxFixture(
           stateHash: "e".repeat(64),
           reproducible: true
         },
-        snapshot: withArtifact ? snapshotRef : null,
-        integrityHash: withArtifact ? snapshotSha : null
+        snapshot: isWithArtifact ? snapshotReference : null,
+        integrityHash: isWithArtifact ? snapshotSha : null
       });
       return true;
     }
@@ -332,7 +334,7 @@ function sandboxFixture(
   const handleGameRequest = (
     method: string,
     id: string,
-    params: Record<string, unknown>
+    parameters: Record<string, unknown>
   ): void => {
     switch (method) {
       case "game.reset": {
@@ -353,7 +355,7 @@ function sandboxFixture(
       }
       case "game.observe": {
         respond(id, {
-          episodeId: params.episodeId,
+          episodeId: parameters.episodeId,
           revision,
           observation: { room: "hall", secret: "engine-only-value" },
           turnContext: null,
@@ -363,15 +365,11 @@ function sandboxFixture(
       }
       case "game.legalActions": {
         respond(id, {
-          episodeId: params.episodeId,
+          episodeId: parameters.episodeId,
           revision,
           actions: options.noLegalActions
             ? []
-            : options.singleLegalAction
-              ? [{ actionId: "advance", description: "Advance" }]
-              : options.branchAlternativeNotLegal
-                ? [{ actionId: "advance", description: "Advance" }]
-                : [
+            : options.singleLegalAction || options.branchAlternativeNotLegal ? [{ actionId: "advance", description: "Advance" }] : [
                     { actionId: "advance", description: "Advance" },
                     { actionId: "wait", description: "Wait" }
                   ]
@@ -383,9 +381,9 @@ function sandboxFixture(
         revision += 1;
         if (options.terminal === false) {
           respond(id, {
-            episodeId: params.episodeId,
+            episodeId: parameters.episodeId,
             revision,
-            acceptedActionId: params.actionId,
+            acceptedActionId: parameters.actionId,
             eventIds: [],
             terminal: false
           });
@@ -404,16 +402,16 @@ function sandboxFixture(
         if (options.emitEventNotifications !== false) {
           eventSequence += 1;
           notify("game.event", {
-            episodeId: params.episodeId,
+            episodeId: parameters.episodeId,
             revision,
             eventSequence,
             event
           });
         }
         respond(id, {
-          episodeId: params.episodeId,
+          episodeId: parameters.episodeId,
           revision,
-          acceptedActionId: params.actionId,
+          acceptedActionId: parameters.actionId,
           eventIds: [options.eventId ?? "event-1"],
           terminal: true
         });
@@ -424,12 +422,12 @@ function sandboxFixture(
           options.captureEventsOmittedCount === undefined
             ? stepEvents.filter(
                 (event) =>
-                  event.step >= Number(params.startStep) &&
-                  event.step <= Number(params.endStep)
+                  event.step >= Number(parameters.startStep) &&
+                  event.step <= Number(parameters.endStep)
               )
             : [];
         respond(id, {
-          episodeId: params.episodeId,
+          episodeId: parameters.episodeId,
           revision,
           events,
           omittedCount: options.captureEventsOmittedCount ?? 0
@@ -438,7 +436,7 @@ function sandboxFixture(
       }
       case "game.outcome": {
         respond(id, {
-          episodeId: params.episodeId,
+          episodeId: parameters.episodeId,
           revision,
           state: options.terminal === false ? "partial" : "terminal",
           outcome: {
@@ -453,7 +451,7 @@ function sandboxFixture(
       }
       case "game.cancel": {
         respond(id, {
-          requestId: params.requestId,
+          requestId: parameters.requestId,
           acknowledged: true,
           episodeDisposition: "unknown"
         });
@@ -467,7 +465,7 @@ function sandboxFixture(
   const processRequest = (request: Record<string, unknown>): void => {
     const method = String(request.method);
     const id = String(request.id);
-    const params = request.params as Record<string, unknown>;
+    const parameters = request.params as Record<string, unknown>;
     sentMethods.push(method);
     if (method === "game.capabilities") {
       respond(
@@ -480,8 +478,8 @@ function sandboxFixture(
       );
       return;
     }
-    if (handleBranchRequest(method, id, params)) return;
-    handleGameRequest(method, id, params);
+    if (handleBranchRequest(method, id, parameters)) return;
+    handleGameRequest(method, id, parameters);
   };
   stdin.on("data", (chunk: Buffer) => {
     requestBuffer += chunk.toString("utf8");
@@ -917,7 +915,7 @@ test("episode runner preserves omitted events as named missing evidence", async 
   }
 });
 
-interface SyntheticArmConfiguration {
+interface SyntheticArmConfig {
   readonly name: "baseline" | "candidate";
   readonly batchId: string;
   readonly buildSha: string;
@@ -926,7 +924,7 @@ interface SyntheticArmConfiguration {
 
 async function runSyntheticArm(input: {
   readonly artifacts: PlaytestArtifactStore;
-  readonly arm: SyntheticArmConfiguration;
+  readonly arm: SyntheticArmConfig;
   readonly seed: string;
   readonly index: number;
   readonly metricId: string;
@@ -981,8 +979,8 @@ async function runSyntheticImprovementEpisodes(input: {
   readonly artifacts: PlaytestArtifactStore;
   readonly pairs: number;
   readonly injectedRegressionCount: number;
-  readonly baseline: SyntheticArmConfiguration;
-  readonly candidate: SyntheticArmConfiguration;
+  readonly baseline: SyntheticArmConfig;
+  readonly candidate: SyntheticArmConfig;
   readonly metricId: string;
   readonly metricRegistry: ReturnType<typeof fixturePlaytestMetricRegistry>;
 }): Promise<{

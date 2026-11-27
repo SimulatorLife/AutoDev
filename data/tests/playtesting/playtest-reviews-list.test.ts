@@ -21,7 +21,9 @@ const WORKSPACE_B = "workspace-b/game";
 const EPISODE_A = "episode-00001";
 const EPISODE_B = "episode-00002";
 
-/** One indexed review row as `playtest_reviews` holds it. */
+/**
+One indexed review row as `playtest_reviews` holds it.
+*/
 interface StoredReviewRow {
   readonly workspace_id: string;
   readonly episode_id: string;
@@ -69,9 +71,9 @@ interface PayloadOptions {
 }
 
 /**
- * A confirmatory review payload. Keys left undefined are absent from the
- * payload, so a test can ask for a review that never carried them.
- */
+A confirmatory review payload. Keys left undefined are absent from the
+payload, so a test can ask for a review that never carried them.
+*/
 function confirmatoryPayload(options: PayloadOptions): Record<string, unknown> {
   const payload: Record<string, unknown> = {
     schema: PLAYTESTS_SESSION_REVIEW_SCHEMA,
@@ -100,7 +102,9 @@ function confirmatoryPayload(options: PayloadOptions): Record<string, unknown> {
   return payload;
 }
 
-/** A discovery review payload; its workspace lives at the top level. */
+/**
+A discovery review payload; its workspace lives at the top level.
+*/
 function discoveryPayload(options: PayloadOptions): Record<string, unknown> {
   const payload: Record<string, unknown> = {
     schema: PLAYTESTS_DISCOVERY_SESSION_REVIEW_SCHEMA,
@@ -140,12 +144,12 @@ function compareRows(a: StoredReviewRow, b: StoredReviewRow): number {
 }
 
 /**
- * A fake ClickHouse endpoint for the review table.
- *
- * It answers exactly what the review list asks for: workspace scope, the
- * optional episode and kind filters, the latest-version fold, the keyset
- * cursor and the population count.
- */
+A fake ClickHouse endpoint for the review table.
+
+It answers exactly what the review list asks for: workspace scope, the
+optional episode and kind filters, the latest-version fold, the keyset
+cursor and the population count.
+*/
 function makeReviewClickHouseFetch(seed: readonly StoredReviewRow[] = []) {
   const table: StoredReviewRow[] = [...seed];
   const calls: URL[] = [];
@@ -229,7 +233,9 @@ function claim(text: string): Record<string, unknown> {
   };
 }
 
-/** A page request that resumes at the cursor only when there is one. */
+/**
+A page request that resumes at the cursor only when there is one.
+*/
 function pageOptions(
   limit: number,
   cursor: string | null
@@ -272,9 +278,9 @@ test("the review list is workspace scoped and never returns another workspace's 
       })
     })
   ]);
-  const repo = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
+  const repository = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
 
-  const page = await repo.listReviews({ workspaceId: WORKSPACE_A });
+  const page = await repository.listReviews({ workspaceId: WORKSPACE_A });
 
   assert.equal(page.total, 2);
   assert.deepEqual(
@@ -314,9 +320,9 @@ test("the review list keeps only the latest version of each review", async () =>
       })
     })
   ]);
-  const repo = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
+  const repository = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
 
-  const page = await repo.listReviews({ workspaceId: WORKSPACE_A });
+  const page = await repository.listReviews({ workspaceId: WORKSPACE_A });
 
   assert.equal(page.total, 1);
   assert.equal(page.rows.length, 1);
@@ -353,9 +359,9 @@ test("the review list tells discovery and confirmatory reviews apart", async () 
       })
     })
   ]);
-  const repo = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
+  const repository = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
 
-  const all = await repo.listReviews({ workspaceId: WORKSPACE_A });
+  const all = await repository.listReviews({ workspaceId: WORKSPACE_A });
   assert.deepEqual(
     all.rows.map((row) => [row.reviewId, row.kind]),
     [
@@ -364,7 +370,7 @@ test("the review list tells discovery and confirmatory reviews apart", async () 
     ]
   );
 
-  const discovery = await repo.listReviews({
+  const discovery = await repository.listReviews({
     workspaceId: WORKSPACE_A,
     kind: "discovery"
   });
@@ -372,7 +378,7 @@ test("the review list tells discovery and confirmatory reviews apart", async () 
   assert.equal(discovery.rows[0]!.kind, "discovery");
   assert.equal(discovery.rows[0]!.headline, "Discovery interpretation");
 
-  const confirmatory = await repo.listReviews({
+  const confirmatory = await repository.listReviews({
     workspaceId: WORKSPACE_A,
     kind: "confirmatory"
   });
@@ -382,7 +388,7 @@ test("the review list tells discovery and confirmatory reviews apart", async () 
 });
 
 test("a review summary counts the observations, interpretations and findings of a review", async () => {
-  const evidenceRefs = [
+  const evidenceReferences = [
     { kind: "episode", id: EPISODE_A },
     { kind: "frame", id: "frame-1" },
     { kind: "frame", id: "frame-1" },
@@ -413,13 +419,13 @@ test("a review summary counts the observations, interpretations and findings of 
           claim("Interpretation three")
         ],
         findings: [{ findingId: "finding-1" }],
-        evidenceRefs
+        evidenceRefs: evidenceReferences
       })
     })
   ]);
-  const repo = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
+  const repository = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
 
-  const page = await repo.listReviews({ workspaceId: WORKSPACE_A });
+  const page = await repository.listReviews({ workspaceId: WORKSPACE_A });
   const summary = page.rows[0]!;
 
   assert.equal(summary.observationCount, 2);
@@ -433,7 +439,7 @@ test("a review summary counts the observations, interpretations and findings of 
   // dropped and the list row stops at the bounded number of references.
   assert.equal(summary.evidenceRefs.length, 8);
   assert.deepEqual(
-    summary.evidenceRefs.map((ref) => ref.id),
+    summary.evidenceRefs.map((reference) => reference.id),
     [
       EPISODE_A,
       "frame-1",
@@ -480,9 +486,9 @@ test("a review headline falls back from interpretations to observations to the s
       })
     })
   ]);
-  const repo = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
+  const repository = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
 
-  const page = await repo.listReviews({ workspaceId: WORKSPACE_A });
+  const page = await repository.listReviews({ workspaceId: WORKSPACE_A });
 
   assert.deepEqual(
     page.rows.map((row) => row.headline),
@@ -502,9 +508,9 @@ test("a review payload without the optional keys degrades instead of failing", a
       })
     })
   ]);
-  const repo = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
+  const repository = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
 
-  const page = await repo.listReviews({ workspaceId: WORKSPACE_A });
+  const page = await repository.listReviews({ workspaceId: WORKSPACE_A });
   const summary = page.rows[0]!;
 
   assert.equal(summary.observationCount, 0);
@@ -531,9 +537,9 @@ test("review paging resumes at the cursor and stops on the last page", async () 
       })
     )
   );
-  const repo = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
+  const repository = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
 
-  const first = await repo.listReviews(
+  const first = await repository.listReviews(
     { workspaceId: WORKSPACE_A },
     { limit: 2 }
   );
@@ -544,7 +550,7 @@ test("review paging resumes at the cursor and stops on the last page", async () 
   );
   assert.notEqual(first.nextCursor, null);
 
-  const second = await repo.listReviews(
+  const second = await repository.listReviews(
     { workspaceId: WORKSPACE_A },
     pageOptions(2, first.nextCursor)
   );
@@ -554,7 +560,7 @@ test("review paging resumes at the cursor and stops on the last page", async () 
   );
   assert.notEqual(second.nextCursor, null);
 
-  const third = await repo.listReviews(
+  const third = await repository.listReviews(
     { workspaceId: WORKSPACE_A },
     pageOptions(2, second.nextCursor)
   );
@@ -620,30 +626,30 @@ test("countReviews agrees with the listed review population", async () => {
       })
     })
   ]);
-  const repo = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
+  const repository = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
 
-  assert.equal(await repo.countReviews({ workspaceId: WORKSPACE_A }), 3);
-  assert.equal(await repo.countReviews({ workspaceId: WORKSPACE_B }), 1);
+  assert.equal(await repository.countReviews({ workspaceId: WORKSPACE_A }), 3);
+  assert.equal(await repository.countReviews({ workspaceId: WORKSPACE_B }), 1);
   assert.equal(
-    await repo.countReviews({ workspaceId: WORKSPACE_A, episodeId: EPISODE_A }),
+    await repository.countReviews({ workspaceId: WORKSPACE_A, episodeId: EPISODE_A }),
     2
   );
   assert.equal(
-    await repo.countReviews({ workspaceId: WORKSPACE_A, episodeId: EPISODE_B }),
+    await repository.countReviews({ workspaceId: WORKSPACE_A, episodeId: EPISODE_B }),
     1
   );
 
-  const page = await repo.listReviews({ workspaceId: WORKSPACE_A });
+  const page = await repository.listReviews({ workspaceId: WORKSPACE_A });
   assert.equal(
     page.total,
-    await repo.countReviews({ workspaceId: WORKSPACE_A })
+    await repository.countReviews({ workspaceId: WORKSPACE_A })
   );
   assert.equal(page.rows.length, page.total);
 });
 
 test("a persisted confirmatory and discovery review are listed from their canonical payloads", async () => {
   const fake = makeReviewClickHouseFetch();
-  const repo = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
+  const repository = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
   const episodeEvidence = { kind: "episode", id: EPISODE_A } as const;
 
   const confirmatory: PlaytestSessionReview = {
@@ -751,10 +757,10 @@ test("a persisted confirmatory and discovery review are listed from their canoni
     status: "hypothesis"
   };
 
-  await repo.insertReview(confirmatory);
-  await repo.insertDiscoveryReview(discovery);
+  await repository.insertReview(confirmatory);
+  await repository.insertDiscoveryReview(discovery);
 
-  const page = await repo.listReviews({ workspaceId: WORKSPACE_A });
+  const page = await repository.listReviews({ workspaceId: WORKSPACE_A });
   const summaries: readonly PlaytestReviewSummary[] = page.rows;
 
   assert.equal(page.total, 2);
@@ -814,9 +820,9 @@ test("the headline leads with a claim the analyst asserted, not one they could n
       })
     })
   ]);
-  const repo = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
+  const repository = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
 
-  const page = await repo.listReviews({ workspaceId: WORKSPACE_A });
+  const page = await repository.listReviews({ workspaceId: WORKSPACE_A });
 
   assert.equal(
     page.rows[0]!.headline,
@@ -850,9 +856,9 @@ test("the review carries the analyst's claims with the status each one holds", a
       })
     })
   ]);
-  const repo = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
+  const repository = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
 
-  const page = await repo.listReviews({ workspaceId: WORKSPACE_A });
+  const page = await repository.listReviews({ workspaceId: WORKSPACE_A });
 
   assert.deepEqual(page.rows[0]!.hypotheses, [
     {
@@ -893,9 +899,9 @@ test("a finding's evidence status is read from the payload, not assumed", async 
       })
     })
   ]);
-  const repo = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
+  const repository = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
 
-  const page = await repo.listReviews({ workspaceId: WORKSPACE_A });
+  const page = await repository.listReviews({ workspaceId: WORKSPACE_A });
 
   assert.deepEqual(page.rows[0]!.findings, [
     {
@@ -927,9 +933,9 @@ test("bounded review text is cut on a word boundary, not mid-word", async () => 
       })
     })
   ]);
-  const repo = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
+  const repository = new PlaytestRepository({ fetchImpl: fake.fetchImpl });
 
-  const page = await repo.listReviews({ workspaceId: WORKSPACE_A });
+  const page = await repository.listReviews({ workspaceId: WORKSPACE_A });
   const row = page.rows[0]!;
 
   // The cut lands after a whole word: "the" is the last complete word

@@ -64,16 +64,16 @@ test("readRuntimeSecret reads only the exact key from the protected Runtime file
 
 test("resolveManagedSecret prefers explicit environment overrides over Keychain", () => {
   const calls: string[][] = [];
-  const deps = {
+  const dependencies = {
     platform: "darwin" as const,
-    runSecurity: (args: readonly string[]) => {
-      calls.push([...args]);
+    runSecurity: (arguments_: readonly string[]) => {
+      calls.push([...arguments_]);
       return "from-keychain\n";
     }
   };
-  const env = { USER: "tester", AUTODEV_DISABLE_KEYCHAIN: "0" };
+  const environment = { USER: "tester", AUTODEV_DISABLE_KEYCHAIN: "0" };
   assert.equal(
-    resolveManagedSecret("MINIMAX_API_KEY", env, deps),
+    resolveManagedSecret("MINIMAX_API_KEY", environment, dependencies),
     "from-keychain"
   );
   assert.equal(calls.length, 1);
@@ -81,28 +81,28 @@ test("resolveManagedSecret prefers explicit environment overrides over Keychain"
   assert.equal(
     resolveManagedSecret(
       "MINIMAX_API_KEY",
-      { ...env, MINIMAX_API_KEY: "explicit-override" },
-      deps
+      { ...environment, MINIMAX_API_KEY: "explicit-override" },
+      dependencies
     ),
     "explicit-override"
   );
   assert.equal(calls.length, 1);
 
-  assert.equal(resolveManagedSecret("UNMANAGED_SECRET", env, deps), null);
+  assert.equal(resolveManagedSecret("UNMANAGED_SECRET", environment, dependencies), null);
   assert.equal(calls.length, 1);
 });
 
 test("writeKeychainSecret passes secret via stdin to security -i and trusts /usr/bin/security", () => {
   const invocations: Array<{ args: string[]; input?: string }> = [];
   const store = new Map<string, string>();
-  const deps = {
+  const dependencies = {
     platform: "darwin" as const,
-    runSecurity: (args: readonly string[], input?: string) => {
+    runSecurity: (arguments_: readonly string[], input?: string) => {
       invocations.push({
-        args: [...args],
-        ...(input === undefined ? {} : { input })
+        args: [...arguments_],
+        ...(input !== undefined && { input })
       });
-      if (args[0] === "-i" && input) {
+      if (arguments_[0] === "-i" && input) {
         const match =
           /-s "([^"]+)" -T "\/usr\/bin\/security" -w "((?:[^"\\]|\\.)*)"/u.exec(
             input
@@ -115,35 +115,35 @@ test("writeKeychainSecret passes secret via stdin to security -i and trusts /usr
         }
         return "";
       }
-      if (args[0] === "find-generic-password") {
-        const service = args[args.indexOf("-s") + 1]!;
+      if (arguments_[0] === "find-generic-password") {
+        const service = arguments_[arguments_.indexOf("-s") + 1]!;
         const found = store.get(service);
         if (!found) throw new Error("not found");
         return `${found}\n`;
       }
-      if (args[0] === "delete-generic-password") {
-        const service = args[args.indexOf("-s") + 1]!;
+      if (arguments_[0] === "delete-generic-password") {
+        const service = arguments_[arguments_.indexOf("-s") + 1]!;
         if (!store.delete(service)) throw new Error("not found");
         return "";
       }
       throw new Error("unexpected security invocation");
     }
   };
-  const env = { USER: "tester", AUTODEV_DISABLE_KEYCHAIN: "0" };
+  const environment = { USER: "tester", AUTODEV_DISABLE_KEYCHAIN: "0" };
   const secretValue = 'sk-secret_"quoted" $val';
-  writeKeychainSecret("AUTODEV_CHATGPT_TUNNEL_API_KEY", secretValue, env, deps);
+  writeKeychainSecret("AUTODEV_CHATGPT_TUNNEL_API_KEY", secretValue, environment, dependencies);
   assert.deepEqual(invocations[0]?.args, ["-i"]);
   assert.match(invocations[0]?.input ?? "", /-T "\/usr\/bin\/security"/u);
   assert.equal(
-    readKeychainSecret("AUTODEV_CHATGPT_TUNNEL_API_KEY", env, { deps }),
+    readKeychainSecret("AUTODEV_CHATGPT_TUNNEL_API_KEY", environment, { deps: dependencies }),
     secretValue
   );
   assert.equal(
-    deleteKeychainSecret("AUTODEV_CHATGPT_TUNNEL_API_KEY", env, deps),
+    deleteKeychainSecret("AUTODEV_CHATGPT_TUNNEL_API_KEY", environment, dependencies),
     true
   );
   assert.equal(
-    readKeychainSecret("AUTODEV_CHATGPT_TUNNEL_API_KEY", env, { deps }),
+    readKeychainSecret("AUTODEV_CHATGPT_TUNNEL_API_KEY", environment, { deps: dependencies }),
     null
   );
 });
@@ -167,7 +167,7 @@ test(
         "test-pass",
         keychain
       ]);
-      const env = {
+      const environment = {
         USER: "autodev-tester",
         AUTODEV_DISABLE_KEYCHAIN: "0",
         AUTODEV_KEYCHAIN_FILE: keychain
@@ -178,14 +178,14 @@ test(
         ["GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY", "gdev-real-test"],
         ["AUTODEV_CHATGPT_TUNNEL_API_KEY", "sk-tunnel-real-test"]
       ] as const) {
-        writeKeychainSecret(name, value, env);
-        assert.equal(readKeychainSecret(name, env), value);
+        writeKeychainSecret(name, value, environment);
+        assert.equal(readKeychainSecret(name, environment), value);
         assert.equal(
-          resolveManagedSecret(name, { ...env, [name]: "override-val" }),
+          resolveManagedSecret(name, { ...environment, [name]: "override-val" }),
           "override-val"
         );
-        assert.equal(deleteKeychainSecret(name, env), true);
-        assert.equal(readKeychainSecret(name, env), null);
+        assert.equal(deleteKeychainSecret(name, environment), true);
+        assert.equal(readKeychainSecret(name, environment), null);
       }
     } finally {
       rmSync(f.root, { recursive: true, force: true });

@@ -62,7 +62,7 @@ async function fixture(
   const root = mkdtempSync(join(tmpdir(), "opencli-browser-test-"));
   const profile = join(root, "private-profile");
   const targets: Target[] = [];
-  const args: string[][] = [];
+  const arguments_: string[][] = [];
   const children: FakeChild[] = [];
   const activatedTargets: string[] = [];
   let listStatus = 200;
@@ -101,7 +101,7 @@ async function fixture(
     }
     if (url.pathname.startsWith("/json/activate/")) {
       const id = url.pathname.slice("/json/activate/".length);
-      if (!targets.some((target) => target.id === id)) {
+      if (targets.every((target) => target.id !== id)) {
         return new Response(null, { status: 404 });
       }
       activatedTargets.push(id);
@@ -121,10 +121,10 @@ async function fixture(
     }),
     spawnBrowser: ((
       command: string,
-      commandArgs: readonly string[],
+      commandArguments: readonly string[],
       options: unknown
     ) => {
-      args.push([command, ...commandArgs]);
+      arguments_.push([command, ...commandArguments]);
       assert.equal((options as { detached: boolean }).detached, false);
       child = fakeChild();
       children.push(child);
@@ -139,7 +139,7 @@ async function fixture(
     await body({
       browser,
       targets,
-      args,
+      args: arguments_,
       profile,
       children,
       activatedTargets,
@@ -638,8 +638,8 @@ test("creates new-window CDP targets and restores minimized windows before activ
       }
       return new Response(null, { status: 404 });
     }) as typeof fetch,
-    cdpCommand: async (_wsUrl, method, params = {}) => {
-      cdpCalls.push({ method, params });
+    cdpCommand: async (_wsUrl, method, parameters = {}) => {
+      cdpCalls.push({ method, params: parameters });
       if (method === "Target.createTarget") {
         const id = `win-${++nextId}`;
         targets.push({

@@ -5,30 +5,34 @@ import { Button } from "../../components/forms/Button.ts";
 import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
 
 /**
- * The Agent Limits column: provider-wide concurrent-agent limits.
- *
- * The limits are provider-wide, not per-role, so the cell is one form holding
- * both steppers and the Unlimited control. One form is what makes the
- * server-rendered constraint workable: each control is a submit button carrying
- * the value it would set, and the form's hidden fields carry the state it would
- * change, so one submission always describes a complete pair of limits.
- *
- * The submit buttons deliberately use *different* field names (`setPerSession`,
- * `setAcrossSessions`, `setUnlimited`) from the hidden state fields
- * (`perSession`, `acrossSessions`). A button sharing a name with a hidden field
- * would produce two values under one name, and `URLSearchParams.get` returns the
- * first -- so the hidden state would win and the operator's new value would be
- * silently discarded.
- */
+The Agent Limits column: provider-wide concurrent-agent limits.
+
+The limits are provider-wide, not per-role, so the cell is one form holding
+both steppers and the Unlimited control. One form is what makes the
+server-rendered constraint workable: each control is a submit button carrying
+the value it would set, and the form's hidden fields carry the state it would
+change, so one submission always describes a complete pair of limits.
+
+The submit buttons deliberately use *different* field names (`setPerSession`,
+`setAcrossSessions`, `setUnlimited`) from the hidden state fields
+(`perSession`, `acrossSessions`). A button sharing a name with a hidden field
+would produce two values under one name, and `URLSearchParams.get` returns the
+first -- so the hidden state would win and the operator's new value would be
+silently discarded.
+*/
 
 const MIN_LIMIT = 1;
 const MAX_LIMIT = 999;
 
-/** The submitted wire value for one axis: an integer, or `unlimited`. */
+/**
+The submitted wire value for one axis: an integer, or `unlimited`.
+*/
 type AxisValue = number | null;
 
 interface LimitAxis {
-  /** Hidden state field, and the submit-button override name for that axis. */
+  /**
+  Hidden state field, and the submit-button override name for that axis.
+  */
   readonly name: "perSession" | "acrossSessions";
   readonly label: string;
 }
@@ -38,7 +42,9 @@ const AXES: readonly LimitAxis[] = [
   { name: "acrossSessions", label: "Across sessions" }
 ];
 
-/** The value the stepper submits, clamped to the range the steppers can produce. */
+/**
+The value the stepper submits, clamped to the range the steppers can produce.
+*/
 function stepped(current: AxisValue, delta: number): number {
   // An Unlimited axis starts from the minimum rather than from zero: zero is
   // not a limit, it would read as "no agents allowed", which is a different
@@ -51,7 +57,9 @@ function wire(value: AxisValue): string {
   return value === null ? "unlimited" : String(value);
 }
 
-/** What the stepper shows: the configured number, or ∞ for Unlimited. */
+/**
+What the stepper shows: the configured number, or ∞ for Unlimited.
+*/
 function display(value: AxisValue): string {
   return value === null ? "∞" : String(value);
 }
@@ -68,7 +76,9 @@ function axisValue(
 const STEP_BUTTON_CLASS =
   "inline-flex shrink-0 items-center justify-center leading-none";
 
-/** One `− n +` stepper row. */
+/**
+One `− n +` stepper row.
+*/
 function LimitStepper({
   axis,
   value,
@@ -114,7 +124,7 @@ function LimitStepper({
           className:
             "inline-flex h-7 w-8 shrink-0 items-center justify-center text-center font-mono text-xs tabular-nums text-fg",
           "data-limit-value": `${provider}-${axis.name}`,
-          ...(value === null ? { title: "Unlimited" } : {})
+          ...((value === null) && { title: "Unlimited" })
         },
         display(value)
       ),
@@ -137,13 +147,13 @@ function LimitStepper({
 }
 
 /**
- * The provider-level Disabled toggle.
- *
- * It posts to the enablement route rather than the limits route, because it is a
- * different fact about the provider, not a limit. Disabling preserves every
- * priority, model and limit, so re-enabling restores the configuration instead
- * of requiring it to be re-entered.
- */
+The provider-level Disabled toggle.
+
+It posts to the enablement route rather than the limits route, because it is a
+different fact about the provider, not a limit. Disabling preserves every
+priority, model and limit, so re-enabling restores the configuration instead
+of requiring it to be re-entered.
+*/
 function ProviderDisabledToggle({
   provider,
   returnTo
@@ -182,9 +192,7 @@ function ProviderDisabledToggle({
         variant: provider.disabled ? "outline" : "secondary",
         size: "compact",
         className: "inline-flex shrink-0 items-center gap-1.5",
-        ariaLabel: provider.disabled
-          ? "Enable provider " + provider.id
-          : "Disable provider " + provider.id,
+        ariaLabel: (provider.disabled ? "Enable provider " : "Disable provider ") + provider.id,
         title: provider.disabled
           ? "Enable this provider again, restoring its roles, models and limits."
           : "Disable this provider entirely, preserving its roles, models and limits.",
@@ -225,12 +233,12 @@ function ProviderDisabledToggle({
 }
 
 /**
- * The Agent Limits cell for one provider.
- *
- * Sized and structured to fit the narrow Agent Limits column: each stepper
- * keeps its full label above its controls, and the two independent actions
- * stack instead of competing for half-width cells.
- */
+The Agent Limits cell for one provider.
+
+Sized and structured to fit the narrow Agent Limits column: each stepper
+keeps its full label above its controls, and the two independent actions
+stack instead of competing for half-width cells.
+*/
 export function ProviderLimitsControls({
   provider,
   returnTo

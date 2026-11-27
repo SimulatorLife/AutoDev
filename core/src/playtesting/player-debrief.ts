@@ -1,4 +1,6 @@
-/** Core-owned, versioned player-authored report contracts. */
+/**
+Core-owned, versioned player-authored report contracts.
+*/
 import { isRecord } from "../shared/object-guards.ts";
 
 export const PLAYTEST_PLAYER_DEBRIEF_SCHEMA =
@@ -67,7 +69,9 @@ export const PLAYTEST_PLAYER_DEBRIEF_PARTIAL_REASONS = [
 export type PlaytestPlayerDebriefPartialReason =
   (typeof PLAYTEST_PLAYER_DEBRIEF_PARTIAL_REASONS)[number];
 
-/** Exact frame locator supporting one self-reported claim. */
+/**
+Exact frame locator supporting one self-reported claim.
+*/
 export interface PlaytestPlayerEvidenceReference {
   readonly kind: "frame";
   readonly id: string;
@@ -75,16 +79,22 @@ export interface PlaytestPlayerEvidenceReference {
   readonly frameIndex: number;
 }
 
-/** Smart-direct's interpretation of operator-requested prose, not game truth. */
+/**
+Smart-direct's interpretation of operator-requested prose, not game truth.
+*/
 export interface PlaytestPlayerFocusInterpretationV1 {
   readonly schema: typeof PLAYTEST_PLAYER_FOCUS_INTERPRETATION_SCHEMA;
-  /** Exact operator text frozen into the run, or null when no focus was requested. */
+  /**
+  Exact operator text frozen into the run, or null when no focus was requested.
+  */
   readonly requestedFocus: string | null;
   readonly objective: string | null;
   readonly inScope: readonly string[];
   readonly forbiddenScope: readonly string[];
   readonly stopCriteria: readonly string[];
-  /** A model self-report; never a verified game outcome. */
+  /**
+  A model self-report; never a verified game outcome.
+  */
   readonly outcome: PlaytestPlayerFocusOutcome;
   readonly assessmentSource: "smart-direct-self-report";
   readonly evidence: readonly PlaytestPlayerEvidenceReference[];
@@ -95,11 +105,15 @@ export interface PlaytestPlayerDebriefSource {
   readonly policyId: "smart-direct";
   readonly policyVersion: string;
   readonly modelId: string;
-  /** Null when the router does not report a separately pinned model revision. */
+  /**
+  Null when the router does not report a separately pinned model revision.
+  */
   readonly modelVersion: string | null;
 }
 
-/** One bounded pre-action checkpoint retained when a run is interrupted. */
+/**
+One bounded pre-action checkpoint retained when a run is interrupted.
+*/
 export interface PlaytestPlayerCheckpointV1 {
   readonly schema: typeof PLAYTEST_PLAYER_CHECKPOINT_SCHEMA;
   readonly intention: string;
@@ -172,7 +186,7 @@ function assertTextList(
   if (
     !Array.isArray(value) ||
     value.length > 3 ||
-    !value.every((item) => isBoundedText(item, 64))
+    value.some((item) => !isBoundedText(item, 64))
   ) {
     throw new TypeError(`Player debrief ${label} is invalid.`);
   }
@@ -359,7 +373,9 @@ function assertCompleteDebrief(
   assertPlaytestPlayerFocusInterpretation(value.focusInterpretation);
 }
 
-/** Strict validator for persisted and API-facing player report payloads. */
+/**
+Strict validator for persisted and API-facing player report payloads.
+*/
 export function assertPlaytestPlayerDebrief(
   value: unknown
 ): asserts value is PlaytestPlayerDebriefV1 {
@@ -421,7 +437,9 @@ export function assertPlaytestPlayerDebrief(
   }
 }
 
-/** Enforce report-author/mode provenance and resolve refs against stored frames. */
+/**
+Enforce report-author/mode provenance and resolve refs against stored frames.
+*/
 export function assertPlaytestPlayerDebriefForEpisode(input: {
   readonly executionMode: string;
   readonly policyId: string;
@@ -540,14 +558,14 @@ function assertStoredPlayerFrame(
     readonly frameIndex?: number;
   }[]
 ): void {
-  const matchesFrame = frames.some(
+  const isMatchesFrame = frames.some(
     (frame) =>
       frame.id === reference.id &&
       frame.kind === reference.kind &&
       frame.step === reference.step &&
       frame.frameIndex === reference.frameIndex
   );
-  if (!matchesFrame) {
+  if (!isMatchesFrame) {
     throw new TypeError(
       "Player debrief evidence reference does not resolve to a stored episode frame."
     );

@@ -14,14 +14,14 @@ import { ConcurrencyLimitControl } from "../src/features/agents/ConcurrencyLimit
 import { patchConcurrencyLimit } from "../src/lib/server/control-api.ts";
 
 /**
- * The reconciliation view the Runtime publishes with the write.
- *
- * The limit is applied by the router's own concurrency manager, in the process
- * that serves the write, so a successful write is a converged one -- the
- * observed generation is the limit that is now enforced. The other convergence
- * words are what the Console has to be able to read without inventing a
- * verdict of its own.
- */
+The reconciliation view the Runtime publishes with the write.
+
+The limit is applied by the router's own concurrency manager, in the process
+that serves the write, so a successful write is a converged one -- the
+observed generation is the limit that is now enforced. The other convergence
+words are what the Console has to be able to read without inventing a
+verdict of its own.
+*/
 function mockReconciliation(
   convergence: ReconciliationView["status"]["convergence"],
   desiredGeneration: string | null,
@@ -299,7 +299,7 @@ test("POST /api/agents/concurrency rejects non-same-origin requests", async () =
 test("POST /api/agents/concurrency sets numeric limit and redirects to returnTo", async () => {
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   process.env.AUTODEV_CONTROL_API_TOKEN = "test-token";
-  const originalFetch = globalThis.fetch;
+  const originalFetch = fetch;
 
   let requestBody: unknown;
   globalThis.fetch = async (_input, init) => {
@@ -360,7 +360,7 @@ test("POST /api/agents/concurrency says the write was not observed rather than c
   // make.
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   process.env.AUTODEV_CONTROL_API_TOKEN = "test-token";
-  const originalFetch = globalThis.fetch;
+  const originalFetch = fetch;
 
   globalThis.fetch = async () => {
     return Response.json({
@@ -443,7 +443,7 @@ test("a concurrency write without a reconciliation view is not an answer the Con
 test("POST /api/agents/concurrency handles conflict (409) with refusal=conflicted", async () => {
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   process.env.AUTODEV_CONTROL_API_TOKEN = "test-token";
-  const originalFetch = globalThis.fetch;
+  const originalFetch = fetch;
 
   globalThis.fetch = async () => {
     return Response.json(
@@ -489,7 +489,7 @@ test("POST /api/agents/concurrency handles conflict (409) with refusal=conflicte
 test("POST /api/agents/concurrency resets to config file and redirects", async () => {
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   process.env.AUTODEV_CONTROL_API_TOKEN = "test-token";
-  const originalFetch = globalThis.fetch;
+  const originalFetch = fetch;
 
   let requestBody: unknown;
   globalThis.fetch = async (_input, init) => {

@@ -20,7 +20,7 @@ import { StatusBadge } from "../../components/status/StatusBadge.ts";
 import {
   DataTable,
   type DataTableFeatures,
-  type DataTableProps
+  type DataTableProps as DataTableProperties
 } from "../../components/tables/DataTable.ts";
 import { PathText } from "../../components/tables/PathText.ts";
 import { namedAfterVisible } from "../../components/ui/accessible-name.ts";
@@ -35,39 +35,39 @@ import {
   workspaceApprovalStatus
 } from "./approval-status.ts";
 import {
-  workspaceConfigurationSaveNotice,
-  type WorkspaceConfigurationSaveOutcome
+  workspaceConfigurationSaveNotice as workspaceConfigSaveNotice,
+  type WorkspaceConfigurationSaveOutcome as WorkspaceConfigSaveOutcome
 } from "./configuration.ts";
 import { workspacePath, WORKSPACES_PATH } from "./paths.ts";
 import {
   workspaceAvailabilityBadgeLabel,
   workspaceAvailabilityBadgeVariant
 } from "./workspace-health.ts";
-import { WorkspaceConfigurationForm } from "./WorkspaceConfigurationForm.ts";
+import { WorkspaceConfigurationForm as WorkspaceConfigForm } from "./WorkspaceConfigurationForm.ts";
 import {
   WorkspaceRequestCell,
   WorkspaceRequestTelemetryProvider
 } from "./WorkspaceRequestTelemetry.ts";
 
 /**
- * One workspace's most recently read playtesting approval, keyed by
- * workspace id. `"unavailable"` is distinct from `null`: the Control API
- * failing to answer this workspace's approval read is not the same claim as
- * it answering "no approval exists".
- */
+One workspace's most recently read playtesting approval, keyed by
+workspace id. `"unavailable"` is distinct from `null`: the Control API
+failing to answer this workspace's approval read is not the same claim as
+it answering "no approval exists".
+*/
 export type WorkspaceApprovalLookup = ReadonlyMap<
   string,
   WorkspacePlaytestApproval | null | "unavailable"
 >;
 
 /**
- * One workspace's approval state, read the way the table row reads it.
- *
- * The row's badge and the count card above the table are two readings of the
- * same fact, so they read it through one function: a workspace whose approval
- * the Control API could not answer is `unavailable` in the badge and in the
- * count, never "not approved" in one place and "unreadable" in the other.
- */
+One workspace's approval state, read the way the table row reads it.
+
+The row's badge and the count card above the table are two readings of the
+same fact, so they read it through one function: a workspace whose approval
+the Control API could not answer is `unavailable` in the badge and in the
+count, never "not approved" in one place and "unreadable" in the other.
+*/
 function workspaceApprovalOf(
   approvals: WorkspaceApprovalLookup,
   workspaceId: string
@@ -80,69 +80,73 @@ function workspaceApprovalOf(
 }
 
 /**
- * Workspaces resource view.
- *
- * Each workspace has a configured `id` (GitHub owner/repo), `baseBranch`,
- * `enabled` state, and `agentRoles` scope (`null` means not configured).
- *
- * Beside the configuration sit the two facts an operator needs to act on it.
- * `configuration` is the Control API's judgement of the canonical entry --
- * whether the role scope names roles the execution contract defines -- and
- * `runtime` is the runtime's live answer about whether it is currently
- * serving the workspace. The two are different authorities, so the view shows
- * them apart: an unobserved workspace reads `Not observed` and an idle one
- * reads `Idle`, because missing evidence and a measured zero are different
- * claims.
- *
- * Playtesting approval is a *different* fact, and one this view can report:
- * Workspaces owns the checkout approval boundary a game adapter runs
- * under, and the Control API answers it per workspace, so each row's badge
- * is a server-fetched, per-workspace read rather than an inferred summary.
- *
- * Aggregate usage is a fourth fact, from a fourth authority: the Usage
- * telemetry store groups logical routed requests by workspace. It is read once
- * for the whole page rather than per workspace, because one breakdown answers
- * every row. A workspace the breakdown does not report reads as unobserved
- * rather than zero when the breakdown was truncated, and a measured zero stays
- * a measured zero -- the two are different claims about the same cell.
- *
- * That read is the browser's rather than the page's. It is the most
- * expensive read the Console makes and it answers a historical question, so
- * it has no place on the path that renders the catalogue: the rows are on
- * screen with their numbers still to come, and each one says so until the
- * breakdown arrives.
- */
+Workspaces resource view.
+
+Each workspace has a configured `id` (GitHub owner/repo), `baseBranch`,
+`enabled` state, and `agentRoles` scope (`null` means not configured).
+
+Beside the configuration sit the two facts an operator needs to act on it.
+`configuration` is the Control API's judgement of the canonical entry --
+whether the role scope names roles the execution contract defines -- and
+`runtime` is the runtime's live answer about whether it is currently
+serving the workspace. The two are different authorities, so the view shows
+them apart: an unobserved workspace reads `Not observed` and an idle one
+reads `Idle`, because missing evidence and a measured zero are different
+claims.
+
+Playtesting approval is a *different* fact, and one this view can report:
+Workspaces owns the checkout approval boundary a game adapter runs
+under, and the Control API answers it per workspace, so each row's badge
+is a server-fetched, per-workspace read rather than an inferred summary.
+
+Aggregate usage is a fourth fact, from a fourth authority: the Usage
+telemetry store groups logical routed requests by workspace. It is read once
+for the whole page rather than per workspace, because one breakdown answers
+every row. A workspace the breakdown does not report reads as unobserved
+rather than zero when the breakdown was truncated, and a measured zero stays
+a measured zero -- the two are different claims about the same cell.
+
+That read is the browser's rather than the page's. It is the most
+expensive read the Console makes and it answers a historical question, so
+it has no place on the path that renders the catalogue: the rows are on
+screen with their numbers still to come, and each one says so until the
+breakdown arrives.
+*/
 
 export interface WorkspacesViewProps {
   readonly workspaces: readonly ControlApiWorkspaceRecord[];
   readonly approvals: WorkspaceApprovalLookup;
   /**
-   * The revision the canonical catalog was read at.
-   *
-   * It is the handle a write is compared against, so the control on every row
-   * carries it: a write decided on a catalog that has since moved is refused
-   * rather than applied over the newer catalog.
-   */
+  The revision the canonical catalog was read at.
+  
+  It is the handle a write is compared against, so the control on every row
+  carries it: a write decided on a catalog that has since moved is refused
+  rather than applied over the newer catalog.
+  */
   readonly revision: string | null;
-  /** The status of the canonical catalog the read came from. */
+  /**
+  The status of the canonical catalog the read came from.
+  */
   readonly catalogStatus: "valid" | "invalid" | "unavailable";
   /**
-   * The Runtime's desired-vs-actual view of the canonical catalog.
-   *
-   * The catalog is the configuration this list edits, so the list shows what
-   * the Runtime observed about it: converged, pending or not observed, with
-   * the operation history behind it.
-   */
+  The Runtime's desired-vs-actual view of the canonical catalog.
+  
+  The catalog is the configuration this list edits, so the list shows what
+  the Runtime observed about it: converged, pending or not observed, with
+  the operation history behind it.
+  */
   readonly reconciliation?: ReconciliationView | undefined;
-  /** How the last write to a workspace's configuration ended. */
-  readonly saveOutcome?: WorkspaceConfigurationSaveOutcome | undefined;
   /**
-   * The workspace the last write was about.
-   *
-   * The list presents every workspace's configuration at once, so a notice
-   * that did not name its workspace would leave the operator to work out
-   * which of the edits on the page it was talking about.
-   */
+  How the last write to a workspace's configuration ended.
+  */
+  readonly saveOutcome?: WorkspaceConfigSaveOutcome | undefined;
+  /**
+  The workspace the last write was about.
+  
+  The list presents every workspace's configuration at once, so a notice
+  that did not name its workspace would leave the operator to work out
+  which of the edits on the page it was talking about.
+  */
   readonly savedWorkspace?: string | undefined;
 }
 
@@ -206,7 +210,7 @@ export function WorkspacesView({
       id: "configuration",
       header: "Configuration",
       cell: ({ row: { original: ws } }) =>
-        React.createElement(WorkspaceConfigurationForm, {
+        React.createElement(WorkspaceConfigForm, {
           workspace: ws,
           revision,
           catalogStatus,
@@ -327,7 +331,7 @@ export function WorkspacesView({
     React.createElement(
       "div",
       null,
-      workspaceConfigurationSaveNotice(saveOutcome, savedWorkspace),
+      workspaceConfigSaveNotice(saveOutcome, savedWorkspace),
       reconciliation === undefined
         ? null
         : React.createElement(ReconciliationPanel, {
@@ -344,7 +348,7 @@ export function WorkspacesView({
       React.createElement(WorkspaceRequestTelemetryProvider, {
         workspaceIds: workspaces.map((workspace) => workspace.id),
         children: React.createElement<
-          DataTableProps<ControlApiWorkspaceRecord>
+          DataTableProperties<ControlApiWorkspaceRecord>
         >(DataTable, {
           data: workspaces,
           columns,

@@ -1,10 +1,10 @@
 /**
- * Deterministic, one-to-one scoring of critic/detector findings against a
- * blinded, independently adjudicated reference corpus (measurement §6).
- * This module scores labels supplied by the corpus owner; it does not create
- * labels, infer truth from model output, or turn incomplete coverage into a
- * recall claim.
- */
+Deterministic, one-to-one scoring of critic/detector findings against a
+blinded, independently adjudicated reference corpus (measurement §6).
+This module scores labels supplied by the corpus owner; it does not create
+labels, infer truth from model output, or turn incomplete coverage into a
+recall claim.
+*/
 
 import { SHA256_PATTERN } from "../shared/sha256.ts";
 
@@ -24,9 +24,13 @@ interface DiagnosticWindow {
 
 export interface PlaytestDiagnosticCoverage {
   readonly stratumId: string;
-  /** Frozen eligible inventory for this reference-corpus stratum. */
+  /**
+  Frozen eligible inventory for this reference-corpus stratum.
+  */
   readonly eligibleEpisodeIds: readonly string[];
-  /** Episodes whose problem and ordinary-play evidence received adequate blind review. */
+  /**
+  Episodes whose problem and ordinary-play evidence received adequate blind review.
+  */
   readonly reviewedEpisodeIds: readonly string[];
 }
 
@@ -53,11 +57,15 @@ export interface PlaytestDiagnosticCorpusInput {
 
 export interface PlaytestDiagnosticSourceScore {
   readonly source: PlaytestDiagnosticScoredSource;
-  /** Predictions inside reviewed episode coverage and therefore scoreable. */
+  /**
+  Predictions inside reviewed episode coverage and therefore scoreable.
+  */
   readonly scoredPredictions: number;
   readonly outOfCoveragePredictions: number;
   readonly matchedInstances: number;
-  /** Includes duplicate predictions after the first one-to-one match. */
+  /**
+  Includes duplicate predictions after the first one-to-one match.
+  */
   readonly falsePositiveInstances: number;
   readonly duplicatePredictions: number;
   readonly unresolvedExcludedPredictions: number;
@@ -97,7 +105,9 @@ export interface PlaytestDiagnosticCorpusResult {
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/u;
 const MAX_COVERAGE_STRATA = 128;
 const MAX_DIAGNOSTIC_INSTANCES = 2000;
-/** Shared collator for deterministic identifier ordering; construction is not free. */
+/**
+Shared collator for deterministic identifier ordering; construction is not free.
+*/
 const ID_COLLATOR = new Intl.Collator();
 
 function identifier(value: unknown, field: string): asserts value is string {
@@ -185,7 +195,7 @@ function scoreSource(
     (total, cell) => total + cell.reviewedEpisodeIds.length,
     0
   );
-  const coverageComplete = coverage.every((cell) =>
+  const isCoverageComplete = coverage.every((cell) =>
     cell.eligibleEpisodeIds.every((episodeId) =>
       cell.reviewedEpisodeIds.includes(episodeId)
     )
@@ -251,7 +261,7 @@ function scoreSource(
     positiveReferences.some((reference) => overlaps(prediction, reference))
   );
   const scoredPredictions = matches.length + falsePositives.length;
-  const recallAvailable = coverageComplete;
+  const isRecallAvailable = isCoverageComplete;
   const matchedInstances = matches.length;
 
   return {
@@ -267,15 +277,15 @@ function scoreSource(
     unresolvedReferenceInstances: unresolvedReferences.length,
     precision:
       scoredPredictions === 0 ? null : matchedInstances / scoredPredictions,
-    recall: recallAvailable
+    recall: isRecallAvailable
       ? positiveReferences.length === 0
         ? 0
         : matchedInstances / positiveReferences.length
       : null,
-    recallAvailable,
+    recallAvailable: isRecallAvailable,
     eligibleEpisodes,
     adequatelyReviewedEpisodes,
-    coverageComplete,
+    coverageComplete: isCoverageComplete,
     matches
   };
 }
@@ -494,7 +504,9 @@ function computeByStratum(input: PlaytestDiagnosticCorpusInput): Record<
   return byStratum;
 }
 
-/** Validate and score diagnostic precision/recall without imputing incomplete truth. */
+/**
+Validate and score diagnostic precision/recall without imputing incomplete truth.
+*/
 export function evaluatePlaytestDiagnosticCorpus(
   input: PlaytestDiagnosticCorpusInput
 ): PlaytestDiagnosticCorpusResult {

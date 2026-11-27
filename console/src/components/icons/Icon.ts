@@ -1,24 +1,24 @@
 import React from "react";
 
 /**
- * The Console's single icon set.
- *
- * AutoDev Console ships no icon package: every icon is one inline SVG path on a
- * 24x24 grid, stroked with `currentColor` so it inherits the surrounding text
- * color (a muted sidebar item stays muted, an active one turns accent). That
- * keeps the dark-only token set as the only source of icon color and avoids a
- * dependency whose light-theme defaults would leak back into the product.
- *
- * Geometry is the Feather 24x24 stroke grid (2px stroke, round caps and
- * joins) so weights match the type scale instead of reading as a separate icon
- * family. The set is deliberately closed: a bounded set is what keeps icon
- * sizing and stroke weight consistent across the product, and a bounded set is
- * only a bounded set if every entry is still used -- so an icon nobody renders
- * is deleted rather than parked here as a spare. Status is carried by
- * `StatusBadge`'s vocabulary rather than by pictograms, which is why there is
- * no "warning" or "info" glyph here: colour plus a written label reads the
- * same in both themes and survives a monochrome rendering.
- */
+The Console's single icon set.
+
+AutoDev Console ships no icon package: every icon is one inline SVG path on a
+24x24 grid, stroked with `currentColor` so it inherits the surrounding text
+color (a muted sidebar item stays muted, an active one turns accent). That
+keeps the dark-only token set as the only source of icon color and avoids a
+dependency whose light-theme defaults would leak back into the product.
+
+Geometry is the Feather 24x24 stroke grid (2px stroke, round caps and
+joins) so weights match the type scale instead of reading as a separate icon
+family. The set is deliberately closed: a bounded set is what keeps icon
+sizing and stroke weight consistent across the product, and a bounded set is
+only a bounded set if every entry is still used -- so an icon nobody renders
+is deleted rather than parked here as a spare. Status is carried by
+`StatusBadge`'s vocabulary rather than by pictograms, which is why there is
+no "warning" or "info" glyph here: colour plus a written label reads the
+same in both themes and survives a monochrome rendering.
+*/
 const CIRCLE_24_PATH = "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z";
 
 export const ICON_PATHS = {
@@ -197,15 +197,15 @@ export type IconName = keyof typeof ICON_PATHS;
 export interface IconProps {
   readonly name: IconName;
   /**
-   * Rendered size in pixels. The grid is 24x24 and the stroke scales with the
-   * box, so one number keeps every icon optically identical.
-   */
+  Rendered size in pixels. The grid is 24x24 and the stroke scales with the
+  box, so one number keeps every icon optically identical.
+  */
   readonly size?: number | undefined;
   readonly className?: string | undefined;
   /**
-   * Accessible name. Omit for decorative icons that repeat adjacent text;
-   * supply it for an icon that is the only label for a control.
-   */
+  Accessible name. Omit for decorative icons that repeat adjacent text;
+  supply it for an icon that is the only label for a control.
+  */
   readonly label?: string | undefined;
 }
 
@@ -215,7 +215,7 @@ export function Icon({
   className,
   label
 }: IconProps): React.JSX.Element {
-  const decorative = label === undefined;
+  const isDecorative = label === undefined;
   return React.createElement(
     "svg",
     {
@@ -229,7 +229,7 @@ export function Icon({
       strokeLinecap: "round",
       strokeLinejoin: "round",
       className: `shrink-0${className === undefined ? "" : ` ${className}`}`,
-      ...(decorative
+      ...(isDecorative
         ? { "aria-hidden": true, focusable: false }
         : { role: "img", "aria-label": label })
     },
@@ -238,11 +238,11 @@ export function Icon({
 }
 
 /**
- * The canonical navigation resources, each paired with the icon that stands for
- * it. One list, because the previous shape stated this twice -- as a type union
- * and again as a `Set` literal -- and a resource added to one but not the other
- * would typecheck while silently rendering no icon at all.
- */
+The canonical navigation resources, each paired with the icon that stands for
+it. One list, because the previous shape stated this twice -- as a type union
+and again as a `Set` literal -- and a resource added to one but not the other
+would typecheck while silently rendering no icon at all.
+*/
 const NAV_ICON_SOURCES = [
   "Overview",
   "Agents",
@@ -261,27 +261,27 @@ const NAV_ICON_SOURCES = [
 ] as const satisfies readonly (Extract<IconName, string> & string)[];
 
 /**
- * Every name in `NAV_ICON_SOURCES` must actually exist in `ICON_PATHS`, and
- * every one must be a canonical navigation section. Either list drifting from
- * its source is a missing glyph in the sidebar, which reads as a design
- * choice rather than a bug -- so both directions are compile errors.
- */
+Every name in `NAV_ICON_SOURCES` must actually exist in `ICON_PATHS`, and
+every one must be a canonical navigation section. Either list drifting from
+its source is a missing glyph in the sidebar, which reads as a design
+choice rather than a bug -- so both directions are compile errors.
+*/
 export type NavIconName = (typeof NAV_ICON_SOURCES)[number];
 
 /**
- * Exported so a test can assert the list is exactly the canonical navigation,
- * in both directions. A name here that no section uses is a section that was
- * renamed or removed while its icon stayed behind.
- */
+Exported so a test can assert the list is exactly the canonical navigation,
+in both directions. A name here that no section uses is a section that was
+renamed or removed while its icon stayed behind.
+*/
 export const NAV_ICONS: readonly NavIconName[] = NAV_ICON_SOURCES;
 
 const NAV_ICON_NAMES: ReadonlySet<string> = new Set<string>(NAV_ICON_SOURCES);
 
 /**
- * Icon for a canonical navigation section, or `null` for a section this set
- * does not cover. Returning `null` rather than guessing keeps an unknown
- * resource from silently borrowing another resource's glyph.
- */
+Icon for a canonical navigation section, or `null` for a section this set
+does not cover. Returning `null` rather than guessing keeps an unknown
+resource from silently borrowing another resource's glyph.
+*/
 export function navIcon(section: string): NavIconName | null {
   return NAV_ICON_NAMES.has(section) ? (section as NavIconName) : null;
 }

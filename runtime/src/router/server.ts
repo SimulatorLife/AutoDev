@@ -62,7 +62,7 @@ import {
   ROUTER_INSTANCE_ID,
   transportErrorInfo
 } from "./proxy.ts";
-import { QUOTA_POLL, quotaAxiArgs } from "./quota-poll.ts";
+import { QUOTA_POLL, quotaAxiArgs as quotaAxiArguments } from "./quota-poll.ts";
 
 const IS_MAIN = isEntryPoint(import.meta.url);
 
@@ -174,7 +174,7 @@ export function startRouterServer(port = PORT, host = HOST): Server {
   const server = createServer((request, response) => {
     void handle(request, response);
   });
-  let livePollStarted = false;
+  const isLivePollStarted = false;
   let quotaPollInterval: ReturnType<typeof setInterval> | null = null;
   let backgroundWarmupTimer: ReturnType<typeof setTimeout> | null = null;
   let quotaAxiRefresh: Promise<void> | null = null;
@@ -183,7 +183,7 @@ export function startRouterServer(port = PORT, host = HOST): Server {
   const quotaAxiAbort = new AbortController();
   let controlServer: Server | null = null;
   let xacpxIpcServer: XacpxOrchestrationIpcHandle | null = null;
-  let cleanedUp = false;
+  let isCleanedUp = false;
   let playtestingShutdown: Promise<void> | null = null;
   const modelDiscovery = IS_MAIN
     ? createProviderModelDiscoveryService({
@@ -235,7 +235,7 @@ export function startRouterServer(port = PORT, host = HOST): Server {
       }
       execFile(
         quotaAxiExecutable,
-        quotaAxiArgs(plan),
+        quotaAxiArguments(plan),
         {
           cwd: runtimePackageRoot,
           encoding: "utf8",
@@ -296,8 +296,8 @@ export function startRouterServer(port = PORT, host = HOST): Server {
   setControlApiDiagnosticsHandler(
     (request, response, pathname, codexHome, repositoryRoot) =>
       handleControlApiDiagnosticsRequest(request, response, pathname, {
-        ...(codexHome === undefined ? {} : { codexHome }),
-        ...(repositoryRoot === undefined ? {} : { repositoryRoot })
+        ...(codexHome !== undefined && { codexHome }),
+        ...(repositoryRoot !== undefined && { repositoryRoot })
       })
   );
   const closePlaytestingSafely = (): Promise<void> => {
@@ -335,8 +335,8 @@ export function startRouterServer(port = PORT, host = HOST): Server {
     handleFatalProcessError("unhandled_rejection", reason);
   };
   const cleanup = () => {
-    if (cleanedUp) return;
-    cleanedUp = true;
+    if (isCleanedUp) return;
+    isCleanedUp = true;
     if (backgroundWarmupTimer !== null) {
       clearTimeout(backgroundWarmupTimer);
       backgroundWarmupTimer = null;
@@ -375,7 +375,7 @@ export function startRouterServer(port = PORT, host = HOST): Server {
   process.on("SIGTERM", onSigterm);
   try {
     server.listen(port, host, () => {
-      if (cleanedUp) return;
+      if (isCleanedUp) return;
       try {
         if (process.env.AUTODEV_ROUTER_WORKER_GENERATION && process.send) {
           const bound = server.address();
@@ -421,7 +421,7 @@ export function startRouterServer(port = PORT, host = HOST): Server {
             manager: SHARED_XACPX_SESSION_MANAGER
           })
             .then((handle) => {
-              if (cleanedUp) {
+              if (isCleanedUp) {
                 void handle.close().catch(() => undefined);
                 return;
               }
@@ -447,15 +447,17 @@ export function startRouterServer(port = PORT, host = HOST): Server {
         // have bound and can service readiness probes.
         backgroundWarmupTimer = setTimeout(() => {
           backgroundWarmupTimer = null;
-          if (cleanedUp) return;
+          if (isCleanedUp) return;
           modelDiscovery?.start();
-          if (IS_MAIN) {
-            void refreshQuotaAxi().catch(() => undefined);
-            quotaPollInterval = setInterval(() => {
-              void refreshQuotaAxi().catch(() => undefined);
-            }, 60_000);
-            quotaPollInterval.unref();
+          if (!IS_MAIN) {
+            return;
           }
+
+          void refreshQuotaAxi().catch(() => undefined);
+          quotaPollInterval = setInterval(() => {
+            void refreshQuotaAxi().catch(() => undefined);
+          }, 60_000);
+          quotaPollInterval.unref();
         }, 50);
         backgroundWarmupTimer.unref();
         writeErrorLine(

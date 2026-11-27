@@ -30,10 +30,10 @@ const ALLOWED_FIELDS = new Set([
 ]);
 
 /**
- * Request analysis over an explicit selection of sessions. Runtime owns
- * eligibility, the critique cap and which sessions produced no packet; this
- * route only authorizes the operator's same-origin request and forwards it.
- */
+Request analysis over an explicit selection of sessions. Runtime owns
+eligibility, the critique cap and which sessions produced no packet; this
+route only authorizes the operator's same-origin request and forwards it.
+*/
 export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!isSameOriginMutation(request)) {
     return jsonErrorResponse(
@@ -53,9 +53,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       "The playtesting analysis form is invalid."
     );
   }
-  const params = form;
-  const workspaceId = params.get("workspaceId")?.trim() ?? "";
-  const rawSelection = params.get("episodeIds");
+  const parameters = form;
+  const workspaceId = parameters.get("workspaceId")?.trim() ?? "";
+  const rawSelection = parameters.get("episodeIds");
   if (!WORKSPACE_ID_PATTERN.test(workspaceId) || rawSelection === null) {
     return jsonErrorResponse(
       400,
@@ -69,8 +69,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (
       !Array.isArray(parsed) ||
       parsed.length === 0 ||
-      !parsed.every(
-        (id) => typeof id === "string" && EPISODE_ID_PATTERN.test(id)
+      parsed.some(
+        (id) => typeof id !== "string" || !EPISODE_ID_PATTERN.test(id)
       )
     ) {
       return jsonErrorResponse(
@@ -91,7 +91,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // operator states which one they want. The flag is read strictly: a value
   // that is neither "true" nor "false" is a malformed request, not a
   // request for a hypothesis review.
-  const rawRequireFindings = params.get("requireFindings");
+  const rawRequireFindings = parameters.get("requireFindings");
   if (
     rawRequireFindings !== null &&
     rawRequireFindings !== "true" &&
@@ -103,7 +103,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       "The findings request flag is malformed."
     );
   }
-  const requireFindings = rawRequireFindings === "true";
+  const isRequireFindings = rawRequireFindings === "true";
   const config = readControlApiConfig();
   if (!config) {
     return jsonErrorResponse(
@@ -116,7 +116,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     workspaceId,
     episodeIds,
     config,
-    { requireFindings }
+    { requireFindings: isRequireFindings }
   );
   if (result.kind !== "ok") {
     return jsonErrorResponse(
@@ -138,7 +138,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   );
 }
 
-/** Workspace-scoped status for the Runtime-owned analyst task list. */
+/**
+Workspace-scoped status for the Runtime-owned analyst task list.
+*/
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const values = request.nextUrl.searchParams.getAll("workspaceId");
   const workspaceId = values[0]?.trim() ?? "";

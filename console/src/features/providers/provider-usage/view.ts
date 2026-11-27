@@ -98,18 +98,18 @@ function usageEvidence(reading: ProviderUsageReading): React.ReactNode {
 }
 
 /**
- * The provider's usage panel.
- *
- * The panel renders a reading. It does not read: the reading is fetched in
- * the browser, after the page has rendered, because the seven-day attempt
- * aggregation is the most expensive read the Console makes and it answers a
- * question about one panel rather than about the page.
- *
- * The reading has a state the measurements do not -- the pending state --
- * and it is rendered as its own thing. A panel that is still waiting has not
- * been told that the provider made no attempts, and rendering that absence
- * as a zero is the failure this state exists to prevent.
- */
+The provider's usage panel.
+
+The panel renders a reading. It does not read: the reading is fetched in
+the browser, after the page has rendered, because the seven-day attempt
+aggregation is the most expensive read the Console makes and it answers a
+question about one panel rather than about the page.
+
+The reading has a state the measurements do not -- the pending state --
+and it is rendered as its own thing. A panel that is still waiting has not
+been told that the provider made no attempts, and rendering that absence
+as a zero is the failure this state exists to prevent.
+*/
 export function providerUsageView({
   provider,
   reading

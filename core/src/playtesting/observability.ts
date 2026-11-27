@@ -170,7 +170,9 @@ function assertEventDefinition(value: unknown, eventIds: Set<string>): void {
   assertExpectedOccurrenceRange(value.expectedOccurrenceRange);
 }
 
-/** Validate the game-owned event taxonomy without inventing absent labels. */
+/**
+Validate the game-owned event taxonomy without inventing absent labels.
+*/
 export function assertPlaytestEventTaxonomy(
   value: unknown
 ): asserts value is PlaytestEventTaxonomy {

@@ -1,13 +1,13 @@
 /**
- * Null-safe dimension anchor scoring against a registry-declared rubric.
- *
- * Insufficient evidence is `null` with a reason -- never category 2. Scoring
- * requires both a minimum independent-unit count and a minimum eligible
- * opportunity count to be met; a ratio that would otherwise land in a high
- * band is still null when the underlying unit counts fall below the
- * rubric's declared minimums. No universal composite score is computed:
- * scoring resolves one dimension at a time against its own score bands.
- */
+Null-safe dimension anchor scoring against a registry-declared rubric.
+
+Insufficient evidence is `null` with a reason -- never category 2. Scoring
+requires both a minimum independent-unit count and a minimum eligible
+opportunity count to be met; a ratio that would otherwise land in a high
+band is still null when the underlying unit counts fall below the
+rubric's declared minimums. No universal composite score is computed:
+scoring resolves one dimension at a time against its own score bands.
+*/
 
 import type {
   PlaytestDimensionAnchor,
@@ -67,14 +67,14 @@ export function scorePlaytestDimensionAnchor(
   }
   const independentUnits = input.independentUnits;
   const eligibleOpportunities = input.eligibleOpportunities;
-  const insufficient =
+  const isInsufficient =
     input.ratio === null ||
     independentUnits === null ||
     eligibleOpportunities === null ||
     independentUnits < rubric.minIndependentUnits ||
     eligibleOpportunities < rubric.minExposure;
 
-  if (insufficient) {
+  if (isInsufficient) {
     return {
       dimensionId: rubric.dimensionId,
       version: rubric.version,
@@ -89,9 +89,7 @@ export function scorePlaytestDimensionAnchor(
       independentUnits,
       eligibleOpportunities,
       insufficientReason: "unobserved",
-      ...(input.counterexampleId === undefined
-        ? {}
-        : { counterexampleId: input.counterexampleId })
+      ...(input.counterexampleId !== undefined && { counterexampleId: input.counterexampleId })
     };
   }
 
@@ -106,9 +104,7 @@ export function scorePlaytestDimensionAnchor(
     evidenceRefs: input.evidenceRefs,
     independentUnits,
     eligibleOpportunities,
-    ...(input.counterexampleId === undefined
-      ? {}
-      : { counterexampleId: input.counterexampleId })
+    ...(input.counterexampleId !== undefined && { counterexampleId: input.counterexampleId })
   };
 }
 

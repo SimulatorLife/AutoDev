@@ -24,12 +24,16 @@ import { request as httpsRequest } from "node:https";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
-/** A single npm name segment, with no path separators or URL escapes. */
+/**
+A single npm name segment, with no path separators or URL escapes.
+*/
 function isPackageSegment(value: string): boolean {
   return /^[a-z0-9][a-z0-9._-]{0,213}$/u.test(value);
 }
 
-/** npm version/tag and tarball segments may contain semver's + character. */
+/**
+npm version/tag and tarball segments may contain semver's + character.
+*/
 function isArtifactSegment(value: string): boolean {
   return /^[a-zA-Z0-9][a-zA-Z0-9._+-]{0,255}$/u.test(value);
 }
@@ -80,10 +84,8 @@ function registryOrigin(registry: string): { origin: URL; secure: boolean } {
   // registries must use HTTPS, and only a root origin is supported.
   if (
     (url.protocol !== "https:" &&
-      !(
-        url.protocol === "http:" &&
-        ["127.0.0.1", "[::1]"].includes(url.hostname)
-      )) ||
+      (url.protocol !== "http:" ||
+        !["127.0.0.1", "[::1]"].includes(url.hostname))) ||
     url.username ||
     url.password ||
     url.pathname !== "/" ||
@@ -161,11 +163,11 @@ export function rewriteRegistryUrls(
       ? (value as Record<string, unknown>)
       : null;
   const rewrite = (value: unknown): void => {
-    const dist = object(object(value)?.dist);
-    if (!dist || typeof dist.tarball !== "string") return;
+    const distribution = object(object(value)?.dist);
+    if (!distribution || typeof distribution.tarball !== "string") return;
     let target: URL;
     try {
-      target = new URL(dist.tarball);
+      target = new URL(distribution.tarball);
     } catch {
       return;
     }
@@ -177,7 +179,7 @@ export function rewriteRegistryUrls(
       !target.hash &&
       classifyRegistryPath(target.pathname) === "tarball"
     ) {
-      dist.tarball = proxy + target.pathname;
+      distribution.tarball = proxy + target.pathname;
     }
   };
   rewrite(metadata);

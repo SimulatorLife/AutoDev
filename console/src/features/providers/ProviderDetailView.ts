@@ -20,7 +20,6 @@ import { LiveCountRefresh } from "../../components/navigation/LiveCountRefresh.t
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
 import { ControlFailureNotice } from "../../components/status/ControlFailureNotice.ts";
-import { InstantDisplay } from "../../components/ui/InstantDisplay.ts";
 import { ReconciliationPanel } from "../../components/status/ConvergenceBadge.ts";
 import {
   NOT_OBSERVED_LABEL,
@@ -30,8 +29,9 @@ import {
 import {
   DataTable,
   type DataTableFeatures,
-  type DataTableProps
+  type DataTableProps as DataTableProperties
 } from "../../components/tables/DataTable.ts";
+import { InstantDisplay } from "../../components/ui/InstantDisplay.ts";
 import {
   ENTITY_LINK_CLASS,
   MONO_VALUE_CLASS,
@@ -70,16 +70,18 @@ export interface ProviderDetailViewProps {
   readonly provider: ControlApiProviderRecord;
   readonly tiers: ControlApiProvidersResponse["tiers"];
   readonly orchestratorTier: string;
-  /** This provider's models, or `null` when the Models collection is unavailable. */
+  /**
+  This provider's models, or `null` when the Models collection is unavailable.
+  */
   readonly models: readonly ControlApiModelRecord[] | null;
   readonly modelDiscovery: ProviderModelDiscoveryState;
   /**
-   * The versions of the CLIs the Runtime found on this machine.
-   *
-   * Optional because a caller without them is a caller that has not read
-   * them: the page then says the version was not observed, which is the
-   * truth, rather than inventing a version for the provider.
-   */
+  The versions of the CLIs the Runtime found on this machine.
+  
+  Optional because a caller without them is a caller that has not read
+  them: the page then says the version was not observed, which is the
+  truth, rather than inventing a version for the provider.
+  */
   readonly cliVersions?: ProviderCliVersionState | undefined;
   readonly usagePanel: React.ReactNode;
   readonly runtime?: ControlApiRuntimeResponse | undefined;
@@ -88,15 +90,15 @@ export interface ProviderDetailViewProps {
 }
 
 /**
- * The provider's own desired-vs-actual state.
- *
- * The Runtime owns this view: it reports whether the routing configuration the
- * operator set -- the provider's enablement, its agent limits, and its role
- * assignments together -- has been applied and observed, and it carries the
- * bounded operation history for the provider's own resources. The Console
- * renders the Runtime's verdict rather than deriving one, so the page cannot
- * claim a convergence the runtime never reported.
- */
+The provider's own desired-vs-actual state.
+
+The Runtime owns this view: it reports whether the routing configuration the
+operator set -- the provider's enablement, its agent limits, and its role
+assignments together -- has been applied and observed, and it carries the
+bounded operation history for the provider's own resources. The Console
+renders the Runtime's verdict rather than deriving one, so the page cannot
+claim a convergence the runtime never reported.
+*/
 function ProviderReconciliationPanel({
   provider
 }: {
@@ -122,18 +124,18 @@ function ProviderReconciliationPanel({
 }
 
 /**
- * The provider detail page's role panel.
- *
- * It shows the same role controls as the Providers row, because the
- * target state's contextual-controls rule requires an item's controls on its
- * row *and* in its detail view. Reusing `ProviderRoleControls` rather than
- * re-describing the roles here is what keeps the two surfaces from drifting
- * apart -- they used to, when each listed its own set of roles.
- *
- * The one difference is layout: here the strip has the panel to itself, so
- * each agent role gets a model row of its own under Subagent (`rows`) instead
- * of the Providers row's single hierarchical select.
- */
+The provider detail page's role panel.
+
+It shows the same role controls as the Providers row, because the
+target state's contextual-controls rule requires an item's controls on its
+row *and* in its detail view. Reusing `ProviderRoleControls` rather than
+re-describing the roles here is what keeps the two surfaces from drifting
+apart -- they used to, when each listed its own set of roles.
+
+The one difference is layout: here the strip has the panel to itself, so
+each agent role gets a model row of its own under Subagent (`rows`) instead
+of the Providers row's single hierarchical select.
+*/
 function RolesPanel({
   provider,
   modelDiscovery,
@@ -343,7 +345,7 @@ function ModelsPanel({
           )
         )
       : null,
-    React.createElement<DataTableProps<ProviderModelRow>>(DataTable, {
+    React.createElement<DataTableProperties<ProviderModelRow>>(DataTable, {
       data: rows,
       columns,
       keyExtractor: (model: ProviderModelRow) =>
@@ -578,7 +580,7 @@ function HealthPanel({
       React.createElement(
         DetailValue,
         { label: "Last-resort eligible" },
-        cooldown === null ? "Yes" : cooldown.lastResortEligible ? "Yes" : "No"
+        (cooldown === null) || cooldown.lastResortEligible ? "Yes" : "No"
       ),
       React.createElement(
         DetailValue,
@@ -688,7 +690,7 @@ export function ProviderDetailView({
           React.createElement(ProviderStatusBadge, {
             provider,
             returnTo,
-            ...(quotaExhaustion === undefined ? {} : { quotaExhaustion })
+            ...(quotaExhaustion !== undefined && { quotaExhaustion })
           }),
           React.createElement(ProviderExternalLinks, {
             provider: provider.id,

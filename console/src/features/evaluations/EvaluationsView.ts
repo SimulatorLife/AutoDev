@@ -32,7 +32,7 @@ import { Tag } from "../../components/status/Tag.ts";
 import {
   DataTable,
   type DataTableFeatures,
-  type DataTableProps
+  type DataTableProps as DataTableProperties
 } from "../../components/tables/DataTable.ts";
 import { TabNav } from "../../components/tabs/Tabs.ts";
 import { TraceStatus } from "../../components/traces/TraceStatus.ts";
@@ -46,7 +46,6 @@ import { InstantDisplay } from "../../components/ui/InstantDisplay.ts";
 import {
   ACTION_LINK_CLASS,
   MONO_ID_CLASS,
-  MONO_META_CLASS,
   MONO_VALUE_CLASS,
   MUTED_META_CLASS,
   MUTED_TEXT_CLASS,
@@ -85,13 +84,13 @@ import {
 } from "./evaluations-url.ts";
 
 /**
- * Evaluations resource view.
- *
- * Two tabs over one bounded read of the evaluation store: the run history and a
- * comparison of outcomes across the targets those runs evaluated. Both describe
- * the same filtered window, so the summary above them and the tables below them
- * cannot disagree about which rows are being counted.
- */
+Evaluations resource view.
+
+Two tabs over one bounded read of the evaluation store: the run history and a
+comparison of outcomes across the targets those runs evaluated. Both describe
+the same filtered window, so the summary above them and the tables below them
+cannot disagree about which rows are being counted.
+*/
 
 export type EvaluationTraceLookup =
   | { readonly kind: "invalid-span-id" }
@@ -102,92 +101,104 @@ export type EvaluationTraceLookup =
   | { readonly kind: "unavailable" }
   | { readonly kind: "observed"; readonly detail: UsageTraceDetail };
 
-interface EvaluationsViewProps {
-  /** Already narrowed by `filters`; the page owns the read, the view owns the shape. */
+interface EvaluationsViewProperties {
+  /**
+  Already narrowed by `filters`; the page owns the read, the view owns the shape.
+  */
   readonly evaluations: readonly EvaluationResult[];
-  /** Rows in the fetched window before filtering, for the filter bar's count. */
+  /**
+  Rows in the fetched window before filtering, for the filter bar's count.
+  */
   readonly availableCount?: number | undefined;
   /**
-   * Every result the source holds, which is more than `availableCount` whenever
-   * the read was capped.
-   *
-   * The page states this rather than letting the window describe itself: a
-   * filter summary that counts a capped window as the whole history tells an
-   * operator a filtered set is everything that exists.
-   */
+  Every result the source holds, which is more than `availableCount` whenever
+  the read was capped.
+  
+  The page states this rather than letting the window describe itself: a
+  filter summary that counts a capped window as the whole history tells an
+  operator a filtered set is everything that exists.
+  */
   readonly totalCount?: number | undefined;
-  /** Whether the read returned a bounded window rather than the whole table. */
+  /**
+  Whether the read returned a bounded window rather than the whole table.
+  */
   readonly truncated?: boolean | undefined;
   readonly filters: EvaluationsFilters;
   readonly filterOptions: EvaluationsFilterOptions;
-  /** Which section is showing. Defaults to the run history. */
+  /**
+  Which section is showing. Defaults to the run history.
+  */
   readonly tab?: EvaluationsTabId | undefined;
-  /** Page of the narrowed window the history table shows. Defaults to the first. */
+  /**
+  Page of the narrowed window the history table shows. Defaults to the first.
+  */
   readonly page?: number | undefined;
   /**
-   * Runs a time bound could not place, because their run time is not a readable
-   * instant.
-   *
-   * Stated on the page rather than absorbed into the counts. A row that cannot
-   * be placed is excluded from the match, and a denominator that quietly lost it
-   * would be a pass rate over a population nobody chose.
-   */
+  Runs a time bound could not place, because their run time is not a readable
+  instant.
+  
+  Stated on the page rather than absorbed into the counts. A row that cannot
+  be placed is excluded from the match, and a denominator that quietly lost it
+  would be a pass rate over a population nobody chose.
+  */
   readonly unplaceable?: number | undefined;
   /**
-   * Runs that report no prompt and matched a prompt filter anyway.
-   *
-   * The inclusion is deliberate -- a row that named no prompt is not evidence it
-   * ran under another one, so dropping it would under-report the history -- but
-   * it used to be silent, which put "No prompt" rows under a bar reading
-   * "Prompt: release-notes". Stating the count keeps the rule and removes the
-   * contradiction.
-   */
+  Runs that report no prompt and matched a prompt filter anyway.
+  
+  The inclusion is deliberate -- a row that named no prompt is not evidence it
+  ran under another one, so dropping it would under-report the history -- but
+  it used to be silent, which put "No prompt" rows under a bar reading
+  "Prompt: release-notes". Stating the count keeps the rule and removes the
+  contradiction.
+  */
   readonly promptless?: number | undefined;
   /**
-   * Oldest run the bounded read holds, when the operator's window ends before
-   * it -- which means the window was never read, not that it is empty.
-   *
-   * Epoch milliseconds, straight from `unreadWindow`; the page owns the read and
-   * this is a fact about it, so the view takes the answer rather than
-   * re-deriving it from rows it was never given.
-   */
+  Oldest run the bounded read holds, when the operator's window ends before
+  it -- which means the window was never read, not that it is empty.
+  
+  Epoch milliseconds, straight from `unreadWindow`; the page owns the read and
+  this is a fact about it, so the view takes the answer rather than
+  re-deriving it from rows it was never given.
+  */
   readonly oldestReadAt?: number | undefined;
-  /** Result id opened in the detail drawer, or `null`. */
+  /**
+  Result id opened in the detail drawer, or `null`.
+  */
   readonly selection?: string | null | undefined;
   /**
-   * The span the URL names, when it names one this page accepts.
-   *
-   * The view is handed this rather than reading it back off `traceLookup`,
-   * because it is needed for links and not for rendering. The reader's answer
-   * is only available once a trace came back observed, and "close this run"
-   * still has to keep the selection on a page whose trace was not found --
-   * which is exactly when the trace panel has no other way to say which span it
-   * was about.
-   */
+  The span the URL names, when it names one this page accepts.
+  
+  The view is handed this rather than reading it back off `traceLookup`,
+  because it is needed for links and not for rendering. The reader's answer
+  is only available once a trace came back observed, and "close this run"
+  still has to keep the selection on a page whose trace was not found --
+  which is exactly when the trace panel has no other way to say which span it
+  was about.
+  */
   readonly spanId?: string | undefined;
   readonly traceLookup?: EvaluationTraceLookup | null | undefined;
 }
 
 /**
- * Verdict wording for one evaluation.
- *
- * The three-way mapping is the target state's rule made literal: a run is
- * Passed or Failed only when its source supplied that verdict, and everything
- * else -- no verdict, an unrecognised one, a run with no metrics at all -- is
- * Not observed. The badge variant and the label are derived together so the
- * colour can never disagree with the word beside it.
- */
+Verdict wording for one evaluation.
+
+The three-way mapping is the target state's rule made literal: a run is
+Passed or Failed only when its source supplied that verdict, and everything
+else -- no verdict, an unrecognised one, a run with no metrics at all -- is
+Not observed. The badge variant and the label are derived together so the
+colour can never disagree with the word beside it.
+*/
 const PASSED_LABEL = "Passed";
 const FAILED_LABEL = "Failed";
 
 /**
- * A verdict's status and its word, derived together.
- *
- * Two literal tables were how this read before: one mapping `passed` to a badge
- * status and another mapping it to a word. They agreed today, and nothing tied
- * them -- so adding a verdict meant editing two lists, and the failure mode is a
- * badge whose colour contradicts the sentence next to it. One table cannot.
- */
+A verdict's status and its word, derived together.
+
+Two literal tables were how this read before: one mapping `passed` to a badge
+status and another mapping it to a word. They agreed today, and nothing tied
+them -- so adding a verdict meant editing two lists, and the failure mode is a
+badge whose colour contradicts the sentence next to it. One table cannot.
+*/
 function verdictOf(passed: boolean | null | undefined): {
   readonly status: StatusBadgeVariant;
   readonly label: string;
@@ -202,7 +213,9 @@ function outcomeBadge(evaluation: EvaluationResult): React.JSX.Element {
   return React.createElement(StatusBadge, { status, label });
 }
 
-/** A metric's own verdict, which is not the evaluation's outcome. */
+/**
+A metric's own verdict, which is not the evaluation's outcome.
+*/
 function metricVerdict(metric: EvaluationMetric): {
   readonly label: string;
   readonly tone: string;
@@ -219,15 +232,15 @@ function metricVerdict(metric: EvaluationMetric): {
 }
 
 /**
- * One metric as a chip.
- *
- * `wrap` rather than the default truncation, because the chip carries three
- * separate facts -- the measurement's name, its value, and its verdict -- and
- * the verdict is what says whether this particular measurement passed. Cut at
- * `tool_failures: 4 · Fai…`, the chip stops being a reading and becomes a
- * measurement whose result is unknown, which is the one thing the target state
- * forbids inferring. Wrapping keeps all three.
- */
+One metric as a chip.
+
+`wrap` rather than the default truncation, because the chip carries three
+separate facts -- the measurement's name, its value, and its verdict -- and
+the verdict is what says whether this particular measurement passed. Cut at
+`tool_failures: 4 · Fai…`, the chip stops being a reading and becomes a
+measurement whose result is unknown, which is the one thing the target state
+forbids inferring. Wrapping keeps all three.
+*/
 function metricChip(metric: EvaluationMetric): React.JSX.Element {
   const verdict = metricVerdict(metric);
   return React.createElement(Tag, {
@@ -239,13 +252,13 @@ function metricChip(metric: EvaluationMetric): React.JSX.Element {
 }
 
 /**
- * The metric list inside a history row.
- *
- * An evaluation with no metrics renders the same Not observed badge every other
- * unobserved verdict does, rather than an empty cell. The empty cell and the
- * missing measurement are different answers, and a blank box is indistinguishable
- * from a row that failed to render.
- */
+The metric list inside a history row.
+
+An evaluation with no metrics renders the same Not observed badge every other
+unobserved verdict does, rather than an empty cell. The empty cell and the
+missing measurement are different answers, and a blank box is indistinguishable
+from a row that failed to render.
+*/
 function metricCell(evaluation: EvaluationResult): React.JSX.Element {
   if (evaluation.metrics.length === 0) {
     return React.createElement(StatusBadge, {
@@ -272,27 +285,27 @@ function metricCell(evaluation: EvaluationResult): React.JSX.Element {
 }
 
 /**
- * A timestamp, split so it can break between its parts, and never stamped with
- * an offset it did not read.
- *
- * Both tables on this resource render a timestamp, and they did it two ways: the
- * history table matched a regex and the trace table sliced the raw string, and
- * both appended a `Z` the source never had to contain. A span stamped
- * `2026-10-05T09:31:00+02:00` rendered as `09:31:00Z` -- the same clock reading
- * under a zone label it was not in, which is a claim about the data, not about
- * formatting. The wire only requires a timestamp to *parse*: the trace validator
- * checks `Date.parse`, not the shape, and the evaluation validator checks only
- * that it is a string, so a `+02:00` offset, a date-only value, and an
- * unreadable one all reach the view intact.
- *
- * The source's own offset is kept, then: `+02:00` stays `+02:00`, a value with
- * no offset shows none, and a value that is not an ISO instant is shown whole.
- * The zone is named rather than signed -- `Z` is Zulu, which is UTC, and the
- * Console says "UTC" because its own column headers and date fields say "UTC".
- *
- * Both evaluation rows and trace spans use the shared toggle, keeping the
- * machine-readable instant and local display behavior consistent.
- */
+A timestamp, split so it can break between its parts, and never stamped with
+an offset it did not read.
+
+Both tables on this resource render a timestamp, and they did it two ways: the
+history table matched a regex and the trace table sliced the raw string, and
+both appended a `Z` the source never had to contain. A span stamped
+`2026-10-05T09:31:00+02:00` rendered as `09:31:00Z` -- the same clock reading
+under a zone label it was not in, which is a claim about the data, not about
+formatting. The wire only requires a timestamp to *parse*: the trace validator
+checks `Date.parse`, not the shape, and the evaluation validator checks only
+that it is a string, so a `+02:00` offset, a date-only value, and an
+unreadable one all reach the view intact.
+
+The source's own offset is kept, then: `+02:00` stays `+02:00`, a value with
+no offset shows none, and a value that is not an ISO instant is shown whole.
+The zone is named rather than signed -- `Z` is Zulu, which is UTC, and the
+Console says "UTC" because its own column headers and date fields say "UTC".
+
+Both evaluation rows and trace spans use the shared toggle, keeping the
+machine-readable instant and local display behavior consistent.
+*/
 function timestampCell(timestamp: string): React.JSX.Element {
   return React.createElement(InstantDisplay, {
     value: timestamp,
@@ -301,8 +314,8 @@ function timestampCell(timestamp: string): React.JSX.Element {
 }
 
 /**
- * The drawer's subtitle is the same instant representation as the table cell.
- */
+The drawer's subtitle is the same instant representation as the table cell.
+*/
 function runTimeInstant(timestamp: string): React.JSX.Element {
   return React.createElement(InstantDisplay, {
     value: timestamp,
@@ -310,72 +323,74 @@ function runTimeInstant(timestamp: string): React.JSX.Element {
   });
 }
 
-/** The value a prompt-less run reports instead of naming a prompt. */
+/**
+The value a prompt-less run reports instead of naming a prompt.
+*/
 const NO_PROMPT_LABEL = "No prompt";
 
 /**
- * Where a link on this page should land.
- *
- * The filters, the open tab, and the open page travel together, so every link
- * built below carries all three. Passing them separately is how a trace link
- * came to preserve the narrowing but drop the tab, landing the operator on the
- * results page after they had opened a comparison -- and how closing a run's
- * drawer would have thrown away the page of the history it was opened from.
- *
- * Those three are dimensions of *one* reading, so a link that changes any of
- * them keeps the others. The two selections are a different kind of thing:
- * which run is open and which span is open are alternatives, and a link that
- * opens one closes the other -- opening a run from a trace, paging the list
- * while a run is open, clearing the filters from beside a trace. The page
- * renders both at once when a URL names both, but no link produces that pair,
- * so treating them as exclusive costs an operator nothing they could reach.
- *
- * The rule exists because the alternative was five bugs of one shape. Read as a
- * table of what every link keeps, the three dimensions were carrying each other
- * and the selections were being dropped by links whose own labels promised
- * otherwise: the filter bar dropped the tab, a row dropped the page it was on,
- * and "Clear the filters and look for it in the whole retained history" dropped
- * the very run it offered to go to.
- */
+Where a link on this page should land.
+
+The filters, the open tab, and the open page travel together, so every link
+built below carries all three. Passing them separately is how a trace link
+came to preserve the narrowing but drop the tab, landing the operator on the
+results page after they had opened a comparison -- and how closing a run's
+drawer would have thrown away the page of the history it was opened from.
+
+Those three are dimensions of *one* reading, so a link that changes any of
+them keeps the others. The two selections are a different kind of thing:
+which run is open and which span is open are alternatives, and a link that
+opens one closes the other -- opening a run from a trace, paging the list
+while a run is open, clearing the filters from beside a trace. The page
+renders both at once when a URL names both, but no link produces that pair,
+so treating them as exclusive costs an operator nothing they could reach.
+
+The rule exists because the alternative was five bugs of one shape. Read as a
+table of what every link keeps, the three dimensions were carrying each other
+and the selections were being dropped by links whose own labels promised
+otherwise: the filter bar dropped the tab, a row dropped the page it was on,
+and "Clear the filters and look for it in the whole retained history" dropped
+the very run it offered to go to.
+*/
 interface EvaluationsNav {
   readonly filters: EvaluationsFilters;
   readonly tab: EvaluationsTabId;
   readonly page: number;
   /**
-   * The span the URL names, when it names one.
-   *
-   * Carried here rather than left to each call site because only the page knows
-   * it: the reader's answer is absent whenever the trace did not come back
-   * observed, and a link that must keep the selection still has to keep it on
-   * those pages.
-   */
+  The span the URL names, when it names one.
+  
+  Carried here rather than left to each call site because only the page knows
+  it: the reader's answer is absent whenever the trace did not come back
+  observed, and a link that must keep the selection still has to keep it on
+  those pages.
+  */
   readonly spanId?: string | undefined;
 }
 
 /**
- * The list for the current state: same filters, same tab, same page, neither
- * selection.
- *
- * This is "back to the list", so it is what the trace panel offers when the
- * operator wants to leave the trace.
- */
+The list for the current state: same filters, same tab, same page, neither
+selection.
+
+This is "back to the list", so it is what the trace panel offers when the
+operator wants to leave the trace.
+*/
 function navListHref(nav: EvaluationsNav): string {
   return evaluationsListHref(nav.filters, { tab: nav.tab, page: nav.page });
 }
 
 /**
- * The same list with the run closed and the trace left open.
- *
- * The drawer's link says "Close evaluation detail", so it closes the detail. It
- * used to hand back `navListHref`, which closed the trace as well -- and a page
- * whose URL named both a run and a span rendered both, so an operator who had
- * deliberately put them side by side lost the trace they were reading to close a
- * drawer, with no link anywhere to get back to it.
- *
- * The result is a URL naming one selection rather than two, so this is not the
- * page rendering two panels at once by a link; it is the one link that undoes
- * one of them.
- */
+The same list with the run closed and the trace left open.
+
+The drawer's link says "Close evaluation detail", so it closes the detail. It
+used to hand back `navListHref`, which closed the trace as well -- and a page
+whose URL named both a run and a span rendered both, so an operator who had
+deliberately put them side by side lost the trace they were reading to close a
+drawer, with no link anywhere to get back to it.
+
+The result is a URL naming one selection rather than two, so this is not the
+page rendering two panels at once by a link; it is the one link that undoes
+one of them.
+*/
 function navCloseResultHref(nav: EvaluationsNav): string {
   return evaluationsListHref(nav.filters, {
     tab: nav.tab,
@@ -385,15 +400,15 @@ function navCloseResultHref(nav: EvaluationsNav): string {
 }
 
 /**
- * What a row's trace reference actually is.
- *
- * Three answers, decided once, because two surfaces render this field and they
- * had drifted into answering different questions: the history table checked
- * whether the value was a span id, and the run drawer did not check at all --
- * so the drawer showed a malformed reference as a real one, on the same run the
- * table beside it labelled "Invalid span". A malformed source must not read as a
- * valid one, and the drawer's title text is not an exception.
- */
+What a row's trace reference actually is.
+
+Three answers, decided once, because two surfaces render this field and they
+had drifted into answering different questions: the history table checked
+whether the value was a span id, and the run drawer did not check at all --
+so the drawer showed a malformed reference as a real one, on the same run the
+table beside it labelled "Invalid span". A malformed source must not read as a
+valid one, and the drawer's title text is not an exception.
+*/
 type EvaluationTraceReference =
   | { readonly kind: "none" }
   | { readonly kind: "invalid"; readonly reported: string }
@@ -475,10 +490,10 @@ function spanLink(
       // it certain. Measured against a fixture of counter-derived ids, 199 of 200
       // rows rendered as `00000000` with nothing to tell them apart on hover.
       title: spanId,
-      ...(selected ? { "aria-current": "true" } : {}),
+      ...(selected && { "aria-current": "true" }),
       dataAttributes: {
         "data-trace-span-id": spanId,
-        ...(selected ? { "data-trace-selected": "true" } : {})
+        ...(selected && { "data-trace-selected": "true" })
       }
     },
     spanId.slice(0, 8)
@@ -507,17 +522,17 @@ function spanLink(
 }
 
 /**
- * The trace table's columns, told which span the trace was opened for.
- *
- * The selected id comes from `detail.selectedSpanId` -- the reader's answer --
- * and never from `nav.spanId`, the id in the URL. They are usually the same
- * string, and where they are not the reader is the authority: `queryTrace`
- * sends the URL's id to the Usage service and trusts the `selectedSpanId` that
- * comes back, since a service holding a partial trace may legitimately answer
- * about a span it retained. Marking the URL's id instead would point the marker
- * at a row the trace does not contain -- at the 200-span cap, marking nothing
- * at all, which is the state this exists to remove.
- */
+The trace table's columns, told which span the trace was opened for.
+
+The selected id comes from `detail.selectedSpanId` -- the reader's answer --
+and never from `nav.spanId`, the id in the URL. They are usually the same
+string, and where they are not the reader is the authority: `queryTrace`
+sends the URL's id to the Usage service and trusts the `selectedSpanId` that
+comes back, since a service holding a partial trace may legitimately answer
+about a span it retained. Marking the URL's id instead would point the marker
+at a row the trace does not contain -- at the 200-span cap, marking nothing
+at all, which is the state this exists to remove.
+*/
 function traceColumns(
   nav: EvaluationsNav,
   selectedSpanId: string
@@ -647,21 +662,21 @@ const TRACE_UNAVAILABLE_MESSAGES: Readonly<
 };
 
 /**
- * The run a link asked for, and the page could not show.
- *
- * The trace selection above has five named states for every way a lookup can
- * come back empty; the run selection had none, and a `?result=` that resolved to
- * nothing rendered the same page as no selection at all. That is a link silently
- * doing nothing, in a table whose whole job is to say what each row is -- and it
- * has three ordinary causes here, each of which the view can name rather than
- * leave the operator to guess: a filter excluded the run, the bounded read never
- * fetched it, or the retained history holds no such id.
- *
- * The lookup is over the *narrowed* window, so a filter is the commonest cause
- * by far: a bookmarked run plus a filter that excludes it used to render an
- * ordinary-looking list, as if the run had never been asked for. The way out is
- * one click, and the callout offers it.
- */
+The run a link asked for, and the page could not show.
+
+The trace selection above has five named states for every way a lookup can
+come back empty; the run selection had none, and a `?result=` that resolved to
+nothing rendered the same page as no selection at all. That is a link silently
+doing nothing, in a table whose whole job is to say what each row is -- and it
+has three ordinary causes here, each of which the view can name rather than
+leave the operator to guess: a filter excluded the run, the bounded read never
+fetched it, or the retained history holds no such id.
+
+The lookup is over the *narrowed* window, so a filter is the commonest cause
+by far: a bookmarked run plus a filter that excludes it used to render an
+ordinary-looking list, as if the run had never been asked for. The way out is
+one click, and the callout offers it.
+*/
 function renderMissingResult(
   selection: string,
   resultCounts: ResultCounts
@@ -726,26 +741,26 @@ function renderMissingResult(
 }
 
 /**
- * The attributes every trace panel carries, whatever state it is in.
- *
- * A row's "View trace" link names `#evaluation-trace-span-<spanId>`, and the
- * panel is the thing that link is trying to reach. The anchor used to sit on the
- * "Selected" chip inside the *observed* panel, so it existed only when the trace
- * loaded: with the source answering 404 the panel rendered its alert, carried no
- * id at all, and the fragment resolved to nothing. Measured in Chromium the
- * browser then stayed at `scrollY` 0 with the failure callout 487px below at
- * 1280 and 1137px below at 390 -- the operator lands at the top of the page and
- * is never shown the one sentence that explains the failure.
- *
- * So the anchor belongs to the panel rather than to one state of it. Whether a
- * lookup succeeds is the one thing about arriving here that the operator does not
- * get to choose, and it must not decide where they land.
- *
- * `tabIndex: -1` moves the keyboard with the viewport, the same arrangement the
- * history heading and the drawer already use. Absent for an invalid span id,
- * because a URL the page has declared unreadable names no element to land on.
- */
-function tracePanelProps(
+The attributes every trace panel carries, whatever state it is in.
+
+A row's "View trace" link names `#evaluation-trace-span-<spanId>`, and the
+panel is the thing that link is trying to reach. The anchor used to sit on the
+"Selected" chip inside the *observed* panel, so it existed only when the trace
+loaded: with the source answering 404 the panel rendered its alert, carried no
+id at all, and the fragment resolved to nothing. Measured in Chromium the
+browser then stayed at `scrollY` 0 with the failure callout 487px below at
+1280 and 1137px below at 390 -- the operator lands at the top of the page and
+is never shown the one sentence that explains the failure.
+
+So the anchor belongs to the panel rather than to one state of it. Whether a
+lookup succeeds is the one thing about arriving here that the operator does not
+get to choose, and it must not decide where they land.
+
+`tabIndex: -1` moves the keyboard with the viewport, the same arrangement the
+history heading and the drawer already use. Absent for an invalid span id,
+because a URL the page has declared unreadable names no element to land on.
+*/
+function tracePanelProperties(
   state: EvaluationTraceLookup["kind"],
   spanId: string | undefined
 ): Record<string, unknown> {
@@ -754,9 +769,7 @@ function tracePanelProps(
     // added later cannot render a panel that is neither marked nor reachable.
     "data-feature": "evaluation-trace-detail",
     "data-trace-state": state,
-    ...(spanId === undefined
-      ? {}
-      : { id: traceSpanAnchorId(spanId), tabIndex: -1 })
+    ...(spanId !== undefined && { id: traceSpanAnchorId(spanId), tabIndex: -1 })
   };
 }
 
@@ -779,7 +792,7 @@ function renderTraceLookup(
           // and never scrolls the window -- so without the margin the panel
           // arrives flush against its top edge with its own padding shaved.
           className: `${CALLOUT_WARNING_CLASS} scroll-mt-4`,
-          ...tracePanelProps(traceLookup.kind, spanId),
+          ...tracePanelProperties(traceLookup.kind, spanId),
           "data-status": status
         },
         message
@@ -812,7 +825,7 @@ function renderTraceLookup(
     {
       className: `flex flex-col gap-4 ${LIST_PANEL_CLASS} scroll-mt-4`,
       "aria-labelledby": EVALUATIONS_TRACE_HEADING_ID,
-      ...tracePanelProps(traceLookup.kind, spanId),
+      ...tracePanelProperties(traceLookup.kind, spanId),
       "data-trace-partial": detail.partial ? "true" : "false"
     },
     React.createElement(
@@ -876,7 +889,7 @@ function renderTraceLookup(
           )
         : null
     ),
-    React.createElement<DataTableProps<UsageTraceSpan>>(DataTable, {
+    React.createElement<DataTableProperties<UsageTraceSpan>>(DataTable, {
       data: detail.spans,
       columns: traceColumns(nav, detail.selectedSpanId),
       keyExtractor: (span) => span.spanId,
@@ -886,16 +899,16 @@ function renderTraceLookup(
 }
 
 /**
- * The drawer's trace value, which is the same three answers as the table's --
- * and now the same answers, not merely the same three.
- *
- * It used to be plain text for any reported span, valid or not, while the table
- * beside it linked the valid ones and labelled the malformed ones "Invalid
- * span". So opening a run to read it either offered no way onward to its trace,
- * or presented a value the page had already decided is not a span id as though
- * it were one. The decision belongs to `traceReferenceOf`; only the typography
- * is the drawer's own.
- */
+The drawer's trace value, which is the same three answers as the table's --
+and now the same answers, not merely the same three.
+
+It used to be plain text for any reported span, valid or not, while the table
+beside it linked the valid ones and labelled the malformed ones "Invalid
+span". So opening a run to read it either offered no way onward to its trace,
+or presented a value the page had already decided is not a span id as though
+it were one. The decision belongs to `traceReferenceOf`; only the typography
+is the drawer's own.
+*/
 function drawerTraceValue(
   evaluation: EvaluationResult,
   nav: EvaluationsNav
@@ -933,13 +946,13 @@ function drawerTraceValue(
 }
 
 /**
- * The detail drawer for one evaluation run.
- *
- * The table carries the run's identity and its verdicts; the measurements
- * themselves are too long to also fit there without cutting them, which is the
- * same reason an unselected row shows a metric count rather than a metric list.
- * Opening a run is where the numbers are read.
- */
+The detail drawer for one evaluation run.
+
+The table carries the run's identity and its verdicts; the measurements
+themselves are too long to also fit there without cutting them, which is the
+same reason an unselected row shows a metric count rather than a metric list.
+Opening a run is where the numbers are read.
+*/
 function renderResultDetail(
   evaluation: EvaluationResult,
   nav: EvaluationsNav
@@ -1002,7 +1015,7 @@ function renderResultDetail(
             label: NOT_OBSERVED_LABEL,
             title: "This evaluation reported no metrics, so none were observed."
           })
-        : React.createElement<DataTableProps<EvaluationMetric>>(DataTable, {
+        : React.createElement<DataTableProperties<EvaluationMetric>>(DataTable, {
             data: evaluation.metrics,
             keyExtractor: (metric) => metric.name,
             emptyMessage: "No metrics were observed for this evaluation.",
@@ -1042,7 +1055,9 @@ function renderResultDetail(
   );
 }
 
-/** Outcome counts for one group of runs, used by both comparison tables. */
+/**
+Outcome counts for one group of runs, used by both comparison tables.
+*/
 interface OutcomeTally {
   readonly runs: number;
   readonly passed: number;
@@ -1051,12 +1066,12 @@ interface OutcomeTally {
 }
 
 /**
- * One collator for every comparison order.
- *
- * `localeCompare` builds an `Intl.Collator` on every call, and this table sorts
- * once per group per render; hoisting it keeps the ordering identical and the
- * cost off the render path.
- */
+One collator for every comparison order.
+
+`localeCompare` builds an `Intl.Collator` on every call, and this table sorts
+once per group per render; hoisting it keeps the ordering identical and the
+cost off the render path.
+*/
 const COMPARISON_COLLATOR = new Intl.Collator("en");
 
 const EMPTY_TALLY: OutcomeTally = {
@@ -1067,14 +1082,14 @@ const EMPTY_TALLY: OutcomeTally = {
 };
 
 /**
- * One run folded into a set of counts.
- *
- * The single place a verdict becomes a number. The stat cards and the comparison
- * tables used to count separately -- the cards with three `.filter()` passes, the
- * tables with this arithmetic -- and the two were free to drift, which is how a
- * page could show a pass rate over one population and a Failed count over
- * another.
- */
+One run folded into a set of counts.
+
+The single place a verdict becomes a number. The stat cards and the comparison
+tables used to count separately -- the cards with three `.filter()` passes, the
+tables with this arithmetic -- and the two were free to drift, which is how a
+page could show a pass rate over one population and a Failed count over
+another.
+*/
 function addRun(
   counts: OutcomeTally,
   evaluation: EvaluationResult
@@ -1087,7 +1102,9 @@ function addRun(
   };
 }
 
-/** The outcome counts for a set of runs, in one pass. */
+/**
+The outcome counts for a set of runs, in one pass.
+*/
 function tallyOutcomes(evaluations: readonly EvaluationResult[]): OutcomeTally {
   let counts = EMPTY_TALLY;
   for (const evaluation of evaluations) {
@@ -1108,18 +1125,20 @@ function tallyBy(
   return tallies;
 }
 
-/** The runs whose verdict the source actually supplied. */
+/**
+The runs whose verdict the source actually supplied.
+*/
 function observedVerdicts(counts: OutcomeTally): number {
   return counts.passed + counts.failed;
 }
 
 /**
- * Pass rate over the runs whose verdict was actually supplied.
- *
- * The denominator is the explicit verdicts and never the row count. A store
- * where most runs report no verdict would otherwise score a single pass as 100%,
- * which is the score-threshold inference the target state rules out.
- */
+Pass rate over the runs whose verdict was actually supplied.
+
+The denominator is the explicit verdicts and never the row count. A store
+where most runs report no verdict would otherwise score a single pass as 100%,
+which is the score-threshold inference the target state rules out.
+*/
 function passRate(counts: OutcomeTally): string {
   const observed = observedVerdicts(counts);
   return observed === 0
@@ -1260,7 +1279,7 @@ function renderComparison(
     // "Evaluation history" and belong at the same level.
     React.createElement("h2", { className: SECTION_HEADING_CLASS }, title),
     React.createElement("p", { className: MUTED_META_CLASS }, description),
-    React.createElement<DataTableProps<readonly [string, OutcomeTally]>>(
+    React.createElement<DataTableProperties<readonly [string, OutcomeTally]>>(
       DataTable,
       {
         data: rows,
@@ -1273,21 +1292,21 @@ function renderComparison(
 }
 
 /**
- * Which slice of the narrowed window the history table is showing.
- *
- * Rendered only under the history tab, and that is the contract rather than an
- * omission: comparisons fold every row in the window into one line per group, so
- * there are a handful of lines to show and none to page through. The `tab` still
- * travels with every link here because the one bug this resource had twice --
- * a link that preserved the narrowing and dropped the section, or vice versa --
- * is exactly the one a pager that assumed its tab would invite.
- *
- * The page is a plain link, so paging needs no JavaScript and the current page
- * is an address. Previous/next render as disabled-looking spans rather than
- * disappearing so the row does not change width as the operator reaches either
- * end of the window -- a control that appears and disappears is a control that
- * moves the thing you are aiming at.
- */
+Which slice of the narrowed window the history table is showing.
+
+Rendered only under the history tab, and that is the contract rather than an
+omission: comparisons fold every row in the window into one line per group, so
+there are a handful of lines to show and none to page through. The `tab` still
+travels with every link here because the one bug this resource had twice --
+a link that preserved the narrowing and dropped the section, or vice versa --
+is exactly the one a pager that assumed its tab would invite.
+
+The page is a plain link, so paging needs no JavaScript and the current page
+is an address. Previous/next render as disabled-looking spans rather than
+disappearing so the row does not change width as the operator reaches either
+end of the window -- a control that appears and disappears is a control that
+moves the thing you are aiming at.
+*/
 function renderPager(
   filters: EvaluationsFilters,
   tab: EvaluationsTabId,
@@ -1304,13 +1323,13 @@ function renderPager(
     label: string,
     enabled: boolean
   ): React.JSX.Element => {
-    const sharedProps = { "aria-label": label };
+    const sharedProperties = { "aria-label": label };
     const stepAttributes = { "data-evaluations-page-step": String(target) };
     return enabled
       ? React.createElement(
           NavigationLink,
           {
-            ...sharedProps,
+            ...sharedProperties,
             href: evaluationsPageHref(filters, target, tab),
             className: `rounded border border-border px-3 py-1 text-xs ${ACTION_LINK_CLASS}`,
             dataAttributes: stepAttributes
@@ -1320,7 +1339,7 @@ function renderPager(
       : React.createElement(
           "span",
           {
-            ...sharedProps,
+            ...sharedProperties,
             ...stepAttributes,
             className: `rounded border border-border px-3 py-1 opacity-50 ${MUTED_META_CLASS}`,
             "aria-disabled": "true"
@@ -1377,19 +1396,19 @@ function renderPager(
 }
 
 /**
- * One end of the run-time window.
- *
- * The label says UTC because that is what the bound is: a day is midnight UTC to
- * midnight UTC, and "Friday" here means the UTC Friday, which is not the
- * operator's Friday everywhere. `/usage`'s custom range already phrases it this
- * way, and two surfaces that both narrow time and disagree about the timezone
- * would be worse than one that says so.
- *
- * `min`/`max` cross-link the two controls so a browser rejects an inverted range
- * rather than the operator submitting one and getting an empty table. The
- * server-side parse re-checks regardless: a constraint on an input is a
- * convenience, not a rule.
- */
+One end of the run-time window.
+
+The label says UTC because that is what the bound is: a day is midnight UTC to
+midnight UTC, and "Friday" here means the UTC Friday, which is not the
+operator's Friday everywhere. `/usage`'s custom range already phrases it this
+way, and two surfaces that both narrow time and disagree about the timezone
+would be worse than one that says so.
+
+`min`/`max` cross-link the two controls so a browser rejects an inverted range
+rather than the operator submitting one and getting an empty table. The
+server-side parse re-checks regardless: a constraint on an input is a
+convenience, not a rule.
+*/
 function runTimeBound(
   name: "from" | "until",
   label: string,
@@ -1414,39 +1433,43 @@ function runTimeBound(
   );
 }
 
-/** The things a view can hold back, as one value rather than a tuple. */
+/**
+The things a view can hold back, as one value rather than a tuple.
+*/
 interface ViewCaveats {
   /**
-   * Whether the window's own two bounds exclude every instant, and the bounds
-   * themselves so the sentence can name which one to move.
-   */
+  Whether the window's own two bounds exclude every instant, and the bounds
+  themselves so the sentence can name which one to move.
+  */
   readonly contradictory?:
     { readonly from: string; readonly until: string } | undefined;
   readonly unplaceable: number;
   readonly promptless: number;
-  /** Oldest run the bounded read holds, when the window ends before it. */
+  /**
+  Oldest run the bounded read holds, when the window ends before it.
+  */
   readonly oldestReadAt?: number | undefined;
   readonly readRows: number;
   readonly storeTotal: number;
 }
 
 /**
- * What this view could not include, said next to the controls that decided it.
- *
- * Three ways a filter can fail to show what the operator asked for, and all
- * three are stated rather than absorbed. A run the window cannot place is
- * excluded from every count. A run that reports no prompt matches any prompt
- * filter, because a row that named no prompt is not evidence that it ran under
- * some other one and dropping it would under-report the history -- which used
- * to be invisible, putting rows reading "No prompt" directly under a bar reading
- * "Prompt: release-notes", a contradiction in one viewport. And a window older
- * than the bounded read was never read at all, which used to render as an empty
- * history against a store holding five thousand rows.
- *
- * Grouped immediately under the filter bar rather than beside the counts,
- * because each sentence explains a control the operator just used, and a caveat
- * about a filter belongs where the filter is.
- */
+What this view could not include, said next to the controls that decided it.
+
+Three ways a filter can fail to show what the operator asked for, and all
+three are stated rather than absorbed. A run the window cannot place is
+excluded from every count. A run that reports no prompt matches any prompt
+filter, because a row that named no prompt is not evidence that it ran under
+some other one and dropping it would under-report the history -- which used
+to be invisible, putting rows reading "No prompt" directly under a bar reading
+"Prompt: release-notes", a contradiction in one viewport. And a window older
+than the bounded read was never read at all, which used to render as an empty
+history against a store holding five thousand rows.
+
+Grouped immediately under the filter bar rather than beside the counts,
+because each sentence explains a control the operator just used, and a caveat
+about a filter belongs where the filter is.
+*/
 function renderViewCaveats({
   contradictory,
   unplaceable,
@@ -1496,18 +1519,10 @@ function renderViewCaveats({
       className: "flex flex-col gap-1 text-xs text-fg-secondary",
       role: "status",
       "data-evaluations-caveats": "true",
-      ...(contradictory === undefined
-        ? {}
-        : { "data-evaluations-contradictory-window": "true" }),
-      ...(unplaceable > 0
-        ? { "data-evaluations-unplaceable": String(unplaceable) }
-        : {}),
-      ...(promptless > 0
-        ? { "data-evaluations-promptless": String(promptless) }
-        : {}),
-      ...(oldestReadAt === undefined
-        ? {}
-        : { "data-evaluations-unread-window": String(oldestReadAt) })
+      ...(contradictory !== undefined && { "data-evaluations-contradictory-window": "true" }),
+      ...((unplaceable > 0) && { "data-evaluations-unplaceable": String(unplaceable) }),
+      ...((promptless > 0) && { "data-evaluations-promptless": String(promptless) }),
+      ...(oldestReadAt !== undefined && { "data-evaluations-unread-window": String(oldestReadAt) })
     },
     ...lines.map((line, index) =>
       React.createElement("p", { key: index }, line, ".")
@@ -1516,12 +1531,12 @@ function renderViewCaveats({
 }
 
 /**
- * One instant, in the same shape the Run Time column renders it.
- *
- * A caveat quoting a timestamp in a different format from the column it is
- * explaining is one more thing to translate before the two can be compared, and
- * the comparison is the whole reason the timestamp is there.
- */
+One instant, in the same shape the Run Time column renders it.
+
+A caveat quoting a timestamp in a different format from the column it is
+explaining is one more thing to translate before the two can be compared, and
+the comparison is the whole reason the timestamp is there.
+*/
 function filterSelect(
   name: "outcome" | "role" | "model" | "prompt",
   label: string,
@@ -1539,15 +1554,15 @@ function filterSelect(
 }
 
 /**
- * How much of the history is on screen.
- *
- * The read is capped and the filters narrow further, so four numbers can differ:
- * how many rows are shown, how many the window held, how many the source has,
- * and whether either filter or cap is in play. Both the filter bar's sentence and
- * the stat card are built from this one value, because the previous wording --
- * "N retained results" -- used the window and said nothing about the rest, which
- * made a capped read describe itself as the complete history.
- */
+How much of the history is on screen.
+
+The read is capped and the filters narrow further, so four numbers can differ:
+how many rows are shown, how many the window held, how many the source has,
+and whether either filter or cap is in play. Both the filter bar's sentence and
+the stat card are built from this one value, because the previous wording --
+"N retained results" -- used the window and said nothing about the rest, which
+made a capped read describe itself as the complete history.
+*/
 interface ResultCounts {
   readonly shown: number;
   readonly window: number;
@@ -1557,14 +1572,14 @@ interface ResultCounts {
 }
 
 /**
- * "1 retained result", "N retained results".
- *
- * A store holding exactly one evaluation is not an exotic state -- it is what a
- * workspace looks like the first time anything is evaluated, and it is the first
- * sentence a new operator reads. Every branch that ends in the noun goes through
- * this, including the capped one: `truncated` is the driver's own flag, so the
- * Console cannot claim that a cap implies a store of two or more.
- */
+"1 retained result", "N retained results".
+
+A store holding exactly one evaluation is not an exotic state -- it is what a
+workspace looks like the first time anything is evaluated, and it is the first
+sentence a new operator reads. Every branch that ends in the noun goes through
+this, including the capped one: `truncated` is the driver's own flag, so the
+Console cannot claim that a cap implies a store of two or more.
+*/
 function retainedResultCount(count: number): string {
   return `${count} retained result${count === 1 ? "" : "s"}`;
 }
@@ -1592,21 +1607,21 @@ function resultSummary({
 }
 
 /**
- * The stat card for the same numbers, as a value rather than a sentence.
- *
- * This card used to read `evaluations.length` under the title "Total
- * Evaluations", which is the lie the filter bar was just rewritten to stop
- * telling: filtered, it reported three as the total; capped, it reported the
- * window as the whole table. The value is now the store's own size and the
- * subtitle states the relationship to what is on screen, so the card and the
- * sentence above it cannot disagree about either number.
- *
- * The subtitle counts rows, never pages. "334 of the most recent 1000 shown"
- * became ambiguous the moment the table started showing 50 rows at a time: 50
- * are on the table, 334 are in the view, and "shown" pointed at both. It now
- * says "in this view", the same phrase the pager uses for its own range, so one
- * word names one population across the page.
- */
+The stat card for the same numbers, as a value rather than a sentence.
+
+This card used to read `evaluations.length` under the title "Total
+Evaluations", which is the lie the filter bar was just rewritten to stop
+telling: filtered, it reported three as the total; capped, it reported the
+window as the whole table. The value is now the store's own size and the
+subtitle states the relationship to what is on screen, so the card and the
+sentence above it cannot disagree about either number.
+
+The subtitle counts rows, never pages. "334 of the most recent 1000 shown"
+became ambiguous the moment the table started showing 50 rows at a time: 50
+are on the table, 334 are in the view, and "shown" pointed at both. It now
+says "in this view", the same phrase the pager uses for its own range, so one
+word names one population across the page.
+*/
 function retainedResults({
   shown,
   window,
@@ -1649,7 +1664,7 @@ export function EvaluationsView({
   selection = null,
   spanId,
   traceLookup = null
-}: EvaluationsViewProps): React.JSX.Element {
+}: EvaluationsViewProperties): React.JSX.Element {
   const counts = tallyOutcomes(evaluations);
   const observedOutcomes = observedVerdicts(counts);
   const narrowed = hasActiveFilters(filters);
@@ -1943,7 +1958,7 @@ export function EvaluationsView({
       React.createElement(StatCard, {
         title: "Retained results",
         value: retained.value,
-        ...(retained.subtitle === null ? {} : { subtitle: retained.subtitle })
+        ...(retained.subtitle !== null && { subtitle: retained.subtitle })
       }),
       React.createElement(StatCard, { title: "Passed", value: counts.passed }),
       React.createElement(StatCard, { title: "Failed", value: counts.failed }),
@@ -1989,7 +2004,7 @@ export function EvaluationsView({
             },
             "Evaluation history"
           ),
-          React.createElement<DataTableProps<EvaluationResult>>(DataTable, {
+          React.createElement<DataTableProperties<EvaluationResult>>(DataTable, {
             // The slice, not the window. The table renders every row it is
             // given, and handing it a full read window put a thousand rows and
             // 25,913 nodes into one response -- 2.9MiB of markup for a page that

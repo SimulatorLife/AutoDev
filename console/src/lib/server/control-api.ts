@@ -1,27 +1,26 @@
+/**
+Server-only typed fetcher for the AutoDev Control API.
+
+This module is the single owner of the service credential and the canonical
+local actor identity used by the Console. It MUST only be imported by
+Server Components, Server Actions, or other server-only code paths.
+
+- The service token is read from `process.env.AUTODEV_CONTROL_API_TOKEN`.
+  It is never serialized to a client payload, log line, or error message.
+- The actor header is the canonical `LOCAL_CONTROL_API_ACTOR` exported by
+  `@simulatorlife/autodev-core`. It is never read from any browser-supplied
+  header or query parameter.
+
+If the upstream Control API is unavailable, this module returns a
+discriminated `ControlApiResult` so the UI can render a clear unavailable
+state instead of fabricating values.
+*/
+import nodePath from "node:path";
+
 import {
   CHATGPT_TUNNEL_CONTROL_PATH,
   type ChatgptTunnelStatus
 } from "@simulatorlife/autodev-core";
-/**
- * Server-only typed fetcher for the AutoDev Control API.
- *
- * This module is the single owner of the service credential and the canonical
- * local actor identity used by the Console. It MUST only be imported by
- * Server Components, Server Actions, or other server-only code paths.
- *
- * - The service token is read from `process.env.AUTODEV_CONTROL_API_TOKEN`.
- *   It is never serialized to a client payload, log line, or error message.
- * - The actor header is the canonical `LOCAL_CONTROL_API_ACTOR` exported by
- *   `@simulatorlife/autodev-core`. It is never read from any browser-supplied
- *   header or query parameter.
- *
- * If the upstream Control API is unavailable, this module returns a
- * discriminated `ControlApiResult` so the UI can render a clear unavailable
- * state instead of fabricating values.
- */
-
-import nodePath from "node:path";
-
 import {
   assertWorkspacePlaytestApproval,
   assertWorkspaceVisualPlaytestTargetApproval,
@@ -62,8 +61,8 @@ import {
   type ControlApiProviderCliVersion,
   type ControlApiProviderEnabledPatchResponse,
   type ControlApiProviderLimitsPatchResponse,
-  controlApiProviderModelsResponseSchema,
   type ControlApiProviderModelsResponse,
+  controlApiProviderModelsResponseSchema,
   type ControlApiProviderRolePatchResponse,
   type ControlApiProvidersResetRequest,
   type ControlApiProvidersResetResponse,
@@ -127,20 +126,20 @@ export type ControlApiResult<T> =
       readonly kind: "unreachable";
       readonly message: string;
       /**
-       * The read was abandoned at the Console's own deadline rather than refused
-       * by the service.
-       *
-       * Additive and optional, so every consumer that branches on
-       * `kind === "unreachable"` is unaffected -- but it is the difference
-       * between two materially different facts. Measured in Chromium against a
-       * Control API fixture that accepts the request and never answers: the page
-       * settled on `autodev_unreachable` carrying the browser's own `AbortError`
-       * text, "This operation was aborted", followed by the advice to configure
-       * the server-side integration. None of which is true. The service was
-       * reachable -- it is holding the connection open -- and the operator's
-       * next move is to look at why the query is slow, not to reconfigure a
-       * credential that is working.
-       */
+      The read was abandoned at the Console's own deadline rather than refused
+      by the service.
+      
+      Additive and optional, so every consumer that branches on
+      `kind === "unreachable"` is unaffected -- but it is the difference
+      between two materially different facts. Measured in Chromium against a
+      Control API fixture that accepts the request and never answers: the page
+      settled on `autodev_unreachable` carrying the browser's own `AbortError`
+      text, "This operation was aborted", followed by the advice to configure
+      the server-side integration. None of which is true. The service was
+      reachable -- it is holding the connection open -- and the operator's
+      next move is to look at why the query is slow, not to reconfigure a
+      credential that is working.
+      */
       readonly timedOut?: boolean;
     }
   | {
@@ -153,13 +152,13 @@ const DEFAULT_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
 const CONTROL_API_TIMEOUT_MS = 5000;
 const GITHUB_CONTROL_API_TIMEOUT_MS = 20_000;
 /**
- * Playtesting reads and writes are answered by the Control API's
- * ClickHouse-backed store. Measured against the live Control API, one
- * playtesting read takes 1-3 seconds on its own, and the playtesting page
- * fans five of them out in parallel, so the generic 5-second Control API
- * deadline expires against a service that is answering normally. The
- * GitHub projection already carries its own budget for the same reason.
- */
+Playtesting reads and writes are answered by the Control API's
+ClickHouse-backed store. Measured against the live Control API, one
+playtesting read takes 1-3 seconds on its own, and the playtesting page
+fans five of them out in parallel, so the generic 5-second Control API
+deadline expires against a service that is answering normally. The
+GitHub projection already carries its own budget for the same reason.
+*/
 export const PLAYTESTING_CONTROL_API_TIMEOUT_MS = 20_000;
 const INVALID_RESPONSE_KIND = "invalid-response" as const;
 const PROMPT_VERSION_TIMEOUT_MS = 12_000;
@@ -172,16 +171,16 @@ export interface ControlApiConfig {
 }
 
 export function readControlApiConfig(
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): ControlApiConfig | null {
-  let serviceToken = env.AUTODEV_CONTROL_API_TOKEN?.trim() ?? "";
+  let serviceToken = environment.AUTODEV_CONTROL_API_TOKEN?.trim() ?? "";
   if (!serviceToken) {
-    const home = env.HOME?.trim();
+    const home = environment.HOME?.trim();
     const codexHome =
-      env.CODEX_HOME?.trim() || (home ? nodePath.join(home, ".codex") : null);
+      environment.CODEX_HOME?.trim() || (home ? nodePath.join(home, ".codex") : null);
     if (codexHome) {
       const secretFile =
-        env.AUTODEV_OPENLIT_SECRET_FILE?.trim() ||
+        environment.AUTODEV_OPENLIT_SECRET_FILE?.trim() ||
         nodePath.join(codexHome, "openlit-secrets.env");
       serviceToken =
         readSecretFromFile(secretFile, "AUTODEV_CONTROL_API_TOKEN") ?? "";
@@ -189,7 +188,7 @@ export function readControlApiConfig(
   }
   if (!serviceToken) return null;
   const baseUrl =
-    env.AUTODEV_CONTROL_API_BASE_URL?.trim() || DEFAULT_CONTROL_API_BASE_URL;
+    environment.AUTODEV_CONTROL_API_BASE_URL?.trim() || DEFAULT_CONTROL_API_BASE_URL;
   return { baseUrl: baseUrl.replace(TRAILING_SLASHES, ""), serviceToken };
 }
 
@@ -202,32 +201,32 @@ export interface FetchControlApiOptions {
 }
 
 /**
- * Issues an authenticated GET against the AutoDev Control API.
- *
- * Never accepts a `headers` argument; the only headers sent are the canonical
- * service credential and the canonical local actor identity. No browser header
- * is ever forwarded.
- */
+Issues an authenticated GET against the AutoDev Control API.
+
+Never accepts a `headers` argument; the only headers sent are the canonical
+service credential and the canonical local actor identity. No browser header
+is ever forwarded.
+*/
 /**
- * Transport failures as a sentence an operator can act on, keyed by the standard
- * cause code the platform reports.
- *
- * `fetch` itself is no use as a diagnostic: every one of these arrives as
- * `TypeError: fetch failed`, which says that something failed and nothing about
- * what. What separates them is `error.cause.code` -- `ECONNREFUSED` against a
- * Control API that is not running, `ENOTFOUND` against a host that does not
- * resolve, `ECONNRESET` against one that accepted the connection and dropped it
- * -- and each points at a different thing to check.
- *
- * `cause.message` is deliberately not forwarded. It reads
- * "connect ECONNREFUSED 127.0.0.1:4101", which puts the configured Control API
- * address into a browser-rendered panel. The errno name is a stable standard
- * identifier and carries the same diagnostic value without the address.
- *
- * An unrecognised code is still named rather than dropped: a cause the Console
- * has not seen before is more informative than a sentence that claims to be the
- * whole story.
- */
+Transport failures as a sentence an operator can act on, keyed by the standard
+cause code the platform reports.
+
+`fetch` itself is no use as a diagnostic: every one of these arrives as
+`TypeError: fetch failed`, which says that something failed and nothing about
+what. What separates them is `error.cause.code` -- `ECONNREFUSED` against a
+Control API that is not running, `ENOTFOUND` against a host that does not
+resolve, `ECONNRESET` against one that accepted the connection and dropped it
+-- and each points at a different thing to check.
+
+`cause.message` is deliberately not forwarded. It reads
+"connect ECONNREFUSED 127.0.0.1:4101", which puts the configured Control API
+address into a browser-rendered panel. The errno name is a stable standard
+identifier and carries the same diagnostic value without the address.
+
+An unrecognised code is still named rather than dropped: a cause the Console
+has not seen before is more informative than a sentence that claims to be the
+whole story.
+*/
 const TRANSPORT_FAILURE_MESSAGES: Readonly<Record<string, string>> = {
   ECONNREFUSED:
     "Nothing is listening at the configured AutoDev Control API address.",
@@ -254,11 +253,11 @@ function describeTransportFailure(error: unknown): string {
 }
 
 /**
- * The one place a request that never completed is turned into a result.
- *
- * Reads and writes share this classifier, so a timeout or transport error is
- * reported the same way whichever request failed.
- */
+The one place a request that never completed is turned into a result.
+
+Reads and writes share this classifier, so a timeout or transport error is
+reported the same way whichever request failed.
+*/
 function transportFailure(
   error: unknown,
   abortedByDeadline: boolean,
@@ -292,19 +291,19 @@ function isRetryableNetworkError(error: unknown): boolean {
 }
 
 /**
- * The one deadline-and-retry policy for Control API requests.
- *
- * The Console's own deadline wraps the whole request, retries included, and
- * its signal -- which also follows a caller-supplied abort -- is the one every
- * attempt hands to `fetch`. A caller's signal therefore only ever ends a
- * request sooner: it can never replace the deadline, so a page waiting on the
- * read always gets an explicit result.
- *
- * `maxRetries` counts retries after the first attempt. Only transport codes in
- * `RETRYABLE_NETWORK_CODES` are retried (never an abort, never a service
- * answer), waiting `retryDelayMs` times the retry number between attempts.
- * Mutations pass no retries and so run under the deadline alone.
- */
+The one deadline-and-retry policy for Control API requests.
+
+The Console's own deadline wraps the whole request, retries included, and
+its signal -- which also follows a caller-supplied abort -- is the one every
+attempt hands to `fetch`. A caller's signal therefore only ever ends a
+request sooner: it can never replace the deadline, so a page waiting on the
+read always gets an explicit result.
+
+`maxRetries` counts retries after the first attempt. Only transport codes in
+`RETRYABLE_NETWORK_CODES` are retried (never an abort, never a service
+answer), waiting `retryDelayMs` times the retry number between attempts.
+Mutations pass no retries and so run under the deadline alone.
+*/
 async function executeControlApiRequest<T>(
   attempt: (signal: AbortSignal) => Promise<ControlApiResult<T>>,
   options: FetchControlApiOptions,
@@ -336,13 +335,15 @@ async function executeControlApiRequest<T>(
     // browser implementation detail ("This operation was aborted"), and
     // forwarding that says nothing about the operator's system. A caller that
     // gave up is not the Console's deadline.
-    const abortedByDeadline =
+    const isAbortedByDeadline =
       error instanceof TaskCancelledError && !options.signal?.aborted;
-    return transportFailure(error, abortedByDeadline, timeoutMs);
+    return transportFailure(error, isAbortedByDeadline, timeoutMs);
   }
 }
 
-/** A Control API response as a result: the parsed body, or the service's refusal. */
+/**
+A Control API response as a result: the parsed body, or the service's refusal.
+*/
 async function readControlApiJsonResponse<T>(
   response: Response
 ): Promise<ControlApiResult<T>> {
@@ -455,10 +456,10 @@ async function readBoundedBinary(
 }
 
 /**
- * Authenticated, bounded image read for an episode-linked Playtesting frame.
- * Only the fixed local Control API route and inert raster image types are
- * accepted; the service credential never reaches the browser.
- */
+Authenticated, bounded image read for an episode-linked Playtesting frame.
+Only the fixed local Control API route and inert raster image types are
+accepted; the service credential never reaches the browser.
+*/
 export function fetchControlApiBinary(
   path: string,
   config: ControlApiConfig,
@@ -480,9 +481,9 @@ export function fetchControlApiBinary(
 }
 
 /**
- * The media type of a Playtesting frame, or `null` when the Control API
- * returned a type the Console will not display.
- */
+The media type of a Playtesting frame, or `null` when the Control API
+returned a type the Console will not display.
+*/
 function displayableFrameMediaType(contentType: string): string | null {
   const separator = contentType.indexOf(";");
   const mediaType = (
@@ -496,7 +497,9 @@ function displayableFrameMediaType(contentType: string): string | null {
   return mediaType;
 }
 
-/** True when the declared content length already exceeds the display bound. */
+/**
+True when the declared content length already exceeds the display bound.
+*/
 function exceedsBinaryResponseLimit(contentLength: string | null): boolean {
   return (
     contentLength !== null &&
@@ -505,7 +508,9 @@ function exceedsBinaryResponseLimit(contentLength: string | null): boolean {
   );
 }
 
-/** The result for a frame body that could not be read within the bound. */
+/**
+The result for a frame body that could not be read within the bound.
+*/
 function binaryReadFailure(
   error: unknown
 ): ControlApiResult<ControlApiBinaryData> {
@@ -525,9 +530,9 @@ function binaryReadFailure(
 }
 
 /**
- * One attempt at reading a Playtesting frame: the request, the type and size
- * guards, and the bounded body read.
- */
+One attempt at reading a Playtesting frame: the request, the type and size
+guards, and the bounded body read.
+*/
 async function readControlApiBinaryFrame(
   fetchImpl: typeof fetch,
   path: string,
@@ -609,9 +614,9 @@ async function readControlApiFailure<T>(
 }
 
 /**
- * Sends a typed server-side Control API mutation using the shared credential,
- * actor, timeout, and error-envelope handling.
- */
+Sends a typed server-side Control API mutation using the shared credential,
+actor, timeout, and error-envelope handling.
+*/
 function mutateControlApi<T>(
   method: "POST" | "PATCH",
   path: string,
@@ -642,8 +647,8 @@ function mutateControlApi<T>(
 }
 
 /**
- * Issues an authenticated POST against the AutoDev Control API.
- */
+Issues an authenticated POST against the AutoDev Control API.
+*/
 export function postControlApi<T>(
   path: string,
   payload: unknown,
@@ -737,21 +742,21 @@ export async function fetchAgentDetail(
 }
 
 /**
- * Narrows one agent record. Agents drive the whole Configure surface, and an
- * unreadable record used to reach the table as `undefined` fields rather than
- * as an explicit failure, so the guard checks the fields the views actually
- * read rather than only the identifier.
- *
- * `status` is accepted as a string rather than as one of the states the
- * contract names, while `convergence` is narrowed to the four the Runtime
- * computes. The difference is deliberate. A convergence is a verdict the Runtime
- * reaches, and the Console must not guess at one it does not recognise, so an
- * unrecognised convergence fails the response closed. A status is a state the
- * service reports, and a service that has grown a state is still evidence of
- * that state: the Console carries it and names it, because the alternative -- a
- * badge with no word, or a whole page refused over one field -- tells the
- * operator nothing about what the service actually said.
- */
+Narrows one agent record. Agents drive the whole Configure surface, and an
+unreadable record used to reach the table as `undefined` fields rather than
+as an explicit failure, so the guard checks the fields the views actually
+read rather than only the identifier.
+
+`status` is accepted as a string rather than as one of the states the
+contract names, while `convergence` is narrowed to the four the Runtime
+computes. The difference is deliberate. A convergence is a verdict the Runtime
+reaches, and the Console must not guess at one it does not recognise, so an
+unrecognised convergence fails the response closed. A status is a state the
+service reports, and a service that has grown a state is still evidence of
+that state: the Console carries it and names it, because the alternative -- a
+badge with no word, or a whole page refused over one field -- tells the
+operator nothing about what the service actually said.
+*/
 function isAgentRecord(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -790,7 +795,9 @@ function isAgentEnablementState(value: unknown): boolean {
   );
 }
 
-/** Narrows the agents collection, including every record it carries. */
+/**
+Narrows the agents collection, including every record it carries.
+*/
 function isControlApiAgentsResponse(
   value: unknown
 ): value is ControlApiAgentsResponse {
@@ -814,10 +821,10 @@ function isControlApiAgentsResponse(
 }
 
 /**
- * Narrows one agent detail record. The detail view composes configuration,
- * actual runtime state, and reconciliation onto one page, so all three have to
- * be present and well-formed before any of them is rendered.
- */
+Narrows one agent detail record. The detail view composes configuration,
+actual runtime state, and reconciliation onto one page, so all three have to
+be present and well-formed before any of them is rendered.
+*/
 function isControlApiAgentDetailResponse(
   value: unknown
 ): value is ControlApiAgentDetailResponse {
@@ -849,7 +856,9 @@ function isControlApiAgentEnablementPatchResponse(
   );
 }
 
-/** Server-only typed mutation for Runtime-owned Agent role enablement. */
+/**
+Server-only typed mutation for Runtime-owned Agent role enablement.
+*/
 export async function patchAgentEnablement(
   role: string,
   request: ControlApiAgentEnablementPatchRequest,
@@ -885,11 +894,11 @@ function isEnablement(value: unknown): boolean {
 }
 
 /**
- * Narrows one canonical reconciliation status: the verdict plus the generations,
- * timestamps, last error, and operator-facing explanation. Every surface that
- * claims convergence validates through this one check so the wording and the
- * "never synthesize a verdict" rule stay identical across resources.
- */
+Narrows one canonical reconciliation status: the verdict plus the generations,
+timestamps, last error, and operator-facing explanation. Every surface that
+claims convergence validates through this one check so the wording and the
+"never synthesize a verdict" rule stay identical across resources.
+*/
 function isReconciliationStatus(value: unknown): value is ReconciliationStatus {
   return (
     isRecord(value) &&
@@ -903,7 +912,9 @@ function isReconciliationStatus(value: unknown): value is ReconciliationStatus {
   );
 }
 
-/** Narrows the `{ status, history }` bundle the mutation and detail routes carry. */
+/**
+Narrows the `{ status, history }` bundle the mutation and detail routes carry.
+*/
 function isReconciliationBundle(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -913,32 +924,32 @@ function isReconciliationBundle(value: unknown): boolean {
 }
 
 /**
- * Narrows one enablement entry to the canonical
- * `ControlApiEnablement & { convergence: ReconciliationStatus }` shape.
- *
- * `convergence` is the nested reconciliation status the Control API derives
- * from desired/observed evidence, not a bare string: it carries the convergence
- * verdict plus the generations, timestamps, last error, and operator-facing
- * explanation that Console renders next to the toggle. Every mutable routing
- * toggle — provider role and model alike — carries it, so the check is named
- * for the contract rather than for one resource that happens to use it.
- */
+Narrows one enablement entry to the canonical
+`ControlApiEnablement & { convergence: ReconciliationStatus }` shape.
+
+`convergence` is the nested reconciliation status the Control API derives
+from desired/observed evidence, not a bare string: it carries the convergence
+verdict plus the generations, timestamps, last error, and operator-facing
+explanation that Console renders next to the toggle. Every mutable routing
+toggle — provider role and model alike — carries it, so the check is named
+for the contract rather than for one resource that happens to use it.
+*/
 /**
- * Narrows one provider role assignment. `disabled` is a member of the priority
- * enum rather than a separate flag, so an assignment cannot claim both a
- * priority and an enabled state, and `model` may only be null or a string.
- */
+Narrows one provider role assignment. `disabled` is a member of the priority
+enum rather than a separate flag, so an assignment cannot claim both a
+priority and an enabled state, and `model` may only be null or a string.
+*/
 function isProviderRoleAssignment(value: unknown): boolean {
   if (!isRecord(value)) return false;
-  const effortOk =
+  const isEffortOk =
     value.reasoningEffort === undefined ||
     value.reasoningEffort === null ||
     typeof value.reasoningEffort === "string";
-  const effectiveEffortOk =
+  const isEffectiveEffortOk =
     value.effectiveReasoningEffort === undefined ||
     value.effectiveReasoningEffort === null ||
     typeof value.effectiveReasoningEffort === "string";
-  const inForceOk =
+  const isInForceOk =
     value.reasoningEffortInForce === undefined ||
     typeof value.reasoningEffortInForce === "boolean";
   const supportedOk =
@@ -954,19 +965,19 @@ function isProviderRoleAssignment(value: unknown): boolean {
     (value.model === null || typeof value.model === "string") &&
     typeof value.mutable === "boolean" &&
     isReconciliationStatus(value.convergence) &&
-    effortOk &&
-    effectiveEffortOk &&
-    inForceOk &&
+    isEffortOk &&
+    isEffectiveEffortOk &&
+    isInForceOk &&
     supportedOk
   );
 }
 
 /**
- * Narrows the role map of one provider. Every role Core declares must be
- * present: a role missing from the response is unobserved, and rendering the
- * control for it would let an operator pick a priority for a role the Runtime
- * never reported.
- */
+Narrows the role map of one provider. Every role Core declares must be
+present: a role missing from the response is unobserved, and rendering the
+control for it would let an operator pick a priority for a role the Runtime
+never reported.
+*/
 function isProviderRoles(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -975,10 +986,10 @@ function isProviderRoles(value: unknown): boolean {
 }
 
 /**
- * Narrows a provider's agent limits. `null` means Unlimited and is a decision
- * the operator made, so it is distinguished from an absent key: a payload that
- * omits `agentLimits` must not validate as "unlimited".
- */
+Narrows a provider's agent limits. `null` means Unlimited and is a decision
+the operator made, so it is distinguished from an absent key: a payload that
+omits `agentLimits` must not validate as "unlimited".
+*/
 function isProviderAgentLimits(value: unknown): boolean {
   if (value === null) return true;
   return (
@@ -1029,7 +1040,9 @@ function isProviderCooldownMap(value: unknown): boolean {
   );
 }
 
-/** Health is a complete Runtime observation, not a partially present record. */
+/**
+Health is a complete Runtime observation, not a partially present record.
+*/
 function isProviderHealth(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -1060,7 +1073,9 @@ function isProviderHealth(value: unknown): boolean {
   );
 }
 
-/** One operator-requested provider check, as Runtime records it. */
+/**
+One operator-requested provider check, as Runtime records it.
+*/
 function isProviderCheck(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -1158,9 +1173,9 @@ export async function fetchProviders(
 }
 
 /**
- * Builds the canonical provider-role PATCH path with an encoded provider
- * segment. This remains private to the typed server mutation below.
- */
+Builds the canonical provider-role PATCH path with an encoded provider
+segment. This remains private to the typed server mutation below.
+*/
 function providerRoleControlPath(provider: string, role: ProviderRole): string {
   return `${CONTROL_API_PATHS.providers}/${encodeURIComponent(
     provider
@@ -1168,11 +1183,11 @@ function providerRoleControlPath(provider: string, role: ProviderRole): string {
 }
 
 /**
- * Server-only typed PATCH against the canonical provider-role route. The
- * Console never sends provider-role mutations directly from the browser; the
- * provider-role route handler invokes this helper with the server-side
- * Control API credential and the canonical local actor header.
- */
+Server-only typed PATCH against the canonical provider-role route. The
+Console never sends provider-role mutations directly from the browser; the
+provider-role route handler invokes this helper with the server-side
+Control API credential and the canonical local actor header.
+*/
 export function patchProviderRole(
   provider: string,
   role: ProviderRole,
@@ -1190,9 +1205,7 @@ export function patchProviderRole(
     {
       priority: assignment.priority,
       model: assignment.model,
-      ...(assignment.reasoningEffort === undefined
-        ? {}
-        : { reasoningEffort: assignment.reasoningEffort })
+      ...(assignment.reasoningEffort !== undefined && { reasoningEffort: assignment.reasoningEffort })
     },
     config,
     options
@@ -1200,9 +1213,9 @@ export function patchProviderRole(
 }
 
 /**
- * Server-only typed PATCH of one agent role's model preference on a provider;
- * `null` returns the role to its tier's model.
- */
+Server-only typed PATCH of one agent role's model preference on a provider;
+`null` returns the role to its tier's model.
+*/
 export function patchAgentModel(
   provider: string,
   role: string,
@@ -1222,10 +1235,10 @@ export function patchAgentModel(
 }
 
 /**
- * Server-only typed reset of Runtime-owned provider overrides. The Console
- * sends no routing configuration or credential data; Runtime clears only its
- * operator overlay and reads the static routing source as the default.
- */
+Server-only typed reset of Runtime-owned provider overrides. The Console
+sends no routing configuration or credential data; Runtime clears only its
+operator overlay and reads the static routing source as the default.
+*/
 export function resetProviderSettings(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
@@ -1241,10 +1254,10 @@ export function resetProviderSettings(
 }
 
 /**
- * Server-only typed PATCH for a provider's agent limits. `null` on either axis
- * means Unlimited, which is a decision the operator made, so the Console sends
- * both keys on every change rather than omitting an axis it is not touching.
- */
+Server-only typed PATCH for a provider's agent limits. `null` on either axis
+means Unlimited, which is a decision the operator made, so the Console sends
+both keys on every change rather than omitting an axis it is not touching.
+*/
 export function patchProviderLimits(
   provider: string,
   agentLimits: ControlApiProviderAgentLimits,
@@ -1264,10 +1277,10 @@ export function patchProviderLimits(
 }
 
 /**
- * Server-only typed PATCH enabling or disabling a provider globally. Runtime
- * preserves the provider's roles and limits across the change, so the Console
- * sends only the flag.
- */
+Server-only typed PATCH enabling or disabling a provider globally. Runtime
+preserves the provider's roles and limits across the change, so the Console
+sends only the flag.
+*/
 export function patchProviderEnabled(
   provider: string,
   disabled: boolean,
@@ -1284,10 +1297,10 @@ export function patchProviderEnabled(
 }
 
 /**
- * Server-only typed POST re-checking one provider: Runtime runs its live probe
- * and model listing and answers with the check and the provider's health after
- * it. The request carries no settings.
- */
+Server-only typed POST re-checking one provider: Runtime runs its live probe
+and model listing and answers with the check and the provider's health after
+it. The request carries no settings.
+*/
 export function checkProvider(
   provider: string,
   config: ControlApiConfig,
@@ -1303,16 +1316,16 @@ export function checkProvider(
 }
 
 /**
- * Builds the canonical provider-scoped PATCH path with an encoded provider
- * segment. This remains private to the typed server mutations below.
- *
- * Sub-segments are joined here rather than by the caller. Passing `"limits"`
- * produced `/control/providers/claudelimits`, which still matched the
- * single-provider route — `claudelimits` is a legal provider id — so the
- * request came back as an unknown-provider 404 instead of a routing error, and
- * every agent-limits mutation failed while the controls looked correct. The
- * separator belongs to whoever assembles the path.
- */
+Builds the canonical provider-scoped PATCH path with an encoded provider
+segment. This remains private to the typed server mutations below.
+
+Sub-segments are joined here rather than by the caller. Passing `"limits"`
+produced `/control/providers/claudelimits`, which still matched the
+single-provider route — `claudelimits` is a legal provider id — so the
+request came back as an unknown-provider 404 instead of a routing error, and
+every agent-limits mutation failed while the controls looked correct. The
+separator belongs to whoever assembles the path.
+*/
 function providerControlPath(
   provider: string,
   ...segments: readonly string[]
@@ -1418,13 +1431,13 @@ function isControlApiProviderVersionsResponse(
 }
 
 /**
- * One provider's CLI version.
- *
- * The two states are kept apart on the way in as well as on the way out: a
- * version that was read and a version that was never read are different
- * facts, and a response that cannot tell them apart would let the page
- * show a release number nobody confirmed.
- */
+One provider's CLI version.
+
+The two states are kept apart on the way in as well as on the way out: a
+version that was read and a version that was never read are different
+facts, and a response that cannot tell them apart would let the page
+show a release number nobody confirmed.
+*/
 function isProviderCliVersion(
   value: unknown
 ): value is ControlApiProviderCliVersion {
@@ -1449,13 +1462,13 @@ function isProviderCliVersion(
 }
 
 /**
- * Reads the versions of the CLIs the Runtime found on this machine.
- *
- * The versions are their own response rather than a field on the provider
- * record, so a Runtime that does not publish them still answers the providers
- * contract, and the page reports the version as not observed instead of
- * failing over a missing release number.
- */
+Reads the versions of the CLIs the Runtime found on this machine.
+
+The versions are their own response rather than a field on the provider
+record, so a Runtime that does not publish them still answers the providers
+contract, and the page reports the version as not observed instead of
+failing over a missing release number.
+*/
 export async function fetchProviderVersions(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
@@ -1477,7 +1490,9 @@ export async function fetchProviderVersions(
   };
 }
 
-/** Reads Runtime-owned provider availability without inventing a catalog. */
+/**
+Reads Runtime-owned provider availability without inventing a catalog.
+*/
 export async function fetchProviderModelDiscovery(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
@@ -1500,9 +1515,9 @@ export async function fetchProviderModelDiscovery(
 }
 
 /**
- * Server-only typed PATCH against the canonical model enablement route,
- * invoked by the Console model route handler with the server credential.
- */
+Server-only typed PATCH against the canonical model enablement route,
+invoked by the Console model route handler with the server credential.
+*/
 export function patchModel(
   model: string,
   enabled: boolean,
@@ -1531,20 +1546,20 @@ function invalidResponse(
 }
 
 /**
- * Narrows the remaining catalog collections.
- *
- * These all share one failure mode: an unreadable response reached the view as
- * an empty collection, and an empty collection is a claim — "no MCP servers are
- * configured", "no tools are exposed" — that a shape the Console cannot read
- * does not support. Each predicate checks the envelope the view actually
- * renders rather than restating every nested Core type.
- */
+Narrows the remaining catalog collections.
+
+These all share one failure mode: an unreadable response reached the view as
+an empty collection, and an empty collection is a claim — "no MCP servers are
+configured", "no tools are exposed" — that a shape the Console cannot read
+does not support. Each predicate checks the envelope the view actually
+renders rather than restating every nested Core type.
+*/
 /**
- * Narrows one target override. Overrides are a list of records, not a string
- * list: each entry names a target and carries its own enablement. Checking them
- * with `isStringList` rejects every well-formed catalog, which is how this
- * route spent a while failing closed against correct data.
- */
+Narrows one target override. Overrides are a list of records, not a string
+list: each entry names a target and carries its own enablement. Checking them
+with `isStringList` rejects every well-formed catalog, which is how this
+route spent a while failing closed against correct data.
+*/
 function isMcpTargetOverride(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -1554,12 +1569,12 @@ function isMcpTargetOverride(value: unknown): boolean {
 }
 
 /**
- * Narrows the Runtime's health verdict for a server.
- *
- * The verdict is the Runtime's own vocabulary, and the Console publishes the
- * five words it uses. A verdict outside them is not a readiness claim, and
- * letting it through would render a status the Console cannot interpret.
- */
+Narrows the Runtime's health verdict for a server.
+
+The verdict is the Runtime's own vocabulary, and the Console publishes the
+five words it uses. A verdict outside them is not a readiness claim, and
+letting it through would render a status the Console cannot interpret.
+*/
 function isMcpHealthVerdict(value: unknown): boolean {
   return (
     value === "configured" ||
@@ -1571,15 +1586,15 @@ function isMcpHealthVerdict(value: unknown): boolean {
 }
 
 /**
- * Narrows one MCP server row. The catalog row is the join of the canonical
- * declaration and the generated role projection, and the view reads every
- * required member of that join: `transport.toUpperCase()` and
- * `targetOverrides.length` throw outright when absent, while a missing
- * `enabled` or `declared` compares unequal to `null`/`false` and so renders a
- * confident "Canonical" / "Configured" claim out of unreadable evidence.
- * Checking the identifier alone let an incomplete payload reach the view and
- * throw instead of failing closed.
- */
+Narrows one MCP server row. The catalog row is the join of the canonical
+declaration and the generated role projection, and the view reads every
+required member of that join: `transport.toUpperCase()` and
+`targetOverrides.length` throw outright when absent, while a missing
+`enabled` or `declared` compares unequal to `null`/`false` and so renders a
+confident "Canonical" / "Configured" claim out of unreadable evidence.
+Checking the identifier alone let an incomplete payload reach the view and
+throw instead of failing closed.
+*/
 /**
 Narrows one approved-catalogue publication.
 
@@ -1627,12 +1642,12 @@ function isMcpGrants(value: unknown): boolean {
 }
 
 /**
- * Narrows the shared MCP gateway the catalog carries.
- *
- * Every verdict the gateway panel renders is read from here, so a field the
- * panel would turn into "Ready" or into a published endpoint has to be
- * present and typed rather than defaulted.
- */
+Narrows the shared MCP gateway the catalog carries.
+
+Every verdict the gateway panel renders is read from here, so a field the
+panel would turn into "Ready" or into a published endpoint has to be
+present and typed rather than defaulted.
+*/
 function isMcpGateway(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -1683,13 +1698,13 @@ function isControlApiMcpsResponse(
 }
 
 /**
- * Narrows one observed MCP server.
- *
- * The observation is what the page's Connection/Health, Tools, and Activity
- * panels render, so every field they read has to be present and typed. A
- * missing `health` or `lastSeenAt` would render a confident verdict out of
- * unreadable evidence -- the same failure the server-row guard describes.
- */
+Narrows one observed MCP server.
+
+The observation is what the page's Connection/Health, Tools, and Activity
+panels render, so every field they read has to be present and typed. A
+missing `health` or `lastSeenAt` would render a confident verdict out of
+unreadable evidence -- the same failure the server-row guard describes.
+*/
 function isMcpRuntimeServer(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -1729,16 +1744,16 @@ function isMcpRuntimeServer(value: unknown): boolean {
 }
 
 /**
- * Narrows the health counts the Runtime publishes.
- *
- * The counts are what the list page's summary reads, so they are checked
- * rather than assumed: a summary that rendered "0 ready" from a payload the
- * Console could not read would be a claim the evidence does not support.
- *
- * `null` is the Runtime's own word for "the division is unknown" -- a Control
- * API with no router attached has not been asked -- and it is kept apart from
- * a set of zero counts, which says the Runtime looked and saw nothing ready.
- */
+Narrows the health counts the Runtime publishes.
+
+The counts are what the list page's summary reads, so they are checked
+rather than assumed: a summary that rendered "0 ready" from a payload the
+Console could not read would be a claim the evidence does not support.
+
+`null` is the Runtime's own word for "the division is unknown" -- a Control
+API with no router attached has not been asked -- and it is kept apart from
+a set of zero counts, which says the Runtime looked and saw nothing ready.
+*/
 function isMcpRuntimeHealthCounts(value: unknown): boolean {
   return (
     value === null ||
@@ -1766,20 +1781,20 @@ function isControlApiMcpRuntimeResponse(
 }
 
 /**
- * Narrows one applied MCP server.
- *
- * The applied configuration is what the page compares the declaration
- * against, so every launch key it renders has to be present and typed. A
- * launch key that is not a string would render as a configuration the
- * Runtime never published.
- */
+Narrows one applied MCP server.
+
+The applied configuration is what the page compares the declaration
+against, so every launch key it renders has to be present and typed. A
+launch key that is not a string would render as a configuration the
+Runtime never published.
+*/
 function isMcpAppliedServer(value: unknown): boolean {
   return (
     isRecord(value) &&
     typeof value.name === "string" &&
     (value.command === null || typeof value.command === "string") &&
     Array.isArray(value.args) &&
-    value.args.every((arg) => typeof arg === "string") &&
+    value.args.every((argument) => typeof argument === "string") &&
     (value.cwd === null || typeof value.cwd === "string") &&
     (value.url === null || typeof value.url === "string") &&
     (value.bearerTokenEnvVar === null ||
@@ -1811,14 +1826,14 @@ function isControlApiMcpAppliedResponse(
 }
 
 /**
- * Narrows one tool catalog row. Tools is the one catalog whose views read
- * several fields off every row -- role exposure drives both the role filter
- * (`exposedRoles.includes`) and the role chips (`exposedRoles.length`), and the
- * availability verdict is what separates "configured" from "Not observed" --
- * so the guard checks those fields rather than only the identifier. Checking
- * the identifier alone let an incomplete payload through to the view, where it
- * threw instead of failing closed.
- */
+Narrows one tool catalog row. Tools is the one catalog whose views read
+several fields off every row -- role exposure drives both the role filter
+(`exposedRoles.includes`) and the role chips (`exposedRoles.length`), and the
+availability verdict is what separates "configured" from "Not observed" --
+so the guard checks those fields rather than only the identifier. Checking
+the identifier alone let an incomplete payload through to the view, where it
+threw instead of failing closed.
+*/
 function isToolCatalogRow(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -1858,12 +1873,12 @@ function isControlApiToolsResponse(
 }
 
 /**
- * Canonical-source validation issues.
- *
- * Shared by every RuleSync catalog so one malformed reason cannot pass the guard
- * on one page and fail another -- the fields are identical because the loader
- * that produces them is identical.
- */
+Canonical-source validation issues.
+
+Shared by every RuleSync catalog so one malformed reason cannot pass the guard
+on one page and fail another -- the fields are identical because the loader
+that produces them is identical.
+*/
 function isValidationIssueList(value: unknown): boolean {
   return (
     Array.isArray(value) &&
@@ -1877,16 +1892,16 @@ function isValidationIssueList(value: unknown): boolean {
 }
 
 /**
- * One hook event, as the contract publishes it.
- *
- * The action list is checked rather than trusted: an event whose actions could
- * not be read is dropped, because an event with an unreadable action list is
- * not an event the operator can act on and rendering it as one would invite a
- * write that drops what it could not read.
- *
- * This is the applied side's shape: the projection the Runtime published says
- * what runs and nothing about where it was declared.
- */
+One hook event, as the contract publishes it.
+
+The action list is checked rather than trusted: an event whose actions could
+not be read is dropped, because an event with an unreadable action list is
+not an event the operator can act on and rendering it as one would invite a
+write that drops what it could not read.
+
+This is the applied side's shape: the projection the Runtime published says
+what runs and nothing about where it was declared.
+*/
 function isControlApiHookEvent(value: unknown): value is ControlApiHookEvent {
   return (
     isRecord(value) &&
@@ -1905,15 +1920,15 @@ function isControlApiHookEvent(value: unknown): value is ControlApiHookEvent {
 }
 
 /**
- * One hook event, as the *declaration* publishes it.
- *
- * The declared side carries where the event's declaration lives, because that is
- * what decides who else an edit reaches. The applied projection has no such
- * place, so the two sides are checked differently: requiring an origin of an
- * applied event would refuse it for the one thing it cannot say, and the applied
- * read would then never be readable at all -- which would look exactly like a
- * Runtime that published nothing.
- */
+One hook event, as the *declaration* publishes it.
+
+The declared side carries where the event's declaration lives, because that is
+what decides who else an edit reaches. The applied projection has no such
+place, so the two sides are checked differently: requiring an origin of an
+applied event would refuse it for the one thing it cannot say, and the applied
+read would then never be readable at all -- which would look exactly like a
+Runtime that published nothing.
+*/
 function isControlApiHookDeclaration(
   value: unknown
 ): value is ControlApiHookDeclaration {
@@ -1952,16 +1967,16 @@ function isControlApiHooksResponse(
 }
 
 /**
- * The applied hook projection, as the Runtime publishes it.
- *
- * The applied side is checked as strictly as the declared one about the things
- * the two sides have in common -- the event's name and the whole action list --
- * because an applied event that could not be read would make the comparison say
- * nothing. The one thing they do not have in common is the origin: a
- * projection carries no declaration site, so requiring one would refuse the
- * applied read on every Runtime, including one that had published a
- * projection.
- */
+The applied hook projection, as the Runtime publishes it.
+
+The applied side is checked as strictly as the declared one about the things
+the two sides have in common -- the event's name and the whole action list --
+because an applied event that could not be read would make the comparison say
+nothing. The one thing they do not have in common is the origin: a
+projection carries no declaration site, so requiring one would refuse the
+applied read on every Runtime, including one that had published a
+projection.
+*/
 function isControlApiHooksAppliedResponse(
   value: unknown
 ): value is ControlApiHooksAppliedResponse {
@@ -1984,39 +1999,39 @@ function isControlApiHooksAppliedResponse(
 }
 
 /**
- * Narrows one metric, which nothing narrowed before.
- *
- * `isEvaluationRow` checked that `metrics` was an array and stopped there, so a
- * read whose measurements were unreadable passed the whole envelope's validation
- * and reached the view. Measured against the six shapes that produces, on one
- * read each:
- *
- * - `metrics: [null]` returned **HTTP 500**. The table's `keyExtractor` reads
- *   `metric.name` on every element, so a null threw inside the server render and
- *   took the resource down with no failure shell, no table and no sentence. The
- *   named code for exactly this, `autodev_control_api_invalid_evaluations_response`,
- *   never ran -- and every well-formed run in the same read went with it.
- * - `metrics: [{}]` rendered the chip `undefined: undefined · Not observed` and
- *   the drawer's Metric cell as an *empty* box, so one unreadable measurement
- *   said two different things depending on which panel the operator opened.
- * - `metrics: [{ name, value: null, pass: true }]` rendered
- *   `latency_ms: null · Passed`: a verdict attached to a measurement that does
- *   not exist, on a run whose own `passed` agreed with it, so the row looked
- *   healthy end to end. JSON is also where a `NaN` or an `Infinity` arrives, so
- *   this is the shape a non-finite measurement takes on the wire.
- * - `metrics: [{ name, value: "12" }]` rendered `tool_calls: 12 · Passed`, so a
- *   quoted number was read as a measurement.
- *
- * `Number.isFinite` rather than `typeof === "number"` because a float beyond the
- * double range parses from JSON to `Infinity` -- a number by every other test.
- *
- * The rule cannot reject a response this Runtime produced, which is the same
- * standard the envelope's `truncated` check is held to. `parseEvaluationRow`
- * already throws `EvaluationSourceUnavailableError` for a score that is not a
- * finite number, `verdictPass` returns `boolean | null` and nothing else, and the
- * metrics are built from `Object.entries(scores)`, so a name is a string and
- * names are unique by construction.
- */
+Narrows one metric, which nothing narrowed before.
+
+`isEvaluationRow` checked that `metrics` was an array and stopped there, so a
+read whose measurements were unreadable passed the whole envelope's validation
+and reached the view. Measured against the six shapes that produces, on one
+read each:
+
+- `metrics: [null]` returned **HTTP 500**. The table's `keyExtractor` reads
+  `metric.name` on every element, so a null threw inside the server render and
+  took the resource down with no failure shell, no table and no sentence. The
+  named code for exactly this, `autodev_control_api_invalid_evaluations_response`,
+  never ran -- and every well-formed run in the same read went with it.
+- `metrics: [{}]` rendered the chip `undefined: undefined · Not observed` and
+  the drawer's Metric cell as an *empty* box, so one unreadable measurement
+  said two different things depending on which panel the operator opened.
+- `metrics: [{ name, value: null, pass: true }]` rendered
+  `latency_ms: null · Passed`: a verdict attached to a measurement that does
+  not exist, on a run whose own `passed` agreed with it, so the row looked
+  healthy end to end. JSON is also where a `NaN` or an `Infinity` arrives, so
+  this is the shape a non-finite measurement takes on the wire.
+- `metrics: [{ name, value: "12" }]` rendered `tool_calls: 12 · Passed`, so a
+  quoted number was read as a measurement.
+
+`Number.isFinite` rather than `typeof === "number"` because a float beyond the
+double range parses from JSON to `Infinity` -- a number by every other test.
+
+The rule cannot reject a response this Runtime produced, which is the same
+standard the envelope's `truncated` check is held to. `parseEvaluationRow`
+already throws `EvaluationSourceUnavailableError` for a score that is not a
+finite number, `verdictPass` returns `boolean | null` and nothing else, and the
+metrics are built from `Object.entries(scores)`, so a name is a string and
+names are unique by construction.
+*/
 function isEvaluationMetric(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -2032,16 +2047,16 @@ function isEvaluationMetric(value: unknown): boolean {
 }
 
 /**
- * Narrows one evaluation row. `passed` is the verdict the table renders, and
- * `boolean | null` is three states: a missing `passed` reads as `undefined`,
- * which every verdict comparison in the view treats as a failure. A row without
- * it would therefore synthesize "did not pass" out of unreadable evidence, so
- * the check requires it alongside the rest of the required record.
- *
- * The metrics are checked with `isEvaluationMetric` for the same reason as the
- * fields above it: an unreadable measurement invalidates its sample, exactly as
- * an unreadable `passed` does, and the two rules must not disagree inside one row.
- */
+Narrows one evaluation row. `passed` is the verdict the table renders, and
+`boolean | null` is three states: a missing `passed` reads as `undefined`,
+which every verdict comparison in the view treats as a failure. A row without
+it would therefore synthesize "did not pass" out of unreadable evidence, so
+the check requires it alongside the rest of the required record.
+
+The metrics are checked with `isEvaluationMetric` for the same reason as the
+fields above it: an unreadable measurement invalidates its sample, exactly as
+an unreadable `passed` does, and the two rules must not disagree inside one row.
+*/
 function isEvaluationRow(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -2094,15 +2109,15 @@ function isControlApiEvaluationsResponse(
 }
 
 /**
- * Narrows the bounded run statistics.
- *
- * `(stats === null || isRecord(stats))` let an *empty* record through, and an
- * empty record is not a neutral reading -- the view does
- * `Math.round(stats.successRate * 100)`, so a missing rate renders `NaN%`, and
- * `stats.totalRuns` draws an empty stat card. Both closed-number members and
- * the nullable rate are checked, so a drifted projection fails closed instead
- * of publishing arithmetic on `undefined`.
- */
+Narrows the bounded run statistics.
+
+`(stats === null || isRecord(stats))` let an *empty* record through, and an
+empty record is not a neutral reading -- the view does
+`Math.round(stats.successRate * 100)`, so a missing rate renders `NaN%`, and
+`stats.totalRuns` draws an empty stat card. Both closed-number members and
+the nullable rate are checked, so a drifted projection fails closed instead
+of publishing arithmetic on `undefined`.
+*/
 function isGithubRunStats(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -2116,11 +2131,11 @@ function isGithubRunStats(value: unknown): boolean {
 }
 
 /**
- * Narrows one workflow definition row. The catalog column and the scheduled
- * count are both derived from these lists, so a row without them is not a row
- * the view can render -- `workflows.filter((w) => w.schedules.length > 0)`
- * would throw rather than fail closed.
- */
+Narrows one workflow definition row. The catalog column and the scheduled
+count are both derived from these lists, so a row without them is not a row
+the view can render -- `workflows.filter((w) => w.schedules.length > 0)`
+would throw rather than fail closed.
+*/
 function isGithubWorkflowRow(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -2177,12 +2192,12 @@ export async function fetchMcps(
 }
 
 /**
- * Reads the Runtime's observation of the MCP servers it has seen.
- *
- * This is a second read, not a wider one: the catalog stays the configuration
- * read, and the observation arrives on its own path so that a page can compose
- * the two without the contract claiming that a declared server was reached.
- */
+Reads the Runtime's observation of the MCP servers it has seen.
+
+This is a second read, not a wider one: the catalog stays the configuration
+read, and the observation arrives on its own path so that a page can compose
+the two without the contract claiming that a declared server was reached.
+*/
 export async function fetchMcpRuntime(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
@@ -2199,14 +2214,14 @@ export async function fetchMcpRuntime(
 }
 
 /**
- * Reads the MCP configuration the Runtime applied, against the canonical
- * declaration.
- *
- * The third MCP read, and the third question: the catalog says what is
- * declared, the runtime read says what the Runtime has reached, and this one
- * says what the Runtime actually applied. The page composes them; the
- * contract keeps them apart.
- */
+Reads the MCP configuration the Runtime applied, against the canonical
+declaration.
+
+The third MCP read, and the third question: the catalog says what is
+declared, the runtime read says what the Runtime has reached, and this one
+says what the Runtime actually applied. The page composes them; the
+contract keeps them apart.
+*/
 export async function fetchMcpApplied(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
@@ -2241,24 +2256,26 @@ function isNullableString(value: unknown): value is string | null {
   return value === null || typeof value === "string";
 }
 
-/** A count the Runtime may legitimately not know, as opposed to counting zero. */
+/**
+A count the Runtime may legitimately not know, as opposed to counting zero.
+*/
 function isNullableNumber(value: unknown): value is number | null {
   return value === null || typeof value === "number";
 }
 
 /**
- * Narrows a finite number. A `NaN` or an infinite value would render as a
- * measurement the Runtime never made.
- */
+Narrows a finite number. A `NaN` or an infinite value would render as a
+measurement the Runtime never made.
+*/
 function isNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
 /**
- * Narrows the four reconciliation verdicts the shared contract defines.
- * Anything else is not a convergence status and must fail closed rather than
- * be coerced into a healthy-looking badge.
- */
+Narrows the four reconciliation verdicts the shared contract defines.
+Anything else is not a convergence status and must fail closed rather than
+be coerced into a healthy-looking badge.
+*/
 function isConvergenceStatus(value: unknown): value is ConvergenceStatus {
   return (
     value === "converged" ||
@@ -2274,28 +2291,30 @@ function isStringList(value: unknown): value is readonly string[] {
   );
 }
 
-/** Optional numeric counter the concurrency projection publishes. */
+/**
+Optional numeric counter the concurrency projection publishes.
+*/
 function isOptionalNumber(value: unknown): value is number | undefined {
   return value === undefined || typeof value === "number";
 }
 
 /**
- * A limit that may legitimately be `null`.
- *
- * `null` here is the Runtime's word for "no limit configured", which is the
- * default for per-session concurrency. Treating it as unreadable made the whole
- * Runtime response fail closed on an ordinary deployment: `/control/runtime`
- * answers `maxConcurrentThreadsPerSession: null` unless an operator configured a
- * limit, and this guard rejected it, so the Runtime page reported an incompatible
- * contract precisely when nothing was wrong.
- *
- * An absent value is a third state, and it is not this one's: the Runtime
- * publishes the configured limit only when it read the config file, so absent
- * means the file was there and could not be read. The guard accepts it, because
- * the difference between a file that declares no limit and a file nobody read
- * is the Runtime's to report, and dropping the whole response over it would
- * hide every other concurrency fact along with it.
- */
+A limit that may legitimately be `null`.
+
+`null` here is the Runtime's word for "no limit configured", which is the
+default for per-session concurrency. Treating it as unreadable made the whole
+Runtime response fail closed on an ordinary deployment: `/control/runtime`
+answers `maxConcurrentThreadsPerSession: null` unless an operator configured a
+limit, and this guard rejected it, so the Runtime page reported an incompatible
+contract precisely when nothing was wrong.
+
+An absent value is a third state, and it is not this one's: the Runtime
+publishes the configured limit only when it read the config file, so absent
+means the file was there and could not be read. The guard accepts it, because
+the difference between a file that declares no limit and a file nobody read
+is the Runtime's to report, and dropping the whole response over it would
+hide every other concurrency fact along with it.
+*/
 function isOptionalNullableNumber(
   value: unknown
 ): value is number | null | undefined {
@@ -2303,28 +2322,28 @@ function isOptionalNullableNumber(
 }
 
 /**
- * The router's lifecycle states, mirroring `RouterLifecycleState`.
- *
- * A membership check rather than `typeof === "string"`, because the Console
- * renders this value as a status word: accepting any string would let a state
- * this build has no word for reach an operator unread, and — worse — would let
- * the compiler keep believing the field is one of the two it knows.
- */
+The router's lifecycle states, mirroring `RouterLifecycleState`.
+
+A membership check rather than `typeof === "string"`, because the Console
+renders this value as a status word: accepting any string would let a state
+this build has no word for reach an operator unread, and — worse — would let
+the compiler keep believing the field is one of the two it knows.
+*/
 function isRouterLifecycleState(value: unknown): boolean {
   return value === "ready" || value === "draining";
 }
 
 /**
- * The source of the concurrency limit in force.
- *
- * A membership check rather than a `typeof === "string"`, because the Console
- * renders this value as the operator-facing word beside the limit: accepting
- * any string would let a source it has no word for reach an operator unread,
- * and -- worse -- would let the compiler keep believing the field is one of
- * the three it knows. It was a plain string, and the value the Console
- * branches on was one the Runtime never published, so the branch was dead and
- * every configured limit was labelled as a default.
- */
+The source of the concurrency limit in force.
+
+A membership check rather than a `typeof === "string"`, because the Console
+renders this value as the operator-facing word beside the limit: accepting
+any string would let a source it has no word for reach an operator unread,
+and -- worse -- would let the compiler keep believing the field is one of
+the three it knows. It was a plain string, and the value the Console
+branches on was one the Runtime never published, so the branch was dead and
+every configured limit was labelled as a default.
+*/
 function isConcurrencyLimitSource(
   value: unknown
 ): value is ControlApiConcurrencyLimitSource {
@@ -2335,7 +2354,9 @@ function isConcurrencyLimitSource(
   );
 }
 
-/** Which config file the router read. A different fact from the limit's source. */
+/**
+Which config file the router read. A different fact from the limit's source.
+*/
 function isConcurrencyConfigFileSource(
   value: unknown
 ): value is ControlApiConcurrencyConfigFileSource {
@@ -2388,7 +2409,9 @@ function isControlApiConcurrencyPatchResponse(
   );
 }
 
-/** Server-only typed mutation for orchestrator concurrency limit. */
+/**
+Server-only typed mutation for orchestrator concurrency limit.
+*/
 export async function patchConcurrencyLimit(
   request: ControlApiConcurrencyPatchRequest,
   config: ControlApiConfig,
@@ -2451,13 +2474,13 @@ function isControlApiLiveAgentCounts(value: unknown): boolean {
 }
 
 /**
- * Narrows the runtime response the Console composes onto the Agents page.
- *
- * Runtime state had no guard at all, so any shape the router happened to
- * return was typed as a healthy runtime and rendered. Lifecycle and concurrency
- * are validated here so a stale or incompatible Runtime fails closed into an
- * explicit unavailable state instead of quietly reporting zeros.
- */
+Narrows the runtime response the Console composes onto the Agents page.
+
+Runtime state had no guard at all, so any shape the router happened to
+return was typed as a healthy runtime and rendered. Lifecycle and concurrency
+are validated here so a stale or incompatible Runtime fails closed into an
+explicit unavailable state instead of quietly reporting zeros.
+*/
 function isRouterAgentActivityState(value: unknown): boolean {
   return (
     value === "active" ||
@@ -2527,9 +2550,9 @@ function isControlApiLiveSessions(
       !Number.isSafeInteger(candidate.lastActivityAt) ||
       candidate.lastActivityAt < 0 ||
       !Number.isFinite(new Date(candidate.lastActivityAt).getTime()) ||
-      ![candidate.provider, candidate.model, candidate.role].every(
+      [candidate.provider, candidate.model, candidate.role].some(
         (field) =>
-          field === null || (typeof field === "string" && field.length > 0)
+          field !== null && (typeof field !== "string" || field.length === 0)
       ) ||
       (candidate.clientSurface !== null &&
         !isClientSurface(candidate.clientSurface))
@@ -2650,7 +2673,9 @@ function isControlApiSkillContentResponse(
   );
 }
 
-/** Server-only read of one existing canonical RuleSync skill source. */
+/**
+Server-only read of one existing canonical RuleSync skill source.
+*/
 export async function fetchSkillContent(
   name: string,
   config: ControlApiConfig,
@@ -2674,10 +2699,10 @@ export async function fetchSkillContent(
 }
 
 /**
- * Validates the desired set against the request and preserves missing actual
- * role evidence as `null`. A response is converged only when the Runtime's
- * observed set and generations confirm the requested assignment.
- */
+Validates the desired set against the request and preserves missing actual
+role evidence as `null`. A response is converged only when the Runtime's
+observed set and generations confirm the requested assignment.
+*/
 export async function fetchHooks(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
@@ -2694,12 +2719,12 @@ export async function fetchHooks(
 }
 
 /**
- * The hook projection the Runtime published.
- *
- * It is read on its own path rather than folded into the declaration, because
- * the two answer different questions: the declaration says what is configured
- * and the applied read says what the Runtime installed.
- */
+The hook projection the Runtime published.
+
+It is read on its own path rather than folded into the declaration, because
+the two answer different questions: the declaration says what is configured
+and the applied read says what the Runtime installed.
+*/
 export async function fetchHooksApplied(
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
@@ -2716,13 +2741,13 @@ export async function fetchHooksApplied(
 }
 
 /**
- * Narrows the permissions policy.
- *
- * `isRecord(value.policy)` was the whole check, and a policy with no members at
- * all passed it. Checking the closed approval-policy set and primitive types
- * ensures drifted or partial objects fail closed instead of rendering blank or
- * fabricated labels.
- */
+Narrows the permissions policy.
+
+`isRecord(value.policy)` was the whole check, and a policy with no members at
+all passed it. Checking the closed approval-policy set and primitive types
+ensures drifted or partial objects fail closed instead of rendering blank or
+fabricated labels.
+*/
 function isPermissionsPolicy(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -2733,14 +2758,14 @@ function isPermissionsPolicy(value: unknown): boolean {
 }
 
 /**
- * Narrows the permissions response.
- *
- * The policy may be absent: a canonical source that could not be read is
- * reported as not observed, which is a state the page renders, rather than a
- * response the whole page refuses to show. The same is true of the applied
- * policy -- a composed configuration that could not be read says so instead of
- * being replaced by the policy the source states.
- */
+Narrows the permissions response.
+
+The policy may be absent: a canonical source that could not be read is
+reported as not observed, which is a state the page renders, rather than a
+response the whole page refuses to show. The same is true of the applied
+policy -- a composed configuration that could not be read says so instead of
+being replaced by the policy the source states.
+*/
 function isControlApiPermissionsResponse(
   value: unknown
 ): value is ControlApiPermissionsResponse {
@@ -2787,13 +2812,13 @@ function isControlApiPermissionsResponse(
 }
 
 /**
- * Per-server tool allowlists: an object whose values are all string lists.
- *
- * An empty object is valid and means the role reaches no MCP tools. It is not
- * the same as a missing field, which fails closed, because a role with no tool
- * grants and a role whose grants the Runtime could not report are different
- * states and only one of them is a permission claim.
- */
+Per-server tool allowlists: an object whose values are all string lists.
+
+An empty object is valid and means the role reaches no MCP tools. It is not
+the same as a missing field, which fails closed, because a role with no tool
+grants and a role whose grants the Runtime could not report are different
+states and only one of them is a permission claim.
+*/
 function isMcpToolGrants(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -2978,13 +3003,13 @@ function isControlApiPromptVersionsResponse(
     !Number.isInteger(value.limit) ||
     (value.limit as number) < 1 ||
     !Array.isArray(value.versions) ||
-    !value.versions.every(
+    value.versions.some(
       (version) =>
-        isRecord(version) &&
-        typeof version.versionHash === "string" &&
-        CONTROL_API_GIT_REVISION_PATTERN.test(version.versionHash) &&
-        typeof version.updatedAt === "string" &&
-        Number.isFinite(Date.parse(version.updatedAt))
+        !isRecord(version) ||
+        typeof version.versionHash !== "string" ||
+        !CONTROL_API_GIT_REVISION_PATTERN.test(version.versionHash) ||
+        typeof version.updatedAt !== "string" ||
+        !Number.isFinite(Date.parse(version.updatedAt))
     )
   ) {
     return false;
@@ -2996,12 +3021,12 @@ function isControlApiPromptVersionsResponse(
 }
 
 /**
- * Reads one page of a prompt's committed history.
- *
- * The page size is the Control API's to choose, so the Console asks for an
- * offset and reads the size back from the answer. Asking for a size here
- * would put two places in charge of how much history a page carries.
- */
+Reads one page of a prompt's committed history.
+
+The page size is the Control API's to choose, so the Console asks for an
+offset and reads the size back from the answer. Asking for a size here
+would put two places in charge of how much history a page carries.
+*/
 export async function fetchPromptVersions(
   name: string,
   config: ControlApiConfig,
@@ -3069,13 +3094,13 @@ export async function fetchPromptVersion(
 }
 
 /**
- * Server-only typed PATCH writing one MCP server's launch configuration to
- * the canonical declaration.
- *
- * The write is a compare-and-swap on the declaration's revision, so the
- * Console sends the revision it read and the Runtime refuses a write decided
- * on an older declaration.
- */
+Server-only typed PATCH writing one MCP server's launch configuration to
+the canonical declaration.
+
+The write is a compare-and-swap on the declaration's revision, so the
+Console sends the revision it read and the Runtime refuses a write decided
+on an older declaration.
+*/
 export function patchMcpServer(
   name: string,
   payload: ControlApiMcpServerPatchRequest,
@@ -3092,18 +3117,18 @@ export function patchMcpServer(
 }
 
 /**
- * Narrows the workspace catalog. The catalog scopes every Memory read, so an
- * unreadable one must not reach the selector as an empty list: an operator
- * would see "no workspaces" rather than "the catalog could not be read".
- */
+Narrows the workspace catalog. The catalog scopes every Memory read, so an
+unreadable one must not reach the selector as an empty list: an operator
+would see "no workspaces" rather than "the catalog could not be read".
+*/
 /**
- * Narrow one workspace's configuration health.
- *
- * The two states are different claims -- "this entry is usable" and "this
- * scope names roles nothing answers to" -- and the second names the roles it
- * could not place, so a fault can be shown rather than only counted.
- */
-function isWorkspaceConfigurationHealth(
+Narrow one workspace's configuration health.
+
+The two states are different claims -- "this entry is usable" and "this
+scope names roles nothing answers to" -- and the second names the roles it
+could not place, so a fault can be shown rather than only counted.
+*/
+function isWorkspaceConfigHealth(
   value: unknown
 ): value is WorkspaceConfigurationHealth {
   if (!isRecord(value)) return false;
@@ -3114,19 +3139,19 @@ function isWorkspaceConfigurationHealth(
 }
 
 /**
- * Narrow one workspace's runtime availability.
- *
- * `not-observed` and `observed` are different claims, and only the observed
- * one carries a count: a workspace the source did not list has zero live
- * agents, which is a measurement rather than an absence of evidence.
- *
- * The status key itself is not spelled here. The Console's server layer may
- * not import the component that owns it, and a second spelling of the key
- * would put the two out of step, so the no-evidence case is recognised by
- * its shape instead: the contract's other status carries no payload at all.
- * A response that carries a payload this contract does not define fails
- * closed rather than being read as evidence.
- */
+Narrow one workspace's runtime availability.
+
+`not-observed` and `observed` are different claims, and only the observed
+one carries a count: a workspace the source did not list has zero live
+agents, which is a measurement rather than an absence of evidence.
+
+The status key itself is not spelled here. The Console's server layer may
+not import the component that owns it, and a second spelling of the key
+would put the two out of step, so the no-evidence case is recognised by
+its shape instead: the contract's other status carries no payload at all.
+A response that carries a payload this contract does not define fails
+closed rather than being read as evidence.
+*/
 function isWorkspaceRuntimeAvailability(
   value: unknown
 ): value is WorkspaceRuntimeAvailability {
@@ -3169,7 +3194,7 @@ function isControlApiWorkspacesResponse(
         typeof workspace.baseBranch === "string" &&
         typeof workspace.enabled === "boolean" &&
         (workspace.agentRoles === null || isStringList(workspace.agentRoles)) &&
-        isWorkspaceConfigurationHealth(workspace.configuration) &&
+        isWorkspaceConfigHealth(workspace.configuration) &&
         isWorkspaceRuntimeAvailability(workspace.runtime)
     )
   );
@@ -3197,13 +3222,13 @@ export async function fetchWorkspaces(
 }
 
 /**
- * Write one workspace's configuration to the canonical catalog.
- *
- * The write is the Runtime's: the Console forwards the operator's edit and
- * never touches the catalog itself. The owner and the repository are separate
- * path segments because a workspace is an `owner/repository` pair, and the
- * Runtime names it the way the catalog is indexed.
- */
+Write one workspace's configuration to the canonical catalog.
+
+The write is the Runtime's: the Console forwards the operator's edit and
+never touches the catalog itself. The owner and the repository are separate
+path segments because a workspace is an `owner/repository` pair, and the
+Runtime names it the way the catalog is indexed.
+*/
 export function patchWorkspace(
   owner: string,
   repository: string,
@@ -3246,16 +3271,16 @@ function workspacePlaytestApprovalPath(workspaceId: string): string {
 }
 
 /**
- * One workspace's playtesting approval.
- *
- * This is a playtesting read: the Control API answers it from the
- * ClickHouse-backed playtesting store, and the Workspaces page reads one per
- * workspace as a single fan-out. It therefore carries the playtesting budget
- * rather than the generic one, for the reason the playtesting page's own
- * workspace read does: the Control API answers this read set as one fan-out,
- * and a shorter deadline here fails the whole page while the Control API is
- * still answering it.
- */
+One workspace's playtesting approval.
+
+This is a playtesting read: the Control API answers it from the
+ClickHouse-backed playtesting store, and the Workspaces page reads one per
+workspace as a single fan-out. It therefore carries the playtesting budget
+rather than the generic one, for the reason the playtesting page's own
+workspace read does: the Control API answers this read set as one fan-out,
+and a shorter deadline here fails the whole page while the Control API is
+still answering it.
+*/
 export async function fetchWorkspacePlaytestApproval(
   workspaceId: string,
   config: ControlApiConfig,
@@ -3474,15 +3499,17 @@ export async function fetchEvaluations(
 }
 
 /**
- * The diagnostics routes are read-only and read the whole machine's session
- * evidence: a session's rollouts, the router's rotated logs, the bridge logs,
- * the hook log and the live runtime. They are slower than a configuration read
- * and they are read on every scoped page view, so they carry their own budget
- * rather than the generic five seconds.
- */
+The diagnostics routes are read-only and read the whole machine's session
+evidence: a session's rollouts, the router's rotated logs, the bridge logs,
+the hook log and the live runtime. They are slower than a configuration read
+and they are read on every scoped page view, so they carry their own budget
+rather than the generic five seconds.
+*/
 const DIAGNOSTICS_CONTROL_API_TIMEOUT_MS = 20_000;
 
-/** The bounded query a session's diagnostics read accepts. */
+/**
+The bounded query a session's diagnostics read accepts.
+*/
 export interface SessionDiagnosticsQuery {
   readonly includeEfficiency?: boolean;
   readonly includeFailures?: boolean;
@@ -3498,10 +3525,10 @@ export interface SessionDiagnosticsQuery {
 }
 
 function diagnosticsQueryString(query: SessionDiagnosticsQuery): string {
-  const params = new URLSearchParams();
+  const parameters = new URLSearchParams();
   const flag = (name: string, value: boolean | undefined): void => {
     if (value === undefined) return;
-    params.set(name, value ? "1" : "0");
+    parameters.set(name, value ? "1" : "0");
   };
   flag("includeEfficiency", query.includeEfficiency);
   flag("includeFailures", query.includeFailures);
@@ -3510,31 +3537,31 @@ function diagnosticsQueryString(query: SessionDiagnosticsQuery): string {
   flag("includeItems", query.includeItems);
   flag("offline", query.offline);
   if (query.eventsLimit !== undefined)
-    params.set("eventsLimit", String(query.eventsLimit));
+    parameters.set("eventsLimit", String(query.eventsLimit));
   if (query.eventsOffset !== undefined)
-    params.set("eventsOffset", String(query.eventsOffset));
+    parameters.set("eventsOffset", String(query.eventsOffset));
   if (query.itemsLimit !== undefined)
-    params.set("itemsLimit", String(query.itemsLimit));
+    parameters.set("itemsLimit", String(query.itemsLimit));
   if (query.itemsOffset !== undefined)
-    params.set("itemsOffset", String(query.itemsOffset));
-  if (query.threadId !== undefined) params.set("threadId", query.threadId);
-  return params.toString();
+    parameters.set("itemsOffset", String(query.itemsOffset));
+  if (query.threadId !== undefined) parameters.set("threadId", query.threadId);
+  return parameters.toString();
 }
 
 /**
- * Read one session's unified diagnostics.
- *
- * The payload is validated against the Core schema before it is handed on: a
- * malformed report would render as though it were evidence.
- */
+Read one session's unified diagnostics.
+
+The payload is validated against the Core schema before it is handed on: a
+malformed report would render as though it were evidence.
+*/
 export async function fetchSessionDiagnostics(
   sessionId: string,
   query: SessionDiagnosticsQuery,
   config: ControlApiConfig,
   options: FetchControlApiOptions = {}
 ): Promise<ControlApiResult<SessionDiagnosticsReport>> {
-  const params = diagnosticsQueryString(query);
-  const path = `${CONTROL_API_PATHS.diagnostics}/sessions/${encodeURIComponent(sessionId)}${params.length > 0 ? `?${params}` : ""}`;
+  const parameters = diagnosticsQueryString(query);
+  const path = `${CONTROL_API_PATHS.diagnostics}/sessions/${encodeURIComponent(sessionId)}${parameters.length > 0 ? `?${parameters}` : ""}`;
   const result = await fetchControlApi<unknown>(path, config, {
     timeoutMs: DIAGNOSTICS_CONTROL_API_TIMEOUT_MS,
     ...options
@@ -3551,7 +3578,9 @@ export async function fetchSessionDiagnostics(
   };
 }
 
-/** Read the cross-session fleet scan. */
+/**
+Read the cross-session fleet scan.
+*/
 export async function fetchFleetSessionScan(
   limit: number,
   config: ControlApiConfig,
@@ -3574,7 +3603,9 @@ export async function fetchFleetSessionScan(
   };
 }
 
-/** Read the hook-denial summary. */
+/**
+Read the hook-denial summary.
+*/
 export async function fetchHookDenials(
   sinceDays: number,
   config: ControlApiConfig,

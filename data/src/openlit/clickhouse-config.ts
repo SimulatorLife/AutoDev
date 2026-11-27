@@ -26,7 +26,9 @@ function readDatabasePassword(codexHome: string): string {
   return match?.[1]?.trim() ?? "";
 }
 
-/** Resolve ClickHouse credentials once for every Data-owned OpenLIT projection adapter. */
+/**
+Resolve ClickHouse credentials once for every Data-owned OpenLIT projection adapter.
+*/
 export function resolveOpenLitClickHouseConnection(
   options: OpenLitClickHouseOptions = {},
   environment: NodeJS.ProcessEnv = process.env
@@ -39,16 +41,16 @@ export function resolveOpenLitClickHouseConnection(
     options.clickhouseUrl ||
     environment.CLICKHOUSE_URL ||
     DEFAULT_CLICKHOUSE_URL;
-  const dbUser = options.dbUser || environment.OPENLIT_DB_USER || "default";
-  const dbPassword =
+  const databaseUser = options.dbUser || environment.OPENLIT_DB_USER || "default";
+  const databasePassword =
     options.dbPassword ||
     environment.OPENLIT_DB_PASSWORD ||
     readDatabasePassword(codexHome);
-  const dbName = options.dbName || environment.OPENLIT_DB_NAME || "openlit";
+  const databaseName = options.dbName || environment.OPENLIT_DB_NAME || "openlit";
   const endpoint = `${clickhouseUrl}/?user=${encodeURIComponent(
-    dbUser
-  )}&password=${encodeURIComponent(dbPassword)}&database=${encodeURIComponent(
-    dbName
+    databaseUser
+  )}&password=${encodeURIComponent(databasePassword)}&database=${encodeURIComponent(
+    databaseName
   )}`;
   return { clickhouseUrl, endpoint };
 }

@@ -110,8 +110,8 @@ function batchArtifact(input: {
       .update(playtestAssignmentManifestHashInput(manifestDraft))
       .digest("hex")
   };
-  const selected = input.packet !== undefined;
-  const failed = input.status === "failed";
+  const isSelected = input.packet !== undefined;
+  const isFailed = input.status === "failed";
   const selectedReview = {
     schema: PLAYTESTS_REVIEW_SELECTION_SCHEMA,
     status: "selected" as const,
@@ -159,7 +159,7 @@ function batchArtifact(input: {
     scenarioIds: ["tutorial"],
     assignmentInventory: { status: "frozen", manifest },
     coverageManifest: null,
-    unobservedAssignments: failed
+    unobservedAssignments: isFailed
       ? [
           {
             assignmentId: "a-0001",
@@ -170,7 +170,7 @@ function batchArtifact(input: {
           }
         ]
       : [],
-    reviewSelection: selected
+    reviewSelection: isSelected
       ? selectedReview
       : input.status === "running"
         ? { status: "pending" }
@@ -198,7 +198,7 @@ function batchArtifact(input: {
       started: input.status === "completed" ? 1 : 0,
       completed: input.status === "completed" ? 1 : 0,
       crashed: 0,
-      infrastructureFailed: failed ? 1 : 0,
+      infrastructureFailed: isFailed ? 1 : 0,
       cancelled: 0,
       budgetTruncated: 0,
       reviewed: 0,
@@ -489,13 +489,13 @@ test("expired pending packets are reclaimed by the artifact retention policy", a
       "expired"
     );
     now += PLAYTEST_PACKET_PENDING_GRACE_MS * 8 + 1;
-    let queried = false;
+    let isQueried = false;
     const result = await reconcilePendingPlaytestPackets({
       workspaceId: "owner/game",
       artifacts: store,
       repository: {
         async getBatchArtifactState() {
-          queried = true;
+          isQueried = true;
           throw new Error("Expired metadata must not require Data.");
         }
       },
@@ -503,7 +503,7 @@ test("expired pending packets are reclaimed by the artifact retention policy", a
     });
     assert.equal(result.status, "complete");
     assert.equal(result.removed, 1);
-    assert.equal(queried, false);
+    assert.equal(isQueried, false);
     assert.equal(store.state(pending), "not-authorized");
   } finally {
     cleanup();

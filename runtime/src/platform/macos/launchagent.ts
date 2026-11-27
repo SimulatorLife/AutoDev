@@ -9,7 +9,9 @@ import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import { resolveConsolePort } from "../console-ensure.ts";
 import { resolveServiceNode } from "../host-arch.ts";
 
-/** The install-wide paths every service LaunchAgent template is rendered against. */
+/**
+The install-wide paths every service LaunchAgent template is rendered against.
+*/
 export interface LaunchAgentPaths {
   readonly repositoryRoot: string;
   readonly home: string;
@@ -20,11 +22,17 @@ export interface LaunchAgentValues {
   readonly codexHome: string;
   readonly home: string;
   readonly repositoryRoot: string;
-  /** The Node binary services run on; see resolveServiceNode. */
+  /**
+  The Node binary services run on; see resolveServiceNode.
+  */
   readonly nodeBin: string;
-  /** The Codex CLI services run on; see findCodexBinary. */
+  /**
+  The Codex CLI services run on; see findCodexBinary.
+  */
   readonly codexBin: string;
-  /** The loopback port the Console binds; see resolveConsolePort. */
+  /**
+  The loopback port the Console binds; see resolveConsolePort.
+  */
   readonly consolePort: string;
   /**
   The command line and environment of a Runtime-owned service job.
@@ -54,21 +62,21 @@ const SERVICE_PLACEHOLDERS: Readonly<
 };
 
 /**
- * Build the single value set every service LaunchAgent renders from. Both the
- * installer and `install check` derive their values here so a template cannot
- * render one way during install and be verified another way.
- */
+Build the single value set every service LaunchAgent renders from. Both the
+installer and `install check` derive their values here so a template cannot
+render one way during install and be verified another way.
+*/
 export function resolveLaunchAgentValues(
   paths: LaunchAgentPaths,
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): LaunchAgentValues {
   return {
     codexHome: paths.codexHome,
     home: paths.home,
     repositoryRoot: paths.repositoryRoot,
     nodeBin: resolveServiceNode(paths.home),
-    codexBin: findCodexBinary(env, paths.home) ?? "",
-    consolePort: String(resolveConsolePort(env.AUTODEV_CONSOLE_PORT))
+    codexBin: findCodexBinary(environment, paths.home) ?? "",
+    consolePort: String(resolveConsolePort(environment.AUTODEV_CONSOLE_PORT))
   };
 }
 

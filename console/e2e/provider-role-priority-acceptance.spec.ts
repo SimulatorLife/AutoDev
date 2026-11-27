@@ -1,15 +1,15 @@
 import { type APIRequestContext, expect, test } from "@playwright/test";
 
 /**
- * A provider role's priority, changed on the Providers page, reaches the
- * Runtime, and the page shows what the Runtime holds.
- *
- * An operator set Claude's orchestrator role to Disabled, the page showed
- * Disabled, and the Runtime never received the change. These pin the three
- * ways that could happen: a write that lands, a write the Runtime refuses (the
- * select must not keep showing the refused choice), and a change made before
- * the page's scripts run (the change must still be submitted).
- */
+A provider role's priority, changed on the Providers page, reaches the
+Runtime, and the page shows what the Runtime holds.
+
+An operator set Claude's orchestrator role to Disabled, the page showed
+Disabled, and the Runtime never received the change. These pin the three
+ways that could happen: a write that lands, a write the Runtime refuses (the
+select must not keep showing the refused choice), and a change made before
+the page's scripts run (the change must still be submitted).
+*/
 
 const FIXTURE_BASE_URL = `http://127.0.0.1:${process.env.AUTODEV_PLAYTEST_FIXTURE_PORT ?? "4311"}`;
 const PROVIDERS_URL = "/providers";

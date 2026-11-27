@@ -10,13 +10,13 @@ const REQUESTS_ATTRIBUTE = "data-workspace-requests";
 const REQUESTS_VALUE = `[${REQUESTS_ATTRIBUTE}]`;
 
 /**
- * The Requests cell for one specific reading state.
- *
- * The attribute carries the state as its value, so the selector has to name
- * the attribute and the value together -- `[data-workspace-requests]` on its own
- * matches the cell whatever it holds, which is the opposite of what these
- * assertions ask.
- */
+The Requests cell for one specific reading state.
+
+The attribute carries the state as its value, so the selector has to name
+the attribute and the value together -- `[data-workspace-requests]` on its own
+matches the cell whatever it holds, which is the opposite of what these
+assertions ask.
+*/
 function requestsState(state: string): string {
   return `[${REQUESTS_ATTRIBUTE}="${state}"]`;
 }

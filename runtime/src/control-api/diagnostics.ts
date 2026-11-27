@@ -1,15 +1,15 @@
 /**
- * The read-only session diagnostics routes of the Control API.
- *
- * These routes are the single source the Console, the CLI and the
- * `autodev-session-diagnostics` skill read a session's evidence from. They are
- * read-only, so both the `viewer` and the `operator` role may read them, and
- * every route answers `format=json` (the default) or `format=text`.
- *
- * The live router status is injected rather than fetched: the Control API runs
- * inside the router's own process, so asking it to call itself over loopback
- * would be a round trip to answer a question it already holds.
- */
+The read-only session diagnostics routes of the Control API.
+
+These routes are the single source the Console, the CLI and the
+`autodev-session-diagnostics` skill read a session's evidence from. They are
+read-only, so both the `viewer` and the `operator` role may read them, and
+every route answers `format=json` (the default) or `format=text`.
+
+The live router status is injected rather than fetched: the Control API runs
+inside the router's own process, so asking it to call itself over loopback
+would be a round trip to answer a question it already holds.
+*/
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { homedir } from "node:os";
@@ -39,7 +39,9 @@ import {
 
 import { errorBody, sendJson } from "../router/proxy.ts";
 
-/** The base path the diagnostics routes are mounted under. */
+/**
+The base path the diagnostics routes are mounted under.
+*/
 export const CONTROL_API_DIAGNOSTICS_PATH = "/control/diagnostics";
 
 const RECENT_PATH = `${CONTROL_API_DIAGNOSTICS_PATH}/sessions/recent`;
@@ -52,36 +54,44 @@ const DEFAULT_ROUTER_LOG = "codex-model-router.launchd.err.log";
 const WHOLE_NUMBER_PATTERN = /^\d+$/u;
 
 /**
- * The router's status, read in-process.
- *
- * The Control API runs inside the router, so it can answer the live question
- * without a loopback call. When no provider is registered the live section of
- * a report says the router was unreachable, which is what a separate process
- * would also have found.
- */
+The router's status, read in-process.
+
+The Control API runs inside the router, so it can answer the live question
+without a loopback call. When no provider is registered the live section of
+a report says the router was unreachable, which is what a separate process
+would also have found.
+*/
 export type ControlApiDiagnosticsRouterStatusSource = () => unknown;
 
 let routerStatusSource: ControlApiDiagnosticsRouterStatusSource | null = null;
 
-/** Register the in-process router status the diagnostics read. */
+/**
+Register the in-process router status the diagnostics read.
+*/
 export function setControlApiDiagnosticsRouterStatusSource(
   source: ControlApiDiagnosticsRouterStatusSource | null
 ): void {
   routerStatusSource = source;
 }
 
-/** The registered in-process router status, if any. */
+/**
+The registered in-process router status, if any.
+*/
 export function controlApiDiagnosticsRouterStatusSource(): ControlApiDiagnosticsRouterStatusSource | null {
   return routerStatusSource;
 }
 
-/** How the diagnostics routes find the machine they are reading. */
+/**
+How the diagnostics routes find the machine they are reading.
+*/
 export interface ControlApiDiagnosticsOptions {
   readonly codexHome?: string | undefined;
   readonly repositoryRoot?: string | undefined;
 }
 
-/** The router log the diagnostics read, under the given `$CODEX_HOME`. */
+/**
+The router log the diagnostics read, under the given `$CODEX_HOME`.
+*/
 export function diagnosticsRouterLog(codexHome: string): string {
   return path.join(codexHome, "run", DEFAULT_ROUTER_LOG);
 }
@@ -89,8 +99,8 @@ export function diagnosticsRouterLog(codexHome: string): string {
 function resolvedCodexHome(options: ControlApiDiagnosticsOptions): string {
   const explicit = options.codexHome?.trim();
   if (explicit) return explicit;
-  const fromEnv = process.env.CODEX_HOME?.trim();
-  if (fromEnv) return fromEnv;
+  const fromEnvironment = process.env.CODEX_HOME?.trim();
+  if (fromEnvironment) return fromEnvironment;
   const home = process.env.HOME?.trim() || homedir();
   return path.join(home, ".codex");
 }
@@ -138,13 +148,15 @@ class DiagnosticsRequestError extends Error {
   }
 }
 
-/** A boolean query flag; anything else is a rejected request. */
-function booleanParam(
-  params: URLSearchParams,
+/**
+A boolean query flag; anything else is a rejected request.
+*/
+function booleanParameter(
+  parameters: URLSearchParams,
   name: string,
   fallback: boolean
 ): boolean {
-  const raw = params.get(name);
+  const raw = parameters.get(name);
   if (raw === null) return fallback;
   if (raw === "0") return false;
   if (raw === "1") return true;
@@ -155,13 +167,13 @@ function booleanParam(
 }
 
 function boundedInteger(
-  params: URLSearchParams,
+  parameters: URLSearchParams,
   name: string,
   fallback: number,
   minimum: number,
   maximum: number
 ): number {
-  const raw = params.get(name);
+  const raw = parameters.get(name);
   if (raw === null) return fallback;
   if (!WHOLE_NUMBER_PATTERN.test(raw)) {
     throw new DiagnosticsRequestError(
@@ -179,8 +191,8 @@ function boundedInteger(
   return value;
 }
 
-function formatParam(params: URLSearchParams): "json" | "text" {
-  const raw = params.get("format");
+function formatParameter(parameters: URLSearchParams): "json" | "text" {
+  const raw = parameters.get("format");
   if (raw === null || raw === "json") return "json";
   if (raw === "text") return "text";
   throw new DiagnosticsRequestError(
@@ -189,12 +201,14 @@ function formatParam(params: URLSearchParams): "json" | "text" {
   );
 }
 
-/** Reject any parameter the route does not define. */
-function rejectUnknownParams(
-  params: URLSearchParams,
+/**
+Reject any parameter the route does not define.
+*/
+function rejectUnknownParameters(
+  parameters: URLSearchParams,
   allowed: readonly string[]
 ): void {
-  for (const key of params.keys()) {
+  for (const key of parameters.keys()) {
     if (!allowed.includes(key)) {
       throw new DiagnosticsRequestError(
         "autodev_control_api_invalid_diagnostics_query",
@@ -204,9 +218,11 @@ function rejectUnknownParams(
   }
 }
 
-/** The `?limit=N` of a fleet route, bounded by that route's own ceiling. */
-function limitParam(params: URLSearchParams, maximum: number): number {
-  return boundedInteger(params, "limit", maximum, 1, maximum);
+/**
+The `?limit=N` of a fleet route, bounded by that route's own ceiling.
+*/
+function limitParameter(parameters: URLSearchParams, maximum: number): number {
+  return boundedInteger(parameters, "limit", maximum, 1, maximum);
 }
 
 const SESSION_PARAMS = [
@@ -229,11 +245,11 @@ const SCAN_PARAMS = ["format", "limit"] as const;
 const HOOKS_PARAMS = ["format", "sinceDays"] as const;
 
 /**
- * Handle one diagnostics request.
- *
- * Returns false when the path is not a diagnostics path, so the caller can
- * fall through to its own routing.
- */
+Handle one diagnostics request.
+
+Returns false when the path is not a diagnostics path, so the caller can
+fall through to its own routing.
+*/
 export async function handleControlApiDiagnosticsRequest(
   request: IncomingMessage,
   response: ServerResponse,
@@ -253,9 +269,9 @@ export async function handleControlApiDiagnosticsRequest(
     return true;
   }
 
-  let params: URLSearchParams;
+  let parameters: URLSearchParams;
   try {
-    params = new URL(request.url ?? "/", "http://127.0.0.1").searchParams;
+    parameters = new URL(request.url ?? "/", "http://127.0.0.1").searchParams;
   } catch {
     sendError(
       response,
@@ -269,9 +285,9 @@ export async function handleControlApiDiagnosticsRequest(
   const codexHome = resolvedCodexHome(options);
   try {
     if (pathname === RECENT_PATH) {
-      rejectUnknownParams(params, RECENT_PARAMS);
-      const format = formatParam(params);
-      const limit = limitParam(params, SESSION_RECENT_LIMIT);
+      rejectUnknownParameters(parameters, RECENT_PARAMS);
+      const format = formatParameter(parameters);
+      const limit = limitParameter(parameters, SESSION_RECENT_LIMIT);
       const body = listRecentSessionsResponse(
         rolloutRoots(codexHome),
         limit,
@@ -282,9 +298,9 @@ export async function handleControlApiDiagnosticsRequest(
       return true;
     }
     if (pathname === SCAN_PATH) {
-      rejectUnknownParams(params, SCAN_PARAMS);
-      const format = formatParam(params);
-      const limit = limitParam(params, SESSION_FLEET_SCAN_LIMIT);
+      rejectUnknownParameters(parameters, SCAN_PARAMS);
+      const format = formatParameter(parameters);
+      const limit = limitParameter(parameters, SESSION_FLEET_SCAN_LIMIT);
       const body = await scanRecentSessions({
         codexHome,
         routerLog: diagnosticsRouterLog(codexHome),
@@ -295,10 +311,10 @@ export async function handleControlApiDiagnosticsRequest(
       return true;
     }
     if (pathname === HOOKS_PATH) {
-      rejectUnknownParams(params, HOOKS_PARAMS);
-      const format = formatParam(params);
+      rejectUnknownParameters(parameters, HOOKS_PARAMS);
+      const format = formatParameter(parameters);
       const sinceDays = boundedInteger(
-        params,
+        parameters,
         "sinceDays",
         7,
         1,
@@ -314,7 +330,7 @@ export async function handleControlApiDiagnosticsRequest(
       await handleSessionRoute(
         response,
         pathname.slice(`${SESSIONS_PATH}/`.length),
-        params,
+        parameters,
         codexHome,
         options
       );
@@ -340,12 +356,12 @@ export async function handleControlApiDiagnosticsRequest(
 async function handleSessionRoute(
   response: ServerResponse,
   rawId: string,
-  params: URLSearchParams,
+  parameters: URLSearchParams,
   codexHome: string,
   options: ControlApiDiagnosticsOptions
 ): Promise<void> {
-  rejectUnknownParams(params, SESSION_PARAMS);
-  const format = formatParam(params);
+  rejectUnknownParameters(parameters, SESSION_PARAMS);
+  const format = formatParameter(parameters);
   const sessionId = safeAutoDevSessionId(decodeURIComponent(rawId));
   if (!sessionId) {
     sendError(
@@ -356,7 +372,7 @@ async function handleSessionRoute(
     );
     return;
   }
-  const rawThreadId = params.get("threadId");
+  const rawThreadId = parameters.get("threadId");
   const validatedThreadId =
     rawThreadId === null ? null : safeAutoDevSessionId(rawThreadId);
   const threadId = validatedThreadId ?? undefined;
@@ -369,47 +385,45 @@ async function handleSessionRoute(
     );
     return;
   }
-  const includeEvents = booleanParam(params, "includeEvents", false);
-  const includeItems = booleanParam(params, "includeItems", false);
+  const isIncludeEvents = booleanParameter(parameters, "includeEvents", false);
+  const isIncludeItems = booleanParameter(parameters, "includeItems", false);
   const report = await buildSessionDiagnosticsReport({
     id: sessionId,
     codexHome,
     routerLog: diagnosticsRouterLog(codexHome),
-    offline: booleanParam(params, "offline", false),
-    includeEfficiency: booleanParam(params, "includeEfficiency", true),
-    includeEvents,
+    offline: booleanParameter(parameters, "offline", false),
+    includeEfficiency: booleanParameter(parameters, "includeEfficiency", true),
+    includeEvents: isIncludeEvents,
     eventsLimit: boundedInteger(
-      params,
+      parameters,
       "eventsLimit",
       SESSION_EVENTS_PAGE_DEFAULT,
       1,
       SESSION_EVENTS_PAGE_LIMIT
     ),
-    eventsOffset: boundedInteger(params, "eventsOffset", 0, 0, 100_000),
-    includeItems,
+    eventsOffset: boundedInteger(parameters, "eventsOffset", 0, 0, 100_000),
+    includeItems: isIncludeItems,
     itemsLimit: boundedInteger(
-      params,
+      parameters,
       "itemsLimit",
       SESSION_ITEMS_PAGE_DEFAULT,
       1,
       SESSION_ITEMS_PAGE_LIMIT
     ),
-    itemsOffset: boundedInteger(params, "itemsOffset", 0, 0, 100_000),
-    ...(threadId === undefined ? {} : { threadId }),
-    ...(options.repositoryRoot === undefined
-      ? {}
-      : { repoRoot: options.repositoryRoot }),
-    ...(routerStatusSource === null ? {} : { routerStatus: routerStatusSource })
+    itemsOffset: boundedInteger(parameters, "itemsOffset", 0, 0, 100_000),
+    ...(threadId !== undefined && { threadId }),
+    ...(options.repositoryRoot !== undefined && { repoRoot: options.repositoryRoot }),
+    ...(routerStatusSource !== null && { routerStatus: routerStatusSource })
   });
   if (format === "text") {
     sendText(
       response,
       renderSessionDiagnosticsReport(report, {
-        failures: booleanParam(params, "includeFailures", false),
-        allFailures: booleanParam(params, "allFailures", false),
-        efficiency: booleanParam(params, "includeEfficiency", true),
-        items: includeItems,
-        events: includeEvents
+        failures: booleanParameter(parameters, "includeFailures", false),
+        allFailures: booleanParameter(parameters, "allFailures", false),
+        efficiency: booleanParameter(parameters, "includeEfficiency", true),
+        items: isIncludeItems,
+        events: isIncludeEvents
       })
     );
     return;

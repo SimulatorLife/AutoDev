@@ -20,50 +20,52 @@ export type StatusBadgeVariant =
   | "not-observed";
 
 /**
- * A status the badge can be handed.
- *
- * The union above is the Console's own vocabulary: the states it has decided a
- * word and a tone for. A status can also arrive from a service that has grown
- * a state the Console has not been taught, and the badge must still be able to
- * render it -- a badge that renders no word says nothing at all, which is a
- * different claim from the one the service made.
- *
- * `(string & {})` keeps the union's members in an editor's completion list
- * while still accepting any other string. It is the shape the repository
- * already uses for an open union (`AgentRole`).
- */
+A status the badge can be handed.
+
+The union above is the Console's own vocabulary: the states it has decided a
+word and a tone for. A status can also arrive from a service that has grown
+a state the Console has not been taught, and the badge must still be able to
+render it -- a badge that renders no word says nothing at all, which is a
+different claim from the one the service made.
+
+`(string & {})` keeps the union's members in an editor's completion list
+while still accepting any other string. It is the shape the repository
+already uses for an open union (`AgentRole`).
+*/
 export type StatusBadgeStatus = StatusBadgeVariant | (string & {});
 
 export interface StatusBadgeProps {
   readonly status: StatusBadgeStatus;
   readonly label?: string;
-  /** Extra explanation revealed on hover, for a verbose state behind a short label. */
+  /**
+  Extra explanation revealed on hover, for a verbose state behind a short label.
+  */
   readonly title?: string | undefined;
   /**
-   * A control that belongs to this status -- such as re-checking a provider's
-   * live verdict -- drawn inside the badge after the word, so the action reads
-   * as part of the verdict it acts on.
-   *
-   * The control keeps its own size when the badge's word is cut short: the
-   * word truncates, the control does not, so a badge that cannot show its
-   * whole label still offers its action in full.
-   */
+  A control that belongs to this status -- such as re-checking a provider's
+  live verdict -- drawn inside the badge after the word, so the action reads
+  as part of the verdict it acts on.
+  
+  The control keeps its own size when the badge's word is cut short: the
+  word truncates, the control does not, so a badge that cannot show its
+  whole label still offers its action in full.
+  */
   readonly action?: React.ReactNode;
 }
 
 /**
- * Semantic style for every status variant, expressed purely in terms of the
- * Console's dark-only semantic tokens (accent/success/warning/error/neutral)
- * defined in app/globals.css. No raw Tailwind palette utility is used here:
- *
- * - configured, pending: accent (an assigned/active value awaiting or
- *   reflecting an operator decision; not itself a correctness claim).
- * - valid, ready, converged: success (explicitly observed correct/healthy
- *   state).
- * - unavailable: warning (a known, non-fatal gap in observed state).
- * - invalid, error: error (an explicitly observed failure/incorrect state).
- * - not-observed: neutral (missing evidence; never implied as success).
- */
+Semantic style for every status variant, expressed purely in terms of the
+Console's dark-only semantic tokens (accent/success/warning/error/neutral)
+defined in app/globals.css. No raw Tailwind palette utility is used here:
+
+- configured, pending: accent (an assigned/active value awaiting or
+  reflecting an operator decision; not itself a correctness claim).
+- valid, ready, converged: success (explicitly observed correct/healthy
+  state).
+- unavailable: warning (a known, non-fatal gap in observed state).
+- invalid, error: error (an explicitly observed failure/incorrect state).
+- not-observed: neutral (missing evidence; never implied as success).
+*/
 const BADGE_STYLES: Record<StatusBadgeVariant, string> = {
   configured: ACCENT_TONE_CLASS,
   valid: SUCCESS_TONE_CLASS,
@@ -79,64 +81,64 @@ const BADGE_STYLES: Record<StatusBadgeVariant, string> = {
 const DEFAULT_STYLE = NEUTRAL_TONE_CLASS;
 
 /**
- * The Console's word for missing evidence.
- *
- * "Not observed" is the product's load-bearing string: it is the answer the
- * Console gives when configuration exists but nothing has reported back, and
- * the target state requires exactly this vocabulary rather than any friendly
- * synonym. It was declared as a local `const NOT_OBSERVED_LABEL` in eight
- * feature files, which means the one word that must never drift is the word
- * most likely to: a view can say "Unknown" or "Unavailable" beside a badge
- * that says "Not observed", and the page then appears to contradict itself
- * about whether evidence is missing or actively wrong.
- *
- * It lives beside `StatusBadge` rather than in a text-treatment module because
- * it is a state, not a style: it is what `StatusBadge` renders for
- * `not-observed`, and the label and the variant are two spellings of one fact.
- */
+The Console's word for missing evidence.
+
+"Not observed" is the product's load-bearing string: it is the answer the
+Console gives when configuration exists but nothing has reported back, and
+the target state requires exactly this vocabulary rather than any friendly
+synonym. It was declared as a local `const NOT_OBSERVED_LABEL` in eight
+feature files, which means the one word that must never drift is the word
+most likely to: a view can say "Unknown" or "Unavailable" beside a badge
+that says "Not observed", and the page then appears to contradict itself
+about whether evidence is missing or actively wrong.
+
+It lives beside `StatusBadge` rather than in a text-treatment module because
+it is a state, not a style: it is what `StatusBadge` renders for
+`not-observed`, and the label and the variant are two spellings of one fact.
+*/
 export const NOT_OBSERVED_LABEL = "Not observed";
 
 /**
- * The variant that encodes "nothing reported back".
- *
- * This is the same defect the label above already had, one layer over, and it
- * was never collected. `NOT_OBSERVED_LABEL` was declared locally in eight
- * feature files before it moved here; the variant beside it was declared
- * locally in seven more -- `as const` in four of them, unannotated in three --
- * and written as a bare `"not-observed"` literal at six further call sites, in
- * files that import `NOT_OBSERVED_LABEL` from this module but not the variant
- * that decides what it renders. The one export in the tree sat in
- * `features/memory/memory-status.ts`, so the shared component's own closed
- * union was declared in a memory feature.
- *
- * Nothing was misspelled while it stood, and that is not the argument for
- * leaving it: `status` is typed `StatusBadgeVariant`, so the compiler catches a
- * wrong key and the value could not drift silently. What it could do was make
- * the union thirteen spellings wide, so the day `not-observed` needs a tone of
- * its own or the key is renamed, thirteen edits across seven files stand between
- * the change and the component -- six of them bare literals that a grep for
- * `NOT_OBSERVED_STATUS` does not find. `satisfies` keeps the literal type for
- * callers that compare against it while still checking the key against the
- * union, so the constant cannot drift from the table it indexes.
- */
+The variant that encodes "nothing reported back".
+
+This is the same defect the label above already had, one layer over, and it
+was never collected. `NOT_OBSERVED_LABEL` was declared locally in eight
+feature files before it moved here; the variant beside it was declared
+locally in seven more -- `as const` in four of them, unannotated in three --
+and written as a bare `"not-observed"` literal at six further call sites, in
+files that import `NOT_OBSERVED_LABEL` from this module but not the variant
+that decides what it renders. The one export in the tree sat in
+`features/memory/memory-status.ts`, so the shared component's own closed
+union was declared in a memory feature.
+
+Nothing was misspelled while it stood, and that is not the argument for
+leaving it: `status` is typed `StatusBadgeVariant`, so the compiler catches a
+wrong key and the value could not drift silently. What it could do was make
+the union thirteen spellings wide, so the day `not-observed` needs a tone of
+its own or the key is renamed, thirteen edits across seven files stand between
+the change and the component -- six of them bare literals that a grep for
+`NOT_OBSERVED_STATUS` does not find. `satisfies` keeps the literal type for
+callers that compare against it while still checking the key against the
+union, so the constant cannot drift from the table it indexes.
+*/
 export const NOT_OBSERVED_STATUS = "not-observed" satisfies StatusBadgeVariant;
 
 /**
- * The word each variant renders when the caller supplies no `label` of its own.
- *
- * This used to be derived from the variant key at render time
- * (`status.charAt(0).toUpperCase() + status.slice(1)`), which silently made the
- * spelling of a status a property of the *call site*. `not-observed` is the only
- * hyphenated variant, so that one expression rendered "Not observed" wherever a
- * view remembered to pass `NOT_OBSERVED_LABEL` and "Not-observed" everywhere
- * else — the same drift the constant above exists to prevent, reintroduced one
- * layer down by the default it was supposed to be safe behind. Two spellings of
- * the product's load-bearing word were both live on `/agents` at once.
- *
- * A `Record` over the variant union also makes the table exhaustive: adding a
- * variant without deciding its word is a typecheck failure rather than a
- * surprise on a page.
- */
+The word each variant renders when the caller supplies no `label` of its own.
+
+This used to be derived from the variant key at render time
+(`status.charAt(0).toUpperCase() + status.slice(1)`), which silently made the
+spelling of a status a property of the *call site*. `not-observed` is the only
+hyphenated variant, so that one expression rendered "Not observed" wherever a
+view remembered to pass `NOT_OBSERVED_LABEL` and "Not-observed" everywhere
+else — the same drift the constant above exists to prevent, reintroduced one
+layer down by the default it was supposed to be safe behind. Two spellings of
+the product's load-bearing word were both live on `/agents` at once.
+
+A `Record` over the variant union also makes the table exhaustive: adding a
+variant without deciding its word is a typecheck failure rather than a
+surprise on a page.
+*/
 const VARIANT_LABEL: Record<StatusBadgeVariant, string> = {
   configured: "Configured",
   valid: "Valid",
@@ -150,18 +152,18 @@ const VARIANT_LABEL: Record<StatusBadgeVariant, string> = {
 };
 
 /**
- * The separators a status key may carry between its words.
- */
+The separators a status key may carry between its words.
+*/
 const STATUS_WORD_SEPARATOR = /[-_\s]+/u;
 
 /**
- * The word a status the Console has no variant for is spoken with.
- *
- * "idle" is spoken "Idle". The Console has no tone for a state it has not been
- * taught, and it must not borrow one -- a badge painted success would be a
- * claim the Console cannot make. But it can say what the service said, and a
- * service that names a state is evidence of that state.
- */
+The word a status the Console has no variant for is spoken with.
+
+"idle" is spoken "Idle". The Console has no tone for a state it has not been
+taught, and it must not borrow one -- a badge painted success would be a
+claim the Console cannot make. But it can say what the service said, and a
+service that names a state is evidence of that state.
+*/
 function spokenStatus(status: string): string {
   const words = status
     .split(STATUS_WORD_SEPARATOR)
@@ -172,17 +174,17 @@ function spokenStatus(status: string): string {
 }
 
 /**
- * The word a badge renders for a status.
- *
- * A known variant has a word of its own, and the table above is exhaustive over
- * them, so adding a variant without deciding its word is still a typecheck
- * failure. A status the Console has no variant for is spoken from its own key:
- * the badge must never render an empty label, because a badge with no word is a
- * shape with no meaning -- the operator sees a dot and cannot tell a state from
- * a rendering that failed, and a screen reader is told nothing at all. A status
- * that names nothing at all is the Console's own word for evidence it does not
- * have.
- */
+The word a badge renders for a status.
+
+A known variant has a word of its own, and the table above is exhaustive over
+them, so adding a variant without deciding its word is still a typecheck
+failure. A status the Console has no variant for is spoken from its own key:
+the badge must never render an empty label, because a badge with no word is a
+shape with no meaning -- the operator sees a dot and cannot tell a state from
+a rendering that failed, and a screen reader is told nothing at all. A status
+that names nothing at all is the Console's own word for evidence it does not
+have.
+*/
 export function statusBadgeLabel(status: StatusBadgeStatus): string {
   const known = VARIANT_LABEL[status as StatusBadgeVariant];
   if (known !== undefined) return known;
@@ -191,10 +193,10 @@ export function statusBadgeLabel(status: StatusBadgeStatus): string {
 }
 
 /**
- * Foreground token per status variant, for places that carry the status as a
- * mark rather than a word (a dot beside a compact chip). Keeps one vocabulary:
- * a status never renders green in one component and success-green in another.
- */
+Foreground token per status variant, for places that carry the status as a
+mark rather than a word (a dot beside a compact chip). Keeps one vocabulary:
+a status never renders green in one component and success-green in another.
+*/
 const STATUS_DOT_CLASS: Record<StatusBadgeVariant, string> = {
   configured: "bg-accent",
   valid: "bg-success",
@@ -209,16 +211,18 @@ const STATUS_DOT_CLASS: Record<StatusBadgeVariant, string> = {
 
 export interface StatusDotProps {
   readonly status: StatusBadgeStatus;
-  /** Accessible description of what the dot means, e.g. "Enabled". */
+  /**
+  Accessible description of what the dot means, e.g. "Enabled".
+  */
   readonly label: string;
 }
 
 /**
- * A status rendered as a colored mark instead of a word, for dense rows where
- * repeating "Enabled" beside every item triples the row height. The label stays
- * available to assistive technology and as a hover title, so compactness never
- * costs the state.
- */
+A status rendered as a colored mark instead of a word, for dense rows where
+repeating "Enabled" beside every item triples the row height. The label stays
+available to assistive technology and as a hover title, so compactness never
+costs the state.
+*/
 export function StatusDot({
   status,
   label
@@ -240,15 +244,15 @@ export interface LiveDotProps {
 }
 
 /**
- * A decorative dot for a live state.
- *
- * The icon set is a stroke set, so a dot drawn on that grid would be a ring
- * rather than a mark, and a filled glyph borrowed from a font would be exactly
- * the thing this product does not do. The Console's own answer is a CSS circle
- * -- the same shape `StatusDot` draws -- minus the announcement: this dot sits
- * beside a word that already says what it means ("Following live"), so naming
- * it would only repeat it.
- */
+A decorative dot for a live state.
+
+The icon set is a stroke set, so a dot drawn on that grid would be a ring
+rather than a mark, and a filled glyph borrowed from a font would be exactly
+the thing this product does not do. The Console's own answer is a CSS circle
+-- the same shape `StatusDot` draws -- minus the announcement: this dot sits
+beside a word that already says what it means ("Following live"), so naming
+it would only repeat it.
+*/
 export function LiveDot({ className }: LiveDotProps): React.JSX.Element {
   return React.createElement("span", {
     className: `inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-accent${

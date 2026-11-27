@@ -1,17 +1,17 @@
 /**
- * `derivePlaytestPolicyValidity`: §6's artifact produced from a real run.
- *
- * The coverage manifest here is built by Core's real coverage computation from
- * real assignments and episodes rather than hand-written, because the whole
- * claim under test is that the derivation reports what the run actually
- * observed. A hand-written manifest would let this file agree with itself.
- *
- * Every competence metric is asserted `null` on purpose. That is the load-bearing
- * part of the design: the metrics compare a policy with a person, and this run
- * measured no person. The last test is a positive control proving the `null`s
- * are what withhold authorization — with fabricated metrics the very same
- * bounds do produce `passed`.
- */
+`derivePlaytestPolicyValidity`: §6's artifact produced from a real run.
+
+The coverage manifest here is built by Core's real coverage computation from
+real assignments and episodes rather than hand-written, because the whole
+claim under test is that the derivation reports what the run actually
+observed. A hand-written manifest would let this file agree with itself.
+
+Every competence metric is asserted `null` on purpose. That is the load-bearing
+part of the design: the metrics compare a policy with a person, and this run
+measured no person. The last test is a positive control proving the `null`s
+are what withhold authorization — with fabricated metrics the very same
+bounds do produce `passed`.
+*/
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
@@ -47,14 +47,14 @@ const ASSIGNMENT_HASH = "c".repeat(64);
 const CREATED_AT = "2026-10-12T00:00:00.000Z";
 
 /**
- * Four cells, one per situation this module has to tell apart:
- *
- * - `heuristic`/`novice` — observed with real opportunities;
- * - `tactical-policy`/`novice` — observed, so ordering has two records to sort;
- * - `zero-policy`/`zero-cohort` — assigned and observed, but the adapter emits
- *   no authoritative event, so nothing was ever eligible to measure;
- * - `unstarted-policy`/`novice` — planned, never assigned.
- */
+Four cells, one per situation this module has to tell apart:
+
+- `heuristic`/`novice` — observed with real opportunities;
+- `tactical-policy`/`novice` — observed, so ordering has two records to sort;
+- `zero-policy`/`zero-cohort` — assigned and observed, but the adapter emits
+  no authoritative event, so nothing was ever eligible to measure;
+- `unstarted-policy`/`novice` — planned, never assigned.
+*/
 function registry(): PlaytestMetricRegistry {
   return expandPlaytestRegistry({
     schemaVersion: 2,
@@ -251,7 +251,9 @@ const POLICY_VERSIONS: Readonly<Record<string, string>> = {
   "zero-policy": "zero-v1"
 };
 
-/** A real content-hashed assignment manifest; a cast would hide a field rename. */
+/**
+A real content-hashed assignment manifest; a cast would hide a field rename.
+*/
 function assignmentManifest(): PlaytestAdapterAssignmentManifest {
   const base = {
     schema: PLAYTESTS_ASSIGNMENT_MANIFEST_SCHEMA,

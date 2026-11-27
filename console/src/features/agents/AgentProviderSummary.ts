@@ -14,14 +14,14 @@ import { MUTED_META_CLASS } from "../../components/ui/text-classes.ts";
 import { providerPath } from "../providers/paths.ts";
 
 /**
- * Read-only summary of the providers an agent role may route to, with each
- * provider's enablement for the role kind the agent runs as. Provider controls
- * live on Providers; this summary only links there.
- *
- * Each provider is one chip carrying a status dot rather than a spelled-out
- * badge. A role that can reach five providers would otherwise stack five
- * "claude Enabled" lines and triple the height of every row in the table.
- */
+Read-only summary of the providers an agent role may route to, with each
+provider's enablement for the role kind the agent runs as. Provider controls
+live on Providers; this summary only links there.
+
+Each provider is one chip carrying a status dot rather than a spelled-out
+badge. A role that can reach five providers would otherwise stack five
+"claude Enabled" lines and triple the height of every row in the table.
+*/
 export function AgentProviderSummary({
   agent,
   providers

@@ -10,7 +10,7 @@ import {
   writeLine
 } from "@simulatorlife/autodev-runtime/shared/output";
 
-import { parseArgs, requiredArg } from "./cli-args.ts";
+import { parseArgs as parseArguments, requiredArg as requiredArgument } from "./cli-args.ts";
 import { readJsonFile } from "./config-files.ts";
 
 export interface CatalogModelEntry {
@@ -42,13 +42,13 @@ export interface CatalogModelEntry {
 }
 
 /**
- * Codex compacts a thread once its input reaches `auto_compact_token_limit`
- * (90% of `context_window` when unset). With 1M-token windows that let root
- * and child sessions run every request at 300k-900k input tokens: every turn
- * re-sends the whole history, so cost grows with context even when cached.
- * Compacting at 200k keeps requests in the band where cached prefixes stay
- * cheap and model attention stays sharp; smaller windows keep the 90% default.
- */
+Codex compacts a thread once its input reaches `auto_compact_token_limit`
+(90% of `context_window` when unset). With 1M-token windows that let root
+and child sessions run every request at 300k-900k input tokens: every turn
+re-sends the whole history, so cost grows with context even when cached.
+Compacting at 200k keeps requests in the band where cached prefixes stay
+cheap and model attention stays sharp; smaller windows keep the 90% default.
+*/
 export const AUTO_COMPACT_TOKEN_LIMIT_CAP = 200_000;
 
 export function autoCompactTokenLimit(contextWindow: number): number {
@@ -59,13 +59,13 @@ export function autoCompactTokenLimit(contextWindow: number): number {
 }
 
 /**
- * Per-call tool output budget for token-truncated models. A tool result stays
- * in context and is re-sent on every later request until compaction; outputs
- * over ~20k characters were 12% of calls but 58% of all tool-output volume,
- * mostly unbounded `rg`/`cat` dumps that a narrower query would answer.
- * Codex keeps the head and tail of a truncated result, so the model still sees
- * where to narrow. Byte-truncated provider catalogs already sit below this.
- */
+Per-call tool output budget for token-truncated models. A tool result stays
+in context and is re-sent on every later request until compaction; outputs
+over ~20k characters were 12% of calls but 58% of all tool-output volume,
+mostly unbounded `rg`/`cat` dumps that a narrower query would answer.
+Codex keeps the head and tail of a truncated result, so the model still sees
+where to narrow. Byte-truncated provider catalogs already sit below this.
+*/
 export const TOOL_OUTPUT_TOKEN_LIMIT = 6000;
 
 const STANDARD_REASONING_LEVELS = [
@@ -382,11 +382,11 @@ export function runModelCatalog(
 
 if (isEntryPoint(import.meta.url)) {
   try {
-    const { values, flags } = parseArgs(process.argv.slice(2));
+    const { values, flags } = parseArguments(process.argv.slice(2));
     process.exitCode = runModelCatalog(
-      requiredArg(values, "routing-config"),
-      requiredArg(values, "catalogs-dir"),
-      requiredArg(values, "output"),
+      requiredArgument(values, "routing-config"),
+      requiredArgument(values, "catalogs-dir"),
+      requiredArgument(values, "output"),
       flags.has("check")
     );
   } catch (error) {

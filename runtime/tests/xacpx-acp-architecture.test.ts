@@ -25,10 +25,6 @@ import {
   ACP_PROVIDER_IDS,
   buildAcpProviderLaunchSpec
 } from "../src/acp/provider-profiles.ts";
-import {
-  buildOpencliRoleTaskSpec,
-  GITHUB_WORKER_ROLE
-} from "../src/providers/opencli-role.ts";
 import { renderBridgeMcpCatalogue } from "../src/config/render-bridge-mcp-catalogue.ts";
 import { evaluatePreToolUse as evaluateBlockCcc } from "../src/hooks/block-ccc-cli.ts";
 import { evaluateFileSurfaceHook } from "../src/hooks/file-surface.ts";
@@ -44,11 +40,15 @@ import {
 import { MCP_GRANT_ENV } from "../src/mcp/gateway-client.ts";
 import { resolveMcpCommand } from "../src/mcp/launcher.ts";
 import { verifySessionGrant } from "../src/mcp/session-grant.ts";
+import {
+  buildOpencliRoleTaskSpec,
+  GITHUB_WORKER_ROLE
+} from "../src/providers/opencli-role.ts";
 import { COOLDOWNS } from "../src/router/cooldown/index.ts";
 import { ROUTING_POLICY, RoutingPolicy } from "../src/router/routing.ts";
 import { autodevHome, autodevStateHome } from "../src/shared/autodev-home.ts";
-import { roleContract } from "../src/shared/execution-contract.ts";
 import { findMcodeBinary } from "../src/shared/executables.ts";
+import { roleContract } from "../src/shared/execution-contract.ts";
 import {
   extractSkillReadPath,
   matchSkillReadTarget
@@ -305,7 +305,7 @@ test("ACP MCP tools are checked against canonical role permissions", () => {
     ["worker", "mcp__filesystem", "reject"],
     ["worker", "mcp__cocoindex_code__search", "reject"],
     ["worker", "mcp__malformed", "reject"],
-    ["worker", "   ", "reject"]
+    ["worker", ' '.repeat(3), "reject"]
   ] as const;
   for (const [role, name, expected] of cases) {
     assert.deepEqual(

@@ -1,17 +1,17 @@
 /**
- * Canonical AutoDev Console navigation.
- *
- * The grouping below is the single authoritative definition of the Console
- * resource surface. Configure/Observe/Operate are presentation groups; the
- * 14 resources remain first-class routes. Any flattened section list, route
- * slug lookup, or section-order helper is derived from this definition so
- * membership and order can never diverge between parallel declarations.
- *
- * Authority: docs/autodev-console-target-state.md §2 "Canonical resource
- * surface" — Configure = Overview, Agents, Providers, MCPs, Skills, Hooks, Prompts,
- * Permissions, Tools; Observe = Usage, Evaluations, Playtesting;
- * Operate = Workspaces, GitHub.
- */
+Canonical AutoDev Console navigation.
+
+The grouping below is the single authoritative definition of the Console
+resource surface. Configure/Observe/Operate are presentation groups; the
+14 resources remain first-class routes. Any flattened section list, route
+slug lookup, or section-order helper is derived from this definition so
+membership and order can never diverge between parallel declarations.
+
+Authority: docs/autodev-console-target-state.md §2 "Canonical resource
+surface" — Configure = Overview, Agents, Providers, MCPs, Skills, Hooks, Prompts,
+Permissions, Tools; Observe = Usage, Evaluations, Playtesting;
+Operate = Workspaces, GitHub.
+*/
 
 export type CanonicalNavGroupId = "Configure" | "Observe" | "Operate";
 
@@ -57,20 +57,20 @@ export type CanonicalNavSection =
   (typeof CANONICAL_NAV_GROUPS)[number]["sections"][number];
 
 /**
- * What each canonical resource is for, in one sentence.
- *
- * A resource's purpose belongs to the resource, not to the page that renders
- * it. A page that states its own purpose can state it on the happy path and
- * forget it on the path where the operator most needs to know what they are
- * looking at -- which is how the Playtesting page came to be the one resource
- * whose header named a surface without saying what it owns, and how the
- * detail pages of the other thirteen came to name a resource without saying
- * what it is for either.
- *
- * The sentence lives here, beside the navigation that lists the resource, so
- * there is one answer per resource, no page can have a different one, and a
- * resource added to the navigation cannot be added without one.
- */
+What each canonical resource is for, in one sentence.
+
+A resource's purpose belongs to the resource, not to the page that renders
+it. A page that states its own purpose can state it on the happy path and
+forget it on the path where the operator most needs to know what they are
+looking at -- which is how the Playtesting page came to be the one resource
+whose header named a surface without saying what it owns, and how the
+detail pages of the other thirteen came to name a resource without saying
+what it is for either.
+
+The sentence lives here, beside the navigation that lists the resource, so
+there is one answer per resource, no page can have a different one, and a
+resource added to the navigation cannot be added without one.
+*/
 export const CANONICAL_SECTION_PURPOSE = {
   Overview:
     "A starting point for configuring AutoDev and navigating its canonical resources.",
@@ -102,16 +102,16 @@ export const CANONICAL_SECTION_PURPOSE = {
 } as const satisfies Record<CanonicalNavSection, string>;
 
 /**
- * The one sentence that says what a canonical resource is for.
- */
+The one sentence that says what a canonical resource is for.
+*/
 export function canonicalSectionPurpose(section: CanonicalNavSection): string {
   return CANONICAL_SECTION_PURPOSE[section];
 }
 
 /**
- * Flattened canonical section list, derived from `CANONICAL_NAV_GROUPS`.
- * Order matches Configure → Observe → Operate; do not redefine it elsewhere.
- */
+Flattened canonical section list, derived from `CANONICAL_NAV_GROUPS`.
+Order matches Configure → Observe → Operate; do not redefine it elsewhere.
+*/
 export const CANONICAL_NAVIGATION: readonly CanonicalNavSection[] =
   CANONICAL_NAV_GROUPS.flatMap((group) => group.sections);
 
@@ -134,9 +134,9 @@ export function isCanonicalNavGroupId(
 }
 
 /**
- * Resolve the canonical group that owns a given section, or `null` if the
- * section is not part of the canonical resource surface.
- */
+Resolve the canonical group that owns a given section, or `null` if the
+section is not part of the canonical resource surface.
+*/
 export function canonicalNavGroupOf(
   section: CanonicalNavSection
 ): CanonicalNavGroup<CanonicalNavSection> {

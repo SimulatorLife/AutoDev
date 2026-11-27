@@ -1,34 +1,34 @@
 /**
- * Console process-liveness endpoint.
- *
- * The Console exposes this single endpoint over the loopback LaunchAgent
- * listener so an external supervisor (reverse proxy, SSH tunnel host, or
- * deployment health check) can confirm the Next.js server process is
- * running and accepting HTTP requests.
- *
- * It is intentionally a process-liveness probe only. It MUST NOT make
- * any backend-readiness claim:
- *
- *   - It never reads AUTODEV_CONTROL_API_TOKEN or
- *     AUTODEV_OPENLIT_USAGE_TOKEN; both values stay in
- *     process.env for the server-side adapters that need them and are
- *     never echoed here.
- *   - It never issues a fetch to the Control API, the OpenLIT Usage
- *     endpoint, ClickHouse, or any other downstream service. The Console
- *     pages render the documented "credential not configured" /
- *     "control API unreachable" states when those backends are
- *     unavailable; this endpoint must never collapse that into a single
- *     optimistic value.
- *   - It returns the same payload whether or not the operator has
- *     finished configuring credentials. That is the contract:
- *     /api/health answers "is the Console server process up and serving
- *     HTTP?", nothing more.
- *
- * The response is JSON-only and includes the process PID, the Node
- * version the server is running on, and the resolved console port. These
- * are process-local facts; they do not leak any operator data or
- * credentials.
- */
+Console process-liveness endpoint.
+
+The Console exposes this single endpoint over the loopback LaunchAgent
+listener so an external supervisor (reverse proxy, SSH tunnel host, or
+deployment health check) can confirm the Next.js server process is
+running and accepting HTTP requests.
+
+It is intentionally a process-liveness probe only. It MUST NOT make
+any backend-readiness claim:
+
+  - It never reads AUTODEV_CONTROL_API_TOKEN or
+    AUTODEV_OPENLIT_USAGE_TOKEN; both values stay in
+    process.env for the server-side adapters that need them and are
+    never echoed here.
+  - It never issues a fetch to the Control API, the OpenLIT Usage
+    endpoint, ClickHouse, or any other downstream service. The Console
+    pages render the documented "credential not configured" /
+    "control API unreachable" states when those backends are
+    unavailable; this endpoint must never collapse that into a single
+    optimistic value.
+  - It returns the same payload whether or not the operator has
+    finished configuring credentials. That is the contract:
+    /api/health answers "is the Console server process up and serving
+    HTTP?", nothing more.
+
+The response is JSON-only and includes the process PID, the Node
+version the server is running on, and the resolved console port. These
+are process-local facts; they do not leak any operator data or
+credentials.
+*/
 
 import { NextResponse } from "next/server.js";
 
@@ -45,9 +45,9 @@ export interface ConsoleHealthPayload {
 const DEFAULT_CONSOLE_PORT = 3300;
 
 function resolveConsolePort(
-  env: Readonly<Record<string, string | undefined>> = process.env
+  environment: Readonly<Record<string, string | undefined>> = process.env
 ): number {
-  const raw = env.AUTODEV_CONSOLE_PORT?.trim();
+  const raw = environment.AUTODEV_CONSOLE_PORT?.trim();
   if (!raw) return DEFAULT_CONSOLE_PORT;
   const value = Number.parseInt(raw);
   if (!Number.isInteger(value) || value <= 0 || value > 65_535) {

@@ -1,19 +1,19 @@
 /**
- * Hash-locked Python environment for the Playtesting statistical analysis
- * worker.
- *
- * The environment is described by:
- *
- *   runtime/src/playtesting/statistics/pyproject.toml   (declared pins)
- *   runtime/src/playtesting/statistics/uv.lock          (resolved hashes)
- *   runtime/src/playtesting/statistics/PYTHON_README.md (operator notes)
- *
- * Runtime does not improvise a venv: it shells out to `uv`, which is the
- * same tool the maintainer uses to lock the project. We refuse to fall
- * back to system Python when `uv` is unavailable or the lock has drifted
- * from `pyproject.toml`; under those conditions the worker cannot be
- * safely invoked and the request must error out honestly.
- */
+Hash-locked Python environment for the Playtesting statistical analysis
+worker.
+
+The environment is described by:
+
+  runtime/src/playtesting/statistics/pyproject.toml   (declared pins)
+  runtime/src/playtesting/statistics/uv.lock          (resolved hashes)
+  runtime/src/playtesting/statistics/PYTHON_README.md (operator notes)
+
+Runtime does not improvise a venv: it shells out to `uv`, which is the
+same tool the maintainer uses to lock the project. We refuse to fall
+back to system Python when `uv` is unavailable or the lock has drifted
+from `pyproject.toml`; under those conditions the worker cannot be
+safely invoked and the request must error out honestly.
+*/
 
 import { createHash, type Hash } from "node:crypto";
 import {
@@ -32,7 +32,9 @@ const SHA256_HEX_LENGTH = 64;
 const PYPROJECT_FILE = "pyproject.toml";
 const UV_LOCK_FILE = "uv.lock";
 
-/** Where the Python project root lives inside the Runtime source tree. */
+/**
+Where the Python project root lives inside the Runtime source tree.
+*/
 function projectRootAbsolute(): string {
   // Resolve from this file's URL so the location remains stable across
   // tests, CLI invocations and packaged distributions.
@@ -40,33 +42,39 @@ function projectRootAbsolute(): string {
   return realpathSync(path.resolve(path.dirname(here)));
 }
 
-/** Absolute path to the Python project's declared manifest. */
+/**
+Absolute path to the Python project's declared manifest.
+*/
 export function pyProjectTomlPath(): string {
   return path.join(projectRootAbsolute(), PYPROJECT_FILE);
 }
 
-/** Absolute path to the uv-resolved lockfile. */
+/**
+Absolute path to the uv-resolved lockfile.
+*/
 export function uvLockPath(): string {
   return path.join(projectRootAbsolute(), UV_LOCK_FILE);
 }
 
-/** Absolute path to the worker entry point module. */
+/**
+Absolute path to the worker entry point module.
+*/
 export function pythonWorkerModule(): string {
   return "python_script";
 }
 
 /**
- * Stable, content-hashed identifier for the worker environment. The
- * Runtime computes it once on startup (or when the fixture is first
- * loaded) and includes it in trace/telemetry events so an investigator
- * can replay an earlier interval exactly by checking the same hash.
- *
- * The hash covers `pyproject.toml`, `uv.lock`, and the worker entry
- * point module; only changes to that triple invalidate it. This guards
- * against a silent `uv sync --no-frozen` or a hand-edit of the lockfile
- * producing intervals from a different resolved environment than the
- * recorded one.
- */
+Stable, content-hashed identifier for the worker environment. The
+Runtime computes it once on startup (or when the fixture is first
+loaded) and includes it in trace/telemetry events so an investigator
+can replay an earlier interval exactly by checking the same hash.
+
+The hash covers `pyproject.toml`, `uv.lock`, and the worker entry
+point module; only changes to that triple invalidate it. This guards
+against a silent `uv sync --no-frozen` or a hand-edit of the lockfile
+producing intervals from a different resolved environment than the
+recorded one.
+*/
 export interface ResolvedPlaytestStatEnvironment {
   readonly projectRoot: string;
   readonly pyprojectPath: string;
@@ -88,10 +96,12 @@ export class PlaytestStatEnvironmentError extends Error {
   }
 }
 
-/** SHA-256 the worker-environment files into one canonical digest. */
-function sha256(buf: Buffer): string {
+/**
+SHA-256 the worker-environment files into one canonical digest.
+*/
+function sha256(buffer: Buffer): string {
   const hash: Hash = createHash("sha256");
-  hash.update(buf);
+  hash.update(buffer);
   return hash.digest("hex");
 }
 
@@ -121,13 +131,13 @@ function assertReadable(label: string, candidate: string): void {
 }
 
 /**
- * Check that the declared pins (in pyproject.toml) match the contract's
- * exact-pinned versions. The parser below understands the small subset
- * of TOML we emit in pyproject.toml: `name = "value"` and
- * `dependencies = [ "name==version", ... ]`. Anything stricter than a
- * `uv.lock`/SciPy version drift should fail the lifecycle gate rather
- * than silently re-pinning in production.
- */
+Check that the declared pins (in pyproject.toml) match the contract's
+exact-pinned versions. The parser below understands the small subset
+of TOML we emit in pyproject.toml: `name = "value"` and
+`dependencies = [ "name==version", ... ]`. Anything stricter than a
+`uv.lock`/SciPy version drift should fail the lifecycle gate rather
+than silently re-pinning in production.
+*/
 export function assertDeclaredPinsMatchContract(pyprojectSource: string): {
   numpy: string;
   scipy: string;
@@ -135,10 +145,10 @@ export function assertDeclaredPinsMatchContract(pyprojectSource: string): {
   python: string;
 } {
   const python = readStringAssignment(pyprojectSource, "requires-python");
-  const deps = readDependenciesArray(pyprojectSource);
+  const dependencies = readDependenciesArray(pyprojectSource);
 
   const pins: Record<string, string> = {};
-  for (const entry of deps) {
+  for (const entry of dependencies) {
     pins[entry.name] = entry.specifier;
   }
 
@@ -185,10 +195,12 @@ export function assertDeclaredPinsMatchContract(pyprojectSource: string): {
   };
 }
 
-/** Parse `name = "value"` style scalar assignments. */
+/**
+Parse `name = "value"` style scalar assignments.
+*/
 function readStringAssignment(source: string, name: string): string {
   const re = new RegExp(
-    String.raw`^` + name + String.raw`\s*=\s*["']([^"']*)["']\s*$`,
+    '^' + name + String.raw`\s*=\s*["']([^"']*)["']\s*$`,
     "mu"
   );
   const match = re.exec(source);
@@ -208,7 +220,9 @@ interface DependencyEntry {
 const DEPENDENCIES_HEAD_RE = /^\s*dependencies\s*=\s*\[/mu;
 const DEPENDENCY_ENTRY_RE = /"([A-Za-z0-9_.-]+)==([A-Za-z0-9._<>=!~+,\\-]+)"/gu;
 
-/** Parse `name = [ "spec>=x.y.z", ... ]` style arrays. */
+/**
+Parse `name = [ "spec>=x.y.z", ... ]` style arrays.
+*/
 function readDependenciesArray(source: string): readonly DependencyEntry[] {
   const head = DEPENDENCIES_HEAD_RE.exec(source);
   if (!head) {
@@ -240,11 +254,11 @@ function readDependenciesArray(source: string): readonly DependencyEntry[] {
 }
 
 /**
- * Resolve and validate the worker environment. The returned
- * `contentHash` is the canonical fingerprint used by
- * `RuntimePlaytestStatAnalysis` to confirm the worker is talking to the
- * same lockfile that produced the recorded interval.
- */
+Resolve and validate the worker environment. The returned
+`contentHash` is the canonical fingerprint used by
+`RuntimePlaytestStatAnalysis` to confirm the worker is talking to the
+same lockfile that produced the recorded interval.
+*/
 export function resolvePlaytestStatEnvironment(): ResolvedPlaytestStatEnvironment {
   const projectRoot = projectRootAbsolute();
   const pyprojectPath = pyProjectTomlPath();

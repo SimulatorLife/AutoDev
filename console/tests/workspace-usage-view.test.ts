@@ -33,12 +33,12 @@ function lookup(
 }
 
 /**
- * The telemetry answer the browser holds.
- *
- * The island reads the breakdown in the browser, so the answer it holds is
- * the payload the endpoint answers with, and the readings it resolves are
- * the rows' own.
- */
+The telemetry answer the browser holds.
+
+The island reads the breakdown in the browser, so the answer it holds is
+the payload the endpoint answers with, and the readings it resolves are
+the rows' own.
+*/
 function readyTelemetry(
   source: Parameters<typeof workspaceRequestLookup>[0]
 ): ReturnType<typeof workspaceRequestReadings> {

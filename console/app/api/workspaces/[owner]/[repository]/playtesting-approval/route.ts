@@ -1,24 +1,24 @@
 /**
- * Server-only Console workspace playtesting-approval mutation route.
- *
- * Receives the bounded form submission from a workspace's Approve form,
- * validates its same-origin browser context, and forwards a typed POST to
- * Runtime using the server-side Control API credential. The browser never
- * receives that credential and never bypasses Runtime -- this route only
- * assembles the checkout approval body the Runtime's
- * `/control/workspaces/:id/playtesting-approval` route reads, it never
- * decides whether the approval is accepted.
- *
- * Every field is required: a checkout approval with an omitted field is
- * not a narrower grant, it is a malformed one, so a missing or malformed
- * field fails the submission closed rather than sending a partial body the
- * Runtime would reject anyway for a less specific reason.
- *
- * Only POST is exported. In-place Console submissions receive a bounded JSON
- * result and, on revision conflict, the latest server-read approval state.
- * Native no-JavaScript form submissions use a redirect fallback to the owning
- * workspace detail page; neither response claims an unconfirmed mutation.
- */
+Server-only Console workspace playtesting-approval mutation route.
+
+Receives the bounded form submission from a workspace's Approve form,
+validates its same-origin browser context, and forwards a typed POST to
+Runtime using the server-side Control API credential. The browser never
+receives that credential and never bypasses Runtime -- this route only
+assembles the checkout approval body the Runtime's
+`/control/workspaces/:id/playtesting-approval` route reads, it never
+decides whether the approval is accepted.
+
+Every field is required: a checkout approval with an omitted field is
+not a narrower grant, it is a malformed one, so a missing or malformed
+field fails the submission closed rather than sending a partial body the
+Runtime would reject anyway for a less specific reason.
+
+Only POST is exported. In-place Console submissions receive a bounded JSON
+result and, on revision conflict, the latest server-read approval state.
+Native no-JavaScript form submissions use a redirect fallback to the owning
+workspace detail page; neither response claims an unconfirmed mutation.
+*/
 
 import type { ControlApiWorkspacePlaytestApprovalResponse } from "@simulatorlife/autodev-core";
 import { type NextRequest, NextResponse } from "next/server.js";
@@ -80,7 +80,9 @@ function responseStatus(
   return result.kind === "unreachable" ? 503 : 502;
 }
 
-/** Trimmed, non-empty text, or `null` for a missing/blank field. */
+/**
+Trimmed, non-empty text, or `null` for a missing/blank field.
+*/
 function requiredField(form: URLSearchParams, name: string): string | null {
   const value = form.get(name);
   if (value === null) return null;
@@ -89,10 +91,10 @@ function requiredField(form: URLSearchParams, name: string): string | null {
 }
 
 /**
- * A bounded, unique, comma-separated list. Empty after trimming blanks is
- * `null`: an approval naming no scenarios or no command at all is a
- * malformed grant, not an empty one.
- */
+A bounded, unique, comma-separated list. Empty after trimming blanks is
+`null`: an approval naming no scenarios or no command at all is a
+malformed grant, not an empty one.
+*/
 function requiredList(
   form: URLSearchParams,
   name: string
@@ -107,7 +109,9 @@ function requiredList(
   return new Set(items).size === items.length ? items : null;
 }
 
-/** `null` for the fresh-approval case, the prior revision for a re-approval, or `undefined` when malformed. */
+/**
+`null` for the fresh-approval case, the prior revision for a re-approval, or `undefined` when malformed.
+*/
 function parseExpectedRevision(raw: string | null): number | null | undefined {
   if (raw === null || raw === "") return null;
   return REVISION_PATTERN.test(raw) ? Number(raw) : undefined;
@@ -156,7 +160,7 @@ function parseApprovalSubmission(
   const limits = parseLimits(form);
   const retentionDaysRaw = form.get("retentionDays");
   const retentionDays =
-    retentionDaysRaw === null ? Number.NaN : Number(retentionDaysRaw);
+    retentionDaysRaw === null ? NaN : Number(retentionDaysRaw);
   const issueReporting = form.get("issueReporting");
   const humanStudyRaw = form.get("humanStudyAllowed");
   if (
@@ -216,7 +220,7 @@ async function respondToApprovalResult(
     {
       kind: "refused",
       refusal,
-      ...(currentApproval === undefined ? {} : { currentApproval })
+      ...(currentApproval !== undefined && { currentApproval })
     },
     responseStatus(result)
   );

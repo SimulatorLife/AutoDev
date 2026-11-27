@@ -44,13 +44,17 @@ function labelForPort(port: number): ManagedServiceLabel | undefined {
 
 interface FakeState {
   loaded: Set<string>;
-  /** Extra `launchctl print` lines per label, e.g. a crash-loop exit code. */
+  /**
+  Extra `launchctl print` lines per label, e.g. a crash-loop exit code.
+  */
   jobLines: Partial<Record<ManagedServiceLabel, string>>;
-  /** Listeners that are not the launchd job, keyed by port. */
+  /**
+  Listeners that are not the launchd job, keyed by port.
+  */
   strays: Map<number, number>;
 }
 
-type FakeDeps = ServiceRestartDeps & {
+type FakeDependencies = ServiceRestartDeps & {
   calls: string[];
   runs: { args: readonly string[]; input?: string; env?: NodeJS.ProcessEnv }[];
   probes: string[];
@@ -58,14 +62,14 @@ type FakeDeps = ServiceRestartDeps & {
   state: FakeState;
 };
 
-function deps(
+function dependencies(
   overrides: Partial<ServiceRestartDeps> = {},
   initial: Partial<FakeState> = {}
-): FakeDeps {
+): FakeDependencies {
   const calls: string[] = [];
-  const runs: FakeDeps["runs"] = [];
+  const runs: FakeDependencies["runs"] = [];
   const probes: string[] = [];
-  const kills: FakeDeps["kills"] = [];
+  const kills: FakeDependencies["kills"] = [];
   const state: FakeState = {
     loaded: new Set(initial.loaded),
     jobLines: initial.jobLines ?? {},
@@ -122,11 +126,11 @@ function deps(
       calls.push("ensure-usage-stack");
       return true;
     },
-    run: (_command, args, input, env) => {
+    run: (_command, arguments_, input, environment) => {
       runs.push({
-        args,
-        ...(input === undefined ? {} : { input }),
-        ...(env === undefined ? {} : { env })
+        args: arguments_,
+        ...(input !== undefined && { input }),
+        ...(environment !== undefined && { env: environment })
       });
       return 0;
     },
@@ -166,7 +170,7 @@ function captureStderr<T>(run: () => Promise<T>): Promise<[T, string]> {
 }
 
 test("a supervised restart reloads each service with bootstrap alone and runs no ensure hooks", async () => {
-  const fake = deps();
+  const fake = dependencies();
   const [status, stderr] = await captureStderr(() =>
     restartServices(options(), fake)
   );
@@ -199,7 +203,7 @@ test("a supervised restart reloads each service with bootstrap alone and runs no
 });
 
 test("a crash-looping bridge is reported at once with its log, without holding up the install", async () => {
-  const fake = deps(
+  const fake = dependencies(
     {},
     {
       jobLines: { [LABEL_OPENCLI_PROXY]: "\tlast exit code = 1" }
@@ -240,7 +244,7 @@ test("a crash-looping bridge is reported at once with its log, without holding u
 });
 
 test("the Console is not bootstrapped before the Model Router is serving", async () => {
-  const base = deps();
+  const base = dependencies();
   const order: string[] = [];
   let readinessProbes = 0;
   let servingIndex = -1;
@@ -282,7 +286,7 @@ test("the Console is not bootstrapped before the Model Router is serving", async
 });
 
 test("the Usage stack is brought up before the Console is bootstrapped", async () => {
-  const base = deps();
+  const base = dependencies();
   const order: string[] = [];
   const consolePlist = `bootstrap:/home/Library/LaunchAgents/${LABEL_AUTODEV_CONSOLE}.plist`;
   const [status] = await captureStderr(() =>
@@ -313,7 +317,7 @@ test("the Usage stack is brought up before the Console is bootstrapped", async (
 });
 
 test("a Usage stack that never serves leaves the Console unbootstrapped", async () => {
-  const base = deps();
+  const base = dependencies();
   const bootstrapped: string[] = [];
   const [status, stderr] = await captureStderr(() =>
     restartServices(options({ readyAttempts: 3 }), {
@@ -340,7 +344,7 @@ test("a Usage stack that never serves leaves the Console unbootstrapped", async 
 });
 
 test("a Console that stopped because a backend did not answer is not a crash loop", async () => {
-  const base = deps();
+  const base = dependencies();
   const [status, stderr] = await captureStderr(() =>
     restartServices(options({ readyAttempts: 3, readyDelayMs: 0 }), {
       ...base,
@@ -371,7 +375,7 @@ test("a Console that stopped because a backend did not answer is not a crash loo
 });
 
 test("a Model Router that never serves leaves the Console unbootstrapped", async () => {
-  const base = deps();
+  const base = dependencies();
   const bootstrapped: string[] = [];
   const [status, stderr] = await captureStderr(() =>
     restartServices(options({ readyAttempts: 3 }), {
@@ -406,7 +410,7 @@ test("a Model Router that never serves leaves the Console unbootstrapped", async
 });
 
 test("an unready service reads its launchd job only every few attempts", async () => {
-  const base = deps();
+  const base = dependencies();
   let jobReads = 0;
   const [status] = await captureStderr(() =>
     restartServices(options({ readyAttempts: 24 }), {
@@ -428,7 +432,7 @@ test("an unready service reads its launchd job only every few attempts", async (
 });
 
 test("a router that never becomes ready fails the install", async () => {
-  const base = deps();
+  const base = dependencies();
   const [status, stderr] = await captureStderr(() =>
     restartServices(options(), {
       ...base,
@@ -443,7 +447,7 @@ test("a router that never becomes ready fails the install", async () => {
 });
 
 test("a router port answered by a process other than the launchd job fails the install", async () => {
-  const base = deps();
+  const base = dependencies();
   const [status, stderr] = await captureStderr(() =>
     restartServices(options(), {
       ...base,
@@ -461,7 +465,7 @@ test("a router port answered by a process other than the launchd job fails the i
 });
 
 test("the Console must become healthy on its managed port before install succeeds", async () => {
-  const base = deps();
+  const base = dependencies();
   const [status, stderr] = await captureStderr(() =>
     restartServices(options(), {
       ...base,
@@ -478,7 +482,7 @@ test("the Console must become healthy on its managed port before install succeed
 });
 
 test("the Console listener must belong to the freshly loaded LaunchAgent", async () => {
-  const base = deps({}, { loaded: new Set([LABEL_AUTODEV_CONSOLE]) });
+  const base = dependencies({}, { loaded: new Set([LABEL_AUTODEV_CONSOLE]) });
   const [status, stderr] = await captureStderr(() =>
     restartServices(options(), {
       ...base,
@@ -495,7 +499,7 @@ test("the Console listener must belong to the freshly loaded LaunchAgent", async
 });
 
 test("an unowned Console listener prevents build publication and service restart", async () => {
-  const base = deps();
+  const base = dependencies();
   const [status, stderr] = await captureStderr(() =>
     restartServices(options(), {
       ...base,
@@ -518,7 +522,7 @@ test("an unowned Console listener prevents build publication and service restart
 });
 
 test("a Console dev session this runtime owns is stopped so the managed Console can take the port", async () => {
-  const fake = deps({}, { strays: new Map([[3300, 52_465]]) });
+  const fake = dependencies({}, { strays: new Map([[3300, 52_465]]) });
   const [status, stderr] = await captureStderr(() =>
     restartServices(options(), {
       ...fake,
@@ -554,7 +558,7 @@ test("a Console dev session this runtime owns is stopped so the managed Console 
 });
 
 test("a Console dev session that displaced a loaded managed Console is reconciled", async () => {
-  const fake = deps(
+  const fake = dependencies(
     {},
     {
       loaded: new Set([LABEL_AUTODEV_CONSOLE]),
@@ -588,7 +592,7 @@ test("a Console dev session that displaced a loaded managed Console is reconcile
 });
 
 test("a loaded but dead managed Console job with an owned dev session is reconciled", async () => {
-  const fake = deps(
+  const fake = dependencies(
     {},
     {
       loaded: new Set([LABEL_AUTODEV_CONSOLE]),
@@ -614,7 +618,7 @@ test("a loaded but dead managed Console job with an owned dev session is reconci
 });
 
 test("a Console holder outside this runtime is refused rather than stopped", async () => {
-  const fake = deps({}, { strays: new Map([[3300, 52_465]]) });
+  const fake = dependencies({}, { strays: new Map([[3300, 52_465]]) });
   const [status, stderr] = await captureStderr(() =>
     restartServices(options(), {
       ...fake,
@@ -632,7 +636,7 @@ test("a Console holder outside this runtime is refused rather than stopped", asy
 });
 
 test("a Console holder is recognized by its working directory when the process list is unreadable", async () => {
-  const fake = deps({}, { strays: new Map([[3300, 52_465]]) });
+  const fake = dependencies({}, { strays: new Map([[3300, 52_465]]) });
   const [status, stderr] = await captureStderr(() =>
     restartServices(options(), {
       ...fake,
@@ -653,7 +657,7 @@ test("a Console holder is recognized by its working directory when the process l
 });
 
 test("a holder from another runtime's console directory is refused rather than stopped", async () => {
-  const fake = deps({}, { strays: new Map([[3300, 52_465]]) });
+  const fake = dependencies({}, { strays: new Map([[3300, 52_465]]) });
   const [status, stderr] = await captureStderr(() =>
     restartServices(options(), {
       ...fake,
@@ -675,7 +679,7 @@ test("a missing Console LaunchAgent or launcher prevents build publication", asy
     "/home/Library/LaunchAgents/com.codex.autodev-console.plist",
     "/home/.codex/hooks/run-autodev-console.sh"
   ]) {
-    const base = deps({ fileExists: (filePath) => filePath !== missingPath });
+    const base = dependencies({ fileExists: (filePath) => filePath !== missingPath });
     const [status, stderr] = await captureStderr(() =>
       restartServices(options(), base)
     );
@@ -691,7 +695,7 @@ test("a missing Console LaunchAgent or launcher prevents build publication", asy
 
 test("a failed staged Console build leaves every running service untouched", async () => {
   let buildAttempts = 0;
-  const base = deps({
+  const base = dependencies({
     buildConsole: () => {
       buildAttempts += 1;
       throw new Error("synthetic build failure");
@@ -710,7 +714,7 @@ test("a failed staged Console build leaves every running service untouched", asy
 });
 
 test("an unmanaged listener from this CODEX_HOME is stopped and gone before its label is bootstrapped", async () => {
-  const fake = deps({}, { strays: new Map([[4100, 68_804]]) });
+  const fake = dependencies({}, { strays: new Map([[4100, 68_804]]) });
   let releasedAfter = 0;
   const [status, stderr] = await captureStderr(() =>
     restartServices(options(), {
@@ -751,7 +755,7 @@ test("each managed backend service recognizes its configured executable path", a
   for (const [label, executable] of executables) {
     const port = PORTS[label];
     const pid = 68_804;
-    const fake = deps({}, { strays: new Map([[port, pid]]) });
+    const fake = dependencies({}, { strays: new Map([[port, pid]]) });
     const [status] = await captureStderr(() =>
       restartServices(options(), {
         ...fake,
@@ -770,7 +774,7 @@ test("each managed backend service recognizes its configured executable path", a
 });
 
 test("an unmanaged listener that ignores SIGTERM is killed before its label is bootstrapped", async () => {
-  const fake = deps({}, { strays: new Map([[4100, 68_804]]) });
+  const fake = dependencies({}, { strays: new Map([[4100, 68_804]]) });
   const [status] = await captureStderr(() =>
     restartServices(options(), {
       ...fake,
@@ -789,7 +793,7 @@ test("an unmanaged listener that ignores SIGTERM is killed before its label is b
 });
 
 test("a port held by a process this installer does not own is left alone and falls back to the ensure hooks", async () => {
-  const fake = deps({}, { strays: new Map([[4004, 42]]) });
+  const fake = dependencies({}, { strays: new Map([[4004, 42]]) });
   const [status, stderr] = await captureStderr(() =>
     restartServices(options(), {
       ...fake,
@@ -811,7 +815,7 @@ test("a port held by a process this installer does not own is left alone and fal
 });
 
 test("a label launchd refuses to load is reported and falls back to the ensure hooks", async () => {
-  const fake = deps();
+  const fake = dependencies();
   const [status, stderr] = await captureStderr(() =>
     restartServices(options(), {
       ...fake,
@@ -840,7 +844,7 @@ test("a label launchd refuses to load is reported and falls back to the ensure h
 });
 
 test("a job that will not unload is reported instead of being bootstrapped over", async () => {
-  const fake = deps({}, { loaded: new Set([LABEL_MODEL_ROUTER]) });
+  const fake = dependencies({}, { loaded: new Set([LABEL_MODEL_ROUTER]) });
   const [status, stderr] = await captureStderr(() =>
     restartServices(options(), {
       ...fake,
@@ -871,7 +875,7 @@ test("a job that will not unload is reported instead of being bootstrapped over"
 });
 
 test("a loaded service owned by another runtime leaves every service untouched", async () => {
-  const fake = deps({}, { loaded: new Set([LABEL_OPENCLI_PROXY]) });
+  const fake = dependencies({}, { loaded: new Set([LABEL_OPENCLI_PROXY]) });
   const [status, stderr] = await captureStderr(() =>
     restartServices(options(), {
       ...fake,
@@ -898,7 +902,7 @@ test("a loaded service owned by another runtime leaves every service untouched",
 });
 
 test("a bridge loaded from an earlier install path under the same CODEX_HOME is adopted and restarted", async () => {
-  const fake = deps({}, { loaded: new Set([LABEL_OPENCLI_PROXY]) });
+  const fake = dependencies({}, { loaded: new Set([LABEL_OPENCLI_PROXY]) });
   assert.equal(
     await restartServices(options(), {
       ...fake,
@@ -931,7 +935,7 @@ test("a bridge loaded from an earlier install path under the same CODEX_HOME is 
 });
 
 test("a runtime rooted at another CODEX_HOME is left untouched", async () => {
-  const fake = deps({
+  const fake = dependencies({
     readFile: () => "<key>CODEX_HOME</key><string>/other/.codex</string>"
   });
   assert.equal(await restartServices(options(), fake), 0);
@@ -940,7 +944,7 @@ test("a runtime rooted at another CODEX_HOME is left untouched", async () => {
 });
 
 test("a missing launchctl refuses to report a Console restart as successful", async () => {
-  const fake = deps({ commandAvailable: () => false });
+  const fake = dependencies({ commandAvailable: () => false });
   const [status, stderr] = await captureStderr(() =>
     restartServices(options(), fake)
   );
@@ -957,7 +961,7 @@ test("a missing launchctl refuses to report a Console restart as successful", as
 test("rebuilds missing Console BUILD_ID before bootstrapping the Console LaunchAgent", async () => {
   let hasBuildId = true;
   let buildCount = 0;
-  const base = deps();
+  const base = dependencies();
   const [status, stderr] = await captureStderr(() =>
     restartServices(options(), {
       ...base,
@@ -993,7 +997,7 @@ test("rebuilds missing Console BUILD_ID before bootstrapping the Console LaunchA
 
 test("refuses to bootstrap the Console when BUILD_ID remains missing after rebuild", async () => {
   let hasBuildId = true;
-  const base = deps();
+  const base = dependencies();
   const [status, stderr] = await captureStderr(() =>
     restartServices(options(), {
       ...base,
@@ -1022,25 +1026,25 @@ test("refuses to bootstrap the Console when BUILD_ID remains missing after rebui
 });
 
 test("failure log tailing is scoped to output written after reload instead of reprinting stale history", async () => {
-  const errPath = `/home/.codex/run/${LABEL_AUTODEV_CONSOLE}.err.log`;
-  let consoleErrContent =
+  const errorPath = `/home/.codex/run/${LABEL_AUTODEV_CONSOLE}.err.log`;
+  let consoleErrorContent =
     "run-autodev-console: console/.next/BUILD_ID is missing\n" +
     "stale earlier error line\n";
   const observedOffsets: Array<number | undefined> = [];
-  const base = deps();
+  const base = dependencies();
   const [status, stderr] = await captureStderr(() =>
     restartServices(options({ readyAttempts: 2 }), {
       ...base,
       readFile: (filePath) =>
         filePath.endsWith(`${LABEL_AUTODEV_CONSOLE}.plist`)
-          ? `<plist><dict><key>StandardErrorPath</key><string>${errPath}</string></dict></plist>`
+          ? `<plist><dict><key>StandardErrorPath</key><string>${errorPath}</string></dict></plist>`
           : "",
       fileSize: (filePath) =>
-        filePath === errPath ? Buffer.byteLength(consoleErrContent, "utf8") : 0,
+        filePath === errorPath ? Buffer.byteLength(consoleErrorContent, "utf8") : 0,
       logTail: (filePath, lines, afterByte) => {
         observedOffsets.push(afterByte);
         const raw =
-          filePath === errPath ? consoleErrContent.slice(afterByte ?? 0) : "";
+          filePath === errorPath ? consoleErrorContent.slice(afterByte ?? 0) : "";
         return raw
           .split(/\r?\n/u)
           .filter((line) => line.trim().length > 0)
@@ -1051,12 +1055,12 @@ test("failure log tailing is scoped to output written after reload instead of re
         bootstrap: (plist) => {
           base.launchd.bootstrap(plist);
           if (plist.endsWith(`${LABEL_AUTODEV_CONSOLE}.plist`)) {
-            consoleErrContent += "[console] fresh failure during this reload\n";
+            consoleErrorContent += "[console] fresh failure during this reload\n";
           }
         },
         print: (label) =>
           label === LABEL_AUTODEV_CONSOLE
-            ? `\tlast exit code = 1\n\tstderr path = ${errPath}`
+            ? `\tlast exit code = 1\n\tstderr path = ${errorPath}`
             : base.launchd.print(label)
       }
     })
@@ -1069,7 +1073,7 @@ test("failure log tailing is scoped to output written after reload instead of re
 });
 
 test("a KeepAlive service that exits immediately with code 0 fails fast instead of exhausting the readiness budget", async () => {
-  const fake = deps(
+  const fake = dependencies(
     {},
     {
       jobLines: { [LABEL_MODEL_ROUTER]: "\tlast exit code = 0" }

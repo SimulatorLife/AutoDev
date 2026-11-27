@@ -1,4 +1,6 @@
-/** Server-only authenticated Playtesting reads for the Console resource. */
+/**
+Server-only authenticated Playtesting reads for the Console resource.
+*/
 import {
   assertPlaytestCoverageManifest,
   assertPlaytestDiscoverySessionReview,
@@ -80,12 +82,12 @@ import {
 } from "../../src/lib/server/control-api.ts";
 
 /**
- * Give every playtesting Control API call the playtesting budget. The
- * playtesting store is ClickHouse-backed and answers one read in seconds,
- * while the playtesting page fans several reads out in parallel, so the
- * generic Control API deadline would expire against a service that is
- * answering normally.
- */
+Give every playtesting Control API call the playtesting budget. The
+playtesting store is ClickHouse-backed and answers one read in seconds,
+while the playtesting page fans several reads out in parallel, so the
+generic Control API deadline would expire against a service that is
+answering normally.
+*/
 function playtestingControlApiOptions(
   options: FetchControlApiOptions
 ): FetchControlApiOptions {
@@ -96,13 +98,13 @@ function playtestingControlApiOptions(
 }
 
 /**
- * The readiness vocabulary the Control API reports.
- *
- * A readiness state is one of three things -- ready, a check the operator has
- * to make, or nothing available -- and the Console branches on all three in
- * more than one place. They are named once here so the branches cannot
- * disagree about what the API said.
- */
+The readiness vocabulary the Control API reports.
+
+A readiness state is one of three things -- ready, a check the operator has
+to make, or nothing available -- and the Console branches on all three in
+more than one place. They are named once here so the branches cannot
+disagree about what the API said.
+*/
 const READINESS_READY = "ready";
 const READINESS_CHECK_REQUIRED = "check-required";
 const READINESS_UNAVAILABLE = "unavailable";
@@ -200,12 +202,12 @@ export interface PlaytestingPageRequest {
   readonly cursor?: string | null;
   readonly filters?: Readonly<Partial<Record<PlaytestingFilterKey, string>>>;
   /**
-   * One finding by id, for the findings resource.
-   *
-   * It is a request field rather than a filter because it is a selection, not
-   * a narrowing: a finding is opened by id from a link that names it, and the
-   * list's own filters are the reader's, not the selection's.
-   */
+  One finding by id, for the findings resource.
+  
+  It is a request field rather than a filter because it is a selection, not
+  a narrowing: a finding is opened by id from a link that names it, and the
+  list's own filters are the reader's, not the selection's.
+  */
   readonly findingId?: string | null | undefined;
 }
 
@@ -543,21 +545,21 @@ function pagePath(
   request: PlaytestingPageRequest,
   resource: ControlApiPlaytestingResource
 ): string {
-  const params = new URLSearchParams({
+  const parameters = new URLSearchParams({
     workspaceId: request.workspaceId,
     limit: String(request.limit)
   });
-  if (request.cursor) params.set("cursor", request.cursor);
+  if (request.cursor) parameters.set("cursor", request.cursor);
   for (const key of PLAYTESTING_FILTERS_BY_RESOURCE[resource]) {
     const value = request.filters?.[key];
-    if (value) params.set(key, value);
+    if (value) parameters.set(key, value);
   }
   // A selected finding is read by id, so it is asked for on the findings
   // resource only; another resource has no such selection to honour.
   if (resource === "findings" && request.findingId) {
-    params.set("findingId", request.findingId);
+    parameters.set("findingId", request.findingId);
   }
-  return `${CONTROL_API_PATHS.playtesting}/${resource}?${params.toString()}`;
+  return `${CONTROL_API_PATHS.playtesting}/${resource}?${parameters.toString()}`;
 }
 
 export async function fetchPlaytestingPage<
@@ -587,14 +589,14 @@ export async function fetchPlaytestingPage<
 }
 
 /**
- * One finding, read by id.
- *
- * A finding is opened by id from the links that name it -- a review that
- * raised it, a shared address -- so the read has to resolve that one finding
- * rather than the first page of the list, which may not hold it. A finding
- * that does not exist reads as "no such finding" rather than as an empty
- * page: the list and the detail are different questions.
- */
+One finding, read by id.
+
+A finding is opened by id from the links that name it -- a review that
+raised it, a shared address -- so the read has to resolve that one finding
+rather than the first page of the list, which may not hold it. A finding
+that does not exist reads as "no such finding" rather than as an empty
+page: the list and the detail are different questions.
+*/
 export async function fetchPlaytestingFinding(
   workspaceId: string,
   findingId: string,
@@ -702,14 +704,14 @@ function isPlaytestingModeReadiness(value: unknown): boolean {
   }
   const reasons = value.reasons;
   if (
-    !reasons.every(
+    reasons.some(
       (reason) =>
-        isRecord(reason) &&
-        isNonEmptyString(reason.code) &&
-        isNonEmptyString(reason.label) &&
-        isNonEmptyString(reason.message) &&
-        (reason.severity === READINESS_CHECK_REQUIRED ||
-          reason.severity === READINESS_UNAVAILABLE)
+        !isRecord(reason) ||
+        !isNonEmptyString(reason.code) ||
+        !isNonEmptyString(reason.label) ||
+        !isNonEmptyString(reason.message) ||
+        reason.severity !== READINESS_CHECK_REQUIRED &&
+          reason.severity !== READINESS_UNAVAILABLE
     )
   ) {
     return false;
@@ -742,14 +744,14 @@ function isVisualModeReadiness(value: unknown, workspaceId: string): boolean {
         (targetReadiness.eligibility !== "supported" &&
           targetReadiness.eligibility !== "unsupported") ||
         !Array.isArray(targetReadiness.reasons) ||
-        !targetReadiness.reasons.every(
+        targetReadiness.reasons.some(
           (reason) =>
-            isRecord(reason) &&
-            isNonEmptyString(reason.code) &&
-            isNonEmptyString(reason.label) &&
-            isNonEmptyString(reason.message) &&
-            (reason.severity === READINESS_CHECK_REQUIRED ||
-              reason.severity === READINESS_UNAVAILABLE)
+            !isRecord(reason) ||
+            !isNonEmptyString(reason.code) ||
+            !isNonEmptyString(reason.label) ||
+            !isNonEmptyString(reason.message) ||
+            reason.severity !== READINESS_CHECK_REQUIRED &&
+              reason.severity !== READINESS_UNAVAILABLE
         )
       ) {
         return false;
@@ -944,8 +946,8 @@ function isRunStartedResponse(
     !Array.isArray(value.assignmentIds) ||
     value.assignmentIds.length !== value.assignmentCount ||
     new Set(value.assignmentIds).size !== value.assignmentIds.length ||
-    !value.assignmentIds.every(
-      (id) => typeof id === "string" && ASSIGNMENT_ID_PATTERN.test(id)
+    value.assignmentIds.some(
+      (id) => typeof id !== "string" || !ASSIGNMENT_ID_PATTERN.test(id)
     ) ||
     !isRunStartedTimestamp(value.createdAt) ||
     !isControlApiPlaytestingRunState(value.status)
@@ -1068,9 +1070,9 @@ export async function fetchPlaytestingActiveRuns(
       "a canonical workspace identifier"
     );
   }
-  const params = new URLSearchParams({ workspaceId });
+  const parameters = new URLSearchParams({ workspaceId });
   const result = await fetchControlApi<unknown>(
-    `${CONTROL_API_PATHS.playtesting}/runs?${params}`,
+    `${CONTROL_API_PATHS.playtesting}/runs?${parameters}`,
     config,
     playtestingControlApiOptions(options)
   );
@@ -1083,17 +1085,17 @@ export async function fetchPlaytestingActiveRuns(
     !Array.isArray(data.runs) ||
     // One malformed live entry fails the whole read rather than leaving the
     // operator looking at a partial view presented as current.
-    !data.runs.every(
+    data.runs.some(
       (run) =>
-        isRecord(run) &&
-        isNonEmptyString(run.batchId) &&
-        RUN_ID_PATTERN.test(run.batchId) &&
-        isCount(run.assignmentCount) &&
-        run.assignmentCount > 0 &&
-        isNonEmptyString(run.createdAt) &&
-        isSessionReferenceList(run.sessions, run.assignmentCount) &&
-        isRunRecord(run.status) &&
-        run.status.batchId === run.batchId
+        !isRecord(run) ||
+        !isNonEmptyString(run.batchId) ||
+        !RUN_ID_PATTERN.test(run.batchId) ||
+        !isCount(run.assignmentCount) ||
+        !(run.assignmentCount > 0) ||
+        !isNonEmptyString(run.createdAt) ||
+        !isSessionReferenceList(run.sessions, run.assignmentCount) ||
+        !isRunRecord(run.status) ||
+        run.status.batchId !== run.batchId
     )
   ) {
     return invalidResponse(
@@ -1132,40 +1134,40 @@ function isPlaytestingAnalystRun(
     !Array.isArray(requestedEpisodeIds) ||
     !requestedEpisodeIds.every(isNonEmptyString) ||
     !Array.isArray(packets) ||
-    !packets.every(
+    packets.some(
       (packet) =>
-        isRecord(packet) &&
-        isNonEmptyString(packet.episodeId) &&
-        isNonEmptyString(packet.batchId) &&
-        isNonEmptyString(packet.packetId)
+        !isRecord(packet) ||
+        !isNonEmptyString(packet.episodeId) ||
+        !isNonEmptyString(packet.batchId) ||
+        !isNonEmptyString(packet.packetId)
     ) ||
     !Array.isArray(receipts) ||
-    !receipts.every(
+    receipts.some(
       (receipt) =>
-        isRecord(receipt) &&
-        isNonEmptyString(receipt.episodeId) &&
-        (receipt.batchId === null || isNonEmptyString(receipt.batchId)) &&
-        isNonEmptyString(receipt.reason) &&
-        isNonEmptyString(receipt.detail)
+        !isRecord(receipt) ||
+        !isNonEmptyString(receipt.episodeId) ||
+        receipt.batchId !== null && !isNonEmptyString(receipt.batchId) ||
+        !isNonEmptyString(receipt.reason) ||
+        !isNonEmptyString(receipt.detail)
     ) ||
     !Array.isArray(budget) ||
-    !budget.every(
+    budget.some(
       (entry) =>
-        isRecord(entry) &&
-        isNonEmptyString(entry.batchId) &&
-        isCount(entry.reviewCap) &&
-        isCount(entry.actualCritiques) &&
-        isCount(entry.reserved) &&
-        isCount(entry.requested) &&
-        isCount(entry.remaining)
+        !isRecord(entry) ||
+        !isNonEmptyString(entry.batchId) ||
+        !isCount(entry.reviewCap) ||
+        !isCount(entry.actualCritiques) ||
+        !isCount(entry.reserved) ||
+        !isCount(entry.requested) ||
+        !isCount(entry.remaining)
     ) ||
     !Array.isArray(reviews) ||
-    !reviews.every(
+    reviews.some(
       (review) =>
-        isRecord(review) &&
-        isNonEmptyString(review.episodeId) &&
-        isNonEmptyString(review.reviewId) &&
-        ["verified", "corroborated", "hypothesis", "not observed"].includes(
+        !isRecord(review) ||
+        !isNonEmptyString(review.episodeId) ||
+        !isNonEmptyString(review.reviewId) ||
+        !["verified", "corroborated", "hypothesis", "not observed"].includes(
           String(review.status)
         )
     ) ||
@@ -1198,9 +1200,9 @@ export async function listPlaytestingAnalyses(
       CANONICAL_WORKSPACE_REQUIREMENT
     );
   }
-  const params = new URLSearchParams({ workspaceId });
+  const parameters = new URLSearchParams({ workspaceId });
   const result = await fetchControlApi(
-    `${CONTROL_API_PATHS.playtesting}/analyses?${params}`,
+    `${CONTROL_API_PATHS.playtesting}/analyses?${parameters}`,
     config,
     playtestingControlApiOptions(options)
   );
@@ -1212,8 +1214,8 @@ export async function listPlaytestingAnalyses(
     data.workspaceId !== workspaceId ||
     !Array.isArray(data.runs) ||
     !Array.isArray(data.syntheses) ||
-    !data.runs.every(
-      (run) => isPlaytestingAnalystRun(run) && run.workspaceId === workspaceId
+    data.runs.some(
+      (run) => !isPlaytestingAnalystRun(run) || run.workspaceId !== workspaceId
     )
   ) {
     return invalidResponse(
@@ -1228,12 +1230,12 @@ export async function listPlaytestingAnalyses(
 }
 
 /**
- * One claim the analyst recorded.
- *
- * The status is checked against the two the product knows, because a claim
- * the analyst could not confirm is not an asserted conclusion and the
- * Console must not present it as one.
- */
+One claim the analyst recorded.
+
+The status is checked against the two the product knows, because a claim
+the analyst could not confirm is not an asserted conclusion and the
+Console must not present it as one.
+*/
 function isPlaytestingReviewClaim(
   value: unknown
 ): value is ControlApiPlaytestingReviewClaim {
@@ -1246,12 +1248,12 @@ function isPlaytestingReviewClaim(
 }
 
 /**
- * One finding the review carries.
- *
- * The evidence status is checked against the four the product knows, because
- * an unreadable status is not a verified defect and the Console must not
- * render one as though it were.
- */
+One finding the review carries.
+
+The evidence status is checked against the four the product knows, because
+an unreadable status is not a verified defect and the Console must not
+render one as though it were.
+*/
 function isPlaytestingReviewFinding(
   value: unknown
 ): value is ControlApiPlaytestingReviewFinding {
@@ -1292,14 +1294,14 @@ function isPlaytestingReview(
 }
 
 /**
- * The workspace's persisted analyst reviews.
- *
- * The reviews are the analyst's durable record: they are stored, so they
- * outlive the Runtime process that produced them. The analyst-run envelope
- * the Console also reads is held in that process and is lost on restart,
- * which is why a reader who ran an analysis and came back to a restarted
- * Console used to find nothing at all.
- */
+The workspace's persisted analyst reviews.
+
+The reviews are the analyst's durable record: they are stored, so they
+outlive the Runtime process that produced them. The analyst-run envelope
+the Console also reads is held in that process and is lost on restart,
+which is why a reader who ran an analysis and came back to a restarted
+Console used to find nothing at all.
+*/
 export async function fetchPlaytestingReviews(
   workspaceId: string,
   config: ControlApiConfig,
@@ -1312,13 +1314,13 @@ export async function fetchPlaytestingReviews(
       CANONICAL_WORKSPACE_REQUIREMENT
     );
   }
-  const params = new URLSearchParams({ workspaceId });
+  const parameters = new URLSearchParams({ workspaceId });
   // A reader that only counts the reviews does not need all of them: the
   // overview shows the newest few, and downloading every review's claims and
   // evidence to count them is a read the workspace does not need to answer.
-  if (limit !== undefined) params.set("limit", String(limit));
+  if (limit !== undefined) parameters.set("limit", String(limit));
   const result = await fetchControlApi(
-    `${CONTROL_API_PATHS.playtesting}/reviews?${params}`,
+    `${CONTROL_API_PATHS.playtesting}/reviews?${parameters}`,
     config,
     playtestingControlApiOptions(options)
   );
@@ -1330,7 +1332,7 @@ export async function fetchPlaytestingReviews(
     data.workspaceId !== workspaceId ||
     !isCount(data.total) ||
     !Array.isArray(data.rows) ||
-    !data.rows.every((row) => isPlaytestingReview(row, workspaceId)) ||
+    data.rows.some((row) => !isPlaytestingReview(row, workspaceId)) ||
     (data.nextCursor !== null && !isNonEmptyString(data.nextCursor))
   ) {
     return invalidResponse(
@@ -1350,13 +1352,13 @@ export async function requestPlaytestingAnalysis(
   config: ControlApiConfig,
   options: FetchControlApiOptions & {
     /**
-     * Whether this dispatch must produce findings.
-     *
-     * A hypothesis review states what the packet shows; a findings request
-     * also files the defect claims the packet supports. Runtime is told
-     * which one the operator asked for, because it cannot be inferred from
-     * the selection.
-     */
+    Whether this dispatch must produce findings.
+    
+    A hypothesis review states what the packet shows; a findings request
+    also files the defect claims the packet supports. Runtime is told
+    which one the operator asked for, because it cannot be inferred from
+    the selection.
+    */
     readonly requireFindings?: boolean;
   } = {}
 ): Promise<ControlApiResult<ControlApiPlaytestingAnalysisDispatchResponse>> {
@@ -1373,9 +1375,9 @@ export async function requestPlaytestingAnalysis(
       `1 to ${String(PLAYTESTS_MAX_ANALYSIS_SESSIONS)} distinct sessions`
     );
   }
-  const params = new URLSearchParams({ workspaceId });
+  const parameters = new URLSearchParams({ workspaceId });
   const result = await postControlApi(
-    `${CONTROL_API_PATHS.playtesting}/analyses?${params}`,
+    `${CONTROL_API_PATHS.playtesting}/analyses?${parameters}`,
     {
       episodeIds: selected,
       operation: "dispatch",
@@ -1393,20 +1395,20 @@ export async function requestPlaytestingAnalysis(
     data.workspaceId !== workspaceId ||
     data.requested !== selected.length ||
     !Array.isArray(data.packets) ||
-    !data.packets.every(
+    data.packets.some(
       (packet) =>
-        isRecord(packet) &&
-        isNonEmptyString(packet.episodeId) &&
-        isNonEmptyString(packet.batchId) &&
-        isNonEmptyString(packet.packetId)
+        !isRecord(packet) ||
+        !isNonEmptyString(packet.episodeId) ||
+        !isNonEmptyString(packet.batchId) ||
+        !isNonEmptyString(packet.packetId)
     ) ||
     !Array.isArray(data.receipts) ||
     (data.analysis !== null && !isPlaytestingAnalystRun(data.analysis)) ||
     (data.analysis !== null &&
       (data.analysis.workspaceId !== workspaceId ||
         data.analysis.requestedEpisodeIds.length !== selected.length ||
-        !data.analysis.requestedEpisodeIds.every((id) =>
-          selected.includes(id)
+        data.analysis.requestedEpisodeIds.some((id) =>
+          !selected.includes(id)
         ))) ||
     (data.packets.length > 0 && data.analysis === null) ||
     // Every requested session is accounted for. A missing one would let the
@@ -1417,15 +1419,15 @@ export async function requestPlaytestingAnalysis(
         isRecord(entry) ? entry.episodeId : null
       )
     ).size !== selected.length ||
-    ![...data.packets, ...data.receipts].every(
-      (entry) => isRecord(entry) && selected.includes(String(entry.episodeId))
+    [...data.packets, ...data.receipts].some(
+      (entry) => !isRecord(entry) || !selected.includes(String(entry.episodeId))
     ) ||
-    !data.receipts.every(
+    data.receipts.some(
       (receipt) =>
-        isRecord(receipt) &&
-        isNonEmptyString(receipt.episodeId) &&
-        isNonEmptyString(receipt.reason) &&
-        isNonEmptyString(receipt.detail)
+        !isRecord(receipt) ||
+        !isNonEmptyString(receipt.episodeId) ||
+        !isNonEmptyString(receipt.reason) ||
+        !isNonEmptyString(receipt.detail)
     )
   ) {
     return invalidResponse(
@@ -1521,9 +1523,9 @@ export async function fetchPlaytestingRunStatus(
       "a workspace and batch identifier"
     );
   }
-  const params = new URLSearchParams({ workspaceId, waitMs: "0" });
+  const parameters = new URLSearchParams({ workspaceId, waitMs: "0" });
   const result = await fetchControlApi<unknown>(
-    `${CONTROL_API_PATHS.playtesting}/runs/${encodeURIComponent(batchId)}?${params}`,
+    `${CONTROL_API_PATHS.playtesting}/runs/${encodeURIComponent(batchId)}?${parameters}`,
     config,
     playtestingControlApiOptions(options)
   );
@@ -1551,9 +1553,9 @@ export async function cancelPlaytestingRun(
       "a workspace and batch identifier"
     );
   }
-  const params = new URLSearchParams({ workspaceId });
+  const parameters = new URLSearchParams({ workspaceId });
   const result = await postControlApi<unknown>(
-    `${CONTROL_API_PATHS.playtesting}/runs/${encodeURIComponent(batchId)}/cancel?${params}`,
+    `${CONTROL_API_PATHS.playtesting}/runs/${encodeURIComponent(batchId)}/cancel?${parameters}`,
     { expectedStatus: "running" },
     config,
     playtestingControlApiOptions(options)
@@ -1680,10 +1682,10 @@ function validHumanPreferenceSummary(value: unknown): boolean {
   ) {
     return false;
   }
-  let countsValid = preference.counts === null;
+  let isCountsValid = preference.counts === null;
   if (isRecord(preference.counts)) {
     const counts = preference.counts;
-    countsValid =
+    isCountsValid =
       Object.keys(counts).length === 6 &&
       isCount(counts.eligibleParticipants) &&
       isCount(counts.preferA) &&
@@ -1698,10 +1700,10 @@ function validHumanPreferenceSummary(value: unknown): boolean {
           counts.unableToJudge +
           counts.missing;
   }
-  let intervalValid = preference.interval === null;
+  let isIntervalValid = preference.interval === null;
   if (isRecord(preference.interval)) {
     const interval = preference.interval;
-    intervalValid =
+    isIntervalValid =
       typeof interval.lower === "number" &&
       Number.isFinite(interval.lower) &&
       interval.lower >= 0 &&
@@ -1719,8 +1721,8 @@ function validHumanPreferenceSummary(value: unknown): boolean {
       (interval.seed === null || isNonEmptyString(interval.seed));
   }
   return (
-    countsValid &&
-    intervalValid &&
+    isCountsValid &&
+    isIntervalValid &&
     (preference.counts !== null ||
       (preference.interval === null &&
         preference.decision === "inconclusive")) &&
@@ -1734,18 +1736,13 @@ function isHumanValidationResponse(
   studyId: string,
   buildSha: string
 ): value is ControlApiPlaytestingHumanValidationResponse {
-  if (
-    !isRecord(value) ||
+  if (!isRecord(value) ||
     value.schema !== "autodev-control-playtesting-human-validation-v1" ||
     value.workspaceId !== workspaceId ||
     value.studyId !== studyId ||
     value.buildSha !== buildSha ||
     !hasNoRestrictedHumanFields(value) ||
-    !("preference" in value)
-  ) {
-    return false;
-  }
-  if (!validHumanPreferenceSummary(value.preference)) return false;
+    !("preference" in value) || !validHumanPreferenceSummary(value.preference)) return false;
   if (value.summary === null) return true;
   const summary = isRecord(value.summary) ? value.summary : null;
   if (
@@ -1819,7 +1816,9 @@ function isHumanValidationResponse(
   );
 }
 
-/** Reads only suppression-aware aggregates; no response or participant IDs enter the Console. */
+/**
+Reads only suppression-aware aggregates; no response or participant IDs enter the Console.
+*/
 export async function fetchPlaytestingHumanValidation(
   workspaceId: string,
   studyId: string,
@@ -1837,8 +1836,8 @@ export async function fetchPlaytestingHumanValidation(
       "a workspace, study, and build identity"
     );
   }
-  const params = new URLSearchParams({ workspaceId, buildSha });
-  const path = `${CONTROL_API_PATHS.playtesting}/human-studies/${encodeURIComponent(studyId)}/validation?${params}`;
+  const parameters = new URLSearchParams({ workspaceId, buildSha });
+  const path = `${CONTROL_API_PATHS.playtesting}/human-studies/${encodeURIComponent(studyId)}/validation?${parameters}`;
   const result = await fetchControlApi<unknown>(
     path,
     config,

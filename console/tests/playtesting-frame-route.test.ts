@@ -15,7 +15,7 @@ function restoreEnvironment(name: string, value: string | undefined): void {
 test("frame proxy keeps service credentials server-side and returns bounded raster bytes", async () => {
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   const previousBase = process.env.AUTODEV_CONTROL_API_BASE_URL;
-  const previousFetch = globalThis.fetch;
+  const previousFetch = fetch;
   process.env.AUTODEV_CONTROL_API_TOKEN = TOKEN;
   process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
   const bytes = new Uint8Array([
@@ -58,7 +58,7 @@ test("frame proxy keeps service credentials server-side and returns bounded rast
 
 test("frame proxy refuses missing workspace scope before any backend read", async () => {
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
-  const previousFetch = globalThis.fetch;
+  const previousFetch = fetch;
   process.env.AUTODEV_CONTROL_API_TOKEN = TOKEN;
   let reads = 0;
   globalThis.fetch = (async () => {

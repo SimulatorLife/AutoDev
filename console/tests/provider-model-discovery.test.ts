@@ -114,10 +114,12 @@ test("provider discovery preserves stale state instead of treating it as current
   if (result.kind !== "ok") return;
   const discovery = result.data.providers[0]?.discovery;
   assert.equal(discovery?.status, "stale");
-  if (discovery?.status === "stale") {
-    assert.equal(discovery.reason, "Provider listing timed out.");
-    assert.equal(discovery.models[0]?.id, "gemini-3.8-flash-low");
+  if (discovery?.status !== "stale") {
+    return;
   }
+
+  assert.equal(discovery.reason, "Provider listing timed out.");
+  assert.equal(discovery.models[0]?.id, "gemini-3.8-flash-low");
 });
 
 test("provider discovery rejects malformed states and duplicate IDs as one invalid response", async () => {

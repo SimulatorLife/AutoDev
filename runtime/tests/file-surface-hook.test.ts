@@ -3,8 +3,8 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { evaluateFileSurfaceHook } from "../src/hooks/file-surface.ts";
 
@@ -20,7 +20,7 @@ function payload(toolName: string, agentType?: string): string {
     model: "autodev/worker",
     tool_name: toolName,
     tool_input: { path: "a.png" },
-    ...(agentType === undefined ? {} : { agent_type: agentType })
+    ...(agentType !== undefined && { agent_type: agentType })
   });
 }
 

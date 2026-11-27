@@ -21,12 +21,12 @@ export interface ControlApiWaitOptions {
 }
 
 /**
- * The Control API did not answer.
- *
- * This is the "not now" class: the endpoint could not be reached, or it
- * answered with a server-side failure. A stale contract and a rejected
- * credential are different classes again, and they are not temporary.
- */
+The Control API did not answer.
+
+This is the "not now" class: the endpoint could not be reached, or it
+answered with a server-side failure. A stale contract and a rejected
+credential are different classes again, and they are not temporary.
+*/
 export class ControlApiUnavailableError extends Error {
   constructor(reason: string) {
     super(
@@ -149,7 +149,7 @@ function isControlApiProviderModelsResponse(
   );
   return (
     providers.size === expectedProviders.size &&
-    [...expectedProviders].every((provider) => providers.has(provider))
+    expectedProviders.isSubsetOf(providers)
   );
 }
 
@@ -236,14 +236,14 @@ async function verifyPlaytestingRoutes(
       : null;
   const code =
     apiError && typeof apiError.code === "string" ? apiError.code : "";
-  const currentPlaytestingCapabilities = isPlaytestingCapabilitiesResponse(
+  const isCurrentPlaytestingCapabilities = isPlaytestingCapabilitiesResponse(
     playtesting.body,
     DEV_PROBE_WORKSPACE_ID
   );
   const currentPlaytestingError =
     code.startsWith("autodev_control_playtesting_") &&
     code !== "autodev_control_playtesting_unknown_path";
-  if (!currentPlaytestingCapabilities && !currentPlaytestingError) {
+  if (!isCurrentPlaytestingCapabilities && !currentPlaytestingError) {
     throw startupError("the workspace-scoped Playtesting routes are missing");
   }
 
@@ -423,13 +423,13 @@ async function verifyWithDeadline(
 }
 
 /**
- * Verify the Runtime's compatibility generation before any Console process
- * serves pages. The manifest is cheap and catches stale installations whose
- * individual endpoint schemas happen to overlap the current Console.
- */
+Verify the Runtime's compatibility generation before any Console process
+serves pages. The manifest is cheap and catches stale installations whose
+individual endpoint schemas happen to overlap the current Console.
+*/
 export async function verifyControlApiCompatibility(
   config: ControlApiCompatibilityConfig,
-  fetchImpl: typeof fetch = globalThis.fetch,
+  fetchImpl: typeof fetch = fetch,
   waitOptions: ControlApiWaitOptions = {}
 ): Promise<void> {
   const timeoutMs = Math.max(0, waitOptions.timeoutMs ?? 0);

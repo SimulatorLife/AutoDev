@@ -10,47 +10,47 @@ import { INCOMPLETE_REASON_CODEX_TOOLS_UNREACHABLE } from "./provider-limits.ts"
 import type { WorkspaceResolutionError } from "./resolve-workspace.ts";
 
 /**
- * The HTTP surface every provider bridge shares.
- *
- * `claude`, `copilot` and `antigravity` each answered `/v1/responses` on the
- * same socket as the router, and each had grown its own copy of "write a JSON
- * body and close" alongside its own copy of the fail-closed response to a
- * workspace that could not be resolved. The three copies had already drifted
- * apart in type signatures, and the fail-closed contract that
- * `docs/provider-routing.md` specifies and `tests/workspace-resolution.test.ts`
- * relies on was asserted in prose while being re-implemented by hand in each
- * bridge. It is owned here instead, once.
- */
+The HTTP surface every provider bridge shares.
+
+`claude`, `copilot` and `antigravity` each answered `/v1/responses` on the
+same socket as the router, and each had grown its own copy of "write a JSON
+body and close" alongside its own copy of the fail-closed response to a
+workspace that could not be resolved. The three copies had already drifted
+apart in type signatures, and the fail-closed contract that
+`docs/provider-routing.md` specifies and `tests/workspace-resolution.test.ts`
+relies on was asserted in prose while being re-implemented by hand in each
+bridge. It is owned here instead, once.
+*/
 
 /**
- * The typed refusal a bridge answers when the request carries content the
- * bridge cannot carry.
- *
- * A CLI-backed bridge turns a turn into a text prompt for its CLI, so it
- * cannot show the model an image. Claude's transcript renderer substitutes
- * the literal text `[image]`; the other bridges drop the part or inline its
- * base64 payload as text. Every one of those answers a question the model was
- * never asked, and the caller reads it as an answer. A refusal names the
- * limit instead, and the router's fallback chain moves on to a route that can
- * serve the request.
- */
+The typed refusal a bridge answers when the request carries content the
+bridge cannot carry.
+
+A CLI-backed bridge turns a turn into a text prompt for its CLI, so it
+cannot show the model an image. Claude's transcript renderer substitutes
+the literal text `[image]`; the other bridges drop the part or inline its
+base64 payload as text. Every one of those answers a question the model was
+never asked, and the caller reads it as an answer. A refusal names the
+limit instead, and the router's fallback chain moves on to a route that can
+serve the request.
+*/
 export const PROVIDER_REQUEST_UNSUPPORTED_TYPE =
   "provider_request_unsupported" as const;
 
 /**
- * The typed refusal of a provider whose tool channel did not carry the turn.
- *
- * A bridge that serves a model which cannot call tools natively -- a web chat
- * site, whose model has to write the call out in prose for the bridge to read
- * -- can end a turn with prose that reports the agent's tools as unavailable
- * instead of with the work the turn asked for. The reply is a report about the
- * turn, not an answer to it, and delivered as an answer it ends the agent's
- * turn with a false result.
- *
- * This type tells the router that the route could not carry out a turn it was
- * given: the chain moves on to another candidate, and the provider is cooled
- * down briefly so the next turn does not pick it again and repeat the refusal.
- */
+The typed refusal of a provider whose tool channel did not carry the turn.
+
+A bridge that serves a model which cannot call tools natively -- a web chat
+site, whose model has to write the call out in prose for the bridge to read
+-- can end a turn with prose that reports the agent's tools as unavailable
+instead of with the work the turn asked for. The reply is a report about the
+turn, not an answer to it, and delivered as an answer it ends the agent's
+turn with a false result.
+
+This type tells the router that the route could not carry out a turn it was
+given: the chain moves on to another candidate, and the provider is cooled
+down briefly so the next turn does not pick it again and repeat the refusal.
+*/
 export const PROVIDER_TOOL_CHANNEL_UNAVAILABLE_TYPE =
   "provider_tool_channel_unavailable" as const;
 
@@ -60,8 +60,8 @@ const TOOL_CHANNEL_UNAVAILABLE_CODES = new Set<string>([
 ]);
 
 /**
- * Fail closed on a turn the provider could not carry out with its tools.
- */
+Fail closed on a turn the provider could not carry out with its tools.
+*/
 export function sendToolChannelUnavailableFailure(
   response: ServerResponse,
   provider: string,
@@ -78,9 +78,9 @@ export function sendToolChannelUnavailableFailure(
 }
 
 /**
- * Whether a provider body reports that its tool channel could not carry out
- * the turn (`provider_tool_channel_unavailable` or `codex_tools_unreachable`).
- */
+Whether a provider body reports that its tool channel could not carry out
+the turn (`provider_tool_channel_unavailable` or `codex_tools_unreachable`).
+*/
 export function providerToolChannelUnavailable(body: unknown): boolean {
   if (
     typeof body !== "string" ||
@@ -105,12 +105,12 @@ export function providerToolChannelUnavailable(body: unknown): boolean {
 }
 
 /**
- * Fail closed on a request this bridge cannot serve.
- *
- * The refusal is typed so the router can tell "this route cannot serve this
- * request" apart from "this provider is broken": the first moves to the next
- * candidate, the second is a provider failure.
- */
+Fail closed on a request this bridge cannot serve.
+
+The refusal is typed so the router can tell "this route cannot serve this
+request" apart from "this provider is broken": the first moves to the next
+candidate, the second is a provider failure.
+*/
 export function sendUnsupportedRequestFailure(
   response: ServerResponse,
   provider: string,
@@ -123,15 +123,15 @@ export function sendUnsupportedRequestFailure(
 }
 
 /**
- * Answer that the provider's account must be signed in again.
- *
- * A browser-driven bridge serves through the operator's signed-in browser, so
- * a signed-out site is neither a broken provider nor a request it cannot
- * serve: it is an action for the operator. The answer is typed
- * (`sign_in_required`) so the router records it as exactly that, and the
- * Console asks for the sign-in instead of reporting the provider Ready or
- * merely Unavailable.
- */
+Answer that the provider's account must be signed in again.
+
+A browser-driven bridge serves through the operator's signed-in browser, so
+a signed-out site is neither a broken provider nor a request it cannot
+serve: it is an action for the operator. The answer is typed
+(`sign_in_required`) so the router records it as exactly that, and the
+Console asks for the sign-in instead of reporting the provider Ready or
+merely Unavailable.
+*/
 export function sendSignInRequired(
   response: ServerResponse,
   message: string
@@ -139,7 +139,9 @@ export function sendSignInRequired(
   sendJson(response, 401, signInRequiredBody(message));
 }
 
-/** The error body of a sign-in-required answer, for a stream's failure event too. */
+/**
+The error body of a sign-in-required answer, for a stream's failure event too.
+*/
 export function signInRequiredBody(message: string): {
   readonly error: {
     readonly type: "authentication_error";
@@ -157,9 +159,9 @@ export function signInRequiredBody(message: string): {
 }
 
 /**
- * The message of a provider body that reports its account must be signed in
- * again, or null for any other body.
- */
+The message of a provider body that reports its account must be signed in
+again, or null for any other body.
+*/
 export function providerSignInRequiredMessage(body: unknown): string | null {
   if (
     typeof body !== "string" ||
@@ -183,13 +185,13 @@ const CONTEXT_WINDOW_EXCEEDED_PATTERN =
   /context[_ ]?(?:window|length)\b[^\n]{0,60}\b(?:exceed|limit|too (?:large|long))|exceeds? (?:the )?(?:maximum )?context[_ ]?(?:window|length)|maximum context length|prompt is too long|input (?:is too long|exceeds the maximum)|context_length_exceeded|string_above_max_length|request_too_large/i;
 
 /**
- * Whether an upstream body is a request-capability or context-window refusal
- * ("this route cannot serve this request") rather than a broken provider.
- *
- * The router reads this to move on to the next candidate (or wait out a
- * primary stateful bridge's transient cooldown) while leaving the refusing
- * provider healthy for smaller or compatible requests.
- */
+Whether an upstream body is a request-capability or context-window refusal
+("this route cannot serve this request") rather than a broken provider.
+
+The router reads this to move on to the next candidate (or wait out a
+primary stateful bridge's transient cooldown) while leaving the refusing
+provider healthy for smaller or compatible requests.
+*/
 export function providerRequestUnsupported(body: unknown): boolean {
   if (typeof body !== "string" || !body) return false;
   if (CONTEXT_WINDOW_EXCEEDED_PATTERN.test(body)) return true;
@@ -212,31 +214,26 @@ export function providerRequestUnsupported(body: unknown): boolean {
         return true;
       }
     }
-    if (
-      isRecord(parsed.base_resp) &&
+    return Boolean(isRecord(parsed.base_resp) &&
       (parsed.base_resp.status_code === 2013 ||
-        parsed.base_resp.status_code === "2013")
-    ) {
-      return true;
-    }
-    return false;
+        parsed.base_resp.status_code === "2013"));
   } catch {
     return false;
   }
 }
 
 /**
- * Write one JSON body and close the response.
- *
- * The router has its own `sendJson` in `router/proxy.ts`, which additionally
- * stamps `x-autodev-router-instance-id`. A bridge answers on behalf of a
- * provider, not as the router, so it must not claim that identity; the two are
- * deliberately separate rather than one being a special case of the other.
- *
- * `body` is `unknown` and `extraHeaders` accepts numbers because callers
- * already relied on the widest of the copies they had, so widening here keeps
- * every existing call site compiling unchanged.
- */
+Write one JSON body and close the response.
+
+The router has its own `sendJson` in `router/proxy.ts`, which additionally
+stamps `x-autodev-router-instance-id`. A bridge answers on behalf of a
+provider, not as the router, so it must not claim that identity; the two are
+deliberately separate rather than one being a special case of the other.
+
+`body` is `unknown` and `extraHeaders` accepts numbers because callers
+already relied on the widest of the copies they had, so widening here keeps
+every existing call site compiling unchanged.
+*/
 export function sendJson(
   response: ServerResponse,
   status: number,
@@ -254,15 +251,15 @@ export function sendJson(
 }
 
 /**
- * Fail closed on a request whose workspace could not be resolved.
- *
- * `resolveCwd` refuses to guess, and this is the only place that turns that
- * refusal into a response: log which bridge rejected the request, then answer
- * `400 invalid_request_error` carrying the resolver's own message. Any other
- * failure is not a workspace problem and must keep propagating, so callers
- * still re-throw everything that is not a `WorkspaceResolutionError` before
- * calling this.
- */
+Fail closed on a request whose workspace could not be resolved.
+
+`resolveCwd` refuses to guess, and this is the only place that turns that
+refusal into a response: log which bridge rejected the request, then answer
+`400 invalid_request_error` carrying the resolver's own message. Any other
+failure is not a workspace problem and must keep propagating, so callers
+still re-throw everything that is not a `WorkspaceResolutionError` before
+calling this.
+*/
 export function sendWorkspaceResolutionFailure(
   response: ServerResponse,
   provider: string,

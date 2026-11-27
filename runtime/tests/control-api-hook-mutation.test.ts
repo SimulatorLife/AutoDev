@@ -26,13 +26,13 @@ const OPERATOR_ACTOR = "hook-mutation-operator";
 const VIEWER_ACTOR = "hook-mutation-viewer";
 
 /**
- * The canonical declaration the write starts from.
- *
- * It declares one event for every target and one event for Codex alone, so a
- * write that lands in the wrong place is visible: an event the target
- * inherits and an event the target declares are written to different parts of
- * the document, and the write says which one it chose.
- */
+The canonical declaration the write starts from.
+
+It declares one event for every target and one event for Codex alone, so a
+write that lands in the wrong place is visible: an event the target
+inherits and an event the target declares are written to different parts of
+the document, and the write says which one it chose.
+*/
 const DECLARATION = `{
   // The shared declaration.
   "hooks": {
@@ -77,8 +77,8 @@ function request(
 }
 
 /**
- * Isolated repository and applied-state directories. No generation is required.
- */
+Isolated repository and applied-state directories. No generation is required.
+*/
 function fixture(): {
   readonly repositoryRoot: string;
   readonly codexHome: string;
@@ -98,9 +98,9 @@ function fixture(): {
 }
 
 /**
- * The credential the Control API requires, installed for the duration of the
- * request and removed again afterwards.
- */
+The credential the Control API requires, installed for the duration of the
+request and removed again afterwards.
+*/
 async function withControlApiCredential<T>(run: () => Promise<T>): Promise<T> {
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   const previousOperators = process.env.AUTODEV_CONTROL_OPERATORS;

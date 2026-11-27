@@ -24,7 +24,7 @@ import { CHIP_TONE_CLASS } from "../../components/tables/Chips.ts";
 import {
   DataTable,
   type DataTableFeatures,
-  type DataTableProps
+  type DataTableProps as DataTableProperties
 } from "../../components/tables/DataTable.ts";
 import { PathText } from "../../components/tables/PathText.ts";
 import { InstantDisplay } from "../../components/ui/InstantDisplay.ts";
@@ -53,22 +53,22 @@ import {
 } from "./github-list-url.ts";
 
 /**
- * GitHub resource view.
- *
- * Every row in the workflow definitions table is an observed workflow
- * definition parsed from `.github/workflows/*.yml` source: its declared name,
- * file path, and trigger events/cron schedules configured under `on:`.
- *
- * When GitHub Actions API credentials and repository configuration are
- * available, this view renders authoritative read-only workflow runtime state
- * (active vs disabled) and bounded recent run statistics.
- *
- * When credentials or repository context are absent, runtime facts remain
- * explicitly "Unavailable" without synthesizing zero or healthy values.
- *
- * Dispatch, cancel, rerun, and schedule mutation controls remain explicitly
- * unimplemented; this view never renders mutation affordances.
- */
+GitHub resource view.
+
+Every row in the workflow definitions table is an observed workflow
+definition parsed from `.github/workflows/*.yml` source: its declared name,
+file path, and trigger events/cron schedules configured under `on:`.
+
+When GitHub Actions API credentials and repository configuration are
+available, this view renders authoritative read-only workflow runtime state
+(active vs disabled) and bounded recent run statistics.
+
+When credentials or repository context are absent, runtime facts remain
+explicitly "Unavailable" without synthesizing zero or healthy values.
+
+Dispatch, cancel, rerun, and schedule mutation controls remain explicitly
+unimplemented; this view never renders mutation affordances.
+*/
 
 export interface GithubViewProps {
   readonly workflows: readonly GithubWorkflowDefinition[];
@@ -78,42 +78,42 @@ export interface GithubViewProps {
   readonly repository?: string | null;
   readonly stats?: GithubActionsRunStats | null;
   /**
-   * The runs the Actions API returned.
-   *
-   * Null when the Actions read did not happen, and an empty list when it
-   * happened and the workflows had never run. The page renders the run table
-   * on the strength of `runtimeFactsAvailable`, which says the same thing, so
-   * neither shape reaches the table.
-   */
+  The runs the Actions API returned.
+  
+  Null when the Actions read did not happen, and an empty list when it
+  happened and the workflows had never run. The page renders the run table
+  on the strength of `runtimeFactsAvailable`, which says the same thing, so
+  neither shape reaches the table.
+  */
   readonly recentRuns?: readonly GithubWorkflowRun[] | null;
   /**
-   * The outcome the runs are narrowed to.
-   *
-   * Optional, because a caller that does not narrow says so by leaving it out
-   * rather than by passing "all".
-   */
+  The outcome the runs are narrowed to.
+  
+  Optional, because a caller that does not narrow says so by leaving it out
+  rather than by passing "all".
+  */
   readonly outcome?: RunOutcomeFilter | undefined;
   /**
-   * The state the workflow definitions are narrowed to.
-   *
-   * Optional, and `undefined` means every state.
-   */
+  The state the workflow definitions are narrowed to.
+  
+  Optional, and `undefined` means every state.
+  */
   readonly state?: WorkflowStateFilter | undefined;
 }
 
 /**
- * One facet: a row of links that narrow a list to one of its values.
- *
- * The GitHub page is read-only and carries no form and no button at all -- a
- * committed contract, and the target state's: dispatch, cancel, rerun and
- * schedule controls are unimplemented and the Console must not expose them as
- * browser-side affordances. A link narrows without being one, and a link that
- * navigates to the narrowed address is the same narrowing a form would have
- * done.
- *
- * The two facets are the same control over different axes, so they are the
- * same code: the runs' outcomes and the definitions' states.
- */
+One facet: a row of links that narrow a list to one of its values.
+
+The GitHub page is read-only and carries no form and no button at all -- a
+committed contract, and the target state's: dispatch, cancel, rerun and
+schedule controls are unimplemented and the Console must not expose them as
+browser-side affordances. A link narrows without being one, and a link that
+navigates to the narrowed address is the same narrowing a form would have
+done.
+
+The two facets are the same control over different axes, so they are the
+same code: the runs' outcomes and the definitions' states.
+*/
 function facetRow<Option extends string>({
   label,
   options,
@@ -162,7 +162,7 @@ function facetRow<Option extends string>({
             }`,
             // The selected chip is otherwise distinguishable only by its
             // colour, which is no way to read a selection aloud.
-            ...(option.value === selected ? { "aria-current": "true" } : {})
+            ...((option.value === selected) && { "aria-current": "true" })
           },
           option.count === undefined
             ? option.label
@@ -174,8 +174,8 @@ function facetRow<Option extends string>({
 }
 
 /**
- * The recent runs, with the facet that narrows them.
- */
+The recent runs, with the facet that narrows them.
+*/
 function recentRunsSection({
   listFilters,
   runs,
@@ -226,7 +226,7 @@ function recentRunsSection({
           )
         : null
     ),
-    React.createElement<DataTableProps<GithubWorkflowRun>>(DataTable, {
+    React.createElement<DataTableProperties<GithubWorkflowRun>>(DataTable, {
       data: narrowed,
       columns,
       keyExtractor: (run: GithubWorkflowRun) => String(run.id),
@@ -236,14 +236,14 @@ function recentRunsSection({
 }
 
 /**
- * What the active-workflow count covers.
- *
- * The Actions API does not report every workflow the repository declares, and
- * a workflow it did not report has no state to count. The count is right for
- * what arrived, and the subtitle says how much of the catalogue arrived, so
- * the number is not read as the whole. The state column draws the same
- * distinction per row.
- */
+What the active-workflow count covers.
+
+The Actions API does not report every workflow the repository declares, and
+a workflow it did not report has no state to count. The count is right for
+what arrived, and the subtitle says how much of the catalogue arrived, so
+the number is not read as the whole. The state column draws the same
+distinction per row.
+*/
 function activeWorkflowsSubtitle(
   counts: Record<WorkflowStateFilter, number>
 ): string {
@@ -256,13 +256,13 @@ function activeWorkflowsSubtitle(
 }
 
 /**
- * The workflow definitions, with the facet that narrows them.
- *
- * The facet is offered only when the runtime facts were read. Without them
- * there is no state to narrow by -- every workflow reads "Unavailable" -- and
- * naming the states the page has not observed would claim a fact it does not
- * have, which is the rule the state column itself follows.
- */
+The workflow definitions, with the facet that narrows them.
+
+The facet is offered only when the runtime facts were read. Without them
+there is no state to narrow by -- every workflow reads "Unavailable" -- and
+naming the states the page has not observed would claim a fact it does not
+have, which is the rule the state column itself follows.
+*/
 function workflowDefinitionsSection({
   listFilters,
   workflows,
@@ -316,7 +316,7 @@ function workflowDefinitionsSection({
             : null
         )
       : null,
-    React.createElement<DataTableProps<GithubWorkflowDefinition>>(DataTable, {
+    React.createElement<DataTableProperties<GithubWorkflowDefinition>>(DataTable, {
       data: narrowed,
       columns,
       keyExtractor: (workflow: GithubWorkflowDefinition) => workflow.id,

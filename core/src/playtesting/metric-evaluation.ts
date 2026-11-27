@@ -1,4 +1,6 @@
-/** Validate game-owned evaluator sufficient statistics against a frozen rubric. */
+/**
+Validate game-owned evaluator sufficient statistics against a frozen rubric.
+*/
 import { SHA256_PATTERN } from "../shared/sha256.ts";
 import type { GameMetricEvaluation } from "./protocol-types.ts";
 import type {
@@ -320,11 +322,11 @@ function normalizeMetricDefinition(
 }
 
 /**
- * Normalize adapter-emitted game facts to the Core-owned indexed result shape.
- * The game adapter executes target-owned code; Runtime never loads or executes
- * arbitrary evaluator code. Results are accepted only for the exact frozen
- * metric id/reference/version/hash/unit and the assigned phase/profile cells.
- */
+Normalize adapter-emitted game facts to the Core-owned indexed result shape.
+The game adapter executes target-owned code; Runtime never loads or executes
+arbitrary evaluator code. Results are accepted only for the exact frozen
+metric id/reference/version/hash/unit and the assigned phase/profile cells.
+*/
 export function normalizeGameMetricEvaluations(
   input: NormalizeGameMetricEvaluationsInput
 ): readonly PlaytestNumericResult[] {
@@ -381,14 +383,14 @@ function assertNumericResultIdentity(result: Record<string, unknown>): void {
   ) {
     throw new TypeError("Playtest numeric result metricId must be non-empty.");
   }
-  const validNumberVersion =
+  const isValidNumberVersion =
     typeof result.metricVersion === "number" &&
     Number.isSafeInteger(result.metricVersion) &&
     result.metricVersion >= 1;
-  const validStringVersion =
+  const isValidStringVersion =
     typeof result.metricVersion === "string" &&
     result.metricVersion.trim().length > 0;
-  if (!validNumberVersion && !validStringVersion) {
+  if (!isValidNumberVersion && !isValidStringVersion) {
     throw new TypeError("Playtest numeric result metricVersion is invalid.");
   }
   if (
@@ -541,7 +543,9 @@ function assertNumericResultExposure(result: Record<string, unknown>): void {
   }
 }
 
-/** Validate the persisted per-episode measurement shape without recomputing it. */
+/**
+Validate the persisted per-episode measurement shape without recomputing it.
+*/
 export function assertPlaytestNumericResult(
   value: unknown
 ): asserts value is PlaytestNumericResult {
@@ -556,7 +560,9 @@ export function assertPlaytestNumericResult(
   assertNumericResultExposure(result);
 }
 
-/** Validate an episode's bounded, unique metric/phase row set. */
+/**
+Validate an episode's bounded, unique metric/phase row set.
+*/
 export function assertPlaytestNumericResults(
   value: unknown
 ): asserts value is readonly PlaytestNumericResult[] {

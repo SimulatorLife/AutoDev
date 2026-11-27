@@ -1,17 +1,17 @@
 /**
- * The Console's interaction contract, measured in a browser.
- *
- * Two properties that only a browser can answer, and that a unit test on the
- * markup cannot: a control that is working keeps the operator's place, and a
- * region that scrolls is reachable by a keyboard.
- *
- * Both were found by measuring the Console rather than by reading it. The
- * prompt preview disabled its control while the request was in flight, and a
- * disabled control is dropped out of the page's focus order the moment it is
- * disabled, so the operator who pressed it lost their place in the document.
- * The permission matrix scrolled sideways with nothing focusable inside it, so
- * its right-hand columns were reachable with a pointer and by nothing else.
- */
+The Console's interaction contract, measured in a browser.
+
+Two properties that only a browser can answer, and that a unit test on the
+markup cannot: a control that is working keeps the operator's place, and a
+region that scrolls is reachable by a keyboard.
+
+Both were found by measuring the Console rather than by reading it. The
+prompt preview disabled its control while the request was in flight, and a
+disabled control is dropped out of the page's focus order the moment it is
+disabled, so the operator who pressed it lost their place in the document.
+The permission matrix scrolled sideways with nothing focusable inside it, so
+its right-hand columns were reachable with a pointer and by nothing else.
+*/
 
 import { expect, test } from "@playwright/test";
 
@@ -23,17 +23,17 @@ const PROMPT_PREVIEW = '[data-button="prompt-preview"]';
 const TABLE_REGION = '[role="region"]';
 
 /**
- * The width at which the Console's tables are wider than the viewport.
- */
+The width at which the Console's tables are wider than the viewport.
+*/
 const PHONE_WIDTH = 390;
 const PHONE_HEIGHT = 844;
 
 /**
- * The delay the preview's request is held for.
- *
- * Without it the pending state is a frame nobody sees, and the measurement
- * would be of a control that had already finished working.
- */
+The delay the preview's request is held for.
+
+Without it the pending state is a frame nobody sees, and the measurement
+would be of a control that had already finished working.
+*/
 const PREVIEW_DELAY_MS = 1500;
 
 test("a table that scrolls is reachable by a keyboard", async ({ page }) => {
@@ -107,24 +107,24 @@ test("a control that is working keeps the operator's place", async ({
 });
 
 /**
- * A control that can act is a pointer target.
- *
- * The user agent's default for `<button>` is `cursor: default`, which
- * contradicts the Console: a button that looks like a button and behaves like
- * one is a target, and the pointer is the cheapest signal an operator has
- * that it is.
- *
- * The shared button vocabulary says so for the buttons it renders. A button
- * rendered outside that vocabulary did not: the command palette's trigger -- on
- * every page of the Console -- the Playtesting page's own controls, the error
- * page's "Try again". Each one hand-written, each one asking for the default
- * arrow while looking like a button and behaving like one.
- *
- * This is a rendering claim about a computed style, so it is measured where it
- * happens: in the browser, on every route, over every button that can act. A
- * control that cannot act -- a disabled one, a busy one -- is not a target and
- * is not asked to be one.
- */
+A control that can act is a pointer target.
+
+The user agent's default for `<button>` is `cursor: default`, which
+contradicts the Console: a button that looks like a button and behaves like
+one is a target, and the pointer is the cheapest signal an operator has
+that it is.
+
+The shared button vocabulary says so for the buttons it renders. A button
+rendered outside that vocabulary did not: the command palette's trigger -- on
+every page of the Console -- the Playtesting page's own controls, the error
+page's "Try again". Each one hand-written, each one asking for the default
+arrow while looking like a button and behaving like one.
+
+This is a rendering claim about a computed style, so it is measured where it
+happens: in the browser, on every route, over every button that can act. A
+control that cannot act -- a disabled one, a busy one -- is not a target and
+is not asked to be one.
+*/
 test("a control that can act is a pointer target", async ({ page }) => {
   const offenders: string[] = [];
   let seen = 0;
@@ -140,8 +140,7 @@ test("a control that can act is a pointer target", async ({ page }) => {
         document.querySelectorAll<HTMLButtonElement>("button")
       )) {
         const style = getComputedStyle(element);
-        if (style.display === "none" || style.visibility === "hidden") continue;
-        if (element.closest("[hidden]")) continue;
+        if (style.display === "none" || style.visibility === "hidden" || element.closest("[hidden]")) continue;
         // A control that cannot act is not a target, so it is not asked to
         // look like one.
         if (element.disabled) continue;

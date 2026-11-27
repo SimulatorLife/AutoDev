@@ -6,21 +6,21 @@ import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point"
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
 export interface InstallCommandBackend {
-  install(args?: readonly string[]): number;
+  install(arguments_?: readonly string[]): number;
 }
 
 const defaultInstaller: InstallCommandBackend = {
-  install: (args = []) =>
-    args.length === 1 && args[0] === "--check"
+  install: (arguments_ = []) =>
+    arguments_.length === 1 && arguments_[0] === "--check"
       ? runInstallCheck()
-      : runInstallCommand(args)
+      : runInstallCommand(arguments_)
 };
 
 export function dispatchInstallCommand(
   backend: InstallCommandBackend = defaultInstaller,
-  args: readonly string[] = []
+  arguments_: readonly string[] = []
 ): number {
-  return backend.install(args);
+  return backend.install(arguments_);
 }
 
 if (isEntryPoint(import.meta.url)) {

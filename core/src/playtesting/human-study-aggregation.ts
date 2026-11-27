@@ -1,17 +1,17 @@
 /**
- * Core-owned, infrastructure-free human-study aggregation.
- *
- * Native miniPXI/full-PXI items are preserved verbatim; ENJ is aggregated as
- * its own distinct, null-safe construct. Aggregation is arm-aware (grouped
- * by itemId and the exposed build id) so a participant with both an A and a
- * B exposure never collides into one respondent count, and a withdrawn
- * participant can be excluded and the arms/paired differences recomputed
- * without re-deriving anything from raw identifiers. Small-cell suppression
- * is applied at the boundary that renders a summary, never inside the raw
- * computation, so the exact math stays independently verifiable.
- *
- * See docs/playtesting-measurement-contract.md#7-human-labels-and-change-sensitivity.
- */
+Core-owned, infrastructure-free human-study aggregation.
+
+Native miniPXI/full-PXI items are preserved verbatim; ENJ is aggregated as
+its own distinct, null-safe construct. Aggregation is arm-aware (grouped
+by itemId and the exposed build id) so a participant with both an A and a
+B exposure never collides into one respondent count, and a withdrawn
+participant can be excluded and the arms/paired differences recomputed
+without re-deriving anything from raw identifiers. Small-cell suppression
+is applied at the boundary that renders a summary, never inside the raw
+computation, so the exact math stays independently verifiable.
+
+See docs/playtesting-measurement-contract.md#7-human-labels-and-change-sensitivity.
+*/
 
 import { type HumanPlaytestStudy } from "./artifacts.ts";
 import {
@@ -27,10 +27,14 @@ import {
   PLAYTESTS_MEASUREMENT_VERSION
 } from "./types.ts";
 
-/** Minimum retained-participant count a human-study summary may disclose unsuppressed. */
+/**
+Minimum retained-participant count a human-study summary may disclose unsuppressed.
+*/
 export const HUMAN_STUDY_SMALL_CELL_SUPPRESSION_THRESHOLD = 5;
 
-/** Per-(item, exposed build) aggregate; never identifies a respondent. */
+/**
+Per-(item, exposed build) aggregate; never identifies a respondent.
+*/
 export interface HumanStudyItemAggregate {
   readonly itemId: string;
   readonly mean: number | null;
@@ -41,12 +45,16 @@ export interface HumanStudyItemAggregate {
   readonly missingReasons: readonly PlaytestMissingReason[];
 }
 
-/** One item aggregate scoped to a specific exposed build ("arm"). */
+/**
+One item aggregate scoped to a specific exposed build ("arm").
+*/
 export interface HumanStudyArmItemAggregate extends HumanStudyItemAggregate {
   readonly armBuildId: string;
 }
 
-/** Within-participant B-minus-A difference for one item, averaged over complete pairs only. */
+/**
+Within-participant B-minus-A difference for one item, averaged over complete pairs only.
+*/
 export interface HumanStudyPairedDifference {
   readonly itemId: string;
   readonly meanDifference: number | null;
@@ -62,7 +70,9 @@ export interface HumanStudyAggregateResult {
   readonly pairedDifferences: readonly HumanStudyPairedDifference[];
 }
 
-/** Full-PXI construct average per exposed build; missingness follows the study policy. */
+/**
+Full-PXI construct average per exposed build; missingness follows the study policy.
+*/
 export interface HumanStudyConstructAggregate {
   readonly constructId: PlaytestPxiConstructId;
   readonly armBuildId: string;
@@ -90,9 +100,7 @@ function aggregateHumanStudyItem(
     const events: MiniPxiEnjResponseEvent[] = responses.map((response) => ({
       respondentId: response.pseudonymousParticipantId,
       nativeValue: response.nativeValue,
-      ...(response.missingReason === undefined
-        ? {}
-        : { missingReason: response.missingReason })
+      ...(response.missingReason !== undefined && { missingReason: response.missingReason })
     }));
     const result = aggregateMiniPxiEnj(
       "n/a",
@@ -155,11 +163,11 @@ function aggregateHumanStudyItem(
 }
 
 /**
- * Aggregate a retained (non-withdrawn) set of human-study item responses.
- * Grouping is always by (itemId, exposed build id) so two exposures from
- * one participant never collide; pass `pairedArmBuildIds` to additionally
- * compute the complete-pair B-minus-A difference for each item.
- */
+Aggregate a retained (non-withdrawn) set of human-study item responses.
+Grouping is always by (itemId, exposed build id) so two exposures from
+one participant never collide; pass `pairedArmBuildIds` to additionally
+compute the complete-pair B-minus-A difference for each item.
+*/
 export function aggregateHumanStudyResponses(
   study: HumanPlaytestStudy,
   responses: readonly HumanStudyResponse[],
@@ -243,10 +251,10 @@ function aggregatePxiConstructs(
     const observed = participantItems.filter(
       (item) => item.nativeValue !== null
     );
-    const incomplete = observed.length !== 3;
+    const isIncomplete = observed.length !== 3;
     const value =
       observed.length === 0 ||
-      (incomplete && study.missingItemPolicy === "null-construct")
+      (isIncomplete && study.missingItemPolicy === "null-construct")
         ? null
         : observed.reduce((sum, item) => sum + item.nativeValue!, 0) /
           observed.length;
@@ -296,14 +304,14 @@ function aggregateArms(
 ): HumanStudyArmItemAggregate[] {
   const byArm = new Map<string, HumanStudyResponse[]>();
   for (const response of responses) {
-    const key = `${response.itemId}\u0000${response.build.id}`;
+    const key = `${response.itemId}\0${response.build.id}`;
     const group = byArm.get(key) ?? [];
     group.push(response);
     byArm.set(key, group);
   }
   const arms: HumanStudyArmItemAggregate[] = [];
   for (const [key, armResponses] of byArm) {
-    const [itemId, armBuildId] = key.split("\u0000") as [string, string];
+    const [itemId, armBuildId] = key.split("\0") as [string, string];
     arms.push({ ...aggregateHumanStudyItem(itemId, armResponses), armBuildId });
   }
   arms.sort(
@@ -358,10 +366,10 @@ function aggregatePairedDifferences(
 }
 
 /**
- * Tombstone every response belonging to `participantId`. This only marks
- * the Core-owned artifact; the restricted repository is responsible for
- * actually deleting the underlying raw/PII storage and any cached summary.
- */
+Tombstone every response belonging to `participantId`. This only marks
+the Core-owned artifact; the restricted repository is responsible for
+actually deleting the underlying raw/PII storage and any cached summary.
+*/
 export function withdrawHumanStudyParticipant(
   responses: readonly HumanStudyResponse[],
   participantId: string
@@ -373,7 +381,9 @@ export function withdrawHumanStudyParticipant(
   );
 }
 
-/** Apply the v1 small-cell privacy floor; `null` means "render as suppressed". */
+/**
+Apply the v1 small-cell privacy floor; `null` means "render as suppressed".
+*/
 export function applyHumanStudySmallCellSuppression(
   aggregate: HumanStudyAggregateResult,
   threshold: number = HUMAN_STUDY_SMALL_CELL_SUPPRESSION_THRESHOLD

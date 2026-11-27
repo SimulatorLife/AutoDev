@@ -56,7 +56,7 @@ test("a frozen benchmark inventory is the only seed source the run form offers",
 test("without a frozen inventory the run form numbers free seeds", () => {
   assert.equal(initialPlaytestingSeed(null), "seed-1");
   assert.equal(isAdmissiblePlaytestingSeed(null, "any-seed"), true);
-  assert.equal(isAdmissiblePlaytestingSeed(null, "   "), false);
+  assert.equal(isAdmissiblePlaytestingSeed(null, ' '.repeat(3)), false);
   assert.equal(
     nextPlaytestingSeed(null, [row("seed-1"), row("seed-3")], "x", "random"),
     "seed-4"

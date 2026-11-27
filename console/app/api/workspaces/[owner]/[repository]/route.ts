@@ -1,29 +1,29 @@
 /**
- * Same-origin boundary for writing one workspace's canonical configuration.
- *
- * The route receives the operator's edit, validates its same-origin browser
- * context, and forwards a typed PATCH to Runtime using the server-side Control
- * API credential. The browser never receives that credential and never
- * bypasses Runtime: the canonical catalog is written by the Runtime, which
- * compares the revision the edit was decided on and refuses a write the
- * catalog has moved past.
- *
- * The route answers with a redirect rather than with a body. That is the
- * Console's own mutation boundary: the navigation owner reads the redirect,
- * moves the page to the destination, and the page renders the outcome from the
- * query. A route that answered with a body instead would leave the page
- * holding the state it had before the write, which is how a feature ends up
- * showing two truths about the same catalog.
- *
- * Only POST is exported. A refused write answers with the Runtime's reason --
- * a conflict, a refused update or an unconfirmed result are different facts,
- * and the operator is told which one happened.
- */
+Same-origin boundary for writing one workspace's canonical configuration.
+
+The route receives the operator's edit, validates its same-origin browser
+context, and forwards a typed PATCH to Runtime using the server-side Control
+API credential. The browser never receives that credential and never
+bypasses Runtime: the canonical catalog is written by the Runtime, which
+compares the revision the edit was decided on and refuses a write the
+catalog has moved past.
+
+The route answers with a redirect rather than with a body. That is the
+Console's own mutation boundary: the navigation owner reads the redirect,
+moves the page to the destination, and the page renders the outcome from the
+query. A route that answered with a body instead would leave the page
+holding the state it had before the write, which is how a feature ends up
+showing two truths about the same catalog.
+
+Only POST is exported. A refused write answers with the Runtime's reason --
+a conflict, a refused update or an unconfirmed result are different facts,
+and the operator is told which one happened.
+*/
 
 import { CONTROL_API_REVISION_PATTERN } from "@simulatorlife/autodev-core";
 import type { NextRequest, NextResponse } from "next/server.js";
 
-import { type WorkspaceConfigurationSaveOutcome } from "../../../../../src/features/workspaces/configuration.ts";
+import { type WorkspaceConfigurationSaveOutcome as WorkspaceConfigSaveOutcome } from "../../../../../src/features/workspaces/configuration.ts";
 import {
   isWorkspacesReturnPath,
   WORKSPACES_PATH
@@ -47,20 +47,20 @@ const WORKSPACE_OWNER_PATTERN = /^[^/\s]+$/u;
 const WORKSPACE_REPOSITORY_PATTERN = /^[^/\s]+$/u;
 
 /**
- * The redirect back to the surface the write came from.
- *
- * The control is on the list and on the workspace's own page, so the write
- * answers to whichever of the two the operator used: a write that answered
- * somewhere else would leave the operator looking at a page that says nothing
- * about the configuration they just changed.
- *
- * The destination is a bounded Workspaces path and not one the browser chose,
- * so a write can never redirect off this Console.
- */
+The redirect back to the surface the write came from.
+
+The control is on the list and on the workspace's own page, so the write
+answers to whichever of the two the operator used: a write that answered
+somewhere else would leave the operator looking at a page that says nothing
+about the configuration they just changed.
+
+The destination is a bounded Workspaces path and not one the browser chose,
+so a write can never redirect off this Console.
+*/
 function redirectToWorkspaces(
   returnTo: string,
   workspaceId: string,
-  outcome?: WorkspaceConfigurationSaveOutcome,
+  outcome?: WorkspaceConfigSaveOutcome,
   basedOn?: string
 ): NextResponse {
   const query = new URLSearchParams();
@@ -75,15 +75,15 @@ function redirectToWorkspaces(
 }
 
 /**
- * The outcome a refusal is reported as.
- *
- * A conflict and a refused update are different facts: the first says the
- * catalog moved under the write, the second says the write could not be
- * expressed. They get different outcomes, and the reason is the Runtime's.
- */
+The outcome a refusal is reported as.
+
+A conflict and a refused update are different facts: the first says the
+catalog moved under the write, the second says the write could not be
+expressed. They get different outcomes, and the reason is the Runtime's.
+*/
 function saveOutcomeForFailure(
   result: Awaited<ReturnType<typeof patchWorkspace>>
-): WorkspaceConfigurationSaveOutcome {
+): WorkspaceConfigSaveOutcome {
   if (result.kind !== "http-error") return "failed";
   switch (result.code) {
     case "autodev_control_workspace_revision_conflict": {
@@ -100,12 +100,12 @@ function saveOutcomeForFailure(
 }
 
 /**
- * The role scope the form carries.
- *
- * A scope that is not configured and a scope that names no role are different
- * facts, so the form says which one it means and the list is read from the
- * names it carries.
- */
+The role scope the form carries.
+
+A scope that is not configured and a scope that names no role are different
+facts, so the form says which one it means and the list is read from the
+names it carries.
+*/
 type RoleScope =
   | { readonly ok: true; readonly agentRoles: readonly string[] | null }
   | { readonly ok: false };

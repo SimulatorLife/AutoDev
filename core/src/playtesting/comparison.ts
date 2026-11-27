@@ -1,15 +1,15 @@
 /**
- * Metric-specific compatibility classification and per-metric/overall
- * comparison decision logic (measurement-contract §4).
- *
- * Core supplies quantity definitions, grouping, and the classification
- * rules below; it does not implement bootstrap/permutation inference.
- * `PlaytestNumericInterval` is produced by a separately selected, pinned,
- * tested statistics library (e.g. SciPy bootstrap) and handed in as a
- * plain typed value. A caller that cannot produce a valid interval reports
- * `null` and the classifier below honestly returns `inconclusive`; it never
- * invents one.
- */
+Metric-specific compatibility classification and per-metric/overall
+comparison decision logic (measurement-contract §4).
+
+Core supplies quantity definitions, grouping, and the classification
+rules below; it does not implement bootstrap/permutation inference.
+`PlaytestNumericInterval` is produced by a separately selected, pinned,
+tested statistics library (e.g. SciPy bootstrap) and handed in as a
+plain typed value. A caller that cannot produce a valid interval reports
+`null` and the classifier below honestly returns `inconclusive`; it never
+invents one.
+*/
 
 import {
   assessPlaytestMetricCompatibility,
@@ -31,30 +31,21 @@ import {
   type PlaytestProvenance,
   PLAYTESTS_COMPARISON_SCHEMA,
   PLAYTESTS_NOT_COMPARABLE_MODE,
-  type PlaytestVersionedRef
+  type PlaytestVersionedRef as PlaytestVersionedReference
 } from "./types.ts";
 
-/** Is this a finite, non-degenerate (lower <= upper) numeric interval? */
+/**
+Is this a finite, non-degenerate (lower <= upper) numeric interval?
+*/
 export function isValidPlaytestInterval(
   interval: PlaytestNumericInterval | null
 ): interval is PlaytestNumericInterval {
-  if (interval === null) return false;
-  if (!Number.isFinite(interval.lower) || !Number.isFinite(interval.upper)) {
-    return false;
-  }
-  if (interval.lower > interval.upper) return false;
-  if (!Number.isFinite(interval.confidenceLevel)) return false;
-  if (interval.confidenceLevel <= 0 || interval.confidenceLevel >= 1) {
-    return false;
-  }
-  if (!interval.method || interval.method.trim().length === 0) return false;
-  if (!interval.libraryVersion || interval.libraryVersion.trim().length === 0) {
-    return false;
-  }
-  return true;
+  return !((interval === null) || !Number.isFinite(interval.lower) || !Number.isFinite(interval.upper) || (interval.lower > interval.upper) || !Number.isFinite(interval.confidenceLevel) || interval.confidenceLevel <= 0 || interval.confidenceLevel >= 1 || !interval.method || interval.method.trim().length === 0 || !interval.libraryVersion || interval.libraryVersion.trim().length === 0);
 }
 
-/** Inputs required to classify one metric's oriented benefit delta. */
+/**
+Inputs required to classify one metric's oriented benefit delta.
+*/
 export interface PlaytestMetricClassificationInput {
   readonly metricId: string;
   readonly metricVersion: number | string;
@@ -65,21 +56,23 @@ export interface PlaytestMetricClassificationInput {
   readonly interval: PlaytestNumericInterval | null;
   readonly baseline: PlaytestMetricArmSummary;
   readonly candidate: PlaytestMetricArmSummary;
-  /** True when missingness/precision bounds already fail regardless of the interval. */
+  /**
+  True when missingness/precision bounds already fail regardless of the interval.
+  */
   readonly missingnessOrPrecisionFailed?: boolean;
 }
 
 /**
- * Classify a single metric delta per §4:
- *
- * - not-comparable overrides everything when semantic eligibility fails.
- * - Missingness/precision failures and invalid intervals yield inconclusive.
- * - improved when lower bound > meaningful margin; regressed when upper
- *   bound < -meaningful margin; no-material-change when the whole interval
- *   is within [-margin, margin]; otherwise inconclusive.
- * - A guardrail margin g>=0 passes noninferiority only when lower > -g;
- *   upper < -g is a breach; overlap is uncertain.
- */
+Classify a single metric delta per §4:
+
+- not-comparable overrides everything when semantic eligibility fails.
+- Missingness/precision failures and invalid intervals yield inconclusive.
+- improved when lower bound > meaningful margin; regressed when upper
+  bound < -meaningful margin; no-material-change when the whole interval
+  is within [-margin, margin]; otherwise inconclusive.
+- A guardrail margin g>=0 passes noninferiority only when lower > -g;
+  upper < -g is a breach; overlap is uncertain.
+*/
 export function classifyPlaytestMetricComparison(
   input: PlaytestMetricClassificationInput
 ): PlaytestMetricComparison {
@@ -124,11 +117,9 @@ function computeClassification(
 function computeGuardrailStatus(
   input: PlaytestMetricClassificationInput
 ): "passed" | "breached" | "uncertain" | "not-applicable" {
-  if (input.guardrailMargin === null) return "not-applicable";
-  if (input.compatibility === PLAYTESTS_NOT_COMPARABLE_MODE)
+  if ((input.guardrailMargin === null) || (input.compatibility === PLAYTESTS_NOT_COMPARABLE_MODE))
     return "not-applicable";
-  if (input.missingnessOrPrecisionFailed === true) return "uncertain";
-  if (!isValidPlaytestInterval(input.interval)) return "uncertain";
+  if ((input.missingnessOrPrecisionFailed === true) || !isValidPlaytestInterval(input.interval)) return "uncertain";
   const { lower, upper } = input.interval;
   const guardrail = input.guardrailMargin;
   if (lower > -guardrail) return "passed";
@@ -153,20 +144,26 @@ function classificationNotes(
   return `Metric "${input.metricId}" classified ${classification}; guardrail ${guardrailStatus}.`;
 }
 
-/** Decide overall promotion eligibility from classified metrics (§4). */
+/**
+Decide overall promotion eligibility from classified metrics (§4).
+*/
 export interface PlaytestDecisionInput {
   readonly metrics: readonly PlaytestMetricComparison[];
   readonly primaryMetricId: string;
 }
 
-/** A comparison metric plus the frozen source semantics from both arms. */
+/**
+A comparison metric plus the frozen source semantics from both arms.
+*/
 export interface PlaytestComparisonMetricInput extends Omit<
   PlaytestMetricClassificationInput,
   "compatibility" | "missingnessOrPrecisionFailed"
 > {
   readonly baselineSemantics: PlaytestMetricSemantics;
   readonly candidateSemantics: PlaytestMetricSemantics;
-  /** Every preregistered assigned unit, including one with a missing outcome. */
+  /**
+  Every preregistered assigned unit, including one with a missing outcome.
+  */
   readonly baselineUnitIds: readonly string[];
   readonly candidateUnitIds: readonly string[];
   readonly missingnessPlan: {
@@ -255,12 +252,12 @@ function compareMissingnessAndPrecision(input: PlaytestComparisonMetricInput): {
 }
 
 /**
- * `eligible-for-owner-promotion` only when the preregistered primary metric
- * improved and every guardrail-bearing metric passed with adequate
- * coverage. A breach yields hold-regression; uncertain evidence yields
- * hold-inconclusive; incompatibility yields hold-not-comparable. Precedence
- * (checked in order): not-comparable > breach > inconclusive > promotion.
- */
+`eligible-for-owner-promotion` only when the preregistered primary metric
+improved and every guardrail-bearing metric passed with adequate
+coverage. A breach yields hold-regression; uncertain evidence yields
+hold-inconclusive; incompatibility yields hold-not-comparable. Precedence
+(checked in order): not-comparable > breach > inconclusive > promotion.
+*/
 export function decidePlaytestComparisonStatus(
   input: PlaytestDecisionInput
 ): PlaytestDecisionStatus {
@@ -294,14 +291,16 @@ export function decidePlaytestComparisonStatus(
   return "eligible-for-owner-promotion";
 }
 
-/** Build one comparison from frozen pairing, metric semantics and measurements. */
-export function buildPlaytestComparison(args: {
+/**
+Build one comparison from frozen pairing, metric semantics and measurements.
+*/
+export function buildPlaytestComparison(arguments_: {
   readonly comparisonId: string;
   readonly version: number;
   readonly benchmarkId: string;
   readonly experimentId: string | null;
-  readonly baseline: PlaytestVersionedRef;
-  readonly candidate: PlaytestVersionedRef;
+  readonly baseline: PlaytestVersionedReference;
+  readonly candidate: PlaytestVersionedReference;
   readonly freezeStatus: "frozen" | "spent" | "not-comparable";
   readonly pairingEvidence: PlaytestPairingEvidence;
   readonly sourceFindingIds: readonly string[];
@@ -316,17 +315,17 @@ export function buildPlaytestComparison(args: {
   readonly provenance: PlaytestProvenance;
   readonly notes?: string;
 }): PlaytestComparison {
-  if (!args.sourceFindingIds.every(isPlaytestFindingId)) {
+  if (!arguments_.sourceFindingIds.every(isPlaytestFindingId)) {
     throw new TypeError(
       "PlaytestComparison.sourceFindingIds must contain canonical stable finding IDs."
     );
   }
-  const assessedPairing = assessPlaytestPairing(args.pairingEvidence);
+  const assessedPairing = assessPlaytestPairing(arguments_.pairingEvidence);
   const expectedBaselineUnits = new Set(
-    args.pairingEvidence.pairs.map((pair) => pair.baseline.episodeId)
+    arguments_.pairingEvidence.pairs.map((pair) => pair.baseline.episodeId)
   );
   const expectedCandidateUnits = new Set(
-    args.pairingEvidence.pairs.map((pair) => pair.candidate.episodeId)
+    arguments_.pairingEvidence.pairs.map((pair) => pair.candidate.episodeId)
   );
   const matchesAssignments = (
     actual: readonly string[],
@@ -335,10 +334,10 @@ export function buildPlaytestComparison(args: {
     actual.length === expected.size &&
     new Set(actual).size === actual.length &&
     actual.every((unitId) => expected.has(unitId));
-  const assignedCountsMatchPairing = args.metrics.every(
+  const assignedCountsMatchPairing = arguments_.metrics.every(
     (metric) =>
-      metric.baseline.assigned === args.pairingEvidence.pairs.length &&
-      metric.candidate.assigned === args.pairingEvidence.pairs.length &&
+      metric.baseline.assigned === arguments_.pairingEvidence.pairs.length &&
+      metric.candidate.assigned === arguments_.pairingEvidence.pairs.length &&
       matchesAssignments(metric.baselineUnitIds, expectedBaselineUnits) &&
       matchesAssignments(metric.candidateUnitIds, expectedCandidateUnits)
   );
@@ -353,7 +352,7 @@ export function buildPlaytestComparison(args: {
         ]
       };
   const seenMetrics = new Set<string>();
-  const metrics = args.metrics.map((input) => {
+  const metrics = arguments_.metrics.map((input) => {
     if (seenMetrics.has(input.metricId)) {
       throw new TypeError(
         `Comparison metric "${input.metricId}" is duplicated.`
@@ -409,49 +408,47 @@ export function buildPlaytestComparison(args: {
         baseline: input.baselineSemantics,
         candidate: input.candidateSemantics
       },
-      ...(diagnostics.length > 0
-        ? { notes: [classified.notes, ...diagnostics].join(" ") }
-        : {})
+      ...((diagnostics.length > 0) && { notes: [classified.notes, ...diagnostics].join(" ") })
     };
   });
   const decision = decidePlaytestComparisonStatus({
     metrics,
-    primaryMetricId: args.primaryMetricId
+    primaryMetricId: arguments_.primaryMetricId
   });
   return {
     schema: PLAYTESTS_COMPARISON_SCHEMA,
-    comparisonId: args.comparisonId,
-    version: args.version,
-    benchmarkId: args.benchmarkId,
-    experimentId: args.experimentId,
-    baseline: args.baseline,
-    candidate: args.candidate,
-    freezeStatus: args.freezeStatus,
+    comparisonId: arguments_.comparisonId,
+    version: arguments_.version,
+    benchmarkId: arguments_.benchmarkId,
+    experimentId: arguments_.experimentId,
+    baseline: arguments_.baseline,
+    candidate: arguments_.candidate,
+    freezeStatus: arguments_.freezeStatus,
     pairing,
-    sourceFindingIds: args.sourceFindingIds,
-    episodeRefs: args.episodeRefs,
-    measurementVersion: args.measurementVersion,
+    sourceFindingIds: arguments_.sourceFindingIds,
+    episodeRefs: arguments_.episodeRefs,
+    measurementVersion: arguments_.measurementVersion,
     metrics,
     decision,
     ownerDecisionAt: null,
     ownerDecisionReason: null,
     ownerDecisionBy: null,
     ownerDisposition: null,
-    humanPreference: args.humanPreference ?? {
+    humanPreference: arguments_.humanPreference ?? {
       answer: "not-collected",
       interval: null
     },
-    provenance: args.provenance,
-    notes: args.notes ?? ""
+    provenance: arguments_.provenance,
+    notes: arguments_.notes ?? ""
   };
 }
 
 /**
- * Record an owner decision onto an existing comparison, returning a new
- * immutable revision rather than mutating the original. The decision
- * status itself is derived from classified metrics, not freely overridden
- * here; this function only attaches the owner's authored reason/timestamp.
- */
+Record an owner decision onto an existing comparison, returning a new
+immutable revision rather than mutating the original. The decision
+status itself is derived from classified metrics, not freely overridden
+here; this function only attaches the owner's authored reason/timestamp.
+*/
 export function recordPlaytestOwnerDecision(
   comparison: PlaytestComparison,
   input: {
@@ -493,7 +490,9 @@ export function recordPlaytestOwnerDecision(
   };
 }
 
-/** Validate current comparison owner-decision fields, including historical gaps. */
+/**
+Validate current comparison owner-decision fields, including historical gaps.
+*/
 export function assertPlaytestComparisonOwnerDecision(
   comparison: PlaytestComparison
 ): void {
@@ -505,12 +504,12 @@ export function assertPlaytestComparisonOwnerDecision(
   if (!Number.isSafeInteger(comparison.version) || comparison.version < 1) {
     throw new TypeError("Comparison revision must be a positive safe integer.");
   }
-  const noDecision =
+  const isNoDecision =
     comparison.ownerDecisionAt === null &&
     comparison.ownerDecisionReason === null &&
     comparison.ownerDecisionBy === null &&
     comparison.ownerDisposition === null;
-  if (noDecision) return;
+  if (isNoDecision) return;
 
   if (
     typeof comparison.ownerDecisionAt !== "string" ||

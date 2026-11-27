@@ -1,4 +1,6 @@
-/** Deterministic selection and validation for bounded confirmatory analyst evidence packets. */
+/**
+Deterministic selection and validation for bounded confirmatory analyst evidence packets.
+*/
 
 import { isCount, isRecord } from "../shared/object-guards.ts";
 import { SHA256_PATTERN } from "../shared/sha256.ts";
@@ -60,7 +62,9 @@ import {
   PLAYTESTS_MISSING_REASONS
 } from "./types.ts";
 
-/** Local aliases keep this file's confirmatory-only logic unchanged below. */
+/**
+Local aliases keep this file's confirmatory-only logic unchanged below.
+*/
 const BUILD_SHA_PATTERN = /^(?:[a-f\d]{40}|[a-f\d]{64})$/iu;
 const MAX_PACKET_WINDOWS = MAX_EVIDENCE_PACKET_WINDOWS;
 export const MAX_PACKET_CROSS_SESSION_SESSIONS = 4;
@@ -82,7 +86,9 @@ type ConfirmatoryAdapterEpisode = PlaytestAdapterEpisode & {
   };
 };
 
-/** Confirmatory scored packets require complete adapter-owned game identity. */
+/**
+Confirmatory scored packets require complete adapter-owned game identity.
+*/
 function assertConfirmatoryAdapterEpisode(
   episode: PlaytestEpisode
 ): asserts episode is ConfirmatoryAdapterEpisode {
@@ -192,7 +198,9 @@ export interface BuildPlaytestEvidencePacketInput {
   readonly measurementVersion: string;
   readonly traceHash: string;
   readonly traceSteps: readonly PlaytestEvidenceTraceStep[];
-  /** Opaque frame id -> verified SHA-256, supplied by Runtime's artifact owner. */
+  /**
+  Opaque frame id -> verified SHA-256, supplied by Runtime's artifact owner.
+  */
   readonly frameHashes: Readonly<Record<string, string>>;
   readonly omittedArtifacts?: readonly PlaytestEvidenceOmittedArtifact[];
   readonly modelId: string | null;
@@ -326,7 +334,9 @@ function crossSessionEpisodeSummary(
   };
 }
 
-/** Stable identity projection used in packet IDs and the context inventory. */
+/**
+Stable identity projection used in packet IDs and the context inventory.
+*/
 export function playtestCrossSessionInventoryHashInput(
   candidates: readonly PlaytestEvidenceCrossSessionCandidate[]
 ): string {
@@ -493,7 +503,9 @@ function buildPacketValue(input: {
   };
 }
 
-/** Freeze the exact selected evidence body before an analyst is called. */
+/**
+Freeze the exact selected evidence body before an analyst is called.
+*/
 export function buildPlaytestEvidencePacket(
   input: BuildPlaytestEvidencePacketInput
 ): PlaytestEvidencePacketV4 {
@@ -710,7 +722,9 @@ function validPacketReviewMetadata(value: Record<string, unknown>): boolean {
   );
 }
 
-/** Validate packet fields before persistence or model exposure. */
+/**
+Validate packet fields before persistence or model exposure.
+*/
 export function assertPlaytestEvidencePacket(
   value: unknown
 ): asserts value is PlaytestEvidencePacket {
@@ -768,8 +782,8 @@ export function assertPlaytestEvidencePacket(
       window.endStep < window.startStep ||
       !Array.isArray(window.selectionReasons) ||
       window.selectionReasons.length === 0 ||
-      !window.selectionReasons.every((reason) =>
-        ["event-bearing-step", "terminal", "ordinary-sample"].includes(
+      window.selectionReasons.some((reason) =>
+        !["event-bearing-step", "terminal", "ordinary-sample"].includes(
           String(reason)
         )
       ) ||
@@ -943,8 +957,8 @@ function assertCrossSessionContext(
   if (value.status === "unavailable") {
     if (
       Object.keys(value).length !== 4 ||
-      !["status", "reason", "inventoryHash", "eligibleSessions"].every(
-        (key) => key in value
+      ["status", "reason", "inventoryHash", "eligibleSessions"].some(
+        (key) => !(key in value)
       ) ||
       !isText(value.reason, 2000) ||
       value.eligibleSessions !== 0
@@ -958,7 +972,7 @@ function assertCrossSessionContext(
   if (
     value.status !== "included" ||
     Object.keys(value).length !== 7 ||
-    ![
+    [
       "status",
       "inventoryHash",
       "selectionSeed",
@@ -966,7 +980,7 @@ function assertCrossSessionContext(
       "inclusionProbability",
       "selectionMethod",
       "sessions"
-    ].every((key) => key in value) ||
+    ].some((key) => !(key in value)) ||
     !isText(value.selectionSeed, 256) ||
     !isCount(value.eligibleSessions, 999) ||
     value.eligibleSessions === 0 ||
@@ -991,7 +1005,7 @@ function assertCrossSessionContext(
     if (
       !isRecord(session) ||
       Object.keys(session).length !== 15 ||
-      ![
+      [
         "workspaceId",
         "batchId",
         "buildSha",
@@ -1007,7 +1021,7 @@ function assertCrossSessionContext(
         "outcome",
         "outcomeMetrics",
         "metrics"
-      ].every((key) => key in session) ||
+      ].some((key) => !(key in session)) ||
       !isText(session.workspaceId) ||
       !isText(session.batchId) ||
       !BUILD_SHA_PATTERN.test(String(session.buildSha)) ||
@@ -1051,7 +1065,7 @@ function assertCrossSessionContext(
       if (
         !isRecord(metric) ||
         Object.keys(metric).length !== 10 ||
-        ![
+        [
           "metricId",
           "metricVersion",
           "phaseId",
@@ -1062,7 +1076,7 @@ function assertCrossSessionContext(
           "missingReasons",
           "independentUnits",
           "unit"
-        ].every((key) => key in metric) ||
+        ].some((key) => !(key in metric)) ||
         !isText(metric.metricId) ||
         ((typeof metric.metricVersion !== "string" ||
           !isText(metric.metricVersion)) &&

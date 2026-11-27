@@ -1,22 +1,22 @@
 /**
- * Direct test harness for the Playtesting statistical worker.
- *
- * These tests spawn the locked Python worker with hand-rolled JSON-RPC
- * envelopes and verify each branch of the contract:
- *
- *   statistics.bootstrap -> PlaytestNumericInterval matching the §4
- *     expected bounds within tolerance.
- *   statistics.multipletests -> corrected p-values and rejections for a
- *     small synthetic BH family.
- *   statistics.manifest -> library version, expected fixture intervals.
- *   statistics.<unknown-method> -> -32602 "invalid-input" envelope.
- *   bootstrap with non-finite values -> -32602 "invalid-input" envelope.
- *
- * The tests also pin the exact fixture expected bounds because Core
- * tests in `@simulatorlife/autodev-core` consumed the same numbers;
- * degrading these would silently invalidate the production classification
- * logic.
- */
+Direct test harness for the Playtesting statistical worker.
+
+These tests spawn the locked Python worker with hand-rolled JSON-RPC
+envelopes and verify each branch of the contract:
+
+  statistics.bootstrap -> PlaytestNumericInterval matching the §4
+    expected bounds within tolerance.
+  statistics.multipletests -> corrected p-values and rejections for a
+    small synthetic BH family.
+  statistics.manifest -> library version, expected fixture intervals.
+  statistics.<unknown-method> -> -32602 "invalid-input" envelope.
+  bootstrap with non-finite values -> -32602 "invalid-input" envelope.
+
+The tests also pin the exact fixture expected bounds because Core
+tests in `@simulatorlife/autodev-core` consumed the same numbers;
+degrading these would silently invalidate the production classification
+logic.
+*/
 
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
@@ -44,19 +44,19 @@ async function callWorker(
   request: object,
   timeoutMs = 60_000
 ): Promise<JsonRpcResponse> {
-  const env = resolvePlaytestStatEnvironment();
-  const args = [
+  const environment = resolvePlaytestStatEnvironment();
+  const arguments_ = [
     "run",
     "--frozen",
     "--project",
-    env.projectRoot,
+    environment.projectRoot,
     "--no-progress",
     "python",
     "-m",
-    env.workerModule
+    environment.workerModule
   ];
-  const child = spawn("uv", args, {
-    cwd: env.projectRoot,
+  const child = spawn("uv", arguments_, {
+    cwd: environment.projectRoot,
     env: {
       ...process.env,
       UV_NO_CACHE: "1",
@@ -197,7 +197,7 @@ test("worker bootstrap rejects NaN input with a stable invalid-input envelope", 
     jsonrpc: "2.0",
     id,
     method: "statistics.bootstrap",
-    params: { array: [Number.NaN, 0, 1], seed: 42 }
+    params: { array: [NaN, 0, 1], seed: 42 }
   });
   assert.ok(response.error, "expected an error envelope for NaN input");
   assert.equal(response.error!.code, -32_602);
@@ -278,12 +278,12 @@ test("exact binomial interval rejects invalid counts, confidence and unknown par
     { successes: 1, trials: 5, confidenceLevel: 1 },
     { successes: 1, trials: 5, unexpected: "field" }
   ];
-  for (const params of invalidCases) {
+  for (const parameters of invalidCases) {
     const response = await callWorker({
       jsonrpc: "2.0",
       id: randomUUID(),
       method: "statistics.binomial_proportion",
-      params
+      params: parameters
     });
     assert.ok(response.error);
     assert.equal(response.error!.code, -32_602);
@@ -316,7 +316,7 @@ test("worker multipletests applies Benjamini-Hochberg FDR", async () => {
   assert.equal(pAdj.length, 4);
   assert.ok(Math.abs(pAdj[0]! - 0.004) < 1e-9);
   assert.ok(Math.abs(pAdj[1]! - 0.02) < 1e-9);
-  assert.ok(Math.abs(pAdj[2]! - 0.053_333_333_333) < 1e-3);
+  assert.ok(Math.abs(pAdj[2]! - 0.053333333333) < 1e-3);
   assert.ok(Math.abs(pAdj[3]! - 0.5) < 1e-9);
 });
 

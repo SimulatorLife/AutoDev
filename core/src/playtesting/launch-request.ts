@@ -1,7 +1,9 @@
 import type { WorkspaceVisualPlaytestLimits } from "../workspaces/visual-playtesting.ts";
 import type { PlaytestVisualPolicyId } from "./visual-decision.ts";
 
-/** Versioned, game-neutral request accepted by the single Runtime launch owner. */
+/**
+Versioned, game-neutral request accepted by the single Runtime launch owner.
+*/
 export const PLAYTEST_LAUNCH_REQUEST_SCHEMA =
   "autodev-playtest-launch-v1" as const;
 
@@ -13,7 +15,9 @@ export const PLAYTEST_EXECUTION_MODES = [
 
 export type PlaytestExecutionMode = (typeof PLAYTEST_EXECUTION_MODES)[number];
 
-/** One game-neutral assignment in an adapter-accelerated batch. */
+/**
+One game-neutral assignment in an adapter-accelerated batch.
+*/
 export interface PlaytestLaunchAssignment {
   readonly scenario: string;
   readonly policy: string;
@@ -33,7 +37,9 @@ export interface PlaytestAdapterBranchOperation {
   readonly branchStep: number;
   readonly alternativeActionId: string;
   readonly policy?: string | undefined;
-  /** Replay-prefix steps count against this continuation budget. */
+  /**
+  Replay-prefix steps count against this continuation budget.
+  */
   readonly maxSteps?: number | undefined;
 }
 
@@ -41,17 +47,21 @@ export type PlaytestAdapterLaunchOperation =
   PlaytestAdapterBatchOperation | PlaytestAdapterBranchOperation;
 
 /**
- * A launch has exactly one execution mode. Visual budgets may only reduce the
- * operator-approved target limits; Runtime remains authoritative at launch.
- */
+A launch has exactly one execution mode. Visual budgets may only reduce the
+operator-approved target limits; Runtime remains authoritative at launch.
+*/
 export type PlaytestLaunchRequest =
   | {
       readonly schema: typeof PLAYTEST_LAUNCH_REQUEST_SCHEMA;
       readonly mode: "adapter-accelerated";
       readonly workspaceId: string;
-      /** Client-generated key, stable across uncertain acceptance retries. */
+      /**
+      Client-generated key, stable across uncertain acceptance retries.
+      */
       readonly requestId: string;
-      /** SHA-256 revision returned by the same server-authoritative preflight. */
+      /**
+      SHA-256 revision returned by the same server-authoritative preflight.
+      */
       readonly capabilityRevision: string;
       readonly operation: PlaytestAdapterLaunchOperation;
     }

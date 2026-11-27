@@ -315,19 +315,19 @@ test("provider agent builds the bounded prompt and role-specific Codex flags", a
         "AUTODEV_CHATGPT_TUNNEL_API_KEY=tunnel-file-secret\n" +
         "CODEX_ROUTER_AUTH_TOKEN=router-from-file\n"
     );
-    const env = {
+    const environment = {
       ...f.env,
       CODEX_ENV_FILE: credentialFile,
       AUTODEV_PLAYTEST_CONTROL_API_TOKEN: "analyst-env-secret",
       AUTODEV_PLAYTEST_CONTROL_API_ROLE: "playtest-analyst"
     };
     const routerEnvironments: NodeJS.ProcessEnv[] = [];
-    const deps: ProviderAgentDeps = {
+    const dependencies: ProviderAgentDeps = {
       ensureRouter: async (environment) => {
         routerEnvironments.push(environment);
       },
-      runCodex: (binary, args, runtimeEnvironment, checkOnly) => {
-        calls.push({ binary, args, env: runtimeEnvironment, checkOnly });
+      runCodex: (binary, arguments_, runtimeEnvironment, checkOnly) => {
+        calls.push({ binary, args: arguments_, env: runtimeEnvironment, checkOnly });
         return 0;
       }
     };
@@ -362,8 +362,8 @@ test("provider agent builds the bounded prompt and role-specific Codex flags", a
           "--prompt",
           "do the task"
         ],
-        env,
-        deps
+        environment,
+        dependencies
       ),
       0
     );
@@ -433,12 +433,12 @@ test("provider agent builds the bounded prompt and role-specific Codex flags", a
       "model_reasoning_summary=concise"
     ]);
     assert.equal(
-      calls[0]?.args.some((arg) => arg.startsWith("sandbox_mode=")),
+      calls[0]?.args.some((argument) => argument.startsWith("sandbox_mode=")),
       false
     );
     assert.equal(
-      calls[0]?.args.some((arg) =>
-        arg.startsWith("mcp_servers.autodev_memory.")
+      calls[0]?.args.some((argument) =>
+        argument.startsWith("mcp_servers.autodev_memory.")
       ),
       false,
       "retired custom Memory MCP must never be configured"
@@ -502,10 +502,10 @@ test("provider agent disables direct Memory MCP access outside ordinary JIT", as
 
     for (const mode of modes) {
       const calls: string[][] = [];
-      const deps: ProviderAgentDeps = {
+      const dependencies: ProviderAgentDeps = {
         ensureRouter: async () => undefined,
-        runCodex: (_binary, args) => {
-          calls.push(args);
+        runCodex: (_binary, arguments__) => {
+          calls.push(arguments__);
           return 0;
         }
       };
@@ -520,14 +520,14 @@ test("provider agent disables direct Memory MCP access outside ordinary JIT", as
             "do the task"
           ],
           { ...f.env, ...mode.environment },
-          deps
+          dependencies
         ),
         0,
         mode.name
       );
-      const args = calls[0] ?? [];
+      const arguments_ = calls[0] ?? [];
       assert.ok(
-        args.every(
+        arguments_.every(
           (argument) => !argument.startsWith("mcp_servers.autodev_memory.")
         ),
         mode.name
@@ -542,15 +542,15 @@ test("provider agent check mode validates the role without requiring a prompt", 
   const f = fixture();
   try {
     const calls: boolean[] = [];
-    const deps: ProviderAgentDeps = {
+    const dependencies: ProviderAgentDeps = {
       ensureRouter: async () => undefined,
-      runCodex: (_binary, _args, _env, checkOnly) => {
+      runCodex: (_binary, _arguments, _environment, checkOnly) => {
         calls.push(checkOnly);
         return 0;
       }
     };
     assert.equal(
-      await runProviderAgent(["--role", "smart", "--check"], f.env, deps),
+      await runProviderAgent(["--role", "smart", "--check"], f.env, dependencies),
       0
     );
     assert.deepEqual(calls, [true]);
@@ -623,7 +623,7 @@ test("playtest analyst materializes a trusted symlinked Codex model catalog", as
       AUTODEV_PLAYTEST_ANALYST_SOURCE_HOME: f.root,
       AUTODEV_PLAYTEST_ANALYST_SOURCE_CODEX_HOME: sourceCodexHome
     };
-    const args = [
+    const arguments_ = [
       "--role",
       "playtest-analyst",
       "--cwd",
@@ -633,7 +633,7 @@ test("playtest analyst materializes a trusted symlinked Codex model catalog", as
     ];
     const dependencies: ProviderAgentDeps = {
       ensureRouter: async () => undefined,
-      runCodex: (_binary, _args, childEnvironment) => {
+      runCodex: (_binary, _arguments, childEnvironment) => {
         const materialized = join(
           childEnvironment.CODEX_HOME!,
           "codex-model-catalog.json"
@@ -647,7 +647,7 @@ test("playtest analyst materializes a trusted symlinked Codex model catalog", as
         return 0;
       }
     };
-    const result = await runProviderAgent(args, environment, dependencies);
+    const result = await runProviderAgent(arguments_, environment, dependencies);
     assert.equal(result, 0);
 
     const sourceCatalogLink = join(sourceCodexHome, "codex-model-catalog.json");
@@ -656,7 +656,7 @@ test("playtest analyst materializes a trusted symlinked Codex model catalog", as
     writeFileSync(untrustedCatalog, "{}");
     symlinkSync(untrustedCatalog, sourceCatalogLink);
     await assert.rejects(
-      () => runProviderAgent(args, environment, dependencies),
+      () => runProviderAgent(arguments_, environment, dependencies),
       /escapes trusted directories/u
     );
   } finally {
@@ -709,7 +709,7 @@ test("the analyst trusts AutoDev's configuration root when the Runtime runs from
     };
     const dependencies: ProviderAgentDeps = {
       ensureRouter: async () => undefined,
-      runCodex: (_binary, _args, childEnvironment) => {
+      runCodex: (_binary, _arguments, childEnvironment) => {
         const materialized = join(
           childEnvironment.CODEX_HOME!,
           "codex-model-catalog.json"
@@ -804,8 +804,8 @@ test("playtest analyst process excludes every Control API credential", async () 
         environment,
         {
           ensureRouter: async () => undefined,
-          runCodex: (_binary, args, env) => {
-            childCalls.push({ args, environment: env });
+          runCodex: (_binary, arguments_, environment_) => {
+            childCalls.push({ args: arguments_, environment: environment_ });
             return 0;
           }
         }
@@ -816,7 +816,7 @@ test("playtest analyst process excludes every Control API credential", async () 
     const childCall = childCalls[0];
     assert.ok(childCall);
     const childEnvironment = childCall.environment;
-    const childArgs = childCall.args;
+    const childArguments = childCall.args;
     assert.equal(
       childEnvironment?.AUTODEV_PLAYTEST_CONTROL_API_TOKEN,
       undefined
@@ -843,29 +843,29 @@ test("playtest analyst process excludes every Control API credential", async () 
       false,
       "the isolated Codex home never receives the OpenLIT database secret"
     );
-    const mcpEnvVars = childArgs.find((argument) =>
+    const mcpEnvironmentVariables = childArguments.find((argument) =>
       argument.startsWith("mcp_servers.playtest.env_vars=")
     );
-    assert.ok(mcpEnvVars);
-    const parsedEnvVars = parseToml(mcpEnvVars) as {
+    assert.ok(mcpEnvironmentVariables);
+    const parsedEnvironmentVariables = parseToml(mcpEnvironmentVariables) as {
       mcp_servers: { playtest: { env_vars: string[] } };
     };
     assert.equal(
-      parsedEnvVars.mcp_servers.playtest.env_vars.includes("CODEX_HOME"),
+      parsedEnvironmentVariables.mcp_servers.playtest.env_vars.includes("CODEX_HOME"),
       false,
       "the isolated CODEX_HOME must not pass through to the Playtesting MCP"
     );
-    const mcpEnv = childArgs.find((argument) =>
+    const mcpEnvironment = childArguments.find((argument) =>
       argument.startsWith("mcp_servers.playtest.env=")
     );
-    assert.ok(mcpEnv);
-    assert.deepEqual(parseToml(mcpEnv), {
+    assert.ok(mcpEnvironment);
+    assert.deepEqual(parseToml(mcpEnvironment), {
       mcp_servers: {
         playtest: { env: { CODEX_HOME: join(f.root, ".codex") } }
       }
     });
     assert.ok(
-      childArgs.every(
+      childArguments.every(
         (argument) => !argument.startsWith("mcp_servers.autodev_memory.")
       ),
       "a disabled Memory MCP must not leave a transport-less server table"
@@ -953,7 +953,7 @@ test("playtest analysis restricts Codex to packet tools and an isolated executio
       ].join("\n") + "\n"
     );
     const captured: { args: string[]; env: NodeJS.ProcessEnv }[] = [];
-    const env: NodeJS.ProcessEnv = {
+    const environment: NodeJS.ProcessEnv = {
       ...f.env,
       CODEX_ENV_FILE: environmentFile,
       AUTODEV_CONTROL_API_BASE_URL: "http://127.0.0.1:4101",
@@ -991,11 +991,11 @@ test("playtest analysis restricts Codex to packet tools and an isolated executio
         "--prompt",
         "Review only the supplied packets."
       ],
-      env,
+      environment,
       {
         ensureRouter: async () => undefined,
-        runCodex: (_binary, args, childEnv) => {
-          captured.push({ args, env: childEnv });
+        runCodex: (_binary, arguments_, childEnvironment) => {
+          captured.push({ args: arguments_, env: childEnvironment });
           return 0;
         }
       }
@@ -1029,8 +1029,8 @@ test("playtest analysis restricts Codex to packet tools and an isolated executio
     );
     assert.ok(call.args.includes("skills.include_instructions=false"));
     assert.ok(call.args.includes("skills.bundled.enabled=false"));
-    const skillsOverride = call.args.find((arg) =>
-      arg.startsWith("skills.config=")
+    const skillsOverride = call.args.find((argument) =>
+      argument.startsWith("skills.config=")
     );
     assert.ok(skillsOverride);
     assert.deepEqual(parseToml(skillsOverride), {
@@ -1186,8 +1186,8 @@ test("analyst provider run enforces its role tool, skill, MCP, and environment p
       childEnvironment,
       {
         ensureRouter: async () => undefined,
-        runCodex: (_binary, args, environment) => {
-          calls.push({ args, environment });
+        runCodex: (_binary, arguments_, environment) => {
+          calls.push({ args: arguments_, environment });
           return 0;
         }
       }
@@ -1386,8 +1386,8 @@ test("browser-tester provider run injects only its bounded Playwright MCP and st
       { ...f.env, CODEX_ENV_FILE: credentialFile },
       {
         ensureRouter: async () => undefined,
-        runCodex: (_binary, args, environment) => {
-          calls.push({ args, environment });
+        runCodex: (_binary, arguments_, environment) => {
+          calls.push({ args: arguments_, environment });
           return 0;
         }
       }
@@ -1414,15 +1414,15 @@ test("browser-tester provider run injects only its bounded Playwright MCP and st
       tools.mcp_servers.playwright.enabled_tools,
       BROWSER_TESTER_TOOL_ALLOWLIST
     );
-    const envVarsArgument = call.args.find((argument) =>
+    const environmentVariablesArgument = call.args.find((argument) =>
       argument.startsWith("mcp_servers.playwright.env_vars=")
     );
-    assert.ok(envVarsArgument);
-    const envVars = parseToml(envVarsArgument) as {
+    assert.ok(environmentVariablesArgument);
+    const environmentVariables = parseToml(environmentVariablesArgument) as {
       mcp_servers: { playwright: { env_vars: string[] } };
     };
     assert.deepEqual(
-      envVars.mcp_servers.playwright.env_vars,
+      environmentVariables.mcp_servers.playwright.env_vars,
       BROWSER_TESTER_MCP_ENV_ALLOWLIST
     );
     assert.ok(
@@ -1519,7 +1519,7 @@ test("playtester provider run enables only the exact read-only runner Playtestin
       ].join("\n") + "\n"
     );
     const calls: Array<{ args: string[]; environment: NodeJS.ProcessEnv }> = [];
-    const env = playtesterEnvironment(f);
+    const environment = playtesterEnvironment(f);
 
     const result = await runProviderAgent(
       [
@@ -1530,11 +1530,11 @@ test("playtester provider run enables only the exact read-only runner Playtestin
         "--prompt",
         "Run only the approved session."
       ],
-      env,
+      environment,
       {
         ensureRouter: async () => undefined,
-        runCodex: (_binary, args, environment) => {
-          calls.push({ args, environment });
+        runCodex: (_binary, arguments_, environment) => {
+          calls.push({ args: arguments_, environment });
           return 0;
         }
       }
@@ -1581,14 +1581,14 @@ test("playtester provider run enables only the exact read-only runner Playtestin
       ),
       "the runner must never receive analyst-only review/write tools"
     );
-    const envVarsArgument = call.args.find((argument) =>
+    const environmentVariablesArgument = call.args.find((argument) =>
       argument.startsWith("mcp_servers.playtest.env_vars=")
     );
-    assert.ok(envVarsArgument);
-    const envVars = parseToml(envVarsArgument) as {
+    assert.ok(environmentVariablesArgument);
+    const environmentVariables = parseToml(environmentVariablesArgument) as {
       mcp_servers: { playtest: { env_vars: string[] } };
     };
-    assert.deepEqual(envVars.mcp_servers.playtest.env_vars, [
+    assert.deepEqual(environmentVariables.mcp_servers.playtest.env_vars, [
       "PATH",
       "HOME",
       "TMPDIR",
@@ -1616,14 +1616,14 @@ test("playtester provider run enables only the exact read-only runner Playtestin
       "AUTODEV_PLAYTEST_CONTROL_API_ROLE"
     ]);
     assert.equal(
-      envVars.mcp_servers.playtest.env_vars.includes(
+      environmentVariables.mcp_servers.playtest.env_vars.includes(
         "AUTODEV_CONTROL_API_TOKEN"
       ),
       false,
       "the runner must never receive the general Control API token"
     );
     assert.equal(
-      envVars.mcp_servers.playtest.env_vars.includes("OPENAI_API_KEY"),
+      environmentVariables.mcp_servers.playtest.env_vars.includes("OPENAI_API_KEY"),
       false,
       "the runner must never receive provider API keys"
     );
@@ -1676,8 +1676,8 @@ test("playtester dispatch fails closed when trusted session credentials are abse
           f.env,
           {
             ensureRouter: async () => undefined,
-            runCodex: (_binary, args, environment) => {
-              calls.push({ args, environment });
+            runCodex: (_binary, arguments_, environment) => {
+              calls.push({ args: arguments_, environment });
               return 0;
             }
           }
@@ -1721,8 +1721,8 @@ test("playtester dispatch fails closed when the materialized role drifts from th
           playtesterEnvironment(f),
           {
             ensureRouter: async () => undefined,
-            runCodex: (_binary, args, environment) => {
-              calls.push({ args, environment });
+            runCodex: (_binary, arguments_, environment) => {
+              calls.push({ args: arguments_, environment });
               return 0;
             }
           }
@@ -1766,8 +1766,8 @@ test("playtester dispatch fails closed when the materialized role is missing the
           playtesterEnvironment(f),
           {
             ensureRouter: async () => undefined,
-            runCodex: (_binary, args, environment) => {
-              calls.push({ args, environment });
+            runCodex: (_binary, arguments_, environment) => {
+              calls.push({ args: arguments_, environment });
               return 0;
             }
           }
@@ -1852,16 +1852,16 @@ test("provider agent injects CONTEXT7_API_KEY only into context7 roles with Keyc
     );
     const routerEnvironments: NodeJS.ProcessEnv[] = [];
     const calls: Array<{ env: NodeJS.ProcessEnv }> = [];
-    const deps: ProviderAgentDeps = {
+    const dependencies: ProviderAgentDeps = {
       ensureRouter: async (environment) => {
         routerEnvironments.push(environment);
       },
-      runCodex: (_binary, _args, runtimeEnvironment) => {
+      runCodex: (_binary, _arguments, runtimeEnvironment) => {
         calls.push({ env: runtimeEnvironment });
         return 0;
       }
     };
-    const baseEnv: NodeJS.ProcessEnv = {
+    const baseEnvironment: NodeJS.ProcessEnv = {
       ...f.env,
       MINIMAX_API_KEY: undefined,
       CONTEXT7_API_KEY: undefined,
@@ -1878,8 +1878,8 @@ test("provider agent injects CONTEXT7_API_KEY only into context7 roles with Keyc
           "--prompt-file",
           promptFile
         ],
-        baseEnv,
-        deps
+        baseEnvironment,
+        dependencies
       ),
       0
     );
@@ -1909,18 +1909,18 @@ test("provider agent injects CONTEXT7_API_KEY only into context7 roles with Keyc
           mode: 0o600
         }
       );
-      const kcEnv: NodeJS.ProcessEnv = {
-        ...baseEnv,
+      const kcEnvironment: NodeJS.ProcessEnv = {
+        ...baseEnvironment,
         USER: "autodev-tester",
         AUTODEV_DISABLE_KEYCHAIN: "0",
         AUTODEV_KEYCHAIN_FILE: keychain
       };
-      writeKeychainSecret("MINIMAX_API_KEY", "minimax-from-keychain", kcEnv);
-      writeKeychainSecret("CONTEXT7_API_KEY", "ctx7-from-keychain", kcEnv);
+      writeKeychainSecret("MINIMAX_API_KEY", "minimax-from-keychain", kcEnvironment);
+      writeKeychainSecret("CONTEXT7_API_KEY", "ctx7-from-keychain", kcEnvironment);
       writeKeychainSecret(
         "AUTODEV_CHATGPT_TUNNEL_API_KEY",
         "tunnel-from-keychain",
-        kcEnv
+        kcEnvironment
       );
       assert.equal(
         await runProviderAgent(
@@ -1932,8 +1932,8 @@ test("provider agent injects CONTEXT7_API_KEY only into context7 roles with Keyc
             "--prompt-file",
             promptFile
           ],
-          kcEnv,
-          deps
+          kcEnvironment,
+          dependencies
         ),
         0
       );
@@ -1955,8 +1955,8 @@ test("provider agent injects CONTEXT7_API_KEY only into context7 roles with Keyc
             "--prompt-file",
             promptFile
           ],
-          { ...kcEnv, CONTEXT7_API_KEY: "ctx7-explicit-override" },
-          deps
+          { ...kcEnvironment, CONTEXT7_API_KEY: "ctx7-explicit-override" },
+          dependencies
         ),
         0
       );

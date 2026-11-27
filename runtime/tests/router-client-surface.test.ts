@@ -71,7 +71,7 @@ test("requestClientSurface resolves originator first, then User-Agent, else null
   assert.equal(
     requestClientSurface(
       mockRequest({
-        originator: "   ",
+        originator: ' '.repeat(3),
         "user-agent": "codex_vscode/0.154.0 (Mac OS 26.5.2; arm64)"
       })
     ),

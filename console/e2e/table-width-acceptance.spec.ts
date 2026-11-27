@@ -3,42 +3,42 @@ import { expect, type Page, test } from "@playwright/test";
 import { CANONICAL_ROUTES, waitForPageContent } from "./acceptance-helpers.ts";
 
 /**
- * The list tables have to fit the column they are given.
- *
- * A table's width is the sum of its declared column weights, and the Console
- * gives a list table one content column. When the sum is larger than that
- * column, the table scrolls sideways and a column ends up past the right edge
- * of the page: the agents table's MCPs column, the MCPs table's Connection
- * column and the providers table's Agent Limits column were all off-screen at
- * 1440, and the providers table's reasoning-effort selector -- one of the three
- * controls every role carries -- was only reachable by scrolling a table whose
- * own border gave no sign that there was anything to the right.
- *
- * The budgets were larger than the room they were declared against, so the
- * scroll bought nothing: the same columns and the same values fit inside the
- * content column once the weights were measured against it.
- *
- * This spec is where that claim belongs, because it is a layout claim: the
- * width a table gets is a measurement, not a constant, and it changes with the
- * viewport, the navigation and the page's own chrome.
- */
+The list tables have to fit the column they are given.
+
+A table's width is the sum of its declared column weights, and the Console
+gives a list table one content column. When the sum is larger than that
+column, the table scrolls sideways and a column ends up past the right edge
+of the page: the agents table's MCPs column, the MCPs table's Connection
+column and the providers table's Agent Limits column were all off-screen at
+1440, and the providers table's reasoning-effort selector -- one of the three
+controls every role carries -- was only reachable by scrolling a table whose
+own border gave no sign that there was anything to the right.
+
+The budgets were larger than the room they were declared against, so the
+scroll bought nothing: the same columns and the same values fit inside the
+content column once the weights were measured against it.
+
+This spec is where that claim belongs, because it is a layout claim: the
+width a table gets is a measurement, not a constant, and it changes with the
+viewport, the navigation and the page's own chrome.
+*/
 
 /**
- * The width the Console is read at on a desktop.
- *
- * 1440 is the width at which the navigation is a column beside the page and
- * the content column is at its widest for a laptop, which is where the tables
- * either fit or do not.
- */
+The width the Console is read at on a desktop.
+
+1440 is the width at which the navigation is a column beside the page and
+the content column is at its widest for a laptop, which is where the tables
+either fit or do not.
+*/
 const DESKTOP_WIDTH = 1440;
 
 /**
- * The routes that render a list table.
- *
- * The hooks and playtesting pages render their own surfaces rather than a
- * catalogue table, so they are measured by the pages that own the tables they
- * do have. Every other canonical resource renders one.
- */
+The routes that render a list table.
+
+The hooks and playtesting pages render their own surfaces rather than a
+catalogue table, so they are measured by the pages that own the tables they
+do have. Every other canonical resource renders one.
+*/
 const LIST_ROUTES = CANONICAL_ROUTES.filter(
   (route) => route.path !== "/hooks" && route.path !== "/playtesting"
 );
@@ -46,8 +46,8 @@ const LIST_ROUTES = CANONICAL_ROUTES.filter(
 test.use({ viewport: { width: DESKTOP_WIDTH, height: 900 } });
 
 /**
- * What is wrong with one table on one page, said in a sentence.
- */
+What is wrong with one table on one page, said in a sentence.
+*/
 async function findProblems(page: Page): Promise<readonly string[]> {
   return page.evaluate(() => {
     const problems: string[] = [];
@@ -74,9 +74,9 @@ async function findProblems(page: Page): Promise<readonly string[]> {
         ancestor = ancestor.parentElement
       ) {
         const style = getComputedStyle(ancestor);
-        const bordered = Number.parseFloat(style.borderTopWidth) > 0;
-        const padded = Number.parseFloat(style.paddingLeft) >= 16;
-        if (bordered && padded) {
+        const isBordered = Number.parseFloat(style.borderTopWidth) > 0;
+        const isPadded = Number.parseFloat(style.paddingLeft) >= 16;
+        if (isBordered && isPadded) {
           problems.push(
             "the table sits inside a bordered, padded panel, so it gets less of " +
               "the content column than every other table and reads as a box in a box"

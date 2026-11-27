@@ -30,23 +30,23 @@ import {
 export interface SkillDetailViewProps {
   readonly source: ControlApiSkillContentResponse;
   /**
-   * Where the skill is installed, read from the catalogue.
-   *
-   * `null` when the catalogue could not be read: a scope that was not observed
-   * is not the same as a skill that is installed nowhere, and this page says
-   * which one it is looking at.
-   */
+  Where the skill is installed, read from the catalogue.
+  
+  `null` when the catalogue could not be read: a scope that was not observed
+  is not the same as a skill that is installed nowhere, and this page says
+  which one it is looking at.
+  */
   readonly scopedSkill?: ScopedSkillDefinition | null | undefined;
 }
 
 /**
- * Where the skill is installed, as the page says it.
- *
- * Three different facts end here: the catalogue could not be read, the skill
- * is installed nowhere, and the skill is installed in one of the places Codex
- * looks for one. Only the first is missing evidence; the second is an
- * observed absence, and the page says so rather than leaving the field empty.
- */
+Where the skill is installed, as the page says it.
+
+Three different facts end here: the catalogue could not be read, the skill
+is installed nowhere, and the skill is installed in one of the places Codex
+looks for one. Only the first is missing evidence; the second is an
+observed absence, and the page says so rather than leaving the field empty.
+*/
 function skillInstallation(scopedSkill: ScopedSkillDefinition | null): {
   readonly scope: string;
   readonly place: { readonly label: string; readonly value: string } | null;

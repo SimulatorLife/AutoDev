@@ -262,11 +262,11 @@ test("active route usage keys subagent events by the same canonical subject as t
       usageTracker.recordUsageEvent({
         phase: event.phase,
         requestId: event.requestId,
-        ...(event.activitySubject ? { subject: event.activitySubject } : {}),
+        ...(event.activitySubject && { subject: event.activitySubject }),
         provider: event.provider,
         model: event.model,
         role: event.role,
-        ...(event.outcome ? { outcome: event.outcome } : {}),
+        ...(event.outcome && { outcome: event.outcome }),
         elapsedMs: event.elapsedMs,
         toolCalls: event.toolCalls,
         timestamp: event.timestamp

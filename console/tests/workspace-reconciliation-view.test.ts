@@ -12,18 +12,18 @@ import { WorkspaceDetailView } from "../src/features/workspaces/WorkspaceDetailV
 import { WorkspacesView } from "../src/features/workspaces/WorkspacesView.ts";
 
 /**
- * The canonical workspace catalog publishes the shared desired-vs-actual view.
- *
- * Every other canonical source in the Control API reports convergence with a
- * write: the operator is told whether the runtime holds what was written, or
- * whether it has not observed it yet. The workspace catalog was the one
- * canonical write that did not, so a saved configuration looked the same as a
- * configuration the runtime had actually picked up.
- *
- * These tests hold the two surfaces that edit the catalog to that contract:
- * the list and the workspace's own page both render the Runtime's verdict
- * rather than deciding one of their own.
- */
+The canonical workspace catalog publishes the shared desired-vs-actual view.
+
+Every other canonical source in the Control API reports convergence with a
+write: the operator is told whether the runtime holds what was written, or
+whether it has not observed it yet. The workspace catalog was the one
+canonical write that did not, so a saved configuration looked the same as a
+configuration the runtime had actually picked up.
+
+These tests hold the two surfaces that edit the catalog to that contract:
+the list and the workspace's own page both render the Runtime's verdict
+rather than deciding one of their own.
+*/
 
 function workspace(id: string): ControlApiWorkspaceRecord {
   return {

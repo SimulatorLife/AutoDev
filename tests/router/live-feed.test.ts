@@ -237,10 +237,10 @@ test("live feed recorder drops non-positive durations and trims text fields", ()
     type: "tool_executed",
     summary: " ", // should fall back to default
     timestamp: "2026-09-27T14:00:00.000Z",
-    name: "   ",
+    name: ' '.repeat(3),
     tool: "",
     durationMs: -10,
-    durationSeconds: Number.NaN,
+    durationSeconds: NaN,
     status: 0
   });
   const [event] = feed.getRecentEvents();

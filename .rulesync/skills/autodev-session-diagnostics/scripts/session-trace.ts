@@ -1,25 +1,25 @@
 #!/usr/bin/env node
 /**
- * session-trace.ts -- the skill's entry point for session diagnostics.
- *
- * The reading of a session's evidence lives in exactly one place: AutoDev's
- * diagnostics engine (`@simulatorlife/autodev-data/diagnostics`), which the
- * Runtime's Control API and the `autodev diagnostics` CLI both run. This
- * script parses no rollout, router log or hook log itself. It asks the
- * Control API for the answer, because only the running Runtime can see the
- * live router state; when it cannot reach the API -- or when the caller
- * pointed the command at its own codex home or router log -- it runs that
- * same engine through the CLI in this checkout, so the answer comes from
- * one implementation and not two.
- *
- * Flags (all preserved from the original script):
- *   node session-trace.ts <session-or-thread-id> [--items] [--events]
- *        [--failures] [--all-failures] [--efficiency] [--json]
- *        [--codex-home DIR] [--router-log FILE] [--offline]
- *   node session-trace.ts --recent [N]
- *   node session-trace.ts --scan-recent [N]
- *   node session-trace.ts --hooks [--since DAYS]
- */
+session-trace.ts -- the skill's entry point for session diagnostics.
+
+The reading of a session's evidence lives in exactly one place: AutoDev's
+diagnostics engine (`@simulatorlife/autodev-data/diagnostics`), which the
+Runtime's Control API and the `autodev diagnostics` CLI both run. This
+script parses no rollout, router log or hook log itself. It asks the
+Control API for the answer, because only the running Runtime can see the
+live router state; when it cannot reach the API -- or when the caller
+pointed the command at its own codex home or router log -- it runs that
+same engine through the CLI in this checkout, so the answer comes from
+one implementation and not two.
+
+Flags (all preserved from the original script):
+  node session-trace.ts <session-or-thread-id> [--items] [--events]
+       [--failures] [--all-failures] [--efficiency] [--json]
+       [--codex-home DIR] [--router-log FILE] [--offline]
+  node session-trace.ts --recent [N]
+  node session-trace.ts --scan-recent [N]
+  node session-trace.ts --hooks [--since DAYS]
+*/
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -38,7 +38,9 @@ const LINE_BREAK = /\r?\n/u;
 const SECRET_FILE_NAME = "openlit-secrets.env";
 const CLI_RELATIVE_PATH = path.join("runtime", "src", "cli", "autodev.ts");
 
-/** What the caller asked for. */
+/**
+What the caller asked for.
+*/
 interface TraceOptions {
   readonly id: string;
   readonly codexHome: string;
@@ -55,7 +57,9 @@ interface TraceOptions {
   readonly hooks: boolean;
   readonly sinceDays: number;
   readonly controlApiUrl: string;
-  /** Whether the caller pointed the command at its own codex home or log. */
+  /**
+  Whether the caller pointed the command at its own codex home or log.
+  */
   readonly customPaths: boolean;
 }
 
@@ -96,18 +100,18 @@ function parsePositiveNumber(raw: string, fallback: number): number {
     : fallback;
 }
 
-function defaultCodexHome(env: NodeJS.ProcessEnv): string {
-  const fromEnv = env.CODEX_HOME?.trim();
-  if (fromEnv) return fromEnv;
-  const home = env.HOME?.trim() || homedir();
+function defaultCodexHome(environment: NodeJS.ProcessEnv): string {
+  const fromEnvironment = environment.CODEX_HOME?.trim();
+  if (fromEnvironment) return fromEnvironment;
+  const home = environment.HOME?.trim() || homedir();
   return path.join(home, ".codex");
 }
 
-function parseArgs(
+function parseArguments(
   argv: readonly string[],
-  env: NodeJS.ProcessEnv
+  environment: NodeJS.ProcessEnv
 ): TraceOptions | null {
-  const codexHomeDefault = defaultCodexHome(env);
+  const codexHomeDefault = defaultCodexHome(environment);
   let id = "";
   let codexHome = codexHomeDefault;
   let routerLog = "";
@@ -115,8 +119,8 @@ function parseArgs(
   let recent: number | null = null;
   let scanRecent: number | null = null;
   let controlApiUrl =
-    env.AUTODEV_CONTROL_API_BASE_URL?.trim() || DEFAULT_CONTROL_API_BASE_URL;
-  let customPaths = false;
+    environment.AUTODEV_CONTROL_API_BASE_URL?.trim() || DEFAULT_CONTROL_API_BASE_URL;
+  let isCustomPaths = false;
   const flags: Record<BooleanCliFlag, boolean> = {
     items: false,
     events: false,
@@ -129,35 +133,35 @@ function parseArgs(
   };
 
   for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index]!;
-    const flagKey = CLI_BOOLEAN_FLAGS[arg];
+    const argument = argv[index]!;
+    const flagKey = CLI_BOOLEAN_FLAGS[argument];
     if (flagKey) {
       flags[flagKey] = true;
       continue;
     }
-    if (arg === "--since") {
+    if (argument === "--since") {
       sinceDays = parsePositiveNumber(
         argv[++index] ?? "",
         DEFAULT_HOOK_WINDOW_DAYS
       );
-    } else if (arg === "--codex-home") {
+    } else if (argument === "--codex-home") {
       codexHome = argv[++index] ?? codexHome;
-      customPaths = true;
-    } else if (arg === "--router-log") {
+      isCustomPaths = true;
+    } else if (argument === "--router-log") {
       routerLog = argv[++index] ?? "";
-      customPaths = true;
-    } else if (arg === "--control-api-url") {
+      isCustomPaths = true;
+    } else if (argument === "--control-api-url") {
       controlApiUrl = argv[++index] ?? controlApiUrl;
-    } else if (arg === "--recent") {
+    } else if (argument === "--recent") {
       recent = DIGITS_ONLY_REGEX.test(argv[index + 1] ?? "")
         ? Number(argv[++index])
         : DEFAULT_RECENT_LIMIT;
-    } else if (arg === "--scan-recent") {
+    } else if (argument === "--scan-recent") {
       scanRecent = DIGITS_ONLY_REGEX.test(argv[index + 1] ?? "")
         ? Number(argv[++index])
         : DEFAULT_RECENT_LIMIT;
-    } else if (!arg.startsWith("--")) {
-      id = arg;
+    } else if (!argument.startsWith("--")) {
+      id = argument;
     }
   }
 
@@ -179,21 +183,21 @@ function parseArgs(
     hooks: flags.hooks,
     sinceDays,
     controlApiUrl: controlApiUrl.replace(TRAILING_SLASHES, ""),
-    customPaths
+    customPaths: isCustomPaths
   };
 }
 
 /**
- * Read the Control API token without ever printing it.
- *
- * The token lives in the environment or in the owner-only secrets file next
- * to the codex home, which is the same place the Runtime reads it from.
- */
+Read the Control API token without ever printing it.
+
+The token lives in the environment or in the owner-only secrets file next
+to the codex home, which is the same place the Runtime reads it from.
+*/
 function readControlApiToken(
   options: TraceOptions,
-  env: NodeJS.ProcessEnv
+  environment: NodeJS.ProcessEnv
 ): string | null {
-  const direct = env.AUTODEV_CONTROL_API_TOKEN?.trim();
+  const direct = environment.AUTODEV_CONTROL_API_TOKEN?.trim();
   if (direct) return direct;
   const secretFile = path.join(options.codexHome, SECRET_FILE_NAME);
   let content: string;
@@ -207,8 +211,7 @@ function readControlApiToken(
     if (!line || line.startsWith("#")) continue;
     const assignment = line.startsWith("export ") ? line.slice(7).trim() : line;
     const separator = assignment.indexOf("=");
-    if (separator < 1) continue;
-    if (assignment.slice(0, separator).trim() !== "AUTODEV_CONTROL_API_TOKEN")
+    if ((separator < 1) || (assignment.slice(0, separator).trim() !== "AUTODEV_CONTROL_API_TOKEN"))
       continue;
     const raw = assignment.slice(separator + 1).trim();
     const quoted =
@@ -221,7 +224,9 @@ function readControlApiToken(
   return null;
 }
 
-/** The Control API path that answers this request. */
+/**
+The Control API path that answers this request.
+*/
 function controlApiPath(options: TraceOptions): string | null {
   const format = options.json ? "json" : "text";
   if (options.hooks) {
@@ -234,7 +239,7 @@ function controlApiPath(options: TraceOptions): string | null {
     return `/control/diagnostics/sessions/recent?limit=${options.recent}&format=${format}`;
   }
   if (!options.id) return null;
-  const params = new URLSearchParams({
+  const parameters = new URLSearchParams({
     format,
     includeEfficiency: options.efficiency ? "1" : "0",
     includeFailures: options.failures ? "1" : "0",
@@ -242,15 +247,17 @@ function controlApiPath(options: TraceOptions): string | null {
     includeItems: options.items ? "1" : "0",
     includeEvents: options.events ? "1" : "0"
   });
-  return `/control/diagnostics/sessions/${encodeURIComponent(options.id)}?${params.toString()}`;
+  return `/control/diagnostics/sessions/${encodeURIComponent(options.id)}?${parameters.toString()}`;
 }
 
-/** Ask the Control API, or return null when it cannot answer. */
+/**
+Ask the Control API, or return null when it cannot answer.
+*/
 async function readControlApi(
   options: TraceOptions,
-  env: NodeJS.ProcessEnv
+  environment: NodeJS.ProcessEnv
 ): Promise<string | null> {
-  const token = readControlApiToken(options, env);
+  const token = readControlApiToken(options, environment);
   const route = controlApiPath(options);
   if (!token || !route) return null;
   try {
@@ -271,16 +278,16 @@ async function readControlApi(
 }
 
 /**
- * Find the AutoDev checkout that owns this script.
- *
- * The skill ships inside the checkout (as `.agents/` or `.claude/`
- * projections) and is also installed into a codex home, so the checkout is
- * found by walking up for the CLI entry point.
- */
-function findRepoRoot(env: NodeJS.ProcessEnv): string | null {
-  const fromEnv = env.AUTODEV_REPO_ROOT?.trim();
-  if (fromEnv && existsSync(path.join(fromEnv, CLI_RELATIVE_PATH)))
-    return fromEnv;
+Find the AutoDev checkout that owns this script.
+
+The skill ships inside the checkout (as `.agents/` or `.claude/`
+projections) and is also installed into a codex home, so the checkout is
+found by walking up for the CLI entry point.
+*/
+function findRepositoryRoot(environment: NodeJS.ProcessEnv): string | null {
+  const fromEnvironment = environment.AUTODEV_REPO_ROOT?.trim();
+  if (fromEnvironment && existsSync(path.join(fromEnvironment, CLI_RELATIVE_PATH)))
+    return fromEnvironment;
   let dir = path.dirname(fileURLToPath(import.meta.url));
   for (let depth = 0; depth < 8; depth += 1) {
     if (existsSync(path.join(dir, CLI_RELATIVE_PATH))) return dir;
@@ -291,23 +298,25 @@ function findRepoRoot(env: NodeJS.ProcessEnv): string | null {
   return null;
 }
 
-/** Run the same engine through the Runtime CLI in this checkout. */
+/**
+Run the same engine through the Runtime CLI in this checkout.
+*/
 function runCliFallback(
   options: TraceOptions,
   argv: readonly string[],
-  env: NodeJS.ProcessEnv
+  environment: NodeJS.ProcessEnv
 ): number {
-  const repoRoot = findRepoRoot(env);
-  if (!repoRoot) {
+  const repositoryRoot = findRepositoryRoot(environment);
+  if (!repositoryRoot) {
     process.stderr.write(
       "session-trace: could not find the AutoDev checkout to run the diagnostics engine. Set AUTODEV_REPO_ROOT to the repository path.\n"
     );
     return 2;
   }
-  const cli = path.join(repoRoot, CLI_RELATIVE_PATH);
+  const cli = path.join(repositoryRoot, CLI_RELATIVE_PATH);
   const result = spawnSync(process.execPath, [cli, "diagnostics", ...argv], {
     stdio: "inherit",
-    env
+    env: environment
   });
   if (result.error) {
     process.stderr.write(
@@ -319,21 +328,21 @@ function runCliFallback(
 }
 
 async function main(argv: readonly string[]): Promise<number> {
-  const env = process.env;
-  const options = parseArgs(argv, env);
+  const environment = process.env;
+  const options = parseArguments(argv, environment);
   if (!options) {
     process.stderr.write(`${usage()}\n`);
     return 2;
   }
   const offline = options.offline || options.customPaths;
   if (!offline) {
-    const answer = await readControlApi(options, env);
+    const answer = await readControlApi(options, environment);
     if (answer !== null) {
       process.stdout.write(answer.endsWith("\n") ? answer : `${answer}\n`);
       return 0;
     }
   }
-  return runCliFallback(options, argv, env);
+  return runCliFallback(options, argv, environment);
 }
 
 if (

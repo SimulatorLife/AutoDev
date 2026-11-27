@@ -12,11 +12,11 @@ const CONFIG = {
 };
 
 /**
- * A service that accepts the request and never answers it.
- *
- * Only the reader's own deadline can end this, which is the thing under test:
- * the promise it returns settles when the signal it was given aborts.
- */
+A service that accepts the request and never answers it.
+
+Only the reader's own deadline can end this, which is the thing under test:
+the promise it returns settles when the signal it was given aborts.
+*/
 function hang(): typeof globalThis.fetch {
   return ((_input: RequestInfo | URL, init?: RequestInit) =>
     new Promise<Response>((_resolve, reject) => {

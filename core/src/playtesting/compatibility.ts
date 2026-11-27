@@ -1,4 +1,6 @@
-/** Semantic compatibility gates for the single canonical PlaytestComparison. */
+/**
+Semantic compatibility gates for the single canonical PlaytestComparison.
+*/
 
 import { SHA256_PATTERN } from "../shared/sha256.ts";
 import type {
@@ -48,11 +50,11 @@ function assertMetricSemantics(
 }
 
 /**
- * Decide whether two runs measure the same metric. A changed critic only
- * invalidates critic-produced dimensions; it does not invalidate an
- * unchanged game-owned deterministic evaluator. Missing or malformed source
- * fingerprints are rejected instead of treated as a compatible default.
- */
+Decide whether two runs measure the same metric. A changed critic only
+invalidates critic-produced dimensions; it does not invalidate an
+unchanged game-owned deterministic evaluator. Missing or malformed source
+fingerprints are rejected instead of treated as a compatible default.
+*/
 export function assessPlaytestMetricCompatibility(
   baseline: PlaytestMetricSemantics,
   candidate: PlaytestMetricSemantics
@@ -92,15 +94,23 @@ export function assessPlaytestMetricCompatibility(
 export interface PlaytestPairingSideEvidence {
   readonly episodeId: string;
   readonly scenarioId: string;
-  /** Stable assignment identity from the frozen experiment allocation. */
+  /**
+  Stable assignment identity from the frozen experiment allocation.
+  */
   readonly seedAllocationId: string;
-  /** Hash of the policy, knowledge and memory-reset contract. */
+  /**
+  Hash of the policy, knowledge and memory-reset contract.
+  */
   readonly policyInformationHash: string;
-  /** Exact initial state when the adapter can provide it, otherwise unobserved. */
+  /**
+  Exact initial state when the adapter can provide it, otherwise unobserved.
+  */
   readonly initialStateHash: string | null;
   readonly rngAlgorithm: string | null;
   readonly rngStreamVersion: string | null;
-  /** Hash of the observed exogenous random-draw sequence, not the seed text. */
+  /**
+  Hash of the observed exogenous random-draw sequence, not the seed text.
+  */
   readonly rngSequenceHash: string | null;
 }
 
@@ -112,9 +122,13 @@ export interface PlaytestPairEvidence {
 
 export interface PlaytestPairingEvidence {
   readonly requestedMode: "paired-initial-condition" | "paired-counterfactual";
-  /** SHA-256 of the immutable allocation manifest, including seed assignment. */
+  /**
+  SHA-256 of the immutable allocation manifest, including seed assignment.
+  */
   readonly allocationPlanHash: string;
-  /** All planned pairs are retained, including units with missing outcomes. */
+  /**
+  All planned pairs are retained, including units with missing outcomes.
+  */
   readonly pairs: readonly PlaytestPairEvidence[];
 }
 
@@ -246,35 +260,35 @@ function assessCounterfactualCoupling(pair: PlaytestPairEvidence): {
   readonly limitations: readonly string[];
 } {
   const limitations: string[] = [];
-  const initialStateMatches =
+  const isInitialStateMatches =
     pair.baseline.initialStateHash !== null &&
     pair.baseline.initialStateHash === pair.candidate.initialStateHash;
-  if (!initialStateMatches) {
+  if (!isInitialStateMatches) {
     limitations.push(
       `${pair.pairId}: identical initial-state hash was not established; counterfactual coupling is unavailable.`
     );
   }
-  const rngMatches =
+  const isRngMatches =
     pair.baseline.rngAlgorithm !== null &&
     pair.baseline.rngStreamVersion !== null &&
     pair.baseline.rngSequenceHash !== null &&
     pair.baseline.rngAlgorithm === pair.candidate.rngAlgorithm &&
     pair.baseline.rngStreamVersion === pair.candidate.rngStreamVersion &&
     pair.baseline.rngSequenceHash === pair.candidate.rngSequenceHash;
-  if (!rngMatches) {
+  if (!isRngMatches) {
     limitations.push(
       `${pair.pairId}: exogenous RNG stream was not proven identical; extra draws or stream divergence invalidate counterfactual coupling.`
     );
   }
-  return { matches: initialStateMatches && rngMatches, limitations };
+  return { matches: isInitialStateMatches && isRngMatches, limitations };
 }
 
 /**
- * Validate a preregistered paired assignment. A stream mismatch (including an
- * extra random draw) downgrades a counterfactual claim to initial-condition
- * pairing without discarding any assigned pair. A mismatched initial state,
- * scenario, seed assignment or policy/information contract is not-comparable.
- */
+Validate a preregistered paired assignment. A stream mismatch (including an
+extra random draw) downgrades a counterfactual claim to initial-condition
+pairing without discarding any assigned pair. A mismatched initial state,
+scenario, seed assignment or policy/information contract is not-comparable.
+*/
 export function assessPlaytestPairing(
   evidence: PlaytestPairingEvidence
 ): PlaytestPairingAssessment {
@@ -292,7 +306,7 @@ export function assessPlaytestPairing(
   const counterfactualLimitations: string[] = [];
   const algorithms = new Set<string>();
   const streamVersions = new Set<string>();
-  let allCounterfactualEvidenceMatches = true;
+  let isAllCounterfactualEvidenceMatches = true;
 
   for (const pair of evidence.pairs) {
     assertUniquePairId(pair, pairIds);
@@ -302,10 +316,12 @@ export function assessPlaytestPairing(
     incompatibilities.push(...pairIncompatibilities(pair));
     collectRngProvenance(pair, algorithms, streamVersions);
     const coupling = assessCounterfactualCoupling(pair);
-    if (!coupling.matches) {
-      allCounterfactualEvidenceMatches = false;
-      counterfactualLimitations.push(...coupling.limitations);
+    if (coupling.matches) {
+      continue;
     }
+
+    isAllCounterfactualEvidenceMatches = false;
+    counterfactualLimitations.push(...coupling.limitations);
   }
 
   if (incompatibilities.length > 0) {
@@ -323,7 +339,7 @@ export function assessPlaytestPairing(
 
   const counterfactual =
     evidence.requestedMode === "paired-counterfactual" &&
-    allCounterfactualEvidenceMatches;
+    isAllCounterfactualEvidenceMatches;
   const couplingDiagnostics =
     evidence.requestedMode === "paired-counterfactual" && !counterfactual
       ? counterfactualLimitations

@@ -1,12 +1,12 @@
 "use client";
 
 /**
- * Coordinates the run start acknowledgement with the one live status owner.
- *
- * The dashboard owns one workspace-scoped status reader. The start form only
- * submits a typed request; the run-status panel is the sole status surface.
- * A terminal transition refreshes the server-rendered evidence and recent result.
- */
+Coordinates the run start acknowledgement with the one live status owner.
+
+The dashboard owns one workspace-scoped status reader. The start form only
+submits a typed request; the run-status panel is the sole status surface.
+A terminal transition refreshes the server-rendered evidence and recent result.
+*/
 import {
   type ControlApiPlaytestingPolicyReadiness,
   type ControlApiPlaytestingRunRecord,
@@ -213,13 +213,13 @@ function adapterModeReadinessCard(
 }
 
 /**
- * The playtest modes the dashboard offers.
- *
- * They are named once because the dashboard reads the same mode in more than
- * one place -- the readiness it asks for, the mode it records, the tab it
- * marks as selected -- and a mode spelled two ways in two places is a mode
- * whose readiness is read from one vocabulary and written to another.
- */
+The playtest modes the dashboard offers.
+
+They are named once because the dashboard reads the same mode in more than
+one place -- the readiness it asks for, the mode it records, the tab it
+marks as selected -- and a mode spelled two ways in two places is a mode
+whose readiness is read from one vocabulary and written to another.
+*/
 const TARGET_GRID_CLASS = "grid gap-1.5";
 const FORM_LABEL_CLASS = `${SECTION_LABEL_CLASS} font-semibold`;
 
@@ -265,12 +265,12 @@ const VISUAL_FOCUS_PRESETS = [
 }[];
 
 /**
- * Every reason the launch may not start, in one place.
- *
- * The button's enabled state and the launch itself have to agree about this,
- * so the conditions are one function rather than two readings of the same
- * state.
- */
+Every reason the launch may not start, in one place.
+
+The button's enabled state and the launch itself have to agree about this,
+so the conditions are one function rather than two readings of the same
+state.
+*/
 function visualLaunchMayStart({
   pending,
   recoveryReady,
@@ -303,13 +303,13 @@ function visualLaunchMayStart({
 }
 
 /**
- * The launch request the cockpit sends, or null when there is nothing to
- * launch.
- *
- * The budget in the request is the smaller of what the operator asked for and
- * what the approved target allows, so the request can never ask for more
- * than the target was approved for.
- */
+The launch request the cockpit sends, or null when there is nothing to
+launch.
+
+The budget in the request is the smaller of what the operator asked for and
+what the approved target allows, so the request can never ask for more
+than the target was approved for.
+*/
 function visualLaunchPayload({
   workspaceId,
   capabilityRevision,
@@ -351,9 +351,9 @@ function visualLaunchPayload({
 }
 
 /**
- * The name the operator gave the area of focus, or what it is when they have
- * not named one.
- */
+The name the operator gave the area of focus, or what it is when they have
+not named one.
+*/
 function visualFocusLabel(focus: string): string {
   const preset = VISUAL_FOCUS_PRESETS.find(
     (candidate) => candidate.prompt === focus
@@ -363,8 +363,8 @@ function visualFocusLabel(focus: string): string {
 }
 
 /**
- * The decision backend the operator chose, if this mode offers it.
- */
+The decision backend the operator chose, if this mode offers it.
+*/
 function visualSelectedPolicy(
   policies: readonly ControlApiPlaytestingPolicyReadiness[],
   policyId: string
@@ -439,10 +439,10 @@ function VisualPlaytestLaunchCockpit({
   // The decision backends this mode offers, with each one's own readiness.
   // A backend that cannot be reached is offered but cannot be chosen.
   const policyOptions = readiness?.policies ?? [];
-  const selectedPolicyAvailable =
+  const isSelectedPolicyAvailable =
     visualSelectedPolicy(policyOptions, selectedPolicyId)?.status === "ready";
 
-  const launching = Boolean(
+  const isLaunching = Boolean(
     launchRecovery.pending || launchRecovery.pendingLaunch
   );
   const canSubmit = visualLaunchMayStart({
@@ -453,7 +453,7 @@ function VisualPlaytestLaunchCockpit({
     workspaceId,
     hasTarget: primaryTarget !== null,
     modeReady: isReady,
-    policyAvailable: selectedPolicyAvailable
+    policyAvailable: isSelectedPolicyAvailable
   });
 
   const handleLaunch = (): void => {
@@ -534,8 +534,8 @@ function VisualPlaytestLaunchCockpit({
         // A launch in flight is a working control, not an unavailable one: the
         // operator keeps their focus on the action they started. Everything
         // that makes a launch impossible stays a disabled control.
-        disabled: !canSubmit && !launching,
-        busy: launching,
+        disabled: !canSubmit && !isLaunching,
+        busy: isLaunching,
         onClick: handleLaunch,
         className:
           "inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl px-6 py-3.5 text-base font-semibold shadow-md",
@@ -644,7 +644,7 @@ function VisualPlaytestLaunchCockpit({
           React.createElement(
             "p",
             { className: `text-xs ${MUTED_TEXT_CLASS}` },
-            selectedPolicyAvailable
+            isSelectedPolicyAvailable
               ? "The backend that chooses each action. Its own readiness is reported above."
               : "The selected decision backend is not reachable, so no run can start with it."
           )
@@ -1018,12 +1018,12 @@ function PlaytestingModeReadinessCards({
 }
 
 /**
- * Keeps the browser's own dialog open or closed with the page's state.
- *
- * The dialog is the browser's: it traps focus and closes on Escape. The
- * page's state says whether it should be open and the browser's own state
- * says whether it is, and the two have to agree.
- */
+Keeps the browser's own dialog open or closed with the page's state.
+
+The dialog is the browser's: it traps focus and closes on Escape. The
+page's state says whether it should be open and the browser's own state
+says whether it is, and the two have to agree.
+*/
 function syncPlaytestDialog(
   dialog: HTMLDialogElement | null,
   open: boolean
@@ -1037,11 +1037,11 @@ function syncPlaytestDialog(
 }
 
 /**
- * What the live-run disclosure says while it is closed.
- *
- * A disclosure that says "Live run status" when a run is active hides the
- * one thing the operator opened it for.
- */
+What the live-run disclosure says while it is closed.
+
+A disclosure that says "Live run status" when a run is active hides the
+one thing the operator opened it for.
+*/
 function liveRunStatusLabel(activeCount: number, totalCount: number): string {
   if (activeCount > 0) {
     return `${String(activeCount)} active ${activeCount === 1 ? "run" : "runs"} · view live status`;
@@ -1052,7 +1052,9 @@ function liveRunStatusLabel(activeCount: number, totalCount: number): string {
   return totalCount > 0 ? "Most recent run status" : "No live runs";
 }
 
-/** The tab's own styling: the selected tab is the accent one. */
+/**
+The tab's own styling: the selected tab is the accent one.
+*/
 function modeTabClass(selected: boolean): string {
   return selected
     ? "border-accent text-accent"
@@ -1069,7 +1071,7 @@ export function PlaytestingRunDashboard({
   readonly showRunControls?: boolean;
 }): React.JSX.Element {
   const router = useRouter();
-  const dialogRef = useRef<HTMLDialogElement>(null);
+  const dialogReference = useRef<HTMLDialogElement>(null);
   const [playDialogOpen, setPlayDialogOpen] = useState(false);
   const live = usePlaytestingActiveRuns({
     workspaceId: scope.workspaceId ?? null
@@ -1079,9 +1081,9 @@ export function PlaytestingRunDashboard({
     setup.kind === "available"
       ? setup.capabilities.modeReadiness[AUTONOMOUS_VISUAL_MODE]
       : null;
-  const visualReady = visualReadiness?.status === "ready";
+  const isVisualReady = visualReadiness?.status === "ready";
   const [selectedMode, setSelectedMode] = useState<PlaytestingDashboardMode>(
-    visualReady ? AUTONOMOUS_VISUAL_MODE : ADAPTER_ACCELERATED_MODE
+    isVisualReady ? AUTONOMOUS_VISUAL_MODE : ADAPTER_ACCELERATED_MODE
   );
 
   const onRunStarted = useCallback(
@@ -1122,7 +1124,7 @@ export function PlaytestingRunDashboard({
     if (terminalBatches) router.refresh();
   }, [router, terminalBatches]);
   useEffect(() => {
-    syncPlaytestDialog(dialogRef.current, playDialogOpen);
+    syncPlaytestDialog(dialogReference.current, playDialogOpen);
   }, [playDialogOpen]);
 
   const activeCount = live.state.runs.filter(
@@ -1164,7 +1166,7 @@ export function PlaytestingRunDashboard({
           React.createElement(
             "dialog",
             {
-              ref: dialogRef,
+              ref: dialogReference,
               className:
                 "m-auto max-h-[calc(100dvh-2rem)] w-[min(52rem,calc(100%-2rem))] overflow-y-auto rounded-xl border border-border bg-surface p-0 text-fg shadow-2xl backdrop:bg-black/70",
               "aria-labelledby": "playtesting-new-dialog-title",
@@ -1230,7 +1232,7 @@ export function PlaytestingRunDashboard({
                   null,
                   "Autonomous Visual AI Player"
                 ),
-                visualReady
+                isVisualReady
                   ? React.createElement(
                       "span",
                       {

@@ -15,60 +15,60 @@ import { NavigationLink } from "./NavigationLink.ts";
 import {
   isSearchSource,
   matchesSearchDestination,
-  searchFailureMessage,
-  searchDestinations,
   type SearchDestination,
+  searchDestinations,
+  searchFailureMessage,
   type SearchSource
 } from "./search-destinations.ts";
 
 /**
- * The Console's command palette.
- *
- * Fourteen resources live behind a sidebar of labels, and the sentence that
- * says what each one is for lives in the page's own header -- so an operator
- * who knows what they want ("which surface tells me about context
- * compaction?") has no way to search for it: the labels are in the rail and
- * the purposes are in the pages.
- *
- * Every dashboard that carries this much state solves it the same way. Grafana
- * opens a command palette on `cmd+k` / `ctrl+k`, and its own documentation
- * lists what the palette is for: "search for and open dashboards and
- * folders", "locate pages within Grafana", and "initiate key actions from any
- * page in the application" (Grafana's Search documentation). Linear, GitHub
- * and Vercel carry the same affordance under the same key.
- *
- * So the Console has one too, and it searches the canonical navigation
- * registry -- the same registry the sidebar is built from -- by both the
- * section's name and the sentence that says what it is for. The registry is
- * the single owner of that sentence, so the palette cannot drift from the
- * page header: it reads the same words.
- *
- * Four details make it usable rather than decorative:
- *
- *   - The shortcut is ignored while the operator is typing in a field. A
- *     palette that swallows the letters of a filter is worse than no palette.
- *   - The results are links, so the browser's own affordances -- a new tab,
- *     the back button, the page's own navigation owner -- keep working.
- *   - A result is selected before a key is pressed, and the arrow keys move
- *     the selection, the way every command palette the operator already
- *     knows behaves.
- *   - The search answers in one keystroke: typing filters, and `Enter` opens
- *     the selected match, so the operator never has to reach for the mouse
- *     to get from a question to a page.
- *
- * The last two, and the dialog's own focus handling, are Ariakit's
- * (`@ariakit/react`): its `Dialog` owns modality, Escape, outside dismissal
- * and focus return; `FocusTrapRegion` contains Tab; and its `Combobox` owns
- * virtual focus, the arrow keys and Enter. See
- * https://ariakit.com/examples/dialog-combobox-command-menu.
- *
- * It is a `.ts` module and not a `.tsx` one, and that is not a style
- * preference: the Console's unit tests load the module graph directly, and
- * Node's type stripping does not carry JSX. A `.ts` module that imports a
- * `.tsx` module takes every test that imports it down with it -- nine files
- * at the time this was written. The markup is built with `createElement` for
- * the same reason `AppShell.ts` and `AppNav.ts` build theirs.
- */
+The Console's command palette.
+
+Fourteen resources live behind a sidebar of labels, and the sentence that
+says what each one is for lives in the page's own header -- so an operator
+who knows what they want ("which surface tells me about context
+compaction?") has no way to search for it: the labels are in the rail and
+the purposes are in the pages.
+
+Every dashboard that carries this much state solves it the same way. Grafana
+opens a command palette on `cmd+k` / `ctrl+k`, and its own documentation
+lists what the palette is for: "search for and open dashboards and
+folders", "locate pages within Grafana", and "initiate key actions from any
+page in the application" (Grafana's Search documentation). Linear, GitHub
+and Vercel carry the same affordance under the same key.
+
+So the Console has one too, and it searches the canonical navigation
+registry -- the same registry the sidebar is built from -- by both the
+section's name and the sentence that says what it is for. The registry is
+the single owner of that sentence, so the palette cannot drift from the
+page header: it reads the same words.
+
+Four details make it usable rather than decorative:
+
+  - The shortcut is ignored while the operator is typing in a field. A
+    palette that swallows the letters of a filter is worse than no palette.
+  - The results are links, so the browser's own affordances -- a new tab,
+    the back button, the page's own navigation owner -- keep working.
+  - A result is selected before a key is pressed, and the arrow keys move
+    the selection, the way every command palette the operator already
+    knows behaves.
+  - The search answers in one keystroke: typing filters, and `Enter` opens
+    the selected match, so the operator never has to reach for the mouse
+    to get from a question to a page.
+
+The last two, and the dialog's own focus handling, are Ariakit's
+(`@ariakit/react`): its `Dialog` owns modality, Escape, outside dismissal
+and focus return; `FocusTrapRegion` contains Tab; and its `Combobox` owns
+virtual focus, the arrow keys and Enter. See
+https://ariakit.com/examples/dialog-combobox-command-menu.
+
+It is a `.ts` module and not a `.tsx` one, and that is not a style
+preference: the Console's unit tests load the module graph directly, and
+Node's type stripping does not carry JSX. A `.ts` module that imports a
+`.tsx` module takes every test that imports it down with it -- nine files
+at the time this was written. The markup is built with `createElement` for
+the same reason `AppShell.ts` and `AppNav.ts` build theirs.
+*/
 
 interface PaletteResult {
   readonly id: string;
@@ -80,56 +80,64 @@ interface PaletteResult {
 }
 
 /**
- * The palette's name.
- *
- * One string names the trigger, the dialog and the field, so the thing the
- * operator activates and the thing that opens are the same thing by name.
- */
+The palette's name.
+
+One string names the trigger, the dialog and the field, so the thing the
+operator activates and the thing that opens are the same thing by name.
+*/
 const PALETTE_NAME = "Search";
 
-/** The field's id, so the label and the input agree on it. */
+/**
+The field's id, so the label and the input agree on it.
+*/
 const PALETTE_INPUT_ID = "command-palette-input";
 
-/** How a result row looks. */
+/**
+How a result row looks.
+*/
 const PALETTE_RESULT_CLASS =
   "flex min-h-6 flex-col gap-0.5 rounded px-3 py-2 transition-colors hover:bg-surface-raised";
 
 /**
- * How the selected result looks.
- *
- * The accent bar is drawn inside the row with an inset shadow, so the
- * selection costs the row no width: a selection that shifted the text would
- * move every line below it when the operator pressed an arrow key.
- */
+How the selected result looks.
+
+The accent bar is drawn inside the row with an inset shadow, so the
+selection costs the row no width: a selection that shifted the text would
+move every line below it when the operator pressed an arrow key.
+*/
 const PALETTE_ACTIVE_RESULT_CLASS =
   "data-[active-item]:bg-surface-raised data-[active-item]:shadow-[inset_2px_0_0_0_var(--color-accent)]";
 
 /**
- * The key the operator presses.
- *
- * The badge is the affordance: an operator who sees `⌘K` next to a button
- * learns that the palette is one key away, which is the difference between
- * searching the Console and scanning it.
- */
+The key the operator presses.
+
+The badge is the affordance: an operator who sees `⌘K` next to a button
+learns that the palette is one key away, which is the difference between
+searching the Console and scanning it.
+*/
 interface Shortcut {
-  /** What the badge shows, and what the control's name says. */
+  /**
+  What the badge shows, and what the control's name says.
+  */
   readonly badge: string;
 }
 
 /**
- * Whether a result matches the query.
- *
- * The query's words are matched one at a time, not as a phrase, because an
- * operator does not know the Console's wording and types the words they have:
- * "sessions playtest" has to find the page whose purpose says "playtest
- * sessions". A phrase match would answer that query with "no resources match
- * that search", which is worse than no answer -- the operator concludes the
- * resource does not exist.
- *
- * The words are matched against the section's name and its purpose together,
- * so a word can name either.
- */
-/** Whether the operator is typing into something, where a shortcut must not fire. */
+Whether a result matches the query.
+
+The query's words are matched one at a time, not as a phrase, because an
+operator does not know the Console's wording and types the words they have:
+"sessions playtest" has to find the page whose purpose says "playtest
+sessions". A phrase match would answer that query with "no resources match
+that search", which is worse than no answer -- the operator concludes the
+resource does not exist.
+
+The words are matched against the section's name and its purpose together,
+so a word can name either.
+*/
+/**
+Whether the operator is typing into something, where a shortcut must not fire.
+*/
 function isTyping(target: EventTarget | null): boolean {
   if (target === null || !(target instanceof HTMLElement)) return false;
   if (target.isContentEditable) return true;
@@ -138,38 +146,40 @@ function isTyping(target: EventTarget | null): boolean {
 }
 
 /**
- * The key this machine calls the shortcut.
- *
- * Read from the user agent rather than from a media query, because the
- * question is which keyboard the operator has in front of them and not which
- * screen they are looking at.
- *
- * The badge is one string, and the control's name carries it: the badge is
- * visible text, and a visible word that the name leaves out is a word the
- * operator can see and nobody else can -- which is the same defect as the
- * state pill that was reachable by sight alone, in a different costume.
- */
+The key this machine calls the shortcut.
+
+Read from the user agent rather than from a media query, because the
+question is which keyboard the operator has in front of them and not which
+screen they are looking at.
+
+The badge is one string, and the control's name carries it: the badge is
+visible text, and a visible word that the name leaves out is a word the
+operator can see and nobody else can -- which is the same defect as the
+state pill that was reachable by sight alone, in a different costume.
+*/
 function shortcutForThisMachine(): Shortcut {
-  const nav: { readonly userAgent?: string } = globalThis.navigator;
+  const nav: { readonly userAgent?: string } = navigator;
   const agent = nav.userAgent ?? "";
   return { badge: agent.includes("Mac") ? "⌘K" : "Ctrl K" };
 }
 
 export interface CommandPaletteProps {
   /**
-   * The resource the operator is on, when they are on one.
-   *
-   * The palette says which of its results is the page they are already on, so
-   * a search that returns the page they are looking at is not a dead end. It
-   * is a prop rather than a pathname because the shell already knows which
-   * resource it is showing, and a palette that has to ask the router where it
-   * is cannot be rendered outside one. A page that belongs to no section marks
-   * no result as the current one.
-   */
+  The resource the operator is on, when they are on one.
+  
+  The palette says which of its results is the page they are already on, so
+  a search that returns the page they are looking at is not a dead end. It
+  is a prop rather than a pathname because the shell already knows which
+  resource it is showing, and a palette that has to ask the router where it
+  is cannot be rendered outside one. A page that belongs to no section marks
+  no result as the current one.
+  */
   readonly activeSection: CanonicalNavSection | undefined;
 }
 
-/** A result's element id, so the announced selection can name the active row. */
+/**
+A result's element id, so the announced selection can name the active row.
+*/
 function resultId(id: string): string {
   return (
     "command-palette-result-" + id.toLowerCase().replaceAll(/[^a-z0-9]+/gu, "-")
@@ -177,20 +187,20 @@ function resultId(id: string): string {
 }
 
 /**
- * The palette is Ariakit's dialog around Ariakit's combobox.
- *
- * Ariakit owns everything the keyboard and the focus do: the dialog is modal,
- * so the page behind it is inert, Escape and an outside click dismiss it, and
- * the focus goes to the field on open; the combobox keeps the focus in the
- * field while the arrow keys move a virtual selection that wraps, selects the
- * first match as the query changes, and opens the selected link on Enter. This
- * module keeps only what is the Console's: the registry it searches, the
- * word-by-word match, the global shortcut and its typing guard, the
- * announcements, and the hand-off to the navigation owner.
- *
- * One state, "open", drives both stores, so a result that hides the combobox
- * on click closes the dialog with it.
- */
+The palette is Ariakit's dialog around Ariakit's combobox.
+
+Ariakit owns everything the keyboard and the focus do: the dialog is modal,
+so the page behind it is inert, Escape and an outside click dismiss it, and
+the focus goes to the field on open; the combobox keeps the focus in the
+field while the arrow keys move a virtual selection that wraps, selects the
+first match as the query changes, and opens the selected link on Enter. This
+module keeps only what is the Console's: the registry it searches, the
+word-by-word match, the global shortcut and its typing guard, the
+announcements, and the hand-off to the navigation owner.
+
+One state, "open", drives both stores, so a result that hides the combobox
+on click closes the dialog with it.
+*/
 export function CommandPalette({
   activeSection
 }: CommandPaletteProps): React.JSX.Element {
@@ -202,9 +212,11 @@ export function CommandPalette({
   >([]);
   const [recordsLoaded, setRecordsLoaded] = React.useState(false);
   const [recordStatus, setRecordStatus] = React.useState("");
-  const triggerRef = React.useRef<HTMLButtonElement | null>(null);
-  /** Whether the palette closed because the operator chose a destination. */
-  const navigatedRef = React.useRef(false);
+  const triggerReference = React.useRef<HTMLButtonElement | null>(null);
+  /**
+  Whether the palette closed because the operator chose a destination.
+  */
+  const navigatedReference = React.useRef(false);
 
   const combobox = Ariakit.useComboboxStore({
     open,
@@ -237,7 +249,7 @@ export function CommandPalette({
 
   React.useEffect(() => {
     if (!open || recordsLoaded) return;
-    let cancelled = false;
+    let isCancelled = false;
     setRecordStatus("Loading search records.");
     void globalThis
       .fetch("/api/console/search")
@@ -246,7 +258,7 @@ export function CommandPalette({
         data: (await response.json()) as unknown
       }))
       .then(({ ok, data }) => {
-        if (cancelled) return;
+        if (isCancelled) return;
         if (data === null || typeof data !== "object") {
           setRecordStatus(searchFailureMessage(["endpoint"]));
           return;
@@ -273,12 +285,12 @@ export function CommandPalette({
         }
       })
       .catch(() => {
-        if (cancelled) return;
+        if (isCancelled) return;
         setRecordStatus(searchFailureMessage(["endpoint"]));
         setRecordsLoaded(false);
       });
     return () => {
-      cancelled = true;
+      isCancelled = true;
     };
   }, [open, recordsLoaded]);
 
@@ -314,13 +326,13 @@ export function CommandPalette({
         ".";
 
   /**
-   * What the trigger is called.
-   *
-   * The badge is inside the trigger, so the key is visible text on the
-   * control -- and a name that leaves a visible word out removes it. The name
-   * therefore carries the key, and the tooltip says the same thing the name
-   * says, which is the rule the Console's own links follow.
-   */
+  What the trigger is called.
+  
+  The badge is inside the trigger, so the key is visible text on the
+  control -- and a name that leaves a visible word out removes it. The name
+  therefore carries the key, and the tooltip says the same thing the name
+  says, which is the rule the Console's own links follow.
+  */
   const triggerName =
     shortcut === null
       ? PALETTE_NAME
@@ -331,7 +343,7 @@ export function CommandPalette({
   }, []);
 
   const openPalette = React.useCallback((): void => {
-    navigatedRef.current = false;
+    navigatedReference.current = false;
     setOpen(true);
   }, []);
 
@@ -354,7 +366,7 @@ export function CommandPalette({
   const trigger = React.createElement(
     "button",
     {
-      ref: triggerRef,
+      ref: triggerReference,
       type: "button",
       onClick: openPalette,
       className:
@@ -422,12 +434,12 @@ export function CommandPalette({
   );
 
   /**
-   * What the palette has selected, said out loud.
-   *
-   * The selection is a visual accent bar, and a screen reader user cannot see
-   * an accent bar. The count says how many resources match; this says which
-   * one Enter would open, and it changes only when the selection does.
-   */
+  What the palette has selected, said out loud.
+  
+  The selection is a visual accent bar, and a screen reader user cannot see
+  an accent bar. The count says how many resources match; this says which
+  one Enter would open, and it changes only when the selection does.
+  */
   const selection = React.createElement(
     "p",
     {
@@ -450,7 +462,7 @@ export function CommandPalette({
         hideOnClick: true,
         setValueOnClick: false,
         onClick: (): void => {
-          navigatedRef.current = true;
+          navigatedReference.current = true;
         },
         render: React.createElement(NavigationLink, {
           href: result.path,
@@ -531,8 +543,8 @@ export function CommandPalette({
         // Dismissal hands the focus back to the trigger however the palette
         // was opened. A palette that closed by navigating leaves the focus to
         // the navigation owner, which moves it to the new page's heading.
-        finalFocus: triggerRef,
-        autoFocusOnHide: (): boolean => !navigatedRef.current,
+        finalFocus: triggerReference,
+        autoFocusOnHide: (): boolean => !navigatedReference.current,
         // The dialog and its backdrop are rendered into the document by
         // Ariakit's portal. The shell's header carries a backdrop-blur, which
         // makes it the containing block for fixed descendants, so a palette

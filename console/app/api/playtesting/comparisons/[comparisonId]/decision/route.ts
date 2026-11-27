@@ -1,4 +1,6 @@
-/** Same-origin, typed owner decision; Runtime remains the authoritative writer. */
+/**
+Same-origin, typed owner decision; Runtime remains the authoritative writer.
+*/
 import {
   type ControlApiPlaytestingComparisonDecisionRequest,
   hasControlCharacters

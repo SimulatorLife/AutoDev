@@ -3,21 +3,21 @@ import { expect, test } from "@playwright/test";
 import { SWEEP_ROUTES, waitForPageContent } from "./acceptance-helpers.ts";
 
 /**
- * The focus order is the page's own.
- *
- * The keyboard reaches a control in the order the page puts it in, and that is
- * the order a screen reader user expects as well. A control that is taken out
- * of that order -- a positive `tabindex` -- is a control the keyboard reaches
- * before the page has said anything, and it is the usual way a focus bug gets
- * "fixed" by making the page worse.
- *
- * The other half is the control that is hidden from assistive technology but
- * still takes focus: a screen reader user tabs into something nobody can
- * name, and the page has told them nothing about where they are.
- *
- * The sweep that found this class in the Console found nothing to fix, which
- * is the point of taking it: the two rules hold, and this is what holds them.
- */
+The focus order is the page's own.
+
+The keyboard reaches a control in the order the page puts it in, and that is
+the order a screen reader user expects as well. A control that is taken out
+of that order -- a positive `tabindex` -- is a control the keyboard reaches
+before the page has said anything, and it is the usual way a focus bug gets
+"fixed" by making the page worse.
+
+The other half is the control that is hidden from assistive technology but
+still takes focus: a screen reader user tabs into something nobody can
+name, and the page has told them nothing about where they are.
+
+The sweep that found this class in the Console found nothing to fix, which
+is the point of taking it: the two rules hold, and this is what holds them.
+*/
 const FOCUSABLE = "a[href], button, input, select, textarea, [tabindex]";
 
 const ROUTES = SWEEP_ROUTES;

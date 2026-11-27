@@ -19,23 +19,23 @@ import { RUNTIME_MODULES } from "../src/platform/install-materializer.ts";
 import { renderRuntimeMirrorPackage } from "../src/platform/runtime-mirror-package.ts";
 
 /**
- * The installed tree's own tests.
- *
- * The hook does not run from the repository: the installer copies the Runtime
- * modules into `$CODEX_HOME/src`, writes the mirror manifest beside them, and
- * puts the execution contract in `$CODEX_HOME/config`. A hook that works in
- * the checkout and not in the installed tree enforces nothing, so the
- * installed layout is exercised here.
- */
+The installed tree's own tests.
+
+The hook does not run from the repository: the installer copies the Runtime
+modules into `$CODEX_HOME/src`, writes the mirror manifest beside them, and
+puts the execution contract in `$CODEX_HOME/config`. A hook that works in
+the checkout and not in the installed tree enforces nothing, so the
+installed layout is exercised here.
+*/
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 
 /**
- * Materialize the Runtime into a temporary Codex home.
- *
- * The layout is the one the installer writes: the modules under `src`, the
- * mirror manifest beside them, and the execution contract under `config`.
- */
+Materialize the Runtime into a temporary Codex home.
+
+The layout is the one the installer writes: the modules under `src`, the
+mirror manifest beside them, and the execution contract under `config`.
+*/
 function installedCodexHome(): string {
   const codexHome = mkdtempSync(path.join(tmpdir(), "autodev-installed-tree-"));
   const source = path.join(codexHome, "src");
@@ -75,8 +75,8 @@ function installedCodexHome(): string {
 }
 
 /**
- * Run the installed hook with one tool call.
- */
+Run the installed hook with one tool call.
+*/
 function runInstalledHook(
   codexHome: string,
   input: {
@@ -96,7 +96,7 @@ function runInstalledHook(
     tool_use_id: "call",
     transcript_path: null,
     turn_id: "turn",
-    ...(input.agentType === undefined ? {} : { agent_type: input.agentType })
+    ...(input.agentType !== undefined && { agent_type: input.agentType })
   });
   try {
     const output = execFileSync(

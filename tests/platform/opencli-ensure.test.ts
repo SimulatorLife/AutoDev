@@ -8,7 +8,7 @@ import {
   resolveOpencliEnsureOptions
 } from "@simulatorlife/autodev-runtime/platform/opencli-ensure";
 
-function deps(overrides: Partial<OpencliEnsureDeps> = {}): OpencliEnsureDeps {
+function dependencies(overrides: Partial<OpencliEnsureDeps> = {}): OpencliEnsureDeps {
   return {
     launchd: {
       isLoaded: () => false,
@@ -54,13 +54,13 @@ test("missing opencli is an optional no-op and a loaded agent is kickstarted", a
     HOME: "/home/test",
     OPENCLI_BIN: "/nonexistent/opencli"
   });
-  assert.equal(await ensureOpencliProxy(unavailable, deps()), true);
+  assert.equal(await ensureOpencliProxy(unavailable, dependencies()), true);
 
   const calls: string[] = [];
   let probes = 0;
   const ready = await ensureOpencliProxy(
     { ...unavailable, available: true, readyTimeoutMs: 20 },
-    deps({
+    dependencies({
       launchd: {
         isLoaded: () => true,
         kickstart: (label) => {

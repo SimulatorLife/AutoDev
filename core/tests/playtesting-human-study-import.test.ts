@@ -141,13 +141,13 @@ function makeRow(
 }
 
 /**
- * The exact synthetic five-player fixture from
- * docs/playtesting-measurement-contract.md#7-human-labels-and-change-sensitivity:
- * P1 ENJ=(1,2), P2=(0,1), P3=(-1,null), P4=(2,2), P5=(1,3) then withdraws.
- * Ten invited exposures, eight retained exposure records, seven valid ENJ
- * responses, four retained participants, three complete pairs. A mean=0.5
- * (n=4); B mean=5/3 (n=3); complete-pair differences average 2/3 (n=3).
- */
+The exact synthetic five-player fixture from
+docs/playtesting-measurement-contract.md#7-human-labels-and-change-sensitivity:
+P1 ENJ=(1,2), P2=(0,1), P3=(-1,null), P4=(2,2), P5=(1,3) then withdraws.
+Ten invited exposures, eight retained exposure records, seven valid ENJ
+responses, four retained participants, three complete pairs. A mean=0.5
+(n=4); B mean=5/3 (n=3); complete-pair differences average 2/3 (n=3).
+*/
 function fivePlayerFixtureRows(
   study: HumanPlaytestStudy
 ): readonly HumanStudyRawRow[] {
@@ -182,7 +182,7 @@ test("importHumanStudyResponses accepts the five-player fixture: 10 rows x 1 ite
   assert.equal(outcome.unchanged.length, 0);
 });
 
-test("P3\u2019s missing B-build ENJ item stays visible as an explicit null, not dropped", () => {
+test("P3\u{2019}s missing B-build ENJ item stays visible as an explicit null, not dropped", () => {
   const study = makeStudy();
   const outcome = importHumanStudyResponses(
     study,
@@ -222,7 +222,7 @@ test("re-importing the identical five-player export is idempotent: no new accept
   assert.equal(second.quarantined.length, 0);
 });
 
-test("P5 withdrawal recomputation reproduces the fixture\u2019s exact A/B means and complete-pair difference", () => {
+test("P5 withdrawal recomputation reproduces the fixture\u{2019}s exact A/B means and complete-pair difference", () => {
   const study = makeStudy();
   const rows = fivePlayerFixtureRows(study);
   const outcome = importHumanStudyResponses(
@@ -399,7 +399,7 @@ test("trusted build, instrument-hash, episode, consent, exposure, timing, and wi
   }
 });
 
-test("importHumanStudyResponses quarantines an independent duplicate participant\u00D7episode\u00D7instrument submission", () => {
+test("importHumanStudyResponses quarantines an independent duplicate participant\u{D7}episode\u{D7}instrument submission", () => {
   const study = makeStudy();
   const base = makeRow(study, {
     participantId: "p1",

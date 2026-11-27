@@ -1,4 +1,6 @@
-/** Human change-sensitivity decision rules; interval estimation stays external. */
+/**
+Human change-sensitivity decision rules; interval estimation stays external.
+*/
 import type {
   HumanPlaytestStudy,
   PlaytestHumanPreferencePlan
@@ -12,7 +14,9 @@ import {
 const SHA256_PATTERN = /^[a-f\d]{64}$/u;
 
 export interface PlaytestHumanPreferenceCounts {
-  /** Unique eligible participants assigned to the two-build preference task. */
+  /**
+  Unique eligible participants assigned to the two-build preference task.
+  */
   readonly eligibleParticipants: number;
   readonly preferA: number;
   readonly preferB: number;
@@ -22,16 +26,22 @@ export interface PlaytestHumanPreferenceCounts {
 }
 
 export interface PlaytestHumanPreferenceResponse {
-  /** Restricted pseudonymous key used only to enforce one response per person. */
+  /**
+  Restricted pseudonymous key used only to enforce one response per person.
+  */
   readonly participantKey: string;
   readonly answer: "A" | "B" | "tie" | "unable-to-judge" | null;
 }
 
 export interface ClassifyPlaytestPreferenceInput {
   readonly counts: PlaytestHumanPreferenceCounts;
-  /** Approved study is the authority for the frozen plan and build pair. */
+  /**
+  Approved study is the authority for the frozen plan and build pair.
+  */
   readonly study: HumanPlaytestStudy;
-  /** External interval for p(B preferred | decisive answer), matching the plan. */
+  /**
+  External interval for p(B preferred | decisive answer), matching the plan.
+  */
   readonly interval: PlaytestNumericInterval | null;
 }
 
@@ -59,10 +69,10 @@ export interface PlaytestPreferenceSensitivityResult {
 }
 
 /**
- * Counts one project-authored A/B preference response per eligible participant.
- * Include a null answer for eligible nonresponders so missingness is retained.
- * Participant keys are checked for duplicates and are never returned.
- */
+Counts one project-authored A/B preference response per eligible participant.
+Include a null answer for eligible nonresponders so missingness is retained.
+Participant keys are checked for duplicates and are never returned.
+*/
 export function aggregatePlaytestPreferenceResponses(
   responses: readonly PlaytestHumanPreferenceResponse[]
 ): PlaytestHumanPreferenceCounts {
@@ -224,7 +234,9 @@ function assertVersionedReference(
   }
 }
 
-/** Bind the optional plan to the exact builds in an approved, counterbalanced study. */
+/**
+Bind the optional plan to the exact builds in an approved, counterbalanced study.
+*/
 export function assertHumanStudyPreferencePlan(
   study: HumanPlaytestStudy
 ): void {
@@ -302,10 +314,10 @@ function assertInput(
 }
 
 /**
- * Applies the preregistered exclusion, precision and practical-margin gates
- * to an externally estimated participant-level preference interval. This
- * function does not calculate confidence intervals or promote a game build.
- */
+Applies the preregistered exclusion, precision and practical-margin gates
+to an externally estimated participant-level preference interval. This
+function does not calculate confidence intervals or promote a game build.
+*/
 export function classifyPlaytestPreferenceSensitivity(
   input: ClassifyPlaytestPreferenceInput
 ): PlaytestPreferenceSensitivityResult {

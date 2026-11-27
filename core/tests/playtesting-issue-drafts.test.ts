@@ -1,15 +1,15 @@
 /**
- * Review-gated issue drafts.
- *
- * The invariants worth protecting: AutoDev drafts and never publishes, a
- * hypothesis stays labelled a hypothesis, a game cannot grant itself the
- * permission its operator withheld, and a closed finding is silent while a
- * regression is not.
- *
- * The fixture builds a real `PlaytestFinding` with no cast, so an invented
- * status or verification stage is a compile error rather than a value that
- * quietly never occurs in the domain.
- */
+Review-gated issue drafts.
+
+The invariants worth protecting: AutoDev drafts and never publishes, a
+hypothesis stays labelled a hypothesis, a game cannot grant itself the
+permission its operator withheld, and a closed finding is silent while a
+regression is not.
+
+The fixture builds a real `PlaytestFinding` with no cast, so an invented
+status or verification stage is a compile error rather than a value that
+quietly never occurs in the domain.
+*/
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -262,7 +262,7 @@ test("a draft carries the finding's evidence verbatim, not a summary of it", () 
   assert.match(draft.body, new RegExp(draft.findingId, "u"));
   assert.match(draft.body, new RegExp(draft.fingerprint, "u"));
   assert.deepEqual(
-    draft.evidenceRefs.map((ref) => `${ref.kind} ${ref.id} @ step ${ref.step}`),
+    draft.evidenceRefs.map((reference) => `${reference.kind} ${reference.id} @ step ${reference.step}`),
     ["episode episode-17 @ step 23"]
   );
 });

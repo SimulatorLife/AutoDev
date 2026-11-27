@@ -1,9 +1,9 @@
 /**
- * Server-side helpers shared by every Console route.
- *
- * Server-only. Imports `./src/lib/server/...` and `./src/components/...`.
- * Must never be imported from any client component.
- */
+Server-side helpers shared by every Console route.
+
+Server-only. Imports `./src/lib/server/...` and `./src/components/...`.
+Must never be imported from any client component.
+*/
 
 import {
   type CanonicalNavSection,
@@ -27,11 +27,11 @@ export interface NodeContext {
 }
 
 /**
- * Resolve the shared, server-only Console context for a route. The control API
- * configuration is `null` when the service token is missing; the route is
- * responsible for rendering an explicit unavailable state instead of falling
- * back to fabricated data.
- */
+Resolve the shared, server-only Console context for a route. The control API
+configuration is `null` when the service token is missing; the route is
+responsible for rendering an explicit unavailable state instead of falling
+back to fabricated data.
+*/
 export function readNodeContext(pathname: string): NodeContext {
   const section = canonicalSectionFromPath(pathname);
   if (!section) {
@@ -50,42 +50,42 @@ export interface UnavailableProps {
 }
 
 /**
- * The machine code a read abandoned at the Console's own deadline carries.
- *
- * The Control API answers this code when the service held the connection open
- * and did not answer in time -- it is reachable, and slow.
- */
+The machine code a read abandoned at the Console's own deadline carries.
+
+The Control API answers this code when the service held the connection open
+and did not answer in time -- it is reachable, and slow.
+*/
 const CONTROL_API_TIMEOUT_CODE = "autodev_control_api_timeout";
 
 /**
- * What to do when the service answered too slowly.
- *
- * The default advice -- configure the server-side integration -- is right for
- * a missing credential and wrong for a slow query, and it sends the operator
- * to reconfigure a credential that is working. Measured against a Control API
- * fixture that accepted the request and never answered, the page settled on
- * "unreachable" and told the operator to fix an integration that was fine.
- *
- * `/evaluations` already draws this distinction for itself. The code is the
- * same on every route, so the shell can carry it once instead of each of the
- * twenty routes that read the Control API having to remember it.
- */
+What to do when the service answered too slowly.
+
+The default advice -- configure the server-side integration -- is right for
+a missing credential and wrong for a slow query, and it sends the operator
+to reconfigure a credential that is working. Measured against a Control API
+fixture that accepted the request and never answered, the page settled on
+"unreachable" and told the operator to fix an integration that was fine.
+
+`/evaluations` already draws this distinction for itself. The code is the
+same on every route, so the shell can carry it once instead of each of the
+twenty routes that read the Control API having to remember it.
+*/
 const CONTROL_API_TIMEOUT_HINT =
   "The Control API accepted the read and did not answer before the Console gave up. Check whether the query is slow against the telemetry store.";
 
 /**
- * The codes that mean the service, or its credential, is not there at all.
- *
- * These are the failures the shell's own advice is true of: there is nothing
- * listening, or nothing is allowed to listen, so the operator has to configure
- * the integration before the read can answer.
- *
- * Every other failure got that advice too, and it was wrong for them: a
- * declaration the Runtime could not apply, a catalogue nobody read, a response
- * the Console could not parse. The service answered in all three, and telling
- * the operator to configure an integration that is already configured sends
- * them to repair the wrong thing.
- */
+The codes that mean the service, or its credential, is not there at all.
+
+These are the failures the shell's own advice is true of: there is nothing
+listening, or nothing is allowed to listen, so the operator has to configure
+the integration before the read can answer.
+
+Every other failure got that advice too, and it was wrong for them: a
+declaration the Runtime could not apply, a catalogue nobody read, a response
+the Console could not parse. The service answered in all three, and telling
+the operator to configure an integration that is already configured sends
+them to repair the wrong thing.
+*/
 const SERVICE_ABSENT_CODES: ReadonlySet<string> = new Set([
   "autodev_unreachable",
   "autodev_control_api_disabled",
@@ -94,66 +94,70 @@ const SERVICE_ABSENT_CODES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * What to do when the service answered, but not with anything usable.
- *
- * The reason above is the service's own, and it is the thing to act on: a
- * declaration that could not be applied names what is wrong with the
- * declaration, and a catalogue nobody read says that the read has to answer
- * first. This says so rather than inventing a cause the shell does not know.
- */
+What to do when the service answered, but not with anything usable.
+
+The reason above is the service's own, and it is the thing to act on: a
+declaration that could not be applied names what is wrong with the
+declaration, and a catalogue nobody read says that the read has to answer
+first. This says so rather than inventing a cause the shell does not know.
+*/
 const READ_DID_NOT_COMPLETE_HINT =
   "The Console could not complete this read. The reason above is what to act on.";
 
-/** Trailing sentence punctuation, which a heading may omit and a message may not. */
+/**
+Trailing sentence punctuation, which a heading may omit and a message may not.
+*/
 const TRAILING_PUNCTUATION = /[.!?:;]+$/;
 
 /**
- * Normalised for the comparison below: case-folded, trimmed, and stripped of
- * trailing punctuation.
- */
+Normalised for the comparison below: case-folded, trimmed, and stripped of
+trailing punctuation.
+*/
 function normaliseClaim(value: string): string {
   return value.trim().toLowerCase().replace(TRAILING_PUNCTUATION, "");
 }
 
 /**
- * Whether the message says what the heading already said.
- *
- * The heading and the message are authored independently -- the title by the
- * route that caught the failure, the message by the Runtime that raised it --
- * so they can land on the same sentence. `/memory` does: both read "Memory
- * storage is not configured", and the panel printed it twice, once as an `h2`
- * and once as the paragraph under it.
- *
- * `/evaluations` shows the panel working as intended, with a heading and a
- * message that say different things, so this is not the shell always
- * duplicating -- it is two writers agreeing by coincidence, which no reviewer
- * sees in the markup because neither string is wrong on its own.
- *
- * Compared case-insensitively and ignoring trailing punctuation, since a title
- * written without a full stop and a sentence written with one are the same
- * claim. The hint is left alone: it is the part that says what to do, and it is
- * the part most worth keeping even when it restates.
- */
+Whether the message says what the heading already said.
+
+The heading and the message are authored independently -- the title by the
+route that caught the failure, the message by the Runtime that raised it --
+so they can land on the same sentence. `/memory` does: both read "Memory
+storage is not configured", and the panel printed it twice, once as an `h2`
+and once as the paragraph under it.
+
+`/evaluations` shows the panel working as intended, with a heading and a
+message that say different things, so this is not the shell always
+duplicating -- it is two writers agreeing by coincidence, which no reviewer
+sees in the markup because neither string is wrong on its own.
+
+Compared case-insensitively and ignoring trailing punctuation, since a title
+written without a full stop and a sentence written with one are the same
+claim. The hint is left alone: it is the part that says what to do, and it is
+the part most worth keeping even when it restates.
+*/
 function repeatsTheTitle(title: string, message: string): boolean {
   return normaliseClaim(title) === normaliseClaim(message);
 }
 
 /**
- * Give a machine token line-break opportunities at its own separators.
- *
- * `overflow-wrap: break-word` cannot do this on its own: CSS has no break
- * opportunity at `_`, so a snake_case code is one unbreakable word and the
- * browser has to cut it somewhere arbitrary. `break-all` made that arbitrary
- * cut permanent instead of a last resort, and the failure shell then rendered
- * `autodev_control_api_invalid_perm` + `issions_response` — two strings that
- * are not the code, and neither of which matches a line in a log.
- *
- * A `<wbr>` after each separator makes those positions real break
- * opportunities, so the token wraps only between its own groups and each line
- * is a true prefix of the value. It renders no characters, so the element's
- * text is still exactly `code`.
- */
-/** Keeps each separator with the group it ends, so a break lands after it. */
+Give a machine token line-break opportunities at its own separators.
+
+`overflow-wrap: break-word` cannot do this on its own: CSS has no break
+opportunity at `_`, so a snake_case code is one unbreakable word and the
+browser has to cut it somewhere arbitrary. `break-all` made that arbitrary
+cut permanent instead of a last resort, and the failure shell then rendered
+`autodev_control_api_invalid_perm` + `issions_response` — two strings that
+are not the code, and neither of which matches a line in a log.
+
+A `<wbr>` after each separator makes those positions real break
+opportunities, so the token wraps only between its own groups and each line
+is a true prefix of the value. It renders no characters, so the element's
+text is still exactly `code`.
+*/
+/**
+Keeps each separator with the group it ends, so a break lands after it.
+*/
 const AFTER_UNDERSCORE = /(?<=_)/u;
 
 function breakableToken(value: string): React.ReactNode[] {
@@ -239,26 +243,26 @@ export function ResourceUnavailable({
 }
 
 /**
- * The failure shell for a page whose Control API credential is missing.
- *
- * Eighteen pages open with this guard, and each one used to spell all three
- * parts itself: the title, the machine code, and the sentence naming the
- * environment variable. Only the noun varied — "agent configuration",
- * "governed memory", "tool catalog data" — and that part is genuinely per page.
- * `/evaluations` names evaluation *results*, because the Runtime exposes one
- * `GET /control/evaluations` returning retained results and no definitions read
- * behind it; a page that sent an operator looking for a surface it does not read
- * would point them at a thing the credential was never going to produce.
- *
- * The other two parts are not per page, and they are the parts that go stale.
- * Renaming `AUTODEV_CONTROL_API_TOKEN` or retitling the shell meant eighteen
- * edits, and the seventeen nobody remembered would have kept pointing at a
- * variable that no longer exists. The code is load-bearing past the page
- * too — tests assert on `data-error-code` and logs match on it — so it belongs
- * in one definition rather than eighteen.
- *
- * `reads` is the noun phrase only; the sentence around it is fixed.
- */
+The failure shell for a page whose Control API credential is missing.
+
+Eighteen pages open with this guard, and each one used to spell all three
+parts itself: the title, the machine code, and the sentence naming the
+environment variable. Only the noun varied — "agent configuration",
+"governed memory", "tool catalog data" — and that part is genuinely per page.
+`/evaluations` names evaluation *results*, because the Runtime exposes one
+`GET /control/evaluations` returning retained results and no definitions read
+behind it; a page that sent an operator looking for a surface it does not read
+would point them at a thing the credential was never going to produce.
+
+The other two parts are not per page, and they are the parts that go stale.
+Renaming `AUTODEV_CONTROL_API_TOKEN` or retitling the shell meant eighteen
+edits, and the seventeen nobody remembered would have kept pointing at a
+variable that no longer exists. The code is load-bearing past the page
+too — tests assert on `data-error-code` and logs match on it — so it belongs
+in one definition rather than eighteen.
+
+`reads` is the noun phrase only; the sentence around it is fixed.
+*/
 export function controlApiCredentialUnavailable(
   reads: string
 ): React.JSX.Element {
@@ -270,16 +274,16 @@ export function controlApiCredentialUnavailable(
 }
 
 /**
- * Render a Console page with the shared AppShell using the canonical section
- * for navigation highlighting. Counts are surfaced from the props when known
- * so the sidebar reflects the loaded resource state.
- *
- * The header's purpose line is not a prop. It is the canonical resource's own
- * sentence, resolved from the navigation registry, so every route for a
- * resource -- its list, its detail, and the states where the read failed --
- * says the same thing about it, and no page can state a different one or
- * forget to state one at all.
- */
+Render a Console page with the shared AppShell using the canonical section
+for navigation highlighting. Counts are surfaced from the props when known
+so the sidebar reflects the loaded resource state.
+
+The header's purpose line is not a prop. It is the canonical resource's own
+sentence, resolved from the navigation registry, so every route for a
+resource -- its list, its detail, and the states where the read failed --
+says the same thing about it, and no page can state a different one or
+forget to state one at all.
+*/
 export function ConsolePageShell({
   section,
   counts,

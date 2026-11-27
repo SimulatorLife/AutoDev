@@ -1,4 +1,6 @@
-/** Server-only status read for a Runtime-owned Playtesting run. */
+/**
+Server-only status read for a Runtime-owned Playtesting run.
+*/
 import { type NextRequest, NextResponse } from "next/server.js";
 
 import { jsonErrorResponse } from "../../../../../src/lib/server/api-response.ts";
@@ -31,11 +33,11 @@ export async function GET(
   context: { readonly params: Promise<{ readonly batchId: string }> }
 ): Promise<NextResponse> {
   const { batchId } = await context.params;
-  const params = new URL(request.url).searchParams;
+  const parameters = new URL(request.url).searchParams;
   if (
     !BATCH_ID_PATTERN.test(batchId) ||
-    [...params.keys()].some((key) => key !== "workspaceId") ||
-    params.getAll("workspaceId").length !== 1
+    [...parameters.keys()].some((key) => key !== "workspaceId") ||
+    parameters.getAll("workspaceId").length !== 1
   ) {
     return jsonErrorResponse(
       400,
@@ -43,7 +45,7 @@ export async function GET(
       "A valid batchId and single workspaceId are required."
     );
   }
-  const workspaceId = params.get("workspaceId")!.trim();
+  const workspaceId = parameters.get("workspaceId")!.trim();
   if (!WORKSPACE_ID_PATTERN.test(workspaceId)) {
     return jsonErrorResponse(
       400,

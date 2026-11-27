@@ -1,12 +1,12 @@
 /**
- * The Commands MCP, driven as a client sees it.
- *
- * The unit suite proves the catalogue, the confinement and the admission
- * rules. This suite starts the real server over stdio, with the real
- * approved catalogue and the real role contract, and proves that a client
- * can discover the commands its role holds, run one, and read the result --
- * through an ordinary call and through the native task lifecycle.
- */
+The Commands MCP, driven as a client sees it.
+
+The unit suite proves the catalogue, the confinement and the admission
+rules. This suite starts the real server over stdio, with the real
+approved catalogue and the real role contract, and proves that a client
+can discover the commands its role holds, run one, and read the result --
+through an ordinary call and through the native task lifecycle.
+*/
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
@@ -38,7 +38,9 @@ const SERVER = path.resolve(
   "commands-main.ts"
 );
 
-/** The test process's environment, as the stdio transport's string map. */
+/**
+The test process's environment, as the stdio transport's string map.
+*/
 function processEnvironment(): Record<string, string> {
   return Object.fromEntries(
     Object.entries(process.env).filter(
@@ -47,7 +49,9 @@ function processEnvironment(): Record<string, string> {
   );
 }
 
-/** A disposable workspace with a Git repository in it. */
+/**
+A disposable workspace with a Git repository in it.
+*/
 function workspaceFixture(): string {
   const root = realpathSync(
     mkdtempSync(path.join(tmpdir(), "autodev-commands-workspace-"))
@@ -223,7 +227,7 @@ test(
         params: {
           name: "git_status",
           arguments: {},
-          task: { ttl: 60000 }
+          task: { ttl: 60_000 }
         }
       },
       CreateTaskResultSchema

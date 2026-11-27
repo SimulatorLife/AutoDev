@@ -1,28 +1,28 @@
 #!/usr/bin/env node
 
 /**
- * Codex's native file tools, refused where Codex runs them.
- *
- * AutoDev has one file-interaction surface: the `filesystem` MCP server
- * (`@modelcontextprotocol/server-filesystem`), offered to every provider the
- * same way and confined to the workspace. A provider-native file tool next to
- * it would be a second surface with its own confinement, its own failure
- * modes and its own trace, so every provider runs without its own.
- *
- * For Codex, AutoDev's model catalogs leave out `apply_patch_tool_type`, which
- * keeps `apply_patch` out of the request. Two tools stay that a catalog cannot
- * remove: `view_image`, which Codex 0.171 offers whatever `[tools]` or the
- * input modalities say, and `apply_patch` on a model whose catalog AutoDev does
- * not render (Codex's own bundled OpenAI catalog). Codex runs a `PreToolUse`
- * hook for both, so this hook refuses them and names the tool to use instead;
- * the model reads the refusal as the call's output and makes the call again
- * through `filesystem`.
- *
- * The refusal is AutoDev's file-surface policy, so it applies only to an
- * AutoDev session (`HookSessionOrigin`). An unrelated native chat that shares
- * the repository's projected hooks keeps its host's own file tools: it was
- * never offered AutoDev's `filesystem` server to use instead.
- */
+Codex's native file tools, refused where Codex runs them.
+
+AutoDev has one file-interaction surface: the `filesystem` MCP server
+(`@modelcontextprotocol/server-filesystem`), offered to every provider the
+same way and confined to the workspace. A provider-native file tool next to
+it would be a second surface with its own confinement, its own failure
+modes and its own trace, so every provider runs without its own.
+
+For Codex, AutoDev's model catalogs leave out `apply_patch_tool_type`, which
+keeps `apply_patch` out of the request. Two tools stay that a catalog cannot
+remove: `view_image`, which Codex 0.171 offers whatever `[tools]` or the
+input modalities say, and `apply_patch` on a model whose catalog AutoDev does
+not render (Codex's own bundled OpenAI catalog). Codex runs a `PreToolUse`
+hook for both, so this hook refuses them and names the tool to use instead;
+the model reads the refusal as the call's output and makes the call again
+through `filesystem`.
+
+The refusal is AutoDev's file-surface policy, so it applies only to an
+AutoDev session (`HookSessionOrigin`). An unrelated native chat that shares
+the repository's projected hooks keeps its host's own file tools: it was
+never offered AutoDev's `filesystem` server to use instead.
+*/
 
 import { readFileSync } from "node:fs";
 
@@ -39,7 +39,9 @@ import {
   parseHookPayload
 } from "./hook-payload.ts";
 
-/** The `filesystem` tool each native file tool is replaced by. */
+/**
+The `filesystem` tool each native file tool is replaced by.
+*/
 const REPLACEMENTS: ReadonlyMap<string, string> = new Map([
   [
     "apply_patch",
@@ -58,7 +60,9 @@ function normalizeToolName(name: string): string {
     .replaceAll(/[\s-]+/gu, "_");
 }
 
-/** Whether `toolName` is a provider-native file tool superseded by the `filesystem` MCP server. */
+/**
+Whether `toolName` is a provider-native file tool superseded by the `filesystem` MCP server.
+*/
 export function isDisabledNativeFileTool(toolName: string): boolean {
   return REPLACEMENTS.has(normalizeToolName(toolName));
 }
@@ -68,7 +72,9 @@ export interface FileSurfaceDecision {
   readonly reason: string | null;
 }
 
-/** Whether a `PreToolUse` payload is a native file tool, and why it is refused. */
+/**
+Whether a `PreToolUse` payload is a native file tool, and why it is refused.
+*/
 export function evaluateFileSurfaceHook(
   rawInput: string,
   environment: NodeJS.ProcessEnv = process.env

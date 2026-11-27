@@ -23,15 +23,15 @@ interface StubResponse {
 }
 
 /**
- * Stand in for ClickHouse, recording every request the adapter makes and
- * answering each query from `responses`, keyed by a substring of the query.
- *
- * The catalog tables are read as `FORMAT JSONEachRow`, so a read is answered
- * with newline-delimited JSON rather than the `{ data: [...] }` envelope the
- * `FORMAT JSON` tables use.
- */
+Stand in for ClickHouse, recording every request the adapter makes and
+answering each query from `responses`, keyed by a substring of the query.
+
+The catalog tables are read as `FORMAT JSONEachRow`, so a read is answered
+with newline-delimited JSON rather than the `{ data: [...] }` envelope the
+`FORMAT JSON` tables use.
+*/
 function stubClickHouse(responses: Readonly<Record<string, StubResponse>>) {
-  const realFetch = globalThis.fetch;
+  const realFetch = fetch;
   const recorded: RecordedRequest[] = [];
 
   globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
@@ -59,7 +59,9 @@ function stubClickHouse(responses: Readonly<Record<string, StubResponse>>) {
 
   return {
     recorded,
-    /** The nth request the adapter made, so a missing one fails loudly. */
+    /**
+    The nth request the adapter made, so a missing one fails loudly.
+    */
     requestAt(index: number): RecordedRequest {
       const found = recorded[index];
       assert.ok(found, `the adapter never sent request ${index}`);
@@ -72,12 +74,12 @@ function stubClickHouse(responses: Readonly<Record<string, StubResponse>>) {
 }
 
 /**
- * Split an `application/x-ndjson` body into its rows.
- *
- * The catalog tables take newline-delimited JSON with no trailing newline, so
- * there is no terminator to strip here -- the last line is a row, not an empty
- * one.
- */
+Split an `application/x-ndjson` body into its rows.
+
+The catalog tables take newline-delimited JSON with no trailing newline, so
+there is no terminator to strip here -- the last line is a row, not an empty
+one.
+*/
 function ndjsonBody(
   body: string | undefined
 ): readonly Record<string, unknown>[] {
@@ -162,7 +164,7 @@ test("a catalog table that already holds the row is not rewritten", async () => 
     );
     assert.ok(insert, "the providers ClickHouse does not hold are inserted");
     assert.ok(
-      !ndjsonBody(insert.body).some((row) => row.provider_id === "claude"),
+      ndjsonBody(insert.body).every((row) => row.provider_id !== "claude"),
       "the row ClickHouse already holds is not written a second time"
     );
   } finally {

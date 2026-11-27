@@ -14,23 +14,23 @@ import {
 } from "../src/features/tools/tools-list-url.ts";
 
 /**
- * The tool catalogue can be narrowed.
- *
- * The catalogue is the largest list in the Console -- 56 entries in the live
- * instance -- and it was the only catalogue that could not be searched. It
- * could be narrowed by source and by role, but only by clicking a facet: an
- * operator who already knew the tool they wanted still had to read the table
- * to find it.
- *
- * The narrowing is the product's own: a filter bar that submits a normal GET
- * navigation, so the narrowed list is addressable, bookmarkable and shareable
- * like every other filtered view.
- *
- * The three filters share one address, so each has to carry the other two.
- * That is the part the facet links used to get wrong -- they rebuilt the query
- * string by hand and dropped the query, so narrowing by search and then
- * clicking a source facet silently widened the list back to everything.
- */
+The tool catalogue can be narrowed.
+
+The catalogue is the largest list in the Console -- 56 entries in the live
+instance -- and it was the only catalogue that could not be searched. It
+could be narrowed by source and by role, but only by clicking a facet: an
+operator who already knew the tool they wanted still had to read the table
+to find it.
+
+The narrowing is the product's own: a filter bar that submits a normal GET
+navigation, so the narrowed list is addressable, bookmarkable and shareable
+like every other filtered view.
+
+The three filters share one address, so each has to carry the other two.
+That is the part the facet links used to get wrong -- they rebuilt the query
+string by hand and dropped the query, so narrowing by search and then
+clicking a source facet silently widened the list back to everything.
+*/
 
 const CATALOG = [
   {
@@ -76,7 +76,7 @@ function renderTools(
       filters: {
         source: filters.source ?? "all",
         role: filters.role ?? "",
-        ...(filters.query === undefined ? {} : { query: filters.query })
+        ...(filters.query !== undefined && { query: filters.query })
       }
     })
   );
@@ -120,7 +120,7 @@ test("a query ignores case, because a tool name is typed in lower case", () => {
 
 test("an empty query is the whole catalogue", () => {
   assert.equal(filterTools(CATALOG, { ...NO_FILTERS, query: "" }).length, 3);
-  assert.equal(filterTools(CATALOG, { ...NO_FILTERS, query: "   " }).length, 3);
+  assert.equal(filterTools(CATALOG, { ...NO_FILTERS, query: ' '.repeat(3) }).length, 3);
 });
 
 test("the source, the role and the query compose", () => {

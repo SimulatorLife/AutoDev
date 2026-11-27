@@ -1,7 +1,7 @@
 /**
- * Canonical MCP HTTP header references and backend-only credential resolution.
- * RuleSync projections keep references; only the remote transport resolves them.
- */
+Canonical MCP HTTP header references and backend-only credential resolution.
+RuleSync projections keep references; only the remote transport resolves them.
+*/
 import { validateHeaderName, validateHeaderValue } from "node:http";
 
 import { isRecord } from "@simulatorlife/autodev-core";
@@ -43,7 +43,9 @@ export function environmentVariableName(value: string): string | null {
   return ENVIRONMENT_REFERENCE.exec(value)?.[1] ?? null;
 }
 
-/** Use native HTTP validation and case-insensitive Headers semantics. */
+/**
+Use native HTTP validation and case-insensitive Headers semantics.
+*/
 function addDeclaredHeader(
   headers: Headers,
   name: string,
@@ -63,7 +65,9 @@ function addDeclaredHeader(
   }
 }
 
-/** Codex's env_http_headers table as unresolved AutoDev references. */
+/**
+Codex's env_http_headers table as unresolved AutoDev references.
+*/
 export function codexEnvironmentHeaders(
   value: unknown
 ): Record<string, string> | null {
@@ -86,19 +90,19 @@ export function codexEnvironmentHeaders(
 }
 
 /**
- * Resolve credentials immediately before opening the SDK transport. Missing
- * credentials, invalid references, case-insensitive collisions and attempts
- * to override SDK-owned headers fail closed, never yielding a partial table.
- */
+Resolve credentials immediately before opening the SDK transport. Missing
+credentials, invalid references, case-insensitive collisions and attempts
+to override SDK-owned headers fail closed, never yielding a partial table.
+*/
 export function resolveRemoteMcpHeaders(
   spec: RemoteBackendSpec,
   server: string,
-  env: NodeJS.ProcessEnv = process.env
+  environment_: NodeJS.ProcessEnv = process.env
 ): Headers {
   // Do not let a variable lookup fall through to Object.prototype.
   const environment: NodeJS.ProcessEnv = Object.assign(
     Object.create(null),
-    env
+    environment_
   );
   const resolveSecret = (name: string): string => {
     if (!ENVIRONMENT_NAME.test(name)) {

@@ -124,7 +124,7 @@ const observedMetrics: UsageMetricsData = {
 
 test("Usage cost formatting keeps catalog estimates explicit and unobserved distinct", () => {
   assert.equal(formatEstimatedCost(0.0081), "$0.0081");
-  assert.equal(formatEstimatedCost(541.080_125), "$541.08");
+  assert.equal(formatEstimatedCost(541.080125), "$541.08");
   assert.equal(formatEstimatedCost(null), "Not observed");
 });
 

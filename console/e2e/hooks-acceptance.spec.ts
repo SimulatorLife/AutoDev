@@ -4,20 +4,20 @@ const FIXTURE_BASE_URL = `http://127.0.0.1:${process.env.AUTODEV_PLAYTEST_FIXTUR
 const NOT_OBSERVED = "Not observed";
 
 /**
- * The command the declaration gives the shared event.
- *
- * It is the value the editor has to be filled from. The Runtime published an
- * older command for the same event, so the two are not the same string and an
- * editor showing the published one would be showing the wrong side.
- */
+The command the declaration gives the shared event.
+
+It is the value the editor has to be filled from. The Runtime published an
+older command for the same event, so the two are not the same string and an
+editor showing the published one would be showing the wrong side.
+*/
 const DECLARED_COMMAND = "echo guarded";
 
 /**
- * The event every target inherits, and the event the target declares alone.
- *
- * The page has to tell them apart, because it is the difference between an
- * edit that reaches every target and an edit that reaches one.
- */
+The event every target inherits, and the event the target declares alone.
+
+The page has to tell them apart, because it is the difference between an
+edit that reaches every target and an edit that reaches one.
+*/
 const SHARED_EVENT = "preToolUse";
 const TARGET_EVENT = "sessionEnd";
 

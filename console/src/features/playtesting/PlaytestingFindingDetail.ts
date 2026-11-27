@@ -1,19 +1,19 @@
 /**
- * The detail panel a finding opens.
- *
- * A finding is a claim about the game that outlives the session it was
- * observed in: it carries an identity that is stable across builds, the
- * workflow state it has reached, how often it has been seen, and the evidence
- * that points at the exact place it was seen. The list row can hold a title and
- * a status; it cannot hold that. So the row opens this panel, and the panel
- * answers the questions a reader actually has about a finding: how well is it
- * supported, how often has it happened, where is the evidence, and what is it
- * being tracked as.
- *
- * The panel is a disclosure under the list, reached by a link that carries the
- * finding's id in the URL, so it is shareable and Back closes it rather than
- * losing it.
- */
+The detail panel a finding opens.
+
+A finding is a claim about the game that outlives the session it was
+observed in: it carries an identity that is stable across builds, the
+workflow state it has reached, how often it has been seen, and the evidence
+that points at the exact place it was seen. The list row can hold a title and
+a status; it cannot hold that. So the row opens this panel, and the panel
+answers the questions a reader actually has about a finding: how well is it
+supported, how often has it happened, where is the evidence, and what is it
+being tracked as.
+
+The panel is a disclosure under the list, reached by a link that carries the
+finding's id in the URL, so it is shareable and Back closes it rather than
+losing it.
+*/
 
 import type { PlaytestFinding } from "@simulatorlife/autodev-core";
 import React from "react";
@@ -46,17 +46,19 @@ import {
   type PlaytestingScope
 } from "./playtesting-url.ts";
 
-/** The stack a drawer's sections are laid out in. */
+/**
+The stack a drawer's sections are laid out in.
+*/
 const SECTION_STACK_CLASS = "flex flex-col gap-2";
 
 /**
- * The tone a severity is shown with.
- *
- * Severity is the cost of the claim if it is true, so it is read as an
- * observation about the game rather than as a state of the record: a
- * catastrophic finding is an error tone, an informational one is not a
- * statement about the record's health.
- */
+The tone a severity is shown with.
+
+Severity is the cost of the claim if it is true, so it is read as an
+observation about the game rather than as a state of the record: a
+catastrophic finding is an error tone, an informational one is not a
+statement about the record's health.
+*/
 function findingSeverityVariant(
   severity: PlaytestFinding["severity"]
 ): StatusBadgeVariant {
@@ -80,13 +82,13 @@ function findingSeverityVariant(
 }
 
 /**
- * How well the evidence supports the claim.
- *
- * A verified claim and a hypothesis are different facts about the same
- * subject, and reading one as the other is the mistake the whole distinction
- * exists to prevent. So the evidence status gets a tone of its own rather
- * than sharing one with the workflow status.
- */
+How well the evidence supports the claim.
+
+A verified claim and a hypothesis are different facts about the same
+subject, and reading one as the other is the mistake the whole distinction
+exists to prevent. So the evidence status gets a tone of its own rather
+than sharing one with the workflow status.
+*/
 function evidenceStatusVariant(
   status: PlaytestFinding["evidenceStatus"]
 ): StatusBadgeVariant {
@@ -110,13 +112,13 @@ function evidenceStatusVariant(
 }
 
 /**
- * How much of the run the finding touched.
- *
- * The two numbers are read together: an affected count on its own says
- * nothing about scale, and an eligible count on its own says nothing about
- * whether the claim was ever seen. A count that was never measured reads as
- * the Console's one word for missing evidence rather than as a zero.
- */
+How much of the run the finding touched.
+
+The two numbers are read together: an affected count on its own says
+nothing about scale, and an eligible count on its own says nothing about
+whether the claim was ever seen. A count that was never measured reads as
+the Console's one word for missing evidence rather than as a zero.
+*/
 function exposureLabel(
   affected: number | null,
   eligible: number | null
@@ -125,24 +127,30 @@ function exposureLabel(
   return `${String(affected)} of ${String(eligible)}`;
 }
 
-/** The cohorts the finding was seen in; an empty list means none were recorded. */
+/**
+The cohorts the finding was seen in; an empty list means none were recorded.
+*/
 function cohortLabel(cohorts: readonly string[]): string {
   return cohorts.length === 0 ? NOT_OBSERVED_LABEL : cohorts.join(", ");
 }
 
-/** One evidence locator, read as what it points at rather than as a record id. */
-function evidenceRefLabel(ref: {
+/**
+One evidence locator, read as what it points at rather than as a record id.
+*/
+function evidenceReferenceLabel(reference: {
   readonly kind: string;
   readonly id: string;
   readonly step?: number | undefined;
 }): string {
-  const step = ref.step === undefined ? "" : ` · step ${String(ref.step)}`;
-  return `${evidenceKindLabel(ref.kind)} · ${ref.id}${step}`;
+  const step = reference.step === undefined ? "" : ` · step ${String(reference.step)}`;
+  return `${evidenceKindLabel(reference.kind)} · ${reference.id}${step}`;
 }
 
-/** Whether an evidence locator points at a session that can be opened. */
-function isEpisodeRef(ref: { readonly kind: string }): boolean {
-  return ref.kind === "episode";
+/**
+Whether an evidence locator points at a session that can be opened.
+*/
+function isEpisodeReference(reference: { readonly kind: string }): boolean {
+  return reference.kind === "episode";
 }
 
 export interface PlaytestingFindingDetailProps {
@@ -265,21 +273,21 @@ export function PlaytestingFindingDetail({
         : React.createElement(
             "ul",
             { className: "flex flex-col gap-1 text-sm text-fg-secondary" },
-            finding.evidenceRefs.map((ref) =>
+            finding.evidenceRefs.map((reference) =>
               React.createElement(
                 "li",
                 {
-                  key: `${ref.kind}-${ref.id}-${String(ref.step ?? "")}`,
-                  "data-finding-evidence": `${ref.kind}-${ref.id}`
+                  key: `${reference.kind}-${reference.id}-${String(reference.step ?? "")}`,
+                  "data-finding-evidence": `${reference.kind}-${reference.id}`
                 },
-                isEpisodeRef(ref)
+                isEpisodeReference(reference)
                   ? React.createElement(
                       NavigationLink,
                       {
                         href: playtestingEpisodeHref(
                           scope,
-                          ref.id,
-                          ref.step ?? null,
+                          reference.id,
+                          reference.step ?? null,
                           finding.findingId
                         ),
                         className: ACTION_LINK_CLASS,
@@ -287,9 +295,9 @@ export function PlaytestingFindingDetail({
                           "data-finding-evidence-link": finding.findingId
                         }
                       },
-                      evidenceRefLabel(ref)
+                      evidenceReferenceLabel(reference)
                     )
-                  : evidenceRefLabel(ref)
+                  : evidenceReferenceLabel(reference)
               )
             )
           )

@@ -3,24 +3,24 @@ import { expect, test } from "@playwright/test";
 import { SWEEP_ROUTES, waitForPageContent } from "./acceptance-helpers.ts";
 
 /**
- * No motion runs when the operator has asked for reduced motion.
- *
- * The target state names it in the acceptance contract: "Accessibility:
- * named controls, live-region announcement without incessant focus changes,
- * accessible data tables, reduced motion."
- *
- * The console had one animation -- the pulsing dot that says a session is
- * live -- and it pulsed whether or not the operator had asked the system not
- * to move things on the page. A pulse is the easiest animation to write and
- * the one nobody checks, because it is a two-pixel dot and it looks
- * deliberate.
- *
- * The check is the browser's own answer rather than a reading of the source:
- * the page is rendered with `prefers-reduced-motion: reduce` emulated, and
- * every element is asked whether it is still animating. A class that honours
- * the preference stops the animation; a class that does not keeps running it,
- * and the difference is measurable.
- */
+No motion runs when the operator has asked for reduced motion.
+
+The target state names it in the acceptance contract: "Accessibility:
+named controls, live-region announcement without incessant focus changes,
+accessible data tables, reduced motion."
+
+The console had one animation -- the pulsing dot that says a session is
+live -- and it pulsed whether or not the operator had asked the system not
+to move things on the page. A pulse is the easiest animation to write and
+the one nobody checks, because it is a two-pixel dot and it looks
+deliberate.
+
+The check is the browser's own answer rather than a reading of the source:
+the page is rendered with `prefers-reduced-motion: reduce` emulated, and
+every element is asked whether it is still animating. A class that honours
+the preference stops the animation; a class that does not keeps running it,
+and the difference is measurable.
+*/
 test("no motion runs when the operator asked for reduced motion", async ({
   page
 }) => {
@@ -37,9 +37,7 @@ test("no motion runs when the operator asked for reduced motion", async ({
       let counted = 0;
       for (const element of Array.from(document.querySelectorAll("main *"))) {
         const style = getComputedStyle(element);
-        if (style.display === "none" || style.visibility === "hidden") continue;
-        if (element.closest("[hidden]")) continue;
-        if (!element.checkVisibility()) continue;
+        if (style.display === "none" || style.visibility === "hidden" || element.closest("[hidden]") || !element.checkVisibility()) continue;
         // Every rendered element is examined, whether or not it animates: the
         // count is what says the sweep read the page rather than an error
         // page.

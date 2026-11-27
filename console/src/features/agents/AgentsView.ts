@@ -19,7 +19,7 @@ import {
 } from "../../components/panels/DetailGrid.ts";
 import {
   ControlFailureNotice,
-  type ControlFailureNoticeProps
+  type ControlFailureNoticeProps as ControlFailureNoticeProperties
 } from "../../components/status/ControlFailureNotice.ts";
 import {
   NOT_OBSERVED_LABEL,
@@ -30,7 +30,7 @@ import { Chip } from "../../components/tables/Chips.ts";
 import {
   DataTable,
   type DataTableFeatures,
-  type DataTableProps
+  type DataTableProps as DataTableProperties
 } from "../../components/tables/DataTable.ts";
 import {
   ENTITY_LINK_CLASS,
@@ -48,18 +48,18 @@ export interface AgentsViewProps {
   readonly providers?: ControlApiProvidersResponse | undefined;
   readonly runtime?: ControlApiRuntimeResponse | undefined;
   /**
-   * Whether the execution contract was read.
-   *
-   * The catalogue is the contract's roles, and the accessor that reads the
-   * contract falls back to an empty contract when the read fails: an empty
-   * contract and a contract nobody read look the same to a caller that only
-   * sees the roles. They are not the same claim -- the first says the contract
-   * declares no role, the second says nobody read it -- and the list says
-   * which one it is showing.
-   */
+  Whether the execution contract was read.
+  
+  The catalogue is the contract's roles, and the accessor that reads the
+  contract falls back to an empty contract when the read fails: an empty
+  contract and a contract nobody read look the same to a caller that only
+  sees the roles. They are not the same claim -- the first says the contract
+  declares no role, the second says nobody read it -- and the list says
+  which one it is showing.
+  */
   readonly executionContractObserved: boolean;
   readonly controlFailed?: boolean | undefined;
-  readonly controlRefusal?: ControlFailureNoticeProps["refusal"];
+  readonly controlRefusal?: ControlFailureNoticeProperties["refusal"];
 }
 
 export function AgentsView({
@@ -376,7 +376,7 @@ export function AgentsView({
         },
         "Configured Agents"
       ),
-      React.createElement<DataTableProps<AgentDefinition>>(DataTable, {
+      React.createElement<DataTableProperties<AgentDefinition>>(DataTable, {
         data: agents,
         columns,
         keyExtractor: (agent: AgentDefinition) => agent.id,
@@ -502,24 +502,24 @@ export function AgentsView({
 }
 
 /**
- * Render one observed counter. An absent counter is not a zero: the Runtime
- * omits a field it has no evidence for, and printing `0` there would claim an
- * observed idle state that was never measured.
- */
+Render one observed counter. An absent counter is not a zero: the Runtime
+omits a field it has no evidence for, and printing `0` there would claim an
+observed idle state that was never measured.
+*/
 function observed(value: number | undefined): string {
   return value === undefined ? NOT_OBSERVED_LABEL : String(value);
 }
 
 /**
- * What an empty agent list has to say.
- *
- * The Control API answered, and it answered with no rows: an observed empty
- * catalogue, unless the read behind it was the one that failed. The catalogue
- * is the execution contract's roles, and the accessor that reads the contract
- * falls back to an empty contract when the read fails -- so "the contract
- * declares no role" and "nobody read the contract" are different claims, and
- * only one of them is an empty list.
- */
+What an empty agent list has to say.
+
+The Control API answered, and it answered with no rows: an observed empty
+catalogue, unless the read behind it was the one that failed. The catalogue
+is the execution contract's roles, and the accessor that reads the contract
+falls back to an empty contract when the read fails -- so "the contract
+declares no role" and "nobody read the contract" are different claims, and
+only one of them is an empty list.
+*/
 function agentEmptyMessage(executionContractObserved: boolean): string {
   return executionContractObserved
     ? "No agents are configured."

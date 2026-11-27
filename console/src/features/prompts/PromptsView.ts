@@ -27,7 +27,7 @@ import { Chip } from "../../components/tables/Chips.ts";
 import {
   DataTable,
   type DataTableFeatures,
-  type DataTableProps
+  type DataTableProps as DataTableProperties
 } from "../../components/tables/DataTable.ts";
 import { PathText } from "../../components/tables/PathText.ts";
 import {
@@ -38,49 +38,51 @@ import { filterPrompts, PROMPTS_LIST_PATH } from "./prompts-list-url.ts";
 
 export interface PromptsViewProps {
   /**
-   * The catalogue: every canonical command and role prompt.
-   *
-   * The narrowing is applied here and not by the page, because the stat row
-   * above the table is about the catalogue and not about the view of it. A
-   * page that narrowed the list before handing it over would have made the
-   * "Canonical Prompts" card report the narrowed count for a catalogue of
-   * seventy-six, which is a different claim from the one the card makes -- and
-   * the navigation badge beside it would have said seventy-six.
-   */
+  The catalogue: every canonical command and role prompt.
+  
+  The narrowing is applied here and not by the page, because the stat row
+  above the table is about the catalogue and not about the view of it. A
+  page that narrowed the list before handing it over would have made the
+  "Canonical Prompts" card report the narrowed count for a catalogue of
+  seventy-six, which is a different claim from the one the card makes -- and
+  the navigation badge beside it would have said seventy-six.
+  */
   readonly commands: readonly PromptAsset[];
-  /** The query the list is narrowed by, if any. */
+  /**
+  The query the list is narrowed by, if any.
+  */
   readonly query?: string | undefined;
   readonly commandSourceValidity: boolean | null;
   /**
-   * Whether the role prompts were read.
-   *
-   * The catalogue is two independent reads -- the RuleSync command catalogue
-   * and the canonical role-prompt directory -- and a count over it is a number
-   * only when both were observed. The role prompts' read fails on a directory
-   * that cannot be listed, and an empty list there would have claimed the
-   * repository holds no role prompt.
-   */
+  Whether the role prompts were read.
+  
+  The catalogue is two independent reads -- the RuleSync command catalogue
+  and the canonical role-prompt directory -- and a count over it is a number
+  only when both were observed. The role prompts' read fails on a directory
+  that cannot be listed, and an empty list there would have claimed the
+  repository holds no role prompt.
+  */
   readonly rolePromptsObserved: boolean;
   /**
-   * Why the catalog is invalid.
-   *
-   * Required rather than defaulted to `[]`: an invalid catalog renders an
-   * empty command list, so without the reasons the page says "no commands"
-   * for a directory that holds several and cannot apply them.
-   */
+  Why the catalog is invalid.
+  
+  Required rather than defaulted to `[]`: an invalid catalog renders an
+  empty command list, so without the reasons the page says "no commands"
+  for a directory that holds several and cannot apply them.
+  */
   readonly validationIssues: readonly RuleSyncValidationIssue[];
 }
 
 /**
- * What the empty list says.
- *
- * Five different facts end with an empty table: the source is invalid, the
- * source was not observed, the query excluded everything, the catalogue is
- * genuinely empty, and the role prompts were not read. Only the caller knows
- * which one it is rendering, and the operator needs to know too -- "no
- * commands are configured" when the query was "review" says the catalog is
- * empty, and it is not.
- */
+What the empty list says.
+
+Five different facts end with an empty table: the source is invalid, the
+source was not observed, the query excluded everything, the catalogue is
+genuinely empty, and the role prompts were not read. Only the caller knows
+which one it is rendering, and the operator needs to know too -- "no
+commands are configured" when the query was "review" says the catalog is
+empty, and it is not.
+*/
 function promptEmptyMessage(
   commandSourceValidity: boolean | null,
   query: string,
@@ -104,15 +106,15 @@ function promptEmptyMessage(
 }
 
 /**
- * The catalogue's counts, and what each one is a measurement of.
- *
- * The catalogue is two independent reads -- the RuleSync command catalogue
- * and the canonical role-prompt directory -- and a count over it is a number
- * only when both were observed: one unread read makes the count incomplete
- * rather than small, and an incomplete count is not a count. Each source's own
- * count is a measurement of that source's read, and the catalogue's own size
- * is a measurement of both.
- */
+The catalogue's counts, and what each one is a measurement of.
+
+The catalogue is two independent reads -- the RuleSync command catalogue
+and the canonical role-prompt directory -- and a count over it is a number
+only when both were observed: one unread read makes the count incomplete
+rather than small, and an incomplete count is not a count. Each source's own
+count is a measurement of that source's read, and the catalogue's own size
+is a measurement of both.
+*/
 function promptsCatalogueCounts(
   commands: readonly PromptAsset[],
   commandSourceValidity: boolean | null,
@@ -129,12 +131,12 @@ function promptsCatalogueCounts(
   const rolePromptCount = commands.filter(
     (c) => c.kind === "role" || c.path.includes("roles")
   ).length;
-  const observed = commandSourceValidity === true && rolePromptsObserved;
+  const isObserved = commandSourceValidity === true && rolePromptsObserved;
   return {
     canonical:
       commandSourceValidity === false
         ? "Invalid"
-        : observed
+        : isObserved
           ? commands.length
           : NOT_OBSERVED_LABEL,
     commands:
@@ -144,7 +146,7 @@ function promptsCatalogueCounts(
           ? "Invalid"
           : NOT_OBSERVED_LABEL,
     rolePrompts: rolePromptsObserved ? rolePromptCount : NOT_OBSERVED_LABEL,
-    observed
+    observed: isObserved
   };
 }
 
@@ -427,7 +429,7 @@ export function PromptsView({
             commandSourceNotice
           )
         : null,
-      React.createElement<DataTableProps<PromptAsset>>(DataTable, {
+      React.createElement<DataTableProperties<PromptAsset>>(DataTable, {
         data: matching,
         columns,
         keyExtractor: (prompt: PromptAsset) => prompt.path,

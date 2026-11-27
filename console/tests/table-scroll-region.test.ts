@@ -11,17 +11,17 @@ import {
 } from "../src/components/tables/DataTable.ts";
 
 /**
- * A table that is wider than the viewport scrolls inside its own region, and a
- * region that scrolls has to be reachable by keyboard.
- *
- * The permission matrix was the case that needed it: its cells hold no links
- * and no controls, so nothing inside could be focused and the region was not
- * focusable either. Its right-hand columns were reachable with a pointer and
- * by nothing else, which is the same as unreachable for a keyboard operator.
- *
- * The region is focusable, so the arrow keys scroll it, and it is named, so a
- * screen reader says which table it is rather than "region".
- */
+A table that is wider than the viewport scrolls inside its own region, and a
+region that scrolls has to be reachable by keyboard.
+
+The permission matrix was the case that needed it: its cells hold no links
+and no controls, so nothing inside could be focused and the region was not
+focusable either. Its right-hand columns were reachable with a pointer and
+by nothing else, which is the same as unreachable for a keyboard operator.
+
+The region is focusable, so the arrow keys scroll it, and it is named, so a
+screen reader says which table it is rather than "region".
+*/
 interface Row {
   readonly id: string;
 }

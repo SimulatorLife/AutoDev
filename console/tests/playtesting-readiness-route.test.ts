@@ -33,7 +33,7 @@ function restore(name: string, value: string | undefined): void {
 async function withControlApi<T>(run: () => Promise<T>): Promise<T> {
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   const previousBase = process.env.AUTODEV_CONTROL_API_BASE_URL;
-  const previousFetch = globalThis.fetch;
+  const previousFetch = fetch;
   process.env.AUTODEV_CONTROL_API_TOKEN = TOKEN;
   process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
   try {

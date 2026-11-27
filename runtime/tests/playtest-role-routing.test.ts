@@ -8,7 +8,7 @@ import { renderModelCatalog } from "../src/config/render-model-catalog.ts";
 import { PROMPT_ROLES, ROLES } from "../src/platform/install-materializer.ts";
 import { ROLE_NAMES, ROUTING_POLICY } from "../src/router/routing.ts";
 
-const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
+const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 
 test("playtester and playtest-analyst are registered in install/materialization roles", () => {
   assert.ok(ROLES.includes("playtester"), "ROLES must include playtester");
@@ -60,9 +60,9 @@ test("router resolves playtest role names, aliases, and tier model assignments",
 });
 
 test("rendered Codex catalog includes every routed role alias with the code-mode contract", () => {
-  const catalogsDirectory = join(repoRoot, "config/catalogs");
+  const catalogsDirectory = join(repositoryRoot, "config/catalogs");
   const rendered = renderModelCatalog(
-    join(repoRoot, "config/model-routing.json"),
+    join(repositoryRoot, "config/model-routing.json"),
     catalogsDirectory
   );
   const generatedPath = join(catalogsDirectory, "codex-model-catalog.json");
@@ -88,7 +88,7 @@ test("rendered Codex catalog includes every routed role alias with the code-mode
 });
 
 test("execution contract defines read-only playtest roles with scoped tools", () => {
-  const contractPath = join(repoRoot, "config/execution-contract.json");
+  const contractPath = join(repositoryRoot, "config/execution-contract.json");
   const contract = JSON.parse(readFileSync(contractPath, "utf8")) as {
     roles: Record<
       string,

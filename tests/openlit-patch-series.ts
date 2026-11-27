@@ -1,19 +1,21 @@
 /**
- * The maintained OpenLIT patch series, in apply order, and the one rule that
- * decides whether a directory listing *is* that series.
- *
- * This lives outside the applying test on purpose. The OpenLIT fork boundary is
- * maintained by replaying this series (patches 01..N) over the pinned upstream
- * commit, so "is the series still exactly what we maintain, in order?" is an
- * invariant about the repository, not about any one clone-requiring test. Keeping
- * the names here means a cheap test can check the invariant against the files on
- * disk without running `git clone`, and it gives the applying test and every
- * other caller a single owner instead of a list each.
- */
+The maintained OpenLIT patch series, in apply order, and the one rule that
+decides whether a directory listing *is* that series.
+
+This lives outside the applying test on purpose. The OpenLIT fork boundary is
+maintained by replaying this series (patches 01..N) over the pinned upstream
+commit, so "is the series still exactly what we maintain, in order?" is an
+invariant about the repository, not about any one clone-requiring test. Keeping
+the names here means a cheap test can check the invariant against the files on
+disk without running `git clone`, and it gives the applying test and every
+other caller a single owner instead of a list each.
+*/
 
 import assert from "node:assert/strict";
 
-/** Every patch in the maintained OpenLIT series, in apply order. */
+/**
+Every patch in the maintained OpenLIT series, in apply order.
+*/
 export const OPENLIT_PATCH_NAMES = [
   "01-generic-dashboard-variables",
   "02-autodev-pages",
@@ -100,25 +102,27 @@ export const OPENLIT_PATCH_NAMES = [
   "83-autodev-clickhouse-max-threads"
 ] as const;
 
-/** Strips the `.patch` suffix a directory listing carries. */
+/**
+Strips the `.patch` suffix a directory listing carries.
+*/
 function patchNames(files: readonly string[]): string[] {
   return files.map((file) => file.replace(/\.patch$/u, ""));
 }
 
 /**
- * Assert a listing of patch files is exactly the maintained series, in order.
- *
- * Data-driven rather than one check per patch: the ladder this replaced grew the
- * caller past the cognitive-complexity ceiling. Exact equality is also stronger
- * than a prefix walk -- an unexpected, missing, renamed or reordered patch fails
- * instead of being quietly skipped, which is what a hand-maintained per-patch
- * list silently stopped doing once the series outgrew it.
- *
- * A checkout that predates the newest patches still passes: the expected series
- * is intersected with what is actually present, which is the tolerance the old
- * per-patch `if (patches.some((p) => p.startsWith("NN-")))` conditionals
- * provided by hand.
- */
+Assert a listing of patch files is exactly the maintained series, in order.
+
+Data-driven rather than one check per patch: the ladder this replaced grew the
+caller past the cognitive-complexity ceiling. Exact equality is also stronger
+than a prefix walk -- an unexpected, missing, renamed or reordered patch fails
+instead of being quietly skipped, which is what a hand-maintained per-patch
+list silently stopped doing once the series outgrew it.
+
+A checkout that predates the newest patches still passes: the expected series
+is intersected with what is actually present, which is the tolerance the old
+per-patch `if (patches.some((p) => p.startsWith("NN-")))` conditionals
+provided by hand.
+*/
 export function assertOpenlitPatchSeries(files: readonly string[]): string[] {
   const applied = patchNames(files);
   const expected = OPENLIT_PATCH_NAMES.filter((name) => applied.includes(name));

@@ -78,7 +78,7 @@ test("assertPlaytestHighlightClips rejects malformed, duplicate, or unbounded cl
   );
   const tooMany = Array.from(
     { length: PLAYTEST_HIGHLIGHT_MAX_CLIPS_PER_EPISODE + 1 },
-    (_, i) => sampleClip({ id: "clip-" + String(i) })
+    (_, index) => sampleClip({ id: "clip-" + String(index) })
   );
   assert.throws(() => assertPlaytestHighlightClips(tooMany), TypeError);
 });

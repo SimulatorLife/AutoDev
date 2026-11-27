@@ -12,9 +12,9 @@ import {
 } from "./instant.ts";
 
 /**
- * How often relative times move on. Every rendered timestamp reads the same
- * clock, so a page with two hundred of them sets one timer, not two hundred.
- */
+How often relative times move on. Every rendered timestamp reads the same
+clock, so a page with two hundred of them sets one timer, not two hundred.
+*/
 const CLOCK_TICK_MS = 30_000;
 
 let clockNow = Date.now();
@@ -32,10 +32,12 @@ function subscribeClock(listener: () => void): () => void {
   }
   return () => {
     clockListeners.delete(listener);
-    if (clockListeners.size === 0 && clockTimer !== null) {
-      clearInterval(clockTimer);
-      clockTimer = null;
+    if (clockListeners.size > 0 || clockTimer === null) {
+      return;
     }
+
+    clearInterval(clockTimer);
+    clockTimer = null;
   };
 }
 
@@ -44,36 +46,42 @@ function readClock(): number {
 }
 
 /**
- * The server has no clock or zone of the operator's. Rendering "3 hours ago" or
- * a local time there would print the server's answer into the page and then
- * contradict it on hydration, so the server snapshot is "no clock" and the
- * server render shows the instant's storage form until the client takes over.
- */
+The server has no clock or zone of the operator's. Rendering "3 hours ago" or
+a local time there would print the server's answer into the page and then
+contradict it on hydration, so the server snapshot is "no clock" and the
+server render shows the instant's storage form until the client takes over.
+*/
 function readServerClock(): number | null {
   return null;
 }
 
-/** `YYYY-MM-DD`: a day with no clock in it. */
+/**
+`YYYY-MM-DD`: a day with no clock in it.
+*/
 const CALENDAR_DATE = /^\d{4}-\d{2}-\d{2}$/u;
 
 export interface InstantDisplayProps {
-  /** The instant as the source wrote it (ISO-8601); absent when not observed. */
+  /**
+  The instant as the source wrote it (ISO-8601); absent when not observed.
+  */
   readonly value: string | null | undefined;
-  /** What moment this is, e.g. "Started"; names the control for assistive technology. */
+  /**
+  What moment this is, e.g. "Started"; names the control for assistive technology.
+  */
   readonly label?: string | undefined;
 }
 
 /**
- * Every timestamp the Console shows: the shared inline display toggle, cycling
- * between relative time ("3 hours ago") and the full date and time in the
- * operator's local zone ("Nov 19, 2026, 10:30 AM").
- *
- * The machine-readable value stays in `dateTime`. Before hydration -- and for a value
- * that is not a readable instant -- the text is the instant's storage form
- * from `instantLabel`, which names its zone, so the page never shows a local
- * time computed in the server's zone. A moment the source did not record reads
- * "Not observed", so no caller decides that for itself.
- */
+Every timestamp the Console shows: the shared inline display toggle, cycling
+between relative time ("3 hours ago") and the full date and time in the
+operator's local zone ("Nov 19, 2026, 10:30 AM").
+
+The machine-readable value stays in `dateTime`. Before hydration -- and for a value
+that is not a readable instant -- the text is the instant's storage form
+from `instantLabel`, which names its zone, so the page never shows a local
+time computed in the server's zone. A moment the source did not record reads
+"Not observed", so no caller decides that for itself.
+*/
 export function InstantDisplay({
   value,
   label = "Time"

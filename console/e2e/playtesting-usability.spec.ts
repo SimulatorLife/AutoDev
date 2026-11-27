@@ -1571,16 +1571,16 @@ test("operator can start, watch, and analyze a completed session from the same C
     page.getByRole("link", { name: "Analyze this session" })
   ).toHaveAttribute(
     "href",
-    new RegExp(String.raw`view=sessions[^]*sessions=${episodeId}`, "u")
+    new RegExp(`view=sessions[^]*sessions=${episodeId}`, "u")
   );
 });
 
 /**
- * The live view must be driven by the operator doing nothing, and an unreadable
- * read must be visible rather than silent. The fixture's run read is switched
- * off explicitly here so a passing run cannot be explained by the panel never
- * having polled.
- */
+The live view must be driven by the operator doing nothing, and an unreadable
+read must be visible rather than silent. The fixture's run read is switched
+off explicitly here so a passing run cannot be explained by the panel never
+having polled.
+*/
 test("live batches appear without operator action, and an unreadable read is stated", async ({
   page,
   request

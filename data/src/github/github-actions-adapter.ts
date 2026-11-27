@@ -90,10 +90,12 @@ function assertRequestWithinTimeout(
   startedAt: number,
   timeoutMs: number
 ): void {
-  if (controller.signal.aborted || performance.now() - startedAt >= timeoutMs) {
-    controller.abort();
-    throw requestTimeoutError(timeoutMs);
+  if (!controller.signal.aborted && !(performance.now() - startedAt >= timeoutMs)) {
+    return;
   }
+
+  controller.abort();
+  throw requestTimeoutError(timeoutMs);
 }
 
 interface BoundedResponseBody {
@@ -187,7 +189,7 @@ function internalErrorResponse(
     {
       autodevErrorCode: code,
       message,
-      ...(originalStatus === undefined ? {} : { originalStatus })
+      ...(originalStatus !== undefined && { originalStatus })
     },
     { status: 502 }
   );
@@ -646,25 +648,25 @@ export class GithubActionsAdapter {
 
   private validateRepository(
     owner: string,
-    repo: string
+    repository: string
   ): { owner: string; repo: string } {
     if (
       !owner ||
-      !repo ||
+      !repository ||
       owner === "." ||
       owner === ".." ||
-      repo === "." ||
-      repo === ".." ||
+      repository === "." ||
+      repository === ".." ||
       !REPO_SEGMENT_PATTERN.test(owner) ||
-      !REPO_SEGMENT_PATTERN.test(repo)
+      !REPO_SEGMENT_PATTERN.test(repository)
     ) {
       throw new GithubActionsApiError(
-        `Invalid repository coordinates: owner="${owner}", repo="${repo}"`,
+        `Invalid repository coordinates: owner="${owner}", repo="${repository}"`,
         400,
         "invalid_repository"
       );
     }
-    return { owner, repo };
+    return { owner, repo: repository };
   }
 
   private async withOctokit<T>(
@@ -673,9 +675,9 @@ export class GithubActionsAdapter {
   ): Promise<T> {
     const controller = new AbortController();
     const startedAt = performance.now();
-    let timedOut = false;
+    let isTimedOut = false;
     const timer = setTimeout(() => {
-      timedOut = true;
+      isTimedOut = true;
       controller.abort();
     }, this.timeoutMs);
     timer.unref();
@@ -719,7 +721,7 @@ export class GithubActionsAdapter {
           this.timeoutMs
         );
       } catch (error: unknown) {
-        if (!response.ok && !timedOut && !controller.signal.aborted) {
+        if (!response.ok && !isTimedOut && !controller.signal.aborted) {
           return (
             paginationConflictResponse(response) ??
             responseWithBody(response, new Uint8Array(), url.href)
@@ -790,7 +792,7 @@ export class GithubActionsAdapter {
       return rethrowRequestError(
         error,
         controller,
-        timedOut,
+        isTimedOut,
         this.timeoutMs,
         token
       );
@@ -801,11 +803,11 @@ export class GithubActionsAdapter {
 
   listWorkflows(
     owner: string,
-    repo: string,
+    repository_: string,
     token?: string
   ): Promise<readonly GithubApiWorkflow[]> {
     return Promise.resolve().then(() => {
-      const repository = this.validateRepository(owner, repo);
+      const repository = this.validateRepository(owner, repository_);
       return this.withOctokit(token, async (octokit) => {
         const result = await collectPaginatedItems(
           octokit.paginate.iterator(octokit.rest.actions.listRepoWorkflows, {
@@ -825,12 +827,12 @@ export class GithubActionsAdapter {
 
   listRecentRuns(
     owner: string,
-    repo: string,
+    repository_: string,
     token?: string,
     options: { limit?: number } = {}
   ): Promise<readonly GithubWorkflowRun[]> {
     return Promise.resolve().then(() => {
-      const repository = this.validateRepository(owner, repo);
+      const repository = this.validateRepository(owner, repository_);
       const limit = boundedRunsLimit(options.limit);
       return this.withOctokit(token, async (octokit) => {
         const result = await collectPaginatedItems(
@@ -855,13 +857,13 @@ export class GithubActionsAdapter {
 
   async fetchRuntimeSnapshot(
     owner: string,
-    repo: string,
+    repository: string,
     token?: string,
     options: { limit?: number } = {}
   ): Promise<GithubActionsRuntimeSnapshot> {
     const [workflows, rawRuns] = await Promise.all([
-      this.listWorkflows(owner, repo, token),
-      this.listRecentRuns(owner, repo, token, options)
+      this.listWorkflows(owner, repository, token),
+      this.listRecentRuns(owner, repository, token, options)
     ]);
 
     // Correlate workflowPath if the run object didn't have path explicitly.

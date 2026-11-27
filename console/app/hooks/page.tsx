@@ -66,7 +66,7 @@ export default async function HooksPage(): Promise<React.JSX.Element> {
       // empty list, and a badge with that list's length would claim the target
       // declares no hooks -- which is a claim about the read, not about the
       // target. A badge with no number says the count is not known.
-      ...(result.data.valid === true ? { counts: { Hooks: hooks.length } } : {})
+      ...((result.data.valid === true) && { counts: { Hooks: hooks.length } })
     },
     React.createElement(HooksView, {
       hooks,
@@ -77,7 +77,7 @@ export default async function HooksPage(): Promise<React.JSX.Element> {
       revision: result.data.revision,
       sourceText: result.data.sourceText,
       applied,
-      ...(appliedUnavailable === null ? {} : { appliedUnavailable })
+      ...(appliedUnavailable !== null && { appliedUnavailable })
     })
   );
 }

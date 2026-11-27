@@ -1,36 +1,36 @@
 /**
- * Reporting channel for subagents a provider bridge spawns inside its own CLI
- * runtime.
- *
- * A CLI-delegation bridge (Claude, Antigravity) does not emit a Codex
- * `function_call` when it delegates -- its CLI runs the child agent itself, and
- * the model router never sees a request for it. Without a report, an
- * orchestrator turn served by one of those providers shows zero subagents in
- * `/status` and the dashboard, which is indistinguishable from a provider that
- * refused to delegate at all.
- *
- * The router supplies everything needed per request: which tool names count as
- * a spawn for the provider serving this request, where to post, and the
- * request id that correlates the report. A bridge therefore needs no routing
- * config, no provider identity, and no router address of its own; and because
- * the request id is a router-generated UUID a bridge only learns by serving
- * the request, presenting it is also what authorizes the report.
- *
- * Two event types travel this channel. `subagent_spawn` opens a child; the
- * optional matching `subagent_result` closes it with the duration and outcome
- * the CLI actually observed. Reporting the close is what lets a CLI-delegated
- * child contribute a measured turn to the router's usage tables rather than
- * only a spawn count. It is optional because a bridge that never sends one --
- * or dies mid-turn -- must not strand an open child: the router closes any
- * child still open when the parent request finishes, using the parent's
- * outcome and the elapsed time since the spawn. Reporting the close only makes
- * the measurement per child instead of per parent turn.
- *
- * Children carry an `id` that is unique within the request, so the close can
- * name the same child the open did. A bridge that does not assign one gets a
- * generated id, and a report that names no children at all is expanded into
- * `count` anonymous children by the router.
- */
+Reporting channel for subagents a provider bridge spawns inside its own CLI
+runtime.
+
+A CLI-delegation bridge (Claude, Antigravity) does not emit a Codex
+`function_call` when it delegates -- its CLI runs the child agent itself, and
+the model router never sees a request for it. Without a report, an
+orchestrator turn served by one of those providers shows zero subagents in
+`/status` and the dashboard, which is indistinguishable from a provider that
+refused to delegate at all.
+
+The router supplies everything needed per request: which tool names count as
+a spawn for the provider serving this request, where to post, and the
+request id that correlates the report. A bridge therefore needs no routing
+config, no provider identity, and no router address of its own; and because
+the request id is a router-generated UUID a bridge only learns by serving
+the request, presenting it is also what authorizes the report.
+
+Two event types travel this channel. `subagent_spawn` opens a child; the
+optional matching `subagent_result` closes it with the duration and outcome
+the CLI actually observed. Reporting the close is what lets a CLI-delegated
+child contribute a measured turn to the router's usage tables rather than
+only a spawn count. It is optional because a bridge that never sends one --
+or dies mid-turn -- must not strand an open child: the router closes any
+child still open when the parent request finishes, using the parent's
+outcome and the elapsed time since the spawn. Reporting the close only makes
+the measurement per child instead of per parent turn.
+
+Children carry an `id` that is unique within the request, so the close can
+name the same child the open did. A bridge that does not assign one gets a
+generated id, and a report that names no children at all is expanded into
+`count` anonymous children by the router.
+*/
 
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 
@@ -61,14 +61,14 @@ export const SESSION_ID_HEADER = "x-autodev-session-id";
 export const SKILL_READ_SOURCE = "skill_read";
 
 /**
- * How a skill operation failed.
- *
- * `unavailable` is a read that never happened -- the call was denied or
- * cancelled -- and `error` is a read that happened and failed. They are
- * separate facts: the first says the skill was out of reach, the second says
- * the skill was reached and did not deliver. The router publishes them as the
- * `autodev.skill.event` values `unavailable` and `error`.
- */
+How a skill operation failed.
+
+`unavailable` is a read that never happened -- the call was denied or
+cancelled -- and `error` is a read that happened and failed. They are
+separate facts: the first says the skill was out of reach, the second says
+the skill was reached and did not deliver. The router publishes them as the
+`autodev.skill.event` values `unavailable` and `error`.
+*/
 export type SkillFailureOutcome = "unavailable" | "error";
 
 export const SKILL_FAILURE_OUTCOMES: ReadonlySet<string> =
@@ -107,11 +107,11 @@ function parseActivityInput(
 export const DEFAULT_HEARTBEAT_THROTTLE_MS = 15_000;
 
 /**
- * What a bridge may report about its request's lifecycle: its own in-CLI
- * delegation and liveness. The router settles each request itself -- tool
- * waits, input waits, completion, failure -- from the response it relays; see
- * REPORTABLE_AGENT_ACTIVITY_STATES in runtime/src/router/http.ts.
- */
+What a bridge may report about its request's lifecycle: its own in-CLI
+delegation and liveness. The router settles each request itself -- tool
+waits, input waits, completion, failure -- from the response it relays; see
+REPORTABLE_AGENT_ACTIVITY_STATES in runtime/src/router/http.ts.
+*/
 export const VALID_ACTIVITY_STATES = Object.freeze(
   new Set(["subagent_wait", "resumed", "heartbeat"])
 );
@@ -139,34 +139,38 @@ export class AgentEventReporter {
     this.childSequence = 0;
     this.lastActivityState = null;
     this.lastHeartbeatAt = 0;
-    const envThrottle = Number.parseInt(
+    const environmentThrottle = Number.parseInt(
       process.env.CODEX_AGENT_HEARTBEAT_THROTTLE_MS ?? ""
     );
     this.heartbeatThrottleMs =
       typeof options?.heartbeatThrottleMs === "number" &&
       Number.isFinite(options.heartbeatThrottleMs)
         ? Math.max(0, options.heartbeatThrottleMs)
-        : Number.isInteger(envThrottle) && envThrottle >= 0
-          ? envThrottle
+        : Number.isInteger(environmentThrottle) && environmentThrottle >= 0
+          ? environmentThrottle
           : DEFAULT_HEARTBEAT_THROTTLE_MS;
   }
 
-  /** An id unique within this request, for callers that have no id of their own. */
+  /**
+  An id unique within this request, for callers that have no id of their own.
+  */
   nextChildId(): string {
     this.childSequence += 1;
     return `c${this.childSequence}`;
   }
 
-  /** True when this tool name means the CLI just spawned a subagent. */
+  /**
+  True when this tool name means the CLI just spawned a subagent.
+  */
   isSpawnTool(name: unknown): boolean {
     return typeof name === "string" && this.spawnTools.has(name);
   }
 
   /**
-   * Post one spawn. Telemetry must never fail a model turn, so this resolves
-   * on transport errors and non-2xx replies instead of rejecting; a lost
-   * report costs a count, a thrown one would cost the turn.
-   */
+  Post one spawn. Telemetry must never fail a model turn, so this resolves
+  on transport errors and non-2xx replies instead of rejecting; a lost
+  report costs a count, a thrown one would cost the turn.
+  */
   async reportSpawn({
     tool,
     role = null,
@@ -186,13 +190,13 @@ export class AgentEventReporter {
   }
 
   /**
-   * Post every child one spawning tool call created. A CLI whose spawn tool
-   * takes a batch -- agy dispatches up to sixteen subagents per
-   * `invoke_subagent` call -- makes one tool call worth N subagents, so
-   * reporting the call rather than its children turns a wide fan-out into a
-   * count of one. Children are grouped by role so the router's `byRole` keeps
-   * the shape of the delegation, and the whole batch travels as one request.
-   */
+  Post every child one spawning tool call created. A CLI whose spawn tool
+  takes a batch -- agy dispatches up to sixteen subagents per
+  `invoke_subagent` call -- makes one tool call worth N subagents, so
+  reporting the call rather than its children turns a wide fan-out into a
+  count of one. Children are grouped by role so the router's `byRole` keeps
+  the shape of the delegation, and the whole batch travels as one request.
+  */
   async reportSpawns({
     tool,
     children,
@@ -208,11 +212,11 @@ export class AgentEventReporter {
   }
 
   /**
-   * Post the outcome of children a previous `reportSpawns` opened. The `id` on
-   * each child is what pairs it with its open; `durationMs` is how long the
-   * CLI ran the child, which is the only per-child turn measurement that
-   * exists -- the router never served a request for it.
-   */
+  Post the outcome of children a previous `reportSpawns` opened. The `id` on
+  each child is what pairs it with its open; `durationMs` is how long the
+  CLI ran the child, which is the only per-child turn measurement that
+  exists -- the router never served a request for it.
+  */
   async reportResults({
     tool,
     children,
@@ -243,11 +247,11 @@ export class AgentEventReporter {
   }
 
   /**
-   * One event per role in a batch, carrying that role's children. Grouping by
-   * role keeps the router's spawn rows the shape of the delegation -- a
-   * twelve-way fan-out is not twelve rows -- while the per-child ids inside
-   * each group still address each child individually.
-   */
+  One event per role in a batch, carrying that role's children. Grouping by
+  role keeps the router's spawn rows the shape of the delegation -- a
+  twelve-way fan-out is not twelve rows -- while the per-child ids inside
+  each group still address each child individually.
+  */
   childEvents(
     type: string,
     {
@@ -277,8 +281,8 @@ export class AgentEventReporter {
       if (!byRole.has(role)) byRole.set(role, []);
       byRole.get(role).push({
         id,
-        ...(model ? { model } : {}),
-        ...(logUri ? { logUri } : {})
+        ...(model && { model }),
+        ...(logUri && { logUri })
       });
     }
     return Array.from(byRole, ([role, group]) => ({
@@ -293,15 +297,15 @@ export class AgentEventReporter {
   }
 
   /**
-   * Report that the CLI never offered a delegation tool at all.
-   *
-   * A workspace can remove the tool from under an orchestrator turn -- a
-   * project `.claude/settings.json` that lists `Agent` under
-   * `permissions.deny` strips it regardless of what this bridge allows -- and
-   * the turn then does the work itself and says nothing. Zero spawns is the
-   * same reading as a provider that simply chose not to delegate, so the
-   * absence has to be reported as its own fact.
-   */
+  Report that the CLI never offered a delegation tool at all.
+  
+  A workspace can remove the tool from under an orchestrator turn -- a
+  project `.claude/settings.json` that lists `Agent` under
+  `permissions.deny` strips it regardless of what this bridge allows -- and
+  the turn then does the work itself and says nothing. Zero spawns is the
+  same reading as a provider that simply chose not to delegate, so the
+  absence has to be reported as its own fact.
+  */
   async reportSpawnToolsUnavailable({
     available = []
   }: { available?: unknown[] } = {}) {
@@ -319,15 +323,15 @@ export class AgentEventReporter {
   }
 
   /**
-   * Post a single tool_executed observation.
-   *
-   * The provider bridge just ran a tool call for the model. This is the
-   * first-class evidence the router needs to mark a tool name as actually
-   * available on this workspace -- without it, per-workspace tool use must
-   * remain unavailable to honour the fail-closed contract. The tool name and
-   * optional call id are the only identifying metadata the router retains;
-   * arguments and outputs are deliberately not propagated.
-   */
+  Post a single tool_executed observation.
+  
+  The provider bridge just ran a tool call for the model. This is the
+  first-class evidence the router needs to mark a tool name as actually
+  available on this workspace -- without it, per-workspace tool use must
+  remain unavailable to honour the fail-closed contract. The tool name and
+  optional call id are the only identifying metadata the router retains;
+  arguments and outputs are deliberately not propagated.
+  */
   async reportToolExecuted({
     tool,
     callId = null,
@@ -365,13 +369,13 @@ export class AgentEventReporter {
   }
 
   /**
-   * Post a single tool_requested observation. The model asked the bridge to
-   * invoke a tool, but the bridge did not necessarily run it -- some
-   * requested tools fail closed at the bridge boundary. Reporting both
-   * requested and executed is what lets the router distinguish "the
-   * provider never offered the tool" from "the provider offered it but
-   * something stopped it from running".
-   */
+  Post a single tool_requested observation. The model asked the bridge to
+  invoke a tool, but the bridge did not necessarily run it -- some
+  requested tools fail closed at the bridge boundary. Reporting both
+  requested and executed is what lets the router distinguish "the
+  provider never offered the tool" from "the provider offered it but
+  something stopped it from running".
+  */
   async reportToolRequested({
     tool,
     callId = null,
@@ -391,12 +395,12 @@ export class AgentEventReporter {
   }
 
   /**
-   * Post a single tool_unavailable observation. The model asked for a tool
-   * the bridge does not have, or the workspace has explicitly denied the
-   * tool through its own settings. Reporting the gap is what stops the
-   * dashboard from rendering "the workspace never used this tool" when the
-   * truth is "the workspace was forbidden from using it".
-   */
+  Post a single tool_unavailable observation. The model asked for a tool
+  the bridge does not have, or the workspace has explicitly denied the
+  tool through its own settings. Reporting the gap is what stops the
+  dashboard from rendering "the workspace never used this tool" when the
+  truth is "the workspace was forbidden from using it".
+  */
   async reportToolUnavailable({
     tool,
     callId = null,
@@ -426,12 +430,12 @@ export class AgentEventReporter {
   }
 
   /**
-   * Post a single skill_exposed observation. The bridge just made a skill
-   * available to the model -- either by resolving a `$skill` invocation or
-   * by surfacing the skill in the system prompt. This is the first-class
-   * event the router needs to mark the skill as available per workspace;
-   * without it, per-workspace skill attribution stays unavailable.
-   */
+  Post a single skill_exposed observation. The bridge just made a skill
+  available to the model -- either by resolving a `$skill` invocation or
+  by surfacing the skill in the system prompt. This is the first-class
+  event the router needs to mark the skill as available per workspace;
+  without it, per-workspace skill attribution stays unavailable.
+  */
   async reportSkillExposed({
     skill,
     source = null,
@@ -457,14 +461,14 @@ export class AgentEventReporter {
   }
 
   /**
-   * Post a single mcp_exposed observation. The bridge just made an MCP
-   * server available to the model -- either by resolving it from the
-   * selected role's MCP list or by surfacing it in the runtime's tool
-   * inventory. This is the first-class event the router needs to mark the
-   * server as exposed per workspace; it is distinct from actually using the
-   * server (a discovery call or an executed tool), which the router derives
-   * from `tool_executed` and its own OTLP discovery-span telemetry instead.
-   */
+  Post a single mcp_exposed observation. The bridge just made an MCP
+  server available to the model -- either by resolving it from the
+  selected role's MCP list or by surfacing it in the runtime's tool
+  inventory. This is the first-class event the router needs to mark the
+  server as exposed per workspace; it is distinct from actually using the
+  server (a discovery call or an executed tool), which the router derives
+  from `tool_executed` and its own OTLP discovery-span telemetry instead.
+  */
   async reportMcpExposed({
     server,
     source = null
@@ -481,13 +485,13 @@ export class AgentEventReporter {
   }
 
   /**
-   * Post a single skill_used observation. The bridge (or a Codex hook
-   * observing a SKILL.md read) just saw the agent actually use a skill.
-   * The router keys dedupe on (requestId, skill, source, pluginId,
-   * workspace, eventId) so a tool retry, a citation in a chat reply, and
-   * repeated reads of the same skill in one turn collapse into one
-   * attributed use rather than overcounting.
-   */
+  Post a single skill_used observation. The bridge (or a Codex hook
+  observing a SKILL.md read) just saw the agent actually use a skill.
+  The router keys dedupe on (requestId, skill, source, pluginId,
+  workspace, eventId) so a tool retry, a citation in a chat reply, and
+  repeated reads of the same skill in one turn collapse into one
+  attributed use rather than overcounting.
+  */
   async reportSkillUsed({
     skill,
     source = null,
@@ -516,15 +520,15 @@ export class AgentEventReporter {
   }
 
   /**
-   * Post a single skill_failed observation. The bridge just watched a
-   * SKILL.md read that did not succeed -- the call was denied or cancelled, or
-   * the read itself failed.
-   *
-   * Without this report the router knows only that the skill was exposed and
-   * never used, which is a claim about a use that did not happen rather than
-   * about the failure that did: the Console's Skills surface reads "exposed,
-   * never used" for a skill whose every read failed.
-   */
+  Post a single skill_failed observation. The bridge just watched a
+  SKILL.md read that did not succeed -- the call was denied or cancelled, or
+  the read itself failed.
+  
+  Without this report the router knows only that the skill was exposed and
+  never used, which is a claim about a use that did not happen rather than
+  about the failure that did: the Console's Skills surface reads "exposed,
+  never used" for a skill whose every read failed.
+  */
   async reportSkillFailed({
     skill,
     source = null,
@@ -538,8 +542,7 @@ export class AgentEventReporter {
     eventId?: string | null;
     outcome?: SkillFailureOutcome;
   } = {}) {
-    if (typeof skill !== "string" || !skill.trim()) return;
-    if (!SKILL_FAILURE_OUTCOMES.has(outcome)) return;
+    if (typeof skill !== "string" || !skill.trim() || !SKILL_FAILURE_OUTCOMES.has(outcome)) return;
     const payload = {
       type: "skill_failed",
       skill: skill.trim(),
@@ -559,9 +562,9 @@ export class AgentEventReporter {
   }
 
   /**
-   * Post a heartbeat activity observation to refresh staleness without
-   * transitioning lifecycle state.
-   */
+  Post a heartbeat activity observation to refresh staleness without
+  transitioning lifecycle state.
+  */
   async reportHeartbeat(options: number | { minIntervalMs?: number } = {}) {
     const minIntervalMs =
       typeof options === "number"
@@ -582,10 +585,10 @@ export class AgentEventReporter {
   }
 
   /**
-   * Post a single normalized activity observation.
-   *
-   * { type: "activity", state: "subagent_wait" | "resumed" | "heartbeat", childIds? }
-   */
+  Post a single normalized activity observation.
+  
+  { type: "activity", state: "subagent_wait" | "resumed" | "heartbeat", childIds? }
+  */
   private async reportHeartbeatActivity(
     stateOrOptions:
       | string
@@ -666,7 +669,7 @@ export class AgentEventReporter {
           // it when the request id is no longer one it knows: the router's
           // registry is in memory, and a restart loses it while a long CLI
           // turn keeps reporting.
-          ...(this.sessionId ? { sessionId: this.sessionId } : {}),
+          ...(this.sessionId && { sessionId: this.sessionId }),
           events
         })
       });
@@ -688,17 +691,17 @@ export class AgentEventReporter {
 }
 
 /**
- * A reporter for this request, or null when the router asked for no reporting
- * (a caller that is not the router).
- *
- * Spawn-tool availability is not a precondition for this channel: a provider
- * with no spawn tools (minimax, copilot) still runs tools, exposes skills,
- * and reaches MCP servers over the same request, and those observations must
- * be reportable even when `spawnTools` is empty. Only the events URL and
- * request id -- both router-issued -- authorize a post; the spawn-tool
- * header is optional and, when absent, this reporter simply never
- * recognizes a tool call as a spawn.
- */
+A reporter for this request, or null when the router asked for no reporting
+(a caller that is not the router).
+
+Spawn-tool availability is not a precondition for this channel: a provider
+with no spawn tools (minimax, copilot) still runs tools, exposes skills,
+and reaches MCP servers over the same request, and those observations must
+be reportable even when `spawnTools` is empty. Only the events URL and
+request id -- both router-issued -- authorize a post; the spawn-tool
+header is optional and, when absent, this reporter simply never
+recognizes a tool call as a spawn.
+*/
 export function resolveAgentEventReporter(
   headers: Record<string, unknown> | undefined
 ): AgentEventReporter | null {
@@ -710,22 +713,22 @@ export function resolveAgentEventReporter(
 }
 
 /**
- * A reporter used by Codex PreToolUse hooks that observe SKILL.md reads.
- *
- * Hooks run on the Codex side and so do not have a router-issued request id
- * to authorize an agent-events post the way a bridge does. The router still
- * receives them: a PreToolUse hook fires inside a session whose
- * /v1/responses parent request the router already issued, and the
- * orchestrator forwards the parent session id into the hook context
- * (`x-codex-session-id`). The router keeps a short-lived session -> bridge
- * context map for exactly this purpose; sessions that never opened a parent
- * request resolve to no context and the router fails closed by dropping the
- * post instead of inventing a workspace key.
- *
- * Returns null when the caller did not provide both an events URL and a
- * session id, so a misconfigured hook is a no-op rather than a shadow
- * authorization path.
- */
+A reporter used by Codex PreToolUse hooks that observe SKILL.md reads.
+
+Hooks run on the Codex side and so do not have a router-issued request id
+to authorize an agent-events post the way a bridge does. The router still
+receives them: a PreToolUse hook fires inside a session whose
+/v1/responses parent request the router already issued, and the
+orchestrator forwards the parent session id into the hook context
+(`x-codex-session-id`). The router keeps a short-lived session -> bridge
+context map for exactly this purpose; sessions that never opened a parent
+request resolve to no context and the router fails closed by dropping the
+post instead of inventing a workspace key.
+
+Returns null when the caller did not provide both an events URL and a
+session id, so a misconfigured hook is a no-op rather than a shadow
+authorization path.
+*/
 export function resolveSkillReadReporter(
   headers: Record<string, unknown> | undefined
 ): AgentEventReporter | null {

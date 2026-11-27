@@ -3,16 +3,16 @@ import { expect, type Locator, type Page, test } from "@playwright/test";
 import { illegibleText, waitForPageContent } from "./acceptance-helpers.ts";
 
 /**
- * The palette's trigger, once the client has written the key that opens it.
- *
- * The name carries the key the badge shows, because the badge is visible text
- * on the control: a visible word the name drops is a word the operator can
- * see and nobody else can. The key is read from the browser, so only the
- * client can write it -- and the client is what registers the shortcut, so
- * waiting for the key is waiting for the shortcut to exist. A key pressed
- * before that is a key pressed into a page that has not taken over yet, and
- * it goes nowhere.
- */
+The palette's trigger, once the client has written the key that opens it.
+
+The name carries the key the badge shows, because the badge is visible text
+on the control: a visible word the name drops is a word the operator can
+see and nobody else can. The key is read from the browser, so only the
+client can write it -- and the client is what registers the shortcut, so
+waiting for the key is waiting for the shortcut to exist. A key pressed
+before that is a key pressed into a page that has not taken over yet, and
+it goes nowhere.
+*/
 async function paletteTrigger(page: Page): Promise<Locator> {
   const trigger = page.locator("[data-command-palette-trigger]");
   await expect(trigger).toBeVisible();
@@ -21,30 +21,30 @@ async function paletteTrigger(page: Page): Promise<Locator> {
 }
 
 /**
- * The Console can be searched for a resource by what it is for.
- *
- * Fourteen resources live behind a sidebar of labels, and the sentence that
- * says what each one is for lives in the page's own header. An operator who
- * knows what they want -- which surface tells me about compaction, which one
- * owns the execution contract -- has no way to search for it: the labels are
- * in the rail and the purposes are in the pages.
- *
- * Every dashboard that carries this much state solves it the same way.
- * Grafana opens a command palette on `cmd+k` / `ctrl+k`, and its own
- * documentation lists what the palette is for: "search for and open
- * dashboards and folders", "locate pages within Grafana", and "initiate key
- * actions from any page in the application" (Grafana's Search documentation).
- *
- * So the palette searches the canonical navigation registry -- the same
- * registry the sidebar is built from -- by the section's name and by the
- * sentence that says what it is for. The registry is the single owner of that
- * sentence, so the palette cannot drift from the page header: it reads the
- * same words.
- *
- * The rest of the spec is about the palette behaving like a dialog rather
- * than like a list of links: it keeps the focus inside itself, it hands the
- * focus back when it closes, and it answers a search in one keystroke.
- */
+The Console can be searched for a resource by what it is for.
+
+Fourteen resources live behind a sidebar of labels, and the sentence that
+says what each one is for lives in the page's own header. An operator who
+knows what they want -- which surface tells me about compaction, which one
+owns the execution contract -- has no way to search for it: the labels are
+in the rail and the purposes are in the pages.
+
+Every dashboard that carries this much state solves it the same way.
+Grafana opens a command palette on `cmd+k` / `ctrl+k`, and its own
+documentation lists what the palette is for: "search for and open
+dashboards and folders", "locate pages within Grafana", and "initiate key
+actions from any page in the application" (Grafana's Search documentation).
+
+So the palette searches the canonical navigation registry -- the same
+registry the sidebar is built from -- by the section's name and by the
+sentence that says what it is for. The registry is the single owner of that
+sentence, so the palette cannot drift from the page header: it reads the
+same words.
+
+The rest of the spec is about the palette behaving like a dialog rather
+than like a list of links: it keeps the focus inside itself, it hands the
+focus back when it closes, and it answers a search in one keystroke.
+*/
 test("the page says the client has taken over only when the page responds", async ({
   page
 }) => {
@@ -279,19 +279,19 @@ test("the palette selects a result the keyboard can move", async ({ page }) => {
 });
 
 /**
- * The open palette is legible, whole and named.
- *
- * The palette is the one surface the Console renders outside the page: it is
- * an overlay, and the sweeps that read the pages read `main`. So the overlay
- * was never measured for the things every other surface is measured for --
- * whether its text can be read, whether anything in it is cut off, and whether
- * every control in it has a name.
- *
- * The palette is where the Console says what each of its fourteen surfaces is
- * *for*, so those sentences are read more often than any other prose in the
- * product. A purpose line too faint to read is a sentence the operator cannot
- * use, and it is the one sentence that tells them which surface they want.
- */
+The open palette is legible, whole and named.
+
+The palette is the one surface the Console renders outside the page: it is
+an overlay, and the sweeps that read the pages read `main`. So the overlay
+was never measured for the things every other surface is measured for --
+whether its text can be read, whether anything in it is cut off, and whether
+every control in it has a name.
+
+The palette is where the Console says what each of its fourteen surfaces is
+*for*, so those sentences are read more often than any other prose in the
+product. A purpose line too faint to read is a sentence the operator cannot
+use, and it is the one sentence that tells them which surface they want.
+*/
 test("the open palette is legible, whole and named", async ({ page }) => {
   await page.goto("/agents");
   await waitForPageContent(page);
@@ -308,13 +308,9 @@ test("the open palette is legible, whole and named", async ({ page }) => {
     const findings: string[] = [];
     for (const element of Array.from(overlay.querySelectorAll("*"))) {
       const style = getComputedStyle(element);
-      if (style.display === "none" || style.visibility === "hidden") continue;
-      if (!element.checkVisibility()) continue;
+      if (style.display === "none" || style.visibility === "hidden" || !element.checkVisibility()) continue;
       const box = element.getBoundingClientRect();
-      if (box.width <= 1 || box.height <= 1) continue;
-      if (style.overflowX === "auto" || style.overflowX === "scroll") continue;
-      if (style.textOverflow === "ellipsis") continue;
-      if (element.clientWidth === 0) continue;
+      if (box.width <= 1 || box.height <= 1 || style.overflowX === "auto" || style.overflowX === "scroll" || (style.textOverflow === "ellipsis") || (element.clientWidth === 0)) continue;
       const over = element.scrollWidth - element.clientWidth;
       if (over <= 1) continue;
       findings.push(
@@ -338,13 +334,8 @@ test("the open palette is legible, whole and named", async ({ page }) => {
   const unnamed = nodes
     .filter((node) => {
       const role = node.role?.value;
-      if (
-        role === undefined ||
-        !["link", "button", "textbox", "option", "checkbox"].includes(role)
-      ) {
-        return false;
-      }
-      if (node.ignored === true) return false;
+      if (role === undefined ||
+        !["link", "button", "textbox", "option", "checkbox"].includes(role) || (node.ignored === true)) return false;
       return (node.name?.value ?? "").trim() === "";
     })
     .map((node) => node.role?.value ?? "");

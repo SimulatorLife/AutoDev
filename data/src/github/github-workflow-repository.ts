@@ -35,13 +35,10 @@ function eventNamesFrom(value: unknown): readonly string[] | null {
         : isYamlMap(value)
           ? Array.from(value.keys())
           : null;
-  if (!values || values.length === 0) return null;
-  if (
-    !values.every(
+  if (!values || values.length === 0 || values.some(
       (event) =>
-        typeof event === "string" && event.length > 0 && event.trim() === event
-    )
-  ) {
+        typeof event !== "string" || event.length === 0 || event.trim() !== event
+    )) {
     return null;
   }
   return Array.from(new Set(values as string[])).sort();
@@ -60,11 +57,11 @@ function cronExpressionsFrom(value: unknown): readonly string[] | null {
 }
 
 /**
- * Parse only the fields needed for the workflow catalog, while delegating YAML
- * syntax and YAML 1.2 key semantics to the maintained `yaml` parser. In
- * particular, YAML 1.2 preserves GitHub's top-level `on` key as a string
- * instead of interpreting it as a YAML 1.1 boolean.
- */
+Parse only the fields needed for the workflow catalog, while delegating YAML
+syntax and YAML 1.2 key semantics to the maintained `yaml` parser. In
+particular, YAML 1.2 preserves GitHub's top-level `on` key as a string
+instead of interpreting it as a YAML 1.1 boolean.
+*/
 function parseWorkflowTriggers(content: string): ParsedWorkflowTriggers | null {
   try {
     const document = parseDocument(content, {

@@ -1,10 +1,12 @@
-/** A bounded HTTP status probe shared by managed service readiness checks. */
+/**
+A bounded HTTP status probe shared by managed service readiness checks.
+*/
 const HEALTH_PROBE_TIMEOUT_MS = 1000;
 
 /**
- * Caller cancellation may shorten, never extend, the probe's own deadline.
- * Redirects do not establish readiness of the service being checked.
- */
+Caller cancellation may shorten, never extend, the probe's own deadline.
+Redirects do not establish readiness of the service being checked.
+*/
 export function httpHealthProbe(
   url: string,
   init: RequestInit = {}

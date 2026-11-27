@@ -1,16 +1,16 @@
 /**
- * The browser's side of the whole-page answer.
- *
- * The Console's navigation owner learns that the destination's whole page has
- * arrived from the browser's own record of the request that carries it: the
- * browser keeps that record, and the owner sees it through a
- * `PerformanceObserver`. A unit test has no browser to keep one.
- *
- * So this stands in for the browser: an observer the owner can install, and an
- * answer the test can hand it. The answer is reported the way the browser
- * reports it -- as a finished request for a destination, carrying the marker
- * that says how the answer was carried.
- */
+The browser's side of the whole-page answer.
+
+The Console's navigation owner learns that the destination's whole page has
+arrived from the browser's own record of the request that carries it: the
+browser keeps that record, and the owner sees it through a
+`PerformanceObserver`. A unit test has no browser to keep one.
+
+So this stands in for the browser: an observer the owner can install, and an
+answer the test can hand it. The answer is reported the way the browser
+reports it -- as a finished request for a destination, carrying the marker
+that says how the answer was carried.
+*/
 
 interface FakeObserver {
   readonly callback: PerformanceObserverCallback;
@@ -19,7 +19,9 @@ interface FakeObserver {
   takeRecords(): PerformanceEntry[];
 }
 
-/** The observers the owner has installed. */
+/**
+The observers the owner has installed.
+*/
 const observers = new Set<FakeObserver>();
 
 class AnswerObserver implements FakeObserver {
@@ -42,24 +44,24 @@ class AnswerObserver implements FakeObserver {
 }
 
 /**
- * Give the owner a browser to watch.
- *
- * Node has an observer of its own, and it keeps the record of Node's
- * requests -- not the record of the request the owner is waiting for. Without
- * this, the owner would wait for an answer that never arrives.
- */
+Give the owner a browser to watch.
+
+Node has an observer of its own, and it keeps the record of Node's
+requests -- not the record of the request the owner is waiting for. Without
+this, the owner would wait for an answer that never arrives.
+*/
 export function installWholePageAnswerObserver(): void {
   globalThis.PerformanceObserver =
     AnswerObserver as unknown as typeof PerformanceObserver;
 }
 
 /**
- * Report that the request for a destination has finished.
- *
- * The answer carries the marker that says how it was carried, because that is
- * how the owner recognises it: the marker is not part of the destination's
- * identity.
- */
+Report that the request for a destination has finished.
+
+The answer carries the marker that says how it was carried, because that is
+how the owner recognises it: the marker is not part of the destination's
+identity.
+*/
 export function deliverWholePageAnswer(href: string): void {
   // The marker belongs in the query, before the hash: a destination's hash is
   // not part of its identity, and a marker behind the hash would be part of
@@ -68,7 +70,7 @@ export function deliverWholePageAnswer(href: string): void {
   const withoutHash = hashIndex === -1 ? href : href.slice(0, hashIndex);
   const hash = hashIndex === -1 ? "" : href.slice(hashIndex);
   const separator = withoutHash.includes("?") ? "&" : "?";
-  const name = `http://console.test${withoutHash}${separator}_rsc=test${hash}`;
+  const name = `https://console.test${withoutHash}${separator}_rsc=test${hash}`;
   const entry = {
     name,
     startTime: 0,
@@ -85,12 +87,12 @@ export function deliverWholePageAnswer(href: string): void {
 }
 
 /**
- * Stand in for the browser's address bar.
- *
- * The owner reads the address bar to tell a committed navigation from one that
- * did not commit, so a test that says "the navigation committed" has to be
- * able to say so.
- */
+Stand in for the browser's address bar.
+
+The owner reads the address bar to tell a committed navigation from one that
+did not commit, so a test that says "the navigation committed" has to be
+able to say so.
+*/
 export function setBrowserAddress(href: string): void {
   const url = new URL(href, "http://console.test");
   globalThis.window = {
@@ -102,7 +104,9 @@ export function setBrowserAddress(href: string): void {
   } as unknown as Window & typeof globalThis;
 }
 
-/** Take the browser's address bar away again. */
+/**
+Take the browser's address bar away again.
+*/
 export function clearBrowserAddress(): void {
   delete (globalThis as { window?: unknown }).window;
 }

@@ -11,50 +11,52 @@ import React from "react";
 import { canonicalNavPath } from "../../lib/routes.ts";
 import { Button } from "../forms/Button.ts";
 import { Icon, navIcon } from "../icons/Icon.ts";
-import { NavigationLink } from "./NavigationLink.ts";
 import { CommandPalette } from "./CommandPalette.ts";
+import { NavigationLink } from "./NavigationLink.ts";
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "autodev.console.sidebar.collapsed";
 const SIDEBAR_COMPACT_QUERY = "(max-width: 1279px)";
 
 export interface AppNavProps {
   /**
-   * The section the operator is on, when they are on one.
-   *
-   * A page that belongs to no section -- the page a bad address lands on --
-   * marks nothing, which is the honest answer: no item in the rail is the
-   * current page.
-   */
+  The section the operator is on, when they are on one.
+  
+  A page that belongs to no section -- the page a bad address lands on --
+  marks nothing, which is the honest answer: no item in the rail is the
+  current page.
+  */
   readonly activeSection: CanonicalNavSection | undefined;
   readonly counts?: Partial<Record<CanonicalNavSection, number>> | undefined;
 }
 
-type NavigationLinkProps = React.ComponentProps<typeof NavigationLink> & {
+type NavigationLinkProperties = React.ComponentProps<typeof NavigationLink> & {
   readonly "data-nav-brand"?: string;
   readonly "data-nav-item"?: string;
 };
 
-type GroupSectionProps = React.HTMLAttributes<HTMLElement> & {
+type GroupSectionProperties = React.HTMLAttributes<HTMLElement> & {
   readonly "data-nav-group"?: CanonicalNavGroupId;
-  /** The first group has no separator above it, in either state. */
+  /**
+  The first group has no separator above it, in either state.
+  */
   readonly "data-nav-group-first"?: string;
 };
 
 /**
- * URL-addressable navigation grouped by Configure / Observe / Operate. Each
- * item remains a real anchor while Next.js handles in-place route transitions.
- * The sidebar preference is persisted. Narrow viewports default to the rail;
- * expanding there overlays the page instead of squeezing its content, and a
- * resource selection or Escape returns it to the rail. Icon-only links retain
- * their accessible names and titles.
- *
- * The *default* for a narrow viewport is a stylesheet decision, not one this
- * component makes after hydration: the server-rendered page painted the
- * expanded navigation first, which on a 390px phone covered 66% of the
- * viewport and hid the page's own title underneath it. `data-nav-preference`
- * therefore carries only the operator's explicit choice, and the stylesheet
- * decides the rest at first paint.
- */
+URL-addressable navigation grouped by Configure / Observe / Operate. Each
+item remains a real anchor while Next.js handles in-place route transitions.
+The sidebar preference is persisted. Narrow viewports default to the rail;
+expanding there overlays the page instead of squeezing its content, and a
+resource selection or Escape returns it to the rail. Icon-only links retain
+their accessible names and titles.
+
+The *default* for a narrow viewport is a stylesheet decision, not one this
+component makes after hydration: the server-rendered page painted the
+expanded navigation first, which on a 390px phone covered 66% of the
+viewport and hid the page's own title underneath it. `data-nav-preference`
+therefore carries only the operator's explicit choice, and the stylesheet
+decides the rest at first paint.
+*/
 export function AppNav({
   activeSection,
   counts
@@ -65,7 +67,7 @@ export function AppNav({
 
   React.useEffect(() => {
     try {
-      const storedPreference = globalThis.localStorage.getItem(
+      const storedPreference = localStorage.getItem(
         SIDEBAR_COLLAPSED_STORAGE_KEY
       );
       if (storedPreference === null) {
@@ -101,13 +103,13 @@ export function AppNav({
   };
 
   const toggleSidebar = (): void => {
-    const nextIsCollapsed = !isCollapsed;
-    setIsCollapsed(nextIsCollapsed);
+    const isNextIsCollapsed = !isCollapsed;
+    setIsCollapsed(isNextIsCollapsed);
     setHasExplicitPreference(true);
-    persistSidebarPreference(nextIsCollapsed);
+    persistSidebarPreference(isNextIsCollapsed);
   };
   const expandedLabelClass = isCollapsed ? "hidden" : "inline";
-  const brandLinkProps: NavigationLinkProps = {
+  const brandLinkProperties: NavigationLinkProperties = {
     href: "/agents",
     "aria-label": "AutoDev Console",
     "data-nav-brand": "autodev",
@@ -165,7 +167,7 @@ export function AppNav({
       },
       React.createElement(
         NavigationLink,
-        brandLinkProps,
+        brandLinkProperties,
         React.createElement(
           "span",
           {
@@ -207,9 +209,7 @@ export function AppNav({
         onClick: toggleSidebar,
         testId: "sidebar-toggle"
       },
-      isCollapsed
-        ? React.createElement(Icon, { name: "chevronsRight", size: 16 })
-        : React.createElement(Icon, { name: "chevronsLeft", size: 16 })
+      React.createElement(Icon, ({ name: isCollapsed ? "chevronsRight" : "chevronsLeft", size: 16 }))
     ),
     React.createElement(
       "ul",
@@ -261,11 +261,11 @@ function renderGroup(
       ? "mt-1 border-t border-border pt-3"
       : "mt-1";
   }
-  const groupSectionProps: GroupSectionProps = {
+  const groupSectionProperties: GroupSectionProperties = {
     // The separators distinguish groups when their headings are hidden.
     className: "flex flex-col gap-1 " + groupSpacingClass,
     "data-nav-group": group.id,
-    ...(isFirst ? { "data-nav-group-first": "true" } : {})
+    ...(isFirst && { "data-nav-group-first": "true" })
   };
   const headingId = "autodev-nav-group-" + group.id.toLowerCase();
   return React.createElement(
@@ -273,7 +273,7 @@ function renderGroup(
     { key: group.id },
     React.createElement(
       "section",
-      { ...groupSectionProps, "aria-labelledby": headingId },
+      { ...groupSectionProperties, "aria-labelledby": headingId },
       // The group label is a label, not a heading.
       //
       // The sidebar is chrome: it is on every page, and it sits before the
@@ -330,7 +330,7 @@ function renderNavItem(
   const count = counts?.[section];
   const href = canonicalNavPath(section);
   const icon = navIcon(section);
-  const labelProps: NavigationLinkProps = {
+  const labelProperties: NavigationLinkProperties = {
     href,
     // The section name stays the link's accessible name in both modes, and the
     // count joins it.
@@ -360,7 +360,7 @@ function renderNavItem(
     { key: section },
     React.createElement(
       NavigationLink,
-      labelProps,
+      labelProperties,
       icon === null
         ? null
         : React.createElement(Icon, {
@@ -399,7 +399,7 @@ function expandedOnlyClass(isCollapsed: boolean): string {
 
 function persistSidebarPreference(isCollapsed: boolean): void {
   try {
-    globalThis.localStorage.setItem(
+    localStorage.setItem(
       SIDEBAR_COLLAPSED_STORAGE_KEY,
       String(isCollapsed)
     );
@@ -413,7 +413,9 @@ type NavigationClick = Pick<
   "altKey" | "button" | "ctrlKey" | "metaKey" | "shiftKey"
 >;
 
-/** Keep browser-native open-in-new-tab gestures from collapsing this sidebar. */
+/**
+Keep browser-native open-in-new-tab gestures from collapsing this sidebar.
+*/
 export function shouldCloseSidebarOnNavigation(
   event: NavigationClick,
   isCompactViewport: boolean

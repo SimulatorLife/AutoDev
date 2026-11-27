@@ -14,19 +14,19 @@ import { ROUTING_POLICY as routing } from "@simulatorlife/autodev-runtime/router
 import { useNonDelegatingContract } from "./non-delegating-contract.ts";
 
 /**
- * A provider that cannot delegate is not an orchestrator provider.
- *
- * The orchestrator's whole job is creating child agents, so a provider with no
- * delegation path cannot serve the orchestrator tier however it is enabled and
- * ranked. Every surface that reported enablement used to say otherwise: the
- * Console showed the provider at P1 for the orchestrator, and an operator who
- * believed it disabled every other provider -- and was then told that no
- * provider was enabled, when the one that was enabled could never have served.
- *
- * These tests pin the two halves of the fix: the router names the real cause,
- * and the surfaces that report a provider's role participation agree with the
- * router about whether it can serve that role at all.
- */
+A provider that cannot delegate is not an orchestrator provider.
+
+The orchestrator's whole job is creating child agents, so a provider with no
+delegation path cannot serve the orchestrator tier however it is enabled and
+ranked. Every surface that reported enablement used to say otherwise: the
+Console showed the provider at P1 for the orchestrator, and an operator who
+believed it disabled every other provider -- and was then told that no
+provider was enabled, when the one that was enabled could never have served.
+
+These tests pin the two halves of the fix: the router names the real cause,
+and the surfaces that report a provider's role participation agree with the
+router about whether it can serve that role at all.
+*/
 
 // Every shipped provider can delegate, so this file runs against a contract
 // in which MiniMax declares no delegation path.

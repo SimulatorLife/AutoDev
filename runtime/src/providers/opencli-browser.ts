@@ -27,18 +27,20 @@ export class OpencliBrowserUnavailableError extends Error {
   }
 }
 
-/** Resolve only the Chromium installed in AutoDev's private Playwright cache. */
+/**
+Resolve only the Chromium installed in AutoDev's private Playwright cache.
+*/
 export function resolveOpencliBrowserExecutable(
-  env: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env
 ): string | null {
-  const home = env.CODEX_HOME?.trim() || path.join(homedir(), ".codex");
+  const home = environment.CODEX_HOME?.trim() || path.join(homedir(), ".codex");
   const expectedCache = path.resolve(
     home,
     "provider-runtime",
     "opencli",
     "browsers"
   );
-  const configuredCache = env.PLAYWRIGHT_BROWSERS_PATH?.trim();
+  const configuredCache = environment.PLAYWRIGHT_BROWSERS_PATH?.trim();
   if (!configuredCache || path.resolve(configuredCache) !== expectedCache)
     return null;
   const executable = path.resolve(chromium.executablePath());
@@ -60,7 +62,7 @@ const VISIBILITY_READ_DELAY_MS = 150;
 export type OpencliCdpCommand = (
   wsUrl: string,
   method: string,
-  params?: Record<string, unknown>,
+  parameters?: Record<string, unknown>,
   signal?: AbortSignal
 ) => Promise<Record<string, unknown>>;
 
@@ -88,7 +90,7 @@ function assertLoopbackCdpWs(wsUrl: string): void {
 async function defaultCdpCommand(
   wsUrl: string,
   method: string,
-  params: Record<string, unknown> = {},
+  parameters: Record<string, unknown> = {},
   signal?: AbortSignal
 ): Promise<Record<string, unknown>> {
   assertLoopbackCdpWs(wsUrl);
@@ -97,17 +99,17 @@ async function defaultCdpCommand(
   combined.throwIfAborted();
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl);
-    let settled = false;
-    const finish = (fn: () => void): void => {
-      if (settled) return;
-      settled = true;
+    let isSettled = false;
+    const finish = (function_: () => void): void => {
+      if (isSettled) return;
+      isSettled = true;
       combined.removeEventListener("abort", onAbort);
       try {
         ws.close();
       } catch {
         // Ignore close errors.
       }
-      fn();
+      function_();
     };
     const onAbort = (): void =>
       finish(() =>
@@ -119,7 +121,7 @@ async function defaultCdpCommand(
       );
     combined.addEventListener("abort", onAbort, { once: true });
     ws.addEventListener("open", () => {
-      ws.send(JSON.stringify({ id: 1, method, params }));
+      ws.send(JSON.stringify({ id: 1, method, params: parameters }));
     });
     ws.addEventListener("error", () => {
       finish(() =>
@@ -162,7 +164,9 @@ export interface OpencliBrowserOptions {
   readonly readinessTimeoutMs?: number;
 }
 
-/** Owns Chromium and leases a distinct CDP page window/target to every command. */
+/**
+Owns Chromium and leases a distinct CDP page window/target to every command.
+*/
 export class OpencliBrowser {
   readonly profileDirectory: string;
   private readonly spawnBrowser: typeof spawn;
@@ -173,7 +177,9 @@ export class OpencliBrowser {
   private visibleLease: string | null = null;
   private readonly visibleQueue: symbol[] = [];
   private creatingTarget = false;
-  /** A command settled without process close; its target must not be leased. */
+  /**
+  A command settled without process close; its target must not be leased.
+  */
   private readonly quarantined = new Set<string>();
   private readonly waiters = new Set<() => void>();
   private changeRevision = 0;
@@ -183,7 +189,9 @@ export class OpencliBrowser {
   private generation = 0;
   private starting: Promise<void> | null = null;
   private closing = false;
-  /** A stop that waits for the commands holding leases to finish. */
+  /**
+  A stop that waits for the commands holding leases to finish.
+  */
   private stopWhenIdle = false;
   private lastError: string | null = null;
   private launchError: Error | null = null;
@@ -200,7 +208,9 @@ export class OpencliBrowser {
     return this.lastError;
   }
 
-  /** Start eagerly so the proxy does not become healthy before its browser is usable. */
+  /**
+  Start eagerly so the proxy does not become healthy before its browser is usable.
+  */
   async initialize(): Promise<void> {
     this.stopWhenIdle = false;
     try {
@@ -275,18 +285,18 @@ export class OpencliBrowser {
       );
     }
     const { endpoint, generation } = lease;
-    let foregroundReleased = !requiresVisiblePage;
+    let isForegroundReleased = !requiresVisiblePage;
     const releaseForeground = (): void => {
-      if (foregroundReleased) return;
-      foregroundReleased = true;
-      if (
-        this.generation === generation &&
-        this.visibleLease === endpoint &&
-        !this.quarantined.has(endpoint)
-      ) {
-        this.visibleLease = null;
-        this.notify();
+      if (isForegroundReleased) return;
+      isForegroundReleased = true;
+      if (this.generation !== generation ||
+        this.visibleLease !== endpoint ||
+        this.quarantined.has(endpoint)) {
+        return;
       }
+
+      this.visibleLease = null;
+      this.notify();
     };
     try {
       if (requiresVisiblePage) {
@@ -437,13 +447,17 @@ export class OpencliBrowser {
     }
   }
 
-  /** A cancelled CLI has not emitted close; isolate only its own CDP target. */
+  /**
+  A cancelled CLI has not emitted close; isolate only its own CDP target.
+  */
   quarantine(endpoint: string): void {
     this.quarantined.add(endpoint);
     this.busy.add(endpoint);
   }
 
-  /** The CLI has now closed, so its CDP target can be leased again. */
+  /**
+  The CLI has now closed, so its CDP target can be leased again.
+  */
   releaseQuarantine(endpoint: string): void {
     this.quarantined.delete(endpoint);
     this.busy.delete(endpoint);
@@ -453,11 +467,11 @@ export class OpencliBrowser {
   }
 
   /**
-   * Shut the browser down when the operator turns the dedicated browser off.
-   *
-   * Unlike `close`, the owner stays usable: turning the setting back on starts
-   * the browser again. Commands already holding a tab finish first.
-   */
+  Shut the browser down when the operator turns the dedicated browser off.
+  
+  Unlike `close`, the owner stays usable: turning the setting back on starts
+  the browser again. Commands already holding a tab finish first.
+  */
   async stop(): Promise<void> {
     this.stopWhenIdle = true;
     this.notify();
@@ -574,7 +588,9 @@ export class OpencliBrowser {
     try {
       unlinkSync(path.join(this.profileDirectory, "DevToolsActivePort"));
     } catch {
-      /* no stale port file */
+      /*
+      no stale port file
+      */
     }
     this.child = this.spawnBrowser(
       this.options.executable,
@@ -594,11 +610,13 @@ export class OpencliBrowser {
       this.notify();
     });
     child.once("close", () => {
-      if (this.child === child && !this.closing) {
-        this.child = null;
-        this.resetState();
-        this.lastError = "Dedicated Chromium exited unexpectedly";
+      if (this.child !== child || this.closing) {
+        return;
       }
+
+      this.child = null;
+      this.resetState();
+      this.lastError = "Dedicated Chromium exited unexpectedly";
     });
     const deadline = Date.now() + (this.options.readinessTimeoutMs ?? 20_000);
     try {
@@ -619,7 +637,9 @@ export class OpencliBrowser {
             ).split(ACTIVE_PORT_LINE_BREAK)[0]
           );
         } catch {
-          /* ActivePort is written asynchronously during startup. */
+          /*
+          ActivePort is written asynchronously during startup.
+          */
         }
         if (port !== null && Number.isInteger(port) && port > 0) {
           this.port = port;
@@ -661,15 +681,17 @@ export class OpencliBrowser {
       }),
       delay(1500)
     ]);
-    if (child.exitCode === null) {
-      child.kill("SIGKILL");
-      await Promise.race([
-        new Promise<void>((resolve) => {
-          child.once("close", () => resolve());
-        }),
-        delay(1000)
-      ]);
+    if (child.exitCode !== null) {
+      return;
     }
+
+    child.kill("SIGKILL");
+    await Promise.race([
+      new Promise<void>((resolve) => {
+        child.once("close", () => resolve());
+      }),
+      delay(1000)
+    ]);
   }
 
   private async version(): Promise<boolean> {
@@ -792,7 +814,7 @@ export class OpencliBrowser {
     this.slots.clear();
     for (const site of OPENCLI_SITES) {
       const targets: string[] = [];
-      for (let i = 0; i < this.options.siteTabs[site]; i++) {
+      for (let index = 0; index < this.options.siteTabs[site]; index++) {
         // One CDP window/tab must be confirmed before requesting the next.
         // eslint-disable-next-line no-await-in-loop -- CDP tabs must exist before slot state is committed.
         targets.push(await this.createTab(site));
@@ -854,14 +876,14 @@ export class OpencliBrowser {
         const existing = new Set(
           currentTargets.map((target) => target.webSocketDebuggerUrl)
         );
-        for (let i = 0; i < slots.length; i++) {
+        for (let index = 0; index < slots.length; index++) {
           if (!canLease() || signal.aborted || gen !== this.generation) break;
-          let endpoint = slots[i]!;
+          let endpoint = slots[index]!;
           // Another acquisition may have replaced a slot while our target
           // inventory was in flight. Never replace a newly assigned or busy
           // target based on that stale snapshot.
           if (
-            endpoint !== snapshot[i] ||
+            endpoint !== snapshot[index] ||
             this.busy.has(endpoint) ||
             this.quarantined.has(endpoint)
           ) {
@@ -877,7 +899,7 @@ export class OpencliBrowser {
               // eslint-disable-next-line no-await-in-loop -- replacement must finish before leasing.
               endpoint = await this.createTab(site);
               if (gen !== this.generation) break;
-              slots[i] = endpoint;
+              slots[index] = endpoint;
             } finally {
               if (gen === this.generation) {
                 this.creatingTarget = false;

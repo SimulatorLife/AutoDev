@@ -34,8 +34,8 @@ import {
   workspaceApprovalStatus
 } from "./approval-status.ts";
 import {
-  workspaceConfigurationSaveNotice,
-  type WorkspaceConfigurationSaveOutcome
+  workspaceConfigurationSaveNotice as workspaceConfigSaveNotice,
+  type WorkspaceConfigurationSaveOutcome as WorkspaceConfigSaveOutcome
 } from "./configuration.ts";
 import { WORKSPACE_PLAYTEST_LIMIT_FIELDS } from "./limits-fields.ts";
 import { workspacePath, WORKSPACES_PATH } from "./paths.ts";
@@ -43,7 +43,7 @@ import {
   workspaceAvailabilityBadgeLabel,
   workspaceAvailabilityBadgeVariant
 } from "./workspace-health.ts";
-import { WorkspaceConfigurationForm } from "./WorkspaceConfigurationForm.ts";
+import { WorkspaceConfigurationForm as WorkspaceConfigForm } from "./WorkspaceConfigurationForm.ts";
 import { WorkspacePlaytestApprovalForm } from "./WorkspacePlaytestApprovalForm.ts";
 import { WorkspacePlaytestRevokeForm } from "./WorkspacePlaytestRevokeForm.ts";
 import {
@@ -62,45 +62,53 @@ interface WorkspaceApprovalUnavailable {
 
 export interface WorkspaceDetailViewProps {
   readonly workspace: ControlApiWorkspaceRecord;
-  /** `null` when read, but no approval has ever been granted. */
+  /**
+  `null` when read, but no approval has ever been granted.
+  */
   readonly approval: WorkspacePlaytestApproval | null;
-  /** Set instead of `approval` when the Control API read itself failed. */
+  /**
+  Set instead of `approval` when the Control API read itself failed.
+  */
   readonly approvalUnavailable?: WorkspaceApprovalUnavailable | undefined;
   readonly visualTargets?:
     readonly WorkspaceVisualPlaytestTargetApproval[] | null | undefined;
   readonly visualTargetsUnavailable?:
     WorkspaceVisualTargetUnavailable | undefined;
   /**
-   * This workspace's logical-request count over the last 24 hours.
-   *
-   * `undefined` when the page could not resolve the workspace's reading at
-   * all; the three states it can carry are the three the list's Requests
-   * column renders.
-   */
+  This workspace's logical-request count over the last 24 hours.
+  
+  `undefined` when the page could not resolve the workspace's reading at
+  all; the three states it can carry are the three the list's Requests
+  column renders.
+  */
   readonly controlFailed?: boolean | undefined;
   readonly refusal?:
     React.ComponentProps<typeof ControlFailureNotice>["refusal"] | undefined;
   /**
-   * The revision the canonical catalog was read at.
-   *
-   * It is the handle a write is compared against, so the configuration
-   * control carries it: a write decided on a catalog that has since moved is
-   * refused rather than applied over the newer catalog.
-   */
+  The revision the canonical catalog was read at.
+  
+  It is the handle a write is compared against, so the configuration
+  control carries it: a write decided on a catalog that has since moved is
+  refused rather than applied over the newer catalog.
+  */
   readonly revision?: string | null | undefined;
-  /** The status of the canonical catalog the read came from. */
+  /**
+  The status of the canonical catalog the read came from.
+  */
   readonly catalogStatus?: "valid" | "invalid" | "unavailable" | undefined;
   /**
-   * The Runtime's desired-vs-actual view of the canonical catalog.
-   *
-   * The catalog is the configuration this page edits, so the page shows what
-   * the Runtime observed about it: converged, pending or not observed, with
-   * the operation history behind it. The Runtime derives it, so the page
-   * renders the Runtime's verdict rather than deciding one of its own.
-   */
+  The Runtime's desired-vs-actual view of the canonical catalog.
+  
+  The catalog is the configuration this page edits, so the page shows what
+  the Runtime observed about it: converged, pending or not observed, with
+  the operation history behind it. The Runtime derives it, so the page
+  renders the Runtime's verdict rather than deciding one of its own.
+  */
   readonly reconciliation?: ReconciliationView | undefined;
-  /** How the last write to this workspace's configuration ended. */
-  readonly saveOutcome?: WorkspaceConfigurationSaveOutcome | undefined;
+  /**
+  How the last write to this workspace's configuration ended.
+  */
+  readonly saveOutcome?: WorkspaceConfigSaveOutcome | undefined;
 }
 
 function IdentityPanel({
@@ -188,15 +196,15 @@ function LimitsPanel({
 }
 
 /**
- * The facts beside one workspace's canonical configuration.
- *
- * The configuration itself is edited by the control above this grid, so the
- * grid holds the facts the control does not own: the runtime's own answer
- * about the workspace is a separate authority from the configuration, and the
- * panel keeps them apart -- an unobserved workspace is missing evidence
- * rather than an idle one.
- */
-function ConfigurationPanel({
+The facts beside one workspace's canonical configuration.
+
+The configuration itself is edited by the control above this grid, so the
+grid holds the facts the control does not own: the runtime's own answer
+about the workspace is a separate authority from the configuration, and the
+panel keeps them apart -- an unobserved workspace is missing evidence
+rather than an idle one.
+*/
+function ConfigPanel({
   workspace
 }: {
   readonly workspace: ControlApiWorkspaceRecord;
@@ -328,7 +336,7 @@ function approvalMutationResult(
   return {
     kind: "refused",
     state,
-    ...(refusal === undefined ? {} : { refusal })
+    ...(refusal !== undefined && { refusal })
   };
 }
 
@@ -356,7 +364,7 @@ export function WorkspaceDetailView({
   );
   const [currentRefusal, setCurrentRefusal] = React.useState(refusal);
   const [pending, setPending] = React.useState(false);
-  const pendingMutationRef = React.useRef(false);
+  const pendingMutationReference = React.useRef(false);
   const [announcement, setAnnouncement] = React.useState("");
 
   React.useEffect(() => {
@@ -376,11 +384,11 @@ export function WorkspaceDetailView({
 
   const submitMutation: React.FormEventHandler<HTMLFormElement> = (event) => {
     event.preventDefault();
-    if (pendingMutationRef.current) return;
-    pendingMutationRef.current = true;
+    if (pendingMutationReference.current) return;
+    pendingMutationReference.current = true;
     const form = event.currentTarget;
     const body = new URLSearchParams();
-    for (const [name, value] of new FormData(form).entries()) {
+    for (const [name, value] of new FormData(form)) {
       if (typeof value === "string") body.append(name, value);
     }
     setPending(true);
@@ -413,8 +421,8 @@ export function WorkspaceDetailView({
               "Workspace mutation response omitted its approval."
             );
           }
-          const approvalIsRevoked = result.state.approval.revokedAt !== null;
-          if (approvalIsRevoked !== isRevocation) {
+          const isApprovalIsRevoked = result.state.approval.revokedAt !== null;
+          if (isApprovalIsRevoked !== isRevocation) {
             throw new TypeError(
               "Workspace mutation response has the wrong approval state."
             );
@@ -444,7 +452,7 @@ export function WorkspaceDetailView({
           "Playtesting approval could not be confirmed. Check the current state before retrying."
         );
       } finally {
-        pendingMutationRef.current = false;
+        pendingMutationReference.current = false;
         setPending(false);
       }
     })();
@@ -599,7 +607,7 @@ export function WorkspaceDetailView({
         { className: SECTION_HEADING_CLASS },
         "Configuration"
       ),
-      workspaceConfigurationSaveNotice(saveOutcome, workspace.id),
+      workspaceConfigSaveNotice(saveOutcome, workspace.id),
       reconciliation === undefined
         ? null
         : React.createElement(ReconciliationPanel, {
@@ -609,13 +617,13 @@ export function WorkspaceDetailView({
       React.createElement(
         "div",
         { className: "mt-3 flex flex-col gap-4" },
-        React.createElement(WorkspaceConfigurationForm, {
+        React.createElement(WorkspaceConfigForm, {
           workspace,
           revision,
           catalogStatus,
           returnTo: workspacePath(workspace.id)
         }),
-        React.createElement(ConfigurationPanel, { workspace })
+        React.createElement(ConfigPanel, { workspace })
       )
     ),
     React.createElement(
@@ -647,9 +655,7 @@ export function WorkspaceDetailView({
       workspaceId: workspace.id,
       workspaceEnabled: currentWorkspaceEnabled,
       initialTargets: visualTargets ?? [],
-      ...(visualTargetsUnavailable === undefined
-        ? {}
-        : { unavailable: visualTargetsUnavailable })
+      ...(visualTargetsUnavailable !== undefined && { unavailable: visualTargetsUnavailable })
     })
   );
 }

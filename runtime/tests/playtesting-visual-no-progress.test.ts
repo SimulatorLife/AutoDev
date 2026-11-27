@@ -1,16 +1,16 @@
 /**
- * The Runtime notices a game that is not advancing.
- *
- * A run that spends its whole budget on a game that shows the player nothing
- * new is indistinguishable from a run that was making progress right up to
- * the end. The Runtime measures the difference: it compares what the player
- * sees now with what they saw before, and when the game has not advanced for
- * as long as the operator allowed, it ends the episode and says so.
- *
- * The thresholds are the operator's. The measurement is the Runtime's, and the
- * decision backend is told what it says, so a backend that can choose
- * differently is told that it should.
- */
+The Runtime notices a game that is not advancing.
+
+A run that spends its whole budget on a game that shows the player nothing
+new is indistinguishable from a run that was making progress right up to
+the end. The Runtime measures the difference: it compares what the player
+sees now with what they saw before, and when the game has not advanced for
+as long as the operator allowed, it ends the episode and says so.
+
+The thresholds are the operator's. The measurement is the Runtime's, and the
+decision backend is told what it says, so a backend that can choose
+differently is told that it should.
+*/
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -20,7 +20,9 @@ import {
   visibleStateOf
 } from "./support/playtesting-visual-episode.ts";
 
-/** The stop reason and the progress reading a recorded trace step carries. */
+/**
+The stop reason and the progress reading a recorded trace step carries.
+*/
 type TraceOutcome = {
   readonly stopReason: string;
   readonly progress: { readonly unchangedSteps: number };

@@ -47,7 +47,7 @@ test("run client forwards the canonical maximum batch and rejects a larger inven
         { length: PLAYTESTS_MAX_BATCH_ASSIGNMENTS },
         (_, index) => {
           const assignmentId = `a-${String(index + 1).padStart(4, "0")}`;
-          return { assignmentId, episodeId: `${"batch-1000"}.${assignmentId}` };
+          return { assignmentId, episodeId: `batch-1000.${assignmentId}` };
         }
       ),
       createdAt: "2026-10-16T12:00:00.000Z",
@@ -465,18 +465,18 @@ test("episode details reject stale schemas and adapter rows with visual assignme
 });
 
 test("Playtesting window fetch validates the exact episode, artifact, and step range", async () => {
-  const requestArgs = {
+  const requestArguments = {
     workspaceId,
     episodeId: "episode-1",
     artifactId: "trace-window-1",
     startStep: 10,
     endStep: 12
   } as const;
-  const result = await fetchPlaytestingWindow(requestArgs, config, {
+  const result = await fetchPlaytestingWindow(requestArguments, config, {
     fetchImpl: (async () =>
       response({
         schema: "autodev-control-playtesting-window-v1",
-        ...requestArgs,
+        ...requestArguments,
         sha256: "b".repeat(64),
         mediaType: "application/x-ndjson",
         sourceLineCount: 4,

@@ -1,34 +1,44 @@
 /**
- * The unified session diagnostics contract.
- *
- * One session's evidence is read from several authoritative places -- the
- * Codex rollouts, the router's rotated logs, the bridge logs, the hook log,
- * and the live router -- and three consumers read it: the Console's `/usage`
- * page, the `autodev-session-diagnostics` skill, and `pnpm autodev --
- * diagnostics`. Those three used to have three different shapes, so a fact
- * could be true in one surface and missing from another.
- *
- * This module is the single shape they all speak. It is pure: no filesystem,
- * no network, no clock. The engine that fills it lives in
- * `@simulatorlife/autodev-data/diagnostics`, and the text rendering lives
- * beside these types so a CLI and an HTTP response cannot drift apart.
- */
+The unified session diagnostics contract.
+
+One session's evidence is read from several authoritative places -- the
+Codex rollouts, the router's rotated logs, the bridge logs, the hook log,
+and the live router -- and three consumers read it: the Console's `/usage`
+page, the `autodev-session-diagnostics` skill, and `pnpm autodev --
+diagnostics`. Those three used to have three different shapes, so a fact
+could be true in one surface and missing from another.
+
+This module is the single shape they all speak. It is pure: no filesystem,
+no network, no clock. The engine that fills it lives in
+`@simulatorlife/autodev-data/diagnostics`, and the text rendering lives
+beside these types so a CLI and an HTTP response cannot drift apart.
+*/
 
 import { type ClientSurface, isClientSurface } from "./client-surface.ts";
 
-/** The schema of one session's full diagnostics report. */
+/**
+The schema of one session's full diagnostics report.
+*/
 export const SESSION_DIAGNOSTICS_SCHEMA = "autodev-session-diagnostics-v1";
 
-/** The schema of the recent-sessions listing. */
+/**
+The schema of the recent-sessions listing.
+*/
 export const SESSION_RECENT_LIST_SCHEMA = "autodev-session-recent-v1";
 
-/** The schema of the cross-session fleet scan. */
+/**
+The schema of the cross-session fleet scan.
+*/
 export const SESSION_FLEET_SCAN_SCHEMA = "autodev-session-fleet-scan-v1";
 
-/** The schema of the hook-denial summary. */
+/**
+The schema of the hook-denial summary.
+*/
 export const SESSION_HOOK_DENIALS_SCHEMA = "autodev-session-hook-denials-v1";
 
-/** The categories a tool failure can fall into. */
+/**
+The categories a tool failure can fall into.
+*/
 export const TOOL_FAILURE_CATEGORIES = [
   "pretooluse-hook",
   "json-wrap-syntax",
@@ -44,7 +54,9 @@ export const TOOL_FAILURE_CATEGORIES = [
 
 export type ToolFailureCategory = (typeof TOOL_FAILURE_CATEGORIES)[number];
 
-/** The closed set of categories, for allowlisting a filter value. */
+/**
+The closed set of categories, for allowlisting a filter value.
+*/
 export function isToolFailureCategory(
   value: unknown
 ): value is ToolFailureCategory {
@@ -54,7 +66,9 @@ export function isToolFailureCategory(
   );
 }
 
-/** The bounded page sizes the diagnostics API accepts. */
+/**
+The bounded page sizes the diagnostics API accepts.
+*/
 export const SESSION_EVENTS_PAGE_LIMIT = 200;
 export const SESSION_EVENTS_PAGE_DEFAULT = 50;
 export const SESSION_ITEMS_PAGE_LIMIT = 200;
@@ -63,7 +77,9 @@ export const SESSION_FLEET_SCAN_LIMIT = 50;
 export const SESSION_RECENT_LIMIT = 50;
 export const SESSION_HOOK_DENIAL_WINDOW_DAYS = 30;
 
-/** One tool call that did not do its job. */
+/**
+One tool call that did not do its job.
+*/
 export interface SessionToolFailure {
   readonly at: string;
   readonly tool: string;
@@ -73,13 +89,17 @@ export interface SessionToolFailure {
   readonly input?: string;
 }
 
-/** Assistant messages that carried only a tag pair and no content. */
+/**
+Assistant messages that carried only a tag pair and no content.
+*/
 export interface SessionThreadAnomalies {
   readonly tagOnlyMessages: number;
   readonly samples: readonly string[];
 }
 
-/** One thread's token usage, accumulated across compaction resets. */
+/**
+One thread's token usage, accumulated across compaction resets.
+*/
 export interface SessionThreadTokenUsage {
   readonly observed: boolean;
   readonly samples: number;
@@ -94,7 +114,9 @@ export interface SessionThreadTokenUsage {
   readonly cacheDrops: number;
 }
 
-/** One thread's context compaction evidence. */
+/**
+One thread's context compaction evidence.
+*/
 export interface SessionThreadCompactionSummary {
   readonly count: number;
   readonly contextCompactedEvents: number;
@@ -104,50 +126,58 @@ export interface SessionThreadCompactionSummary {
   readonly responseImageItems: number;
 }
 
-/** One thread's prompt and skill-catalog overhead. */
+/**
+One thread's prompt and skill-catalog overhead.
+*/
 export interface SessionThreadPromptOverhead {
   /**
-   * The initial developer prompt's size in UTF-8 bytes. The initial developer
-   * prompt is the text of every developer message the thread received before
-   * its first agent output, each message's text parts joined with a newline.
-   */
+  The initial developer prompt's size in UTF-8 bytes. The initial developer
+  prompt is the text of every developer message the thread received before
+  its first agent output, each message's text parts joined with a newline.
+  */
   readonly initialDeveloperBytes: number;
   /**
-   * The same text's length in Unicode code points: a character outside the
-   * Basic Multilingual Plane (a surrogate pair) counts once, an unpaired
-   * surrogate counts once, and combining marks count separately (this is not a
-   * grapheme count).
-   */
+  The same text's length in Unicode code points: a character outside the
+  Basic Multilingual Plane (a surrogate pair) counts once, an unpaired
+  surrogate counts once, and combining marks count separately (this is not a
+  grapheme count).
+  */
   readonly initialDeveloperChars: number;
   /**
-   * The same text's length in tokens, or null when no tokenizer for the
-   * thread's provider model is available to count it. A rollout records token
-   * usage only per request, never per message, so the engine reports null
-   * rather than an estimate.
-   */
+  The same text's length in tokens, or null when no tokenizer for the
+  thread's provider model is available to count it. A rollout records token
+  usage only per request, never per message, so the engine reports null
+  rather than an estimate.
+  */
   readonly initialDeveloperTokens: number | null;
   readonly skillsCatalogBytes: number;
   readonly skillsLoaded: number;
   readonly skillsByRoot: Readonly<Record<string, number>>;
-  /** The distinct skills whose SKILL.md this thread read, sorted by name. */
+  /**
+  The distinct skills whose SKILL.md this thread read, sorted by name.
+  */
   readonly skillsRead: readonly string[];
   /**
-   * How many tool calls of this thread read each skill's SKILL.md, keyed by
-   * exactly the names in skillsRead. A call that names the same SKILL.md more
-   * than once is one read; each further call is another.
-   */
+  How many tool calls of this thread read each skill's SKILL.md, keyed by
+  exactly the names in skillsRead. A call that names the same SKILL.md more
+  than once is one read; each further call is another.
+  */
   readonly skillReadCounts: Readonly<Record<string, number>>;
   readonly skillTelemetryReads: number | null;
 }
 
-/** One thread's efficiency evidence. */
+/**
+One thread's efficiency evidence.
+*/
 export interface SessionThreadEfficiency {
   readonly tokens: SessionThreadTokenUsage;
   readonly compaction: SessionThreadCompactionSummary;
   readonly prompt: SessionThreadPromptOverhead;
 }
 
-/** One turn of one thread. */
+/**
+One turn of one thread.
+*/
 export interface SessionThreadTurn {
   readonly turnId: string;
   readonly started: string | null;
@@ -156,7 +186,9 @@ export interface SessionThreadTurn {
   readonly detail: string | null;
 }
 
-/** A silence of a minute or more inside one thread. */
+/**
+A silence of a minute or more inside one thread.
+*/
 export interface SessionThreadGap {
   readonly seconds: number;
   readonly after: string;
@@ -164,7 +196,9 @@ export interface SessionThreadGap {
   readonly at: string;
 }
 
-/** One truncated rollout item, with the thread it came from. */
+/**
+One truncated rollout item, with the thread it came from.
+*/
 export interface SessionThreadItem {
   readonly at: string;
   readonly kind: string;
@@ -173,11 +207,11 @@ export interface SessionThreadItem {
 }
 
 /**
- * How much a thread investigated before it first changed a file.
- *
- * `observed` is false when the rollout carries no `item_completed` records: the
- * counts are then unknown, not zero.
- */
+How much a thread investigated before it first changed a file.
+
+`observed` is false when the rollout carries no `item_completed` records: the
+counts are then unknown, not zero.
+*/
 export interface SessionInvestigation {
   readonly observed: boolean;
   readonly firstEditAt: string | null;
@@ -194,7 +228,9 @@ export interface SessionInvestigation {
   };
 }
 
-/** One thread of a session: the root turn and every subagent under it. */
+/**
+One thread of a session: the root turn and every subagent under it.
+*/
 export interface SessionThreadTrace {
   readonly id: string;
   readonly sessionId: string | null;
@@ -212,7 +248,9 @@ export interface SessionThreadTrace {
   readonly counts: Readonly<Record<string, number>>;
   readonly turns: readonly SessionThreadTurn[];
   readonly gaps: readonly SessionThreadGap[];
-  /** Calls by tool; MCP tools are keyed `mcp__<server>__<tool>`. */
+  /**
+  Calls by tool; MCP tools are keyed `mcp__<server>__<tool>`.
+  */
   readonly tools: Readonly<Record<string, number>>;
   readonly toolFailures: readonly SessionToolFailure[];
   readonly anomalies?: SessionThreadAnomalies;
@@ -221,7 +259,9 @@ export interface SessionThreadTrace {
   readonly items?: readonly SessionThreadItem[];
 }
 
-/** One router event row, as the router recorded it. */
+/**
+One router event row, as the router recorded it.
+*/
 export interface SessionRouterEventRow {
   readonly at: string;
   readonly requestId: string;
@@ -244,7 +284,9 @@ export interface SessionRouterEventRow {
   readonly errorCode?: string | null;
 }
 
-/** One request the router skipped, with the reason it gave. */
+/**
+One request the router skipped, with the reason it gave.
+*/
 export interface SessionRouterSkippedEvent {
   readonly at: string;
   readonly requestId: string;
@@ -253,7 +295,9 @@ export interface SessionRouterSkippedEvent {
   readonly elapsedMs: number | null;
 }
 
-/** One router request that failed. */
+/**
+One router request that failed.
+*/
 export interface SessionRouterFailure {
   readonly at: string;
   readonly requestId: string;
@@ -264,7 +308,9 @@ export interface SessionRouterFailure {
   readonly elapsedMs: number | null;
 }
 
-/** One provider's share of a thread's requests. */
+/**
+One provider's share of a thread's requests.
+*/
 export interface SessionRouterProviderStats {
   readonly requests: number;
   readonly failures: number;
@@ -272,25 +318,29 @@ export interface SessionRouterProviderStats {
   readonly toolCalls: number;
 }
 
-/** One thread's router requests, summarised. */
+/**
+One thread's router requests, summarised.
+*/
 export interface SessionRouterSummary {
   readonly thread: string;
   readonly model: string | null;
   /**
-   * `thread`: every matched event names the thread. `model-window`: some are
-   * older events matched by model and time, so same-model threads interleave.
-   */
+  `thread`: every matched event names the thread. `model-window`: some are
+  older events matched by model and time, so same-model threads interleave.
+  */
   readonly matchedBy: "thread" | "model-window";
   readonly requests: number;
   readonly byProvider: Readonly<Record<string, SessionRouterProviderStats>>;
   readonly failures: readonly SessionRouterFailure[];
-  /** Providers in request order, collapsed: a turn that hops shows more. */
+  /**
+  Providers in request order, collapsed: a turn that hops shows more.
+  */
   readonly providerSequence: readonly string[];
   /**
-   * Upstream models the router sent the thread's requests to, in request
-   * order and collapsed. These are provider model ids (`claude-opus-5-5`),
-   * not the AutoDev role alias Codex asked for (`autodev/orchestrator`).
-   */
+  Upstream models the router sent the thread's requests to, in request
+  order and collapsed. These are provider model ids (`claude-opus-5-5`),
+  not the AutoDev role alias Codex asked for (`autodev/orchestrator`).
+  */
   readonly modelSequence: readonly string[];
   readonly skipped?: readonly SessionRouterSkippedEvent[];
   readonly retries?: number;
@@ -302,21 +352,27 @@ export interface SessionRouterSummary {
   readonly events?: readonly SessionRouterEventRow[];
 }
 
-/** Matching lines from one bridge log. */
+/**
+Matching lines from one bridge log.
+*/
 export interface SessionBridgeLogAlert {
   readonly file: string;
   readonly count: number;
   readonly samples: readonly string[];
 }
 
-/** One log file the diagnostics read, with how fresh it is. */
+/**
+One log file the diagnostics read, with how fresh it is.
+*/
 export interface SessionLogFileSummary {
   readonly file: string;
   readonly modified: string;
   readonly bytes: number;
 }
 
-/** What the live runtime looked like while the session ran. */
+/**
+What the live runtime looked like while the session ran.
+*/
 export interface SessionLiveReport {
   readonly router: {
     readonly reachable: boolean;
@@ -325,7 +381,9 @@ export interface SessionLiveReport {
     readonly liveByRole: Readonly<Record<string, number>> | null;
     readonly startedAt: string | null;
   };
-  /** Recently written threads whose latest turn has not ended. */
+  /**
+  Recently written threads whose latest turn has not ended.
+  */
   readonly openThreads: readonly {
     readonly id: string;
     readonly modified: string;
@@ -343,7 +401,9 @@ export interface SessionLiveReport {
   } | null;
 }
 
-/** One workspace's MCP exposure against what it actually used. */
+/**
+One workspace's MCP exposure against what it actually used.
+*/
 export interface SessionEfficiencyWorkspaceMcpSummary {
   readonly workspace: string;
   readonly exposed: Readonly<Record<string, number>>;
@@ -355,7 +415,9 @@ export interface SessionEfficiencyWorkspaceMcpSummary {
   }[];
 }
 
-/** The persisted router state, read beside the live one. */
+/**
+The persisted router state, read beside the live one.
+*/
 export interface SessionEfficiencySummary {
   readonly disabledProviders: readonly string[];
   readonly nullRoleModels: readonly string[];
@@ -369,7 +431,9 @@ export interface SessionEfficiencySummary {
   readonly workspaces?: readonly SessionEfficiencyWorkspaceMcpSummary[];
 }
 
-/** One bounded page of a longer list. */
+/**
+One bounded page of a longer list.
+*/
 export interface SessionPagedSlice<T> {
   readonly items: readonly T[];
   readonly total: number;
@@ -378,7 +442,9 @@ export interface SessionPagedSlice<T> {
   readonly hasMore: boolean;
 }
 
-/** The session-wide rollups every surface shows first. */
+/**
+The session-wide rollups every surface shows first.
+*/
 export interface SessionDiagnosticsAggregates {
   readonly threadCount: number;
   readonly totalTokens: number;
@@ -397,16 +463,24 @@ export interface SessionDiagnosticsAggregates {
   readonly maxReplacementImages: number;
   readonly responseImageItems: number;
   readonly maxInitialDeveloperBytes: number;
-  /** The largest thread initial developer prompt, in code points. */
+  /**
+  The largest thread initial developer prompt, in code points.
+  */
   readonly maxInitialDeveloperChars: number;
-  /** The largest counted thread prompt in tokens; null when none was counted. */
+  /**
+  The largest counted thread prompt in tokens; null when none was counted.
+  */
   readonly maxInitialDeveloperTokens: number | null;
   readonly maxSkillsCatalogBytes: number;
   readonly maxSkillsLoaded: number;
   readonly skillsByRoot: Readonly<Record<string, number>>;
-  /** The number of keys of skillReadCounts. */
+  /**
+  The number of keys of skillReadCounts.
+  */
   readonly uniqueSkillsRead: number;
-  /** SKILL.md reads per skill, summed over every thread of the session. */
+  /**
+  SKILL.md reads per skill, summed over every thread of the session.
+  */
   readonly skillReadCounts: Readonly<Record<string, number>>;
   readonly skillTelemetryReads: number | null;
   readonly turnsTotal: number;
@@ -428,7 +502,9 @@ export interface SessionDiagnosticsAggregates {
   readonly byProvider: Readonly<Record<string, SessionRouterProviderStats>>;
 }
 
-/** Bounded lifecycle evidence; no claim of native transcript or token coverage. */
+/**
+Bounded lifecycle evidence; no claim of native transcript or token coverage.
+*/
 export interface NativeSessionEvidence {
   readonly startedAt: string | null;
   readonly lastObservedAt: string;
@@ -437,17 +513,27 @@ export interface NativeSessionEvidence {
   readonly workspace: string | null;
 }
 
-/** One session's full diagnostics report. */
+/**
+One session's full diagnostics report.
+*/
 export interface SessionDiagnosticsReport {
   readonly schema: typeof SESSION_DIAGNOSTICS_SCHEMA;
-  /** False when neither a rollout nor a native lifecycle observation matched. */
+  /**
+  False when neither a rollout nor a native lifecycle observation matched.
+  */
   readonly found: boolean;
   readonly requestedId: string;
-  /** The session the id resolved to, when it resolved to one. */
+  /**
+  The session the id resolved to, when it resolved to one.
+  */
   readonly rootSessionId: string | null;
-  /** True when the id named a child thread rather than the session root. */
+  /**
+  True when the id named a child thread rather than the session root.
+  */
   readonly matchedByThreadId: boolean;
-  /** The client surface observed on the session's root thread, if any. */
+  /**
+  The client surface observed on the session's root thread, if any.
+  */
   readonly clientSurface: ClientSurface | null;
   readonly nativeSession?: NativeSessionEvidence;
   readonly threads: readonly SessionThreadTrace[];
@@ -461,7 +547,9 @@ export interface SessionDiagnosticsReport {
   readonly itemsPage: SessionPagedSlice<SessionThreadItem>;
 }
 
-/** One session in the recent-sessions listing. */
+/**
+One session in the recent-sessions listing.
+*/
 export interface RecentSessionSummary {
   readonly id: string;
   readonly started: string;
@@ -471,14 +559,18 @@ export interface RecentSessionSummary {
   readonly clientSurface: ClientSurface | null;
 }
 
-/** The recent-sessions listing. */
+/**
+The recent-sessions listing.
+*/
 export interface SessionRecentListResponse {
   readonly schema: typeof SESSION_RECENT_LIST_SCHEMA;
   readonly limit: number;
   readonly sessions: readonly RecentSessionSummary[];
 }
 
-/** One session's row in the fleet scan. */
+/**
+One session's row in the fleet scan.
+*/
 export interface FleetSessionRow {
   readonly id: string;
   readonly started: string;
@@ -502,7 +594,9 @@ export interface FleetSessionRow {
   readonly providers: Readonly<Record<string, number>>;
 }
 
-/** The fleet-wide totals of the fleet scan. */
+/**
+The fleet-wide totals of the fleet scan.
+*/
 export interface FleetScanTotals {
   readonly sessions: number;
   readonly threads: number;
@@ -523,19 +617,29 @@ export interface FleetScanTotals {
   }[];
 }
 
-/** The fleet scan across the newest sessions. */
+/**
+The fleet scan across the newest sessions.
+*/
 export interface SessionFleetScanResponse {
   readonly schema: typeof SESSION_FLEET_SCAN_SCHEMA;
   readonly limit: number;
-  /** Rollout-backed efficiency/failure rows only. */
+  /**
+  Rollout-backed efficiency/failure rows only.
+  */
   readonly sessions: readonly FleetSessionRow[];
-  /** Unified bounded recent list when lifecycle-only native sessions are present. */
+  /**
+  Unified bounded recent list when lifecycle-only native sessions are present.
+  */
   readonly recentSessions?: readonly RecentSessionSummary[];
-  /** Rollout-only totals; native metrics must not be fabricated as zero. */
+  /**
+  Rollout-only totals; native metrics must not be fabricated as zero.
+  */
   readonly totals: FleetScanTotals;
 }
 
-/** The `PreToolUse` denials recorded in the hook log. */
+/**
+The `PreToolUse` denials recorded in the hook log.
+*/
 export interface HookDenialSummary {
   readonly logFile: string;
   readonly sinceDays: number;
@@ -555,19 +659,21 @@ export interface HookDenialSummary {
   }[];
 }
 
-/** The hook-denial summary response. */
+/**
+The hook-denial summary response.
+*/
 export interface SessionHookDenialsResponse {
   readonly schema: typeof SESSION_HOOK_DENIALS_SCHEMA;
   readonly summary: HookDenialSummary;
 }
 
 /**
- * The failure categories, in the order they are tried.
- *
- * A failure is categorized by the first rule that matches, so the order is the
- * contract: a `SyntaxError` inside a JSON-wrapped argument is a
- * `json-wrap-syntax` failure, not a plain `syntax-error`.
- */
+The failure categories, in the order they are tried.
+
+A failure is categorized by the first rule that matches, so the order is the
+contract: a `SyntaxError` inside a JSON-wrapped argument is a
+`json-wrap-syntax` failure, not a plain `syntax-error`.
+*/
 const FAILURE_CATEGORY_RULES: ReadonlyArray<
   readonly [ToolFailureCategory, RegExp]
 > = [
@@ -584,12 +690,12 @@ const FAILURE_CATEGORY_RULES: ReadonlyArray<
 const SYNTAX_COLON_REGEX = /SyntaxError: Unexpected token ':'/i;
 
 /**
- * The category a tool failure falls into.
- *
- * A caller that already knows the category passes it through; a caller that
- * only has the excerpt derives it here, so the Console, the CLI and the fleet
- * scan agree on what "a hook block" is.
- */
+The category a tool failure falls into.
+
+A caller that already knows the category passes it through; a caller that
+only has the excerpt derives it here, so the Console, the CLI and the fleet
+scan agree on what "a hook block" is.
+*/
 export function classifyToolFailure(
   detail: string,
   input?: string | undefined
@@ -605,13 +711,25 @@ export function classifyToolFailure(
   return "other";
 }
 
-/* ------------------------------------------------------------------ */
-/* Runtime validators.                                                 */
+/*
+------------------------------------------------------------------
+*/
+/*
+Runtime validators.
+*/
 /*                                                                     */
-/* The Console reads these payloads over HTTP from a service it does   */
-/* not control, so a malformed body must fail closed rather than be    */
-/* rendered as though it were evidence.                                */
-/* ------------------------------------------------------------------ */
+/*
+The Console reads these payloads over HTTP from a service it does
+*/
+/*
+not control, so a malformed body must fail closed rather than be
+*/
+/*
+rendered as though it were evidence.
+*/
+/*
+------------------------------------------------------------------
+*/
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -629,7 +747,9 @@ function isNullableNumber(value: unknown): value is number | null {
   return value === null || isNumber(value);
 }
 
-/** A whole, non-negative measurement such as a character or token count. */
+/**
+A whole, non-negative measurement such as a character or token count.
+*/
 function isCount(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) >= 0;
 }
@@ -667,13 +787,10 @@ function isStringMap(value: unknown): value is Record<string, string> {
 }
 
 function isSessionToolFailure(value: unknown): value is SessionToolFailure {
-  if (!isRecord(value)) return false;
-  if (
-    typeof value.at !== "string" ||
+  if (!isRecord(value) || typeof value.at !== "string" ||
     typeof value.tool !== "string" ||
     typeof value.callId !== "string" ||
-    typeof value.detail !== "string"
-  )
+    typeof value.detail !== "string")
     return false;
   if (value.category !== undefined && !isToolFailureCategory(value.category))
     return false;
@@ -702,19 +819,10 @@ function isSessionThreadGap(value: unknown): value is SessionThreadGap {
 }
 
 function isSessionInvestigation(value: unknown): value is SessionInvestigation {
-  if (!isRecord(value)) return false;
-  if (typeof value.observed !== "boolean") return false;
-  if (!isNullableString(value.firstEditAt)) return false;
-  if (!isNumber(value.toolCalls) || !isNullableNumber(value.tokens))
-    return false;
-  if (
-    !isNumber(value.filesRead) ||
+  if (!isRecord(value) || (typeof value.observed !== "boolean") || !isNullableString(value.firstEditAt) || !isNumber(value.toolCalls) || !isNullableNumber(value.tokens) || !isNumber(value.filesRead) ||
     !isNumber(value.repeatedReads) ||
     !isNumber(value.searches) ||
-    !isNumber(value.repeatedSearches)
-  )
-    return false;
-  if (!isRecord(value.context)) return false;
+    !isNumber(value.repeatedSearches) || !isRecord(value.context)) return false;
   return (
     isNumber(value.context.ccc) &&
     isNumber(value.context.cgc) &&
@@ -729,7 +837,9 @@ function isListOf<T>(
   return Array.isArray(value) && value.every((entry) => guard(entry));
 }
 
-/** Whether an optional field is absent or passes its guard. */
+/**
+Whether an optional field is absent or passes its guard.
+*/
 function isAbsentOr(
   value: unknown,
   guard: (entry: unknown) => boolean
@@ -771,20 +881,19 @@ function isSessionThreadCompactionSummary(
 }
 
 /**
- * Whether per-skill read counts are keyed by exactly the skills read.
- *
- * Every key of the map names a skill in the list and every skill in the list
- * has a whole, positive count: a skill counted but not listed, or listed but
- * never counted, means the two fields came from different reads.
- */
+Whether per-skill read counts are keyed by exactly the skills read.
+
+Every key of the map names a skill in the list and every skill in the list
+has a whole, positive count: a skill counted but not listed, or listed but
+never counted, means the two fields came from different reads.
+*/
 function isSkillReadCounts(
   value: unknown,
   skillsRead: readonly string[]
 ): value is Record<string, number> {
   if (!isCountMap(value)) return false;
   const listed = new Set(skillsRead);
-  if (listed.size !== skillsRead.length) return false;
-  if (Object.keys(value).length !== listed.size) return false;
+  if ((listed.size !== skillsRead.length) || (Object.keys(value).length !== listed.size)) return false;
   return skillsRead.every((skill) => {
     const count = value[skill];
     return count !== undefined && Number.isInteger(count) && count >= 1;
@@ -794,8 +903,7 @@ function isSkillReadCounts(
 function isSessionThreadPromptOverhead(
   value: unknown
 ): value is SessionThreadPromptOverhead {
-  if (!isRecord(value)) return false;
-  if (!isStringList(value.skillsRead)) return false;
+  if (!isRecord(value) || !isStringList(value.skillsRead)) return false;
   return (
     isNumber(value.initialDeveloperBytes) &&
     isCount(value.initialDeveloperChars) &&
@@ -1134,16 +1242,9 @@ const AGGREGATE_COUNT_MAP_KEYS: readonly string[] = [
 function isSessionDiagnosticsAggregates(
   value: unknown
 ): value is SessionDiagnosticsAggregates {
-  if (!isRecord(value)) return false;
-  if (!AGGREGATE_NUMERIC_KEYS.every((key) => isNumber(value[key])))
-    return false;
-  if (
-    !AGGREGATE_NULLABLE_NUMERIC_KEYS.every((key) =>
-      isNullableNumber(value[key])
-    )
-  )
-    return false;
-  if (!AGGREGATE_COUNT_MAP_KEYS.every((key) => isCountMap(value[key])))
+  if (!isRecord(value) || AGGREGATE_NUMERIC_KEYS.some((key) => !isNumber(value[key])) || AGGREGATE_NULLABLE_NUMERIC_KEYS.some((key) =>
+      !isNullableNumber(value[key])
+    ) || AGGREGATE_COUNT_MAP_KEYS.some((key) => !isCountMap(value[key])))
     return false;
   // uniqueSkillsRead counts the keys of skillReadCounts; disagreement means
   // the two rollups were built from different reads.
@@ -1191,7 +1292,9 @@ function hasSessionReportIdentity(value: Record<string, unknown>): boolean {
   );
 }
 
-/** Whether a payload is a usable session diagnostics report. */
+/**
+Whether a payload is a usable session diagnostics report.
+*/
 export function isSessionDiagnosticsReport(
   value: unknown
 ): value is SessionDiagnosticsReport {
@@ -1222,7 +1325,9 @@ function isRecentSessionSummary(value: unknown): boolean {
   );
 }
 
-/** Whether a payload is a usable recent-sessions listing. */
+/**
+Whether a payload is a usable recent-sessions listing.
+*/
 export function isSessionRecentListResponse(
   value: unknown
 ): value is SessionRecentListResponse {
@@ -1295,7 +1400,9 @@ function isFleetScanTotals(value: unknown): boolean {
   );
 }
 
-/** Whether a payload is a usable fleet scan. */
+/**
+Whether a payload is a usable fleet scan.
+*/
 export function isSessionFleetScanResponse(
   value: unknown
 ): value is SessionFleetScanResponse {
@@ -1310,39 +1417,31 @@ export function isSessionFleetScanResponse(
   );
 }
 
-/** Whether a payload is a usable hook-denial summary. */
+/**
+Whether a payload is a usable hook-denial summary.
+*/
 export function isSessionHookDenialsResponse(
   value: unknown
 ): value is SessionHookDenialsResponse {
-  if (!isRecord(value)) return false;
-  if (value.schema !== SESSION_HOOK_DENIALS_SCHEMA) return false;
-  if (!isRecord(value.summary)) return false;
+  if (!isRecord(value) || (value.schema !== SESSION_HOOK_DENIALS_SCHEMA) || !isRecord(value.summary)) return false;
   const { summary } = value;
-  if (
-    typeof summary.logFile !== "string" ||
+  if (typeof summary.logFile !== "string" ||
     !isNumber(summary.sinceDays) ||
     typeof summary.cutoff !== "string" ||
     !isNumber(summary.totalLines) ||
-    !isNumber(summary.preToolUseDenials)
-  )
-    return false;
-  if (!isCountMap(summary.byPolicy) || !isCountMap(summary.byRole))
-    return false;
-  if (!isEveryEntry(summary.byReason, isReasonCount)) return false;
-  if (!Array.isArray(summary.topCommands)) return false;
+    !isNumber(summary.preToolUseDenials) || !isCountMap(summary.byPolicy) || !isCountMap(summary.byRole) || !isEveryEntry(summary.byReason, isReasonCount) || !Array.isArray(summary.topCommands)) return false;
   for (const entry of summary.topCommands) {
-    if (!isRecord(entry)) return false;
-    if (
-      typeof entry.commandHead !== "string" ||
+    if (!isRecord(entry) || typeof entry.commandHead !== "string" ||
       typeof entry.policy !== "string" ||
-      !isNumber(entry.count)
-    )
+      !isNumber(entry.count))
       return false;
   }
   return true;
 }
 
-/** Whether a payload is a plain map of strings, used by the Console's checks. */
+/**
+Whether a payload is a plain map of strings, used by the Console's checks.
+*/
 export function isStringRecord(
   value: unknown
 ): value is Record<string, string> {

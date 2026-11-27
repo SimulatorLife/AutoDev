@@ -4,12 +4,12 @@ import type {
 } from "@simulatorlife/autodev-core";
 
 /**
- * Compute run statistics precisely scoped to the returned/time-filtered set.
- * Success rate is successful conclusions divided by completed sampled runs;
- * non-success or missing conclusions remain in the denominator.
- * Returns non-null stats only over actual observed runs; callers must NOT
- * synthesize 0/healthy when runtime data is absent or unavailable.
- */
+Compute run statistics precisely scoped to the returned/time-filtered set.
+Success rate is successful conclusions divided by completed sampled runs;
+non-success or missing conclusions remain in the denominator.
+Returns non-null stats only over actual observed runs; callers must NOT
+synthesize 0/healthy when runtime data is absent or unavailable.
+*/
 export function computeRunStats(
   runs: readonly GithubWorkflowRun[]
 ): GithubActionsRunStats {

@@ -1,12 +1,12 @@
 /**
- * The provider's own convergence, driven in a browser.
- *
- * A provider's routing configuration is Runtime-owned: the router serves the
- * live routing policy, so the runtime's observed state is the configuration it
- * holds. The page has to say so rather than leaving the operator to assume it:
- * the verdict behind the generations, the generations themselves, and the
- * operation history the Runtime recorded for the provider.
- */
+The provider's own convergence, driven in a browser.
+
+A provider's routing configuration is Runtime-owned: the router serves the
+live routing policy, so the runtime's observed state is the configuration it
+holds. The page has to say so rather than leaving the operator to assume it:
+the verdict behind the generations, the generations themselves, and the
+operation history the Runtime recorded for the provider.
+*/
 import { expect, test } from "@playwright/test";
 
 const PROVIDER_ROUTE = "/providers/claude";

@@ -11,7 +11,7 @@ import {
   createOpencliHealthServer,
   processRunner
 } from "../src/providers/opencli.ts";
-import { OpencliBrowser } from "../src/providers/opencli-browser.ts";
+import type { OpencliBrowser } from "../src/providers/opencli-browser.ts";
 import {
   buildOpencliRoleTaskSpec,
   executeOpencliRoleTurn,
@@ -57,15 +57,15 @@ test("delegation uses the authenticated browser owner with native role argv and 
     server.close();
   });
   const port = (server.address() as AddressInfo).port;
-  const vars = {
+  const variables = {
     [OPENCLI_ROUTER_AUTH_VARIABLE]: token,
     CODEX_OPENCLI_PROXY_HOST: "127.0.0.1",
     CODEX_OPENCLI_PROXY_PORT: String(port)
   };
   const previous = Object.fromEntries(
-    Object.keys(vars).map((key) => [key, process.env[key]])
+    Object.keys(variables).map((key) => [key, process.env[key]])
   );
-  Object.assign(process.env, vars);
+  Object.assign(process.env, variables);
   t.after(() => {
     for (const [key, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[key];
@@ -230,8 +230,8 @@ test("Gemini role turns forward model and thinking level, handle fallbacks, stri
       },
       AbortSignal.timeout(5000)
     ),
-    (err: unknown) =>
-      err instanceof OpencliCommandError && err.code === "MODEL_LIMIT"
+    (error: unknown) =>
+      error instanceof OpencliCommandError && error.code === "MODEL_LIMIT"
   );
 });
 
@@ -240,16 +240,16 @@ test("processRunner sanitizes secrets from child env and releases foreground on 
   const previousCustomSecret = process.env.AUTODEV_CONTROL_API_TOKEN;
   process.env[OPENCLI_ROUTER_AUTH_VARIABLE] = "super-secret-opencli-key";
   process.env.AUTODEV_CONTROL_API_TOKEN = "super-secret-control-token";
-  let seenEnv: NodeJS.ProcessEnv | undefined;
+  let seenEnvironment: NodeJS.ProcessEnv | undefined;
   const fakeBrowser = {
     run: async (
       _site: "chatgpt" | "gemini",
       _signal: AbortSignal,
-      cmd: (
+      command: (
         endpoint: string,
         releaseForeground: () => void
       ) => Promise<Record<string, unknown>[]>
-    ) => cmd("ws://127.0.0.1:9555/devtools/page/1", () => undefined),
+    ) => command("ws://127.0.0.1:9555/devtools/page/1", () => undefined),
     close: async () => undefined
   } as unknown as OpencliBrowser;
   try {
@@ -259,11 +259,11 @@ test("processRunner sanitizes secrets from child env and releases foreground on 
       new Set(),
       fakeBrowser,
       ((
-        _cmd: string,
-        _args: readonly string[],
-        opts: { env: NodeJS.ProcessEnv }
+        _command: string,
+        _arguments: readonly string[],
+        options: { env: NodeJS.ProcessEnv }
       ) => {
-        seenEnv = opts.env;
+        seenEnvironment = options.env;
         const child = new EventEmitter() as ChildProcess & {
           stdout: PassThrough;
           stderr: PassThrough;
@@ -296,10 +296,10 @@ test("processRunner sanitizes secrets from child env and releases foreground on 
       args: ["chatgpt", "ask", "hi"],
       signal: AbortSignal.timeout(1000)
     });
-    assert.equal(seenEnv?.[OPENCLI_ROUTER_AUTH_VARIABLE], undefined);
-    assert.equal(seenEnv?.AUTODEV_CONTROL_API_TOKEN, undefined);
+    assert.equal(seenEnvironment?.[OPENCLI_ROUTER_AUTH_VARIABLE], undefined);
+    assert.equal(seenEnvironment?.AUTODEV_CONTROL_API_TOKEN, undefined);
     assert.equal(
-      seenEnv?.OPENCLI_CDP_ENDPOINT,
+      seenEnvironment?.OPENCLI_CDP_ENDPOINT,
       "ws://127.0.0.1:9555/devtools/page/1"
     );
   } finally {

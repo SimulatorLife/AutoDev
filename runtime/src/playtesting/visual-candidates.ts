@@ -1,11 +1,11 @@
 /**
- * The affordance proposer for a visual playtest turn.
- *
- * A decision backend answers with one action out of the set the Runtime
- * offers. Smart-direct grounds its own answer against the observation and
- * ignores the set; a backend that chooses from a list needs that list built
- * from the very same observation both backends read.
- */
+The affordance proposer for a visual playtest turn.
+
+A decision backend answers with one action out of the set the Runtime
+offers. Smart-direct grounds its own answer against the observation and
+ignores the set; a backend that chooses from a list needs that list built
+from the very same observation both backends read.
+*/
 import {
   PLAYTEST_VISUAL_ACTION_SCHEMA,
   type PlaytestJsonValue,
@@ -19,57 +19,71 @@ import {
 import { withoutControlCharacters } from "./recorded-text.ts";
 
 /**
- * How many candidates one observation may offer.
- *
- * The upstream's choice question accepts at most sixteen options, so an
- * offer larger than that cannot be asked about at all: the server refuses
- * the question rather than answering a subset of it. The Runtime's offer is
- * therefore bounded by the contract of the backend that chooses from it, and
- * a small local model compares a short list far more reliably than a long
- * one besides.
- */
+How many candidates one observation may offer.
+
+The upstream's choice question accepts at most sixteen options, so an
+offer larger than that cannot be asked about at all: the server refuses
+the question rather than answering a subset of it. The Runtime's offer is
+therefore bounded by the contract of the backend that chooses from it, and
+a small local model compares a short list far more reliably than a long
+one besides.
+*/
 export const MAX_VISUAL_CANDIDATES = 16;
 
 /**
- * A candidate id becomes a JSON object key in the choice question and comes
- * back as the exact option the model chose, so it has to survive that round
- * trip unchanged. The Core's own control-id charset is the safe one: letters,
- * digits, dot, underscore, colon and dash.
- */
+A candidate id becomes a JSON object key in the choice question and comes
+back as the exact option the model chose, so it has to survive that round
+trip unchanged. The Core's own control-id charset is the safe one: letters,
+digits, dot, underscore, colon and dash.
+*/
 const UNSAFE_ID_CHARACTERS = /[^A-Za-z0-9._:-]/gu;
 const MAX_CANDIDATE_ID_LENGTH = 128;
-/** The bound the choice contract puts on one candidate description. */
+/**
+The bound the choice contract puts on one candidate description.
+*/
 const MAX_CANDIDATE_DESCRIPTION_LENGTH = 512;
-/** The room left for a disambiguating suffix when two ids reduce alike. */
+/**
+The room left for a disambiguating suffix when two ids reduce alike.
+*/
 const MAX_ID_SUFFIX_ROOM = 8;
 /**
- * The control roles the Runtime refuses to activate.
- *
- * The admission gate refuses an activation of a text field whatever its input
- * kind claims, so a candidate the Runtime would refuse to dispatch is never
- * offered in the first place.
- */
+The control roles the Runtime refuses to activate.
+
+The admission gate refuses an activation of a text field whatever its input
+kind claims, so a candidate the Runtime would refuse to dispatch is never
+offered in the first place.
+*/
 const TEXT_CONTROL_ROLES = new Set<PlaytestVisualControlRole>([
   "textbox",
   "combobox"
 ]);
 
-/** One observation's candidate set, and whether the cap dropped anything. */
+/**
+One observation's candidate set, and whether the cap dropped anything.
+*/
 export interface VisualCandidateSet {
-  /** The candidates a decision backend may choose from, in observation order. */
+  /**
+  The candidates a decision backend may choose from, in observation order.
+  */
   readonly candidates: readonly PlaytestVisualCandidate[];
-  /** How many controls in the observation could be acted on at all. */
+  /**
+  How many controls in the observation could be acted on at all.
+  */
   readonly actionableControlCount: number;
-  /** Whether the cap dropped actionable controls. */
+  /**
+  Whether the cap dropped actionable controls.
+  */
   readonly truncated: boolean;
-  /** How many actionable controls the cap dropped. */
+  /**
+  How many actionable controls the cap dropped.
+  */
   readonly droppedCount: number;
 }
 
 /**
- * Build the candidate set for one observation, and say whether the cap
- * dropped anything.
- */
+Build the candidate set for one observation, and say whether the cap
+dropped anything.
+*/
 export function buildVisualCandidateSet(
   observation: PlaytestVisualObservation
 ): VisualCandidateSet {
@@ -100,13 +114,13 @@ export function buildVisualCandidateSet(
 }
 
 /**
- * The offer, as the episode's trace records it.
- *
- * A reader of the trace can already see every control the screen showed.
- * What the trace has to add is how much of that the decision backend was
- * asked about: the offer is a choice the backend made from, and an offer the
- * contract's bound shortened is part of what the decision was made on.
- */
+The offer, as the episode's trace records it.
+
+A reader of the trace can already see every control the screen showed.
+What the trace has to add is how much of that the decision backend was
+asked about: the offer is a choice the backend made from, and an offer the
+contract's bound shortened is part of what the decision was made on.
+*/
 export function visualCandidateOffer(
   set: VisualCandidateSet
 ): PlaytestJsonValue {
@@ -118,12 +132,12 @@ export function visualCandidateOffer(
 }
 
 /**
- * The candidates a decision backend may choose from for one observation.
- *
- * Only a control the player can act on is a candidate: a disabled control is
- * not an action, and a text field is not something one click performs, so it
- * is left to a backend that can type rather than offered as a choice.
- */
+The candidates a decision backend may choose from for one observation.
+
+Only a control the player can act on is a candidate: a disabled control is
+not an action, and a text field is not something one click performs, so it
+is left to a backend that can type rather than offered as a choice.
+*/
 export function buildVisualCandidates(
   observation: PlaytestVisualObservation
 ): readonly PlaytestVisualCandidate[] {
@@ -131,13 +145,13 @@ export function buildVisualCandidates(
 }
 
 /**
- * The trace line for the candidate a decision chose.
- *
- * A decision carries an action rather than a candidate id, so the trace
- * resolves the action back to the candidate that offered it. An action that no
- * candidate offered has no explanation, and the helper says so instead of
- * inventing one.
- */
+The trace line for the candidate a decision chose.
+
+A decision carries an action rather than a candidate id, so the trace
+resolves the action back to the candidate that offered it. An action that no
+candidate offered has no explanation, and the helper says so instead of
+inventing one.
+*/
 export function describeVisualCandidateChoice(
   candidates: readonly PlaytestVisualCandidate[],
   action: PlaytestVisualAction
@@ -149,13 +163,13 @@ export function describeVisualCandidateChoice(
 }
 
 /**
- * The candidate id is the control's own id, reduced to the safe charset.
- *
- * The Core already gives every control an id in that charset, so the reduction
- * is the identity for a well-formed observation and the ids stay unique. An id
- * outside the charset is still reduced rather than refused, and a reduction
- * that would collide gets a numbered suffix so the option ids stay distinct.
- */
+The candidate id is the control's own id, reduced to the safe charset.
+
+The Core already gives every control an id in that charset, so the reduction
+is the identity for a well-formed observation and the ids stay unique. An id
+outside the charset is still reduced rather than refused, and a reduction
+that would collide gets a numbered suffix so the option ids stay distinct.
+*/
 function candidateId(controlId: string, taken: ReadonlySet<string>): string {
   const base =
     controlId
@@ -171,14 +185,14 @@ function candidateId(controlId: string, taken: ReadonlySet<string>): string {
 }
 
 /**
- * The sentence a decision backend reads to choose this control.
- *
- * The name is the Runtime's own redacted accessible name and the role is the
- * Runtime's own control role, so the sentence can say what the player sees
- * without carrying a raw value or a selector. It promises only what the
- * Runtime does -- one activation -- and never an effect the Runtime cannot
- * observe.
- */
+The sentence a decision backend reads to choose this control.
+
+The name is the Runtime's own redacted accessible name and the role is the
+Runtime's own control role, so the sentence can say what the player sees
+without carrying a raw value or a selector. It promises only what the
+Runtime does -- one activation -- and never an effect the Runtime cannot
+observe.
+*/
 function describeControl(control: PlaytestVisualControl): string {
   const prefix = `Activate the ${control.role} `;
   const name = readableName(control.name);
@@ -192,14 +206,16 @@ function describeControl(control: PlaytestVisualControl): string {
 }
 
 /**
- * The accessible name as a sentence may quote it: no control characters, no
- * double quote of its own, and no surrounding whitespace.
- */
+The accessible name as a sentence may quote it: no control characters, no
+double quote of its own, and no surrounding whitespace.
+*/
 function readableName(name: string): string {
   return withoutControlCharacters(name).replaceAll('"', "'").trim();
 }
 
-/** The activation of one control, citing the observation it was seen in. */
+/**
+The activation of one control, citing the observation it was seen in.
+*/
 function activateControl(
   observation: PlaytestVisualObservation,
   controlId: string
@@ -215,7 +231,9 @@ function activateControl(
   };
 }
 
-/** Whether two actions are the same action on the same control or key. */
+/**
+Whether two actions are the same action on the same control or key.
+*/
 function sameAction(
   left: PlaytestVisualAction,
   right: PlaytestVisualAction

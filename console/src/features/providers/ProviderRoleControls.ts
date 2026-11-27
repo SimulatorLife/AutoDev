@@ -11,7 +11,7 @@ import React from "react";
 import { AutoSubmitSelectField } from "../../components/forms/AutoSubmitSelectField.ts";
 import {
   HierarchicalSelect,
-  type HierarchicalSelectProps
+  type HierarchicalSelectProps as HierarchicalSelectProperties
 } from "../../components/forms/HierarchicalSelect.ts";
 import { Icon, type IconName } from "../../components/icons/Icon.ts";
 import { NOT_OBSERVED_LABEL } from "../../components/status/StatusBadge.ts";
@@ -27,41 +27,41 @@ import {
 } from "./provider-model-discovery.ts";
 
 /**
- * The read-only chip that carries a role's reasoning effort.
- *
- * Two call sites render it -- the effort in force, and the effort a model slug
- * fixes -- and they were the same string written twice, so a change to one of
- * them would have left two different chips in the same column.
- *
- * The fill is the Console's `input` surface, which is the surface a control
- * that holds a value wears: the chip is a value in a cell, not prose on the
- * page. The earlier `bg-surface-muted/30` named a token that does not exist,
- * so it emitted no rule at all and the chip carried no fill of its own -- the
- * value looked like the placeholder beside it. The type treatment is the shared
- * mono-value one rather than a hand-written copy of it.
- */
+The read-only chip that carries a role's reasoning effort.
+
+Two call sites render it -- the effort in force, and the effort a model slug
+fixes -- and they were the same string written twice, so a change to one of
+them would have left two different chips in the same column.
+
+The fill is the Console's `input` surface, which is the surface a control
+that holds a value wears: the chip is a value in a cell, not prose on the
+page. The earlier `bg-surface-muted/30` named a token that does not exist,
+so it emitted no rule at all and the chip carried no fill of its own -- the
+value looked like the placeholder beside it. The type treatment is the shared
+mono-value one rather than a hand-written copy of it.
+*/
 const ROLE_EFFORT_CHIP_CLASS = `min-w-0 w-28 truncate rounded border border-border bg-input px-2 py-1 text-center ${MONO_VALUE_CLASS}`;
 
 /**
- * The Roles column: the fixed roles, each with its priority and its model.
- *
- * The Subagent role's per-agent model overrides take one of two layouts. The
- * Providers table, where the strip shares a row with every other column, folds
- * them into one hierarchical select on the Subagent row. The provider detail
- * page, where the strip has the panel to itself, gives each agent role
- * (`explorer`, `worker`, ...) a row of its own under Subagent, so a model per
- * agent role is one select away rather than two levels into a menu.
- *
- * Every role is one form that posts to the role route. Priority and model live
- * in the same submission because they are one assignment -- a role's
- * participation *is* its priority, and its model is part of that same decision --
- * so splitting them across two forms would let one save while the other
- * silently failed, leaving a row that claims a combination nobody chose.
- *
- * Both selections submit this complete native form immediately. The Runtime
- * remains authoritative: the redirect renders the confirmed assignment, and
- * the shared failure notice explains an unconfirmed write.
- */
+The Roles column: the fixed roles, each with its priority and its model.
+
+The Subagent role's per-agent model overrides take one of two layouts. The
+Providers table, where the strip shares a row with every other column, folds
+them into one hierarchical select on the Subagent row. The provider detail
+page, where the strip has the panel to itself, gives each agent role
+(`explorer`, `worker`, ...) a row of its own under Subagent, so a model per
+agent role is one select away rather than two levels into a menu.
+
+Every role is one form that posts to the role route. Priority and model live
+in the same submission because they are one assignment -- a role's
+participation *is* its priority, and its model is part of that same decision --
+so splitting them across two forms would let one save while the other
+silently failed, leaving a row that claims a combination nobody chose.
+
+Both selections submit this complete native form immediately. The Runtime
+remains authoritative: the redirect renders the confirmed assignment, and
+the shared failure notice explains an unconfirmed write.
+*/
 
 const ROLE_LABELS: Readonly<Record<ProviderRole, string>> = {
   orchestrator: "Orchestrator",
@@ -69,11 +69,11 @@ const ROLE_LABELS: Readonly<Record<ProviderRole, string>> = {
 };
 
 /**
- * The four role icons, declared as icon props rather than bare name strings so
- * the icon set stays a closed, checked set: an entry here that nothing renders
- * fails the icon guard, and the type keeps a typo from reaching the `Icon`
- * component at runtime.
- */
+The four role icons, declared as icon props rather than bare name strings so
+the icon set stays a closed, checked set: an entry here that nothing renders
+fails the icon guard, and the type keeps a typo from reaching the `Icon`
+component at runtime.
+*/
 const ROLE_ICONS = {
   orchestrator: { name: "roleOrchestrator" },
   subagent: { name: "roleSubagent" }
@@ -83,7 +83,9 @@ const ROLE_ICONS = {
 
 const MODEL_COLLATOR = new Intl.Collator();
 
-/** The priority dropdown's selected value for an assignment. */
+/**
+The priority dropdown's selected value for an assignment.
+*/
 function priorityOptionSelected(
   assignment: ControlApiProviderRoleAssignment
 ): string {
@@ -93,9 +95,9 @@ function priorityOptionSelected(
 }
 
 /**
- * How the Subagent role's per-agent model overrides are laid out: folded into
- * the Subagent row's hierarchical select, or one row per agent role.
- */
+How the Subagent role's per-agent model overrides are laid out: folded into
+the Subagent row's hierarchical select, or one row per agent role.
+*/
 export type SubagentModelLayout = "hierarchical" | "rows";
 
 type ModelChoice = { readonly id: string; readonly label: string };
@@ -161,10 +163,10 @@ function modelDiscoveryDisabledReason(
 }
 
 /**
- * A model select's options: the Auto choice, every listed model, and the
- * current model when the listing no longer carries it -- labelled with why --
- * so a saved choice stays visible instead of silently reading as Auto.
- */
+A model select's options: the Auto choice, every listed model, and the
+current model when the listing no longer carries it -- labelled with why --
+so a saved choice stays visible instead of silently reading as Auto.
+*/
 function modelSelectOptions(
   discovery: ProviderModelDiscoveryState,
   provider: string,
@@ -175,24 +177,24 @@ function modelSelectOptions(
   return [
     { value: "", label: autoLabel },
     ...models.map(({ id, label }) => ({ value: id, label })),
-    ...(current !== null && !models.some(({ id }) => id === current)
-      ? [
+    ...(current === null || models.some(({ id }) => id === current)
+      ? []
+      : [
           {
             value: current,
             label: preservedModelLabel(discovery, provider, current)
           }
-        ]
-      : [])
+        ])
   ];
 }
 
 const MODEL_EFFORT_SUFFIX = /-(low|medium|high)$/;
 
 /**
- * Why a role's model cannot be changed now, or undefined when it can: the
- * provider is disabled, cannot serve the role, the role is Disabled, or the
- * provider's models are not currently observed.
- */
+Why a role's model cannot be changed now, or undefined when it can: the
+provider is disabled, cannot serve the role, the role is Disabled, or the
+provider's models are not currently observed.
+*/
 function roleModelDisabledReason(
   provider: string,
   assignment: ControlApiProviderRoleAssignment,
@@ -210,13 +212,13 @@ function roleModelDisabledReason(
 }
 
 /**
- * The model dropdown for one role.
- *
- * When the role is disabled the control stays present and keeps its value, but
- * it is disabled and dimmed: the previously chosen model has to stay visible
- * and recoverable, because re-enabling the role should restore it rather than
- * force the operator to pick it again from memory.
- */
+The model dropdown for one role.
+
+When the role is disabled the control stays present and keeps its value, but
+it is disabled and dimmed: the previously chosen model has to stay visible
+and recoverable, because re-enabling the role should restore it rather than
+force the operator to pick it again from memory.
+*/
 function RoleModelSelect({
   provider,
   role,
@@ -232,7 +234,7 @@ function RoleModelSelect({
   readonly discovery: ProviderModelDiscoveryState;
   readonly disabledReason: string | undefined;
 }): React.JSX.Element {
-  const roleDisabled = assignment.priority === "disabled";
+  const isRoleDisabled = assignment.priority === "disabled";
   return React.createElement(AutoSubmitSelectField, {
     // Scoped per role: several role forms submit `model` from the same page, so
     // sharing the default id would leave every label pointing at whichever
@@ -248,10 +250,10 @@ function RoleModelSelect({
     testId: `role-model-${provider}-${role}`,
     dataAttributes: {
       "data-role-model": role,
-      "data-dimmed": roleDisabled ? "true" : "false"
+      "data-dimmed": isRoleDisabled ? "true" : "false"
     },
     defaultValue: assignment.model ?? "",
-    ...(disabledReason === undefined ? {} : { disabled: true, disabledReason }),
+    ...(disabledReason !== undefined && { disabled: true, disabledReason }),
     options: modelSelectOptions(
       discovery,
       provider,
@@ -321,7 +323,7 @@ function RoleEffortSelect({
     );
   }
 
-  const roleDisabled = assignment.priority === "disabled";
+  const isRoleDisabled = assignment.priority === "disabled";
   const options = [
     { value: "", label: "Default" },
     ...supportedLevels.map((lvl) => ({
@@ -339,35 +341,35 @@ function RoleEffortSelect({
     testId: `role-effort-${provider}-${role}`,
     dataAttributes: {
       "data-role-effort": role,
-      "data-dimmed": roleDisabled ? "true" : "false"
+      "data-dimmed": isRoleDisabled ? "true" : "false"
     },
     defaultValue: assignment.reasoningEffort ?? "",
-    ...(disabledReason === undefined ? {} : { disabled: true, disabledReason }),
+    ...(disabledReason !== undefined && { disabled: true, disabledReason }),
     options
   });
 }
 
 /**
- * The role strip's aligned grid: label, priority, model, effort. Every row --
- * a role's or an agent role's -- uses it, so the columns line up down the
- * whole strip.
- *
- * The label column is a fixed width, and it is the width the longest role
- * label needs: `Orchestrator`, with its icon, is 92px.
- *
- * It was `max-content` for a while, to stop a label being cut. That traded
- * one defect for another: every row's grid sized its own label track to its
- * own label, so the rows' controls started at different x positions.
- * Measured in Chromium against the production build, the priority column
- * drifted 38px between `Smart` and `Orchestrator`, and the model column
- * drifted with it -- a strip that claims to be an aligned configuration, in
- * which the eye cannot scan down a column at all.
- *
- * The gaps are `1.5` because the four tracks sum to 494px against a 496px
- * cell: the columns were sized to fill that cell exactly, so the four pixels
- * the label needed came from the gaps rather than from a column that was
- * already measured.
- */
+The role strip's aligned grid: label, priority, model, effort. Every row --
+a role's or an agent role's -- uses it, so the columns line up down the
+whole strip.
+
+The label column is a fixed width, and it is the width the longest role
+label needs: `Orchestrator`, with its icon, is 92px.
+
+It was `max-content` for a while, to stop a label being cut. That traded
+one defect for another: every row's grid sized its own label track to its
+own label, so the rows' controls started at different x positions.
+Measured in Chromium against the production build, the priority column
+drifted 38px between `Smart` and `Orchestrator`, and the model column
+drifted with it -- a strip that claims to be an aligned configuration, in
+which the eye cannot scan down a column at all.
+
+The gaps are `1.5` because the four tracks sum to 494px against a 496px
+cell: the columns were sized to fill that cell exactly, so the four pixels
+the label needed came from the gaps rather than from a column that was
+already measured.
+*/
 const ROLE_GRID_CLASS =
   "grid min-w-0 grid-cols-[5.75rem_5rem_12rem_7rem] items-center gap-1.5";
 
@@ -392,9 +394,9 @@ function RoleRow({
 }): React.JSX.Element {
   // Only the hierarchical layout moves the Subagent model into its own menu
   // forms; in the rows layout it is an ordinary select in this role's form.
-  const hierarchicalModel =
+  const isHierarchicalModel =
     role === "subagent" && subagentLayout === "hierarchical";
-  const roleDisabled = assignment.priority === "disabled";
+  const isRoleDisabled = assignment.priority === "disabled";
   // A globally disabled provider's roles cannot be edited until it is enabled
   // again. Both controls stay in place with that reason rather than vanishing,
   // so the preserved configuration is visible instead of merely implied.
@@ -416,7 +418,7 @@ function RoleRow({
   const effortReason =
     blockedReason ??
     cannotServeReason ??
-    (roleDisabled
+    (isRoleDisabled
       ? "This role is set to Disabled. Choose a priority to change its reasoning effort."
       : undefined);
 
@@ -426,7 +428,7 @@ function RoleRow({
     isAntigravityProvider(provider) &&
     assignment.model !== null &&
     MODEL_EFFORT_SUFFIX.test(assignment.model);
-  const effortSubmitsViaSelect =
+  const isEffortSubmitsViaSelect =
     hasLevels && !isAgyFixed && effortReason === undefined;
 
   return React.createElement(
@@ -477,7 +479,7 @@ function RoleRow({
       className: "min-w-0 w-20",
       testId: `role-priority-${provider}-${role}`,
       tone:
-        roleDisabled || cannotServeReason !== undefined ? "warning" : undefined,
+        isRoleDisabled || cannotServeReason !== undefined ? "warning" : undefined,
       dataAttributes: { "data-role-priority": role },
       defaultValue: priorityOptionSelected(assignment),
       ...(blockedReason === undefined
@@ -492,7 +494,7 @@ function RoleRow({
         { value: "disabled", label: "Disabled" }
       ]
     }),
-    hierarchicalModel
+    isHierarchicalModel
       ? React.createElement(HierarchicalSelect, {
           ...subagentModelSelect({
             provider,
@@ -525,7 +527,7 @@ function RoleRow({
     // hierarchical Subagent model is chosen in its own menu forms, so the
     // role's form carries the current model for its priority and effort
     // changes.
-    ...(modelReason === undefined && !hierarchicalModel
+    ...(modelReason === undefined && !isHierarchicalModel
       ? []
       : [
           React.createElement("input", {
@@ -535,7 +537,7 @@ function RoleRow({
             value: assignment.model ?? ""
           })
         ]),
-    ...(effortSubmitsViaSelect
+    ...(isEffortSubmitsViaSelect
       ? []
       : [
           React.createElement("input", {
@@ -556,15 +558,15 @@ function RoleRow({
 }
 
 /**
- * One agent role's model override, as a row of its own under Subagent.
- *
- * An agent role has no priority or reasoning effort of its own -- it runs at
- * the Subagent role's priority and effort -- so its row is a label spanning the
- * label and priority tracks, and a model select in the model track, aligned
- * with every role's model above it. Auto names the model the role then runs:
- * its tier's configured model. The select is blocked for the same reasons the
- * Subagent model is, since the override only applies while that role serves.
- */
+One agent role's model override, as a row of its own under Subagent.
+
+An agent role has no priority or reasoning effort of its own -- it runs at
+the Subagent role's priority and effort -- so its row is a label spanning the
+label and priority tracks, and a model select in the model track, aligned
+with every role's model above it. Auto names the model the role then runs:
+its tier's configured model. The select is blocked for the same reasons the
+Subagent model is, since the override only applies while that role serves.
+*/
 function AgentModelRow({
   provider,
   entry,
@@ -628,9 +630,7 @@ function AgentModelRow({
         "data-dimmed": subagent.priority === "disabled" ? "true" : "false"
       },
       defaultValue: entry.model ?? "",
-      ...(disabledReason === undefined
-        ? {}
-        : { disabled: true, disabledReason }),
+      ...(disabledReason !== undefined && { disabled: true, disabledReason }),
       options: modelSelectOptions(
         discovery,
         provider,
@@ -655,17 +655,17 @@ function AgentModelRow({
 }
 
 /**
- * The hierarchical model's submit forms sit beside, not inside, the role form
- * that contains its closed control. Keeping only these small native forms in
- * the initial document lets the client-owned menu mount its many option
- * buttons only when the operator opens it.
- */
+The hierarchical model's submit forms sit beside, not inside, the role form
+that contains its closed control. Keeping only these small native forms in
+the initial document lets the client-owned menu mount its many option
+buttons only when the operator opens it.
+*/
 function HierarchicalSelectForms({
   id,
   levels,
   disabledReason
 }: Pick<
-  HierarchicalSelectProps,
+  HierarchicalSelectProperties,
   "id" | "levels" | "disabledReason"
 >): React.JSX.Element | null {
   if (disabledReason !== undefined) return null;
@@ -697,11 +697,11 @@ function HierarchicalSelectForms({
 }
 
 /**
- * The roles for one provider, in the fixed order the target state names:
- * Orchestrator, Subagent. The order is read from `PROVIDER_ROLES` rather than
- * restated here so a role added to Core cannot go missing from this column.
- * In the `rows` layout each agent role follows Subagent in a row of its own.
- */
+The roles for one provider, in the fixed order the target state names:
+Orchestrator, Subagent. The order is read from `PROVIDER_ROLES` rather than
+restated here so a role added to Core cannot go missing from this column.
+In the `rows` layout each agent role follows Subagent in a row of its own.
+*/
 export function ProviderRoleControls({
   provider,
   modelDiscovery,
@@ -786,12 +786,12 @@ export function ProviderRoleControls({
 }
 
 /**
- * The Subagent model, as one select with a level per target: "All subagents"
- * sets the Subagent role's model, and each agent role (`explorer`, `smart`,
- * ...) can be given a model of its own that wins over it. A role left on Auto
- * runs the Subagent model, or the tier's configured model when that is Auto
- * too; each level says which model that is.
- */
+The Subagent model, as one select with a level per target: "All subagents"
+sets the Subagent role's model, and each agent role (`explorer`, `smart`,
+...) can be given a model of its own that wins over it. A role left on Auto
+runs the Subagent model, or the tier's configured model when that is Auto
+too; each level says which model that is.
+*/
 function subagentModelSelect({
   provider,
   assignment,
@@ -806,7 +806,7 @@ function subagentModelSelect({
   readonly models: readonly ModelChoice[];
   readonly discovery: ProviderModelDiscoveryState;
   readonly returnTo: string;
-}): HierarchicalSelectProps {
+}): HierarchicalSelectProperties {
   const options = (current: string | null, auto: string) =>
     modelSelectOptions(discovery, provider, models, current, auto);
   const overrides = agentModels.filter(({ model }) => model !== null).length;

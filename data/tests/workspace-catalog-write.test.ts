@@ -151,7 +151,7 @@ test("a write that could not be expressed is refused and the file is untouched",
     // An enablement that is not a flag.
     { expected: revision, update: { enabled: "yes" } },
     // A base branch that is empty.
-    { expected: revision, update: { baseBranch: "   " } },
+    { expected: revision, update: { baseBranch: ' '.repeat(3) } },
     // A base branch that is not a branch name.
     { expected: revision, update: { baseBranch: 7 } },
     // A role scope that is not a list.

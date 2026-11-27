@@ -6,13 +6,13 @@ import {
   allocatePlaytestExperimentArms,
   allocatePlaytestSurveillanceStrata,
   assertNoContradictingLocator,
-  assertPlaytestAdapterParams,
+  assertPlaytestAdapterParams as assertPlaytestAdapterParameters,
   assertPlaytestAdapterResult,
   assertPlaytestCapabilityAdvertisement,
   assertPlaytestEventTaxonomy,
   assertPlaytestEvidenceLocator,
   assertPlaytestFindingEvidenceStatusConsistent,
-  assertPlaytestGameConfiguration,
+  assertPlaytestGameConfiguration as assertPlaytestGameConfig,
   assertPlaytestJsonRpcError,
   assertPlaytestJsonRpcNotification,
   assertPlaytestJsonRpcRequest,
@@ -783,7 +783,7 @@ test("samplePlaytestDiscovery rejects duplicate IDs and non-finite ranking score
   assert.throws(
     () =>
       samplePlaytestDiscovery(
-        [{ id: "invalid", anomalyScore: Number.NaN }],
+        [{ id: "invalid", anomalyScore: NaN }],
         1,
         "seed",
         "anomaly-v1"
@@ -1363,8 +1363,8 @@ test("classifyPlaytestMetricComparison: a degenerate/NaN interval is honestly in
     guardrailMargin: null,
     orientedBenefitDelta: null,
     interval: {
-      lower: Number.NaN,
-      upper: Number.NaN,
+      lower: NaN,
+      upper: NaN,
       method: "percentile-bootstrap",
       libraryVersion: "scipy-1.17.0",
       confidenceLevel: 0.95,
@@ -2132,33 +2132,33 @@ test("event taxonomy accepts authoritative game events and versioned detector pr
 // --- protocol/envelope validators --------------------------------------------
 
 test("method-specific adapter contracts bind resets, observations, legal actions, revisions, and outcomes", () => {
-  const resetParams = {
+  const resetParameters = {
     seed: "42",
     scenarioId: "tutorial",
     approvedVariantHash: "a".repeat(64)
   };
   assert.doesNotThrow(() =>
-    assertPlaytestAdapterParams("game.reset", resetParams)
+    assertPlaytestAdapterParameters("game.reset", resetParameters)
   );
   assert.throws(
     () =>
-      assertPlaytestAdapterParams("game.reset", {
-        ...resetParams,
+      assertPlaytestAdapterParameters("game.reset", {
+        ...resetParameters,
         workspaceId: "model-selected"
       }),
     /unsupported field/u
   );
 
-  const stepParams = {
+  const stepParameters = {
     episodeId: "episode-1",
     actionId: "advance",
     expectedRevision: 3
   };
   assert.doesNotThrow(() =>
-    assertPlaytestAdapterParams("game.step", stepParams)
+    assertPlaytestAdapterParameters("game.step", stepParameters)
   );
   assert.doesNotThrow(() =>
-    assertPlaytestAdapterResult("game.step", stepParams, {
+    assertPlaytestAdapterResult("game.step", stepParameters, {
       episodeId: "episode-1",
       revision: 4,
       acceptedActionId: "advance",
@@ -2168,7 +2168,7 @@ test("method-specific adapter contracts bind resets, observations, legal actions
   );
   assert.throws(
     () =>
-      assertPlaytestAdapterResult("game.step", stepParams, {
+      assertPlaytestAdapterResult("game.step", stepParameters, {
         episodeId: "episode-1",
         revision: 3,
         acceptedActionId: "advance",
@@ -2179,7 +2179,7 @@ test("method-specific adapter contracts bind resets, observations, legal actions
   );
   assert.throws(
     () =>
-      assertPlaytestAdapterResult("game.step", stepParams, {
+      assertPlaytestAdapterResult("game.step", stepParameters, {
         episodeId: "episode-1",
         revision: 4,
         acceptedActionId: "invented",
@@ -2189,9 +2189,9 @@ test("method-specific adapter contracts bind resets, observations, legal actions
     /equal the requested legal action/u
   );
 
-  const revisionParams = { episodeId: "episode-1", expectedRevision: 4 };
+  const revisionParameters = { episodeId: "episode-1", expectedRevision: 4 };
   assert.doesNotThrow(() =>
-    assertPlaytestAdapterResult("game.legalActions", revisionParams, {
+    assertPlaytestAdapterResult("game.legalActions", revisionParameters, {
       episodeId: "episode-1",
       revision: 4,
       actions: []
@@ -2199,7 +2199,7 @@ test("method-specific adapter contracts bind resets, observations, legal actions
   );
   assert.throws(
     () =>
-      assertPlaytestAdapterResult("game.legalActions", revisionParams, {
+      assertPlaytestAdapterResult("game.legalActions", revisionParameters, {
         episodeId: "episode-1",
         revision: 4,
         actions: [{ actionId: "same" }, { actionId: "same" }]
@@ -2207,7 +2207,7 @@ test("method-specific adapter contracts bind resets, observations, legal actions
     /action ids must be unique/u
   );
   assert.doesNotThrow(() =>
-    assertPlaytestAdapterResult("game.outcome", revisionParams, {
+    assertPlaytestAdapterResult("game.outcome", revisionParameters, {
       episodeId: "episode-1",
       revision: 4,
       state: "partial",
@@ -2607,7 +2607,7 @@ test("workspace approval binds a local checkout (not a commit), immutable image,
     () =>
       assertWorkspacePlaytestApproval({
         ...approval,
-        workingDirectory: String.raw`C:outside`
+        workingDirectory: 'C:outside'
       }),
     /remain inside checkout/u
   );
@@ -2669,9 +2669,9 @@ test("playtest.config.json validates a bounded target-owned adapter and analysis
     },
     reporting: { githubIssues: "review" }
   };
-  assert.doesNotThrow(() => assertPlaytestGameConfiguration(config));
+  assert.doesNotThrow(() => assertPlaytestGameConfig(config));
   assert.doesNotThrow(() =>
-    assertPlaytestGameConfiguration({
+    assertPlaytestGameConfig({
       ...config,
       analysis: {
         ...config.analysis,
@@ -2685,7 +2685,7 @@ test("playtest.config.json validates a bounded target-owned adapter and analysis
   );
   assert.throws(
     () =>
-      assertPlaytestGameConfiguration({
+      assertPlaytestGameConfig({
         ...config,
         adapter: { ...config.adapter, command: "pnpm run unsafe" }
       }),
@@ -2693,7 +2693,7 @@ test("playtest.config.json validates a bounded target-owned adapter and analysis
   );
   assert.throws(
     () =>
-      assertPlaytestGameConfiguration({
+      assertPlaytestGameConfig({
         ...config,
         analysis: {
           ...config.analysis,
@@ -2708,7 +2708,7 @@ test("playtest.config.json validates a bounded target-owned adapter and analysis
   );
   assert.throws(
     () =>
-      assertPlaytestGameConfiguration({
+      assertPlaytestGameConfig({
         ...config,
         analysis: {
           ...config.analysis,
@@ -2722,7 +2722,7 @@ test("playtest.config.json validates a bounded target-owned adapter and analysis
   );
   assert.throws(
     () =>
-      assertPlaytestGameConfiguration({
+      assertPlaytestGameConfig({
         ...config,
         analysis: { ...config.analysis, rubric: "../outside.json" }
       }),
@@ -2730,7 +2730,7 @@ test("playtest.config.json validates a bounded target-owned adapter and analysis
   );
   assert.throws(
     () =>
-      assertPlaytestGameConfiguration({
+      assertPlaytestGameConfig({
         ...config,
         budget: { ...config.budget, workers: 33 }
       }),
@@ -2738,7 +2738,7 @@ test("playtest.config.json validates a bounded target-owned adapter and analysis
   );
   assert.throws(
     () =>
-      assertPlaytestGameConfiguration({
+      assertPlaytestGameConfig({
         ...config,
         scenarioFamilies: { default: "intro" }
       }),
@@ -2746,7 +2746,7 @@ test("playtest.config.json validates a bounded target-owned adapter and analysis
   );
   assert.throws(
     () =>
-      assertPlaytestGameConfiguration({
+      assertPlaytestGameConfig({
         ...config,
         analysis: { ...config.analysis, observationContract: "../outside.json" }
       }),
@@ -2754,11 +2754,11 @@ test("playtest.config.json validates a bounded target-owned adapter and analysis
   );
   assert.throws(
     () =>
-      assertPlaytestGameConfiguration({
+      assertPlaytestGameConfig({
         ...config,
         analysis: {
           ...config.analysis,
-          observationContract: String.raw`C:outside.json`
+          observationContract: 'C:outside.json'
         }
       }),
     /analysis.observationContract.*workspace-relative/u
@@ -2771,7 +2771,7 @@ test("playtest.config.json validates a bounded target-owned adapter and analysis
   ]) {
     assert.throws(
       () =>
-        assertPlaytestGameConfiguration({
+        assertPlaytestGameConfig({
           ...config,
           analysis: { ...config.analysis, observationContract: invalidPath }
         }),

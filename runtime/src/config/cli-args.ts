@@ -6,15 +6,15 @@ export function parseArgs(argv: string[]): {
 } {
   const values: Record<string, string> = {};
   const flags = new Set<string>();
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    if (!arg?.startsWith("--"))
-      throw new ConfigError(`unexpected argument: ${arg ?? ""}`);
-    const key = arg.slice(2);
-    const next = argv[i + 1];
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (!argument?.startsWith("--"))
+      throw new ConfigError(`unexpected argument: ${argument ?? ""}`);
+    const key = argument.slice(2);
+    const next = argv[index + 1];
     if (next && !next.startsWith("--")) {
       values[key] = next;
-      i += 1;
+      index += 1;
     } else flags.add(key);
   }
   return { values, flags };

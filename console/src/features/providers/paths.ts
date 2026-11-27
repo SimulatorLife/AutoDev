@@ -1,8 +1,8 @@
 /**
- * URL helpers for the Providers resource. Every Providers link, toggle return
- * path, and mutation redirect is built here so list rows, detail views, and
- * route handlers agree on one URL shape.
- */
+URL helpers for the Providers resource. Every Providers link, toggle return
+path, and mutation redirect is built here so list rows, detail views, and
+route handlers agree on one URL shape.
+*/
 
 export const PROVIDERS_PATH = "/providers";
 export const PROVIDERS_TABS = ["providers", "models"] as const;
@@ -26,7 +26,9 @@ export function modelPath(provider: string, model: string): string {
   return `${providerPath(provider)}/models/${encodeURIComponent(model)}`;
 }
 
-/** Only Providers pages may be a toggle's return destination. */
+/**
+Only Providers pages may be a toggle's return destination.
+*/
 export function isProvidersReturnPath(value: string | null): value is string {
   return value !== null && RETURN_PATH_PATTERN.test(value);
 }

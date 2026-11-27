@@ -1,4 +1,6 @@
-/** Runtime-hosted Playtesting MCP server implementation. */
+/**
+Runtime-hosted Playtesting MCP server implementation.
+*/
 import { createHash, randomUUID } from "node:crypto";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -117,10 +119,10 @@ export type PlaytestMcpServer = McpServer & {
 export interface PlaytestMcpOptions extends PlaytestRunControlOptions {
   readonly sessionProvider: PlaytestMcpSessionProvider;
   /**
-   * Process-shared Runtime owner; the MCP facade never creates another
-   * scheduler. Null only for the analyst, whose allowlisted packet/review tools
-   * use the workspace-bound repository and do not call run control.
-   */
+  Process-shared Runtime owner; the MCP facade never creates another
+  scheduler. Null only for the analyst, whose allowlisted packet/review tools
+  use the workspace-bound repository and do not call run control.
+  */
   readonly playtestRunControl: PlaytestRunControl | null;
 }
 
@@ -180,14 +182,14 @@ const evidenceLocatorSchema = z.strictObject({
 });
 
 /**
- * Strict finding input. Caller-supplied event types, episode scope, IDs,
- * fingerprints, and revisions are rejected: Runtime derives event types
- * from cited persisted trace entries and derives scope from the stored
- * episode. Only the proposed mechanic/action/witness and descriptive
- * finding content cross this boundary. Workflow state, prevalence,
- * cohorts, external links and verification dates are supplied only by their
- * source-owning Runtime/Data workflows.
- */
+Strict finding input. Caller-supplied event types, episode scope, IDs,
+fingerprints, and revisions are rejected: Runtime derives event types
+from cited persisted trace entries and derives scope from the stored
+episode. Only the proposed mechanic/action/witness and descriptive
+finding content cross this boundary. Workflow state, prevalence,
+cohorts, external links and verification dates are supplied only by their
+source-owning Runtime/Data workflows.
+*/
 const findingIdentityFailureSignatureSchema = z.strictObject({
   action: z.string().min(1).max(200).nullable().optional(),
   witness: z.string().min(1).max(200)
@@ -218,7 +220,7 @@ const reviewClaimSchema = z.strictObject({
   evidenceRefs: z.array(evidenceLocatorSchema).min(1).max(64)
 });
 
-const crossSessionEvidenceRefSchema = z.strictObject({
+const crossSessionEvidenceReferenceSchema = z.strictObject({
   episodeId: z.string().min(1).max(256),
   packetId: z.string().min(1).max(128),
   locator: evidenceLocatorSchema
@@ -227,7 +229,7 @@ const crossSessionEvidenceRefSchema = z.strictObject({
 const crossSessionClaimSchema = z.strictObject({
   kind: z.enum(["pattern", "counterexample", "confounder"]),
   text: z.string().min(1).max(8000),
-  evidenceRefs: z.array(crossSessionEvidenceRefSchema).min(1).max(64)
+  evidenceRefs: z.array(crossSessionEvidenceReferenceSchema).min(1).max(64)
 });
 
 const crossSessionExperimentSchema = z.strictObject({
@@ -236,7 +238,7 @@ const crossSessionExperimentSchema = z.strictObject({
   metricId: z.string().min(1).max(256),
   controls: z.array(z.string().min(1).max(4000)).min(1).max(16),
   budget: z.string().min(1).max(4000),
-  evidenceRefs: z.array(crossSessionEvidenceRefSchema).min(1).max(64)
+  evidenceRefs: z.array(crossSessionEvidenceReferenceSchema).min(1).max(64)
 });
 
 const reviewCompletenessSchema = z.strictObject({
@@ -282,12 +284,10 @@ function playtestEvidenceLocatorFromInput(
   return {
     kind: locator.kind,
     id: locator.id,
-    ...(locator.step === undefined ? {} : { step: locator.step }),
-    ...(locator.revision === undefined ? {} : { revision: locator.revision }),
-    ...(locator.frameIndex === undefined
-      ? {}
-      : { frameIndex: locator.frameIndex }),
-    ...(locator.phaseId === undefined ? {} : { phaseId: locator.phaseId })
+    ...(locator.step !== undefined && { step: locator.step }),
+    ...(locator.revision !== undefined && { revision: locator.revision }),
+    ...(locator.frameIndex !== undefined && { frameIndex: locator.frameIndex }),
+    ...(locator.phaseId !== undefined && { phaseId: locator.phaseId })
   };
 }
 
@@ -300,13 +300,13 @@ const reviewExperimentSchema = z.strictObject({
 });
 
 /**
- * §11's missed-known-issue / duplicate-flood gate lives here: the stable
- * `findingId` is derived from the SHA-256 fingerprint of the canonical
- * identity (not from anything a caller controls), so the same underlying
- * defect across builds/policies/seed/batches deterministically produces the
- * same finding ID. Prefix is fixed so Data/Console can recognize the
- * namespace without parsing the hash.
- */
+§11's missed-known-issue / duplicate-flood gate lives here: the stable
+`findingId` is derived from the SHA-256 fingerprint of the canonical
+identity (not from anything a caller controls), so the same underlying
+defect across builds/policies/seed/batches deterministically produces the
+same finding ID. Prefix is fixed so Data/Console can recognize the
+namespace without parsing the hash.
+*/
 function deriveStableFindingId(fingerprint: string): string {
   if (!SHA256_PATTERN.test(fingerprint)) {
     throw new PlaytestMcpValidationError(
@@ -317,18 +317,20 @@ function deriveStableFindingId(fingerprint: string): string {
 }
 
 /**
- * Compute the SHA-256 fingerprint over `playtestFindingIdentityHashInput`.
- * Runtime owns the actual hashing; Core never computes the digest itself,
- * matching the division of responsibility used by `playtestBenchmarkHashInput`
- * in `core/src/playtesting/benchmark.ts`.
- */
+Compute the SHA-256 fingerprint over `playtestFindingIdentityHashInput`.
+Runtime owns the actual hashing; Core never computes the digest itself,
+matching the division of responsibility used by `playtestBenchmarkHashInput`
+in `core/src/playtesting/benchmark.ts`.
+*/
 function computeFindingFingerprint(identity: PlaytestFindingIdentity): string {
   return createHash("sha256")
     .update(playtestFindingIdentityHashInput(identity))
     .digest("hex");
 }
 
-/** JSON-stable key for a locator used by the duplicate-flood merge. */
+/**
+JSON-stable key for a locator used by the duplicate-flood merge.
+*/
 function evidenceLocatorKey(locator: PlaytestEvidenceLocator): string {
   const parts = [
     locator.kind,
@@ -342,7 +344,7 @@ function evidenceLocatorKey(locator: PlaytestEvidenceLocator): string {
   return JSON.stringify(parts);
 }
 
-function unionEvidenceRefs(
+function unionEvidenceReferences(
   a: readonly PlaytestEvidenceLocator[],
   b: readonly PlaytestEvidenceLocator[]
 ): readonly PlaytestEvidenceLocator[] {
@@ -366,19 +368,19 @@ function unionStringSet(
 }
 
 /**
- * Per-(workspace, fingerprint) in-process serialization point for finding
- * writes. The MCP server reads the latest revision and persists the
- * resulting append inside the SAME critical section keyed by
- * `workspaceId::fingerprint`, so two concurrent submitReview calls that
- * resolve to the same identity can never both observe the same "latest
- * version" and race to insert a colliding revision. ClickHouse does NOT
- * enforce cross-process uniqueness of `(workspace_id, fingerprint,
- * version)` -- a distributed Runtime would still need a coordinating
- * store (e.g. a lease table or a single-writer queue) to guarantee it;
- * this in-process map only guarantees ordering within one Runtime
- * process. Completed chains are removed from the map once settled so it
- * never grows unbounded across the process lifetime.
- */
+Per-(workspace, fingerprint) in-process serialization point for finding
+writes. The MCP server reads the latest revision and persists the
+resulting append inside the SAME critical section keyed by
+`workspaceId::fingerprint`, so two concurrent submitReview calls that
+resolve to the same identity can never both observe the same "latest
+version" and race to insert a colliding revision. ClickHouse does NOT
+enforce cross-process uniqueness of `(workspace_id, fingerprint,
+version)` -- a distributed Runtime would still need a coordinating
+store (e.g. a lease table or a single-writer queue) to guarantee it;
+this in-process map only guarantees ordering within one Runtime
+process. Completed chains are removed from the map once settled so it
+never grows unbounded across the process lifetime.
+*/
 const findingAppendLocks = new Map<string, Promise<unknown>>();
 const batchReviewLocks = new Map<string, Promise<unknown>>();
 const crossSessionSynthesisLocks = new Map<string, Promise<void>>();
@@ -415,12 +417,12 @@ function assertReviewReceiptMatchesBatch(
     );
   }
   if (
-    !batch.reviewPackets.some(
+    batch.reviewPackets.every(
       (packet) =>
-        packet.status === "prepared" &&
-        packet.packetId === receipt.packetId &&
-        packet.assignmentId === receipt.assignmentId &&
-        packet.episodeId === receipt.episodeId
+        packet.status !== "prepared" ||
+        packet.packetId !== receipt.packetId ||
+        packet.assignmentId !== receipt.assignmentId ||
+        packet.episodeId !== receipt.episodeId
     )
   ) {
     throw new PlaytestMcpUnavailableError(
@@ -428,10 +430,10 @@ function assertReviewReceiptMatchesBatch(
     );
   }
   if (
-    !batch.reviewSelection.selected.some(
+    batch.reviewSelection.selected.every(
       (selected) =>
-        selected.assignmentId === receipt.assignmentId &&
-        selected.episodeId === receipt.episodeId
+        selected.assignmentId !== receipt.assignmentId ||
+        selected.episodeId !== receipt.episodeId
     )
   ) {
     throw new PlaytestMcpAuthorizationError(
@@ -608,12 +610,12 @@ function selectWindowRange(input: {
 }
 
 /**
- * Build the known-evidence index from real stored records -- never from the
- * locators the caller is simultaneously trying to get verified. Episode
- * identity and frames come from the indexed episode row; event identity
- * comes from parsing the episode's own persisted trace artifact; review,
- * finding and comparison identity come from the real repository.
- */
+Build the known-evidence index from real stored records -- never from the
+locators the caller is simultaneously trying to get verified. Episode
+identity and frames come from the indexed episode row; event identity
+comes from parsing the episode's own persisted trace artifact; review,
+finding and comparison identity come from the real repository.
+*/
 interface PlaytestTraceEvent {
   readonly eventId: string;
   readonly type: string;
@@ -627,7 +629,9 @@ interface PlaytestEpisodeTraceFacts {
   readonly selectedActionIds: ReadonlySet<string>;
 }
 
-/** Parse one JSONL line into a structured trace entry, or null if it is not one. */
+/**
+Parse one JSONL line into a structured trace entry, or null if it is not one.
+*/
 function parseTraceLine(line: string): Record<string, unknown> | null {
   const trimmed = line.trim();
   if (!trimmed) return null;
@@ -643,7 +647,9 @@ function parseTraceLine(line: string): Record<string, unknown> | null {
   return parsed as Record<string, unknown>;
 }
 
-/** Normalize a trace entry's selectedActionId to its lower-cased NFKC form, or null. */
+/**
+Normalize a trace entry's selectedActionId to its lower-cased NFKC form, or null.
+*/
 function normalizeTraceSelectedActionId(
   entry: Record<string, unknown>
 ): string | null {
@@ -651,7 +657,9 @@ function normalizeTraceSelectedActionId(
   return entry.selectedActionId.normalize("NFKC").trim().toLowerCase();
 }
 
-/** Build a PlaytestTraceEvent from a raw event payload, or null if invalid. */
+/**
+Build a PlaytestTraceEvent from a raw event payload, or null if invalid.
+*/
 function tryCreateTraceEvent(
   rawEvent: unknown,
   step: number | null,
@@ -684,7 +692,9 @@ function tryCreateTraceEvent(
   };
 }
 
-/** Decode the trace artifact window as UTF-8 text, or null if it cannot be authorized/read. */
+/**
+Decode the trace artifact window as UTF-8 text, or null if it cannot be authorized/read.
+*/
 function readEpisodeTraceWindow(
   episode: PlaytestEpisode,
   artifacts: PlaytestArtifactStore
@@ -701,7 +711,9 @@ function readEpisodeTraceWindow(
   }
 }
 
-/** Parse an episode's persisted JSONL trace as authoritative event/action facts. */
+/**
+Parse an episode's persisted JSONL trace as authoritative event/action facts.
+*/
 function readEpisodeTraceFacts(
   episode: PlaytestEpisode,
   artifacts: PlaytestArtifactStore
@@ -736,13 +748,13 @@ function readEpisodeTraceFacts(
 }
 
 /**
- * Shape accepted by `resolveSubmittedFinding`. Mirrors `findingSchema`
- * but is structurally typed so we can keep callers strictly typed through
- * zod while passing the resolved shape to the helper.
- */
+Shape accepted by `resolveSubmittedFinding`. Mirrors `findingSchema`
+but is structurally typed so we can keep callers strictly typed through
+zod while passing the resolved shape to the helper.
+*/
 type SubmittedFinding = z.infer<typeof findingSchema>;
 
-function normalizeEvidenceRefs(
+function normalizeEvidenceReferences(
   locators: SubmittedFinding["evidenceRefs"]
 ): readonly PlaytestEvidenceLocator[] {
   // Strip zod-output `undefined`s from optional numeric fields so the
@@ -769,7 +781,9 @@ function normalizeEvidenceRefs(
   });
 }
 
-/** Derive finding scope/events from the stored episode and cited trace, never caller claims. */
+/**
+Derive finding scope/events from the stored episode and cited trace, never caller claims.
+*/
 function buildSubmittedFindingIdentity(
   episode: PlaytestEpisode,
   traceFacts: PlaytestEpisodeTraceFacts,
@@ -809,7 +823,7 @@ function buildSubmittedFindingIdentity(
     mechanicKey: submitted.identity.mechanicKey,
     failureSignature: {
       events,
-      ...(requestedAction === undefined ? {} : { action: requestedAction }),
+      ...(requestedAction !== undefined && { action: requestedAction }),
       witness: submitted.identity.failureSignature.witness
     },
     scope: {
@@ -831,15 +845,15 @@ interface SubmittedFindingGroup {
 }
 
 /**
- * Collapse findings within ONE submitted review that resolve to the same
- * stable identity fingerprint before any Data read/append happens, so a
- * single review can never create two persisted revisions -- or two
- * entries in its own findings array -- for the same underlying defect.
- * The first occurrence in review order keeps its severity/title/description;
- * later in-review duplicates only contribute additional validated evidence.
- * Cohort is derived from the stored episode. Workflow state, prevalence,
- * external links and verification dates are owned by separate workflows.
- */
+Collapse findings within ONE submitted review that resolve to the same
+stable identity fingerprint before any Data read/append happens, so a
+single review can never create two persisted revisions -- or two
+entries in its own findings array -- for the same underlying defect.
+The first occurrence in review order keeps its severity/title/description;
+later in-review duplicates only contribute additional validated evidence.
+Cohort is derived from the stored episode. Workflow state, prevalence,
+external links and verification dates are owned by separate workflows.
+*/
 function collapseInReviewDuplicateFindings(
   episode: PlaytestEpisode,
   traceFacts: PlaytestEpisodeTraceFacts,
@@ -883,7 +897,9 @@ function collapseInReviewDuplicateFindings(
   return order.map((fingerprint) => byFingerprint.get(fingerprint)!);
 }
 
-/** Resolve the finding revision from the latest workspace-owned fingerprint. */
+/**
+Resolve the finding revision from the latest workspace-owned fingerprint.
+*/
 interface PreparedSubmittedFinding {
   readonly finding: PlaytestFinding;
   readonly shouldInsert: boolean;
@@ -896,16 +912,16 @@ function resolveSubmittedFinding(
   const { identity, fingerprint, submitted } = group;
   const findingId = deriveStableFindingId(fingerprint);
   if (existing) {
-    const evidenceRefs = unionEvidenceRefs(
+    const evidenceReferences = unionEvidenceReferences(
       existing.evidenceRefs,
-      normalizeEvidenceRefs(submitted.evidenceRefs)
+      normalizeEvidenceReferences(submitted.evidenceRefs)
     );
     const affectedCohorts = unionStringSet(
       existing.affectedCohorts,
       group.affectedCohorts
     );
     if (
-      canonicalPlaytestJson(evidenceRefs) ===
+      canonicalPlaytestJson(evidenceReferences) ===
         canonicalPlaytestJson(existing.evidenceRefs) &&
       canonicalPlaytestJson(affectedCohorts) ===
         canonicalPlaytestJson(existing.affectedCohorts)
@@ -931,7 +947,7 @@ function resolveSubmittedFinding(
         affectedOpportunities: existing.affectedOpportunities,
         totalEligibleOpportunities: existing.totalEligibleOpportunities,
         affectedCohorts,
-        evidenceRefs,
+        evidenceRefs: evidenceReferences,
         experimentIds: existing.experimentIds,
         issueRefs: existing.issueRefs,
         lastVerifiedBuild: existing.lastVerifiedBuild,
@@ -957,7 +973,7 @@ function resolveSubmittedFinding(
       affectedOpportunities: null,
       totalEligibleOpportunities: null,
       affectedCohorts: [...group.affectedCohorts],
-      evidenceRefs: normalizeEvidenceRefs(submitted.evidenceRefs),
+      evidenceRefs: normalizeEvidenceReferences(submitted.evidenceRefs),
       experimentIds: [],
       issueRefs: [],
       lastVerifiedBuild: null,
@@ -977,7 +993,7 @@ function assertSubmittedFindingEvidenceStatus(
     assertPlaytestFindingEvidenceStatusConsistent(
       {
         ...finding,
-        evidenceRefs: normalizeEvidenceRefs(group.submitted.evidenceRefs)
+        evidenceRefs: normalizeEvidenceReferences(group.submitted.evidenceRefs)
       },
       evidenceIndex
     );
@@ -1019,7 +1035,9 @@ async function preflightSubmittedFindingGroups(
   );
 }
 
-/** Persist one already preflight-validated finding under its fingerprint lock. */
+/**
+Persist one already preflight-validated finding under its fingerprint lock.
+*/
 async function appendSubmittedFindingGroup(
   workspaceId: string,
   group: SubmittedFindingGroup,
@@ -1041,7 +1059,7 @@ async function appendSubmittedFindingGroup(
 async function buildKnownPlaytestEvidenceIndex(
   workspaceId: string,
   episode: PlaytestEpisode,
-  evidenceRefs: readonly PlaytestEvidenceLocator[],
+  evidenceReferences: readonly PlaytestEvidenceLocator[],
   traceFacts: PlaytestEpisodeTraceFacts,
   playtestRepository: PlaytestingRepositoryOps
 ): Promise<PlaytestKnownEvidenceIndex> {
@@ -1062,13 +1080,13 @@ async function buildKnownPlaytestEvidenceIndex(
   if (latestReview) reviewIds.add(latestReview.reviewId);
 
   const findingIds = new Set<string>();
-  const findingRefs = new Set(
-    evidenceRefs
+  const findingReferences = new Set(
+    evidenceReferences
       .filter((reference) => reference.kind === "finding")
-      .map((ref) => ref.id)
+      .map((reference) => reference.id)
   );
   const findings = await Promise.all(
-    Array.from(findingRefs, (findingId) =>
+    Array.from(findingReferences, (findingId) =>
       playtestRepository.getFinding(workspaceId, findingId)
     )
   );
@@ -1077,13 +1095,13 @@ async function buildKnownPlaytestEvidenceIndex(
   }
 
   const comparisonIds = new Set<string>();
-  const comparisonRefs = new Set(
-    evidenceRefs
+  const comparisonReferences = new Set(
+    evidenceReferences
       .filter((reference) => reference.kind === "comparison")
-      .map((ref) => ref.id)
+      .map((reference) => reference.id)
   );
   const comparisons = await Promise.all(
-    Array.from(comparisonRefs, (comparisonId) =>
+    Array.from(comparisonReferences, (comparisonId) =>
       playtestRepository.getLatestComparison(workspaceId, comparisonId)
     )
   );
@@ -1167,7 +1185,7 @@ function anchorsForReview(
 
   return packet.dimensionRubrics.map((rubric) => {
     const note = notes.get(rubric.dimensionId);
-    const evidenceRefs = note ? normalizeEvidenceRefs(note.evidenceRefs) : [];
+    const evidenceReferences = note ? normalizeEvidenceReferences(note.evidenceRefs) : [];
     const matchingMetrics = packet.metrics.filter(
       (metric) =>
         rubric.indicator ===
@@ -1175,7 +1193,7 @@ function anchorsForReview(
     );
     const metric =
       matchingMetrics.length === 1 &&
-      evidenceRefs.length > 0 &&
+      evidenceReferences.length > 0 &&
       rubric.modality === packet.observationMode
         ? matchingMetrics[0]!
         : null;
@@ -1184,17 +1202,13 @@ function anchorsForReview(
       ratio: metric?.estimate ?? null,
       independentUnits: metric?.independentUnits ?? null,
       eligibleOpportunities: metric?.opportunityCount ?? null,
-      evidenceRefs,
-      ...(note?.counterexampleId === undefined
-        ? {}
-        : { counterexampleId: note.counterexampleId })
+      evidenceRefs: evidenceReferences,
+      ...(note?.counterexampleId !== undefined && { counterexampleId: note.counterexampleId })
     });
     return {
       ...anchor,
       rationale: note?.rationale ?? anchor.rationale,
-      ...(metric === null && rubric.modality !== packet.observationMode
-        ? { insufficientReason: "unsupported-modality" as const }
-        : {})
+      ...(metric === null && rubric.modality !== packet.observationMode && { insufficientReason: "unsupported-modality" as const })
     };
   });
 }
@@ -1390,7 +1404,7 @@ export function createPlaytestMcpServer(
         limit: z.number().int().min(1).max(500).default(50)
       }
     },
-    (args) =>
+    (arguments_) =>
       safely(async () => {
         const session = await sessionProvider.current();
         assertPlaytestToolRole(
@@ -1398,7 +1412,7 @@ export function createPlaytestMcpServer(
           RUN_STATUS_READER_ROLES,
           "playtest.listEpisodes"
         );
-        const targetWorkspaceId = authorizeWorkspace(args.workspaceId, session);
+        const targetWorkspaceId = authorizeWorkspace(arguments_.workspaceId, session);
         if (!playtestRepository) {
           throw new PlaytestMcpUnavailableError(
             "Playtest data repository is not configured for episode listing."
@@ -1408,18 +1422,18 @@ export function createPlaytestMcpServer(
         const page = await playtestRepository.listEpisodes(
           {
             workspaceId: targetWorkspaceId,
-            ...(args.batchId ? { batchId: args.batchId } : {}),
-            ...(args.buildSha ? { buildSha: args.buildSha } : {}),
-            ...(args.scenario ? { scenario: args.scenario } : {}),
-            ...(args.policy ? { policy: args.policy } : {}),
-            ...(args.cohort ? { cohort: args.cohort } : {}),
-            ...(args.status ? { status: args.status } : {}),
-            ...(args.gameOutcome ? { gameOutcome: args.gameOutcome } : {}),
-            ...(args.reviewStatus ? { reviewStatus: args.reviewStatus } : {})
+            ...(arguments_.batchId && { batchId: arguments_.batchId }),
+            ...(arguments_.buildSha && { buildSha: arguments_.buildSha }),
+            ...(arguments_.scenario && { scenario: arguments_.scenario }),
+            ...(arguments_.policy && { policy: arguments_.policy }),
+            ...(arguments_.cohort && { cohort: arguments_.cohort }),
+            ...(arguments_.status && { status: arguments_.status }),
+            ...(arguments_.gameOutcome && { gameOutcome: arguments_.gameOutcome }),
+            ...(arguments_.reviewStatus && { reviewStatus: arguments_.reviewStatus })
           },
           {
-            limit: args.limit,
-            ...(args.cursor ? { cursor: args.cursor } : {})
+            limit: arguments_.limit,
+            ...(arguments_.cursor && { cursor: arguments_.cursor })
           }
         );
 
@@ -1633,7 +1647,7 @@ export function createPlaytestMcpServer(
         if (batchId) {
           const page = await playtestRepository.listEpisodes(
             { workspaceId: targetWorkspaceId, batchId },
-            { limit: limit ?? 50, ...(cursor ? { cursor } : {}) }
+            { limit: limit ?? 50, ...(cursor && { cursor }) }
           );
           return {
             kind: "per-episode-metrics",
@@ -1874,7 +1888,7 @@ export function createPlaytestMcpServer(
           .max(32)
       })
     },
-    (args) =>
+    (arguments_) =>
       safely(async () => {
         const session = await sessionProvider.current();
         if (!isReviewerRole(session.role)) {
@@ -1889,10 +1903,10 @@ export function createPlaytestMcpServer(
         }
         assertAnalystEpisodeSelected(
           session,
-          args.episodeId,
+          arguments_.episodeId,
           "playtest.submitDiscoveryReview"
         );
-        const workspaceId = authorizeWorkspace(args.workspaceId, session);
+        const workspaceId = authorizeWorkspace(arguments_.workspaceId, session);
         if (!playtestRepository?.insertDiscoveryReview) {
           throw new PlaytestMcpUnavailableError(
             "Playtest Data storage does not support discovery review persistence."
@@ -1900,7 +1914,7 @@ export function createPlaytestMcpServer(
         }
         const episode = await playtestRepository.getEpisode(
           workspaceId,
-          args.episodeId
+          arguments_.episodeId
         );
         if (!episode) {
           throw new PlaytestMcpValidationError(
@@ -1919,45 +1933,45 @@ export function createPlaytestMcpServer(
           );
         }
         if (
-          prepared.packet.packetId !== args.packetId ||
-          prepared.artifact.artifactId !== args.packetArtifactId ||
+          prepared.packet.packetId !== arguments_.packetId ||
+          prepared.artifact.artifactId !== arguments_.packetArtifactId ||
           prepared.artifact.sha256.toLowerCase() !==
-            args.packetSha256.toLowerCase()
+            arguments_.packetSha256.toLowerCase()
         ) {
           throw new PlaytestMcpValidationError(
             "The submitted discovery review does not match the exact persisted packet artifact."
           );
         }
         const observations: PlaytestDiscoveryReviewDraft["observations"] =
-          args.observations.map((claim) => ({
+          arguments_.observations.map((claim) => ({
             hypothesisId: claim.hypothesisId,
             status: claim.status,
             text: claim.text,
-            evidenceRefs: normalizeEvidenceRefs(claim.evidenceRefs)
+            evidenceRefs: normalizeEvidenceReferences(claim.evidenceRefs)
           }));
         const interpretations: PlaytestDiscoveryReviewDraft["interpretations"] =
-          args.interpretations.map((claim) => ({
+          arguments_.interpretations.map((claim) => ({
             hypothesisId: claim.hypothesisId,
             status: claim.status,
             text: claim.text,
-            evidenceRefs: normalizeEvidenceRefs(claim.evidenceRefs)
+            evidenceRefs: normalizeEvidenceReferences(claim.evidenceRefs)
           }));
         const alternativeExplanations: PlaytestDiscoveryReviewDraft["alternativeExplanations"] =
-          args.alternativeExplanations.map((claim) => ({
+          arguments_.alternativeExplanations.map((claim) => ({
             hypothesisId: claim.hypothesisId,
             status: claim.status,
             text: claim.text,
-            evidenceRefs: normalizeEvidenceRefs(claim.evidenceRefs)
+            evidenceRefs: normalizeEvidenceReferences(claim.evidenceRefs)
           }));
         const experiments: PlaytestDiscoveryReviewDraft["experiments"] =
-          args.experiments.map((experiment) => ({
+          arguments_.experiments.map((experiment) => ({
             ...experiment,
-            evidenceRefs: normalizeEvidenceRefs(experiment.evidenceRefs)
+            evidenceRefs: normalizeEvidenceReferences(experiment.evidenceRefs)
           }));
         const draftCore: PlaytestDiscoveryReviewDraft = {
           reviewId: "discovery-pending",
           packetId: prepared.packet.packetId,
-          chronologicalSummary: args.chronologicalSummary,
+          chronologicalSummary: arguments_.chronologicalSummary,
           observations,
           interpretations,
           alternativeExplanations,
@@ -1984,7 +1998,7 @@ export function createPlaytestMcpServer(
           ...alternativeExplanations
         ];
         const allWords = [
-          args.chronologicalSummary,
+          arguments_.chronologicalSummary,
           ...allClaims.map((claim) => claim.text),
           ...alternativeExplanations.map((claim) => claim.text),
           ...experiments.flatMap((experiment) => [
@@ -2003,7 +2017,7 @@ export function createPlaytestMcpServer(
         ) {
           throw new PlaytestReviewNarrativeValidationError();
         }
-        const evidenceRefs = [
+        const evidenceReferences = [
           ...new Map(
             [
               ...allClaims.flatMap((claim) => claim.evidenceRefs),
@@ -2023,7 +2037,7 @@ export function createPlaytestMcpServer(
                 episodeId: episode.episodeId,
                 packetId: prepared.packet.packetId,
                 packetSha256: prepared.artifact.sha256,
-                chronologicalSummary: args.chronologicalSummary,
+                chronologicalSummary: arguments_.chronologicalSummary,
                 observations,
                 interpretations,
                 alternativeExplanations,
@@ -2064,12 +2078,12 @@ export function createPlaytestMcpServer(
           authorRole: "playtest-analyst",
           authorId: session.actor,
           measurementVersion: prepared.packet.measurementVersion,
-          chronologicalSummary: args.chronologicalSummary,
+          chronologicalSummary: arguments_.chronologicalSummary,
           observations,
           interpretations,
           alternativeExplanations,
           experiments,
-          evidenceRefs,
+          evidenceRefs: evidenceReferences,
           createdAt: new Date().toISOString(),
           status
         };
@@ -2111,7 +2125,7 @@ export function createPlaytestMcpServer(
         notes: z.string().max(4000).optional()
       }
     },
-    (args) =>
+    (arguments_) =>
       safely(async () => {
         const session = await sessionProvider.current();
         const reviewerRole = session.role;
@@ -2122,31 +2136,31 @@ export function createPlaytestMcpServer(
         }
         assertAnalystEpisodeSelected(
           session,
-          args.episodeId,
+          arguments_.episodeId,
           "playtest.submitReview"
         );
         if (
-          !Array.isArray(args.observations) ||
-          args.observations.length === 0 ||
-          !Array.isArray(args.interpretations) ||
-          args.interpretations.length === 0 ||
-          !Array.isArray(args.alternativeExplanations) ||
-          !Array.isArray(args.experiments)
+          !Array.isArray(arguments_.observations) ||
+          arguments_.observations.length === 0 ||
+          !Array.isArray(arguments_.interpretations) ||
+          arguments_.interpretations.length === 0 ||
+          !Array.isArray(arguments_.alternativeExplanations) ||
+          !Array.isArray(arguments_.experiments)
         ) {
           throw new PlaytestMcpValidationError(
             "A review must include observed and interpreted claims, alternatives, and an explicit experiment list."
           );
         }
-        const evidenceRefs = normalizeEvidenceRefs(args.evidenceRefs ?? []);
-        const observations = (args.observations ?? []).map((claim) => ({
+        const evidenceReferences = normalizeEvidenceReferences(arguments_.evidenceRefs ?? []);
+        const observations = (arguments_.observations ?? []).map((claim) => ({
           text: claim.text,
-          evidenceRefs: normalizeEvidenceRefs(claim.evidenceRefs)
+          evidenceRefs: normalizeEvidenceReferences(claim.evidenceRefs)
         }));
-        const interpretations = (args.interpretations ?? []).map((claim) => ({
+        const interpretations = (arguments_.interpretations ?? []).map((claim) => ({
           text: claim.text,
-          evidenceRefs: normalizeEvidenceRefs(claim.evidenceRefs)
+          evidenceRefs: normalizeEvidenceReferences(claim.evidenceRefs)
         }));
-        const submittedFindings = args.findings ?? [];
+        const submittedFindings = arguments_.findings ?? [];
         if (submittedFindings.length > MAX_FINDINGS_PER_REVIEW) {
           throw new PlaytestMcpValidationError(
             `A review may include at most ${String(MAX_FINDINGS_PER_REVIEW)} findings.`
@@ -2162,7 +2176,7 @@ export function createPlaytestMcpServer(
             "Submitted finding does not satisfy the finding schema."
           );
         }
-        const targetWorkspaceId = authorizeWorkspace(args.workspaceId, session);
+        const targetWorkspaceId = authorizeWorkspace(arguments_.workspaceId, session);
         if (!playtestRepository) {
           throw new PlaytestMcpUnavailableError(
             "Playtest data repository is not configured; the review cannot be recorded."
@@ -2173,19 +2187,19 @@ export function createPlaytestMcpServer(
             "Playtest data repository does not support review persistence."
           );
         }
-        if (args.status !== "hypothesis" && args.status !== "not observed") {
+        if (arguments_.status !== "hypothesis" && arguments_.status !== "not observed") {
           throw new PlaytestMcpValidationError(
             "Reviewer conclusions remain hypothesis or not-observed until independent validation is available."
           );
         }
         const episode = await playtestRepository.getEpisode(
           targetWorkspaceId,
-          args.episodeId
+          arguments_.episodeId
         );
         if (!episode) {
           throw new PlaytestMcpValidationError(
             'Playtest episode "' +
-              args.episodeId +
+              arguments_.episodeId +
               '" was not found in workspace "' +
               targetWorkspaceId +
               '".'
@@ -2209,25 +2223,25 @@ export function createPlaytestMcpServer(
           );
         }
         if (
-          packet.packet.packetId !== args.packetId ||
-          packet.artifact.artifactId !== args.packetArtifactId ||
+          packet.packet.packetId !== arguments_.packetId ||
+          packet.artifact.artifactId !== arguments_.packetArtifactId ||
           packet.artifact.sha256.toLowerCase() !==
-            args.packetSha256.toLowerCase() ||
-          args.rubricHash !== packet.packet.rubricHash
+            arguments_.packetSha256.toLowerCase() ||
+          arguments_.rubricHash !== packet.packet.rubricHash
         ) {
           throw new PlaytestMcpValidationError(
             "The submitted review does not match the frozen evidence packet."
           );
         }
-        const dimensionEvidence = args.dimensionEvidence ?? [];
-        const alternativeExplanations = args.alternativeExplanations ?? [];
-        const experiments = args.experiments ?? [];
+        const dimensionEvidence = arguments_.dimensionEvidence ?? [];
+        const alternativeExplanations = arguments_.alternativeExplanations ?? [];
+        const experiments = arguments_.experiments ?? [];
         const reportCompleteness =
-          args.reportCompleteness as PlaytestReviewCompleteness;
+          arguments_.reportCompleteness as PlaytestReviewCompleteness;
         assertReviewExperimentMetrics(packet.packet, experiments);
         const anchors = anchorsForReview(packet.packet, dimensionEvidence);
-        const packetEvidenceRefs = [
-          ...evidenceRefs,
+        const packetEvidenceReferences = [
+          ...evidenceReferences,
           ...(reportCompleteness.crossSessionContext.status === "available"
             ? reportCompleteness.crossSessionContext.evidenceRefs
             : []),
@@ -2238,7 +2252,7 @@ export function createPlaytestMcpServer(
         ] as PlaytestEvidenceLocator[];
         try {
           assertPlaytestEvidenceLocatorsWithinPacket(
-            packetEvidenceRefs,
+            packetEvidenceReferences,
             packet.packet
           );
         } catch {
@@ -2254,9 +2268,9 @@ export function createPlaytestMcpServer(
                 workspaceId: targetWorkspaceId,
                 batchId: episode.batchId,
                 episodeId: episode.episodeId,
-                chronologicalSummary: args.chronologicalSummary,
-                status: args.status,
-                evidenceRefs,
+                chronologicalSummary: arguments_.chronologicalSummary,
+                status: arguments_.status,
+                evidenceRefs: evidenceReferences,
                 observations,
                 interpretations,
                 dimensionEvidence,
@@ -2264,10 +2278,10 @@ export function createPlaytestMcpServer(
                 reportCompleteness,
                 experiments,
                 findings,
-                rubricHash: args.rubricHash,
+                rubricHash: arguments_.rubricHash,
                 packetId: packet.packet.packetId,
                 packetSha256: packet.artifact.sha256,
-                notes: args.notes ?? ""
+                notes: arguments_.notes ?? ""
               })
             )
             .digest("hex");
@@ -2367,8 +2381,8 @@ export function createPlaytestMcpServer(
               );
             }
 
-            const allEvidenceRefs = [
-              ...evidenceRefs,
+            const allEvidenceReferences = [
+              ...evidenceReferences,
               ...findings.flatMap((finding) => finding.evidenceRefs),
               ...observations.flatMap((claim) => claim.evidenceRefs),
               ...interpretations.flatMap((claim) => claim.evidenceRefs)
@@ -2380,16 +2394,16 @@ export function createPlaytestMcpServer(
             const knownIndex = await buildKnownPlaytestEvidenceIndex(
               targetWorkspaceId,
               episode,
-              allEvidenceRefs,
+              allEvidenceReferences,
               traceFacts,
               playtestRepository
             );
 
             try {
-              assertKnownEvidenceLocators(allEvidenceRefs, knownIndex);
+              assertKnownEvidenceLocators(allEvidenceReferences, knownIndex);
               assertPlaytestSessionReviewHasEvidence({
                 reviewId: "review-precheck",
-                evidenceRefs,
+                evidenceRefs: evidenceReferences,
                 observations,
                 interpretations,
                 alternativeExplanations,
@@ -2397,7 +2411,7 @@ export function createPlaytestMcpServer(
                 reportCompleteness,
                 findings: findings.map((finding, index) => ({
                   findingId: "review-precheck-finding-" + String(index + 1),
-                  evidenceRefs: normalizeEvidenceRefs(finding.evidenceRefs)
+                  evidenceRefs: normalizeEvidenceReferences(finding.evidenceRefs)
                 }))
               });
             } catch {
@@ -2409,7 +2423,7 @@ export function createPlaytestMcpServer(
             try {
               assertPlaytestReviewNarrativeMinimums({
                 reviewId: "review-precheck",
-                chronologicalSummary: args.chronologicalSummary,
+                chronologicalSummary: arguments_.chronologicalSummary,
                 observations,
                 interpretations,
                 alternativeExplanations,
@@ -2423,7 +2437,7 @@ export function createPlaytestMcpServer(
             try {
               assertPlaytestReviewNarrativeGroundedInPacket(
                 {
-                  chronologicalSummary: args.chronologicalSummary,
+                  chronologicalSummary: arguments_.chronologicalSummary,
                   observations,
                   interpretations,
                   alternativeExplanations,
@@ -2485,7 +2499,7 @@ export function createPlaytestMcpServer(
               schema: PLAYTESTS_SESSION_REVIEW_SCHEMA,
               reviewId,
               version: 1,
-              episodeId: args.episodeId,
+              episodeId: arguments_.episodeId,
               supersedes: null,
               evidencePacket: {
                 packetId: packet.packet.packetId,
@@ -2493,14 +2507,14 @@ export function createPlaytestMcpServer(
               },
               authorRole: reviewerRole,
               authorId: session.actor,
-              rubricHash: args.rubricHash,
+              rubricHash: arguments_.rubricHash,
               measurementVersion: PLAYTESTS_MEASUREMENT_VERSION,
               provenance: {
                 workspaceId: targetWorkspaceId,
                 measurementVersion: PLAYTESTS_MEASUREMENT_VERSION,
                 generatedAt: new Date().toISOString()
               },
-              chronologicalSummary: args.chronologicalSummary,
+              chronologicalSummary: arguments_.chronologicalSummary,
               authoritativeMetrics: packet.packet.metrics,
               observations,
               interpretations,
@@ -2508,11 +2522,11 @@ export function createPlaytestMcpServer(
               alternativeExplanations,
               reportCompleteness,
               experiments,
-              status: args.status,
+              status: arguments_.status,
               findings: resolvedFindings,
-              evidenceRefs,
+              evidenceRefs: evidenceReferences,
               createdAt: new Date().toISOString(),
-              notes: args.notes ?? ""
+              notes: arguments_.notes ?? ""
             };
 
             await playtestRepository.insertReview(review);
@@ -2539,7 +2553,7 @@ export function createPlaytestMcpServer(
         experiments: z.array(crossSessionExperimentSchema).max(32)
       })
     },
-    (args) =>
+    (arguments_) =>
       safely(async () => {
         const session = await sessionProvider.current();
         if (session.role !== REVIEWER_ROLE) {
@@ -2619,7 +2633,7 @@ export function createPlaytestMcpServer(
             const normalizedExperiments: PlaytestCrossSessionExperiment[] = [];
             const validateReferences = (
               references: readonly z.infer<
-                typeof crossSessionEvidenceRefSchema
+                typeof crossSessionEvidenceReferenceSchema
               >[]
             ): void => {
               for (const reference of references) {
@@ -2647,7 +2661,7 @@ export function createPlaytestMcpServer(
                 referencedEpisodes.add(reference.episodeId);
               }
             };
-            for (const claim of args.claims) {
+            for (const claim of arguments_.claims) {
               validateReferences(claim.evidenceRefs);
               normalizedClaims.push({
                 ...claim,
@@ -2658,7 +2672,7 @@ export function createPlaytestMcpServer(
                 }))
               });
             }
-            for (const experiment of args.experiments) {
+            for (const experiment of arguments_.experiments) {
               validateReferences(experiment.evidenceRefs);
               normalizedExperiments.push({
                 ...experiment,
@@ -2699,7 +2713,7 @@ export function createPlaytestMcpServer(
               promptHash: null,
               generatedAt: new Date().toISOString(),
               status: "hypothesis",
-              summary: args.summary,
+              summary: arguments_.summary,
               contributors,
               packetEligibleEpisodeIds: [...selectedEpisodeIds],
               metricAggregation,
@@ -2731,7 +2745,7 @@ export function createPlaytestMcpServer(
         limit: z.number().int().min(1).max(500).default(50)
       }
     },
-    (args) =>
+    (arguments_) =>
       safely(async () => {
         const session = await sessionProvider.current();
         assertPlaytestToolRole(
@@ -2739,7 +2753,7 @@ export function createPlaytestMcpServer(
           FINDING_READER_ROLES,
           "playtest.findings"
         );
-        const targetWorkspaceId = authorizeWorkspace(args.workspaceId, session);
+        const targetWorkspaceId = authorizeWorkspace(arguments_.workspaceId, session);
         if (!playtestRepository) {
           throw new PlaytestMcpUnavailableError(
             "Playtest data repository is not configured for listing findings."
@@ -2749,15 +2763,13 @@ export function createPlaytestMcpServer(
         const page = await playtestRepository.listFindings(
           {
             workspaceId: targetWorkspaceId,
-            ...(args.severity ? { severity: args.severity } : {}),
-            ...(args.status ? { status: args.status } : {}),
-            ...(args.verificationStage
-              ? { verificationStage: args.verificationStage }
-              : {})
+            ...(arguments_.severity && { severity: arguments_.severity }),
+            ...(arguments_.status && { status: arguments_.status }),
+            ...(arguments_.verificationStage && { verificationStage: arguments_.verificationStage })
           },
           {
-            limit: args.limit,
-            ...(args.cursor ? { cursor: args.cursor } : {})
+            limit: arguments_.limit,
+            ...(arguments_.cursor && { cursor: arguments_.cursor })
           }
         );
 
@@ -2786,7 +2798,7 @@ export function createPlaytestMcpServer(
         limit: z.number().int().min(1).max(500).default(50)
       }
     },
-    (args) =>
+    (arguments_) =>
       safely(async () => {
         const session = await sessionProvider.current();
         assertPlaytestToolRole(
@@ -2794,7 +2806,7 @@ export function createPlaytestMcpServer(
           FINDING_READER_ROLES,
           "playtest.issueDrafts"
         );
-        const targetWorkspaceId = authorizeWorkspace(args.workspaceId, session);
+        const targetWorkspaceId = authorizeWorkspace(arguments_.workspaceId, session);
         if (!playtestRepository) {
           throw new PlaytestMcpUnavailableError(
             "Playtest data repository is not configured for drafting issues."
@@ -2813,15 +2825,13 @@ export function createPlaytestMcpServer(
         const page = await playtestRepository.listFindings(
           {
             workspaceId: targetWorkspaceId,
-            ...(args.severity ? { severity: args.severity } : {}),
-            ...(args.status ? { status: args.status } : {}),
-            ...(args.verificationStage
-              ? { verificationStage: args.verificationStage }
-              : {})
+            ...(arguments_.severity && { severity: arguments_.severity }),
+            ...(arguments_.status && { status: arguments_.status }),
+            ...(arguments_.verificationStage && { verificationStage: arguments_.verificationStage })
           },
           {
-            limit: args.limit,
-            ...(args.cursor ? { cursor: args.cursor } : {})
+            limit: arguments_.limit,
+            ...(arguments_.cursor && { cursor: arguments_.cursor })
           }
         );
         const drafts: readonly PlaytestIssueDraft[] = buildPlaytestIssueDrafts({
@@ -2857,7 +2867,7 @@ export function createPlaytestMcpServer(
         batchId: z.string().min(1).max(256)
       }
     },
-    (args) =>
+    (arguments_) =>
       safely(async () => {
         const session = await sessionProvider.current();
         assertPlaytestToolRole(
@@ -2865,15 +2875,15 @@ export function createPlaytestMcpServer(
           ANALYSIS_READER_ROLES,
           "playtest.policyValidity"
         );
-        const targetWorkspaceId = authorizeWorkspace(args.workspaceId, session);
+        const targetWorkspaceId = authorizeWorkspace(arguments_.workspaceId, session);
         const repository = requiredRunRepository(playtestRepository);
         const batch = await repository.getBatch(
           targetWorkspaceId,
-          args.batchId
+          arguments_.batchId
         );
         if (!batch) {
           throw new PlaytestMcpValidationError(
-            `No batch '${args.batchId}' exists in this workspace.`
+            `No batch '${arguments_.batchId}' exists in this workspace.`
           );
         }
 
@@ -2949,7 +2959,7 @@ export function createPlaytestMcpServer(
         limit: z.number().int().min(1).max(500).default(50)
       }
     },
-    (args) =>
+    (arguments_) =>
       safely(async () => {
         const session = await sessionProvider.current();
         assertPlaytestToolRole(
@@ -2957,7 +2967,7 @@ export function createPlaytestMcpServer(
           FINDING_READER_ROLES,
           "playtest.triageFindings"
         );
-        const targetWorkspaceId = authorizeWorkspace(args.workspaceId, session);
+        const targetWorkspaceId = authorizeWorkspace(arguments_.workspaceId, session);
         if (!playtestRepository) {
           throw new PlaytestMcpUnavailableError(
             "Playtest data repository is not configured for triage."
@@ -2966,18 +2976,16 @@ export function createPlaytestMcpServer(
         const page = await playtestRepository.listFindings(
           {
             workspaceId: targetWorkspaceId,
-            ...(args.severity ? { severity: args.severity } : {}),
-            ...(args.status ? { status: args.status } : {}),
-            ...(args.verificationStage
-              ? { verificationStage: args.verificationStage }
-              : {})
+            ...(arguments_.severity && { severity: arguments_.severity }),
+            ...(arguments_.status && { status: arguments_.status }),
+            ...(arguments_.verificationStage && { verificationStage: arguments_.verificationStage })
           },
           {
-            limit: args.limit,
-            ...(args.cursor ? { cursor: args.cursor } : {})
+            limit: arguments_.limit,
+            ...(arguments_.cursor && { cursor: arguments_.cursor })
           }
         );
-        const overrides = args.overrides ?? [];
+        const overrides = arguments_.overrides ?? [];
         const ranked = triagePlaytestFindings(page.rows, overrides);
         const examined = new Set(page.rows.map((finding) => finding.findingId));
         return {
@@ -3011,7 +3019,7 @@ export function createPlaytestMcpServer(
         metricId: z.string().min(1).max(256)
       }
     },
-    (args) =>
+    (arguments_) =>
       safely(async () => {
         const session = await sessionProvider.current();
         assertPlaytestToolRole(
@@ -3019,24 +3027,24 @@ export function createPlaytestMcpServer(
           ANALYSIS_READER_ROLES,
           "playtest.cohortMixShift"
         );
-        const targetWorkspaceId = authorizeWorkspace(args.workspaceId, session);
+        const targetWorkspaceId = authorizeWorkspace(arguments_.workspaceId, session);
         const repository = requiredRunRepository(playtestRepository);
         const reference = await repository.getBatch(
           targetWorkspaceId,
-          args.referenceBatchId
+          arguments_.referenceBatchId
         );
         if (!reference) {
           throw new PlaytestMcpValidationError(
-            `No batch '${args.referenceBatchId}' exists in this workspace.`
+            `No batch '${arguments_.referenceBatchId}' exists in this workspace.`
           );
         }
         const candidate = await repository.getBatch(
           targetWorkspaceId,
-          args.candidateBatchId
+          arguments_.candidateBatchId
         );
         if (!candidate) {
           throw new PlaytestMcpValidationError(
-            `No batch '${args.candidateBatchId}' exists in this workspace.`
+            `No batch '${arguments_.candidateBatchId}' exists in this workspace.`
           );
         }
         if (
@@ -3085,7 +3093,7 @@ export function createPlaytestMcpServer(
             { batch: reference, episodes: pages[0]!.rows },
             { batch: candidate, episodes: pages[1]!.rows }
           ],
-          metricId: args.metricId
+          metricId: arguments_.metricId
         });
 
         return {
@@ -3093,7 +3101,7 @@ export function createPlaytestMcpServer(
           candidateBatchId: candidate.batchId,
           referenceBuildSha: reference.buildSha,
           candidateBuildSha: candidate.buildSha,
-          metricId: args.metricId,
+          metricId: arguments_.metricId,
           benchmarkId: benchmark.benchmarkId,
           benchmarkContentHash: benchmarkHash,
           standardized: outcome.result !== null,

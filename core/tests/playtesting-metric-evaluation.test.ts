@@ -107,7 +107,7 @@ const context = {
 };
 
 test("game.outcome wire contract carries typed, unique, bounded evaluator facts", () => {
-  const params = { episodeId: "episode-1", expectedRevision: 2 };
+  const parameters = { episodeId: "episode-1", expectedRevision: 2 };
   const base = {
     episodeId: "episode-1",
     revision: 2,
@@ -118,11 +118,11 @@ test("game.outcome wire contract carries typed, unique, bounded evaluator facts"
     missingReasons: []
   };
   assert.doesNotThrow(() =>
-    assertPlaytestAdapterResult("game.outcome", params, base)
+    assertPlaytestAdapterResult("game.outcome", parameters, base)
   );
   assert.throws(
     () =>
-      assertPlaytestAdapterResult("game.outcome", params, {
+      assertPlaytestAdapterResult("game.outcome", parameters, {
         ...base,
         evaluations: undefined
       }),
@@ -130,7 +130,7 @@ test("game.outcome wire contract carries typed, unique, bounded evaluator facts"
   );
   assert.throws(
     () =>
-      assertPlaytestAdapterResult("game.outcome", params, {
+      assertPlaytestAdapterResult("game.outcome", parameters, {
         ...base,
         evaluations: [evaluation(), evaluation()]
       }),
@@ -138,7 +138,7 @@ test("game.outcome wire contract carries typed, unique, bounded evaluator facts"
   );
   assert.throws(
     () =>
-      assertPlaytestAdapterResult("game.outcome", params, {
+      assertPlaytestAdapterResult("game.outcome", parameters, {
         ...base,
         evaluations: [evaluation({ opportunityCount: 3 })]
       }),

@@ -26,14 +26,14 @@ import {
 export const dynamic = "force-dynamic";
 
 /**
- * The address the detail page was opened with.
- *
- * It carries the usage window the panel reads (`startDate`, `endDate`) and
- * the list's narrowing (`source`, `role`, `q`), which the breadcrumb travels
- * back with. The narrowing is read by the catalogue's own reader, so the
- * detail page and the list page read one address the same way.
- */
-type ToolDetailSearchParams = Readonly<
+The address the detail page was opened with.
+
+It carries the usage window the panel reads (`startDate`, `endDate`) and
+the list's narrowing (`source`, `role`, `q`), which the breadcrumb travels
+back with. The narrowing is read by the catalogue's own reader, so the
+detail page and the list page read one address the same way.
+*/
+type ToolDetailSearchParameters = Readonly<
   Record<string, string | readonly string[] | undefined>
 >;
 
@@ -42,16 +42,16 @@ function first(value: string | readonly string[] | undefined): string {
 }
 
 /**
- * How the tool catalogue was read.
- *
- * The catalogue is a composite of two independent reads -- the RuleSync tool
- * declarations and the execution contract's role projection -- and the two
- * are observed separately. The catalogue can therefore only say a tool is
- * absent when both were read: a tool the RuleSync source alone declares is
- * missing from a catalogue whose contract half nobody read, and a tool the
- * contract alone projects is missing from one whose RuleSync half was not
- * read.
- */
+How the tool catalogue was read.
+
+The catalogue is a composite of two independent reads -- the RuleSync tool
+declarations and the execution contract's role projection -- and the two
+are observed separately. The catalogue can therefore only say a tool is
+absent when both were read: a tool the RuleSync source alone declares is
+missing from a catalogue whose contract half nobody read, and a tool the
+contract alone projects is missing from one whose RuleSync half was not
+read.
+*/
 function toolCatalogueObservation(
   validity: "valid" | "invalid" | "not-observed",
   executionContractObserved: boolean
@@ -77,11 +77,11 @@ function toolCatalogueObservation(
 }
 
 /**
- * The resource's own name, taken from the route parameter rather than from a
- * second fetch of the resource. The page body already reads the same
- * parameter, and a metadata function that fetched would double every
- * detail-page request.
- */
+The resource's own name, taken from the route parameter rather than from a
+second fetch of the resource. The page body already reads the same
+parameter, and a metadata function that fetched would double every
+detail-page request.
+*/
 export async function generateMetadata({
   params
 }: {
@@ -97,11 +97,11 @@ export default async function ToolDetailPage({
   searchParams
 }: {
   readonly params: Promise<{ readonly name: string }>;
-  readonly searchParams?: Promise<ToolDetailSearchParams>;
+  readonly searchParams?: Promise<ToolDetailSearchParameters>;
 }): Promise<React.JSX.Element> {
   const [{ name: rawName }, sp] = await Promise.all([
     params,
-    searchParams ?? Promise.resolve({} as ToolDetailSearchParams)
+    searchParams ?? Promise.resolve({} as ToolDetailSearchParameters)
   ]);
   const { section, config } = readNodeContext("/tools");
   if (!config) {

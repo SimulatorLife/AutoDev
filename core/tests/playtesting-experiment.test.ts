@@ -8,7 +8,7 @@ import {
   type PlaytestExperiment,
   playtestExperimentHashInput,
   PLAYTESTS_EXPERIMENT_TRANSITIONS,
-  type PlaytestVersionedRef,
+  type PlaytestVersionedRef as PlaytestVersionedReference,
   transitionPlaytestExperiment
 } from "../src/playtesting/index.ts";
 
@@ -18,13 +18,13 @@ const HYPOTHESIS =
 const FALSIFIER =
   "No preregistered primary improvement of 0.10 meaningful margin.";
 
-const BASELINE: PlaytestVersionedRef = {
+const BASELINE: PlaytestVersionedReference = {
   id: "fixture-artifact-A",
   version: 1,
   contentHash:
     "0000000000000000000000000000000000000000000000000000000000000001"
 };
-const TREATMENT: PlaytestVersionedRef = {
+const TREATMENT: PlaytestVersionedReference = {
   id: "fixture-artifact-B",
   version: 1,
   contentHash:
@@ -42,8 +42,8 @@ interface FixtureExperimentOverrides {
   readonly ownerDecision?: string | null;
   readonly attemptIds?: readonly string[];
   readonly maxAssignments?: number;
-  readonly baseline?: PlaytestVersionedRef;
-  readonly treatment?: PlaytestVersionedRef;
+  readonly baseline?: PlaytestVersionedReference;
+  readonly treatment?: PlaytestVersionedReference;
   readonly budget?: {
     readonly maxAssignments: number;
     readonly maxCritiques: number;

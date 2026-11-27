@@ -10,16 +10,16 @@ function source(relativePath: string): string {
 }
 
 /**
- * A file's code with its comments removed.
- *
- * Comments are stripped before asking whether a file *uses* the symbol, so a
- * module that merely documents the convention is not reported as a consumer
- * that bypassed the owner. `tests/console-internal-links.test.ts` is exactly
- * that: it explains what `canonicalNavPath` builds without importing it.
- * A guard that reports its own documentation is a guard people turn off.
- * `//` is only treated as a comment when it is not preceded by `:` so a URL in
- * a string literal does not truncate the line.
- */
+A file's code with its comments removed.
+
+Comments are stripped before asking whether a file *uses* the symbol, so a
+module that merely documents the convention is not reported as a consumer
+that bypassed the owner. `tests/console-internal-links.test.ts` is exactly
+that: it explains what `canonicalNavPath` builds without importing it.
+A guard that reports its own documentation is a guard people turn off.
+`//` is only treated as a comment when it is not preceded by `:` so a URL in
+a string literal does not truncate the line.
+*/
 function code(relativePath: string): string {
   return source(relativePath)
     .replaceAll(/\/\*[\s\S]*?\*\//g, "")

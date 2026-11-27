@@ -12,28 +12,28 @@ import {
 import { sha256 } from "./support/hash.ts";
 
 /**
- * Synthetic three-build mix-shift fixture mirroring
- * docs/playtesting-measurement-contract.md §10's worked A/B/C table and
- * §11's "three-build changing cohort mix" gate. The benchmark weights
- * are a frozen 50/50 easy/hard distribution; the raw sampled completion
- * rates are deliberately misleading for build B (raw 85% hides a 65%
- * fixed-weight rate), while build C's raw 86% recovers to the pinned
- * 70% fixed-weight baseline.
- *
- * Test data layout:
- *   - Build A: rates 90% / 50% over  50 /  50 observed episodes
- *   - Build B: rates 90% / 40% over 900 / 100 observed episodes
- *   - Build C: rates 90% / 50% over 900 / 100 observed episodes
- */
+Synthetic three-build mix-shift fixture mirroring
+docs/playtesting-measurement-contract.md §10's worked A/B/C table and
+§11's "three-build changing cohort mix" gate. The benchmark weights
+are a frozen 50/50 easy/hard distribution; the raw sampled completion
+rates are deliberately misleading for build B (raw 85% hides a 65%
+fixed-weight rate), while build C's raw 86% recovers to the pinned
+70% fixed-weight baseline.
+
+Test data layout:
+  - Build A: rates 90% / 50% over  50 /  50 observed episodes
+  - Build B: rates 90% / 40% over 900 / 100 observed episodes
+  - Build C: rates 90% / 50% over 900 / 100 observed episodes
+*/
 const COHORT_EASY = "easy";
 const COHORT_HARD = "hard";
 
 /**
- * Minimal-but-typed PlaytestBenchmark fixture. The standardizer only
- * inspects `benchmarkId`, `version`, `contentHash`, and `cohortWeights`,
- * but the TypeScript surface requires every field of the artifact so
- * downstream consumers (Runtime/Data) can replay the manifest hash.
- */
+Minimal-but-typed PlaytestBenchmark fixture. The standardizer only
+inspects `benchmarkId`, `version`, `contentHash`, and `cohortWeights`,
+but the TypeScript surface requires every field of the artifact so
+downstream consumers (Runtime/Data) can replay the manifest hash.
+*/
 function frozenBenchmark(
   overrides: {
     readonly benchmarkId?: string;
@@ -592,7 +592,7 @@ test("validation rejects negative, zero, and non-finite benchmark cohort weights
       standardizePlaytestCohortRates({
         benchmark: rawBenchmark({
           [COHORT_EASY]: 1,
-          [COHORT_HARD]: Number.NaN
+          [COHORT_HARD]: NaN
         }),
         builds: threeBuildInput().builds
       }),

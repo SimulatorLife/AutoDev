@@ -268,7 +268,7 @@ test("visual discovery dispatch prepares one packet and stores only hypothesis r
     rootDirectory: root,
     workspaceId: WORKSPACE
   });
-  const frameRef = artifacts.writeArtifact({
+  const frameReference = artifacts.writeArtifact({
     artifactId: "frame-racing-0",
     mediaType: "image/png",
     bytes: PNG
@@ -320,7 +320,7 @@ test("visual discovery dispatch prepares one packet and stores only hypothesis r
         frameRefs: [
           {
             kind: "frame",
-            id: frameRef.artifactId,
+            id: frameReference.artifactId,
             step: 0,
             frameIndex: 0
           }
@@ -328,7 +328,7 @@ test("visual discovery dispatch prepares one packet and stores only hypothesis r
       }
     ]
   }).reference;
-  const episode = visualEpisode(trace.artifactId, frameRef.artifactId);
+  const episode = visualEpisode(trace.artifactId, frameReference.artifactId);
   const batch = visualBatch();
   let latestDiscoveryReview: unknown = null;
   let insertedDiscoveryReviewCount = 0;
@@ -429,7 +429,7 @@ test("visual discovery dispatch prepares one packet and stores only hypothesis r
       prepared.packetArtifact.sha256,
       dispatchedPacket.artifact.sha256
     );
-    assert.equal(prepared.packet.frames[0]?.frameId, frameRef.artifactId);
+    assert.equal(prepared.packet.frames[0]?.frameId, frameReference.artifactId);
     assert.equal(
       prepared.packet.areasOfFocus,
       "Inspect race setup choices.",
@@ -460,7 +460,7 @@ test("visual discovery dispatch prepares one packet and stores only hypothesis r
           evidenceRefs: [
             {
               kind: "frame",
-              id: frameRef.artifactId,
+              id: frameReference.artifactId,
               step: 0,
               frameIndex: 0
             }
@@ -475,7 +475,7 @@ test("visual discovery dispatch prepares one packet and stores only hypothesis r
           evidenceRefs: [
             {
               kind: "frame",
-              id: frameRef.artifactId,
+              id: frameReference.artifactId,
               step: 0,
               frameIndex: 0
             }
@@ -591,7 +591,7 @@ test("an analyst that submits no review reports its own words in the failure", a
     rootDirectory: root,
     workspaceId: WORKSPACE
   });
-  const frameRef = artifacts.writeArtifact({
+  const frameReference = artifacts.writeArtifact({
     artifactId: "frame-racing-0",
     mediaType: "image/png",
     bytes: PNG
@@ -643,7 +643,7 @@ test("an analyst that submits no review reports its own words in the failure", a
         frameRefs: [
           {
             kind: "frame",
-            id: frameRef.artifactId,
+            id: frameReference.artifactId,
             step: 0,
             frameIndex: 0
           }
@@ -651,7 +651,7 @@ test("an analyst that submits no review reports its own words in the failure", a
       }
     ]
   }).reference;
-  const episode = visualEpisode(trace.artifactId, frameRef.artifactId);
+  const episode = visualEpisode(trace.artifactId, frameReference.artifactId);
   const batch = visualBatch();
   const repository = {
     getBatch: async () => batch,
@@ -737,7 +737,7 @@ function cappedControlName(step: number, index: number): string {
     "race start - mechanically healthy - Tire age 0 laps - 0 of 1 required " +
     "pit stops completed - 1% of the lap to the finish line";
   return (
-    name.slice(0, PLAYTESTS_DISCOVERY_CONTROL_NAME_MAX_LENGTH - 1) + "\u2026"
+    name.slice(0, PLAYTESTS_DISCOVERY_CONTROL_NAME_MAX_LENGTH - 1) + "\u{2026}"
   );
 }
 
@@ -770,7 +770,7 @@ test("a real game's visible state produces one packet that fits the analyst budg
         enabled: true,
         focused: false
       }));
-    const frameRefs = [0, 1, 2, 3].map(
+    const frameReferences = [0, 1, 2, 3].map(
       (step) =>
         artifacts.writeArtifact({
           artifactId: "frame-racing-" + String(step),
@@ -815,7 +815,7 @@ test("a real game's visible state produces one packet that fits the analyst budg
         frameRefs: [
           {
             kind: "frame" as const,
-            id: frameRefs[step]!.artifactId,
+            id: frameReferences[step]!.artifactId,
             step,
             frameIndex: step
           }
@@ -823,9 +823,9 @@ test("a real game's visible state produces one packet that fits the analyst budg
       }))
     }).reference;
     const episode = {
-      ...visualEpisode(trace.artifactId, frameRefs[0]!.artifactId),
+      ...visualEpisode(trace.artifactId, frameReferences[0]!.artifactId),
       stepCount: 4,
-      frames: frameRefs.map((reference, step) => ({
+      frames: frameReferences.map((reference, step) => ({
         kind: "frame" as const,
         id: reference.artifactId,
         step,
@@ -899,7 +899,7 @@ test("runtime-prepared discovery packet keeps a null operator focus null and bin
       rootDirectory: root,
       workspaceId: WORKSPACE
     });
-    const frameRef = artifacts.writeArtifact({
+    const frameReference = artifacts.writeArtifact({
       artifactId: "frame-racing-null",
       mediaType: "image/png",
       bytes: PNG
@@ -930,7 +930,7 @@ test("runtime-prepared discovery packet keeps a null operator focus null and bin
           frameRefs: [
             {
               kind: "frame",
-              id: frameRef.artifactId,
+              id: frameReference.artifactId,
               step: 0,
               frameIndex: 0
             }
@@ -970,7 +970,7 @@ test("runtime-prepared discovery packet keeps a null operator focus null and bin
         manifest: nullFocusManifest
       }
     };
-    const episode = visualEpisode(trace.artifactId, frameRef.artifactId);
+    const episode = visualEpisode(trace.artifactId, frameReference.artifactId);
     const prepared = preparePlaytestDiscoveryEvidencePacket({
       workspaceId: WORKSPACE,
       episode,

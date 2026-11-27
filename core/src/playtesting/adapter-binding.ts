@@ -1,22 +1,24 @@
 /**
- * Declarative game-adapter bindings.
- *
- * A game used to implement all thirteen protocol methods itself — transport,
- * capability negotiation, revision tracking, event emission, per-phase action
- * enumeration — which is AutoDev-shaped code every game rewrites. A binding
- * names the game's own functions instead; this contract is what the generic
- * runtime dispatches through, and what `autodev playtest check` verifies before
- * a workspace is approved.
- *
- * Nothing here is optional-by-default. A protocol method with no declared
- * binding is an explicit, reported gap rather than a silent fallback, because a
- * runtime that answered from a default would hand the analyst an observation no
- * game actually produced.
- */
+Declarative game-adapter bindings.
+
+A game used to implement all thirteen protocol methods itself — transport,
+capability negotiation, revision tracking, event emission, per-phase action
+enumeration — which is AutoDev-shaped code every game rewrites. A binding
+names the game's own functions instead; this contract is what the generic
+runtime dispatches through, and what `autodev playtest check` verifies before
+a workspace is approved.
+
+Nothing here is optional-by-default. A protocol method with no declared
+binding is an explicit, reported gap rather than a silent fallback, because a
+runtime that answered from a default would hand the analyst an observation no
+game actually produced.
+*/
 
 import { isRecord } from "../shared/object-guards.ts";
 
-/** The protocol methods a binding may supply. */
+/**
+The protocol methods a binding may supply.
+*/
 export const PLAYTESTS_BINDABLE_METHODS = [
   "capabilities",
   "reset",
@@ -37,14 +39,14 @@ export type PlaytestBindableMethod =
   (typeof PLAYTESTS_BINDABLE_METHODS)[number];
 
 /**
- * Methods the Runtime cannot proceed without. An adapter missing one is not a
- * lesser adapter; it cannot produce an episode.
- *
- * `capabilities` is absent because AutoDev owns it. The advertisement is
- * derived from the game's declared schemas, so a game that bound its own
- * `capabilities` would have it silently ignored — requiring that binding would
- * ask a game to write a function nothing ever calls.
- */
+Methods the Runtime cannot proceed without. An adapter missing one is not a
+lesser adapter; it cannot produce an episode.
+
+`capabilities` is absent because AutoDev owns it. The advertisement is
+derived from the game's declared schemas, so a game that bound its own
+`capabilities` would have it silently ignored — requiring that binding would
+ask a game to write a function nothing ever calls.
+*/
 export const PLAYTESTS_REQUIRED_BINDINGS: readonly PlaytestBindableMethod[] = [
   "reset",
   "observe",
@@ -54,22 +56,26 @@ export const PLAYTESTS_REQUIRED_BINDINGS: readonly PlaytestBindableMethod[] = [
 ];
 
 /**
- * Methods AutoDev answers itself rather than dispatching to the game.
- *
- * A game may still bind these; the derived answer is what is served, so a
- * game's own implementation cannot overwrite the digests AutoDev computed.
- */
+Methods AutoDev answers itself rather than dispatching to the game.
+
+A game may still bind these; the derived answer is what is served, so a
+game's own implementation cannot overwrite the digests AutoDev computed.
+*/
 export const PLAYTESTS_ADAPTER_OWNED_METHODS: readonly PlaytestBindableMethod[] =
   ["capabilities"];
 
 /**
- * How a bound function is reached on the game object: a property name, or a
- * name plus a dotted path for a factory that returns a namespace.
- */
+How a bound function is reached on the game object: a property name, or a
+name plus a dotted path for a factory that returns a namespace.
+*/
 export interface PlaytestBindingReference {
-  /** Property on the object the entry factory returned. */
+  /**
+  Property on the object the entry factory returned.
+  */
   readonly export: string;
-  /** Optional dotted path when the factory returns a nested namespace. */
+  /**
+  Optional dotted path when the factory returns a nested namespace.
+  */
   readonly path?: string;
 }
 
@@ -77,25 +83,29 @@ export interface PlaytestAdapterBinding {
   readonly schema: typeof PLAYTESTS_ADAPTER_BINDING_SCHEMA;
   readonly schemaVersion: 1;
   /**
-   * Onboarding tier, stated rather than assumed. `declarative` means the
-   * declarations alone drive the game; `generated-scaffold` means AutoDev
-   * generated the bodies and the game filled them in.
-   */
+  Onboarding tier, stated rather than assumed. `declarative` means the
+  declarations alone drive the game; `generated-scaffold` means AutoDev
+  generated the bodies and the game filled them in.
+  */
   readonly tier: "declarative" | "generated-scaffold";
-  /** Module the generic runtime imports, resolved inside the integration directory. */
+  /**
+  Module the generic runtime imports, resolved inside the integration directory.
+  */
   readonly entry: string;
-  /** Named factory the module exports, called once per adapter process. */
+  /**
+  Named factory the module exports, called once per adapter process.
+  */
   readonly factory: string;
   /**
-   * The engine RNG version used by `reset(seed)`. Without a version the Runtime
-   * does not claim seeded-run reproducibility.
-   */
+  The engine RNG version used by `reset(seed)`. Without a version the Runtime
+  does not claim seeded-run reproducibility.
+  */
   readonly rngVersion?: string;
   /**
-   * The game's own schemas. AutoDev derives their digests rather than reading
-   * them from the file, which is what stops a hand-written adapter drifting
-   * when a schema is edited.
-   */
+  The game's own schemas. AutoDev derives their digests rather than reading
+  them from the file, which is what stops a hand-written adapter drifting
+  when a schema is edited.
+  */
   readonly schemas: Readonly<{
     readonly observation: Readonly<Record<string, unknown>>;
     readonly action: Readonly<Record<string, unknown>>;
@@ -110,53 +120,55 @@ export const PLAYTESTS_ADAPTER_BINDING_SCHEMA =
   "autodev-playtest-adapter-binding-v1" as const;
 
 /**
- * AutoDev's own adapter image, pinned.
- *
- * The adapter is AutoDev's protocol code, so it runs in AutoDev's image rather
- * than each game's. The game image is the thing under test, and the game's
- * code reaches the adapter through the approved checkout. This is the same for
- * every onboarded game: two games cannot disagree about what protocol version
- * they are speaking because neither of them supplies it.
- */
+AutoDev's own adapter image, pinned.
+
+The adapter is AutoDev's protocol code, so it runs in AutoDev's image rather
+than each game's. The game image is the thing under test, and the game's
+code reaches the adapter through the approved checkout. This is the same for
+every onboarded game: two games cannot disagree about what protocol version
+they are speaking because neither of them supplies it.
+*/
 export const PLAYTESTS_AUTODEV_ADAPTER_IMAGE_DIGEST =
   "sha256:autodev-playtest-adapter@sha256:" as const;
 
 /**
- * The canonical integration directory a repository declares Playtesting in.
- *
- * One owner, because every consumer resolves against it: the CLI that lays it
- * out, the approved-config loader that reads the config, the sandbox that names
- * it when a checkout is not clean, and the generic adapter that finds the game's
- * binding at run time. A second literal in any of them is a directory that one
- * path creates and another refuses to find.
- */
+The canonical integration directory a repository declares Playtesting in.
+
+One owner, because every consumer resolves against it: the CLI that lays it
+out, the approved-config loader that reads the config, the sandbox that names
+it when a checkout is not clean, and the generic adapter that finds the game's
+binding at run time. A second literal in any of them is a directory that one
+path creates and another refuses to find.
+*/
 export const PLAYTESTS_INTEGRATION_DIR = ".autodev";
 
 /**
- * Where the sandbox mounts the approved checkout inside the container.
- *
- * Owned here, beside the adapter command that depends on it: the sandbox mounts
- * here and the adapter resolves its integration directory here, so the two paths
- * are a pair. Changing one without the other would leave the adapter looking
- * outside the mount for a binding that is present.
- */
+Where the sandbox mounts the approved checkout inside the container.
+
+Owned here, beside the adapter command that depends on it: the sandbox mounts
+here and the adapter resolves its integration directory here, so the two paths
+are a pair. Changing one without the other would leave the adapter looking
+outside the mount for a binding that is present.
+*/
 export const PLAYTESTS_ADAPTER_CONTAINER_WORKSPACE = "/workspace";
 
 /**
- * The command AutoDev's adapter image runs.
- *
- * A game bound through declarations does not declare this; the game under test
- * is reached through the integration directory's binding file. The entrypoint
- * is resolved inside the approved checkout so the sandbox's read-only,
- * SHA-addressed mount is what bounds it.
- */
+The command AutoDev's adapter image runs.
+
+A game bound through declarations does not declare this; the game under test
+is reached through the integration directory's binding file. The entrypoint
+is resolved inside the approved checkout so the sandbox's read-only,
+SHA-addressed mount is what bounds it.
+*/
 export const PLAYTESTS_GENERIC_ADAPTER_COMMAND: readonly string[] = [
   "/opt/autodev/playtest-adapter/main.js",
   "--integration-dir",
   PLAYTESTS_INTEGRATION_DIR
 ];
 
-/** True when this adapter is AutoDev's, not a game-supplied command. */
+/**
+True when this adapter is AutoDev's, not a game-supplied command.
+*/
 export function usesGenericPlaytestAdapter(
   command: readonly string[]
 ): boolean {
@@ -187,8 +199,7 @@ const PATH_SEGMENT_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;
 const RNG_VERSION_PATTERN = /^[A-Za-z\d][A-Za-z\d._:+@-]{0,127}$/u;
 
 function validReference(value: unknown): boolean {
-  if (!isRecord(value) || typeof value.export !== "string") return false;
-  if (!EXPORT_NAME_PATTERN.test(value.export)) return false;
+  if (!isRecord(value) || typeof value.export !== "string" || !EXPORT_NAME_PATTERN.test(value.export)) return false;
   if (value.path === undefined) return true;
   if (typeof value.path !== "string" || value.path.length === 0) return false;
   return value.path
@@ -197,12 +208,12 @@ function validReference(value: unknown): boolean {
 }
 
 /**
- * Validate a binding and report every protocol method it cannot supply.
- *
- * An unbindable method is listed rather than defaulted, so a game is told what
- * it still has to write instead of discovering it as an unexplained refusal
- * mid-run.
- */
+Validate a binding and report every protocol method it cannot supply.
+
+An unbindable method is listed rather than defaulted, so a game is told what
+it still has to write instead of discovering it as an unexplained refusal
+mid-run.
+*/
 function bindingHeaderError(value: Record<string, unknown>): string | null {
   if (value.schema !== PLAYTESTS_ADAPTER_BINDING_SCHEMA) {
     return `The adapter binding must declare schema ${PLAYTESTS_ADAPTER_BINDING_SCHEMA}.`;
@@ -261,12 +272,12 @@ function bindingMethodsError(value: Record<string, unknown>): string | null {
 }
 
 /**
- * Validate a binding and report every protocol method it cannot supply.
- *
- * An unbindable method is listed rather than defaulted, so a game is told what
- * it still has to write instead of discovering it as an unexplained refusal
- * mid-run.
- */
+Validate a binding and report every protocol method it cannot supply.
+
+An unbindable method is listed rather than defaulted, so a game is told what
+it still has to write instead of discovering it as an unexplained refusal
+mid-run.
+*/
 export function resolvePlaytestAdapterBinding(
   value: unknown
 ): PlaytestBindingResolution {
@@ -312,11 +323,11 @@ export function resolvePlaytestAdapterBinding(
 }
 
 /**
- * Methods a binding leaves to AutoDev, which it therefore cannot perform.
- *
- * AutoDev-owned methods are excluded: they are always served, so leaving one
- * unbound is not a capability gap and must not be reported as one.
- */
+Methods a binding leaves to AutoDev, which it therefore cannot perform.
+
+AutoDev-owned methods are excluded: they are always served, so leaving one
+unbound is not a capability gap and must not be reported as one.
+*/
 export function unboundPlaytestMethods(
   binding: PlaytestAdapterBinding
 ): readonly PlaytestBindableMethod[] {

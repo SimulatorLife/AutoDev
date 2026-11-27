@@ -21,7 +21,7 @@ test("OpenLIT down stops the configured stack and preserves its volumes", () => 
     const codexHome = join(directory, "codex-home");
     const capture = join(directory, "docker-args.txt");
     const composeFile = join(directory, "compose.yml");
-    const envFile = join(directory, "openlit.env");
+    const environmentFile = join(directory, "openlit.env");
     const docker = join(binDirectory, "docker");
     const secret = join(codexHome, "openlit-secrets.env");
     const home = join(directory, "home");
@@ -35,7 +35,7 @@ test("OpenLIT down stops the configured stack and preserves its volumes", () => 
 
     writeFileSync(docker, fakeDocker, { mode: 0o700 });
     writeFileSync(composeFile, "services: {}\n");
-    writeFileSync(envFile, "OPENLIT_IMAGE=example\n");
+    writeFileSync(environmentFile, "OPENLIT_IMAGE=example\n");
     writeFileSync(
       secret,
       [
@@ -58,7 +58,7 @@ test("OpenLIT down stops the configured stack and preserves its volumes", () => 
           CODEX_HOME: codexHome,
           REPO_ROOT: repositoryRoot,
           AUTODEV_OPENLIT_COMPOSE_FILE: composeFile,
-          AUTODEV_OPENLIT_ENV_FILE: envFile,
+          AUTODEV_OPENLIT_ENV_FILE: environmentFile,
           OPENLIT_DOCKER_CAPTURE: capture,
           PATH: `${binDirectory}:${process.env.PATH ?? ""}`
         }
@@ -66,16 +66,16 @@ test("OpenLIT down stops the configured stack and preserves its volumes", () => 
     );
 
     assert.equal(result.status, 0, result.stderr);
-    const args = readFileSync(capture, "utf8").trim().split("\n");
-    assert.deepEqual(args, [
+    const arguments_ = readFileSync(capture, "utf8").trim().split("\n");
+    assert.deepEqual(arguments_, [
       "compose",
       "--env-file",
-      envFile,
+      environmentFile,
       "-f",
       composeFile,
       "down"
     ]);
-    assert.equal(args.includes("--volumes"), false);
+    assert.equal(arguments_.includes("--volumes"), false);
     assert.doesNotMatch(result.stdout + result.stderr, /[a-d]{64}/u);
   } finally {
     rmSync(directory, { recursive: true, force: true });

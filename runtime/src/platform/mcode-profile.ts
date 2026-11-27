@@ -1,41 +1,41 @@
 /**
- * MiniMax Code (`mcode`) profile materialization.
- *
- * MiniMax Code resolves the profile it reads from `--data-dir`,
- * `MINIMAX_DATA_DIR`, `MAVIS_DATA_DIR` or `~/.minimax`. It never reads
- * `MCODE_HOME`, so the profile AutoDev owns has to be handed over through
- * `MINIMAX_DATA_DIR` (see `runtime/src/acp/provider-profiles.ts`).
- *
- * This module owns the artifacts MiniMax Code discovers natively inside that
- * profile. Every artifact is produced by stock RuleSync targets reading the
- * canonical `.rulesync/` sources; nothing here renders provider syntax by
- * hand:
- *
- * - `AGENTS.md` -- the canonical rule projection (`agentsmd`).
- * - `hooks.json` -- the canonical hook projection (`claudecode`), in the
- *   Claude hook envelope MiniMax Code parses for user hooks. The document
- *   carries `enabled: true`, because MiniMax Code keeps user hooks off
- *   unless the document enables them.
- * - `permission.json` -- the canonical deny list (`claudecode` permissions),
- *   in MiniMax Code's native v2 rule shape.
- *
- * The profile deliberately holds no MCP configuration. The role's authorized
- * MCP servers are injected into the ACP session from the canonical execution
- * contract, and MiniMax Code merges session servers over profile servers by
- * name; a profile-level server list would therefore expose servers to roles
- * that do not hold them.
- *
- * The profile links the operator's own MiniMax Code `config.yaml` and `auth`
- * directory, so a session runs with the models and credentials the operator
- * already configured without copying secrets into AutoDev's tree.
- *
- * The same canonical projection also enrolls the operator's standalone
- * profile (`~/.minimax`, read by the MiniMax Code desktop app and the
- * standalone `mcode` CLI) -- see {@link enrollMcodeOperatorProfile}. That
- * profile belongs to the operator, so enrollment merges AutoDev's
- * contribution into it instead of replacing it, and the two profiles must
- * never overlap. Its MCP registrations (`mcp.json`) are not reconciled here.
- */
+MiniMax Code (`mcode`) profile materialization.
+
+MiniMax Code resolves the profile it reads from `--data-dir`,
+`MINIMAX_DATA_DIR`, `MAVIS_DATA_DIR` or `~/.minimax`. It never reads
+`MCODE_HOME`, so the profile AutoDev owns has to be handed over through
+`MINIMAX_DATA_DIR` (see `runtime/src/acp/provider-profiles.ts`).
+
+This module owns the artifacts MiniMax Code discovers natively inside that
+profile. Every artifact is produced by stock RuleSync targets reading the
+canonical `.rulesync/` sources; nothing here renders provider syntax by
+hand:
+
+- `AGENTS.md` -- the canonical rule projection (`agentsmd`).
+- `hooks.json` -- the canonical hook projection (`claudecode`), in the
+  Claude hook envelope MiniMax Code parses for user hooks. The document
+  carries `enabled: true`, because MiniMax Code keeps user hooks off
+  unless the document enables them.
+- `permission.json` -- the canonical deny list (`claudecode` permissions),
+  in MiniMax Code's native v2 rule shape.
+
+The profile deliberately holds no MCP configuration. The role's authorized
+MCP servers are injected into the ACP session from the canonical execution
+contract, and MiniMax Code merges session servers over profile servers by
+name; a profile-level server list would therefore expose servers to roles
+that do not hold them.
+
+The profile links the operator's own MiniMax Code `config.yaml` and `auth`
+directory, so a session runs with the models and credentials the operator
+already configured without copying secrets into AutoDev's tree.
+
+The same canonical projection also enrolls the operator's standalone
+profile (`~/.minimax`, read by the MiniMax Code desktop app and the
+standalone `mcode` CLI) -- see {@link enrollMcodeOperatorProfile}. That
+profile belongs to the operator, so enrollment merges AutoDev's
+contribution into it instead of replacing it, and the two profiles must
+never overlap. Its MCP registrations (`mcp.json`) are not reconciled here.
+*/
 
 import {
   existsSync,
@@ -68,7 +68,9 @@ const OBSOLETE_PROFILE_FILES = ["permissions.json", "mcp.json"] as const;
 
 const CLAUDE_SETTINGS_RELATIVE = path.join(".claude", "settings.json");
 
-/** The operator's own MiniMax Code profile directory. */
+/**
+The operator's own MiniMax Code profile directory.
+*/
 const OPERATOR_PROFILE_DIRECTORY = ".minimax";
 
 const CANONICAL_MATCHER_INLINE_FLAGS = /\(\?[a-zA-Z]+\)/gu;
@@ -78,12 +80,12 @@ const FILE_NAME_COLLATOR = new Intl.Collator();
 const MCODE_MATCHER_PART_PATTERN = /^[A-Za-z0-9_.:/-]+$/u;
 
 /**
- * Claude permission categories and the MiniMax Code tools they name. A
- * category MiniMax Code does not know (an MCP server selector, for example)
- * stays with the canonical role contract and the gateway, because MiniMax
- * Code matches a rule by exact tool name and cannot express "every tool of
- * one MCP server".
- */
+Claude permission categories and the MiniMax Code tools they name. A
+category MiniMax Code does not know (an MCP server selector, for example)
+stays with the canonical role contract and the gateway, because MiniMax
+Code matches a rule by exact tool name and cannot express "every tool of
+one MCP server".
+*/
 const MCODE_TOOL_NAMES: Readonly<Record<string, string>> = {
   Bash: "bash",
   Read: "read",
@@ -105,9 +107,13 @@ const MCODE_PATH_ACTIONS: Readonly<Record<string, readonly string[]>> = {
 
 export interface McodeProfileArtifacts {
   readonly agentsMd: string;
-  /** The canonical hooks, keyed by MiniMax Code hook event. */
+  /**
+  The canonical hooks, keyed by MiniMax Code hook event.
+  */
   readonly hooks: Readonly<Record<string, unknown>>;
-  /** The canonical deny rules in MiniMax Code's native v2 shape. */
+  /**
+  The canonical deny rules in MiniMax Code's native v2 shape.
+  */
   readonly deny: readonly McodePermissionEntry[];
   readonly hooksJson: string;
   readonly permissionJson: string;
@@ -135,9 +141,9 @@ function expandHome(pattern: string, home: string): string {
 }
 
 /**
- * Split a Claude permission rule into its tool name and its optional
- * pattern: `Bash`, `Bash(rm -rf *)`.
- */
+Split a Claude permission rule into its tool name and its optional
+pattern: `Bash`, `Bash(rm -rf *)`.
+*/
 function parseClaudePermissionRule(
   rule: string
 ): { readonly tool: string; readonly pattern?: string } | null {
@@ -152,10 +158,10 @@ function parseClaudePermissionRule(
 }
 
 /**
- * Translate one RuleSync/Claude permission rule into MiniMax Code's native
- * v2 rule. Returns `null` for a rule MiniMax Code cannot express, which is
- * reported rather than silently dropped.
- */
+Translate one RuleSync/Claude permission rule into MiniMax Code's native
+v2 rule. Returns `null` for a rule MiniMax Code cannot express, which is
+reported rather than silently dropped.
+*/
 export function toMcodePermissionEntry(
   rule: string,
   home: string
@@ -186,19 +192,19 @@ export function toMcodePermissionEntry(
 }
 
 /**
- * Project a canonical hook matcher onto the tool names MiniMax Code offers.
- *
- * The canonical hook declarations are written in the Codex/Claude dialect:
- * inline case-insensitive flags and separator-tolerant names
- * (`apply[_ -]?patch`). MiniMax Code matches a hook against the names of the
- * tools it offers and rejects a matcher that carries an inline flag, so the
- * matcher is resolved against the canonical tool vocabulary and re-emitted in
- * MiniMax Code's dialect.
- *
- * Returns `null` for a matcher that names no canonical tool, which means the
- * canonical dialect and MiniMax Code's dialect have drifted apart and the
- * matcher cannot be projected.
- */
+Project a canonical hook matcher onto the tool names MiniMax Code offers.
+
+The canonical hook declarations are written in the Codex/Claude dialect:
+inline case-insensitive flags and separator-tolerant names
+(`apply[_ -]?patch`). MiniMax Code matches a hook against the names of the
+tools it offers and rejects a matcher that carries an inline flag, so the
+matcher is resolved against the canonical tool vocabulary and re-emitted in
+MiniMax Code's dialect.
+
+Returns `null` for a matcher that names no canonical tool, which means the
+canonical dialect and MiniMax Code's dialect have drifted apart and the
+matcher cannot be projected.
+*/
 export function toMcodeHookMatcher(matcher: string): string | null {
   const stripped = matcher
     .replaceAll(CANONICAL_MATCHER_INLINE_FLAGS, "")
@@ -225,14 +231,14 @@ export function toMcodeHookMatcher(matcher: string): string | null {
 }
 
 /**
- * The canonical hook declarations in MiniMax Code's dialect.
- *
- * Every matcher is projected onto the tool names MiniMax Code offers, so the
- * hooks fire there instead of being rejected by MiniMax Code's matcher
- * validation. A matcher that cannot be projected is an error: a hook that
- * never fires would leave the role boundary unenforced while the profile
- * claimed it was configured.
- */
+The canonical hook declarations in MiniMax Code's dialect.
+
+Every matcher is projected onto the tool names MiniMax Code offers, so the
+hooks fire there instead of being rejected by MiniMax Code's matcher
+validation. A matcher that cannot be projected is an error: a hook that
+never fires would leave the role boundary unenforced while the profile
+claimed it was configured.
+*/
 export function renderMcodeHooks(
   hooks: Record<string, unknown>
 ): Record<string, unknown> {
@@ -276,14 +282,14 @@ export function renderMcodeHooks(
 }
 
 /**
- * The canonical permission document in MiniMax Code's native v2 shape.
- *
- * Only the deny rules are projected. An allow rule in MiniMax Code's engine
- * answers a tool call without asking the ACP client, which would take the
- * role contract out of the decision; the canonical allows therefore stay with
- * the execution contract and the ACP permission boundary, exactly like the
- * per-role capability enforcement the canonical source documents.
- */
+The canonical permission document in MiniMax Code's native v2 shape.
+
+Only the deny rules are projected. An allow rule in MiniMax Code's engine
+answers a tool call without asking the ACP client, which would take the
+role contract out of the decision; the canonical allows therefore stay with
+the execution contract and the ACP permission boundary, exactly like the
+per-role capability enforcement the canonical source documents.
+*/
 export function renderMcodeDenyEntries(
   claudePermissions: unknown,
   home: string
@@ -322,9 +328,9 @@ function generateInto(
 }
 
 /**
- * Render the MiniMax Code profile artifacts from the canonical `.rulesync/`
- * sources through stock RuleSync targets.
- */
+Render the MiniMax Code profile artifacts from the canonical `.rulesync/`
+sources through stock RuleSync targets.
+*/
 export function renderMcodeProfileArtifacts(options: {
   readonly repositoryRoot: string;
   readonly home?: string;
@@ -383,8 +389,8 @@ export function renderMcodeProfileArtifacts(options: {
 }
 
 /**
- * Whether `linkPath` is already a link to `target`.
- */
+Whether `linkPath` is already a link to `target`.
+*/
 function isLinkTo(linkPath: string, target: string): boolean {
   try {
     return (
@@ -396,10 +402,10 @@ function isLinkTo(linkPath: string, target: string): boolean {
 }
 
 /**
- * Make `linkPath` a link to `target`, replacing whatever it holds. The
- * profile directory belongs to AutoDev, so an entry that is not a link is
- * replaced rather than left behind.
- */
+Make `linkPath` a link to `target`, replacing whatever it holds. The
+profile directory belongs to AutoDev, so an entry that is not a link is
+replaced rather than left behind.
+*/
 function writeLink(linkPath: string, target: string): void {
   try {
     if (lstatSync(linkPath).isSymbolicLink()) unlinkSync(linkPath);
@@ -434,10 +440,10 @@ function writeProfileFiles(
 }
 
 /**
- * The operator's own model configuration and credentials stay in the
- * operator's profile; the AutoDev profile links them so a session runs with
- * the models the operator configured.
- */
+The operator's own model configuration and credentials stay in the
+operator's profile; the AutoDev profile links them so a session runs with
+the models the operator configured.
+*/
 function reconcileProfileLinks(
   links: ReadonlyArray<readonly [string, string]>,
   options: { readonly check?: boolean }
@@ -480,10 +486,10 @@ function removeObsoleteProfileFiles(
 }
 
 /**
- * Resolve existing ancestors even when the final profile is not created yet.
- * In particular, a symlinked parent must not turn managed-profile cleanup
- * into writes inside the operator's standalone profile.
- */
+Resolve existing ancestors even when the final profile is not created yet.
+In particular, a symlinked parent must not turn managed-profile cleanup
+into writes inside the operator's standalone profile.
+*/
 function resolvedProfilePath(value: string): string {
   const absolute = path.resolve(value);
   try {
@@ -501,17 +507,19 @@ function resolvedProfilePath(value: string): string {
   }
 }
 
-/** The operator's standalone MiniMax Code profile for `home`. */
+/**
+The operator's standalone MiniMax Code profile for `home`.
+*/
 export function operatorMcodeProfileDirectory(home: string): string {
   return path.join(home, OPERATOR_PROFILE_DIRECTORY);
 }
 
 /**
- * Refuse any lexical or resolved-path overlap between the managed profile and
- * the operator profile. The managed profile's reconciliation replaces and
- * removes files, and the operator enrollment merges into what it finds, so
- * neither may ever act on the other's tree.
- */
+Refuse any lexical or resolved-path overlap between the managed profile and
+the operator profile. The managed profile's reconciliation replaces and
+removes files, and the operator enrollment merges into what it finds, so
+neither may ever act on the other's tree.
+*/
 function assertProfilesDisjoint(
   managedProfile: string,
   operatorProfile: string
@@ -530,10 +538,10 @@ function assertProfilesDisjoint(
 }
 
 /**
- * Materialize (or verify, with `check: true`) the AutoDev-managed MiniMax
- * Code profile. Never apply its destructive reconciliation rules to the
- * operator's standalone profile.
- */
+Materialize (or verify, with `check: true`) the AutoDev-managed MiniMax
+Code profile. Never apply its destructive reconciliation rules to the
+operator's standalone profile.
+*/
 export function materializeMcodeProfile(options: {
   readonly repositoryRoot: string;
   readonly profileDirectory: string;
@@ -594,27 +602,27 @@ export function materializeMcodeProfile(options: {
 // ---------------------------------------------------------------------------
 
 /**
- * Delimits AutoDev's canonical rules inside the operator's own `AGENTS.md`.
- * Everything outside the block is the operator's and is preserved verbatim.
- */
+Delimits AutoDev's canonical rules inside the operator's own `AGENTS.md`.
+Everything outside the block is the operator's and is preserved verbatim.
+*/
 const OPERATOR_RULES_BEGIN =
   "<!-- BEGIN AutoDev canonical rules: generated from .rulesync/rules by the AutoDev installer; edit the canonical source, not this block -->";
 const OPERATOR_RULES_END = "<!-- END AutoDev canonical rules -->";
 
 /**
- * MiniMax Code reads at most this many bytes of the global `AGENTS.md`
- * (`GLOBAL_INSTRUCTIONS_MAX_BYTES` in MiniMax Code 3.1). A longer document is
- * truncated silently, which would drop canonical rules while the profile
- * claimed to carry them.
- */
+MiniMax Code reads at most this many bytes of the global `AGENTS.md`
+(`GLOBAL_INSTRUCTIONS_MAX_BYTES` in MiniMax Code 3.1). A longer document is
+truncated silently, which would drop canonical rules while the profile
+claimed to carry them.
+*/
 export const MCODE_GLOBAL_INSTRUCTIONS_MAX_BYTES = 32 * 1024;
 
 /**
- * Where the installer records which hook groups and deny rules it merged
- * into the operator profile. It lives in the AutoDev home, never in the
- * operator profile, so a later reconciliation can retire exactly AutoDev's
- * own former contributions and nothing the operator wrote.
- */
+Where the installer records which hook groups and deny rules it merged
+into the operator profile. It lives in the AutoDev home, never in the
+operator profile, so a later reconciliation can retire exactly AutoDev's
+own former contributions and nothing the operator wrote.
+*/
 export const OPERATOR_ENROLLMENT_RECORD = path.join(
   "providers",
   "mcode-operator-enrollment.json"
@@ -627,18 +635,22 @@ interface OperatorEnrollmentRecord {
 }
 
 export interface McodeOperatorEnrollmentResult {
-  /** `null` when the operator profile does not exist, so nothing is enrolled. */
+  /**
+  `null` when the operator profile does not exist, so nothing is enrolled.
+  */
   readonly profileDirectory: string | null;
   readonly written: readonly string[];
   readonly drifted: readonly string[];
   /**
-   * Operator state enrollment will not override; each entry names the file
-   * and the operator choice that blocks it.
-   */
+  Operator state enrollment will not override; each entry names the file
+  and the operator choice that blocks it.
+  */
   readonly conflicts: readonly string[];
 }
 
-/** JSON with sorted object keys, so equal values compare equal. */
+/**
+JSON with sorted object keys, so equal values compare equal.
+*/
 function stableJson(value: unknown): string {
   return JSON.stringify(value, (_key, inner: unknown) =>
     isRecord(inner)
@@ -689,10 +701,10 @@ const OPERATOR_RULES_BLOCK = new RegExp(
 );
 
 /**
- * The operator's `AGENTS.md` with AutoDev's canonical block reconciled. The
- * operator's own text is kept; the block replaces a previous block in place
- * or is appended after the operator's text.
- */
+The operator's `AGENTS.md` with AutoDev's canonical block reconciled. The
+operator's own text is kept; the block replaces a previous block in place
+or is appended after the operator's text.
+*/
 export function mergeOperatorInstructions(
   current: string | null,
   canonicalRules: string
@@ -706,10 +718,10 @@ export function mergeOperatorInstructions(
 }
 
 /**
- * The operator's hooks document with AutoDev's canonical groups reconciled.
- * Groups the record says AutoDev wrote earlier are retired; every other
- * operator group is kept in its place, ahead of the canonical groups.
- */
+The operator's hooks document with AutoDev's canonical groups reconciled.
+Groups the record says AutoDev wrote earlier are retired; every other
+operator group is kept in its place, ahead of the canonical groups.
+*/
 function mergeOperatorHooks(
   current: Record<string, unknown>,
   canonical: Readonly<Record<string, unknown>>,
@@ -743,10 +755,10 @@ function mergeOperatorHooks(
 }
 
 /**
- * The operator's permission document with AutoDev's canonical deny rules
- * reconciled. The operator's allow and ask rules, and deny rules AutoDev did
- * not write, are kept unchanged.
- */
+The operator's permission document with AutoDev's canonical deny rules
+reconciled. The operator's allow and ask rules, and deny rules AutoDev did
+not write, are kept unchanged.
+*/
 function mergeOperatorPermissions(
   current: Record<string, unknown>,
   canonicalDeny: readonly McodePermissionEntry[],
@@ -766,8 +778,7 @@ function mergeOperatorPermissions(
     deny: [],
     ask: [],
     ...current
-  };
-  merged.deny = [...kept, ...canonicalDeny];
+  , deny: [...kept, ...canonicalDeny],};
   return { ...current, ...merged };
 }
 
@@ -792,23 +803,23 @@ function formatJson(value: unknown): string {
 }
 
 /**
- * Enroll (or verify, with `check: true`) the operator's standalone MiniMax
- * Code profile with the canonical RuleSync projection: the canonical rules
- * in its global `AGENTS.md`, the canonical hooks (session bootstrap, command
- * policy, skill-read telemetry, role sandbox) in its `hooks.json`, and the
- * canonical deny rules in its `permission.json`. Skills need no write here:
- * MiniMax Code reads the user-level `~/.agents/skills` AutoDev already
- * materializes.
- *
- * Enrollment merges and never replaces. The operator's own instructions,
- * hooks, allow/ask rules, model configuration, credentials, history and
- * `mcp.json` are left as they are; an operator choice enrollment would have
- * to override (user hooks explicitly disabled, a file that is not JSON, an
- * unsupported permission schema) is reported as a conflict instead.
- *
- * An absent operator profile means MiniMax Code has never run as this user,
- * so nothing is created.
- */
+Enroll (or verify, with `check: true`) the operator's standalone MiniMax
+Code profile with the canonical RuleSync projection: the canonical rules
+in its global `AGENTS.md`, the canonical hooks (session bootstrap, command
+policy, skill-read telemetry, role sandbox) in its `hooks.json`, and the
+canonical deny rules in its `permission.json`. Skills need no write here:
+MiniMax Code reads the user-level `~/.agents/skills` AutoDev already
+materializes.
+
+Enrollment merges and never replaces. The operator's own instructions,
+hooks, allow/ask rules, model configuration, credentials, history and
+`mcp.json` are left as they are; an operator choice enrollment would have
+to override (user hooks explicitly disabled, a file that is not JSON, an
+unsupported permission schema) is reported as a conflict instead.
+
+An absent operator profile means MiniMax Code has never run as this user,
+so nothing is created.
+*/
 export function enrollMcodeOperatorProfile(options: {
   readonly repositoryRoot: string;
   readonly managedProfileDirectory: string;
@@ -953,11 +964,11 @@ export interface McodeProfilesResult {
 }
 
 /**
- * Reconcile (or verify, with `check: true`) both MiniMax Code profiles from
- * one rendering of the canonical sources: the AutoDev-managed profile that
- * Runtime-managed `mcode acp` sessions run against, and the operator's
- * standalone profile.
- */
+Reconcile (or verify, with `check: true`) both MiniMax Code profiles from
+one rendering of the canonical sources: the AutoDev-managed profile that
+Runtime-managed `mcode acp` sessions run against, and the operator's
+standalone profile.
+*/
 export function reconcileMcodeProfiles(options: {
   readonly repositoryRoot: string;
   readonly autodevHome: string;

@@ -32,7 +32,7 @@ const SEED = 0xc0_ff_ee;
 function observe(tier: string, draws: number): string[][] {
   const random = mulberry32(SEED);
   const out: string[][] = [];
-  for (let i = 0; i < draws; i += 1) {
+  for (let index = 0; index < draws; index += 1) {
     const list = routing.providerPriority(tier, random);
     if (list.length > 0) out.push(list);
   }
@@ -70,7 +70,7 @@ describe("provider selection order", () => {
 
   test("providerPriority for an unknown tier returns an empty list", () => {
     const random = mulberry32(SEED);
-    for (let i = 0; i < 4; i += 1) {
+    for (let index = 0; index < 4; index += 1) {
       assert.deepEqual(routing.providerPriority("nonexistent", random), []);
     }
   });
@@ -87,21 +87,21 @@ describe("provider selection order", () => {
     const priorityRandom = mulberry32(SEED);
     const tierRandom = mulberry32(SEED);
     const roleRandom = mulberry32(SEED);
-    for (let i = 0; i < 4; i += 1) {
+    for (let index = 0; index < 4; index += 1) {
       const priority = routing.providerPriority("default", priorityRandom);
       const tier = routing.tierCandidates("default", tierRandom);
       const role = routing.roleCandidates("default", roleRandom);
-      for (const [j, element] of priority.entries()) {
+      for (const [index, element] of priority.entries()) {
         assert.equal(
-          tier[j]!.provider,
+          tier[index]!.provider,
           element!,
-          `tier candidate ${j} matches priority order`
+          `tier candidate ${index} matches priority order`
         );
-        if (role[j])
+        if (role[index])
           assert.equal(
-            role[j]!.provider,
+            role[index]!.provider,
             element!,
-            `role candidate ${j} matches priority order`
+            `role candidate ${index} matches priority order`
           );
       }
     }

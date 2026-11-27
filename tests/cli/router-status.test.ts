@@ -77,7 +77,7 @@ const statusPayload = {
 
 async function runStatusCli(
   payload: unknown,
-  args: string[] = [],
+  arguments_: string[] = [],
   entrypoint = "runtime/src/cli/router-status.ts"
 ): Promise<{ stdout: string; stderr: string }> {
   const server = createServer((_request, response) => {
@@ -97,7 +97,7 @@ async function runStatusCli(
   try {
     return await new Promise<{ stdout: string; stderr: string }>(
       (resolve, reject) => {
-        const child = spawn(process.execPath, [entrypoint, ...args], {
+        const child = spawn(process.execPath, [entrypoint, ...arguments_], {
           cwd: REPO_ROOT,
           env: {
             ...process.env,

@@ -8,7 +8,7 @@ import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/
 
 const RUNTIME_PACKAGE_NAME = "@simulatorlife/autodev-runtime";
 
-function withTempRoot(run: (root: string) => void): void {
+function withTemporaryRoot(run: (root: string) => void): void {
   const root = mkdtempSync(path.join(os.tmpdir(), "runtime-source-root-"));
   try {
     run(root);
@@ -23,7 +23,7 @@ function writeManifest(filePath: string, contents: string): void {
 }
 
 test("resolveRuntimeSourceRoot uses a trimmed configured root", () => {
-  withTempRoot((root) => {
+  withTemporaryRoot((root) => {
     assert.equal(
       resolveRuntimeSourceRoot(
         path.join(root, "src", "shared"),
@@ -35,16 +35,16 @@ test("resolveRuntimeSourceRoot uses a trimmed configured root", () => {
 });
 
 test("resolveRuntimeSourceRoot ignores a whitespace-only configured root", () => {
-  withTempRoot((root) => {
+  withTemporaryRoot((root) => {
     assert.equal(
-      resolveRuntimeSourceRoot(path.join(root, "src", "shared"), "   "),
+      resolveRuntimeSourceRoot(path.join(root, "src", "shared"), ' '.repeat(3)),
       root
     );
   });
 });
 
 test("resolveRuntimeSourceRoot recognizes a checkout by its runtime manifest", () => {
-  withTempRoot((root) => {
+  withTemporaryRoot((root) => {
     writeManifest(
       path.join(root, "runtime", "package.json"),
       JSON.stringify({ name: RUNTIME_PACKAGE_NAME })
@@ -57,7 +57,7 @@ test("resolveRuntimeSourceRoot recognizes a checkout by its runtime manifest", (
 });
 
 test("resolveRuntimeSourceRoot resolves an installed tree two levels up", () => {
-  withTempRoot((home) => {
+  withTemporaryRoot((home) => {
     writeManifest(
       path.join(home, "src", "package.json"),
       JSON.stringify({ name: RUNTIME_PACKAGE_NAME })
@@ -70,7 +70,7 @@ test("resolveRuntimeSourceRoot resolves an installed tree two levels up", () => 
 });
 
 test("resolveRuntimeSourceRoot treats a tree without any manifest as installed", () => {
-  withTempRoot((home) => {
+  withTemporaryRoot((home) => {
     assert.equal(
       resolveRuntimeSourceRoot(path.join(home, "a", "src", "shared")),
       path.join(home, "a")
@@ -79,7 +79,7 @@ test("resolveRuntimeSourceRoot treats a tree without any manifest as installed",
 });
 
 test("resolveRuntimeSourceRoot ignores a runtime manifest naming another package", () => {
-  withTempRoot((root) => {
+  withTemporaryRoot((root) => {
     writeManifest(
       path.join(root, "runtime", "package.json"),
       JSON.stringify({ name: "unrelated" })
@@ -92,7 +92,7 @@ test("resolveRuntimeSourceRoot ignores a runtime manifest naming another package
 });
 
 test("resolveRuntimeSourceRoot ignores an unreadable runtime manifest", () => {
-  withTempRoot((root) => {
+  withTemporaryRoot((root) => {
     writeManifest(path.join(root, "runtime", "package.json"), "{not json");
     assert.equal(
       resolveRuntimeSourceRoot(path.join(root, "runtime", "src", "shared")),
