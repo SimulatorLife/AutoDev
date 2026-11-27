@@ -1000,14 +1000,17 @@ export interface AttemptSpanOptions {
   The observed client surface that originated this attempt, or null.
   */
   clientSurface?: ClientSurface | null | undefined;
+  /**
+  The logical request this attempt serves. Without one the span is
+  parented to whatever span is active in the OTel context.
+  */
+  parent?: Span | null | undefined;
 }
 
 /**
-Start a child GenAI client-operation span for one physical
-provider/model attempt. The new span is parented to whatever span is
-currently active in the OTel context, so the logical AutoDev
-routed-request span (started by startLogicalRequestSpan and made active
-via context.with(trace.setSpan(...))) becomes the parent.
+Start a child GenAI client-operation span for one physical provider/model
+attempt, under its logical AutoDev routed request: the explicit `parent`,
+or else the span active in the OTel context.
 */
 export function startAttemptSpan(options: AttemptSpanOptions): Span {
   ensureOtelInitialized();
@@ -1025,10 +1028,13 @@ export function startAttemptSpan(options: AttemptSpanOptions): Span {
   if (requestedModel) attributes["autodev.requested_model"] = requestedModel;
   const threadId = safeTrim(options.threadId);
   if (threadId) attributes["gen_ai.conversation.id"] = threadId;
-  const span = state.tracer.startSpan("gen_ai.client_operation", {
-    kind: SpanKind.CLIENT,
-    attributes
-  });
+  const span = state.tracer.startSpan(
+    "gen_ai.client_operation",
+    { kind: SpanKind.CLIENT, attributes },
+    options.parent
+      ? trace.setSpan(context.active(), options.parent)
+      : context.active()
+  );
   attemptMetricContexts.set(span, {
     attributes: {
       ...metricAttributes({

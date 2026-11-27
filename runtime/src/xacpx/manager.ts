@@ -6,12 +6,13 @@ allocation, concurrency admission, and request-outcome cooldowns. Each session
 pins strictly to one provider at creation (no mid-session cross-provider hops),
 letting each autonomous CLI manage its own context window and native compaction.
 
-The `AcpConsoleSink` interface keeps session transport decoupled so AutoDev
-Console or an external ACP console can attach directly without `/responses`
-proxying.
+Every turn the manager executes is reported through one `XacpxTurnEventSink`
+(started, then completed or failed), so the Runtime observes agent turns --
+their telemetry and the commits they made -- without `/responses` proxying.
 */
 
 import { type ChildProcess, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -95,26 +96,78 @@ export type SessionDispatchPlan =
       readonly task: OpencliRoleTaskSpec;
     };
 
-export interface AcpConsoleSessionEvent {
-  readonly type:
-    | "session_started"
-    | "session_resumed"
-    | "session_failed"
-    | "session_completed";
+/**
+Token usage a provider reported for one turn; absent fields were not
+reported and stay unavailable rather than zero.
+*/
+export interface XacpxTurnUsage {
+  readonly input: number | null;
+  readonly output: number | null;
+  readonly cacheRead: number | null;
+}
+
+/**
+One session turn's lifecycle, as the manager executes it. Each turn starts
+once and ends once, completed or failed; the session fields are the pinned
+session's own.
+*/
+export type XacpxTurnEvent = {
+  /**
+  Unique per turn; the start and the end of one turn share it.
+  */
+  readonly turnId: string;
   readonly sessionId: string;
+  readonly parentSessionId: string | null;
   readonly provider: string;
   readonly model: string;
   readonly role: string;
   /**
-  The directory the session works in; turn boundaries are where the
-  Runtime measures what the session committed there.
+  The directory the session works in.
   */
   readonly cwd: string;
-  readonly detail?: string;
+  readonly transport: "acp" | "opencli";
+} & (
+  | { readonly type: "turn_started" }
+  | {
+      readonly type: "turn_completed";
+      readonly stopReason: string;
+      readonly usage: XacpxTurnUsage | null;
+    }
+  | {
+      readonly type: "turn_failed";
+      readonly cancelled: boolean;
+      readonly detail: string;
+    }
+);
+
+export interface XacpxTurnEventSink {
+  emit(event: XacpxTurnEvent): void;
 }
 
-export interface AcpConsoleSink {
-  emit(event: AcpConsoleSessionEvent): void;
+function reportedTokenCount(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : null;
+}
+
+/**
+The turn usage an ACP agent reported in its prompt response (an unstable
+ACP field many agents omit), or null when it reported none.
+*/
+function reportedTurnUsage(response: object): XacpxTurnUsage | null {
+  const usage: unknown = "usage" in response ? response.usage : null;
+  if (!usage || typeof usage !== "object") return null;
+  const fields = usage as Record<string, unknown>;
+  const reported: XacpxTurnUsage = {
+    input: reportedTokenCount(fields.inputTokens),
+    output: reportedTokenCount(fields.outputTokens),
+    cacheRead: reportedTokenCount(fields.cachedReadTokens)
+  };
+  return reported.input === null &&
+    reported.output === null &&
+    reported.cacheRead === null
+    ? null
+    : reported;
 }
 
 export interface PlanSessionRequest {
@@ -469,18 +522,18 @@ export class XacpxSessionManager {
     LiveOpencliSessionHandle
   >();
   private readonly policy: RoutingPolicy;
-  private readonly consoleSink: AcpConsoleSink | null;
+  private readonly eventSink: XacpxTurnEventSink | null;
   private readonly acpTransportFactory: AcpTransportFactory;
   private readonly opencliRunner: OpencliRunner;
 
   constructor(options?: {
     readonly policy?: RoutingPolicy;
-    readonly consoleSink?: AcpConsoleSink | null;
+    readonly eventSink?: XacpxTurnEventSink | null;
     readonly acpTransportFactory?: AcpTransportFactory;
     readonly opencliRunner?: OpencliRunner;
   }) {
     this.policy = options?.policy ?? ROUTING_POLICY;
-    this.consoleSink = options?.consoleSink ?? null;
+    this.eventSink = options?.eventSink ?? null;
     this.acpTransportFactory =
       options?.acpTransportFactory ?? defaultAcpTransportFactory;
     this.opencliRunner = options?.opencliRunner ?? runOpencliRoleTurn;
@@ -677,15 +730,6 @@ export class XacpxSessionManager {
       this.pins.set(request.sessionId, session);
     }
 
-    this.consoleSink?.emit({
-      type: existing ? "session_resumed" : "session_started",
-      sessionId: session.sessionId,
-      provider: session.provider,
-      model: session.model,
-      role: session.role,
-      cwd: session.cwd
-    });
-
     if (isOpencliProvider(chosen.provider)) {
       // The site's MCP app is what carries this role's tool surface, so the
       // app is selected by the role: the conversation's tools are the role's
@@ -752,6 +796,17 @@ export class XacpxSessionManager {
       throw new Error("Session turn cancelled before dispatch.");
     }
     const plan = this.planDispatch(request, environment);
+    const turn = {
+      turnId: randomUUID(),
+      sessionId: plan.session.sessionId,
+      parentSessionId: plan.session.parentSessionId,
+      provider: plan.session.provider,
+      model: plan.session.model,
+      role: plan.session.role,
+      cwd: plan.session.cwd,
+      transport: plan.kind
+    } as const;
+    this.eventSink?.emit({ ...turn, type: "turn_started" });
     let isOpencliCancelled = false;
     let opencli: LiveOpencliSessionHandle | undefined;
     if (plan.kind === "opencli") {
@@ -798,13 +853,11 @@ export class XacpxSessionManager {
           opencli.active = null;
           settle();
         }
-        this.consoleSink?.emit({
-          type: "session_completed",
-          sessionId: plan.session.sessionId,
-          provider: plan.session.provider,
-          model: plan.session.model,
-          role: plan.session.role,
-          cwd: plan.session.cwd
+        this.eventSink?.emit({
+          ...turn,
+          type: "turn_completed",
+          stopReason: "end_turn",
+          usage: null
         });
         return {
           session: plan.session,
@@ -849,14 +902,11 @@ export class XacpxSessionManager {
       } finally {
         signal?.removeEventListener("abort", onAbort);
       }
-      this.consoleSink?.emit({
-        type: "session_completed",
-        sessionId: plan.session.sessionId,
-        provider: plan.session.provider,
-        model: plan.session.model,
-        role: plan.session.role,
-        cwd: plan.session.cwd,
-        detail: promptResponse.stopReason
+      this.eventSink?.emit({
+        ...turn,
+        type: "turn_completed",
+        stopReason: promptResponse.stopReason,
+        usage: reportedTurnUsage(promptResponse)
       });
       return {
         session: plan.session,
@@ -867,20 +917,18 @@ export class XacpxSessionManager {
       };
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      if (!signal?.aborted && !isOpencliCancelled) {
+      const cancelled = signal?.aborted === true || isOpencliCancelled;
+      if (!cancelled) {
         COOLDOWNS.cooldownProvider(plan.session.provider, {
           failureClass: "upstream_error",
           detail,
           model: plan.session.model
         });
       }
-      this.consoleSink?.emit({
-        type: "session_failed",
-        sessionId: plan.session.sessionId,
-        provider: plan.session.provider,
-        model: plan.session.model,
-        role: plan.session.role,
-        cwd: plan.session.cwd,
+      this.eventSink?.emit({
+        ...turn,
+        type: "turn_failed",
+        cancelled,
         detail
       });
       throw error;

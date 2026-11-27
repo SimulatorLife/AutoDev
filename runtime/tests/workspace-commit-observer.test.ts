@@ -10,6 +10,7 @@ import {
   AggregationTemporality,
   InMemoryMetricExporter
 } from "@opentelemetry/sdk-metrics";
+import { InMemorySpanExporter } from "@opentelemetry/sdk-trace";
 
 import {
   AGENT_METHODS,
@@ -25,16 +26,19 @@ import {
 } from "../src/router/subagents.ts";
 import {
   flushTelemetryMetrics,
+  getFinishedSpans,
   METRIC_GIT_COMMITS,
   observeRouterWorkspaceGitCommits,
+  resetTelemetryExporter,
   resetTrackedGitCommitsForTest,
+  setTelemetryExporter,
   setTelemetryMetricExporterForTest
 } from "../src/router/telemetry.ts";
 import {
   gitCommitIdentity,
   gitCommitIdentityEnv as gitCommitIdentityEnvironment
 } from "../src/telemetry/git-commit-identity.ts";
-import { XACPX_SESSION_COMMIT_OBSERVATION } from "../src/xacpx/http.ts";
+import { XACPX_TURN_OBSERVATION } from "../src/xacpx/http.ts";
 import { XacpxSessionManager } from "../src/xacpx/manager.ts";
 import {
   createWorkspaceCommitObserver,
@@ -46,6 +50,7 @@ const metricExporter = new InMemoryMetricExporter(
   AggregationTemporality.CUMULATIVE
 );
 setTelemetryMetricExporterForTest(metricExporter);
+setTelemetryExporter(new InMemorySpanExporter());
 
 function execGit(
   root: string,
@@ -763,9 +768,10 @@ test("a session with no remembered workspace observes nothing", async () => {
   });
 });
 
-test("an XACPX session's turn boundaries measure the commits its agent made", async () => {
+test("an XACPX session's turns are each one measured request, and their boundaries measure the commits its agent made", async () => {
   resetRouterWorkspaceGitObserversForTest();
   resetTrackedGitCommitsForTest();
+  resetTelemetryExporter();
   metricExporter.reset();
   // ACP sessions are admitted to the shared MCP gateway.
   ensureLocalAdmission(process.env.CODEX_HOME!);
@@ -795,11 +801,21 @@ test("an XACPX session's turn boundaries measure the commits its agent made", as
                 provider: "codex"
               })
             });
+            // The agent reports the turn's token usage (unstable ACP field).
+            return {
+              stopReason: "end_turn",
+              usage: {
+                inputTokens: 120,
+                outputTokens: 30,
+                cachedReadTokens: 80,
+                totalTokens: 150
+              }
+            };
           }
           return { stopReason: "end_turn" };
         });
     const manager = new XacpxSessionManager({
-      consoleSink: XACPX_SESSION_COMMIT_OBSERVATION,
+      eventSink: XACPX_TURN_OBSERVATION,
       acpTransportFactory: () => ({ target: agent() })
     });
     // Observations are serialized per workspace, so awaiting one more after
@@ -856,6 +872,44 @@ test("an XACPX session's turn boundaries measure the commits its agent made", as
           value: 1
         }
       ]
+    );
+
+    // Each turn is one logical request served by one pinned provider attempt.
+    const spans = getFinishedSpans().filter(
+      (span) => span.attributes["autodev.workspace"] === basename(root)
+    );
+    const requests = spans.filter(
+      (span) => span.name === "autodev.routed_request"
+    );
+    const attempts = spans.filter(
+      (span) => span.name === "gen_ai.client_operation"
+    );
+    assert.equal(requests.length, 2);
+    assert.equal(attempts.length, 2);
+    for (const [index, attempt] of attempts.entries()) {
+      const request = requests[index]!;
+      assert.equal(
+        attempt.parentSpanContext?.spanId,
+        request.spanContext().spanId
+      );
+      assert.equal(
+        request.attributes["autodev.session.id"],
+        "xacpx-commit-session"
+      );
+      assert.equal(attempt.attributes["autodev.agent.role"], "worker");
+      assert.deepEqual(attempt.attributes["gen_ai.response.finish_reasons"], [
+        "end_turn"
+      ]);
+    }
+    assert.equal(
+      attempts[0]!.attributes["gen_ai.usage.input_tokens"],
+      undefined
+    );
+    assert.equal(attempts[1]!.attributes["gen_ai.usage.input_tokens"], 120);
+    assert.equal(attempts[1]!.attributes["gen_ai.usage.output_tokens"], 30);
+    assert.equal(
+      attempts[1]!.attributes["gen_ai.usage.cache_read.input_tokens"],
+      80
     );
   });
 });

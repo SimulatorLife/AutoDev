@@ -55,12 +55,12 @@ import {
 } from "../src/shared/skill-reads.ts";
 import { didHandleAcpRoute } from "../src/xacpx/http.ts";
 import {
-  type AcpConsoleSessionEvent,
   resolveAcpPermissionResponse,
   resolveXacpxBinaries,
   validateDelegatedRole,
   validateDelegatedWorkspace,
-  XacpxSessionManager
+  XacpxSessionManager,
+  type XacpxTurnEvent
 } from "../src/xacpx/manager.ts";
 import { startXacpxOrchestrationIpcServer } from "../src/xacpx/orchestration-ipc.ts";
 
@@ -305,7 +305,7 @@ test("ACP MCP tools are checked against canonical role permissions", () => {
     ["worker", "mcp__filesystem", "reject"],
     ["worker", "mcp__cocoindex_code__search", "reject"],
     ["worker", "mcp__malformed", "reject"],
-    ["worker", ' '.repeat(3), "reject"]
+    ["worker", " ".repeat(3), "reject"]
   ] as const;
   for (const [role, name, expected] of cases) {
     assert.deepEqual(
@@ -417,14 +417,7 @@ test("XacpxSessionManager resolves binaries, dispatches every transport, and pin
   assert.equal(existsSync(binaries.xacpxBin), true);
   assert.equal(existsSync(binaries.acpxBin), true);
 
-  const events: AcpConsoleSessionEvent[] = [];
-  const manager = new XacpxSessionManager({
-    consoleSink: {
-      emit: (event) => {
-        events.push(event);
-      }
-    }
-  });
+  const manager = new XacpxSessionManager();
 
   const workerPlan = manager.planDispatch({
     sessionId: "acp-worker-1",
@@ -434,9 +427,8 @@ test("XacpxSessionManager resolves binaries, dispatches every transport, and pin
     promptOrTask: "Implement feature"
   });
   assert.equal(workerPlan.kind, "acp");
-  assert.equal(events[0]?.type, "session_started");
 
-  // Re-dispatching on the same session stays pinned and emits session_resumed.
+  // Re-dispatching on the same session stays pinned.
   const resumedPlan = manager.planDispatch({
     sessionId: "acp-worker-1",
     role: "worker",
@@ -446,7 +438,6 @@ test("XacpxSessionManager resolves binaries, dispatches every transport, and pin
   });
   assert.equal(resumedPlan.kind, "acp");
   assert.equal(resumedPlan.session.provider, workerPlan.session.provider);
-  assert.equal(events[1]?.type, "session_resumed");
 
   // Switching roles on an already-pinned session is refused.
   assert.throws(() =>
@@ -795,12 +786,12 @@ test("XacpxSessionManager executes live ACP turns, enforces read-only permission
         return {};
       });
 
-  const events: AcpConsoleSessionEvent[] = [];
+  const events: XacpxTurnEvent[] = [];
   let transportCalls = 0;
   let launchedPromptMode: string | undefined;
   const opencliCalls: string[] = [];
   const manager = new XacpxSessionManager({
-    consoleSink: {
+    eventSink: {
       emit: (event) => {
         events.push(event);
       }
@@ -861,6 +852,31 @@ test("XacpxSessionManager executes live ACP turns, enforces read-only permission
   assert.equal(ghResult.outputText, "github pr #42 opened");
   assert.equal(ghResult.conversationId, "github-chat-42");
   assert.equal(opencliCalls.length, 1);
+
+  // Every turn, on either transport, starts and then completes exactly once,
+  // labelled with the session's pinned provider and the turn's own id.
+  assert.deepEqual(
+    events.map(({ type, sessionId, transport }) => ({
+      type,
+      sessionId,
+      transport
+    })),
+    [
+      { type: "turn_started", sessionId: "sess-ro-1", transport: "acp" },
+      { type: "turn_completed", sessionId: "sess-ro-1", transport: "acp" },
+      { type: "turn_started", sessionId: "sess-ro-1", transport: "acp" },
+      { type: "turn_completed", sessionId: "sess-ro-1", transport: "acp" },
+      { type: "turn_started", sessionId: "sess-gh-1", transport: "opencli" },
+      { type: "turn_completed", sessionId: "sess-gh-1", transport: "opencli" }
+    ]
+  );
+  for (let index = 0; index < events.length; index += 2) {
+    assert.equal(events[index]!.turnId, events[index + 1]!.turnId);
+  }
+  assert.notEqual(events[0]!.turnId, events[2]!.turnId);
+  assert.equal(events[0]!.role, "explorer");
+  assert.match(events[4]!.provider, /^opencli-/u);
+  assert.equal(events[5]!.provider, events[4]!.provider);
 
   // HTTP /v1/acp/sessions endpoint round-trip.
   const server = createServer((request, response) => {

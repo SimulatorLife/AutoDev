@@ -13,16 +13,24 @@ import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
 
+import type { Span } from "@opentelemetry/api";
 import { isRecord } from "@simulatorlife/autodev-core";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
 import {
-  type AcpConsoleSink,
   type PlanSessionRequest,
-  XacpxSessionManager
+  XacpxSessionManager,
+  type XacpxTurnEvent,
+  type XacpxTurnEventSink
 } from "@simulatorlife/autodev-runtime/xacpx/manager";
 
 import { ROUTER_INSTANCE_ID } from "../router/proxy.ts";
-import { observeRouterWorkspaceGitCommits } from "../router/telemetry.ts";
+import {
+  endAttemptSpan,
+  endLogicalRequestSpan,
+  observeRouterWorkspaceGitCommits,
+  startAttemptSpan,
+  startLogicalRequestSpan
+} from "../router/telemetry.ts";
 
 const MAX_BODY_BYTES = 1_048_576;
 const METHOD_NOT_ALLOWED_ERROR = "Method not allowed";
@@ -33,13 +41,15 @@ const ACP_SESSION_ITEM_ROUTE = /^\/v1\/acp\/sessions\/([^/]+)$/u;
 function writeJson(
   response: ServerResponse,
   status: number,
-  body: unknown
+  body: unknown,
+  extraHeaders: Record<string, string> = {}
 ): void {
   const encoded = Buffer.from(JSON.stringify(body));
   response.writeHead(status, {
     "content-type": "application/json",
     "content-length": encoded.length,
-    connection: "close"
+    connection: "close",
+    ...extraHeaders
   });
   response.end(encoded);
 }
@@ -116,7 +126,9 @@ async function handleSessionsCollection(
       ...(parentSessionId && { parentSessionId })
     };
     const result = await manager.executeTurn(planRequest);
-    writeJson(response, 200, result);
+    writeJson(response, 200, result, {
+      "x-autodev-session-id": result.session.sessionId
+    });
   } catch (error) {
     writeJson(response, 400, { error: errorMessage(error) });
   }
@@ -146,15 +158,84 @@ async function handleSessionPromptRoute(
   }
 }
 
+interface OpenTurnSpans {
+  readonly logical: Span;
+  readonly attempt: Span;
+}
+
+const openTurnSpans = new Map<string, OpenTurnSpans>();
+
 /**
-Every XACPX turn boundary is a commit boundary. Agent turns no longer pass
-through the Router's routed-request events, so without this the commits an
-ACP or OpenCLI session made were never measured. The workspace is labelled
-the way XACPX labels it everywhere else (the directory's name); the actor
-is read back from each commit, never from the session.
+Open one logical request and its single provider attempt for a turn. A
+pinned session serves a turn on exactly one provider/model, so the turn is
+one logical request with one physical attempt; the requested model stays
+unknown because the role, not a model selector, chose the provider.
 */
-export const XACPX_SESSION_COMMIT_OBSERVATION: AcpConsoleSink = {
+function startTurnSpans(event: XacpxTurnEvent): void {
+  const context = {
+    role: event.role,
+    workspace: { key: path.basename(event.cwd) },
+    sessionId: event.sessionId
+  };
+  const logical = startLogicalRequestSpan({
+    ...context,
+    requestId: null,
+    providerRole: event.role === "orchestrator" ? "orchestrator" : "subagent",
+    subject: "turn",
+    requestedModel: null
+  });
+  const attempt = startAttemptSpan({
+    ...context,
+    provider: event.provider,
+    model: event.model,
+    selection: "pinned",
+    attemptNumber: 1,
+    parent: logical
+  });
+  openTurnSpans.set(event.turnId, { logical, attempt });
+}
+
+function endTurnSpans(event: XacpxTurnEvent): void {
+  const open = openTurnSpans.get(event.turnId);
+  if (!open) return;
+  openTurnSpans.delete(event.turnId);
+  if (event.type === "turn_completed") {
+    endAttemptSpan(open.attempt, {
+      status: "ok",
+      finishReason: event.stopReason,
+      usage: event.usage
+    });
+    endLogicalRequestSpan(open.logical, {
+      status: "ok",
+      provider: event.provider
+    });
+    return;
+  }
+  // The failure's own text stays out of telemetry; its kind is enough.
+  const errorType =
+    event.type === "turn_failed" && event.cancelled
+      ? "cancelled"
+      : "turn_failed";
+  endAttemptSpan(open.attempt, { status: "error", errorType });
+  endLogicalRequestSpan(open.logical, {
+    status: "error",
+    errorMessage: errorType,
+    provider: event.provider
+  });
+}
+
+/**
+Every agent turn now runs here rather than through the Router's routed
+`/responses` path, so this is where the Runtime observes it: one logical
+request with one provider attempt per turn, and the turn's start and end
+as commit boundaries. The workspace is labelled the way XACPX labels it
+elsewhere (the directory's name); a commit's actor is read back from the
+commit, never from the session.
+*/
+export const XACPX_TURN_OBSERVATION: XacpxTurnEventSink = {
   emit(event) {
+    if (event.type === "turn_started") startTurnSpans(event);
+    else endTurnSpans(event);
     void observeRouterWorkspaceGitCommits({
       workspaceKey: path.basename(event.cwd),
       workspacePath: event.cwd,
@@ -164,7 +245,7 @@ export const XACPX_SESSION_COMMIT_OBSERVATION: AcpConsoleSink = {
 };
 
 export const SHARED_XACPX_SESSION_MANAGER = new XacpxSessionManager({
-  consoleSink: XACPX_SESSION_COMMIT_OBSERVATION
+  eventSink: XACPX_TURN_OBSERVATION
 });
 
 export async function didHandleAcpRoute(
@@ -212,7 +293,15 @@ export async function didHandleAcpRoute(
   }
   if (request.method === "DELETE") {
     const closed = await manager.closeSession(sessionId);
-    writeJson(response, closed ? 200 : 404, { sessionId, closed });
+    writeJson(
+      response,
+      closed ? 200 : 404,
+      { sessionId, closed },
+      {
+        "x-autodev-session-id": sessionId,
+        "x-autodev-session-ended": "1"
+      }
+    );
     return true;
   }
   writeJson(response, 405, { error: METHOD_NOT_ALLOWED_ERROR });
