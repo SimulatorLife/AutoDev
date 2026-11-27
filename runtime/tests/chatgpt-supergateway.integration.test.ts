@@ -80,6 +80,7 @@ import {
   runMcpGatewayDaemon,
   serviceReady
 } from "../src/platform/mcp-gateway-service.ts";
+import { roleContract } from "../src/shared/execution-contract.ts";
 import { resolveCocoIndexBinary } from "../src/shared/executables.ts";
 import { resolveCommandOnPath } from "../src/platform/runtime-files.ts";
 import { XacpxSessionManager } from "../src/xacpx/manager.ts";
@@ -1261,23 +1262,32 @@ function serviceFixture(root: string) {
     supergateway: () => "/fixture/supergateway",
     backend: () => ({ command: "/fixture/filesystem", args: [] }),
     hasSecret: (name) => name === "CONTEXT7_API_KEY",
-    discoverTools: async (server) =>
-      server === "filesystem"
-        ? [
-            "read_text_file",
-            "write_file",
-            "edit_file",
-            "list_allowed_directories"
-          ]
-        : server === "lsp"
-          ? ["lsp_find_symbol", "lsp_workspace_diagnostics"]
-          : server === "xacpx"
-            ? ["delegate_request", "task_get", "task_list", "task_cancel"]
-            : server === "openaiDeveloperDocs"
-              ? ["search_openai_docs", "list_openai_docs"]
-              : server === "context7"
-                ? ["resolve-library-id", "query-docs"]
-                : [],
+    discoverTools: async (
+      server,
+      _descriptor,
+      _paths,
+      _workspace,
+      _node,
+      env
+    ) =>
+      server === "commands"
+        ? [...(roleContract(env.AUTODEV_AGENT_ROLE!).mcpTools?.commands ?? [])]
+        : server === "filesystem"
+          ? [
+              "read_text_file",
+              "write_file",
+              "edit_file",
+              "list_allowed_directories"
+            ]
+          : server === "lsp"
+            ? ["lsp_find_symbol", "lsp_workspace_diagnostics"]
+            : server === "xacpx"
+              ? ["delegate_request", "task_get", "task_list", "task_cancel"]
+              : server === "openaiDeveloperDocs"
+                ? ["search_openai_docs", "list_openai_docs"]
+                : server === "context7"
+                  ? ["resolve-library-id", "query-docs"]
+                  : [],
     launchValues: () => ({
       ...paths,
       nodeBin: process.execPath,
@@ -1446,7 +1456,10 @@ test(
       const localKey = privateRead(path.join(directory, "local.key"));
       assert.match(localKey, /^[a-f0-9]{64}$/u);
       assert.notEqual(localKey, key);
-      assert.match(privateRead(path.join(directory, "admission.key")), /^[a-f0-9]{64}$/u);
+      assert.match(
+        privateRead(path.join(directory, "admission.key")),
+        /^[a-f0-9]{64}$/u
+      );
       const workerFilesystem = config.mcpServers["local-worker-filesystem"];
       assert.equal(workerFilesystem.path, "/local/worker/filesystem");
       assert.equal(
@@ -1524,18 +1537,33 @@ test(
       );
       assert.deepEqual([...new Set(approvedHomes)], [codexHome]);
       assert.notEqual(approved.policyDigest, first.policyDigest);
-      assert.deepEqual(approved.grants.commands, [
-        "install_dependencies",
-        "typecheck",
-        "test",
-        "lint_fix",
-        "git_status",
-        "git_diff",
-        "git_stage",
-        "git_commit"
-      ]);
+      // Once approved, the gateway grants the orchestrator role's canonical
+      // Commands tools exactly as the execution contract declares them.
+      assert.deepEqual(
+        approved.grants.commands,
+        roleContract("orchestrator").mcpTools?.commands
+      );
       // The new generation replaces the old one.
       assert.ok(!existsSync(path.join(directory, first.generation)));
+
+      // While the checkout proposes a catalogue revision the operator has not
+      // approved, the role contract can name commands the approved revision
+      // lacks. The gateway grants only what the Commands backend serves, so
+      // its preflight matches the backend instead of failing the install.
+      const pending = await ensureMcpGateway(
+        paths,
+        { HOME: paths.home },
+        undefined,
+        {
+          ...gatewayDeps,
+          commandCatalogue: () => "sha256:previously-approved-fixture",
+          discoverTools: async (server, ...rest) =>
+            server === "commands"
+              ? ["git_status", "test", "not_in_role_contract"]
+              : gatewayDeps.discoverTools!(server, ...rest)
+        }
+      );
+      assert.deepEqual(pending.grants.commands, ["git_status", "test"]);
 
       // Switching to the `smart` role (googleDeveloperKnowledge and playwright,
       // no xacpx) with GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY available admits the

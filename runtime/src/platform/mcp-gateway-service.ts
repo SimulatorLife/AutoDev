@@ -798,7 +798,12 @@ async function resolveReviewedFromRoleContract(
         ? roleMcpTools[server]
         : permissions.allowedTools[server];
       const discoverOnce = () => {
-        const key = `${server}:${contract.readOnly === true}`;
+        // The Commands backend serves its role's grant, so what it lists
+        // depends on the role, not only on read-only confinement.
+        const key =
+          server === MCP_SERVER_COMMANDS
+            ? `${server}:${role}`
+            : `${server}:${contract.readOnly === true}`;
         const cached = discovered?.get(key);
         if (cached) return cached;
         const tools = discover(
@@ -813,7 +818,18 @@ async function resolveReviewedFromRoleContract(
         discovered?.set(key, tools);
         return tools;
       };
-      const tools = explicit?.length ? explicit : await discoverOnce();
+      // The Commands backend serves only the approved catalogue's commands
+      // that the role holds and the workspace admits. The checkout's role
+      // contract can name commands a pending catalogue revision proposes,
+      // so its list is a ceiling and the backend's listing is the grant.
+      const tools =
+        server === MCP_SERVER_COMMANDS
+          ? (await discoverOnce()).filter(
+              (tool) => !explicit?.length || explicit.includes(tool)
+            )
+          : explicit?.length
+            ? explicit
+            : await discoverOnce();
       const filtered = denied
         ? tools.filter((tool) => !denied.has(tool))
         : tools;
