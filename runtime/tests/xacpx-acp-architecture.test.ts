@@ -5,7 +5,8 @@ import {
   mkdirSync,
   mkdtempSync,
   realpathSync,
-  rmSync
+  rmSync,
+  writeFileSync
 } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -410,6 +411,94 @@ test("ACP provider profiles project canonical role capabilities, native mcpServe
   assert.match(ghTask.prompt, /Raise a PR to AutoDev/u);
   assert.equal(ghTask.mcpApp, "AutoDev");
   assert.equal(ghTask.site, "chatgpt");
+});
+
+test("an ACP executor is spawned from where it is installed, with only the host variables it needs", () => {
+  const bin = mkdtempSync(path.join(tmpdir(), "autodev-acp-bin-"));
+  try {
+    const executor = path.join(bin, "claude-agent-acp");
+    writeFileSync(executor, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    const spec = buildAcpProviderLaunchSpec({
+      provider: "claude",
+      role: "worker",
+      model: "sonnet",
+      cwd: REPO_ROOT,
+      systemPrompt: "Worker",
+      sessionId: "sess-executor-path",
+      env: {
+        PATH: ["/usr/bin", "/bin", bin].join(path.delimiter),
+        HOME: homedir(),
+        USER: "operator",
+        LANG: "en_US.UTF-8",
+        CODEX_HOME: process.env.CODEX_HOME!,
+        CLAUDE_AGENT_ACP_PATH_UNUSED: "x",
+        CODEX_ROUTER_AUTH_TOKEN: "router-secret",
+        AUTODEV_CONTROL_API_TOKEN: "control-secret",
+        PNPM_HOME: path.join(bin, "pnpm")
+      }
+    });
+    // The name an operator types stays the command; the file found is spawned.
+    assert.equal(spec.command, "claude-agent-acp");
+    assert.equal(spec.program, executor);
+    // The executor's own directory leads PATH, then the Runtime's search path.
+    assert.equal(spec.env.PATH, [bin, "/usr/bin", "/bin"].join(path.delimiter));
+    assert.equal(spec.env.HOME, homedir());
+    assert.equal(spec.env.USER, "operator");
+    assert.equal(spec.env.LANG, "en_US.UTF-8");
+    // Runtime tokens and unrelated variables are never handed over.
+    assert.equal(spec.env.CODEX_ROUTER_AUTH_TOKEN, undefined);
+    assert.equal(spec.env.AUTODEV_CONTROL_API_TOKEN, undefined);
+    assert.equal(spec.env.CLAUDE_AGENT_ACP_PATH_UNUSED, undefined);
+    assert.equal(spec.env.PNPM_HOME, undefined);
+  } finally {
+    rmSync(bin, { recursive: true, force: true });
+  }
+});
+
+test("a turn on a provider whose ACP executor is not installed fails the turn instead of the Runtime", async () => {
+  const home = mkdtempSync(path.join(tmpdir(), "autodev-acp-missing-"));
+  const events: string[] = [];
+  const manager = new XacpxSessionManager({
+    eventSink: {
+      emit: (event) => {
+        events.push(event.type);
+      }
+    }
+  });
+  try {
+    const environment = {
+      PATH: home,
+      HOME: home,
+      CODEX_HOME: process.env.CODEX_HOME!
+    };
+    const plan = manager.planDispatch(
+      {
+        sessionId: "acp-missing-executor",
+        role: "worker",
+        cwd: REPO_ROOT,
+        systemPrompt: "Worker",
+        promptOrTask: "Implement"
+      },
+      environment
+    );
+    assert.equal(plan.kind, "acp");
+    await assert.rejects(
+      manager.executeTurn(
+        {
+          sessionId: "acp-missing-executor",
+          role: "worker",
+          cwd: REPO_ROOT,
+          systemPrompt: "Worker",
+          promptOrTask: "Implement"
+        },
+        environment
+      ),
+      /ACP executor '[^']+' for provider '[^']+' is not installed\./u
+    );
+    assert.deepEqual(events, ["turn_started", "turn_failed"]);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test("XacpxSessionManager resolves binaries, dispatches every transport, and pins sessions", () => {

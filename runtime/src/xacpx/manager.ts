@@ -13,6 +13,7 @@ their telemetry and the commits they made -- without `/responses` proxying.
 
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import { existsSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -377,14 +378,42 @@ export function resolveAcpPermissionResponse(
   return { outcome: { outcome: "selected", optionId: allowOption.optionId } };
 }
 
-function defaultAcpTransportFactory(
+/**
+Start the executor and wait until it is running. A child that cannot start
+(an executor that is not installed, or not executable) reports that as an
+`error` event rather than a throw; waiting for `spawn` turns it into a failed
+turn instead of an unhandled event that would take the Runtime down.
+*/
+async function startedExecutor(
   launch: AcpProviderLaunchSpec
-): AcpTransportConnection {
-  const child: ChildProcess = spawn(launch.command, [...launch.args], {
+): Promise<ChildProcess> {
+  const child: ChildProcess = spawn(launch.program, [...launch.args], {
     cwd: launch.cwd,
     env: launch.env,
     stdio: ["pipe", "pipe", "pipe"]
   });
+  try {
+    await once(child, "spawn");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    throw new Error(
+      code === "ENOENT"
+        ? `ACP executor '${launch.command}' for provider '${launch.provider}' is not installed.`
+        : `ACP executor '${launch.command}' for provider '${launch.provider}' could not start (${code ?? "unknown error"}).`,
+      { cause: error }
+    );
+  }
+  // A running child can still fail later (a broken pipe on exit); the
+  // connection observes that through its streams, so the event is only
+  // kept from becoming unhandled.
+  child.on("error", () => {});
+  return child;
+}
+
+async function defaultAcpTransportFactory(
+  launch: AcpProviderLaunchSpec
+): Promise<AcpTransportConnection> {
+  const child = await startedExecutor(launch);
   if (!child.stdin || !child.stdout) {
     child.kill("SIGTERM");
     throw new Error(

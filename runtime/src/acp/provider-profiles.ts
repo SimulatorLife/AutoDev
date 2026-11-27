@@ -17,6 +17,13 @@ import path from "node:path";
 
 import type { McpServer } from "@agentclientprotocol/sdk";
 import { autodevHome } from "@simulatorlife/autodev-runtime/shared/autodev-home";
+import {
+  findAgyBinary,
+  findCopilotBinary,
+  findExecutable,
+  findMcodeBinary,
+  findPnpmGlobalBinary
+} from "@simulatorlife/autodev-runtime/shared/executables";
 import { roleContract } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { resolveManagedSecret } from "@simulatorlife/autodev-runtime/shared/runtime-secrets";
 
@@ -32,6 +39,17 @@ export const ACP_PROVIDER_IDS = [
 ] as const;
 
 export type AcpProviderId = (typeof ACP_PROVIDER_IDS)[number];
+
+/**
+The ACP executor each provider is served by, as an operator would type it.
+*/
+const ACP_EXECUTOR_COMMANDS: Readonly<Record<AcpProviderId, string>> = {
+  claude: "claude-agent-acp",
+  antigravity: "agy",
+  copilot: "copilot",
+  mcode: "mcode",
+  codex: "codex-acp"
+};
 
 export type AcpIsolationEnforcement =
   "enforced" | "runtime_permission_guard" | "unverified_gap";
@@ -60,7 +78,16 @@ export interface AcpProviderLaunchSpec {
   readonly provider: AcpProviderId;
   readonly role: string;
   readonly model: string;
+  /**
+  The executor's name, as an operator would type it.
+  */
   readonly command: string;
+  /**
+  The file that is spawned: the executor found through the same lookups the
+  Runtime's CLI-version reader uses, or `command` itself when it is not
+  installed (the spawn then fails the turn as a missing executor).
+  */
+  readonly program: string;
   readonly args: readonly string[];
   readonly env: Readonly<Record<string, string>>;
   readonly cwd: string;
@@ -100,12 +127,82 @@ export function resolveAcpProviderId(provider: string): AcpProviderId | null {
   return null;
 }
 
+/**
+The host variables an executor needs to start and find its own sign-in:
+where it lives and runs, who runs it, and the locale. Nothing else from the
+Runtime's environment is handed over -- backend credentials stay with the
+gateway and Runtime tokens stay with the Runtime.
+*/
+const EXECUTOR_HOST_VARIABLES = [
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "TMPDIR",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE"
+] as const;
+
+/**
+Where each provider's ACP executor is, or null when it is not installed.
+Launchd starts the Runtime with a minimal PATH, so each lookup also covers
+the install locations a login shell would add.
+*/
+function findAcpExecutor(
+  provider: AcpProviderId,
+  environment: NodeJS.ProcessEnv
+): string | null {
+  const home = environment.HOME?.trim() || homedir();
+  const onPathOrPnpm = (name: string) =>
+    findExecutable(name, environment.PATH ?? "") ??
+    findPnpmGlobalBinary(name, home, environment);
+  const lookups: Record<AcpProviderId, () => string | null> = {
+    claude: () => onPathOrPnpm(ACP_EXECUTOR_COMMANDS.claude),
+    codex: () => onPathOrPnpm(ACP_EXECUTOR_COMMANDS.codex),
+    antigravity: () => findAgyBinary(environment),
+    copilot: () => findCopilotBinary(environment, home),
+    mcode: () => findMcodeBinary(environment, home)
+  };
+  return lookups[provider]();
+}
+
+/**
+The host part of an executor's environment. The executor's own directory
+leads PATH, so the tools installed beside it (its CLI, its helpers) resolve
+the same way it did.
+*/
+function executorHostEnvironment(
+  environment: NodeJS.ProcessEnv,
+  program: string
+): Record<string, string> {
+  const host: Record<string, string> = {
+    HOME: environment.HOME?.trim() || homedir()
+  };
+  for (const name of EXECUTOR_HOST_VARIABLES) {
+    const value = environment[name];
+    if (value) host[name] = value;
+  }
+  const searchPath = (environment.PATH ?? "")
+    .split(path.delimiter)
+    .filter(Boolean);
+  const programDirectory = path.isAbsolute(program)
+    ? path.dirname(program)
+    : null;
+  host.PATH = [
+    ...(programDirectory ? [programDirectory] : []),
+    ...searchPath.filter((directory) => directory !== programDirectory)
+  ].join(path.delimiter);
+  return host;
+}
+
 function sharedIsolationEnvironment(
   options: AcpProfileOptions,
-  contract: ReturnType<typeof roleContract>
+  contract: ReturnType<typeof roleContract>,
+  program: string
 ): Record<string, string> {
   const homeDirectory = autodevHome(options.env);
   return {
+    ...executorHostEnvironment(options.env ?? process.env, program),
     AUTODEV_HOME: homeDirectory,
     AUTODEV_AGENT_ROLE: options.role,
     AUTODEV_PROVIDER: options.provider,
@@ -179,10 +276,15 @@ export function buildAcpProviderLaunchSpec(
   const isReadOnly = contract.readOnly === true;
   const isShell = contract.shell !== false;
   const isHooks = contract.hooks !== false;
-  const baseEnvironment = sharedIsolationEnvironment(options, contract);
+  const command = ACP_EXECUTOR_COMMANDS[options.provider];
+  const program =
+    findAcpExecutor(options.provider, options.env ?? process.env) ?? command;
+  const baseEnvironment = sharedIsolationEnvironment(options, contract, program);
   const acpMcpServers = buildAcpMcpServers(options, contract);
 
   const sharedFields = {
+    command,
+    program,
     role: options.role,
     model: options.model,
     cwd: options.cwd,
@@ -216,7 +318,6 @@ export function buildAcpProviderLaunchSpec(
       return {
         ...sharedFields,
         provider: "claude",
-        command: "claude-agent-acp",
         args: cliArguments,
         env: {
           ...baseEnvironment,
@@ -244,7 +345,6 @@ export function buildAcpProviderLaunchSpec(
       return {
         ...sharedFields,
         provider: "antigravity",
-        command: "agy",
         args: [
           "acp",
           "--stdio",
@@ -282,7 +382,6 @@ export function buildAcpProviderLaunchSpec(
       return {
         ...sharedFields,
         provider: "copilot",
-        command: "copilot",
         args: cliArguments,
         env: baseEnvironment,
         isolation: {
@@ -310,7 +409,6 @@ export function buildAcpProviderLaunchSpec(
       return {
         ...sharedFields,
         provider: "mcode",
-        command: "mcode",
         args: ["acp"],
         env: {
           ...baseEnvironment,
@@ -336,7 +434,6 @@ export function buildAcpProviderLaunchSpec(
       return {
         ...sharedFields,
         provider: "codex",
-        command: "codex-acp",
         args: [],
         env: baseEnvironment,
         isolation: {
