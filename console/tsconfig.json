@@ -43,11 +43,7 @@
     "src/**/*.tsx",
     "tests/**/*.ts",
     "tests/**/*.tsx",
-    ".next/dev/types/**/*.ts",
-    ".next-staging-e2e-40813-50468/types/**/*.ts",
-    ".next-staging-e2e-40813-50468/dev/types/**/*.ts",
-    ".next-staging-e2e-19081-59505/types/**/*.ts",
-    ".next-staging-e2e-19081-59505/dev/types/**/*.ts"
+    ".next/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",
