@@ -2,16 +2,17 @@
 Observe enrolled native host sessions without granting execution authority.
 */
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import path from "node:path";
 
-import { readLocalAdmission } from "../mcp/gateway-admission.ts";
 import { isEntryPoint } from "../shared/entry-point.ts";
 import {
   NATIVE_SESSION_EVENTS_PATH,
   type NativeSessionObservation,
-  nativeSessionObservationSchema} from "../shared/native-session-observation.ts";
+  nativeSessionObservationSchema,
+  observedLabel,
+  observedWorkspace
+} from "../shared/native-session-observation.ts";
 import { extractHookContext, parseHookPayload } from "./hook-payload.ts";
+import { postRuntimeObservation } from "./runtime-observation.ts";
 
 /**
 MiniMax's installed projection supplies a fixed host marker; Claude Code
@@ -40,22 +41,12 @@ export function nativeHookObservation(
       ? "claude_code"
       : null;
   if (!client) return null;
-  const workspace =
-    context.cwd && path.isAbsolute(context.cwd)
-      ? path.basename(context.cwd)
-      : null;
   const parsed = nativeSessionObservationSchema.safeParse({
     client,
     sessionId: context.sessionId,
     event,
-    model:
-      context.model && /^[A-Za-z0-9_.:/-]{1,128}$/u.test(context.model)
-        ? context.model
-        : null,
-    workspace:
-      workspace && /^[A-Za-z0-9_. -]{1,128}$/u.test(workspace)
-        ? workspace
-        : null
+    model: observedLabel(context.model),
+    workspace: observedWorkspace(context.cwd)
   });
   return parsed.success ? parsed.data : null;
 }
@@ -66,28 +57,8 @@ export async function reportNativeSession(
 ): Promise<void> {
   try {
     const observation = nativeHookObservation(input, event);
-    if (!observation) return;
-    const home = process.env.HOME?.trim() || homedir();
-    const codexHome =
-      process.env.CODEX_HOME?.trim() || path.join(home, ".codex");
-    const admission = readLocalAdmission(codexHome);
-    if (!admission) return;
-    const port = Number(process.env.CODEX_MODEL_ROUTER_PORT ?? "4100");
-    if (!Number.isInteger(port) || port < 1 || port > 65_535) return;
-    const response = await fetch(
-      `http://127.0.0.1:${port}${NATIVE_SESSION_EVENTS_PATH}`,
-      {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${admission.key}`,
-          "content-type": "application/json"
-        },
-        body: JSON.stringify(observation),
-        redirect: "error",
-        signal: AbortSignal.timeout(1000)
-      }
-    );
-    await response.body?.cancel();
+    if (observation)
+      await postRuntimeObservation(NATIVE_SESSION_EVENTS_PATH, observation);
   } catch {
     // Observation is best effort and must not block native host work.
   }

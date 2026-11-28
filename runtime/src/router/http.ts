@@ -97,17 +97,24 @@ import {
   nativeSessionIdentity,
   nativeSessionObservationSchema
 } from "../shared/native-session-observation.ts";
+import {
+  SKILL_READ_EVENT_LIMIT,
+  SKILL_READ_EVENTS_PATH,
+  SKILL_READ_SOURCE,
+  type SkillReadObservation,
+  skillReadObservationSchema
+} from "../shared/skill-read-observation.ts";
 import { didHandleAcpRoute } from "../xacpx/http.ts";
 import { createAgentEventIngest } from "./agent-event-ingest.ts";
 import {
   correlationSnapshot,
   correlationStatus,
   CorrelationTracker,
+  recordBridgeSkillUsed,
   restoreCorrelation,
   setDefaultCorrelationTracker
 } from "./correlation.ts";
 import {
-  activeProviderRequests,
   CHAIN_SELECTION_DEADLINE_MS,
   CONCRETE_STATUS_MAX_ATTEMPTS,
   errorBody,
@@ -130,12 +137,12 @@ import {
   UPSTREAM_TIMEOUT_MS,
   UPSTREAM_TRANSPORT_MAX_ATTEMPTS
 } from "./proxy.ts";
+import { QUOTA_POLL } from "./quota-poll.ts";
 import {
   SharedRouterStateClient,
   type SharedRouterStateSnapshot,
   sumCountsExcludingGeneration
 } from "./shared-state-ipc.ts";
-import { QUOTA_POLL } from "./quota-poll.ts";
 import {
   AGENT_EVENTS_PATH,
   closeBridgeSubagentsForRequest,
@@ -1770,22 +1777,94 @@ export async function loadCatalog(
 }
 
 /**
+Whether a loopback request carries the local enrollment credential, which
+authorizes observations only, not execution.
+*/
+function isLocalObservationAuthorized(request: IncomingMessage): boolean {
+  const admission = readLocalAdmission(CODEX_HOME);
+  const header = request.headers.authorization;
+  const expected = admission ? `Bearer ${admission.key}` : "";
+  return (
+    expected !== "" &&
+    isLoopbackAddress(request.socket.remoteAddress) &&
+    typeof header === "string" &&
+    Buffer.byteLength(header) === Buffer.byteLength(expected) &&
+    timingSafeEqual(Buffer.from(header), Buffer.from(expected))
+  );
+}
+
+/**
+Record a hook-observed `SKILL.md` read under the attribution the hook
+observed in its own session.
+*/
+async function handleSkillReadObservation(
+  request: IncomingMessage,
+  response: ServerResponse
+): Promise<void> {
+  if (!isLocalObservationAuthorized(request)) {
+    sendRouterAuthFailure(response);
+    return;
+  }
+  let observed: SkillReadObservation;
+  try {
+    if (request.headers["content-encoding"])
+      throw new Error("Encoded observations are not supported");
+    observed = skillReadObservationSchema.parse(
+      JSON.parse(await requestBody(request, SKILL_READ_EVENT_LIMIT))
+    );
+  } catch {
+    sendJson(response, 400, errorBody("Invalid skill read observation"));
+    return;
+  }
+  const context = {
+    sessionId: observed.sessionId,
+    role: observed.role,
+    provider: observed.provider,
+    model: observed.model,
+    workspace: observed.workspace
+  };
+  const event = {
+    type: "skill_used",
+    skill: observed.skill,
+    source: SKILL_READ_SOURCE,
+    eventId: observed.eventId
+  };
+  const accepted = recordBridgeSkillUsed({ event, context });
+  if (accepted)
+    liveFeedEvents.record({
+      category: "skills",
+      type: "skill_used",
+      summary: `skill_used: ${observed.skill}`,
+      timestamp: null,
+      requestId: null,
+      provider: observed.provider,
+      model: observed.model,
+      role: observed.role,
+      workspace: observed.workspace,
+      phase: null,
+      outcome: null,
+      status: null,
+      failureClass: null,
+      durationMs: null,
+      name: observed.skill,
+      server: null,
+      source: SKILL_READ_SOURCE,
+      tool: null,
+      skill: observed.skill,
+      hook: null,
+      handlerType: null
+    });
+  sendJson(response, 200, { accepted });
+}
+
+/**
 Local enrollment credentials authorize observations only, not execution.
 */
 async function handleNativeSessionObservation(
   request: IncomingMessage,
   response: ServerResponse
 ): Promise<void> {
-  const admission = readLocalAdmission(CODEX_HOME);
-  const header = request.headers.authorization;
-  const expected = admission ? `Bearer ${admission.key}` : "";
-  if (
-    !expected ||
-    !isLoopbackAddress(request.socket.remoteAddress) ||
-    typeof header !== "string" ||
-    Buffer.byteLength(header) !== Buffer.byteLength(expected) ||
-    !timingSafeEqual(Buffer.from(header), Buffer.from(expected))
-  ) {
+  if (!isLocalObservationAuthorized(request)) {
     sendRouterAuthFailure(response);
     return;
   }
@@ -1838,6 +1917,10 @@ export async function handleRequest(
   }
   if (pathname === NATIVE_SESSION_EVENTS_PATH && request.method === "POST") {
     await handleNativeSessionObservation(request, response);
+    return;
+  }
+  if (pathname === SKILL_READ_EVENTS_PATH && request.method === "POST") {
+    await handleSkillReadObservation(request, response);
     return;
   }
   if (pathname === AGENT_EVENTS_PATH && request.method === "POST") {
