@@ -56,6 +56,73 @@ export type ConsoleTraceResult =
 export type ConsoleSessionUsageResult =
   OpenLITSessionResult | { readonly kind: "not-configured" };
 
+export interface UsageEndpointFailureDescription {
+  readonly title: string;
+  readonly code: string;
+  readonly message: string;
+  readonly hint: string;
+  readonly httpStatus: number | null;
+}
+
+/**
+Single authoritative mapping from an OpenLIT Usage read failure into the
+Console's operator-facing code, message, and remediation hint.
+*/
+export function describeUsageEndpointFailure(
+  result: Exclude<ConsoleUsageResult, { readonly kind: "ok" }>
+): UsageEndpointFailureDescription {
+  switch (result.kind) {
+    case "not-configured": {
+      return {
+        title: "Usage telemetry credential is not configured",
+        code: "autodev_usage_credentials_disabled",
+        message:
+          "Set AUTODEV_OPENLIT_USAGE_TOKEN in the Next.js server environment to read telemetry.",
+        hint: "The Usage token is server-only and is never sent to the browser.",
+        httpStatus: null
+      };
+    }
+    case "unreachable": {
+      return {
+        title: "Usage telemetry service could not be reached",
+        code: "autodev_openlit_usage_unreachable",
+        message:
+          "The Console could not connect to the configured OpenLIT Usage endpoint.",
+        hint: "Check that OpenLIT is running and AUTODEV_OPENLIT_USAGE_URL points to its HTTP service. No sample telemetry is substituted.",
+        httpStatus: null
+      };
+    }
+    case "invalid-response": {
+      return {
+        title: "Usage telemetry response was invalid",
+        code: "autodev_openlit_usage_invalid_response",
+        message:
+          "OpenLIT returned data that does not match the validated AutoDev Usage response schema.",
+        hint: "Confirm OpenLIT serves the required AutoDev Usage v5 contract. After an upgrade, rebuild and restart the managed Console; metric panels stay hidden until validation succeeds.",
+        httpStatus: null
+      };
+    }
+    case "unauthorized": {
+      return {
+        title: "Usage telemetry service rejected the server credential",
+        code: "autodev_openlit_usage_unauthorized",
+        message: `The Usage endpoint returned HTTP ${result.status}.`,
+        hint: "Verify the dedicated server-side Usage credential; it is never sent to the browser.",
+        httpStatus: result.status
+      };
+    }
+    case "http-error": {
+      return {
+        title: "Usage query failed",
+        code: `autodev_openlit_usage_http_${result.status}`,
+        message: `The Usage endpoint returned HTTP ${result.status}.`,
+        hint: "Check the OpenLIT Usage endpoint status and keep telemetry unavailable until the read succeeds.",
+        httpStatus: result.status
+      };
+    }
+  }
+}
+
 export function readOpenLITUsageConfig(
   environment: OpenLITUsageEnvironment = process.env
 ): OpenLITUsageConfig | null {
@@ -63,7 +130,8 @@ export function readOpenLITUsageConfig(
   if (!serviceToken) {
     const home = environment.HOME?.trim();
     const codexHome =
-      environment.CODEX_HOME?.trim() || (home ? path.join(home, ".codex") : null);
+      environment.CODEX_HOME?.trim() ||
+      (home ? path.join(home, ".codex") : null);
     if (codexHome) {
       const secretFile =
         environment.AUTODEV_OPENLIT_SECRET_FILE?.trim() ||
@@ -74,7 +142,8 @@ export function readOpenLITUsageConfig(
   }
   if (!serviceToken) return null;
   const baseUrl =
-    environment.AUTODEV_OPENLIT_USAGE_URL?.trim() || DEFAULT_OPENLIT_USAGE_BASE_URL;
+    environment.AUTODEV_OPENLIT_USAGE_URL?.trim() ||
+    DEFAULT_OPENLIT_USAGE_BASE_URL;
   return { baseUrl: baseUrl.replace(TRAILING_SLASHES, ""), serviceToken };
 }
 
@@ -264,13 +333,25 @@ export function usageViewStateFromSearchParams(
     spanLimit: oneOf(first(searchParameters.spanLimit), SPAN_LIMITS, 50),
     spanSort: rawSpanSort === "asc" ? "asc" : "desc",
     eventsOffset: offsetValue(first(searchParameters.eventsOffset)),
-    eventsLimit: oneOf(first(searchParameters.eventsLimit), SMALL_PAGE_LIMITS, 50),
+    eventsLimit: oneOf(
+      first(searchParameters.eventsLimit),
+      SMALL_PAGE_LIMITS,
+      50
+    ),
     itemsOffset: offsetValue(first(searchParameters.itemsOffset)),
-    itemsLimit: oneOf(first(searchParameters.itemsLimit), SMALL_PAGE_LIMITS, 50),
+    itemsLimit: oneOf(
+      first(searchParameters.itemsLimit),
+      SMALL_PAGE_LIMITS,
+      50
+    ),
     threadId,
     failureCategory: isToolFailureCategory(rawFailureCategory)
       ? rawFailureCategory
       : undefined,
-    hooksSinceDays: oneOf(first(searchParameters.hooksSinceDays), HOOK_WINDOWS, 7)
+    hooksSinceDays: oneOf(
+      first(searchParameters.hooksSinceDays),
+      HOOK_WINDOWS,
+      7
+    )
   };
 }

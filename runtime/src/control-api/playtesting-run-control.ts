@@ -10,9 +10,11 @@ import {
   type ControlApiPlaytestingCapabilitiesResponse,
   type ControlApiPlaytestingCapabilityReason,
   type ControlApiPlaytestingComparisonDecisionRequest,
+  controlApiPlaytestingComparisonDecisionRequestSchema,
   type ControlApiPlaytestingComparisonDecisionResponse,
   type ControlApiPlaytestingModeReadiness,
   type ControlApiPlaytestingPolicyReadiness,
+  controlApiPlaytestingRunCancellationRequestSchema,
   type ControlApiPlaytestingRunCancellationResponse,
   type ControlApiPlaytestingRunRecord,
   type ControlApiPlaytestingRunRequestLookupResponse,
@@ -104,16 +106,6 @@ const CANCELLATION_REASONS = new Set<ControlApiPlaytestingCancellationReason>([
   "workspace-disabled"
 ]);
 
-const cancellationRequestSchema = z.strictObject({
-  expectedStatus: z.literal("running")
-});
-const comparisonDecisionRequestSchema = z.strictObject({
-  workspaceId: z.string().regex(WORKSPACE_ID_PATTERN),
-  comparisonId: z.string().regex(BATCH_ID_PATTERN),
-  expectedVersion: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
-  disposition: z.enum(["promote", "hold"]),
-  reason: z.string().min(1).max(4000)
-});
 const PROCESS_SESSION_HEADER = "x-autodev-playtest-session";
 const BASE64URL_HEADER_PATTERN = /^[A-Za-z0-9_-]+$/u;
 const processSessionSchema = z.strictObject({
@@ -865,7 +857,9 @@ async function comparisonDecisionRequest(
     sendError(response, body.status, body.code, body.message);
     return null;
   }
-  const parsed = comparisonDecisionRequestSchema.safeParse(body.body);
+  const parsed = controlApiPlaytestingComparisonDecisionRequestSchema.safeParse(
+    body.body
+  );
   if (!parsed.success || parsed.data.comparisonId !== comparisonId) {
     sendError(
       response,
@@ -1596,7 +1590,11 @@ async function cancelRun(
     sendError(response, parsedBody.status, parsedBody.code, parsedBody.message);
     return;
   }
-  if (!cancellationRequestSchema.safeParse(parsedBody.body).success) {
+  if (
+    !controlApiPlaytestingRunCancellationRequestSchema.safeParse(
+      parsedBody.body
+    ).success
+  ) {
     sendError(
       response,
       400,

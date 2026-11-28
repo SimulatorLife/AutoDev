@@ -170,6 +170,7 @@ export interface ButtonProps {
   readonly ariaLabel?: string | undefined;
   readonly ariaControls?: string | undefined;
   readonly ariaExpanded?: boolean | undefined;
+  readonly ariaPressed?: boolean | undefined;
 }
 
 const BUTTON_VARIANT_CLASS = {
@@ -215,7 +216,8 @@ export function Button({
   dataAttributes,
   ariaLabel,
   ariaControls,
-  ariaExpanded
+  ariaExpanded,
+  ariaPressed
 }: ButtonProps): React.JSX.Element {
   return React.createElement(
     "button",
@@ -237,6 +239,7 @@ export function Button({
       ...(ariaLabel !== undefined && { "aria-label": ariaLabel }),
       ...(ariaControls !== undefined && { "aria-controls": ariaControls }),
       ...(ariaExpanded !== undefined && { "aria-expanded": ariaExpanded }),
+      ...(ariaPressed !== undefined && { "aria-pressed": ariaPressed }),
       className: `${
         size === "default"
           ? BUTTON_VARIANT_CLASS[variant]

@@ -775,10 +775,10 @@ function mergeOperatorPermissions(
   const merged: Record<string, unknown> = {
     version: 2,
     allow: [],
-    deny: [],
     ask: [],
-    ...current
-  , deny: [...kept, ...canonicalDeny],};
+    ...current,
+    deny: [...kept, ...canonicalDeny]
+  };
   return { ...current, ...merged };
 }
 

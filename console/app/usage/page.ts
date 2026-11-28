@@ -8,6 +8,10 @@ import type { Metadata } from "next";
 import React from "react";
 
 import {
+  ACTIVE_SESSIONS_REFRESH_SCOPE,
+  DASHBOARD_REFRESH_SCOPE
+} from "../../src/features/usage/usage-api.ts";
+import {
   type SessionDiagnosticsFailure,
   SessionDiagnosticsView,
   type SessionDiagnosticsViewState
@@ -33,14 +37,14 @@ import {
 } from "../../src/lib/server/control-api.ts";
 import {
   type ConsoleSessionUsageResult,
-  type ConsoleUsageResult,
+  describeUsageEndpointFailure,
   loadOpenLITSessionUsage,
   loadOpenLITTrace,
   type UsageSearchParams as UsageSearchParameters,
   usageViewStateFromSearchParams as usageViewStateFromSearchParameters
 } from "../../src/lib/server/openlit-usage.ts";
 import { loadUsageActiveSessions } from "../../src/lib/server/usage-active-sessions.ts";
-import { readUsageTelemetry } from "../../src/lib/server/usage-telemetry.ts";
+import { readUsageTelemetryWithTimestamp } from "../../src/lib/server/usage-telemetry.ts";
 import {
   ConsolePageShell,
   readNodeContext,
@@ -60,49 +64,16 @@ export const metadata: Metadata = {
   title: "Usage"
 };
 
-type UsageEndpointFailure = Exclude<
-  ConsoleUsageResult,
-  { readonly kind: typeof NOT_CONFIGURED | "ok" }
->;
-
-function unavailableUsageState(result: UsageEndpointFailure) {
-  switch (result.kind) {
-    case "unreachable": {
-      return {
-        title: "Usage telemetry service could not be reached",
-        code: "autodev_openlit_usage_unreachable",
-        message:
-          "The Console could not connect to the configured OpenLIT Usage endpoint.",
-        hint: "Check that OpenLIT is running and AUTODEV_OPENLIT_USAGE_URL points to its HTTP service. No sample telemetry is substituted."
-      };
-    }
-    case "invalid-response": {
-      return {
-        title: "Usage telemetry response was invalid",
-        code: "autodev_openlit_usage_invalid_response",
-        message:
-          "OpenLIT returned data that does not match the validated AutoDev Usage response schema.",
-        hint: "Confirm OpenLIT serves the required AutoDev Usage v5 contract. After an upgrade, rebuild and restart the managed Console; metric panels stay hidden until validation succeeds."
-      };
-    }
-    case "unauthorized": {
-      return {
-        title: "Usage telemetry service rejected the server credential",
-        code: "autodev_openlit_usage_unauthorized",
-        message: `The Usage endpoint returned HTTP ${result.status}.`,
-        hint: "Verify the dedicated server-side Usage credential; it is never sent to the browser."
-      };
-    }
-    case HTTP_ERROR: {
-      return {
-        title: "Usage query failed",
-        code: `autodev_openlit_usage_http_${result.status}`,
-        message: `The Usage endpoint returned HTTP ${result.status}.`,
-        hint: "Check the OpenLIT Usage endpoint status and keep telemetry unavailable until the read succeeds."
-      };
-    }
+function selectionQueryString(selection: UsageFilterSelection): string {
+  const parameters = new URLSearchParams({ range: selection.range });
+  for (const [axis, values] of Object.entries(selection.values)) {
+    for (const value of values ?? []) parameters.append(axis, value);
   }
-  throw new Error("Unhandled OpenLIT Usage failure result.");
+  if (selection.customRange) {
+    parameters.set("startDate", selection.customRange.startDate);
+    parameters.set("endDate", selection.customRange.endDate);
+  }
+  return parameters.toString();
 }
 
 function usageTraceLookup(
@@ -289,8 +260,10 @@ export default async function UsagePage({
   // The live-session scope has no interval, so it is served by the Runtime's
   // read-only control-plane projection rather than by a Usage telemetry query.
   // Asking OpenLIT for it would request a window that does not exist.
+  const queryString = selectionQueryString(selection);
   if (!isHistoricalUsageSelection(selection)) {
     const live = await loadUsageActiveSessions(config ?? null);
+    const liveObservedAt = new Date().toISOString();
     if (live.kind === NOT_CONFIGURED) {
       return React.createElement(
         ConsolePageShell,
@@ -302,7 +275,16 @@ export default async function UsagePage({
             "Set AUTODEV_CONTROL_API_TOKEN in the Next.js server environment to read live session state.",
           hint: "Active sessions come from the Runtime's read-only /control/runtime projection."
         }),
-        React.createElement(UsageView, { selection })
+        React.createElement(UsageView, {
+          selection,
+          freshness: {
+            scope: ACTIVE_SESSIONS_REFRESH_SCOPE,
+            queryString,
+            initialObservedAt: liveObservedAt,
+            initialLastSuccessAt: null,
+            hasSnapshot: false
+          }
+        })
       );
     }
     if (live.kind === "unavailable") {
@@ -315,7 +297,16 @@ export default async function UsagePage({
           message: live.message,
           hint: "An unavailable read is not an idle Runtime; no session count is shown until the Runtime reports one."
         }),
-        React.createElement(UsageView, { selection })
+        React.createElement(UsageView, {
+          selection,
+          freshness: {
+            scope: ACTIVE_SESSIONS_REFRESH_SCOPE,
+            queryString,
+            initialObservedAt: liveObservedAt,
+            initialLastSuccessAt: null,
+            hasSnapshot: false
+          }
+        })
       );
     }
     return React.createElement(
@@ -325,7 +316,14 @@ export default async function UsagePage({
       },
       React.createElement(UsageView, {
         selection,
-        activeSessions: live.activeSessions
+        activeSessions: live.activeSessions,
+        freshness: {
+          scope: ACTIVE_SESSIONS_REFRESH_SCOPE,
+          queryString,
+          initialObservedAt: liveObservedAt,
+          initialLastSuccessAt: liveObservedAt,
+          hasSnapshot: true
+        }
       })
     );
   }
@@ -338,43 +336,36 @@ export default async function UsagePage({
         ? rawSpanId[0]
         : undefined;
   const hasTraceSelection = rawSpanId !== undefined;
-  const [result, traceResult] = await Promise.all([
-    readUsageTelemetry(selection),
+  const [snapshot, traceResult] = await Promise.all([
+    readUsageTelemetryWithTimestamp(selection),
     hasTraceSelection
       ? loadOpenLITTrace(selectedSpanId ?? "")
       : Promise.resolve(undefined)
   ]);
+  const { result, observedAt } = snapshot;
   const traceLookup =
     traceResult === undefined ||
     (result.kind !== "ok" && traceResult.kind !== "ok")
       ? undefined
       : usageTraceLookup(traceResult);
 
-  if (result.kind === NOT_CONFIGURED) {
-    return React.createElement(
-      ConsolePageShell,
-      { section },
-      React.createElement(ResourceUnavailable, {
-        title: "Usage telemetry credential is not configured",
-        code: "autodev_usage_credentials_disabled",
-        message:
-          "Set AUTODEV_OPENLIT_USAGE_TOKEN in the Next.js server environment to read telemetry.",
-        hint: "The Usage token is server-only and is never sent to the browser."
-      }),
-      React.createElement(UsageView, {
-        selection,
-        ...(traceLookup !== undefined && { traceLookup })
-      })
-    );
-  }
-
   if (result.kind !== "ok") {
     return React.createElement(
       ConsolePageShell,
       { section },
-      React.createElement(ResourceUnavailable, unavailableUsageState(result)),
+      React.createElement(
+        ResourceUnavailable,
+        describeUsageEndpointFailure(result)
+      ),
       React.createElement(UsageView, {
         selection,
+        freshness: {
+          scope: DASHBOARD_REFRESH_SCOPE,
+          queryString,
+          initialObservedAt: observedAt,
+          initialLastSuccessAt: null,
+          hasSnapshot: false
+        },
         ...(traceLookup !== undefined && { traceLookup })
       })
     );
@@ -397,6 +388,13 @@ export default async function UsagePage({
       selection,
       fleetView,
       mcpInventory,
+      freshness: {
+        scope: DASHBOARD_REFRESH_SCOPE,
+        queryString,
+        initialObservedAt: observedAt,
+        initialLastSuccessAt: observedAt,
+        hasSnapshot: true
+      },
       ...(traceLookup !== undefined && { traceLookup })
     })
   );
@@ -578,7 +576,9 @@ async function renderSessionScopedPage(
             includeItems: true,
             itemsLimit: viewState.itemsLimit,
             itemsOffset: viewState.itemsOffset,
-            ...(viewState.threadId !== undefined && { threadId: viewState.threadId })
+            ...(viewState.threadId !== undefined && {
+              threadId: viewState.threadId
+            })
           },
           config
         ).then((result) =>
@@ -632,6 +632,8 @@ async function renderSessionScopedPage(
       spansFailure: spansFailureValue,
       spanHrefFor
     }),
-    ...(traceResult !== undefined && { traceLookup: usageTraceLookup(traceResult) })
+    ...(traceResult !== undefined && {
+      traceLookup: usageTraceLookup(traceResult)
+    })
   });
 }

@@ -54,15 +54,18 @@ import {
   getRouterStatus,
   handle,
   HOST,
+  initializeWorkerSharedState,
   PORT,
   recordProviderSignIn
 } from "./http.ts";
+import { configuredControlApiListener } from "./control-plane-config.ts";
 import {
   isClientDisconnectError,
   ROUTER_INSTANCE_ID,
   transportErrorInfo
 } from "./proxy.ts";
 import { QUOTA_POLL, quotaAxiArgs as quotaAxiArguments } from "./quota-poll.ts";
+import type { SharedRouterStateClient } from "./shared-state-ipc.ts";
 
 const IS_MAIN = isEntryPoint(import.meta.url);
 
@@ -145,30 +148,6 @@ export function createControlApiServer(): Server {
   return server;
 }
 
-function configuredControlApiListener(
-  routerPort: number
-): { host: string; port: number } | null {
-  if (
-    process.env.AUTODEV_CONTROL_API_DISABLED === "1" ||
-    process.env.AUTODEV_CONTROL_API_LISTEN_HOST === "none"
-  ) {
-    return null;
-  }
-  // Only bind the default port 4101 when running on standard router port 4100 or when explicitly configured
-  if (routerPort !== 4100 && !process.env.AUTODEV_CONTROL_API_LISTEN_HOST) {
-    return null;
-  }
-  const host = process.env.AUTODEV_CONTROL_API_LISTEN_HOST?.trim() || "0.0.0.0";
-  const rawPort = process.env.AUTODEV_CONTROL_API_LISTEN_PORT?.trim();
-  const port = rawPort ? Number(rawPort) : 4101;
-  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
-    throw new Error(
-      "AUTODEV_CONTROL_API_LISTEN_PORT must be between 1 and 65535."
-    );
-  }
-  return { host, port };
-}
-
 export function startRouterServer(port = PORT, host = HOST): Server {
   loadRouterState();
   const server = createServer((request, response) => {
@@ -183,6 +162,7 @@ export function startRouterServer(port = PORT, host = HOST): Server {
   const quotaAxiAbort = new AbortController();
   let controlServer: Server | null = null;
   let xacpxIpcServer: XacpxOrchestrationIpcHandle | null = null;
+  let sharedStateClient: SharedRouterStateClient | null = null;
   let isCleanedUp = false;
   let playtestingShutdown: Promise<void> | null = null;
   const modelDiscovery = IS_MAIN
@@ -345,6 +325,10 @@ export function startRouterServer(port = PORT, host = HOST): Server {
       void xacpxIpcServer.close().catch(() => undefined);
       xacpxIpcServer = null;
     }
+    if (sharedStateClient) {
+      sharedStateClient.close();
+      sharedStateClient = null;
+    }
     void SHARED_XACPX_SESSION_MANAGER.closeAllSessions().catch(() => undefined);
     if (quotaPollInterval !== null) {
       clearInterval(quotaPollInterval);
@@ -376,98 +360,131 @@ export function startRouterServer(port = PORT, host = HOST): Server {
   try {
     server.listen(port, host, () => {
       if (isCleanedUp) return;
-      try {
-        if (process.env.AUTODEV_ROUTER_WORKER_GENERATION && process.send) {
+      void (async () => {
+        try {
+          const workerGenerationId =
+            process.env.AUTODEV_ROUTER_WORKER_GENERATION?.trim();
+          const workerXacpxSocket =
+            process.env.AUTODEV_WORKER_XACPX_SOCKET?.trim();
+          if (workerGenerationId) {
+            sharedStateClient = await initializeWorkerSharedState();
+          }
           const bound = server.address();
           if (!bound || typeof bound === "string") {
-            throw new Error("Router worker did not bind a TCP listener");
-          }
-          process.send({
-            type: "autodev-router-worker-listening",
-            generationId: process.env.AUTODEV_ROUTER_WORKER_GENERATION,
-            port: bound.port
-          });
-        }
-        const controlListener = configuredControlApiListener(port);
-        if (controlListener) {
-          controlServer = createControlApiServer();
-          controlServer.once("error", (error) => {
-            cleanup();
-            server.close();
-            handleFatalProcessError("control_api_listener_error", error);
-          });
-          controlServer.listen(
-            controlListener.port,
-            controlListener.host,
-            () => {
-              writeErrorLine(
-                `AutoDev Control API listening at http://${controlListener.host}:${controlListener.port}`
-              );
-            }
-          );
-        }
-        const configuredXacpxSocket =
-          process.env.AUTODEV_XACPX_ORCHESTRATION_SOCKET?.trim();
-        if (
-          configuredXacpxSocket !== "none" &&
-          (IS_MAIN || Boolean(configuredXacpxSocket))
-        ) {
-          const socketPath = resolveXacpxOrchestrationSocketPath(
-            undefined,
-            process.env
-          );
-          void startXacpxOrchestrationIpcServer({
-            socketPath,
-            manager: SHARED_XACPX_SESSION_MANAGER
-          })
-            .then((handle) => {
-              if (isCleanedUp) {
-                void handle.close().catch(() => undefined);
-                return;
-              }
-              xacpxIpcServer = handle;
-              writeErrorLine(
-                `AutoDev XACPX orchestration IPC listening at ${handle.socketPath}`
-              );
-            })
-            .catch(() => {
-              writeErrorLine("AutoDev XACPX orchestration IPC startup failed.");
-            });
-        }
-        if (getControlApiAvailability().enabled) {
-          try {
-            void warmupDefaultPlaytestingRepository().catch(() => {
-              writeErrorLine("Playtesting schema startup warmup failed.");
-            });
-          } catch {
-            writeErrorLine("Playtesting schema startup warmup failed.");
-          }
-        }
-        // Defer heavy external provider probes until after both HTTP listeners
-        // have bound and can service readiness probes.
-        backgroundWarmupTimer = setTimeout(() => {
-          backgroundWarmupTimer = null;
-          if (isCleanedUp) return;
-          modelDiscovery?.start();
-          if (!IS_MAIN) {
-            return;
+            throw new Error("Router server did not bind a TCP listener");
           }
 
-          void refreshQuotaAxi().catch(() => undefined);
-          quotaPollInterval = setInterval(() => {
+          const configuredXacpxSocket =
+            process.env.AUTODEV_XACPX_ORCHESTRATION_SOCKET?.trim();
+          let startedXacpxSocket: string | null = null;
+          if (workerXacpxSocket) {
+            const handle = await startXacpxOrchestrationIpcServer({
+              socketPath: workerXacpxSocket,
+              manager: SHARED_XACPX_SESSION_MANAGER
+            });
+            if (isCleanedUp) {
+              void handle.close().catch(() => undefined);
+              return;
+            }
+            xacpxIpcServer = handle;
+            startedXacpxSocket = handle.socketPath;
+            writeErrorLine(
+              `AutoDev worker XACPX orchestration IPC listening at ${handle.socketPath}`
+            );
+          } else if (
+            configuredXacpxSocket !== "none" &&
+            (IS_MAIN || Boolean(configuredXacpxSocket))
+          ) {
+            const socketPath = resolveXacpxOrchestrationSocketPath(
+              undefined,
+              process.env
+            );
+            void startXacpxOrchestrationIpcServer({
+              socketPath,
+              manager: SHARED_XACPX_SESSION_MANAGER
+            })
+              .then((handle) => {
+                if (isCleanedUp) {
+                  void handle.close().catch(() => undefined);
+                  return;
+                }
+                xacpxIpcServer = handle;
+                writeErrorLine(
+                  `AutoDev XACPX orchestration IPC listening at ${handle.socketPath}`
+                );
+              })
+              .catch(() => {
+                writeErrorLine(
+                  "AutoDev XACPX orchestration IPC startup failed."
+                );
+              });
+          }
+
+          const controlListener = configuredControlApiListener(port);
+          if (controlListener) {
+            controlServer = createControlApiServer();
+            controlServer.once("error", (error) => {
+              cleanup();
+              server.close();
+              handleFatalProcessError("control_api_listener_error", error);
+            });
+            controlServer.listen(
+              controlListener.port,
+              controlListener.host,
+              () => {
+                writeErrorLine(
+                  `AutoDev Control API listening at http://${controlListener.host}:${controlListener.port}`
+                );
+              }
+            );
+          }
+
+          if (workerGenerationId && process.send) {
+            process.send({
+              type: "autodev-router-worker-listening",
+              generationId: workerGenerationId,
+              port: bound.port,
+              ...(startedXacpxSocket !== null && {
+                xacpxSocket: startedXacpxSocket
+              })
+            });
+          }
+
+          if (getControlApiAvailability().enabled) {
+            try {
+              void warmupDefaultPlaytestingRepository().catch(() => {
+                writeErrorLine("Playtesting schema startup warmup failed.");
+              });
+            } catch {
+              writeErrorLine("Playtesting schema startup warmup failed.");
+            }
+          }
+          // Defer heavy external provider probes until after both HTTP listeners
+          // have bound and can service readiness probes.
+          backgroundWarmupTimer = setTimeout(() => {
+            backgroundWarmupTimer = null;
+            if (isCleanedUp) return;
+            modelDiscovery?.start();
+            if (!IS_MAIN) {
+              return;
+            }
+
             void refreshQuotaAxi().catch(() => undefined);
-          }, 60_000);
-          quotaPollInterval.unref();
-        }, 50);
-        backgroundWarmupTimer.unref();
-        writeErrorLine(
-          `Codex model router listening at http://${host}:${port}`
-        );
-      } catch (error) {
-        cleanup();
-        server.close();
-        handleFatalProcessError("router_startup_error", error);
-      }
+            quotaPollInterval = setInterval(() => {
+              void refreshQuotaAxi().catch(() => undefined);
+            }, 60_000);
+            quotaPollInterval.unref();
+          }, 50);
+          backgroundWarmupTimer.unref();
+          writeErrorLine(
+            `Codex model router listening at http://${host}:${port}`
+          );
+        } catch (error) {
+          cleanup();
+          server.close();
+          handleFatalProcessError("router_startup_error", error);
+        }
+      })();
     });
   } catch (error) {
     cleanup();

@@ -149,11 +149,10 @@ test("workspace overview distinguishes batches, episodes, findings, and comparis
   page
 }) => {
   await page.goto(PLAYTESTING_OVERVIEW_URL);
+  const viewsNav = page.getByRole("navigation", { name: "Playtesting views" });
+  await expect(viewsNav).toBeVisible();
   await expect(
-    page.getByRole("navigation", { name: "Playtesting views" })
-  ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "Overview", exact: true })
+    viewsNav.getByRole("link", { name: "Overview", exact: true })
   ).toHaveAttribute("aria-current", "page");
   await expect(page.getByText("Latest result")).toBeVisible();
   const dialog = await openNewPlaytest(page);
@@ -507,7 +506,26 @@ test("visual session Analyze dispatch sends the selected session and shows its d
           ],
           receipts: [],
           budget: [],
-          analysis: null
+          analysis: {
+            analysisId: "analysis-visual-debrief-fixture",
+            workspaceId: FIXTURE_WORKSPACE_ID,
+            status: "running",
+            createdAt: "2026-10-16T12:00:00.000Z",
+            finishedAt: null,
+            requestedEpisodeIds: [VISUAL_DEBRIEF_EPISODE_ID],
+            packets: [
+              {
+                episodeId: VISUAL_DEBRIEF_EPISODE_ID,
+                batchId: "batch-visual-debrief",
+                packetId: "packet-visual-debrief-fixture"
+              }
+            ],
+            receipts: [],
+            budget: [],
+            reviews: [],
+            synthesisId: null,
+            error: null
+          }
         }
       })
     });

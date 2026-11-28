@@ -106,6 +106,7 @@ test("the route dispatches the selected packets and returns every receipt", asyn
           ],
           budget: [],
           reviews: [],
+          synthesisId: null,
           error: null
         }
       });
@@ -282,6 +283,7 @@ test("status reads are workspace-scoped and keep the Runtime run identity", asyn
             receipts: [],
             budget: [],
             reviews: [],
+            synthesisId: null,
             error: null
           }
         ]

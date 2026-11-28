@@ -65,6 +65,12 @@ export type UsageWidgetId =
   | "provider-hops-by-role"
   | "provider-hops-by-workspace"
   | "provider-hops-by-reason"
+  | "agent-launches-root-stages"
+  | "agent-launches-child-stages"
+  | "agent-launches-root-rejections"
+  | "agent-launches-child-rejections"
+  | "agent-launches-failed-before-start-by-provider"
+  | "agent-launches-by-role"
   | "skill-events-by-event"
   | "estimated-cost";
 
@@ -138,6 +144,60 @@ export type UsageGitChangeStatus =
 
 export type UsageGitChangeNotApplicableReason =
   "active-sessions" | "unsupported-filter";
+
+/**
+Filters `autodev.agent.launches` never carry on any stage.
+*/
+export type UsageAgentLaunchUnsupportedFilter = "skill";
+
+/**
+Filters omitted on pre-selection `attempted` and `rejected` stages because
+the launch was evaluated before provider/model selection.
+*/
+export type UsageAgentLaunchPreSelectionFilter = "provider" | "model";
+
+export type UsageAgentLaunchStatus = UsageGitChangeStatus;
+
+export type UsageAgentLaunchNotApplicableReason =
+  UsageGitChangeNotApplicableReason;
+
+/**
+Stage and outcome counters for one launch kind (`root` or `child`).
+Pre-selection counters (`attempted`, `rejected`, `resolved`, `pending`,
+`launchSuccessRatePercent`, `rejectionReasons`) become `null` when Usage is
+filtered by `provider` or `model`.
+*/
+export interface UsageAgentLaunchSummary {
+  readonly attempted: number | null;
+  readonly admitted: number | null;
+  readonly rejected: number | null;
+  readonly started: number | null;
+  readonly failedBeforeStart: number | null;
+  readonly resolved: number | null;
+  readonly pending: number | null;
+  readonly launchSuccessRatePercent: number | null;
+  readonly succeeded: number | null;
+  readonly failed: number | null;
+  readonly cancelled: number | null;
+  readonly rejectionReasons: readonly UsageBreakdownCount[] | null;
+}
+
+/**
+Bounded launch attempt, admission, pre-start failure, and work outcome
+counters from `autodev.agent.launches` (`root` and `child` kept separate).
+*/
+export interface UsageAgentLaunchMetrics {
+  readonly status: UsageAgentLaunchStatus;
+  readonly notApplicableReason: UsageAgentLaunchNotApplicableReason | null;
+  readonly unsupportedFilters: readonly UsageAgentLaunchUnsupportedFilter[];
+  readonly preSelectionApplicable: boolean;
+  readonly preSelectionUnsupportedFilters: readonly UsageAgentLaunchPreSelectionFilter[];
+  readonly breakdownsPartial: boolean;
+  readonly root: UsageAgentLaunchSummary;
+  readonly child: UsageAgentLaunchSummary;
+  readonly failedBeforeStartByProvider: readonly UsageBreakdownCount[] | null;
+  readonly attemptsByRole: readonly UsageBreakdownCount[] | null;
+}
 
 /**
 Bounded Git output measurements from commit-owned Runtime metric counters.
@@ -420,6 +480,7 @@ export interface UsageMetricsData {
   Logical routed requests grouped by workspace; null when not observed.
   */
   readonly requestsByWorkspace: UsageWorkspaceRequestBreakdown | null;
+  readonly agentLaunches: UsageAgentLaunchMetrics;
   readonly attemptsByProvider:
     readonly { readonly provider: string; readonly count: number }[] | null;
   /**

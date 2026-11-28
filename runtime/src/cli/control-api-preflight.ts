@@ -1,7 +1,12 @@
 import {
   CONTROL_API_CONTRACT,
-  CONTROL_API_PLAYTESTING_READINESS_SCHEMA,
+  controlApiContractResponseSchema,
+  controlApiEvaluationsResponseSchema,
+  controlApiPlaytestingCapabilitiesPreflightSchema,
+  controlApiPlaytestingReadinessResponseSchema,
   controlApiProviderModelsResponseSchema,
+  controlApiProvidersResponseSchema,
+  type ControlApiProvidersResponse,
   isRecord,
   LOCAL_CONTROL_API_ACTOR
 } from "@simulatorlife/autodev-core";
@@ -37,96 +42,16 @@ export class ControlApiUnavailableError extends Error {
 }
 
 function isControlApiContractResponse(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    value.schema === CONTROL_API_CONTRACT.schema &&
-    value.version === CONTROL_API_CONTRACT.version
-  );
-}
-
-function isControlApiProvidersResponse(value: unknown): value is {
-  readonly schema: "autodev-control-providers-v5";
-  readonly quotaAxi: unknown;
-  readonly providers: readonly {
-    readonly id: string;
-    readonly links: {
-      readonly usage: string | null;
-      readonly documentation: string | null;
-    };
-  }[];
-} {
-  if (
-    !isRecord(value) ||
-    value.schema !== "autodev-control-providers-v5" ||
-    (value.quotaAxi !== null && !isRecord(value.quotaAxi)) ||
-    !Array.isArray(value.providers)
-  ) {
-    return false;
-  }
-  const providerIds = new Set<string>();
-  for (const provider of value.providers) {
-    if (
-      !isRecord(provider) ||
-      typeof provider.id !== "string" ||
-      provider.id.trim() !== provider.id ||
-      provider.id.length === 0 ||
-      providerIds.has(provider.id) ||
-      !isRecord(provider.links) ||
-      (provider.links.usage !== null &&
-        typeof provider.links.usage !== "string") ||
-      (provider.links.documentation !== null &&
-        typeof provider.links.documentation !== "string")
-    ) {
-      return false;
-    }
-    providerIds.add(provider.id);
-  }
-  return true;
+  return controlApiContractResponseSchema.safeParse(value).success;
 }
 
 function isPlaytestingCapabilitiesResponse(
   value: unknown,
   workspaceId: string
 ): boolean {
-  if (
-    !isRecord(value) ||
-    value.schema !== "autodev-control-playtesting-capabilities-v3" ||
-    value.workspaceId !== workspaceId ||
-    !isRecord(value.modeReadiness)
-  ) {
-    return false;
-  }
-  for (const mode of [
-    "adapter-accelerated",
-    "autonomous-visual",
-    "scripted-regression"
-  ] as const) {
-    const readiness = value.modeReadiness[mode];
-    if (
-      !isRecord(readiness) ||
-      (readiness.status !== "ready" &&
-        readiness.status !== "check-required" &&
-        readiness.status !== "unavailable") ||
-      !Array.isArray(readiness.reasons)
-    ) {
-      return false;
-    }
-  }
-  const visual = value.modeReadiness["autonomous-visual"];
-  return (
-    isRecord(visual) &&
-    (visual.targetStore === "available" ||
-      visual.targetStore === "unavailable") &&
-    Array.isArray(visual.targets) &&
-    visual.targets.every((entry) => {
-      if (!isRecord(entry) || !isRecord(entry.target)) return false;
-      return (
-        (entry.eligibility === "supported" ||
-          entry.eligibility === "unsupported") &&
-        Array.isArray(entry.reasons)
-      );
-    })
-  );
+  const parsed =
+    controlApiPlaytestingCapabilitiesPreflightSchema.safeParse(value);
+  return parsed.success && parsed.data.workspaceId === workspaceId;
 }
 
 /**
@@ -268,12 +193,11 @@ async function verifyPlaytestingRoutes(
     readinessError && typeof readinessError.code === "string"
       ? readinessError.code
       : "";
+  const parsedReadiness =
+    controlApiPlaytestingReadinessResponseSchema.safeParse(readiness.body);
   const currentReadinessResponse =
-    isRecord(readiness.body) &&
-    readiness.body.schema === CONTROL_API_PLAYTESTING_READINESS_SCHEMA &&
-    readiness.body.workspaceId === DEV_PROBE_WORKSPACE_ID &&
-    (readiness.body.status === "initializing" ||
-      readiness.body.status === "ready");
+    parsedReadiness.success &&
+    parsedReadiness.data.workspaceId === DEV_PROBE_WORKSPACE_ID;
   const currentReadinessError =
     readinessCode.startsWith("autodev_control_playtesting_") &&
     readinessCode !== "autodev_control_playtesting_unknown_path";
@@ -343,10 +267,13 @@ async function verifyControlApiCompatibilityOnce(
       `the Providers endpoint returned HTTP ${providers.response.status}`
     );
   }
-  const providerData = providers.body;
-  if (!providers.response.ok || !isControlApiProvidersResponse(providerData)) {
+  const parsedProviders = controlApiProvidersResponseSchema.safeParse(
+    providers.body
+  );
+  if (!providers.response.ok || !parsedProviders.success) {
     throw startupError("the current Providers v5 response contract is missing");
   }
+  const providerData: ControlApiProvidersResponse = parsedProviders.data;
 
   const providerIds = new Set(providerData.providers.map(({ id }) => id));
   await verifyProviderModelDiscovery(request, providerIds);
@@ -376,9 +303,7 @@ async function verifyEvaluationsRoute(request: ControlApiProbe): Promise<void> {
   }
   if (
     !evaluations.response.ok ||
-    !isRecord(evaluations.body) ||
-    evaluations.body.schema !== "autodev-control-evaluations-v1" ||
-    !Array.isArray(evaluations.body.evaluations)
+    !controlApiEvaluationsResponseSchema.safeParse(evaluations.body).success
   ) {
     throw startupError(
       "the current Evaluations v1 response contract is missing"

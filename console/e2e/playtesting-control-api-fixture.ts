@@ -1220,7 +1220,7 @@ async function applyMcpDeclarationWrite(
   url: URL
 ): Promise<boolean> {
   const match = url.pathname.match(MCP_SERVER_ROUTE);
-  if ((match === null) || (request.method !== "PATCH")) return false;
+  if (match === null || request.method !== "PATCH") return false;
   const server = decodeURIComponent(match[1] ?? "");
   const body = await readJsonBody(request);
   const expectedRevision = body?.expectedRevision;
@@ -1320,7 +1320,10 @@ function readLaunchArguments(
   current: readonly string[]
 ): readonly string[] {
   if (raw === null) return [];
-  if (Array.isArray(raw) && raw.every((argument) => typeof argument === "string")) {
+  if (
+    Array.isArray(raw) &&
+    raw.every((argument) => typeof argument === "string")
+  ) {
     return raw as string[];
   }
   return current;
@@ -2015,13 +2018,32 @@ function syntheticVisualLaunchShapeIsValid(
   launch: Record<string, unknown>,
   limits: unknown
 ): boolean {
-  if (!isSyntheticVisualReadinessEnabled || (Object.keys(launch).length !== SYNTHETIC_VISUAL_LAUNCH_KEYS.size)) {
+  if (
+    !isSyntheticVisualReadinessEnabled ||
+    Object.keys(launch).length !== SYNTHETIC_VISUAL_LAUNCH_KEYS.size
+  ) {
     return false;
   }
-  if (Object.keys(launch).some((key) => !SYNTHETIC_VISUAL_LAUNCH_KEYS.has(key)) || (launch.schema !== PLAYTEST_LAUNCH_REQUEST_SCHEMA)) return false;
-  if ((launch.workspaceId !== WORKSPACE_ID) || (launch.targetId !== SYNTHETIC_VISUAL_TARGET.targetId)) return false;
-  if ((launch.policyId !== FIXTURE_SMART_DIRECT_POLICY) || (launch.capabilityRevision !== FIXTURE_CAPABILITY_REVISION)) return false;
-  if ((typeof launch.requestId !== "string") || !REQUEST_ID_PATTERN.test(launch.requestId)) return false;
+  if (
+    Object.keys(launch).some((key) => !SYNTHETIC_VISUAL_LAUNCH_KEYS.has(key)) ||
+    launch.schema !== PLAYTEST_LAUNCH_REQUEST_SCHEMA
+  )
+    return false;
+  if (
+    launch.workspaceId !== WORKSPACE_ID ||
+    launch.targetId !== SYNTHETIC_VISUAL_TARGET.targetId
+  )
+    return false;
+  if (
+    launch.policyId !== FIXTURE_SMART_DIRECT_POLICY ||
+    launch.capabilityRevision !== FIXTURE_CAPABILITY_REVISION
+  )
+    return false;
+  if (
+    typeof launch.requestId !== "string" ||
+    !REQUEST_ID_PATTERN.test(launch.requestId)
+  )
+    return false;
   if (!limits || typeof limits !== "object" || Array.isArray(limits)) {
     return false;
   }
@@ -2042,13 +2064,29 @@ function syntheticVisualLimitsWithinApproval(
 ): boolean {
   const approved = SYNTHETIC_VISUAL_TARGET.limits;
   const episodes = Number(limits.episodeCount);
-  if (!Number.isSafeInteger(limits.episodeCount) || episodes < 1 || (episodes > approved.episodeCount)) return false;
+  if (
+    !Number.isSafeInteger(limits.episodeCount) ||
+    episodes < 1 ||
+    episodes > approved.episodeCount
+  )
+    return false;
   const steps = Number(limits.maxStepsPerEpisode);
-  if (!Number.isSafeInteger(limits.maxStepsPerEpisode) || steps < 1 || (steps > approved.maxStepsPerEpisode)) return false;
-  if ((limits.wallTimeMs !== approved.wallTimeMs) || (limits.smartRequestsPerEpisode !== approved.smartRequestsPerEpisode)) {
+  if (
+    !Number.isSafeInteger(limits.maxStepsPerEpisode) ||
+    steps < 1 ||
+    steps > approved.maxStepsPerEpisode
+  )
+    return false;
+  if (
+    limits.wallTimeMs !== approved.wallTimeMs ||
+    limits.smartRequestsPerEpisode !== approved.smartRequestsPerEpisode
+  ) {
     return false;
   }
-  if ((limits.smartTokensPerEpisode !== approved.smartTokensPerEpisode) || (limits.screenshotCountPerEpisode !== approved.screenshotCountPerEpisode)) {
+  if (
+    limits.smartTokensPerEpisode !== approved.smartTokensPerEpisode ||
+    limits.screenshotCountPerEpisode !== approved.screenshotCountPerEpisode
+  ) {
     return false;
   }
   if (limits.artifactBytesPerEpisode !== approved.artifactBytesPerEpisode) {
@@ -2458,7 +2496,10 @@ async function handleSyntheticRunMutation(
   response: ServerResponse,
   url: URL
 ): Promise<boolean> {
-  if ((await handleSyntheticComparisonMutation(request, response, url)) || (await handleSyntheticLaunchMutation(request, response, url))) {
+  if (
+    (await handleSyntheticComparisonMutation(request, response, url)) ||
+    (await handleSyntheticLaunchMutation(request, response, url))
+  ) {
     return true;
   }
   return handleSyntheticCancellationMutation(request, response, url);
@@ -2585,12 +2626,16 @@ function handleSyntheticReadFailureConfig(
     }
     case "/fixture/run-ack-failure": {
       isFailNextRunAcknowledgement = url.searchParams.get("mode") === "once";
-      sendJson(response, { failNextRunAcknowledgement: isFailNextRunAcknowledgement });
+      sendJson(response, {
+        failNextRunAcknowledgement: isFailNextRunAcknowledgement
+      });
       return true;
     }
     case "/fixture/run-by-request-not-found": {
       isFailNextRunByRequestLookup = url.searchParams.get("mode") === "once";
-      sendJson(response, { failNextRunByRequestLookup: isFailNextRunByRequestLookup });
+      sendJson(response, {
+        failNextRunByRequestLookup: isFailNextRunByRequestLookup
+      });
       return true;
     }
     case "/fixture/run-count": {
@@ -2610,13 +2655,17 @@ function handleSyntheticReadFailureConfig(
     }
     case "/fixture/analyses-read-fail": {
       isSyntheticAnalystRunsReadFails = url.searchParams.get("mode") !== "off";
-      sendJson(response, { syntheticAnalystRunsReadFails: isSyntheticAnalystRunsReadFails });
+      sendJson(response, {
+        syntheticAnalystRunsReadFails: isSyntheticAnalystRunsReadFails
+      });
       return true;
     }
     case "/fixture/analyst-history": {
       isSyntheticAnalystTaskHistoryMissing =
         url.searchParams.get("mode") === "missing";
-      sendJson(response, { syntheticAnalystTaskHistoryMissing: isSyntheticAnalystTaskHistoryMissing });
+      sendJson(response, {
+        syntheticAnalystTaskHistoryMissing: isSyntheticAnalystTaskHistoryMissing
+      });
       return true;
     }
     default: {
@@ -2686,6 +2735,7 @@ function sendSyntheticCapabilities(response: ServerResponse): void {
     })),
     limits: approved ? limits : null,
     issueReporting: approved ? workspaceApproval.issueReporting : "disabled",
+    configuredIssueReporting: "disabled",
     humanStudyAllowed: approved ? workspaceApproval.humanStudyAllowed : false,
     revokedAt: workspaceApproval?.revokedAt ?? null,
     runPreflight: "required-at-start"
@@ -3212,7 +3262,8 @@ function configureReadinessFixture(
   response: ServerResponse
 ): boolean {
   if (url.pathname !== "/fixture/readiness") return false;
-  isSyntheticReadinessUnavailable = url.searchParams.get("unavailable") === "on";
+  isSyntheticReadinessUnavailable =
+    url.searchParams.get("unavailable") === "on";
   const polls = Number(url.searchParams.get("pendingPolls") ?? 0);
   syntheticReadinessPendingPolls = Number.isSafeInteger(polls)
     ? Math.max(0, Math.min(10, polls))
@@ -3592,7 +3643,7 @@ async function handleAgentEnablementMutation(
   url: URL
 ): Promise<boolean> {
   const match = url.pathname.match(AGENT_DETAIL_ROUTE);
-  if ((match === null) || (request.method !== "PATCH")) return false;
+  if (match === null || request.method !== "PATCH") return false;
 
   const role = decodeURIComponent(match[1]);
   const body = await readJsonBody(request);
@@ -3744,7 +3795,7 @@ async function applyWorkspaceConfigWrite(
   url: URL
 ): Promise<boolean> {
   const match = url.pathname.match(WORKSPACE_CONFIGURATION_ROUTE);
-  if ((match === null) || (request.method !== "PATCH")) return false;
+  if (match === null || request.method !== "PATCH") return false;
 
   const workspaceId = `${decodeURIComponent(match[1] ?? "")}/${decodeURIComponent(match[2] ?? "")}`;
   if (workspaceId !== workspaceConfig.id) {
@@ -3844,9 +3895,7 @@ async function applyWorkspaceConfigWrite(
   });
   const isChanged = before !== after;
   if (isChanged) {
-    workspaceConfig.revision = nextWorkspaceRevision(
-      workspaceConfig.revision
-    );
+    workspaceConfig.revision = nextWorkspaceRevision(workspaceConfig.revision);
   }
   sendJson(response, {
     schema: "autodev-control-workspace-patch-v2",
@@ -3956,9 +4005,7 @@ function configureWorkspaceFixture(
     workspaceConfig.agentRoles = null;
     workspaceConfig.revision = INITIAL_WORKSPACE_REVISION;
   } else if (state === FIXTURE_STATE_REVISION_MOVED) {
-    workspaceConfig.revision = nextWorkspaceRevision(
-      workspaceConfig.revision
-    );
+    workspaceConfig.revision = nextWorkspaceRevision(workspaceConfig.revision);
   } else {
     sendJson(
       response,
@@ -4308,7 +4355,8 @@ function handleGithubRead(
       response.writeHead(405).end();
       return true;
     }
-    isGithubRuntimeUnavailable = url.searchParams.get("state") === "unavailable";
+    isGithubRuntimeUnavailable =
+      url.searchParams.get("state") === "unavailable";
     sendJson(response, {
       state: isGithubRuntimeUnavailable ? "unavailable" : "observed"
     });
@@ -4354,11 +4402,23 @@ The Runtime's read-only live projection, and the fixture's control over it.
 `/fixture/runtime/state` takes the Runtime away, so a page that reads it
 has to say that the read failed rather than showing an idle Runtime.
 */
+let mcpRuntimeState: "ready" | "stale" = "ready";
+
 function handleRuntimeFixture(
   request: IncomingMessage,
   response: ServerResponse,
   url: URL
 ): boolean {
+  if (url.pathname === "/fixture/mcp-runtime/state") {
+    if (request.method !== "POST") {
+      response.writeHead(405).end();
+      return true;
+    }
+    mcpRuntimeState =
+      url.searchParams.get("state") === "stale" ? "stale" : "ready";
+    sendJson(response, { state: mcpRuntimeState });
+    return true;
+  }
   if (url.pathname === "/fixture/runtime/state") {
     if (request.method !== "POST") {
       response.writeHead(405).end();
@@ -4712,23 +4772,24 @@ function handleCatalogResourceRead(
     // separate read from the catalog, and it carries only the servers the
     // Runtime actually reached -- the catalog's other two servers have never
     // been seen, and the page has to say so rather than borrow this verdict.
+    const isStale = mcpRuntimeState === "stale";
     sendJson(response, {
       schema: "autodev-control-mcp-runtime-v1",
-      source: "runtime.telemetry",
+      source: "mcp-gateway",
       observedServers: 1,
       health: {
-        ready: 1,
+        ready: isStale ? 0 : 1,
         error: 0,
-        stale: 0,
+        stale: isStale ? 1 : 0,
         configured: 0,
         observed: 0
       },
       servers: [
         {
           name: "openaiDeveloperDocs",
-          health: "ready",
+          health: mcpRuntimeState,
           lastSeenAt: "2026-10-22T12:00:00.000Z",
-          lastStatus: "ready",
+          lastStatus: isStale ? "ok" : "ready",
           initAttempts: 2,
           toolDiscoveryAttempts: 1,
           failures: 0,
@@ -4737,9 +4798,9 @@ function handleCatalogResourceRead(
           roles: [
             {
               role: "orchestrator",
-              health: "ready",
+              health: mcpRuntimeState,
               lastSeenAt: "2026-10-22T12:00:00.000Z",
-              lastStatus: "ready"
+              lastStatus: isStale ? "ok" : "ready"
             }
           ],
           tools: [{ name: "search_docs", count: 6, errors: 0 }]
@@ -4799,7 +4860,7 @@ function handleCatalogResourceRead(
     sendJson(response, {
       schema: "autodev-control-skills-v2",
       source: ".rulesync/skills",
-      readOnly: false,
+      readOnly: true,
       executionContractObserved: true,
       valid: true,
       issues: [],
@@ -4825,7 +4886,8 @@ function handleCatalogResourceRead(
           // Nothing has been observed for this skill, and that is not the
           // same as observing that it was never exposed or used.
           observedExposure: null,
-          observedUse: null
+          observedUse: null,
+          observedError: null
         },
         {
           name: "release-notes",
@@ -4840,7 +4902,8 @@ function handleCatalogResourceRead(
           scopeLocation: null,
           workspace: null,
           observedExposure: null,
-          observedUse: null
+          observedUse: null,
+          observedError: null
         }
       ],
       unresolvedAssignments: []
@@ -4852,7 +4915,7 @@ function handleCatalogResourceRead(
     sendJson(response, {
       schema: "autodev-control-prompts-v2",
       source: ".rulesync/prompts",
-      readOnly: false,
+      readOnly: true,
       valid: true,
       issues: [],
       totalCommands: 1,
@@ -5089,7 +5152,18 @@ function handleFixtureCatalogRoutes(
   response: ServerResponse,
   url: URL
 ): boolean {
-  if (configureSkillFixture(request, response, url) || configureMcpFixture(request, response, url) || configureHookFixture(request, response, url) || configureWorkspaceFixture(request, response, url) || configurePermissionPolicyFixture(request, response, url) || configureCanonicalSourceFixture(request, response, url) || handleRuntimeFixture(request, response, url) || handleGithubRead(request, response, url) || handleEvaluationsRead(url, response)) return true;
+  if (
+    configureSkillFixture(request, response, url) ||
+    configureMcpFixture(request, response, url) ||
+    configureHookFixture(request, response, url) ||
+    configureWorkspaceFixture(request, response, url) ||
+    configurePermissionPolicyFixture(request, response, url) ||
+    configureCanonicalSourceFixture(request, response, url) ||
+    handleRuntimeFixture(request, response, url) ||
+    handleGithubRead(request, response, url) ||
+    handleEvaluationsRead(url, response)
+  )
+    return true;
   return handleCatalogResourceRead(url, response);
 }
 
@@ -5297,7 +5371,18 @@ async function handleSyntheticMutationRoutes(
   response: ServerResponse,
   url: URL
 ): Promise<boolean> {
-  if ((await handleSyntheticWorkspaceApproval(request, response, url.pathname)) || (await handleSyntheticAnalysisMutation(request, response, url)) || (await handleSyntheticRunMutation(request, response, url)) || handleSyntheticReadinessInitialization(request, response, url) || (await handleSyntheticSkillRoleMutation(request, response, url)) || (await handleAgentEnablementMutation(request, response, url)) || (await handleProviderRoleMutation(request, response, url)) || (await handleAgentModelMutation(request, response, url)) || configureProviderRoleFixture(request, response, url) || (await applyMcpDeclarationWrite(response, request, url))) {
+  if (
+    (await handleSyntheticWorkspaceApproval(request, response, url.pathname)) ||
+    (await handleSyntheticAnalysisMutation(request, response, url)) ||
+    (await handleSyntheticRunMutation(request, response, url)) ||
+    handleSyntheticReadinessInitialization(request, response, url) ||
+    (await handleSyntheticSkillRoleMutation(request, response, url)) ||
+    (await handleAgentEnablementMutation(request, response, url)) ||
+    (await handleProviderRoleMutation(request, response, url)) ||
+    (await handleAgentModelMutation(request, response, url)) ||
+    configureProviderRoleFixture(request, response, url) ||
+    (await applyMcpDeclarationWrite(response, request, url))
+  ) {
     return true;
   }
   if (url.pathname.startsWith("/control/hooks/")) {
@@ -5408,7 +5493,13 @@ const server = createServer(
       response.writeHead(200).end("ok");
       return;
     }
-    if (resetSyntheticFixture(request, response) || configureReadinessFixture(url, response) || handleSyntheticReadFailureConfig(url, response) || (await handleSyntheticMutationRoutes(request, response, url))) return;
+    if (
+      resetSyntheticFixture(request, response) ||
+      configureReadinessFixture(url, response) ||
+      handleSyntheticReadFailureConfig(url, response) ||
+      (await handleSyntheticMutationRoutes(request, response, url))
+    )
+      return;
     // The catalog and the fixture's own control routes are answered before the
     // read-only guard: one of them is a write, and a write that the guard
     // rejects with a bare 405 is a route that does not exist.
@@ -5693,7 +5784,11 @@ const server = createServer(
       response.writeHead(404).end();
       return;
     }
-    if (handleSyntheticRunRead(request, response, url) || handleSyntheticPlaytestingRead(response, url)) return;
+    if (
+      handleSyntheticRunRead(request, response, url) ||
+      handleSyntheticPlaytestingRead(response, url)
+    )
+      return;
     response.writeHead(404).end();
   }
 );

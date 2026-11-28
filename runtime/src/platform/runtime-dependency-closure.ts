@@ -183,6 +183,24 @@ export interface RuntimeDependencyClosureResult {
   readonly deployed: boolean;
 }
 
+function cloneSeededClosure(seedTarget: string, build: string): boolean {
+  if (
+    process.platform !== "darwin" ||
+    !doesExist(path.join(seedTarget, "node_modules"))
+  )
+    return false;
+  try {
+    // APFS copy-on-write clone preserves relative symlinks and allocates
+    // distinct inodes (never hard links), so the cloned closure keeps full
+    // filesystem isolation while skipping a second `pnpm deploy`.
+    execaSync("/bin/cp", ["-cRp", seedTarget, build], { stdio: "ignore" });
+    return doesExist(path.join(build, "node_modules"));
+  } catch {
+    rmSync(build, { recursive: true, force: true });
+    return false;
+  }
+}
+
 /**
 Deploy this checkout's closure under `$CODEX_HOME` unless it is already
 there. The deploy runs beside its final name and is renamed into place, so a
@@ -193,7 +211,8 @@ dropped first.
 export function materializeRuntimeDependencyClosure(
   repositoryRoot: string,
   codexHome: string,
-  deploy: DeployRuntimeClosure = deployWithPnpm
+  deploy: DeployRuntimeClosure = deployWithPnpm,
+  seedFromHome?: string
 ): RuntimeDependencyClosureResult {
   const name = runtimeDependencyClosureName(repositoryRoot);
   const target = path.join(codexHome, name);
@@ -202,13 +221,20 @@ export function materializeRuntimeDependencyClosure(
   const build = `${target}${BUILD_MARKER}${process.pid}`;
   rmSync(build, { recursive: true, force: true });
   try {
-    deploy(repositoryRoot, build);
-    for (const entry of readdirSync(build))
-      if (entry !== "node_modules")
-        rmSync(path.join(build, entry), { recursive: true, force: true });
-    if (!doesExist(path.join(build, "node_modules")))
-      throw new Error(`pnpm deploy produced no node_modules in ${build}`);
-    relocateWorkspacePackages(build);
+    const canSeed =
+      deploy === deployWithPnpm &&
+      seedFromHome !== undefined &&
+      path.resolve(seedFromHome) !== path.resolve(codexHome) &&
+      cloneSeededClosure(path.join(seedFromHome, name), build);
+    if (!canSeed) {
+      deploy(repositoryRoot, build);
+      for (const entry of readdirSync(build))
+        if (entry !== "node_modules")
+          rmSync(path.join(build, entry), { recursive: true, force: true });
+      if (!doesExist(path.join(build, "node_modules")))
+        throw new Error(`pnpm deploy produced no node_modules in ${build}`);
+      relocateWorkspacePackages(build);
+    }
     try {
       renameSync(build, target);
     } catch (error) {

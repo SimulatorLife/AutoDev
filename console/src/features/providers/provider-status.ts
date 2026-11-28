@@ -249,15 +249,20 @@ export function ProviderStatusBadge({
     // "The latest provider health evidence is a failure" -- leaves the part
     // that was cut unavailable, so the verdict is named in the title and the
     // explanation follows it.
-    ...(status.title !== undefined && { title: `${status.label} — ${status.title}` })
+    ...(status.title !== undefined && {
+      title: `${status.label} — ${status.title}`
+    })
   });
   return React.createElement(
     "form",
     {
+      className: "group inline-flex max-w-full",
+      "data-provider-check-form": provider.id,
       action: `/api/providers/${encodeURIComponent(provider.id)}/check`,
       method: "POST",
-      className: "group inline-flex max-w-full",
-      "data-provider-check-form": provider.id
+      // A per-row check button inside a table cell is a control group, not
+      // a page-level unnamed form landmark.
+      role: "group"
     },
     React.createElement("input", {
       type: "hidden",

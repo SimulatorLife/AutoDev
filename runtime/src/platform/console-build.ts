@@ -114,6 +114,7 @@ const TSCONFIG_FILE = "tsconfig.json";
 const CACHE_DIR = "cache";
 const RSC_INFO_FILE = ".rscinfo";
 const SEEDED_CACHE_ENTRIES = [
+  "turbopack",
   "webpack",
   "swc",
   ".tsbuildinfo",

@@ -191,7 +191,9 @@ test("the recent runs can be narrowed by outcome", async ({ page }) => {
   // shell around it has its own controls, so the assertion is about the
   // resource's own region.
   await expect(githubBody(page).locator("form")).toHaveCount(0);
-  await expect(githubBody(page).locator("button")).toHaveCount(0);
+  await expect(
+    githubBody(page).locator("button:not([data-inline-display-toggle])")
+  ).toHaveCount(0);
   await expect(page.locator('[data-run-outcome="failed"]')).toBeVisible();
 
   await page.locator('[data-run-outcome="failed"]').click();
@@ -239,7 +241,11 @@ test("the workflow definitions can be narrowed by state", async ({ page }) => {
   // of its own -- the one that collapses the sidebar -- and that is not a
   // control on the GitHub page.
   await expect(page.locator('[data-feature="github"] form')).toHaveCount(0);
-  await expect(page.locator('[data-feature="github"] button')).toHaveCount(0);
+  await expect(
+    page.locator(
+      '[data-feature="github"] button:not([data-inline-display-toggle])'
+    )
+  ).toHaveCount(0);
 });
 
 test("the page offers no GitHub mutation control", async ({ page }) => {

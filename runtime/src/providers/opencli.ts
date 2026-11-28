@@ -46,6 +46,7 @@ import {
 } from "../shared/execution-contract.ts";
 import {
   OpencliBrowser,
+  OpencliSitePageNotOpenError,
   resolveOpencliBrowserExecutable
 } from "./opencli-browser.ts";
 import {
@@ -108,6 +109,12 @@ export interface OpencliRunRequest {
   readonly args: readonly string[];
   readonly signal: AbortSignal;
   readonly onProgress?: (record: Record<string, unknown>) => void;
+  /**
+  Run only on a site page that is already open: never start the dedicated
+  browser or open a page. Background probes set it, and get
+  `OpencliSitePageNotOpenError` when no such page exists.
+  */
+  readonly existingPageOnly?: boolean;
 }
 
 export type OpencliRunner = (
@@ -304,7 +311,7 @@ export function processRunner(
         }
       });
     });
-  const run: OpencliRunner = ({ args, signal, onProgress }) => {
+  const run: OpencliRunner = ({ args, signal, onProgress, existingPageOnly }) => {
     const site = args[0] as OpencliSite;
     if (!OPENCLI_SITES.includes(site)) {
       return spawnOpencli(args, childEnvironment, signal, onProgress);
@@ -331,9 +338,12 @@ export function processRunner(
             onProgress?.(record);
           }
         ),
-      // Only the operations that open a menu with a native click need the
-      // browser's foreground; the rest run without it and stay concurrent.
-      opencliCommandRequiresForeground(args)
+      {
+        // Only the operations that open a menu with a native click need the
+        // browser's foreground; the rest run without it and stay concurrent.
+        requiresVisiblePage: opencliCommandRequiresForeground(args),
+        shouldOpenPage: existingPageOnly !== true
+      }
     );
   };
   return Object.assign(run, {
@@ -391,18 +401,25 @@ export function createOpencliHealthServer(
     if (cached && Date.now() - cached.at < MODEL_LIST_TTL_MS) {
       return cached.models;
     }
-    const spec = OPENCLI_SITE_SPECS[site];
-    const specModels = spec.models;
-    const models = Array.isArray(specModels)
-      ? specModels
-      : typeof specModels === "function"
-        ? await specModels((arguments_) =>
-            options.run({
-              args: arguments_,
-              signal: AbortSignal.timeout(MODEL_LIST_TIMEOUT_MS)
-            })
-          )
-        : [];
+    const specModels = OPENCLI_SITE_SPECS[site].models;
+    if (typeof specModels !== "function") return specModels;
+    let models: readonly string[];
+    try {
+      // Discovery is a background probe: it reads a site page only when a
+      // turn already opened one, and never opens a browser window itself.
+      models = await specModels((arguments_) =>
+        options.run({
+          args: arguments_,
+          signal: AbortSignal.timeout(MODEL_LIST_TIMEOUT_MS),
+          existingPageOnly: true
+        })
+      );
+    } catch (error) {
+      if (error instanceof OpencliSitePageNotOpenError) {
+        return cached?.models ?? [];
+      }
+      throw error;
+    }
     modelLists.set(site, { at: Date.now(), models });
     return models;
   }
@@ -573,10 +590,10 @@ if (IS_MAIN) {
   const healthServer = createOpencliHealthServer({
     run: runner,
     ...(roleTurnToken && { roleTurnToken }),
-    browserHealth: () => ({
-      ready: browser.isReady,
-      error: browser.unavailableReason
-    })
+    browserHealth: () => {
+      const error = browser.unavailableReason;
+      return { ready: error === null, error };
+    }
   });
   const server = createServer((request, response) => {
     void healthServer.handle(request, response);
@@ -591,10 +608,9 @@ if (IS_MAIN) {
       void runner.close().finally(() => process.exit(0));
     });
   }
-  void browser.initialize().finally(() => {
-    if (isShuttingDown) return;
-    server.listen(port, host, () => {
-      writeErrorLine(`opencli service listening at http://${host}:${port}`);
-    });
+  // The browser starts on the first turn that needs a site page, not here:
+  // a service (re)start opens no window.
+  server.listen(port, host, () => {
+    writeErrorLine(`opencli service listening at http://${host}:${port}`);
   });
 }

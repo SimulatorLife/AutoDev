@@ -7,16 +7,15 @@ import path from "node:path";
 import test from "node:test";
 
 import {
-  AggregationTemporality,
-  InMemoryMetricExporter
-} from "@opentelemetry/sdk-metrics";
-import { InMemorySpanExporter } from "@opentelemetry/sdk-trace";
-
-import {
   AGENT_METHODS,
   AgentApp,
   PROTOCOL_VERSION
 } from "@agentclientprotocol/sdk";
+import {
+  AggregationTemporality,
+  InMemoryMetricExporter
+} from "@opentelemetry/sdk-metrics";
+import { InMemorySpanExporter } from "@opentelemetry/sdk-trace";
 
 import { ensureLocalAdmission } from "../src/mcp/gateway-admission.ts";
 import {
@@ -107,45 +106,67 @@ const turn = (sessionId: string, extra: object = {}) => ({
   ...extra
 });
 
-test("a root launch reaches each stage once, and a follow-up turn on its live executor is not another launch", async () => {
-  ensureLocalAdmission(process.env.CODEX_HOME!);
-  const manager = new XacpxSessionManager({
-    acpTransportFactory: () => ({ target: answeringAgent() })
-  });
+async function withIsolatedAdmissionHome(
+  run: () => Promise<void>
+): Promise<void> {
+  const codexHome = mkdtempSync(path.join(tmpdir(), "autodev-launch-home-"));
+  const previousCodexHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = codexHome;
+  ensureLocalAdmission(codexHome);
   try {
-    const stages = await launchStagesDuring(async () => {
-      await manager.executeTurn(turn("launch-root"));
-      await manager.promptSession("launch-root", "and again");
-    });
-    assert.deepEqual(stages, {
-      "root attempted": 1,
-      "root admitted": 1,
-      "root started": 1,
-      "root succeeded": 1
-    });
+    await run();
   } finally {
-    await manager.closeAllSessions();
+    if (previousCodexHome === undefined) {
+      delete process.env.CODEX_HOME;
+    } else {
+      process.env.CODEX_HOME = previousCodexHome;
+    }
+    rmSync(codexHome, { recursive: true, force: true });
   }
+}
+
+test("a root launch reaches each stage once, and a follow-up turn on its live executor is not another launch", async () => {
+  await withIsolatedAdmissionHome(async () => {
+    const manager = new XacpxSessionManager({
+      acpTransportFactory: () => ({ target: answeringAgent() })
+    });
+    try {
+      const stages = await launchStagesDuring(async () => {
+        await manager.executeTurn(turn("launch-root"));
+        await manager.promptSession("launch-root", "and again");
+      });
+      assert.deepEqual(stages, {
+        "root attempted": 1,
+        "root admitted": 1,
+        "root started": 1,
+        "root succeeded": 1
+      });
+    } finally {
+      await manager.closeAllSessions();
+    }
+  });
 });
 
 test("a child whose executor never starts is admitted and failed before start, with no work outcome", async () => {
-  const manager = new XacpxSessionManager({
-    acpTransportFactory: () => {
-      throw new Error("ACP executor is not installed.");
-    }
-  });
-  const stages = await launchStagesDuring(async () => {
-    await assert.rejects(
-      manager.executeTurn(
-        turn("launch-child", { parentSessionId: "launch-coordinator" })
-      ),
-      /not installed/u
-    );
-  });
-  assert.deepEqual(stages, {
-    "child attempted": 1,
-    "child admitted": 1,
-    "child failed_before_start": 1
+  await withIsolatedAdmissionHome(async () => {
+    const manager = new XacpxSessionManager({
+      acpTransportFactory: () => {
+        throw new Error("ACP executor is not installed.");
+      }
+    });
+    const stages = await launchStagesDuring(async () => {
+      await assert.rejects(
+        manager.executeTurn(
+          turn("launch-child", { parentSessionId: "launch-coordinator" })
+        ),
+        /not installed/u
+      );
+    });
+    assert.deepEqual(stages, {
+      "child attempted": 1,
+      "child admitted": 1,
+      "child failed_before_start": 1
+    });
   });
 });
 
@@ -153,7 +174,9 @@ test("a launch the session manager cannot dispatch is rejected", async () => {
   const manager = new XacpxSessionManager();
   const stages = await launchStagesDuring(async () => {
     await assert.rejects(
-      manager.executeTurn(turn("launch-unknown-role", { role: "no-such-role" })),
+      manager.executeTurn(
+        turn("launch-unknown-role", { role: "no-such-role" })
+      ),
       /Unknown agent role/u
     );
   });

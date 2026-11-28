@@ -109,7 +109,9 @@ function okResponse(): Response {
         id: WORKSPACE_ID,
         baseBranch: "release",
         enabled: false,
-        agentRoles: ["worker", "reviewer"]
+        agentRoles: ["worker", "reviewer"],
+        configuration: { status: "configured" },
+        runtime: { status: "not-observed" }
       },
       reconciliation: {
         status: {
@@ -165,7 +167,10 @@ test("a write answers to the surface it came from", async () => {
   // The list names the workspace the outcome is about, because the list
   // presents every workspace's configuration at once.
   const { result: listResult } = await withMockedFetch(okResponse, () =>
-    route.POST(request({ ...FIELDS, returnTo: WORKSPACES_RETURN }), parameters())
+    route.POST(
+      request({ ...FIELDS, returnTo: WORKSPACES_RETURN }),
+      parameters()
+    )
   );
   assert.equal(listResult.status, 303);
   assert.equal(

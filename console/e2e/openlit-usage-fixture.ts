@@ -44,6 +44,8 @@ const HTTP_ERROR_SCOPE = "3M";
 const UNREACHABLE_SCOPE = "1M";
 const UNAUTHORIZED_SCOPE = "CUSTOM";
 
+let usageFixtureMode: "normal" | "http_503" = "normal";
+
 /**
 The span id the telemetry source never retained.
 
@@ -96,6 +98,12 @@ const USAGE_WIDGET_IDS = [
   "provider-hops-by-role",
   "provider-hops-by-workspace",
   "provider-hops-by-reason",
+  "agent-launches-root-stages",
+  "agent-launches-child-stages",
+  "agent-launches-root-rejections",
+  "agent-launches-child-rejections",
+  "agent-launches-failed-before-start-by-provider",
+  "agent-launches-by-role",
   "skill-events-by-event",
   "estimated-cost"
 ] as const;
@@ -265,6 +273,140 @@ function observedWidgets(): readonly UsageWidget[] {
       ],
       xAxis: "g0",
       yAxis: "hops"
+    },
+    {
+      key: "agent-launches-root-stages",
+      querySucceeded: true,
+      observed: true,
+      partial: false,
+      rows: [
+        { name: "attempted", count: 6 },
+        { name: "admitted", count: 5 },
+        { name: "rejected", count: 1 },
+        { name: "started", count: 4 },
+        { name: "failed_before_start", count: 1 },
+        { name: "succeeded", count: 4 },
+        { name: "failed", count: 0 },
+        { name: "cancelled", count: 0 }
+      ],
+      xAxis: "name",
+      yAxis: "count"
+    },
+    {
+      key: "agent-launches-child-stages",
+      querySucceeded: true,
+      observed: true,
+      partial: false,
+      rows: [
+        { name: "attempted", count: 4 },
+        { name: "admitted", count: 2 },
+        { name: "rejected", count: 2 },
+        { name: "started", count: 2 },
+        { name: "failed_before_start", count: 0 },
+        { name: "succeeded", count: 1 },
+        { name: "failed", count: 0 },
+        { name: "cancelled", count: 1 }
+      ],
+      xAxis: "name",
+      yAxis: "count"
+    },
+    {
+      key: "agent-launches-root-rejections",
+      querySucceeded: true,
+      observed: true,
+      partial: false,
+      rows: [{ name: "dispatch_refused", count: 1 }],
+      xAxis: "name",
+      yAxis: "count"
+    },
+    {
+      key: "agent-launches-child-rejections",
+      querySucceeded: true,
+      observed: true,
+      partial: false,
+      rows: [{ name: "concurrency_limit", count: 2 }],
+      xAxis: "name",
+      yAxis: "count"
+    },
+    {
+      key: "agent-launches-failed-before-start-by-provider",
+      querySucceeded: true,
+      observed: true,
+      partial: false,
+      rows: [{ name: "codex", count: 1 }],
+      xAxis: "name",
+      yAxis: "count"
+    },
+    {
+      key: "agent-launches-by-role",
+      querySucceeded: true,
+      observed: true,
+      partial: false,
+      rows: [
+        { name: "orchestrator", count: 6 },
+        { name: "worker", count: 4 }
+      ],
+      xAxis: "name",
+      yAxis: "count"
+    },
+    {
+      key: "context-compactions",
+      querySucceeded: true,
+      observed: true,
+      partial: false,
+      rows: [{ compactions: "3" }],
+      valuePath: "0.compactions"
+    },
+    {
+      key: "context-compactions-over-time",
+      querySucceeded: true,
+      observed: true,
+      partial: false,
+      rows: [
+        { label: "2026-11-09 09:00", count: 2 },
+        { label: "2026-11-09 10:00", count: 1 }
+      ],
+      xAxis: "label",
+      yAxis: "count"
+    },
+    {
+      key: "context-compactions-by-workspace",
+      querySucceeded: true,
+      observed: true,
+      partial: false,
+      rows: [{ g0: WORKSPACE_ID, compactions: 3 }],
+      xAxis: "g0",
+      yAxis: "compactions"
+    },
+    {
+      key: "context-compactions-by-model",
+      querySucceeded: true,
+      observed: true,
+      partial: false,
+      rows: [{ g0: "autodev/orchestrator", compactions: 3 }],
+      xAxis: "g0",
+      yAxis: "compactions"
+    },
+    {
+      key: "context-compactions-by-agent",
+      querySucceeded: true,
+      observed: true,
+      partial: false,
+      rows: [{ g0: "orchestrator", compactions: 3 }],
+      xAxis: "g0",
+      yAxis: "compactions"
+    },
+    {
+      key: "context-compactions-by-provider",
+      querySucceeded: true,
+      observed: true,
+      partial: false,
+      rows: [
+        { g0: "claude", compactions: 2 },
+        { g0: "codex", compactions: 1 }
+      ],
+      xAxis: "g0",
+      yAxis: "compactions"
     }
   ];
 }
@@ -327,7 +469,7 @@ function respond(scope: string | null, response: ServerResponse): void {
       );
     return;
   }
-  if (scope === HTTP_ERROR_SCOPE) {
+  if (scope === HTTP_ERROR_SCOPE || usageFixtureMode === "http_503") {
     response
       .writeHead(503, { "content-type": "application/json" })
       .end(JSON.stringify({ error: "the usage source is unavailable" }));
@@ -421,12 +563,13 @@ that a long session is longer than one page: the fixture holds more spans
 than a single page holds, so the Console's pager has something to page.
 */
 const SESSION_SPAN_COUNT = 250;
+const DIAGNOSTICS_SESSION_ID = "01a0ba14-d54c-78f2-9367-3f80e9a8f75f";
 
 /**
 One span of the fixture session, with a stable id and timestamp.
 */
 function sessionSpan(index: number): Record<string, unknown> {
-  const suffix = index.toString(16).padStart(16, "0");
+  const suffix = (index + 1).toString(16).padStart(16, "0");
   return {
     spanId: suffix,
     traceId: `${suffix}${suffix}`,
@@ -438,6 +581,7 @@ function sessionSpan(index: number): Record<string, unknown> {
     durationNs: 1_000_000,
     statusCode: "OK",
     provider: index % 2 === 0 ? "claude" : null,
+    conversationId: DIAGNOSTICS_SESSION_ID,
     requestedModel: index % 2 === 0 ? "autodev/worker" : "autodev/orchestrator",
     role: index % 2 === 0 ? "worker" : "orchestrator",
     workspace: "SimulatorLife/AutoDev",
@@ -492,7 +636,7 @@ function respondSessionUsage(body: string, response: ServerResponse): void {
   const page = ordered.slice(offset, offset + limit);
   response.writeHead(200, { "content-type": "application/json" }).end(
     JSON.stringify({
-      schema: "autodev-openlit-session-usage-v2",
+      schema: "autodev-openlit-session-usage-v3",
       status: "observed",
       partial: false,
       total: SESSION_SPAN_COUNT,
@@ -509,6 +653,18 @@ const server = createServer((request, response) => {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   if (url.pathname === "/health") {
     response.writeHead(200).end("ok");
+    return;
+  }
+  if (url.pathname === "/fixture/usage/state") {
+    if (request.method !== "POST") {
+      response.writeHead(405).end();
+      return;
+    }
+    usageFixtureMode =
+      url.searchParams.get("mode") === "http_503" ? "http_503" : "normal";
+    response
+      .writeHead(200, { "content-type": "application/json" })
+      .end(JSON.stringify({ mode: usageFixtureMode }));
     return;
   }
   // The exact-session page is its own route: the Console posts the session id

@@ -11,6 +11,7 @@ Routes:
 
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { homedir } from "node:os";
 import path from "node:path";
 
 import type { Span } from "@opentelemetry/api";
@@ -24,6 +25,7 @@ import {
 } from "@simulatorlife/autodev-runtime/xacpx/manager";
 
 import { ROUTER_INSTANCE_ID } from "../router/proxy.ts";
+import { AcpPinLedgerPublisher, acpPinsFile } from "./pin-ledger.ts";
 import {
   endAttemptSpan,
   endLogicalRequestSpan,
@@ -250,7 +252,13 @@ export const XACPX_TURN_OBSERVATION: XacpxTurnEventSink = {
 };
 
 export const SHARED_XACPX_SESSION_MANAGER = new XacpxSessionManager({
-  eventSink: XACPX_TURN_OBSERVATION
+  eventSink: XACPX_TURN_OBSERVATION,
+  pinLedger: new AcpPinLedgerPublisher(() => {
+    const codexHome =
+      process.env.CODEX_HOME?.trim() ||
+      path.join(process.env.HOME?.trim() || homedir(), ".codex");
+    return acpPinsFile(codexHome);
+  })
 });
 
 export async function didHandleAcpRoute(

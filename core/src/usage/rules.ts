@@ -46,3 +46,31 @@ export function deriveProviderHopRatePercent(
   }
   return (hops / logicalRequests) * 100;
 }
+
+/**
+Derive launch success rate (`started / (started + rejected + failedBeforeStart)`),
+keeping pre-start admission/launch failures distinct from post-start work
+outcomes (`succeeded / failed / cancelled`).
+*/
+export function deriveAgentLaunchSuccessRatePercent(
+  started: number | null,
+  rejected: number | null,
+  failedBeforeStart: number | null
+): number | null {
+  if (
+    started === null ||
+    rejected === null ||
+    failedBeforeStart === null ||
+    !Number.isSafeInteger(started) ||
+    !Number.isSafeInteger(rejected) ||
+    !Number.isSafeInteger(failedBeforeStart) ||
+    started < 0 ||
+    rejected < 0 ||
+    failedBeforeStart < 0
+  ) {
+    return null;
+  }
+  const resolved = started + rejected + failedBeforeStart;
+  if (resolved <= 0) return null;
+  return (started / resolved) * 100;
+}

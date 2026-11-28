@@ -3,6 +3,7 @@ import React from "react";
 
 import { PageBody } from "../../src/components/layout/PageBody.ts";
 import { DETAIL_PANEL_CLASS } from "../../src/components/layout/Panel.ts";
+import { LiveCountRefresh } from "../../src/components/navigation/LiveCountRefresh.ts";
 import { OverviewSignals } from "../../src/features/overview/OverviewSignals.ts";
 import type { ControlApiConfig } from "../../src/lib/server/control-api.ts";
 import { ConsolePageShell, readNodeContext } from "../_console.ts";
@@ -38,6 +39,15 @@ function OverviewSignalsLoading(): React.JSX.Element {
 
 export default function OverviewPage(): React.JSX.Element {
   const { section, config } = readNodeContext("/overview");
+  const signalsFallback = React.createElement(OverviewSignalsLoading);
+  const signalsContent = React.createElement(OverviewSignalsSection, {
+    config
+  });
+  const signalsSuspense = React.createElement(
+    React.Suspense,
+    { fallback: signalsFallback },
+    signalsContent
+  );
 
   return React.createElement(
     ConsolePageShell,
@@ -45,6 +55,7 @@ export default function OverviewPage(): React.JSX.Element {
     React.createElement(
       PageBody,
       { feature: "overview" },
+      React.createElement(LiveCountRefresh),
       React.createElement(
         "p",
         {
@@ -52,11 +63,7 @@ export default function OverviewPage(): React.JSX.Element {
         },
         "Live Runtime activity, provider verdicts, recent failures and recent telemetry, each read from its owning source."
       ),
-      React.createElement(
-        React.Suspense,
-        { fallback: React.createElement(OverviewSignalsLoading) },
-        React.createElement(OverviewSignalsSection, { config })
-      )
+      signalsSuspense
     )
   );
 }

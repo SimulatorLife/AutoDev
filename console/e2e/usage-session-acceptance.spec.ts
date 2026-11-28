@@ -56,8 +56,11 @@ test("a session id in the top filter bar scopes the whole page to that session",
   await expect(page.getByText("Clear session")).toBeVisible();
   await expect(page.locator('[data-tab-item="overview"]')).toBeVisible();
 
-  // The session's own evidence is on the page.
-  await expect(page.getByText(WORKER_THREAD_ID).first()).toBeVisible();
+  // The session's own evidence and source-confirmed ACP pin links are on the page.
+  await expect(page.getByText("ImplementationCoder").first()).toBeVisible();
+  await expect(page.getByText("probe_unavailable").first()).toBeVisible();
+  await expect(page.getByText("ACP session pins").first()).toBeVisible();
+  await expect(page.getByText("child-acp-worker-1").first()).toBeVisible();
 });
 
 test("the session's tabs keep the session scope and show that tab's evidence", async ({
@@ -80,27 +83,32 @@ test("the session's tabs keep the session scope and show that tab's evidence", a
   await page.locator('[data-tab-item="requests"]').click();
   await page.waitForURL(/tab=requests/u);
   expect(new URL(page.url()).searchParams.get("sessionId")).toBe(SESSION_ID);
-  await expect(page.getByText("probe_unavailable").first()).toBeVisible();
+  await expect(page.getByText(WORKER_THREAD_ID).first()).toBeVisible();
+  await expect(page.getByText("antigravity → claude").first()).toBeVisible();
+  await expect(page.getByText("acp-pin").first()).toBeVisible();
 });
 
-test("the threads tab shows role, provider and model, and the prompt size toggles units", async ({
+test("the threads overview and thread detail show role, provider, model, and prompt size toggle", async ({
   page
 }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
-  await page.goto(
-    "/usage?range=24H&sessionId=" +
-      SESSION_ID +
-      "&tab=threads&threadId=" +
-      WORKER_THREAD_ID
-  );
+  await page.goto(`/usage?range=24H&sessionId=${SESSION_ID}&tab=overview`);
   await waitForPageContent(page);
 
-  const threads = page.getByRole("table", { name: "Session threads" });
-  for (const header of ["Role", "Model provider", "Model"]) {
+  const threads = page
+    .getByRole("region", { name: "Session threads" })
+    .getByRole("table");
+  for (const header of ["Role", "Routed provider(s)", "Model"]) {
     await expect(
       threads.getByRole("columnheader", { name: header, exact: true })
     ).toBeVisible();
   }
+
+  await threads.getByRole("link", { name: "ImplementationCoder" }).click();
+  await page.waitForURL(new RegExp(`threadId=${WORKER_THREAD_ID}`, "u"));
+  await waitForPageContent(page);
+  await expect(page.getByText("antigravity → claude").first()).toBeVisible();
+  await expect(page.getByText("gemini → sonnet").first()).toBeVisible();
 
   const toggle = page.locator(
     '[data-inline-display-toggle="initial-developer-prompt"]'

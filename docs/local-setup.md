@@ -1112,45 +1112,31 @@ its `node_modules` link, so launchd's `PATH` never decides which opencli runs
 (`OPENCLI_BIN` overrides it). Its pnpm `postinstall` (shell completions only)
 is not needed.
 
-Which browser opencli drives is the **Dedicated browser** toggle on either
-opencli provider's page in the Console (Providers -> `opencli-chatgpt` or
-`opencli-gemini` -> Browser). It covers both providers, is stored in
-`$CODEX_HOME/run/opencli-browser.json`, and applies to the next turn without a
-restart.
+opencli drives a **dedicated Chrome for Testing**, never your own Chrome. The
+normal typed installer installs the pinned headed build into
+`$CODEX_HOME/provider-runtime/opencli/browsers`, without using or altering
+your Chrome installation. The bridge starts this browser with a private
+profile at `$CODEX_HOME/run/opencli-browser-profile` and exposes CDP only on
+loopback. The window is visible because ChatGPT blocks headless Chromium.
+Sign in to ChatGPT and Gemini in that window once; the cookies remain in that
+profile and are not exported, and you may need to sign in again when a site's
+session expires.
 
-- **Off (the default): your own Chrome.** Install opencli's Browser Bridge
-  Chrome extension and sign in to each site once in your Chrome; turns run in
-  the extension's "OpenCLI" tab group. Confirm the extension with the
-  commands below.
-  The extension drives its tabs through Chrome's `chrome.debugger` API, so
-  Chrome shows an _"OpenCLI" started debugging this browser_ banner while it
-  is attached. AutoDev does not start your Chrome and cannot pass it flags;
-  to hide the banner, quit Chrome completely (Cmd-Q) and start it yourself
-  with `--silent-debugger-extension-api`:
+The browser opens lazily and is reused:
 
-  ```bash
-  open -a "Google Chrome" --args --silent-debugger-extension-api
-  ```
+- Nothing opens when the bridge starts. The first turn that needs ChatGPT or
+  Gemini starts the browser and opens that site only, preferring a tab
+  already on the site (for example the one you signed in with), then the
+  startup blank tab, and only then a new tab in the same window. A site gains
+  another tab only while every tab it holds is busy, up to its route's
+  concurrent-turn limit.
+- Background probes never open it: Gemini model discovery reads only a Gemini
+  tab that is already open.
+- The browser outlives the bridge. A reinstall or bridge restart adopts the
+  running browser and its tabs rather than opening new windows. Quit it
+  yourself when you want it gone; the next turn that needs it relaunches it.
 
-  The flag is ignored if Chrome is already running, and applies only to that
-  launch: Chrome started later from the Dock or Spotlight shows the banner
-  again. `chrome://version` lists it under "Command Line" when it took
-  effect. It silences the banner for every extension with the `debugger`
-  permission, not only OpenCLI, so Chrome no longer tells you when any
-  extension attaches to your pages. The dedicated browser below never shows
-  the banner: it is driven over loopback CDP, not through the extension.
-
-- **On: a dedicated Chrome for Testing.** The normal typed installer always
-  installs the pinned headed build into
-  `$CODEX_HOME/provider-runtime/opencli/browsers`, without using or altering
-  your Chrome installation, so the toggle needs no reinstall. The bridge
-  starts this browser with a private profile at
-  `$CODEX_HOME/run/opencli-browser-profile`, exposes CDP only on loopback, and
-  keeps one target per admitted turn. The window is visible because ChatGPT
-  blocks headless Chromium. Sign in to ChatGPT and Gemini in that separate
-  window once; the cookies remain in that profile and are not exported, and
-  you may need to sign in again when a site's session expires. Turning the
-  toggle off closes the window once its running turns finish.
+See [`opencli-separate-browser.md`](opencli-separate-browser.md#lazy-opening-and-reuse).
 
 When the selected browser is signed in to several Google accounts, set
 `OPENCLI_GEMINI_ACCOUNT` to an account that has Gemini enabled in
@@ -1204,9 +1190,9 @@ three places, and each one is live at a different moment:
   symlink (`$CODEX_HOME/.src-<hash>/providers/`, swapped atomically so a
   restarting process never observes a half-written tree and retained for 7 days
   after replacement for in-flight sessions), the path
-  `run-autodev-opencli-proxy.sh` executes. With the dedicated browser on, the
-  bridge owns Chrome for Testing's lifecycle and CDP target pool; its private
-  profile remains in `CODEX_HOME` across restarts. The normal installer
+  `run-autodev-opencli-proxy.sh` executes. The bridge owns Chrome for
+  Testing's lifecycle and CDP tab pool; the browser and its private profile
+  outlive bridge restarts. The normal installer
   refreshes the bridge and ensures the build pinned by Runtime's Playwright
   dependency is installed.
 

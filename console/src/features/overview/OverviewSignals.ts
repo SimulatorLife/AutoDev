@@ -25,7 +25,7 @@ import type {
 const h = React.createElement;
 
 const FACT_GRID_CLASS =
-  "grid list-none grid-cols-2 gap-3 p-0 m-0 sm:grid-cols-3 xl:grid-cols-6";
+  "grid list-none grid-cols-1 gap-3 p-0 m-0 sm:grid-cols-3 xl:grid-cols-6";
 
 /**
 An observed count, or the unobserved label: never a defaulted zero.
@@ -48,7 +48,7 @@ function fact(label: string, value: string, note?: string): React.JSX.Element {
     ),
     note === undefined
       ? null
-      : h("p", { className: `${MUTED_META_CLASS} mt-1` }, note)
+      : h("p", { className: `${MUTED_META_CLASS} mt-1 break-words` }, note)
   );
 }
 

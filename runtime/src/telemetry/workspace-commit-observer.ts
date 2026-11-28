@@ -38,6 +38,8 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import PQueue from "p-queue";
+
 import { type RecordGitCommitOptions } from "../router/telemetry.ts";
 import {
   type GitCommitChange,
@@ -443,10 +445,8 @@ export function createWorkspaceCommitObserver(
   };
   // A serialized queue so concurrent observe() / initialize() calls on
   // the same observer run in submission order without racing their own
-  // state. The chain is kept non-rejecting so a single failure does not
-  // poison the next call; the original promise that was returned still
-  // rejects for the caller that triggered it.
-  let chain: Promise<unknown> = Promise.resolve();
+  // state or letting a failed call poison the queue.
+  let queue = new PQueue({ concurrency: 1 });
 
   const runInitialize = async (): Promise<WorkspaceCommitBaseline> => {
     const root = await resolveRepositoryRoot();
@@ -489,10 +489,10 @@ export function createWorkspaceCommitObserver(
           error: { kind: "head_unreadable", reason: error }
         };
       }
-      // Calls are serialized through `chain`; no observer operation can
+      // Calls are serialized through `queue`; no observer operation can
       // reassign these fields while this read has yielded at the Git call.
       baselineHead = head;
-      // eslint-disable-next-line require-atomic-updates -- chain serializes all observer state transitions.
+      // eslint-disable-next-line require-atomic-updates -- queue serializes all observer state transitions.
       isInitialized = true;
       return {
         workspaceKey: safeKey,
@@ -628,9 +628,9 @@ export function createWorkspaceCommitObserver(
     // list helper bounds one scan, so a long range is drained in later
     // observations rather than skipping commits beyond the cap.
     const lastListed = listed.at(-1);
-    // Calls are serialized through `chain`; a concurrent observation
+    // Calls are serialized through `queue`; a concurrent observation
     // cannot advance the cursor between the Git reads and this update.
-    // eslint-disable-next-line require-atomic-updates -- chain serializes all cursor reads and writes.
+    // eslint-disable-next-line require-atomic-updates -- queue serializes all cursor reads and writes.
     if (lastListed) baselineHead = lastListed;
     return {
       workspaceKey: safeKey,
@@ -650,26 +650,12 @@ export function createWorkspaceCommitObserver(
     workspaceKey: safeKey,
     repositoryRoot,
     isInitialized: () => isInitialized,
-    initialize: () => {
-      const next = chain.then(
-        () => runInitialize(),
-        () => runInitialize()
-      );
-      chain = next.catch(() => undefined);
-      return next;
-    },
-    observe: () => {
-      const next = chain.then(
-        () => runObserve(),
-        () => runObserve()
-      );
-      chain = next.catch(() => undefined);
-      return next;
-    },
+    initialize: () => queue.add(runInitialize),
+    observe: () => queue.add(runObserve),
     reset: () => {
       isInitialized = false;
       baselineHead = null;
-      chain = Promise.resolve();
+      queue = new PQueue({ concurrency: 1 });
     }
   };
 }

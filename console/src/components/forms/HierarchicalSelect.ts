@@ -117,7 +117,7 @@ export function HierarchicalSelect({
           id,
           role: "button",
           "aria-disabled": "true",
-          "aria-label": label,
+          "aria-label": `${label}: ${summary}`,
           title: `${summary} — ${disabledReason}`,
           className: `${SELECT_CONTROL_CLASS} block aria-disabled:cursor-not-allowed truncate opacity-60`
         },

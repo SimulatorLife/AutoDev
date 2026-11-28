@@ -120,22 +120,60 @@ export const UPSTREAM_TRANSPORT_MAX_ATTEMPTS = positiveDuration(
 export const PROBE_RETRY_TIMEOUT_MS = Math.max(1500, PROBE_TIMEOUT_MS * 2);
 
 export const activeProviderRequests = new Map<string, number>();
+const externalProviderRequests = new Map<string, number>();
+let localProviderRequestsListener:
+  | ((counts: Record<string, number>) => void)
+  | null = null;
+
+export function setLocalProviderRequestsListener(
+  listener: ((counts: Record<string, number>) => void) | null
+): void {
+  localProviderRequestsListener = listener;
+}
+
+export function setExternalProviderRequests(
+  counts: Record<string, number>
+): void {
+  externalProviderRequests.clear();
+  for (const [provider, count] of Object.entries(counts)) {
+    if (typeof count === "number" && Number.isFinite(count) && count > 0) {
+      externalProviderRequests.set(provider, count);
+    }
+  }
+}
 
 export function getActiveRequests(provider: string): number {
-  return activeProviderRequests.get(provider) ?? 0;
+  return (
+    (activeProviderRequests.get(provider) ?? 0) +
+    (externalProviderRequests.get(provider) ?? 0)
+  );
+}
+
+export function getGlobalActiveRequestsSnapshot(): Record<string, number> {
+  const combined: Record<string, number> = {};
+  for (const [provider, count] of activeProviderRequests) {
+    if (count > 0) combined[provider] = count;
+  }
+  for (const [provider, count] of externalProviderRequests) {
+    if (count > 0) combined[provider] = (combined[provider] ?? 0) + count;
+  }
+  return combined;
 }
 
 export function incrementActiveRequests(provider: string): void {
-  activeProviderRequests.set(provider, getActiveRequests(provider) + 1);
+  const local = (activeProviderRequests.get(provider) ?? 0) + 1;
+  activeProviderRequests.set(provider, local);
+  localProviderRequestsListener?.(Object.fromEntries(activeProviderRequests));
 }
 
 export function decrementActiveRequests(provider: string): void {
-  const current = getActiveRequests(provider);
+  const current = activeProviderRequests.get(provider) ?? 0;
   if (current <= 1) {
     activeProviderRequests.delete(provider);
   } else {
     activeProviderRequests.set(provider, current - 1);
   }
+  localProviderRequestsListener?.(Object.fromEntries(activeProviderRequests));
 }
 
 export function isClientDisconnectError(error: unknown): boolean {

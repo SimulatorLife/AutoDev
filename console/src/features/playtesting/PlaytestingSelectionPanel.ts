@@ -5,7 +5,9 @@ Bounded Console selection and live dispatch to the read-only analyst role.
 */
 import {
   type ControlApiPlaytestingAnalysesResponse,
+  controlApiPlaytestingAnalysesResponseSchema,
   type ControlApiPlaytestingAnalysisDispatchResponse,
+  controlApiPlaytestingAnalysisDispatchResponseSchema,
   isRecord,
   PLAYTESTS_MAX_ANALYSIS_SESSIONS
 } from "@simulatorlife/autodev-core";
@@ -54,24 +56,18 @@ export async function dispatchAnalystReview(
     return { ok: false, message: responseMessage(payload) };
   }
   const envelope = isRecord(payload) ? payload : null;
-  const data = isRecord(envelope?.data) ? envelope.data : null;
+  const parsed = controlApiPlaytestingAnalysisDispatchResponseSchema.safeParse(
+    envelope?.data
+  );
   if (
     envelope?.kind !== "ok" ||
-    !data ||
-    data.schema !== "autodev-control-playtesting-analysis-v1" ||
-    data.operation !== "dispatch" ||
-    data.workspaceId !== workspaceId ||
-    data.requested !== episodeIds.length ||
-    !Array.isArray(data.packets) ||
-    !Array.isArray(data.receipts) ||
-    (data.analysis !== null && !isRecord(data.analysis))
+    !parsed.success ||
+    parsed.data.workspaceId !== workspaceId ||
+    parsed.data.requested !== episodeIds.length
   ) {
     return { ok: false, message: responseMessage(payload) };
   }
-  return {
-    ok: true,
-    data: data as unknown as ControlApiPlaytestingAnalysisDispatchResponse
-  };
+  return { ok: true, data: parsed.data };
 }
 
 export interface PlaytestingSelectionPanelProps {
@@ -145,24 +141,21 @@ export function PlaytestingSelectionPanel({
         );
         const payload: unknown = await response.json().catch(() => null);
         const envelope = isRecord(payload) ? payload : null;
-        const data = isRecord(envelope?.data) ? envelope.data : null;
+        const parsed = controlApiPlaytestingAnalysesResponseSchema.safeParse(
+          envelope?.data
+        );
         if (
           !response.ok ||
           envelope?.kind !== "ok" ||
-          !data ||
-          data.schema !== "autodev-control-playtesting-analyses-v1" ||
-          data.workspaceId !== workspaceId ||
-          !Array.isArray(data.runs) ||
-          !Array.isArray(data.syntheses)
+          !parsed.success ||
+          parsed.data.workspaceId !== workspaceId
         ) {
           throw new Error(responseMessage(payload));
         }
         if (isCancelled) return;
         hasSuccessfulRead = true;
-        const incomingRuns =
-          data.runs as ControlApiPlaytestingAnalysesResponse["runs"];
-        const incomingSyntheses =
-          data.syntheses as ControlApiPlaytestingAnalysesResponse["syntheses"];
+        const incomingRuns = parsed.data.runs;
+        const incomingSyntheses = parsed.data.syntheses;
         const previousRuns =
           knownRuns.current?.workspaceId === workspaceId
             ? knownRuns.current.runs

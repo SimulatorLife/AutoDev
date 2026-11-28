@@ -1,8 +1,8 @@
 "use client";
 
 import {
-  assertWorkspacePlaytestApproval,
   type ControlApiWorkspacePlaytestApprovalResponse,
+  controlApiWorkspacePlaytestApprovalResponseSchema,
   type ControlApiWorkspaceRecord,
   isRecord,
   type ReconciliationView,
@@ -20,6 +20,7 @@ import {
 import { PageBody } from "../../components/layout/PageBody.ts";
 import { DETAIL_PANEL_CLASS } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
+import { LiveCountRefresh } from "../../components/navigation/LiveCountRefresh.ts";
 import { DetailGrid, DetailValue } from "../../components/panels/DetailGrid.ts";
 import {
   ControlFailureNotice,
@@ -289,24 +290,11 @@ function approvalStateFromResponse(
   value: unknown,
   workspaceId: string
 ): ControlApiWorkspacePlaytestApprovalResponse | null {
-  if (
-    !isRecord(value) ||
-    value.schema !== "autodev-control-workspace-playtest-approval-v1" ||
-    value.workspaceId !== workspaceId ||
-    typeof value.workspaceEnabled !== "boolean" ||
-    (value.approval !== null && !isRecord(value.approval))
-  ) {
-    return null;
-  }
-  try {
-    if (value.approval !== null) {
-      assertWorkspacePlaytestApproval(value.approval);
-      if (value.approval.workspaceId !== workspaceId) return null;
-    }
-  } catch {
-    return null;
-  }
-  return value as unknown as ControlApiWorkspacePlaytestApprovalResponse;
+  const parsed =
+    controlApiWorkspacePlaytestApprovalResponseSchema.safeParse(value);
+  return parsed.success && parsed.data.workspaceId === workspaceId
+    ? parsed.data
+    : null;
 }
 
 function approvalMutationResult(
@@ -556,6 +544,7 @@ export function WorkspaceDetailView({
   return React.createElement(
     PageBody,
     { feature: "workspace-detail" },
+    React.createElement(LiveCountRefresh),
     React.createElement(
       "section",
       { className: DETAIL_PANEL_CLASS },
@@ -655,7 +644,9 @@ export function WorkspaceDetailView({
       workspaceId: workspace.id,
       workspaceEnabled: currentWorkspaceEnabled,
       initialTargets: visualTargets ?? [],
-      ...(visualTargetsUnavailable !== undefined && { unavailable: visualTargetsUnavailable })
+      ...(visualTargetsUnavailable !== undefined && {
+        unavailable: visualTargetsUnavailable
+      })
     })
   );
 }

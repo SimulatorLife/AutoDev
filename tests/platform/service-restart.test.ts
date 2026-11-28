@@ -1103,3 +1103,42 @@ test("a KeepAlive service that exits immediately with code 0 fails fast instead 
     /com\.codex\.model-router is not running: exited immediately with code 0 instead of staying up/u
   );
 });
+
+test("zero-downtime Router generation activation skips launchd restart when ingress succeeds", async () => {
+  // Activation applies only to a Router job that is already loaded.
+  const fake = dependencies({}, { loaded: new Set([LABEL_MODEL_ROUTER]) });
+  let activatedCount = 0;
+  const [status, stderr] = await captureStderr(() =>
+    restartServices(options(), {
+      ...fake,
+      tryActivateRouterGeneration: async () => {
+        activatedCount += 1;
+        return "activated";
+      }
+    })
+  );
+  assert.equal(status, 0, stderr);
+  assert.equal(activatedCount, 1);
+  assert.ok(
+    !fake.calls.includes(`bootout:${LABEL_MODEL_ROUTER}`),
+    "running ingress must never be restarted when generation cutover succeeds"
+  );
+  assert.ok(
+    !fake.calls.some((call) => call.includes(`bootstrap:`) && call.includes(LABEL_MODEL_ROUTER)),
+    "running ingress must not be re-bootstrapped on zero-downtime activation"
+  );
+});
+
+test("failed zero-downtime Router generation activation preserves running job instead of falling back to ensure", async () => {
+  // Activation applies only to a Router job that is already loaded.
+  const fake = dependencies({}, { loaded: new Set([LABEL_MODEL_ROUTER]) });
+  const [status] = await captureStderr(() =>
+    restartServices(options(), {
+      ...fake,
+      tryActivateRouterGeneration: async () => "failed"
+    })
+  );
+  assert.equal(status, 1);
+  assert.ok(!fake.calls.includes(`bootout:${LABEL_MODEL_ROUTER}`));
+  assert.equal(fake.runs.length, 0);
+});

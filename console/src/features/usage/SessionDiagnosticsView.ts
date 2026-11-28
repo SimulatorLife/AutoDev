@@ -15,6 +15,7 @@ read server-side to be read at all.
 */
 
 import {
+  type AcpPinRecord,
   formatClientSurface,
   type SessionDiagnosticsReport,
   type SessionRouterEventRow,
@@ -421,9 +422,14 @@ function renderContextHeader(
     React.createElement(
       DetailValue,
       { label: "Live" },
-      React.createElement(Tag, native ? {
-            children: native.endedAt ? "End observed" : NOT_OBSERVED_LABEL
-          } : ({ children: openThread === true ? "Open turn" : "Not running" }))
+      React.createElement(
+        Tag,
+        native
+          ? {
+              children: native.endedAt ? "End observed" : NOT_OBSERVED_LABEL
+            }
+          : { children: openThread === true ? "Open turn" : "Not running" }
+      )
     ),
     React.createElement(
       DetailValue,
@@ -652,10 +658,70 @@ function renderOverview(
   const tools = chartData(aggregates.toolCallsByName);
   const turns = chartData(aggregates.turnsByOutcome);
 
+  const acpPins = report.acpPins ?? [];
+
   return [
     React.createElement(
       "div",
       { className: PAGE_SECTION_STACK_CLASS },
+      acpPins.length > 0
+        ? panel(
+            "ACP session pins",
+            React.createElement<DataTableProperties<AcpPinRecord>>(DataTable, {
+              data: acpPins,
+              columns: [
+                {
+                  id: "session",
+                  header: "Pin session",
+                  cell: ({ row: { original: pin } }) => pin.sessionId,
+                  meta: { weight: 210, align: "tokens" }
+                },
+                {
+                  id: "role",
+                  header: "Role",
+                  cell: ({ row: { original: pin } }) => pin.role,
+                  meta: { weight: 120, align: "tokens" }
+                },
+                {
+                  id: "provider",
+                  header: "Provider",
+                  cell: ({ row: { original: pin } }) => pin.provider,
+                  meta: { weight: 140, align: "tokens" }
+                },
+                {
+                  id: "model",
+                  header: "Model",
+                  cell: ({ row: { original: pin } }) => pin.model,
+                  meta: { weight: 190, align: "tokens" }
+                },
+                {
+                  id: "transport",
+                  header: "Transport",
+                  cell: ({ row: { original: pin } }) => pin.transport,
+                  meta: { weight: 90, align: "tokens" }
+                },
+                {
+                  id: "acpSession",
+                  header: "ACP session ID",
+                  cell: ({ row: { original: pin } }) =>
+                    pin.acpSessionId ?? NOT_OBSERVED_LABEL,
+                  meta: { weight: 220, align: "tokens" }
+                },
+                {
+                  id: "status",
+                  header: "Status",
+                  cell: ({ row: { original: pin } }) =>
+                    React.createElement(Tag, {
+                      children: pin.closedAt ? "Closed" : "Active"
+                    }),
+                  meta: { weight: 90, align: "tokens" }
+                }
+              ],
+              keyExtractor: (pin) => pin.sessionId,
+              emptyMessage: "No ACP session pins were observed."
+            })
+          )
+        : null,
       panel(
         "Session tokens",
         React.createElement(
@@ -802,13 +868,16 @@ function renderOverview(
         : React.createElement("div"),
       panel(
         "Threads",
-        React.createElement<DataTableProperties<SessionThreadTrace>>(DataTable, {
-          data: report.threads,
-          columns: threadColumns(state, report.router),
-          keyExtractor: (thread) => thread.id,
-          emptyMessage: "No thread was observed for this session.",
-          label: "Session threads"
-        })
+        React.createElement<DataTableProperties<SessionThreadTrace>>(
+          DataTable,
+          {
+            data: report.threads,
+            columns: threadColumns(state, report.router),
+            keyExtractor: (thread) => thread.id,
+            emptyMessage: "No thread was observed for this session.",
+            label: "Session threads"
+          }
+        )
       ),
       panel(
         "Skill usage",
@@ -1413,135 +1482,142 @@ function renderRequests(
     { className: PAGE_SECTION_STACK_CLASS },
     panel(
       "Per-thread router summary",
-      React.createElement<DataTableProperties<SessionRouterSummary>>(DataTable, {
-        data: report.router,
-        columns: [
-          {
-            id: "thread",
-            header: "Thread",
-            cell: ({ row: { original: summary } }) => summary.thread,
-            meta: { weight: 220, align: "tokens" }
-          },
-          {
-            id: "matched",
-            header: "Match",
-            cell: ({ row: { original: summary } }) => summary.matchedBy,
-            meta: { weight: 120, align: "tokens" }
-          },
-          {
-            id: "requests",
-            header: "Requests",
-            cell: ({ row: { original: summary } }) => String(summary.requests),
-            meta: { weight: 90, align: "tokens" }
-          },
-          {
-            id: "providers",
-            header: "Provider sequence",
-            cell: ({ row: { original: summary } }) =>
-              routerProviderLabel(summary),
-            meta: { weight: 220, align: "tokens" }
-          },
-          {
-            id: "failures",
-            header: "Failures",
-            cell: ({ row: { original: summary } }) =>
-              String(summary.failures.length),
-            meta: { weight: 90, align: "tokens" }
-          },
-          {
-            id: "skipped",
-            header: "Skipped",
-            cell: ({ row: { original: summary } }) =>
-              String(summary.skipped?.length ?? 0),
-            meta: { weight: 90, align: "tokens" }
-          },
-          {
-            id: "retries",
-            header: "Retries",
-            cell: ({ row: { original: summary } }) =>
-              String(summary.retries ?? 0),
-            meta: { weight: 80, align: "tokens" }
-          },
-          {
-            id: "exhaustion",
-            header: "Exhaustion waits",
-            cell: ({ row: { original: summary } }) =>
-              String(summary.exhaustionWaits?.count ?? 0),
-            meta: { weight: 120, align: "tokens" }
-          },
-          {
-            id: "transport",
-            header: "Transport errors",
-            cell: ({ row: { original: summary } }) =>
-              String(summary.transportErrors ?? 0),
-            meta: { weight: 120, align: "tokens" }
-          }
-        ],
-        keyExtractor: (summary) => summary.thread,
-        emptyMessage: "No router request was observed for this session.",
-        label: "Router summary"
-      })
+      React.createElement<DataTableProperties<SessionRouterSummary>>(
+        DataTable,
+        {
+          data: report.router,
+          columns: [
+            {
+              id: "thread",
+              header: "Thread",
+              cell: ({ row: { original: summary } }) => summary.thread,
+              meta: { weight: 220, align: "tokens" }
+            },
+            {
+              id: "matched",
+              header: "Match",
+              cell: ({ row: { original: summary } }) => summary.matchedBy,
+              meta: { weight: 120, align: "tokens" }
+            },
+            {
+              id: "requests",
+              header: "Requests",
+              cell: ({ row: { original: summary } }) =>
+                String(summary.requests),
+              meta: { weight: 90, align: "tokens" }
+            },
+            {
+              id: "providers",
+              header: "Provider sequence",
+              cell: ({ row: { original: summary } }) =>
+                routerProviderLabel(summary),
+              meta: { weight: 220, align: "tokens" }
+            },
+            {
+              id: "failures",
+              header: "Failures",
+              cell: ({ row: { original: summary } }) =>
+                String(summary.failures.length),
+              meta: { weight: 90, align: "tokens" }
+            },
+            {
+              id: "skipped",
+              header: "Skipped",
+              cell: ({ row: { original: summary } }) =>
+                String(summary.skipped?.length ?? 0),
+              meta: { weight: 90, align: "tokens" }
+            },
+            {
+              id: "retries",
+              header: "Retries",
+              cell: ({ row: { original: summary } }) =>
+                String(summary.retries ?? 0),
+              meta: { weight: 80, align: "tokens" }
+            },
+            {
+              id: "exhaustion",
+              header: "Exhaustion waits",
+              cell: ({ row: { original: summary } }) =>
+                String(summary.exhaustionWaits?.count ?? 0),
+              meta: { weight: 120, align: "tokens" }
+            },
+            {
+              id: "transport",
+              header: "Transport errors",
+              cell: ({ row: { original: summary } }) =>
+                String(summary.transportErrors ?? 0),
+              meta: { weight: 120, align: "tokens" }
+            }
+          ],
+          keyExtractor: (summary) => summary.thread,
+          emptyMessage: "No router request was observed for this session.",
+          label: "Router summary"
+        }
+      )
     ),
     panel(
       "Router events",
       React.createElement(
         "div",
         { className: PANEL_CONTENT_STACK_CLASS },
-        React.createElement<DataTableProperties<SessionRouterEventRow>>(DataTable, {
-          data: report.eventsPage.items,
-          columns: [
-            {
-              id: "at",
-              header: TIME_UTC_HEADER,
-              cell: ({ row: { original: event } }) =>
-                React.createElement(InstantDisplay, {
-                  value: event.at,
-                  label: "Event time"
-                }),
-              meta: { weight: 170, align: "tokens" }
-            },
-            {
-              id: "phase",
-              header: "Phase",
-              cell: ({ row: { original: event } }) => event.phase,
-              meta: { weight: 120, align: "tokens" }
-            },
-            {
-              id: "provider",
-              header: "Provider",
-              cell: ({ row: { original: event } }) =>
-                event.provider ?? NOT_OBSERVED_LABEL,
-              meta: { weight: 120, align: "tokens" }
-            },
-            {
-              id: "model",
-              header: "Model",
-              cell: ({ row: { original: event } }) =>
-                event.model ?? NOT_OBSERVED_LABEL,
-              meta: { weight: 140, align: "tokens" }
-            },
-            {
-              id: "outcome",
-              header: "Outcome",
-              cell: ({ row: { original: event } }) =>
-                event.outcome ?? NOT_OBSERVED_LABEL,
-              meta: { weight: 110, align: "tokens" }
-            },
-            {
-              id: "elapsed",
-              header: "Elapsed (ms)",
-              cell: ({ row: { original: event } }) =>
-                event.elapsedMs === null
-                  ? NOT_OBSERVED_LABEL
-                  : String(event.elapsedMs),
-              meta: { weight: 110, align: "tokens" }
-            }
-          ],
-          keyExtractor: (event: SessionRouterEventRow) =>
-            `${event.at}:${event.requestId}:${event.phase}`,
-          emptyMessage: NO_EVENTS_MESSAGE,
-          label: "Router events"
-        }),
+        React.createElement<DataTableProperties<SessionRouterEventRow>>(
+          DataTable,
+          {
+            data: report.eventsPage.items,
+            columns: [
+              {
+                id: "at",
+                header: TIME_UTC_HEADER,
+                cell: ({ row: { original: event } }) =>
+                  React.createElement(InstantDisplay, {
+                    value: event.at,
+                    label: "Event time"
+                  }),
+                meta: { weight: 170, align: "tokens" }
+              },
+              {
+                id: "phase",
+                header: "Phase",
+                cell: ({ row: { original: event } }) => event.phase,
+                meta: { weight: 120, align: "tokens" }
+              },
+              {
+                id: "provider",
+                header: "Provider",
+                cell: ({ row: { original: event } }) =>
+                  event.provider ?? NOT_OBSERVED_LABEL,
+                meta: { weight: 120, align: "tokens" }
+              },
+              {
+                id: "model",
+                header: "Model",
+                cell: ({ row: { original: event } }) =>
+                  event.model ?? NOT_OBSERVED_LABEL,
+                meta: { weight: 140, align: "tokens" }
+              },
+              {
+                id: "outcome",
+                header: "Outcome",
+                cell: ({ row: { original: event } }) =>
+                  event.outcome ?? NOT_OBSERVED_LABEL,
+                meta: { weight: 110, align: "tokens" }
+              },
+              {
+                id: "elapsed",
+                header: "Elapsed (ms)",
+                cell: ({ row: { original: event } }) =>
+                  event.elapsedMs === null
+                    ? NOT_OBSERVED_LABEL
+                    : String(event.elapsedMs),
+                meta: { weight: 110, align: "tokens" }
+              }
+            ],
+            keyExtractor: (event: SessionRouterEventRow) =>
+              `${event.at}:${event.requestId}:${event.phase}`,
+            emptyMessage: NO_EVENTS_MESSAGE,
+            label: "Router events"
+          }
+        ),
         React.createElement(Pagination, {
           label: "Router events",
           offset: report.eventsPage.offset,
@@ -1694,13 +1770,16 @@ function renderSpans(
     React.createElement(
       "div",
       { className: LIST_PANEL_CLASS },
-      React.createElement<DataTableProperties<UsageSessionSpanSummary>>(DataTable, {
-        data: spans.spans,
-        columns: spanColumns(),
-        keyExtractor: (span) => span.spanId,
-        emptyMessage: NO_SPANS_MESSAGE,
-        label: "Session spans"
-      })
+      React.createElement<DataTableProperties<UsageSessionSpanSummary>>(
+        DataTable,
+        {
+          data: spans.spans,
+          columns: spanColumns(),
+          keyExtractor: (span) => span.spanId,
+          emptyMessage: NO_SPANS_MESSAGE,
+          label: "Session spans"
+        }
+      )
     ),
     React.createElement(Pagination, {
       label: "Spans",

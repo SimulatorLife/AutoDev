@@ -21,9 +21,15 @@ import { pathToFileURL } from "node:url";
 
 import { checkRuntimeSourceGeneration } from "@simulatorlife/autodev-runtime/platform/install-check";
 import {
+  ensureIngressControlSecret,
+  ingressGenerationsStateFile,
+  readIngressControlSecret
+} from "@simulatorlife/autodev-runtime/platform/install-state";
+import {
   currentRuntimeSourceGeneration,
   GENERATION_RETENTION_MS,
   materializeRuntimeSourceGeneration,
+  resolveProtectedRuntimeGenerations,
   runtimeSourceGenerationName,
   type RuntimeSourceTree
 } from "@simulatorlife/autodev-runtime/platform/runtime-source-generation";
@@ -345,6 +351,75 @@ test("a process started through the generation symlink satisfies isEntryPoint", 
       { encoding: "utf8" }
     );
     assert.equal(output, "true");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("protected live and rollback generations are never garbage-collected regardless of age", () => {
+  const home = codexHome();
+  try {
+    const oldest = materializeRuntimeSourceGeneration(
+      home,
+      tree({ "router/server.ts": "export const v = 1;\n" }),
+      1000
+    );
+    const second = materializeRuntimeSourceGeneration(
+      home,
+      tree({ "router/server.ts": "export const v = 2;\n" }),
+      2000
+    );
+    const stateFile = ingressGenerationsStateFile(home);
+    mkdirSync(path.dirname(stateFile), { recursive: true, mode: 0o700 });
+    writeFileSync(
+      stateFile,
+      JSON.stringify({ protectedReleases: [oldest.generation] }),
+      { mode: 0o600 }
+    );
+    assert.ok(resolveProtectedRuntimeGenerations(home).has(oldest.generation));
+
+    const thirdTree = tree({ "router/server.ts": "export const v = 3;\n" });
+    const third = materializeRuntimeSourceGeneration(
+      home,
+      thirdTree,
+      3000 + GENERATION_RETENTION_MS * 2
+    );
+    // `second` was replaced just now, so its retention starts here; the
+    // protected `oldest` is long past its retention and still kept.
+    assert.deepEqual(third.collected, []);
+
+    const later = materializeRuntimeSourceGeneration(
+      home,
+      thirdTree,
+      3000 + GENERATION_RETENTION_MS * 4
+    );
+    assert.deepEqual(later.collected, [second.generation]);
+    assert.ok(readdirSync(home).includes(oldest.generation));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("ensureIngressControlSecret provisions mode 0700 dir, 0600 secret, and supports rotation", () => {
+  const home = codexHome();
+  try {
+    const first = ensureIngressControlSecret(home);
+    assert.equal(first.created, true);
+    assert.equal(first.rotated, false);
+    assert.ok(first.token.length >= 64);
+    assert.equal(readIngressControlSecret(home), first.token);
+
+    const idempotent = ensureIngressControlSecret(home);
+    assert.equal(idempotent.created, false);
+    assert.equal(idempotent.rotated, false);
+    assert.equal(idempotent.token, first.token);
+
+    const rotated = ensureIngressControlSecret(home, { rotate: true });
+    assert.equal(rotated.rotated, true);
+    assert.notEqual(rotated.token, first.token);
+    assert.equal(readIngressControlSecret(home), rotated.token);
+    assert.equal(lstatSync(path.dirname(rotated.tokenFile)).mode & 0o777, 0o700);
+    assert.equal(lstatSync(rotated.tokenFile).mode & 0o777, 0o600);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

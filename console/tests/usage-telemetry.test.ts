@@ -7,6 +7,7 @@ import type { ConsoleUsageResult } from "../src/lib/server/openlit-usage.ts";
 import {
   clearUsageTelemetryCacheForTests,
   readUsageTelemetry,
+  readUsageTelemetryWithTimestamp,
   USAGE_TELEMETRY_TTL_MS,
   usageTelemetryCacheKey
 } from "../src/lib/server/usage-telemetry.ts";
@@ -197,5 +198,32 @@ test("two different selections are read separately", async () => {
     { load }
   );
 
+  assert.equal(calls.count, 2);
+});
+
+test("readUsageTelemetryWithTimestamp records observedAt and supports forceRefresh", async () => {
+  clearUsageTelemetryCacheForTests();
+  const calls = { count: 0 };
+  const load = countingLoader(calls);
+  let clock = Date.parse("2026-11-27T12:00:00.000Z");
+  const now = (): number => clock;
+
+  const first = await readUsageTelemetryWithTimestamp(SELECTION, { load, now });
+  assert.equal(first.observedAt, "2026-11-27T12:00:00.000Z");
+
+  clock += 30_000;
+  const cached = await readUsageTelemetryWithTimestamp(SELECTION, {
+    load,
+    now
+  });
+  assert.equal(cached.observedAt, "2026-11-27T12:00:00.000Z");
+  assert.equal(calls.count, 1);
+
+  const forced = await readUsageTelemetryWithTimestamp(SELECTION, {
+    load,
+    now,
+    forceRefresh: true
+  });
+  assert.equal(forced.observedAt, "2026-11-27T12:00:30.000Z");
   assert.equal(calls.count, 2);
 });

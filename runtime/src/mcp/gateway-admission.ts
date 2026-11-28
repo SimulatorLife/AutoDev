@@ -154,6 +154,7 @@ export function issueLaunchGrant(options: {
   readonly launchDirectory: string;
   readonly role: string;
   readonly session?: string;
+  readonly runtimeSession?: boolean;
 }): { grant: string; renew(): string } {
   const home = options.env.HOME?.trim() || homedir();
   const codexHome = options.env.CODEX_HOME?.trim() || path.join(home, ".codex");
@@ -172,7 +173,12 @@ export function issueLaunchGrant(options: {
     workspace: admitted.workspace,
     role: options.role,
     ...(options.session
-      ? { session: options.session, runtimeSession: true as const }
+      ? {
+          session: options.session,
+          ...((options.runtimeSession ?? true) && {
+            runtimeSession: true as const
+          })
+        }
       : { session: newGrantSession() })
   };
   const renew = () => issueSessionGrant(admission.secret, claims);

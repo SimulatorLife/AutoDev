@@ -38,8 +38,9 @@ test("DataTable builds its rows and columns with TanStack's constructTable and s
     new URL("../src/components/tables/DataTable.ts", import.meta.url),
     "utf8"
   )
+    .replaceAll(/\/\*[\s\S]*?\*\//gu, "")
     .split("\n")
-    .filter((line) => !/^\s*(\*|\/\*|\/\/)/u.test(line))
+    .filter((line) => !/^\s*\/\//u.test(line))
     .join("\n");
   assert.match(source, /from "@tanstack\/react-table"/u);
   assert.match(source, /\bconstructTable\b/u);

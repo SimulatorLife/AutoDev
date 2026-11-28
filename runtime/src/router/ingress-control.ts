@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { timingSafeEqual } from "node:crypto";
+import { rmSync } from "node:fs";
 import { chmod, lstat, realpath, stat } from "node:fs/promises";
 import {
   createServer,
@@ -9,7 +10,7 @@ import {
 } from "node:http";
 import path from "node:path";
 
-import { isPathWithin } from "@simulatorlife/autodev-data/files";
+import { atomicWriteSync, isPathWithin } from "@simulatorlife/autodev-data/files";
 import { ExponentialBackoff, handleAll, retry } from "cockatiel";
 
 import {
@@ -17,6 +18,8 @@ import {
   type RouterGenerationEndpoint,
   type RouterIngress
 } from "./ingress.ts";
+import { SharedRouterStateServer } from "./shared-state-ipc.ts";
+import { XacpxOrchestrationSocketRouter } from "./xacpx-ipc-proxy.ts";
 
 const DEFAULT_WORKER_SHUTDOWN_TIMEOUT_MS = 60_000;
 // A worker that served this long before crashing was healthy; its crash
@@ -42,6 +45,8 @@ export interface RouterIngressSupervisorOptions {
   releasesDirectory: string;
   workerStartupTimeoutMs?: number;
   workerShutdownTimeoutMs?: number;
+  sharedStateSocket?: string | null;
+  xacpxSocketPath?: string | null;
 }
 
 interface ActivationResult {
@@ -62,6 +67,8 @@ active before the current one stays retained as the rollback target.
 */
 export class RouterIngressSupervisor {
   readonly controlServer: Server;
+  readonly sharedStateServer: SharedRouterStateServer | null;
+  readonly xacpxSocketRouter: XacpxOrchestrationSocketRouter | null;
   private readonly ingress: RouterIngress;
   private readonly controlSocket: string;
   private readonly controlToken: Buffer;
@@ -69,6 +76,7 @@ export class RouterIngressSupervisor {
   private readonly startupTimeoutMs: number;
   private readonly shutdownTimeoutMs: number;
   private readonly workers = new Map<string, ChildProcess>();
+  private readonly workerXacpxSockets = new Map<string, string>();
   private readonly stoppingWorkers = new WeakMap<ChildProcess, Promise<void>>();
   // Verified worker entry of the active and rollback generations only.
   private readonly releases = new Map<string, string>();
@@ -106,6 +114,17 @@ export class RouterIngressSupervisor {
     ) {
       throw new Error("Invalid ingress worker shutdown timeout");
     }
+    this.sharedStateServer =
+      options.sharedStateSocket === null
+        ? null
+        : new SharedRouterStateServer({
+            socketPath:
+              options.sharedStateSocket ??
+              path.join(path.dirname(options.controlSocket), "shared-state.sock")
+          });
+    this.xacpxSocketRouter = options.xacpxSocketPath
+      ? new XacpxOrchestrationSocketRouter(options.xacpxSocketPath)
+      : null;
     this.controlServer = createServer((request, response) => {
       void this.handle(request, response).catch(() => {
         if (response.headersSent) {
@@ -121,6 +140,12 @@ export class RouterIngressSupervisor {
     // The socket is reachable the moment it binds, before any chmod could
     // narrow it, so its directory must already exclude everyone else.
     await this.assertPrivateSocketDirectory();
+    if (this.sharedStateServer) {
+      await this.sharedStateServer.listen();
+    }
+    if (this.xacpxSocketRouter) {
+      await this.xacpxSocketRouter.listen();
+    }
     // Do not unlink an existing socket: it could belong to a running ingress.
     await new Promise<void>((resolve, reject) => {
       const onError = (error: Error) => {
@@ -161,6 +186,17 @@ export class RouterIngressSupervisor {
     const workers = [...this.workers.values()];
     await Promise.all(workers.map((child) => this.stopWorker(child)));
     this.workers.clear();
+    for (const [id, xacpxSocket] of this.workerXacpxSockets) {
+      this.xacpxSocketRouter?.unregisterGeneration(id);
+      rmSync(xacpxSocket, { force: true });
+    }
+    this.workerXacpxSockets.clear();
+    if (this.xacpxSocketRouter) {
+      await this.xacpxSocketRouter.close();
+    }
+    if (this.sharedStateServer) {
+      await this.sharedStateServer.close();
+    }
     if (!this.controlServer.listening) {
       return;
     }
@@ -229,14 +265,25 @@ export class RouterIngressSupervisor {
   ): Promise<{
     child: ChildProcess;
     endpoint: RouterGenerationEndpoint;
+    xacpxSocket: string | null;
   }> {
     return new Promise((resolve, reject) => {
+      const workerXacpxSocket = this.xacpxSocketRouter
+        ? path.join(path.dirname(this.controlSocket), `xacpx-${id}.sock`)
+        : null;
       const environment: NodeJS.ProcessEnv = {
         ...process.env,
         CODEX_MODEL_ROUTER_HOST: "127.0.0.1",
         CODEX_MODEL_ROUTER_PORT: "0",
         AUTODEV_CONTROL_API_DISABLED: "1",
-        AUTODEV_ROUTER_WORKER_GENERATION: id
+        AUTODEV_ROUTER_WORKER_GENERATION: id,
+        AUTODEV_XACPX_ORCHESTRATION_SOCKET: "none",
+        ...(this.sharedStateServer && {
+          AUTODEV_ROUTER_SHARED_STATE_SOCKET: this.sharedStateServer.socketPath
+        }),
+        ...(workerXacpxSocket && {
+          AUTODEV_WORKER_XACPX_SOCKET: workerXacpxSocket
+        })
       };
       delete environment.AUTODEV_ROUTER_INGRESS_CONTROL_TOKEN;
       const child = spawn(process.execPath, [entry], {
@@ -244,7 +291,11 @@ export class RouterIngressSupervisor {
         stdio: ["ignore", "inherit", "inherit", "ipc"]
       });
       let isSettled = false;
-      const finish = (error?: Error, port?: number) => {
+      const finish = (
+        error?: Error,
+        port?: number,
+        reportedXacpxSocket?: string | null
+      ) => {
         if (isSettled) return;
         isSettled = true;
         clearTimeout(timer);
@@ -255,7 +306,11 @@ export class RouterIngressSupervisor {
           if (child.exitCode === null) child.kill("SIGTERM");
           reject(error ?? new Error("Worker did not announce its listener"));
         } else {
-          resolve({ child, endpoint: { id, host: "127.0.0.1", port } });
+          resolve({
+            child,
+            endpoint: { id, host: "127.0.0.1", port },
+            xacpxSocket: reportedXacpxSocket ?? null
+          });
         }
       };
       const onError = (error: Error) => finish(error);
@@ -272,7 +327,12 @@ export class RouterIngressSupervisor {
           payload.port > 0 &&
           payload.port <= 65_535
         ) {
-          finish(undefined, payload.port);
+          const announcedXacpx =
+            typeof payload.xacpxSocket === "string" &&
+            payload.xacpxSocket.trim().length > 0
+              ? payload.xacpxSocket.trim()
+              : null;
+          finish(undefined, payload.port, announcedXacpx);
         }
       };
       const timer = setTimeout(
@@ -341,14 +401,27 @@ export class RouterIngressSupervisor {
       throw new Error("Invalid or duplicate generation ID");
     }
     const verified = await this.verifiedEntry(entry);
-    const { child, endpoint } = await this.spawnWorker(id, verified);
+    const { child, endpoint, xacpxSocket } = await this.spawnWorker(
+      id,
+      verified
+    );
+    if (xacpxSocket && this.xacpxSocketRouter) {
+      this.workerXacpxSockets.set(id, xacpxSocket);
+      this.xacpxSocketRouter.registerGeneration(id, xacpxSocket);
+    }
     let previous: string | null;
     try {
       previous = await this.ingress.activateGeneration(endpoint);
     } catch (error) {
+      if (xacpxSocket) {
+        this.xacpxSocketRouter?.unregisterGeneration(id);
+        this.workerXacpxSockets.delete(id);
+        rmSync(xacpxSocket, { force: true });
+      }
       child.kill("SIGTERM");
       throw error;
     }
+    this.xacpxSocketRouter?.setActiveGeneration(id);
     this.workers.set(id, child);
     this.superviseWorker(id, child);
     this.releases.set(id, verified);
@@ -360,7 +433,50 @@ export class RouterIngressSupervisor {
       if (generationId !== id && generationId !== this.rollbackGenerationId)
         this.releases.delete(generationId);
     }
+    this.persistGenerationsState();
     return { activeGenerationId: id, retiringGenerationId: previous };
+  }
+
+  private persistGenerationsState(): void {
+    const status = this.ingress.getStatus();
+    const protectedReleases = new Set<string>();
+    for (const entry of this.releases.values()) {
+      const releaseName = path.basename(path.dirname(path.dirname(entry)));
+      if (releaseName.startsWith(".src-")) {
+        protectedReleases.add(releaseName);
+      }
+    }
+    try {
+      atomicWriteSync(
+        path.join(path.dirname(this.controlSocket), "generations-state.json"),
+        `${JSON.stringify(
+          {
+            activeGenerationId: status.activeGenerationId,
+            rollbackGenerationId: this.rollbackGenerationId,
+            retiringGenerationIds: status.generations
+              .filter((item) => item.state === "retiring")
+              .map((item) => item.id),
+            protectedReleases: [...protectedReleases].sort(),
+            updatedAt: new Date().toISOString()
+          },
+          null,
+          2
+        )}\n`,
+        { mode: 0o600 }
+      );
+    } catch {
+      /* ignore state persistence failure when socket dir is torn down */
+    }
+  }
+
+  private cleanupGenerationResources(id: string): void {
+    this.sharedStateServer?.purgeGeneration(id);
+    this.xacpxSocketRouter?.unregisterGeneration(id);
+    const workerXacpxSocket = this.workerXacpxSockets.get(id);
+    if (workerXacpxSocket) {
+      this.workerXacpxSockets.delete(id);
+      rmSync(workerXacpxSocket, { force: true });
+    }
   }
 
   /**
@@ -373,6 +489,7 @@ export class RouterIngressSupervisor {
     child.once("exit", (exitCode, signal) => {
       if (this.stoppingWorkers.has(child)) return;
       this.workers.delete(id);
+      this.cleanupGenerationResources(id);
       const wasActive = this.ingress.getStatus().activeGenerationId === id;
       this.ingress.report({
         phase: "generation_worker_exited",
@@ -461,6 +578,8 @@ export class RouterIngressSupervisor {
     const worker = this.workers.get(id);
     if (worker) await this.stopWorker(worker);
     this.workers.delete(id);
+    this.cleanupGenerationResources(id);
+    this.persistGenerationsState();
   }
 
   private async handle(

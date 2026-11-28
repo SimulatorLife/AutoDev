@@ -166,7 +166,8 @@ session is almost always recent.
 */
 export function findSessionRollouts(
   sessionsRoot: string | readonly string[],
-  id: string
+  id: string,
+  extraIds: readonly string[] = []
 ): string[] {
   const sessionId = safeAutoDevSessionId(id);
   if (!sessionId) return [];
@@ -174,8 +175,18 @@ export function findSessionRollouts(
     ? [...sessionsRoot]
     : [sessionsRoot as string];
   const files = roots.flatMap((root) => rolloutFiles(root)).reverse();
-  const direct = files.filter((file) => file.includes(sessionId));
-  const sessionIds = new Set<string>([sessionId]);
+  const seedIds = new Set<string>([sessionId]);
+  for (const extra of extraIds) {
+    const valid = safeAutoDevSessionId(extra);
+    if (valid) seedIds.add(valid);
+  }
+  const direct = files.filter((file) => {
+    for (const candidate of seedIds) {
+      if (file.includes(candidate)) return true;
+    }
+    return false;
+  });
+  const sessionIds = new Set<string>(seedIds);
   for (const file of direct) {
     const meta = readHeadMeta(file);
     if (typeof meta?.session_id === "string") sessionIds.add(meta.session_id);

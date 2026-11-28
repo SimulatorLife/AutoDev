@@ -10,6 +10,11 @@ import {
   routedSiteTabs
 } from "@simulatorlife/autodev-runtime/providers/opencli";
 import {
+  type OpencliBrowser,
+  type OpencliRunOptions,
+  OpencliSitePageNotOpenError
+} from "@simulatorlife/autodev-runtime/providers/opencli-browser";
+import {
   CHATGPT_MODELS,
   geminiConversationId,
   geminiModelLimit,
@@ -67,6 +72,78 @@ test("opencli health server reports liveliness, browser errors, and discovered m
   } finally {
     server.close();
   }
+});
+
+test("model discovery reads Gemini only from an open page and never opens one", async () => {
+  const requests: {
+    args: readonly string[];
+    existingPageOnly: boolean | undefined;
+  }[] = [];
+  let isGeminiOpen = false;
+  const health = createOpencliHealthServer({
+    run: async ({ args, existingPageOnly }) => {
+      requests.push({ args, existingPageOnly });
+      if (!isGeminiOpen) throw new OpencliSitePageNotOpenError("gemini");
+      return [{ model: "3.1-pro" }];
+    }
+  });
+  const server = createServer((request, response) => {
+    void health.handle(request, response);
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const port = (server.address() as AddressInfo).port;
+    const list = async (): Promise<string[]> => {
+      const response = await fetch(
+        `http://127.0.0.1:${port}/v1/models?provider=opencli-gemini`
+      );
+      assert.equal(response.status, 200);
+      const body = (await response.json()) as { data: { id: string }[] };
+      return body.data.map((entry) => entry.id);
+    };
+    // No Gemini page: the listing is empty (the Runtime keeps its last list).
+    assert.deepEqual(await list(), []);
+    isGeminiOpen = true;
+    assert.deepEqual(await list(), ["opencli-gemini-3.1-pro"]);
+    assert.ok(requests.length === 2);
+    assert.ok(requests.every((request) => request.existingPageOnly === true));
+  } finally {
+    server.close();
+  }
+});
+
+test("the process runner opens site pages for turns but not for probes", async () => {
+  const calls: OpencliRunOptions[] = [];
+  const browser = {
+    run: async (
+      _site: string,
+      _signal: AbortSignal,
+      _command: unknown,
+      options: OpencliRunOptions
+    ) => {
+      calls.push(options);
+      return [];
+    },
+    close: async () => undefined
+  } as unknown as OpencliBrowser;
+  const run = processRunner(
+    () => ({ command: "opencli", args: [] }),
+    { chatgpt: 1, gemini: 1 },
+    new Set(),
+    browser
+  );
+  await run({
+    args: ["gemini", "ask", "hi"],
+    signal: AbortSignal.timeout(1000)
+  });
+  await run({
+    args: ["gemini", "models"],
+    signal: AbortSignal.timeout(1000),
+    existingPageOnly: true
+  });
+  assert.equal(calls[0]?.shouldOpenPage, true);
+  assert.equal(calls[1]?.shouldOpenPage, false);
 });
 
 test("routedSiteTabs derive from ROUTES", () => {

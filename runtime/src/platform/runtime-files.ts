@@ -176,6 +176,7 @@ export interface RepoInstallCache {
   fingerprint covers the run.
   */
   rulesyncGenerate?: string;
+  rulesyncGitignore?: string;
   [key: string]: unknown;
 }
 
@@ -204,7 +205,8 @@ function readDiskInstallCache(
         ...parsed,
         schema: REPO_INSTALL_CACHE_SCHEMA,
         ...((typeof parsed.rulesyncInstallFingerprint === "string") && { rulesyncInstallFingerprint: parsed.rulesyncInstallFingerprint }),
-        ...((typeof parsed.rulesyncGenerate === "string") && { rulesyncGenerate: parsed.rulesyncGenerate })
+        ...((typeof parsed.rulesyncGenerate === "string") && { rulesyncGenerate: parsed.rulesyncGenerate }),
+        ...((typeof parsed.rulesyncGitignore === "string") && { rulesyncGitignore: parsed.rulesyncGitignore })
       };
     }
   } catch {
@@ -247,7 +249,8 @@ export function writeRepoInstallCache(
     ...cache,
     schema: REPO_INSTALL_CACHE_SCHEMA,
     ...(cache.rulesyncInstallFingerprint !== undefined && { rulesyncInstallFingerprint: cache.rulesyncInstallFingerprint }),
-    ...(cache.rulesyncGenerate !== undefined && { rulesyncGenerate: cache.rulesyncGenerate })
+    ...(cache.rulesyncGenerate !== undefined && { rulesyncGenerate: cache.rulesyncGenerate }),
+    ...(cache.rulesyncGitignore !== undefined && { rulesyncGitignore: cache.rulesyncGitignore })
   };
   memoryRepositoryInstallCache.set(resolved, next);
   if (!cachePath) return;
@@ -369,6 +372,14 @@ refuse to read a gitignored `.agents/skills/` -- Antigravity among them.
 The command reads the configuration from the working directory and resolves
 the exclude file through Git, so it has to run from the repository root.
 */
+function computeRulesyncGitignoreFingerprint(repositoryRoot: string): string {
+  return computeRepoPathsFingerprint(
+    repositoryRoot,
+    ["rulesync.jsonc", path.join(".git", "info", "exclude")],
+    [`rulesync:${readRulesyncPackageVersion(repositoryRoot)}`]
+  );
+}
+
 export function runRulesyncGitignore(repositoryRoot: string): void {
   const normalizedRoot = path.resolve(repositoryRoot);
   const rulesyncBin = path.join(
@@ -382,9 +393,22 @@ export function runRulesyncGitignore(repositoryRoot: string): void {
       `missing-rulesync ${rulesyncBin}; run pnpm install --frozen-lockfile`
     );
   }
+  const cache =
+    process.env.AUTODEV_FORCE_RULESYNC === "1"
+      ? null
+      : readRepoInstallCache(normalizedRoot);
+  const preFingerprint = computeRulesyncGitignoreFingerprint(normalizedRoot);
+  if (cache?.rulesyncGitignore === preFingerprint) {
+    return;
+  }
   execFileSync(rulesyncBin, ["gitignore", "--silent"], {
     cwd: normalizedRoot,
     stdio: "pipe"
+  });
+  const latestCache = readRepoInstallCache(normalizedRoot);
+  writeRepoInstallCache(normalizedRoot, {
+    ...latestCache,
+    rulesyncGitignore: computeRulesyncGitignoreFingerprint(normalizedRoot)
   });
 }
 

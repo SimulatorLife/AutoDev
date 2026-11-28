@@ -14,7 +14,10 @@ no network, no clock. The engine that fills it lives in
 beside these types so a CLI and an HTTP response cannot drift apart.
 */
 
-import { type ClientSurface, isClientSurface } from "./client-surface.ts";
+import { z } from "zod";
+
+import { type AcpPinRecord, acpPinRecordSchema } from "./acp-pins.ts";
+import { CLIENT_SURFACES, type ClientSurface } from "./client-surface.ts";
 
 /**
 The schema of one session's full diagnostics report.
@@ -325,10 +328,14 @@ export interface SessionRouterSummary {
   readonly thread: string;
   readonly model: string | null;
   /**
-  `thread`: every matched event names the thread. `model-window`: some are
+  `acp-pin`: attributed by an authoritative Runtime/ACP session pin.
+  `thread`: every matched router event names the thread. `model-window`: some are
   older events matched by model and time, so same-model threads interleave.
   */
-  readonly matchedBy: "thread" | "model-window";
+  readonly matchedBy: "acp-pin" | "thread" | "model-window";
+  readonly pinSessionId?: string;
+  readonly pinRole?: string;
+  readonly pinTransport?: "acp" | "opencli";
   readonly requests: number;
   readonly byProvider: Readonly<Record<string, SessionRouterProviderStats>>;
   readonly failures: readonly SessionRouterFailure[];
@@ -521,6 +528,7 @@ export interface SessionDiagnosticsReport {
   */
   readonly clientSurface: ClientSurface | null;
   readonly nativeSession?: NativeSessionEvidence;
+  readonly acpPins?: readonly AcpPinRecord[];
   readonly threads: readonly SessionThreadTrace[];
   readonly router: readonly SessionRouterSummary[];
   readonly logs: readonly SessionLogFileSummary[];
@@ -698,562 +706,410 @@ export function classifyToolFailure(
 
 /*
 ------------------------------------------------------------------
-*/
-/*
-Runtime validators.
-*/
-/*                                                                     */
-/*
+Runtime Zod schemas and response guards.
+
 The Console reads these payloads over HTTP from a service it does
-*/
-/*
 not control, so a malformed body must fail closed rather than be
-*/
-/*
 rendered as though it were evidence.
-*/
-/*
 ------------------------------------------------------------------
 */
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+const finiteNumberSchema = z.number().finite();
+const nullableFiniteNumberSchema = finiteNumberSchema.nullable();
+const countSchema = z
+  .number()
+  .int()
+  .min(0)
+  .refine((value) => Number.isSafeInteger(value));
+const nullableCountSchema = countSchema.nullable();
+const nullableStringSchema = z.string().nullable();
+const countMapSchema = z.record(z.string(), finiteNumberSchema);
+const nullableCountMapSchema = countMapSchema.nullable();
+const stringListSchema = z.array(z.string());
+export const stringRecordSchema = z.record(z.string(), z.string());
+const nullableClientSurfaceSchema = z.enum(CLIENT_SURFACES).nullable();
+const toolFailureCategorySchema = z.enum(TOOL_FAILURE_CATEGORIES);
+
+const sessionToolFailureSchema = z.object({
+  at: z.string(),
+  tool: z.string(),
+  callId: z.string(),
+  detail: z.string(),
+  category: toolFailureCategorySchema.optional(),
+  input: z.string().optional()
+});
+
+const sessionThreadTurnSchema = z.object({
+  turnId: z.string(),
+  started: nullableStringSchema,
+  ended: nullableStringSchema,
+  outcome: z.string(),
+  detail: nullableStringSchema
+});
+
+const sessionThreadGapSchema = z.object({
+  seconds: finiteNumberSchema,
+  after: z.string(),
+  before: z.string(),
+  at: z.string()
+});
+
+const sessionInvestigationSchema = z.object({
+  observed: z.boolean(),
+  firstEditAt: nullableStringSchema,
+  toolCalls: finiteNumberSchema,
+  tokens: nullableFiniteNumberSchema,
+  filesRead: finiteNumberSchema,
+  repeatedReads: finiteNumberSchema,
+  searches: finiteNumberSchema,
+  repeatedSearches: finiteNumberSchema,
+  context: z.object({
+    ccc: finiteNumberSchema,
+    cgc: finiteNumberSchema,
+    lsp: finiteNumberSchema
+  })
+});
+
+const sessionThreadTokenUsageSchema = z.object({
+  observed: z.boolean(),
+  samples: finiteNumberSchema,
+  inputTokens: finiteNumberSchema,
+  cachedInputTokens: finiteNumberSchema,
+  outputTokens: finiteNumberSchema,
+  reasoningOutputTokens: finiteNumberSchema,
+  totalTokens: finiteNumberSchema,
+  cacheHitPct: nullableFiniteNumberSchema,
+  reasoningPct: nullableFiniteNumberSchema,
+  peakInputTokens: finiteNumberSchema,
+  cacheDrops: finiteNumberSchema
+});
+
+const sessionThreadCompactionSummarySchema = z.object({
+  count: finiteNumberSchema,
+  contextCompactedEvents: finiteNumberSchema,
+  maxReplacementItems: finiteNumberSchema,
+  maxReplacementBytes: finiteNumberSchema,
+  maxReplacementImages: finiteNumberSchema,
+  responseImageItems: finiteNumberSchema
+});
+
+function validateSkillReadCounts(
+  prompt: {
+    readonly skillsRead: readonly string[];
+    readonly skillReadCounts: Readonly<Record<string, number>>;
+  },
+  context: z.RefinementCtx
+): void {
+  const listed = new Set(prompt.skillsRead);
+  const keys = Object.keys(prompt.skillReadCounts);
+  if (listed.size !== prompt.skillsRead.length || keys.length !== listed.size) {
+    context.addIssue({
+      code: "custom",
+      message: "skillReadCounts must match skillsRead exactly"
+    });
+    return;
+  }
+  for (const skill of prompt.skillsRead) {
+    const count = prompt.skillReadCounts[skill];
+    if (count === undefined || !Number.isSafeInteger(count) || count < 1) {
+      context.addIssue({
+        code: "custom",
+        message: `skillReadCounts entry '${skill}' must be an integer >= 1`
+      });
+    }
+  }
 }
 
-function isNullableString(value: unknown): value is string | null {
-  return value === null || typeof value === "string";
-}
+const sessionThreadPromptOverheadSchema = z
+  .object({
+    initialDeveloperBytes: finiteNumberSchema,
+    initialDeveloperChars: countSchema,
+    initialDeveloperTokens: nullableCountSchema,
+    skillsCatalogBytes: finiteNumberSchema,
+    skillsLoaded: finiteNumberSchema,
+    skillsByRoot: countMapSchema,
+    skillsRead: stringListSchema,
+    skillReadCounts: countMapSchema,
+    skillTelemetryReads: nullableFiniteNumberSchema
+  })
+  .superRefine(validateSkillReadCounts);
 
-function isNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
-}
+const sessionThreadEfficiencySchema = z.object({
+  tokens: sessionThreadTokenUsageSchema,
+  compaction: sessionThreadCompactionSummarySchema,
+  prompt: sessionThreadPromptOverheadSchema
+});
 
-function isNullableNumber(value: unknown): value is number | null {
-  return value === null || isNumber(value);
-}
+const sessionThreadAnomaliesSchema = z.object({
+  tagOnlyMessages: finiteNumberSchema,
+  samples: stringListSchema
+});
 
-/**
-A whole, non-negative measurement such as a character or token count.
-*/
-function isCount(value: unknown): value is number {
-  return Number.isSafeInteger(value) && (value as number) >= 0;
-}
+const sessionThreadItemSchema = z.object({
+  at: z.string(),
+  kind: z.string(),
+  detail: z.string(),
+  threadId: z.string()
+});
 
-function isNullableCount(value: unknown): value is number | null {
-  return value === null || isCount(value);
-}
+const sessionThreadTraceSchema = z.object({
+  id: z.string(),
+  sessionId: nullableStringSchema,
+  parentId: nullableStringSchema,
+  nickname: nullableStringSchema,
+  role: nullableStringSchema,
+  model: nullableStringSchema,
+  modelProvider: nullableStringSchema,
+  cliVersion: nullableStringSchema,
+  clientSurface: nullableClientSurfaceSchema,
+  cwd: nullableStringSchema,
+  file: z.string(),
+  start: nullableStringSchema,
+  end: nullableStringSchema,
+  counts: countMapSchema,
+  turns: z.array(sessionThreadTurnSchema),
+  gaps: z.array(sessionThreadGapSchema),
+  tools: countMapSchema,
+  toolFailures: z.array(sessionToolFailureSchema),
+  anomalies: sessionThreadAnomaliesSchema.optional(),
+  efficiency: sessionThreadEfficiencySchema.optional(),
+  investigation: sessionInvestigationSchema,
+  items: z.array(sessionThreadItemSchema).optional()
+});
 
-function isCountMap(value: unknown): value is Record<string, number> {
-  if (!isRecord(value)) return false;
-  return Object.values(value).every((entry) => isNumber(entry));
-}
+const sessionRouterEventRowSchema = z.object({
+  at: z.string(),
+  requestId: z.string(),
+  thread: nullableStringSchema,
+  phase: z.string(),
+  role: nullableStringSchema,
+  requestedModel: nullableStringSchema,
+  provider: nullableStringSchema,
+  model: nullableStringSchema,
+  outcome: nullableStringSchema,
+  status: nullableFiniteNumberSchema,
+  failureClass: nullableStringSchema,
+  reason: nullableStringSchema.optional(),
+  spawnFailureReason: nullableStringSchema,
+  denialReason: nullableStringSchema,
+  elapsedMs: nullableFiniteNumberSchema,
+  toolCalls: nullableFiniteNumberSchema,
+  selection: nullableStringSchema,
+  errorName: nullableStringSchema.optional(),
+  errorCode: nullableStringSchema.optional()
+});
 
-function isNullableCountMap(
-  value: unknown
-): value is Record<string, number> | null {
-  return value === null || isCountMap(value);
-}
+const sessionRouterProviderStatsSchema = z.object({
+  requests: finiteNumberSchema,
+  failures: finiteNumberSchema,
+  elapsedMs: finiteNumberSchema,
+  toolCalls: finiteNumberSchema
+});
 
-function isStringList(value: unknown): value is readonly string[] {
-  return (
-    Array.isArray(value) && value.every((entry) => typeof entry === "string")
-  );
-}
+const providerStatsMapSchema = z.record(
+  z.string(),
+  sessionRouterProviderStatsSchema
+);
 
-function isNullableClientSurface(
-  value: unknown
-): value is ClientSurface | null {
-  return value === null || isClientSurface(value);
-}
+const sessionRouterFailureSchema = z.object({
+  at: z.string(),
+  requestId: z.string(),
+  provider: nullableStringSchema,
+  status: nullableFiniteNumberSchema,
+  failureClass: nullableStringSchema,
+  spawnFailureReason: nullableStringSchema.optional(),
+  elapsedMs: nullableFiniteNumberSchema
+});
 
-function isStringMap(value: unknown): value is Record<string, string> {
-  if (!isRecord(value)) return false;
-  return Object.values(value).every((entry) => typeof entry === "string");
-}
+const sessionRouterSkippedEventSchema = z.object({
+  at: z.string(),
+  requestId: z.string(),
+  provider: nullableStringSchema,
+  reason: z.string(),
+  elapsedMs: nullableFiniteNumberSchema
+});
 
-function isSessionToolFailure(value: unknown): value is SessionToolFailure {
-  if (!isRecord(value) || typeof value.at !== "string" ||
-    typeof value.tool !== "string" ||
-    typeof value.callId !== "string" ||
-    typeof value.detail !== "string")
-    return false;
-  if (value.category !== undefined && !isToolFailureCategory(value.category))
-    return false;
-  return value.input === undefined || typeof value.input === "string";
-}
+const sessionRouterSummarySchema = z.object({
+  thread: z.string(),
+  model: nullableStringSchema,
+  matchedBy: z.enum(["acp-pin", "thread", "model-window"]),
+  pinSessionId: z.string().optional(),
+  pinRole: z.string().optional(),
+  pinTransport: z.enum(["acp", "opencli"]).optional(),
+  requests: finiteNumberSchema,
+  byProvider: providerStatsMapSchema,
+  failures: z.array(sessionRouterFailureSchema),
+  providerSequence: stringListSchema,
+  modelSequence: stringListSchema,
+  skipped: z.array(sessionRouterSkippedEventSchema).optional(),
+  retries: finiteNumberSchema.optional(),
+  exhaustionWaits: z
+    .object({
+      count: finiteNumberSchema,
+      totalMs: finiteNumberSchema
+    })
+    .optional(),
+  transportErrors: finiteNumberSchema.optional(),
+  events: z.array(sessionRouterEventRowSchema).optional()
+});
 
-function isSessionThreadTurn(value: unknown): value is SessionThreadTurn {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.turnId === "string" &&
-    isNullableString(value.started) &&
-    isNullableString(value.ended) &&
-    typeof value.outcome === "string" &&
-    isNullableString(value.detail)
-  );
-}
+const liveRouterSchema = z.object({
+  reachable: z.boolean(),
+  canonicalLiveCount: nullableFiniteNumberSchema,
+  byState: nullableCountMapSchema,
+  liveByRole: nullableCountMapSchema,
+  startedAt: nullableStringSchema
+});
 
-function isSessionThreadGap(value: unknown): value is SessionThreadGap {
-  if (!isRecord(value)) return false;
-  return (
-    isNumber(value.seconds) &&
-    typeof value.after === "string" &&
-    typeof value.before === "string" &&
-    typeof value.at === "string"
-  );
-}
+const liveOpenThreadSchema = z.object({
+  id: z.string(),
+  modified: z.string()
+});
 
-function isSessionInvestigation(value: unknown): value is SessionInvestigation {
-  if (!isRecord(value) || (typeof value.observed !== "boolean") || !isNullableString(value.firstEditAt) || !isNumber(value.toolCalls) || !isNullableNumber(value.tokens) || !isNumber(value.filesRead) ||
-    !isNumber(value.repeatedReads) ||
-    !isNumber(value.searches) ||
-    !isNumber(value.repeatedSearches) || !isRecord(value.context)) return false;
-  return (
-    isNumber(value.context.ccc) &&
-    isNumber(value.context.cgc) &&
-    isNumber(value.context.lsp)
-  );
-}
+const liveServiceSchema = z.object({
+  pid: z.string(),
+  started: z.string(),
+  script: z.string()
+});
 
-function isListOf<T>(
-  value: unknown,
-  guard: (entry: unknown) => entry is T
-): value is readonly T[] {
-  return Array.isArray(value) && value.every((entry) => guard(entry));
-}
+const liveDriftSchema = z.object({
+  checked: finiteNumberSchema,
+  differing: stringListSchema,
+  missing: stringListSchema
+});
 
-/**
-Whether an optional field is absent or passes its guard.
-*/
-function isAbsentOr(
-  value: unknown,
-  guard: (entry: unknown) => boolean
-): boolean {
-  return value === undefined || guard(value);
-}
+const sessionLiveReportSchema = z.object({
+  router: liveRouterSchema,
+  openThreads: z.array(liveOpenThreadSchema),
+  processes: stringListSchema,
+  services: z.array(liveServiceSchema),
+  drift: liveDriftSchema.nullable()
+});
 
-function isSessionThreadTokenUsage(
-  value: unknown
-): value is SessionThreadTokenUsage {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.observed === "boolean" &&
-    isNumber(value.samples) &&
-    isNumber(value.inputTokens) &&
-    isNumber(value.cachedInputTokens) &&
-    isNumber(value.outputTokens) &&
-    isNumber(value.reasoningOutputTokens) &&
-    isNumber(value.totalTokens) &&
-    isNullableNumber(value.cacheHitPct) &&
-    isNullableNumber(value.reasoningPct) &&
-    isNumber(value.peakInputTokens) &&
-    isNumber(value.cacheDrops)
-  );
-}
+const providerLastFailureSchema = z.object({
+  provider: z.string(),
+  status: nullableStringSchema,
+  cooldownKind: nullableStringSchema,
+  lastFailureClass: nullableStringSchema,
+  lastFailureStatus: nullableFiniteNumberSchema
+});
 
-function isSessionThreadCompactionSummary(
-  value: unknown
-): value is SessionThreadCompactionSummary {
-  if (!isRecord(value)) return false;
-  return (
-    isNumber(value.count) &&
-    isNumber(value.contextCompactedEvents) &&
-    isNumber(value.maxReplacementItems) &&
-    isNumber(value.maxReplacementBytes) &&
-    isNumber(value.maxReplacementImages) &&
-    isNumber(value.responseImageItems)
-  );
-}
+const sessionEfficiencySummarySchema = z.object({
+  disabledProviders: stringListSchema,
+  nullRoleModels: stringListSchema,
+  providerLastFailures: z.array(providerLastFailureSchema).optional()
+});
 
-/**
-Whether per-skill read counts are keyed by exactly the skills read.
-
-Every key of the map names a skill in the list and every skill in the list
-has a whole, positive count: a skill counted but not listed, or listed but
-never counted, means the two fields came from different reads.
-*/
-function isSkillReadCounts(
-  value: unknown,
-  skillsRead: readonly string[]
-): value is Record<string, number> {
-  if (!isCountMap(value)) return false;
-  const listed = new Set(skillsRead);
-  if ((listed.size !== skillsRead.length) || (Object.keys(value).length !== listed.size)) return false;
-  return skillsRead.every((skill) => {
-    const count = value[skill];
-    return count !== undefined && Number.isInteger(count) && count >= 1;
+function sessionPagedSliceSchema<Item extends z.ZodTypeAny>(itemSchema: Item) {
+  return z.object({
+    items: z.array(itemSchema),
+    total: finiteNumberSchema,
+    limit: finiteNumberSchema,
+    offset: finiteNumberSchema,
+    hasMore: z.boolean()
   });
 }
 
-function isSessionThreadPromptOverhead(
-  value: unknown
-): value is SessionThreadPromptOverhead {
-  if (!isRecord(value) || !isStringList(value.skillsRead)) return false;
-  return (
-    isNumber(value.initialDeveloperBytes) &&
-    isCount(value.initialDeveloperChars) &&
-    isNullableCount(value.initialDeveloperTokens) &&
-    isNumber(value.skillsCatalogBytes) &&
-    isNumber(value.skillsLoaded) &&
-    isCountMap(value.skillsByRoot) &&
-    isSkillReadCounts(value.skillReadCounts, value.skillsRead) &&
-    isNullableNumber(value.skillTelemetryReads)
-  );
-}
+const sessionDiagnosticsAggregatesSchema = z
+  .object({
+    threadCount: finiteNumberSchema,
+    totalTokens: finiteNumberSchema,
+    inputTokens: finiteNumberSchema,
+    cachedInputTokens: finiteNumberSchema,
+    outputTokens: finiteNumberSchema,
+    reasoningOutputTokens: finiteNumberSchema,
+    cacheHitPct: nullableFiniteNumberSchema,
+    reasoningPct: nullableFiniteNumberSchema,
+    peakInputTokens: finiteNumberSchema,
+    cacheDrops: finiteNumberSchema,
+    compactions: finiteNumberSchema,
+    contextCompactedEvents: finiteNumberSchema,
+    maxReplacementItems: finiteNumberSchema,
+    maxReplacementBytes: finiteNumberSchema,
+    maxReplacementImages: finiteNumberSchema,
+    responseImageItems: finiteNumberSchema,
+    maxInitialDeveloperBytes: finiteNumberSchema,
+    maxInitialDeveloperChars: finiteNumberSchema,
+    maxInitialDeveloperTokens: nullableFiniteNumberSchema,
+    maxSkillsCatalogBytes: finiteNumberSchema,
+    maxSkillsLoaded: finiteNumberSchema,
+    skillsByRoot: countMapSchema,
+    uniqueSkillsRead: finiteNumberSchema,
+    skillReadCounts: countMapSchema,
+    skillTelemetryReads: nullableFiniteNumberSchema,
+    turnsTotal: finiteNumberSchema,
+    turnsByOutcome: countMapSchema,
+    gapsCount: finiteNumberSchema,
+    toolCallsTotal: finiteNumberSchema,
+    toolCallsByName: countMapSchema,
+    toolFailuresTotal: finiteNumberSchema,
+    toolFailuresByCategory: countMapSchema,
+    preToolUseBlocks: finiteNumberSchema,
+    routerRequests: finiteNumberSchema,
+    routerFailures: finiteNumberSchema,
+    routerSkippedTotal: finiteNumberSchema,
+    routerSkippedByReason: countMapSchema,
+    routerRetries: finiteNumberSchema,
+    exhaustionWaits: finiteNumberSchema,
+    transportErrors: finiteNumberSchema,
+    providerHops: finiteNumberSchema,
+    byProvider: providerStatsMapSchema
+  })
+  .superRefine((aggregates, context) => {
+    if (
+      Object.keys(aggregates.skillReadCounts).length !==
+      aggregates.uniqueSkillsRead
+    ) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "uniqueSkillsRead must equal the number of keys in skillReadCounts"
+      });
+    }
+  });
 
-function isSessionThreadEfficiency(
-  value: unknown
-): value is SessionThreadEfficiency {
-  if (!isRecord(value)) return false;
-  return (
-    isSessionThreadTokenUsage(value.tokens) &&
-    isSessionThreadCompactionSummary(value.compaction) &&
-    isSessionThreadPromptOverhead(value.prompt)
-  );
-}
+const sessionLogFileSummarySchema = z.object({
+  file: z.string(),
+  modified: z.string(),
+  bytes: finiteNumberSchema
+});
 
-function hasSessionThreadIdentity(value: Record<string, unknown>): boolean {
-  return (
-    typeof value.id === "string" &&
-    isNullableString(value.sessionId) &&
-    isNullableString(value.parentId) &&
-    isNullableString(value.nickname) &&
-    isNullableString(value.role) &&
-    isNullableString(value.model) &&
-    isNullableString(value.modelProvider) &&
-    isNullableString(value.cliVersion) &&
-    isNullableClientSurface(value.clientSurface) &&
-    isNullableString(value.cwd) &&
-    typeof value.file === "string" &&
-    isNullableString(value.start) &&
-    isNullableString(value.end)
-  );
-}
+const sessionBridgeLogAlertSchema = z.object({
+  file: z.string(),
+  count: finiteNumberSchema,
+  samples: stringListSchema
+});
 
-function isSessionThreadAnomalies(
-  value: unknown
-): value is SessionThreadAnomalies {
-  if (!isRecord(value)) return false;
-  return isNumber(value.tagOnlyMessages) && isStringList(value.samples);
-}
+const nativeSessionEvidenceSchema = z.object({
+  startedAt: nullableStringSchema,
+  lastObservedAt: z.string(),
+  endedAt: nullableStringSchema,
+  model: nullableStringSchema,
+  workspace: nullableStringSchema
+});
 
-function isSessionThreadItem(value: unknown): value is SessionThreadItem {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.at === "string" &&
-    typeof value.kind === "string" &&
-    typeof value.detail === "string" &&
-    typeof value.threadId === "string"
-  );
-}
-
-function isSessionThreadTrace(value: unknown): value is SessionThreadTrace {
-  if (!isRecord(value) || !hasSessionThreadIdentity(value)) return false;
-  return (
-    isCountMap(value.counts) &&
-    isCountMap(value.tools) &&
-    isListOf(value.turns, isSessionThreadTurn) &&
-    isListOf(value.gaps, isSessionThreadGap) &&
-    isListOf(value.toolFailures, isSessionToolFailure) &&
-    isSessionInvestigation(value.investigation) &&
-    isAbsentOr(value.efficiency, isSessionThreadEfficiency) &&
-    isAbsentOr(value.anomalies, isSessionThreadAnomalies) &&
-    isAbsentOr(value.items, (items) => isListOf(items, isSessionThreadItem))
-  );
-}
-
-function isSessionRouterEventRow(
-  value: unknown
-): value is SessionRouterEventRow {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.at === "string" &&
-    typeof value.requestId === "string" &&
-    isNullableString(value.thread) &&
-    typeof value.phase === "string" &&
-    isNullableString(value.role) &&
-    isNullableString(value.requestedModel) &&
-    isNullableString(value.provider) &&
-    isNullableString(value.model) &&
-    isNullableString(value.outcome) &&
-    isNullableNumber(value.status) &&
-    isNullableString(value.failureClass) &&
-    isNullableString(value.spawnFailureReason) &&
-    isNullableString(value.denialReason) &&
-    isNullableNumber(value.elapsedMs) &&
-    isNullableNumber(value.toolCalls) &&
-    isNullableString(value.selection)
-  );
-}
-
-function isSessionRouterProviderStats(
-  value: unknown
-): value is SessionRouterProviderStats {
-  if (!isRecord(value)) return false;
-  return (
-    isNumber(value.requests) &&
-    isNumber(value.failures) &&
-    isNumber(value.elapsedMs) &&
-    isNumber(value.toolCalls)
-  );
-}
-
-function isProviderStatsMap(
-  value: unknown
-): value is Record<string, SessionRouterProviderStats> {
-  return (
-    isRecord(value) &&
-    Object.values(value).every((stats) => isSessionRouterProviderStats(stats))
-  );
-}
-
-function isSessionRouterFailure(value: unknown): value is SessionRouterFailure {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.at === "string" &&
-    typeof value.requestId === "string" &&
-    isNullableString(value.provider) &&
-    isNullableNumber(value.status) &&
-    isNullableString(value.failureClass) &&
-    isNullableNumber(value.elapsedMs)
-  );
-}
-
-function isSessionRouterSkippedEvent(
-  value: unknown
-): value is SessionRouterSkippedEvent {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.at === "string" &&
-    typeof value.requestId === "string" &&
-    isNullableString(value.provider) &&
-    typeof value.reason === "string" &&
-    isNullableNumber(value.elapsedMs)
-  );
-}
-
-function isExhaustionWaits(value: unknown): boolean {
-  return isRecord(value) && isNumber(value.count) && isNumber(value.totalMs);
-}
-
-function isSessionRouterSummary(value: unknown): value is SessionRouterSummary {
-  if (!isRecord(value)) return false;
-  if (value.matchedBy !== "thread" && value.matchedBy !== "model-window")
-    return false;
-  return (
-    typeof value.thread === "string" &&
-    isNullableString(value.model) &&
-    isNumber(value.requests) &&
-    isProviderStatsMap(value.byProvider) &&
-    isListOf(value.failures, isSessionRouterFailure) &&
-    isStringList(value.providerSequence) &&
-    isStringList(value.modelSequence) &&
-    isAbsentOr(value.skipped, (skipped) =>
-      isListOf(skipped, isSessionRouterSkippedEvent)
-    ) &&
-    isAbsentOr(value.retries, isNumber) &&
-    isAbsentOr(value.exhaustionWaits, isExhaustionWaits) &&
-    isAbsentOr(value.transportErrors, isNumber) &&
-    isAbsentOr(value.events, (events) =>
-      isListOf(events, isSessionRouterEventRow)
-    )
-  );
-}
-
-function isLiveRouterState(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.reachable === "boolean" &&
-    isNullableNumber(value.canonicalLiveCount) &&
-    isNullableCountMap(value.byState) &&
-    isNullableCountMap(value.liveByRole) &&
-    isNullableString(value.startedAt)
-  );
-}
-
-function isLiveOpenThread(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    typeof value.id === "string" &&
-    typeof value.modified === "string"
-  );
-}
-
-function isLiveService(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    typeof value.pid === "string" &&
-    typeof value.started === "string" &&
-    typeof value.script === "string"
-  );
-}
-
-function isDeploymentDrift(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    isNumber(value.checked) &&
-    isStringList(value.differing) &&
-    isStringList(value.missing)
-  );
-}
-
-function isEveryEntry(
-  value: unknown,
-  guard: (entry: unknown) => boolean
-): boolean {
-  return Array.isArray(value) && value.every((entry) => guard(entry));
-}
-
-function isSessionLiveReport(value: unknown): value is SessionLiveReport {
-  if (!isRecord(value)) return false;
-  return (
-    isLiveRouterState(value.router) &&
-    isEveryEntry(value.openThreads, isLiveOpenThread) &&
-    isStringList(value.processes) &&
-    isEveryEntry(value.services, isLiveService) &&
-    (value.drift === null || isDeploymentDrift(value.drift))
-  );
-}
-
-function isProviderLastFailure(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.provider === "string" &&
-    isNullableString(value.status) &&
-    isNullableString(value.cooldownKind) &&
-    isNullableString(value.lastFailureClass) &&
-    isNullableNumber(value.lastFailureStatus)
-  );
-}
-
-function isSessionEfficiencySummary(
-  value: unknown
-): value is SessionEfficiencySummary {
-  if (!isRecord(value)) return false;
-  return (
-    isStringList(value.disabledProviders) &&
-    isStringList(value.nullRoleModels) &&
-    isAbsentOr(value.providerLastFailures, (failures) =>
-      isEveryEntry(failures, isProviderLastFailure)
-    )
-  );
-}
-
-function isSessionPagedSlice(
-  value: unknown
-): value is SessionPagedSlice<unknown> {
-  if (!isRecord(value)) return false;
-  return (
-    Array.isArray(value.items) &&
-    isNumber(value.total) &&
-    isNumber(value.limit) &&
-    isNumber(value.offset) &&
-    typeof value.hasMore === "boolean"
-  );
-}
-
-const AGGREGATE_NUMERIC_KEYS: readonly string[] = [
-  "threadCount",
-  "totalTokens",
-  "inputTokens",
-  "cachedInputTokens",
-  "outputTokens",
-  "reasoningOutputTokens",
-  "peakInputTokens",
-  "cacheDrops",
-  "compactions",
-  "contextCompactedEvents",
-  "maxReplacementItems",
-  "maxReplacementBytes",
-  "maxReplacementImages",
-  "responseImageItems",
-  "maxInitialDeveloperBytes",
-  "maxInitialDeveloperChars",
-  "maxSkillsCatalogBytes",
-  "maxSkillsLoaded",
-  "uniqueSkillsRead",
-  "turnsTotal",
-  "gapsCount",
-  "toolCallsTotal",
-  "toolFailuresTotal",
-  "preToolUseBlocks",
-  "routerRequests",
-  "routerFailures",
-  "routerSkippedTotal",
-  "routerRetries",
-  "exhaustionWaits",
-  "transportErrors",
-  "providerHops"
-];
-
-const AGGREGATE_NULLABLE_NUMERIC_KEYS: readonly string[] = [
-  "cacheHitPct",
-  "reasoningPct",
-  "maxInitialDeveloperTokens",
-  "skillTelemetryReads"
-];
-
-const AGGREGATE_COUNT_MAP_KEYS: readonly string[] = [
-  "skillsByRoot",
-  "skillReadCounts",
-  "turnsByOutcome",
-  "toolCallsByName",
-  "toolFailuresByCategory",
-  "routerSkippedByReason"
-];
-
-function isSessionDiagnosticsAggregates(
-  value: unknown
-): value is SessionDiagnosticsAggregates {
-  if (!isRecord(value) || AGGREGATE_NUMERIC_KEYS.some((key) => !isNumber(value[key])) || AGGREGATE_NULLABLE_NUMERIC_KEYS.some((key) =>
-      !isNullableNumber(value[key])
-    ) || AGGREGATE_COUNT_MAP_KEYS.some((key) => !isCountMap(value[key])))
-    return false;
-  // uniqueSkillsRead counts the keys of skillReadCounts; disagreement means
-  // the two rollups were built from different reads.
-  if (
-    Object.keys(value.skillReadCounts as Record<string, number>).length !==
-    value.uniqueSkillsRead
-  )
-    return false;
-  return isProviderStatsMap(value.byProvider);
-}
-
-function isSessionLogFileSummary(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    typeof value.file === "string" &&
-    typeof value.modified === "string" &&
-    isNumber(value.bytes)
-  );
-}
-
-function isSessionBridgeLogAlert(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    typeof value.file === "string" &&
-    isNumber(value.count) &&
-    isStringList(value.samples)
-  );
-}
-
-function hasSessionReportIdentity(value: Record<string, unknown>): boolean {
-  return (
-    value.schema === SESSION_DIAGNOSTICS_SCHEMA &&
-    typeof value.found === "boolean" &&
-    typeof value.requestedId === "string" &&
-    isNullableString(value.rootSessionId) &&
-    typeof value.matchedByThreadId === "boolean" &&
-    isNullableClientSurface(value.clientSurface) &&
-    (value.nativeSession === undefined ||
-      (isRecord(value.nativeSession) &&
-        isNullableString(value.nativeSession.startedAt) &&
-        typeof value.nativeSession.lastObservedAt === "string" &&
-        isNullableString(value.nativeSession.endedAt) &&
-        isNullableString(value.nativeSession.model) &&
-        isNullableString(value.nativeSession.workspace)))
-  );
-}
+/**
+Zod schema for one session's full diagnostics report.
+*/
+export const sessionDiagnosticsReportSchema = z.object({
+  schema: z.literal(SESSION_DIAGNOSTICS_SCHEMA),
+  found: z.boolean(),
+  requestedId: z.string(),
+  rootSessionId: nullableStringSchema,
+  matchedByThreadId: z.boolean(),
+  clientSurface: nullableClientSurfaceSchema,
+  nativeSession: nativeSessionEvidenceSchema.optional(),
+  acpPins: z.array(acpPinRecordSchema).optional(),
+  threads: z.array(sessionThreadTraceSchema),
+  router: z.array(sessionRouterSummarySchema),
+  logs: z.array(sessionLogFileSummarySchema),
+  bridgeAlerts: z.array(sessionBridgeLogAlertSchema),
+  live: sessionLiveReportSchema.nullable(),
+  efficiency: sessionEfficiencySummarySchema.nullable(),
+  aggregates: sessionDiagnosticsAggregatesSchema,
+  eventsPage: sessionPagedSliceSchema(sessionRouterEventRowSchema),
+  itemsPage: sessionPagedSliceSchema(sessionThreadItemSchema)
+});
 
 /**
 Whether a payload is a usable session diagnostics report.
@@ -1261,32 +1117,26 @@ Whether a payload is a usable session diagnostics report.
 export function isSessionDiagnosticsReport(
   value: unknown
 ): value is SessionDiagnosticsReport {
-  if (!isRecord(value) || !hasSessionReportIdentity(value)) return false;
-  return (
-    isListOf(value.threads, isSessionThreadTrace) &&
-    isListOf(value.router, isSessionRouterSummary) &&
-    isEveryEntry(value.logs, isSessionLogFileSummary) &&
-    isEveryEntry(value.bridgeAlerts, isSessionBridgeLogAlert) &&
-    (value.live === null || isSessionLiveReport(value.live)) &&
-    (value.efficiency === null ||
-      isSessionEfficiencySummary(value.efficiency)) &&
-    isSessionDiagnosticsAggregates(value.aggregates) &&
-    isSessionPagedSlice(value.eventsPage) &&
-    isSessionPagedSlice(value.itemsPage)
-  );
+  return sessionDiagnosticsReportSchema.safeParse(value).success;
 }
 
-function isRecentSessionSummary(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  return (
-    typeof value.id === "string" &&
-    typeof value.started === "string" &&
-    typeof value.lastWrite === "string" &&
-    isNumber(value.threads) &&
-    isNullableString(value.cwd) &&
-    isNullableClientSurface(value.clientSurface)
-  );
-}
+const recentSessionSummarySchema = z.object({
+  id: z.string(),
+  started: z.string(),
+  lastWrite: z.string(),
+  threads: finiteNumberSchema,
+  cwd: nullableStringSchema,
+  clientSurface: nullableClientSurfaceSchema
+});
+
+/**
+Zod schema for the recent-sessions listing.
+*/
+export const sessionRecentListResponseSchema = z.object({
+  schema: z.literal(SESSION_RECENT_LIST_SCHEMA),
+  limit: finiteNumberSchema,
+  sessions: z.array(recentSessionSummarySchema)
+});
 
 /**
 Whether a payload is a usable recent-sessions listing.
@@ -1294,74 +1144,66 @@ Whether a payload is a usable recent-sessions listing.
 export function isSessionRecentListResponse(
   value: unknown
 ): value is SessionRecentListResponse {
-  if (!isRecord(value)) return false;
-  return (
-    value.schema === SESSION_RECENT_LIST_SCHEMA &&
-    isNumber(value.limit) &&
-    isEveryEntry(value.sessions, isRecentSessionSummary)
-  );
+  return sessionRecentListResponseSchema.safeParse(value).success;
 }
 
-function hasFleetSessionTokenFields(value: Record<string, unknown>): boolean {
-  return (
-    isNumber(value.threads) &&
-    isNumber(value.totalTokens) &&
-    isNumber(value.inputTokens) &&
-    isNumber(value.cachedInputTokens) &&
-    isNullableNumber(value.cacheHitPct) &&
-    isNumber(value.cacheDrops) &&
-    isNumber(value.compactions) &&
-    isNumber(value.maxSkillsLoaded)
-  );
-}
+const reasonCountSchema = z.object({
+  reason: z.string(),
+  count: finiteNumberSchema
+});
 
-function isFleetSessionRow(value: unknown): boolean {
-  if (!isRecord(value) || !hasFleetSessionTokenFields(value)) return false;
-  return (
-    typeof value.id === "string" &&
-    typeof value.started === "string" &&
-    typeof value.lastWrite === "string" &&
-    isNullableString(value.cwd) &&
-    isNullableClientSurface(value.clientSurface) &&
-    isNumber(value.toolFailures) &&
-    isNumber(value.preToolUseBlocks) &&
-    (value.topFailureCategory === null ||
-      isToolFailureCategory(value.topFailureCategory)) &&
-    isNumber(value.routerRequests) &&
-    isNumber(value.routerFailures) &&
-    isCountMap(value.routerSkipped) &&
-    isCountMap(value.providers)
-  );
-}
+const keyCountSchema = z.object({
+  key: z.string(),
+  count: finiteNumberSchema
+});
 
-function isReasonCount(value: unknown): boolean {
-  return (
-    isRecord(value) && typeof value.reason === "string" && isNumber(value.count)
-  );
-}
+const fleetSessionRowSchema = z.object({
+  id: z.string(),
+  started: z.string(),
+  lastWrite: z.string(),
+  cwd: nullableStringSchema,
+  clientSurface: nullableClientSurfaceSchema,
+  threads: finiteNumberSchema,
+  totalTokens: finiteNumberSchema,
+  inputTokens: finiteNumberSchema,
+  cachedInputTokens: finiteNumberSchema,
+  cacheHitPct: nullableFiniteNumberSchema,
+  cacheDrops: finiteNumberSchema,
+  compactions: finiteNumberSchema,
+  maxSkillsLoaded: finiteNumberSchema,
+  toolFailures: finiteNumberSchema,
+  preToolUseBlocks: finiteNumberSchema,
+  topFailureCategory: toolFailureCategorySchema.nullable(),
+  routerRequests: finiteNumberSchema,
+  routerFailures: finiteNumberSchema,
+  routerSkipped: countMapSchema,
+  providers: countMapSchema
+});
 
-function isKeyCount(value: unknown): boolean {
-  return (
-    isRecord(value) && typeof value.key === "string" && isNumber(value.count)
-  );
-}
+const fleetScanTotalsSchema = z.object({
+  sessions: finiteNumberSchema,
+  threads: finiteNumberSchema,
+  totalTokens: finiteNumberSchema,
+  inputTokens: finiteNumberSchema,
+  cachedInputTokens: finiteNumberSchema,
+  cacheHitPct: nullableFiniteNumberSchema,
+  cacheDrops: finiteNumberSchema,
+  compactions: finiteNumberSchema,
+  toolFailuresByCategory: countMapSchema,
+  preToolUseReasons: z.array(reasonCountSchema),
+  routerSkippedByReason: z.array(keyCountSchema)
+});
 
-function isFleetScanTotals(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  return (
-    isNumber(value.sessions) &&
-    isNumber(value.threads) &&
-    isNumber(value.totalTokens) &&
-    isNumber(value.inputTokens) &&
-    isNumber(value.cachedInputTokens) &&
-    isNullableNumber(value.cacheHitPct) &&
-    isNumber(value.cacheDrops) &&
-    isNumber(value.compactions) &&
-    isCountMap(value.toolFailuresByCategory) &&
-    isEveryEntry(value.preToolUseReasons, isReasonCount) &&
-    isEveryEntry(value.routerSkippedByReason, isKeyCount)
-  );
-}
+/**
+Zod schema for the cross-session fleet scan.
+*/
+export const sessionFleetScanResponseSchema = z.object({
+  schema: z.literal(SESSION_FLEET_SCAN_SCHEMA),
+  limit: finiteNumberSchema,
+  sessions: z.array(fleetSessionRowSchema),
+  recentSessions: z.array(recentSessionSummarySchema).optional(),
+  totals: fleetScanTotalsSchema
+});
 
 /**
 Whether a payload is a usable fleet scan.
@@ -1369,16 +1211,34 @@ Whether a payload is a usable fleet scan.
 export function isSessionFleetScanResponse(
   value: unknown
 ): value is SessionFleetScanResponse {
-  if (!isRecord(value)) return false;
-  return (
-    value.schema === SESSION_FLEET_SCAN_SCHEMA &&
-    isNumber(value.limit) &&
-    isEveryEntry(value.sessions, isFleetSessionRow) &&
-    (value.recentSessions === undefined ||
-      isEveryEntry(value.recentSessions, isRecentSessionSummary)) &&
-    isFleetScanTotals(value.totals)
-  );
+  return sessionFleetScanResponseSchema.safeParse(value).success;
 }
+
+const topCommandSchema = z.object({
+  commandHead: z.string(),
+  policy: z.string(),
+  count: finiteNumberSchema
+});
+
+const hookDenialsSummarySchema = z.object({
+  logFile: z.string(),
+  sinceDays: finiteNumberSchema,
+  cutoff: z.string(),
+  totalLines: finiteNumberSchema,
+  preToolUseDenials: finiteNumberSchema,
+  byPolicy: countMapSchema,
+  byRole: countMapSchema,
+  byReason: z.array(reasonCountSchema),
+  topCommands: z.array(topCommandSchema)
+});
+
+/**
+Zod schema for the hook-denial summary response.
+*/
+export const sessionHookDenialsResponseSchema = z.object({
+  schema: z.literal(SESSION_HOOK_DENIALS_SCHEMA),
+  summary: hookDenialsSummarySchema
+});
 
 /**
 Whether a payload is a usable hook-denial summary.
@@ -1386,20 +1246,7 @@ Whether a payload is a usable hook-denial summary.
 export function isSessionHookDenialsResponse(
   value: unknown
 ): value is SessionHookDenialsResponse {
-  if (!isRecord(value) || (value.schema !== SESSION_HOOK_DENIALS_SCHEMA) || !isRecord(value.summary)) return false;
-  const { summary } = value;
-  if (typeof summary.logFile !== "string" ||
-    !isNumber(summary.sinceDays) ||
-    typeof summary.cutoff !== "string" ||
-    !isNumber(summary.totalLines) ||
-    !isNumber(summary.preToolUseDenials) || !isCountMap(summary.byPolicy) || !isCountMap(summary.byRole) || !isEveryEntry(summary.byReason, isReasonCount) || !Array.isArray(summary.topCommands)) return false;
-  for (const entry of summary.topCommands) {
-    if (!isRecord(entry) || typeof entry.commandHead !== "string" ||
-      typeof entry.policy !== "string" ||
-      !isNumber(entry.count))
-      return false;
-  }
-  return true;
+  return sessionHookDenialsResponseSchema.safeParse(value).success;
 }
 
 /**
@@ -1408,5 +1255,5 @@ Whether a payload is a plain map of strings, used by the Console's checks.
 export function isStringRecord(
   value: unknown
 ): value is Record<string, string> {
-  return isStringMap(value);
+  return stringRecordSchema.safeParse(value).success;
 }

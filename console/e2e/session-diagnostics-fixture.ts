@@ -226,6 +226,22 @@ export function sessionDiagnosticsReport(): Record<string, unknown> {
         }
       }
     ],
+    acpPins: [
+      {
+        sessionId: "child-acp-worker-1",
+        parentSessionId: `local:orchestrator:repo:${DIAGNOSTICS_SESSION_ID}`,
+        acpSessionId: "01a0ba17-d54c-78f2-9367-3f80e9a8f75f",
+        role: "worker",
+        provider: "claude",
+        model: "claude-sonnet-4-5",
+        reasoningEffort: "high",
+        transport: "acp",
+        cwd: "/repo",
+        createdAt: SESSION_START,
+        updatedAt: SESSION_END,
+        closedAt: null
+      }
+    ],
     router: [
       {
         thread: DIAGNOSTICS_WORKER_THREAD_ID,
@@ -254,6 +270,19 @@ export function sessionDiagnosticsReport(): Record<string, unknown> {
           }
         ],
         retries: 1
+      },
+      {
+        thread: "01a0ba17-d54c-78f2-9367-3f80e9a8f75f",
+        model: "claude-sonnet-4-5",
+        matchedBy: "acp-pin",
+        pinSessionId: "child-acp-worker-1",
+        pinRole: "worker",
+        pinTransport: "acp",
+        requests: 0,
+        byProvider: {},
+        failures: [],
+        providerSequence: ["claude"],
+        modelSequence: ["claude-sonnet-4-5"]
       }
     ],
     logs: [

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import type { ControlApiMcpRuntimeResponse } from "@simulatorlife/autodev-core";
@@ -94,5 +95,15 @@ test("the Console still refuses an MCP runtime observation it cannot read", asyn
       "invalid-response",
       JSON.stringify(broken)
     );
+  }
+});
+
+test("MCP list and detail views mount LiveCountRefresh for five-second visible polling", () => {
+  for (const relativePath of [
+    "../src/features/mcps/McpsView.ts",
+    "../src/features/mcps/McpDetailView.ts"
+  ]) {
+    const source = readFileSync(new URL(relativePath, import.meta.url), "utf8");
+    assert.match(source, /React\.createElement\(LiveCountRefresh\)/u);
   }
 });

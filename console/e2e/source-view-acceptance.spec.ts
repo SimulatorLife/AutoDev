@@ -70,7 +70,9 @@ for (const item of cases) {
     // The revision the page names is the revision of the source it shows.
     const revision = await publishedRevision(request, item.resource);
     await expect(
-      page.getByText(`revision ${revision.slice(0, 12)}`)
+      item.path === "/hooks/preToolUse"
+        ? page.getByText(revision, { exact: true })
+        : page.getByText(`revision ${revision.slice(0, 12)}`)
     ).toBeVisible();
 
     const view = page.locator("[data-source-view]");

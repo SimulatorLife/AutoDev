@@ -50,6 +50,12 @@ const usageWidgetIds = [
   "provider-hops-by-role",
   "provider-hops-by-workspace",
   "provider-hops-by-reason",
+  "agent-launches-root-stages",
+  "agent-launches-child-stages",
+  "agent-launches-root-rejections",
+  "agent-launches-child-rejections",
+  "agent-launches-failed-before-start-by-provider",
+  "agent-launches-by-role",
   "skill-events-by-event",
   "estimated-cost"
 ] as const;

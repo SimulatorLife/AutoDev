@@ -25,20 +25,23 @@ const wholePageNavigationSource = readFileSync(
 test("resource navigation uses Next links instead of full-document anchors", () => {
   assert.match(
     appNavSource,
-    /React\.createElement\(\s*NavigationLink,\s*brandLinkProps/u
+    /React\.createElement\(\s*NavigationLink,\s*brandLinkProperties/u
   );
   assert.match(
     appNavSource,
-    /React\.createElement\(\s*NavigationLink,\s*labelProps/u
+    /React\.createElement\(\s*NavigationLink,\s*labelProperties/u
   );
   assert.doesNotMatch(appNavSource, /React\.createElement\(\s*["']a["']/u);
 });
 
 test("view tabs use Next links while retaining URL-addressable tab state", () => {
   assert.match(tabsSource, /import \{ NavigationLink \}/u);
-  assert.match(tabsSource, /React\.createElement\(NavigationLink, linkProps/u);
+  assert.match(
+    tabsSource,
+    /React\.createElement\(NavigationLink, linkProperties/u
+  );
   assert.doesNotMatch(tabsSource, /React\.createElement\(\s*["']a["']/u);
-  assert.match(tabsSource, /tabHref\(basePath, tab\.id, tabParam\)/u);
+  assert.match(tabsSource, /tabHref\(basePath, tab\.id, tabParameter\)/u);
 });
 
 test("resource navigation warms the destination it is about to route to, in full", () => {

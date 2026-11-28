@@ -224,7 +224,9 @@ function removeAbandonedTemporaryFiles(stateFile: string): void {
 
 export class RouterPersistence {
   private readonly stateFileOption?: string | (() => string) | undefined;
-  private readonly isMain: boolean;
+  private isMain: boolean;
+  private remotePersistNow?: ((file?: string) => Promise<boolean>) | null;
+  private remoteSchedulePersist?: ((file?: string) => void) | null;
   private readonly debounceMs: number;
   private readonly getSnapshot?: (() => Record<string, unknown>) | undefined;
   private readonly restoreSectionCallback?:
@@ -321,10 +323,28 @@ export class RouterPersistence {
     }
   }
 
+  setIsMain(isMain: boolean): void {
+    this.isMain = isMain;
+    if (!isMain) this.cancelScheduledPersist();
+  }
+
+  setRemoteHandlers(
+    handlers: {
+      persistNow?: (file?: string) => Promise<boolean>;
+      schedulePersist?: (file?: string) => void;
+    } | null
+  ): void {
+    this.remotePersistNow = handlers?.persistNow ?? null;
+    this.remoteSchedulePersist = handlers?.schedulePersist ?? null;
+  }
+
   persistNow(file?: string): Promise<boolean> {
     if (this.persistTimeout) {
       clearTimeout(this.persistTimeout);
       this.persistTimeout = null;
+    }
+    if (this.remotePersistNow) {
+      return this.remotePersistNow(file);
     }
     const targetFile = this.getStateFile(file);
 
@@ -336,6 +356,10 @@ export class RouterPersistence {
   }
 
   schedulePersist(file?: string): void {
+    if (this.remoteSchedulePersist) {
+      this.remoteSchedulePersist(file);
+      return;
+    }
     if (!this.isMain || this.persistTimeout) return;
     this.persistTimeout = setTimeout(() => {
       this.persistTimeout = null;

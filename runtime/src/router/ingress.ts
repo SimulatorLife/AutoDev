@@ -8,6 +8,8 @@ import {
   type ServerResponse
 } from "node:http";
 
+import PQueue from "p-queue";
+
 const DEFAULT_RETIREMENT_DRAIN_TIMEOUT_MS = 30_000;
 
 const HOP_BY_HOP_HEADERS = [
@@ -42,18 +44,9 @@ block the ones queued after it.
 export function createSerialQueue(): <T>(
   operation: () => Promise<T>
 ) => Promise<T> {
-  let tail: Promise<void> = Promise.resolve();
-  return async (operation) => {
-    const previous = tail;
-    const { promise, resolve } = Promise.withResolvers<void>();
-    tail = promise;
-    try {
-      await previous;
-      return await operation();
-    } finally {
-      resolve();
-    }
-  };
+  const queue = new PQueue({ concurrency: 1 });
+  return <T>(operation: () => Promise<T>): Promise<T> =>
+    queue.add(operation) as Promise<T>;
 }
 
 /**
@@ -101,9 +94,77 @@ interface Generation {
   endpoint: RouterGenerationEndpoint;
   state: "active" | "retiring" | "retired";
   requests: Set<AbortController>;
+  sessions: Set<string>;
   drainTimer?: NodeJS.Timeout;
   retired: Promise<void>;
   resolveRetired: () => void;
+}
+
+const ACP_SESSION_PATH_PATTERN =
+  /^\/v1\/acp\/sessions\/([^/]+)(?:\/(?:prompt|cancel))?$/u;
+const SESSION_AFFINITY_HEADERS: ReadonlyArray<
+  readonly [header: string, prefix: string]
+> = [
+  ["x-autodev-session-id", "autodev"],
+  ["x-codex-session-id", "codex"],
+  ["session-id", "session"],
+  ["x-session-id", "session"],
+  ["x-conversation-id", "conversation"],
+  ["mcp-session-id", "mcp"]
+];
+
+interface SessionAffinity {
+  key: string;
+  endsSession: boolean;
+}
+
+function headerValue(headers: IncomingHttpHeaders, name: string): string | null {
+  const raw = headers[name];
+  if (typeof raw === "string" && raw.trim().length > 0) return raw.trim();
+  if (Array.isArray(raw) && typeof raw[0] === "string" && raw[0].trim()) {
+    return raw[0].trim();
+  }
+  return null;
+}
+
+function requestPathname(rawUrl: string | undefined): string {
+  try {
+    return new URL(rawUrl ?? "/", "http://127.0.0.1").pathname;
+  } catch {
+    return "/";
+  }
+}
+
+function extractSessionAffinity(request: IncomingMessage): SessionAffinity | null {
+  const pathname = requestPathname(request.url);
+  const acpMatch = ACP_SESSION_PATH_PATTERN.exec(pathname);
+  if (acpMatch) {
+    try {
+      const sessionId = decodeURIComponent(acpMatch[1] ?? "").trim();
+      if (sessionId) {
+        const isItemPath =
+          !pathname.endsWith("/prompt") && !pathname.endsWith("/cancel");
+        return {
+          key: `acp:${sessionId}`,
+          endsSession: request.method === "DELETE" && isItemPath
+        };
+      }
+    } catch {
+      /* ignore invalid URI component */
+    }
+  }
+  for (const [header, prefix] of SESSION_AFFINITY_HEADERS) {
+    const value = headerValue(request.headers, header);
+    if (!value) continue;
+    return {
+      key: `${prefix}:${value}`,
+      endsSession:
+        header === "mcp-session-id" &&
+        request.method === "DELETE" &&
+        pathname.startsWith("/mcp")
+    };
+  }
+  return null;
 }
 
 export interface RouterIngressOptions {
@@ -121,6 +182,7 @@ request handling, Control API authorization and provider telemetry.
 export class RouterIngress {
   readonly server: Server;
   private readonly generations = new Map<string, Generation>();
+  private readonly sessionGenerations = new Map<string, string>();
   private active: Generation | null = null;
   private readonly serialized = createSerialQueue();
   private readonly readinessTimeoutMs: number;
@@ -224,6 +286,7 @@ export class RouterIngress {
         endpoint: { ...endpoint },
         state: "active",
         requests: new Set(),
+        sessions: new Set(),
         retired,
         resolveRetired
       };
@@ -260,20 +323,35 @@ export class RouterIngress {
     if (!generation || generation.state === "retired") return;
     if (this.active === generation) this.active = null;
     generation.state = "retiring";
+    for (const sessionKey of generation.sessions) {
+      if (this.sessionGenerations.get(sessionKey) === generationId) {
+        this.sessionGenerations.delete(sessionKey);
+      }
+    }
+    generation.sessions.clear();
     for (const request of generation.requests) request.abort();
     this.finishRetirement(generation);
   }
 
   private beginRetirement(generation: Generation): void {
     generation.state = "retiring";
-    if (generation.requests.size > 0) {
+    if (generation.requests.size > 0 || generation.sessions.size > 0) {
       generation.drainTimer = setTimeout(() => {
         this.report({
           phase: "generation_drain_deadline_expired",
           generationId: generation.endpoint.id,
           inFlight: generation.requests.size
         });
+        for (const sessionKey of generation.sessions) {
+          if (
+            this.sessionGenerations.get(sessionKey) === generation.endpoint.id
+          ) {
+            this.sessionGenerations.delete(sessionKey);
+          }
+        }
+        generation.sessions.clear();
         for (const request of generation.requests) request.abort();
+        this.finishRetirement(generation);
       }, this.retirementDrainTimeoutMs);
       generation.drainTimer.unref();
     }
@@ -281,7 +359,13 @@ export class RouterIngress {
   }
 
   private finishRetirement(generation: Generation): void {
-    if (generation.state !== "retiring" || generation.requests.size > 0) return;
+    if (
+      generation.state !== "retiring" ||
+      generation.requests.size > 0 ||
+      generation.sessions.size > 0
+    ) {
+      return;
+    }
     clearTimeout(generation.drainTimer);
     generation.state = "retired";
     generation.resolveRetired();
@@ -358,6 +442,92 @@ export class RouterIngress {
     });
   }
 
+  private unpinSession(generation: Generation, key: string): void {
+    if (this.sessionGenerations.get(key) === generation.endpoint.id) {
+      this.sessionGenerations.delete(key);
+    }
+    generation.sessions.delete(key);
+  }
+
+  private pinSession(generation: Generation, key: string): void {
+    if (generation.state === "retired") return;
+    const previousId = this.sessionGenerations.get(key);
+    if (previousId && previousId !== generation.endpoint.id) {
+      const previousGeneration = this.generations.get(previousId);
+      previousGeneration?.sessions.delete(key);
+      if (previousGeneration) this.finishRetirement(previousGeneration);
+    }
+    this.sessionGenerations.set(key, generation.endpoint.id);
+    generation.sessions.add(key);
+  }
+
+  private resolveTargetGeneration(
+    affinity: SessionAffinity | null
+  ): Generation | null {
+    if (affinity) {
+      const pinnedId = this.sessionGenerations.get(affinity.key);
+      if (pinnedId) {
+        const pinned = this.generations.get(pinnedId);
+        if (
+          pinned &&
+          (pinned.state === "active" || pinned.state === "retiring")
+        ) {
+          return pinned;
+        }
+        this.sessionGenerations.delete(affinity.key);
+      }
+    }
+    const target = this.active;
+    if (target && affinity && !affinity.endsSession) {
+      this.pinSession(target, affinity.key);
+    }
+    return target;
+  }
+
+  private captureResponseSessionAffinity(
+    generation: Generation,
+    requestAffinity: SessionAffinity | null,
+    upstreamHeaders: IncomingHttpHeaders,
+    statusCode: number,
+    pathname: string
+  ): void {
+    const responseKeys: string[] = [];
+    const autodevId = headerValue(upstreamHeaders, "x-autodev-session-id");
+    if (autodevId) {
+      responseKeys.push(
+        pathname.startsWith("/v1/acp/sessions")
+          ? `acp:${autodevId}`
+          : `autodev:${autodevId}`
+      );
+    }
+    const codexId = headerValue(upstreamHeaders, "x-codex-session-id");
+    if (codexId) responseKeys.push(`codex:${codexId}`);
+    const mcpId = headerValue(upstreamHeaders, "mcp-session-id");
+    if (mcpId) responseKeys.push(`mcp:${mcpId}`);
+
+    const ended =
+      headerValue(upstreamHeaders, "x-autodev-session-ended") === "1" ||
+      Boolean(requestAffinity?.endsSession) ||
+      (statusCode === 404 && ACP_SESSION_PATH_PATTERN.test(pathname));
+
+    if (ended) {
+      if (requestAffinity) this.unpinSession(generation, requestAffinity.key);
+      for (const key of responseKeys) this.unpinSession(generation, key);
+      return;
+    }
+    for (const key of responseKeys) {
+      this.pinSession(generation, key);
+    }
+  }
+
+  /**
+  Forward a request directly to the active worker generation (used by the
+  persistent Control API listener hosted beside the ingress public port).
+  */
+  forwardActiveOnly(request: IncomingMessage, response: ServerResponse): void {
+    this.forwardToGeneration(this.active, request, response, null);
+  }
+
   private forward(request: IncomingMessage, response: ServerResponse): void {
     // The stable listener owns its readiness; ordinary health, Control API and
     // model routes pass unchanged to the selected worker generation.
@@ -373,7 +543,17 @@ export class RouterIngress {
       response.end(JSON.stringify(status));
       return;
     }
-    const generation = this.active;
+    const affinity = extractSessionAffinity(request);
+    const generation = this.resolveTargetGeneration(affinity);
+    this.forwardToGeneration(generation, request, response, affinity);
+  }
+
+  private forwardToGeneration(
+    generation: Generation | null,
+    request: IncomingMessage,
+    response: ServerResponse,
+    requestAffinity: SessionAffinity | null
+  ): void {
     if (!generation) {
       response.writeHead(503, {
         "content-type": "application/json",
@@ -384,6 +564,7 @@ export class RouterIngress {
       );
       return;
     }
+    const pathname = requestPathname(request.url);
     const headers = endToEndHeaders(request.headers);
     const requestIdHeader = headers["x-request-id"];
     const requestId =
@@ -408,11 +589,20 @@ export class RouterIngress {
           upstream.destroy();
           return;
         }
+        const statusCode = upstream.statusCode ?? 502;
+        this.captureResponseSessionAffinity(
+          generation,
+          requestAffinity,
+          upstream.headers,
+          statusCode,
+          pathname
+        );
         const responseHeaders = endToEndHeaders(upstream.headers);
-        response.writeHead(upstream.statusCode ?? 502, responseHeaders);
+        response.writeHead(statusCode, responseHeaders);
         upstream.pipe(response);
         upstream.once("end", () => {
           isBackendCompleted = true;
+          this.finishRetirement(generation);
         });
         upstream.once("error", () => response.destroy());
       }

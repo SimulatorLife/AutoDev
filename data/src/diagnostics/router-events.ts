@@ -15,6 +15,7 @@ import path from "node:path";
 import { createInterface } from "node:readline";
 
 import type {
+  AcpPinRecord,
   SessionRouterEventRow,
   SessionRouterFailure,
   SessionRouterSkippedEvent,
@@ -128,14 +129,14 @@ function routerEventFromLine(
     outcome: stringOrNull(event.outcome),
     status: numberOrNull(event.status),
     failureClass: stringOrNull(event.failureClass),
-    ...((typeof event.reason === "string") && { reason: event.reason }),
+    ...(typeof event.reason === "string" && { reason: event.reason }),
     spawnFailureReason: stringOrNull(event.spawnFailureReason),
     denialReason: stringOrNull(event.denialReason),
     elapsedMs: numberOrNull(event.elapsedMs),
     toolCalls: numberOrNull(event.toolCalls),
     selection: stringOrNull(event.selection),
-    ...((typeof event.errorName === "string") && { errorName: event.errorName }),
-    ...((typeof event.errorCode === "string") && { errorCode: event.errorCode })
+    ...(typeof event.errorName === "string" && { errorName: event.errorName }),
+    ...(typeof event.errorCode === "string" && { errorCode: event.errorCode })
   };
 }
 
@@ -250,7 +251,9 @@ function recordRouterEvent(
         failureClass:
           row.failureClass ?? row.spawnFailureReason ?? "spawn_failed",
         elapsedMs: row.elapsedMs,
-        ...(row.spawnFailureReason && { spawnFailureReason: row.spawnFailureReason })
+        ...(row.spawnFailureReason && {
+          spawnFailureReason: row.spawnFailureReason
+        })
       });
       return;
     }
@@ -323,15 +326,33 @@ export function routerEventsForThread(
 /**
 One thread's requests, summarized.
 
-Events that name threads match exactly; older ones fall back to the model
-and the time window, and the summary says which of the two it used.
+Historical router events preserve pre-ACP provider-hop evidence (matching by
+`thread` or legacy `model-window`). When a thread has no router events and an
+authoritative ACP session pin owns it, attribution comes directly from that pin.
 */
 export function summarizeRouter(
   thread: SessionThreadTrace,
   rows: readonly SessionRouterEventRow[],
-  withEvents: boolean
+  withEvents: boolean,
+  acpPin?: AcpPinRecord | null
 ): SessionRouterSummary {
   const mine = routerEventsForThread(thread, rows);
+  if (mine.length === 0 && acpPin) {
+    return {
+      thread: thread.id,
+      model: thread.model,
+      matchedBy: "acp-pin",
+      pinSessionId: acpPin.sessionId,
+      pinRole: acpPin.role,
+      pinTransport: acpPin.transport,
+      requests: 0,
+      byProvider: {},
+      failures: [],
+      providerSequence: [acpPin.provider],
+      modelSequence: [acpPin.model],
+      ...(withEvents && { events: [] })
+    };
+  }
   const isGuessed = mine.some((row) => row.thread === null);
   const accumulator: RouterSummaryAccumulator = {
     requests: new Set<string>(),
@@ -355,15 +376,17 @@ export function summarizeRouter(
     failures: accumulator.failures,
     providerSequence: accumulator.providerSequence,
     modelSequence: accumulator.modelSequence,
-    ...((accumulator.skipped.length > 0) && { skipped: accumulator.skipped }),
-    ...((accumulator.retries > 0) && { retries: accumulator.retries }),
-    ...((accumulator.exhaustionWaitCount > 0) && {
-          exhaustionWaits: {
-            count: accumulator.exhaustionWaitCount,
-            totalMs: accumulator.exhaustionWaitMs
-          }
-        }),
-    ...((accumulator.transportErrors > 0) && { transportErrors: accumulator.transportErrors }),
+    ...(accumulator.skipped.length > 0 && { skipped: accumulator.skipped }),
+    ...(accumulator.retries > 0 && { retries: accumulator.retries }),
+    ...(accumulator.exhaustionWaitCount > 0 && {
+      exhaustionWaits: {
+        count: accumulator.exhaustionWaitCount,
+        totalMs: accumulator.exhaustionWaitMs
+      }
+    }),
+    ...(accumulator.transportErrors > 0 && {
+      transportErrors: accumulator.transportErrors
+    }),
     ...(withEvents && { events: mine })
   };
 }

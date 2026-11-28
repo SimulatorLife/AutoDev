@@ -28,6 +28,7 @@ import { materializeInstallation } from "./install-materializer.ts";
 import {
   checkRequiredKeychainSecrets,
   ensureBridgeRouterAuth,
+  ensureIngressControlSecret,
   ensureRouterAuth,
   REQUIRED_INSTALL_KEYCHAIN_SECRETS
 } from "./install-state.ts";
@@ -43,6 +44,7 @@ export interface InstallCommandOptions {
 interface InstallFlags {
   materializeOnly: boolean;
   routerAuth: boolean;
+  rotateIngressSecret: boolean;
   chatgptTunnel: ChatgptTunnelMode;
   /**
   The command catalogue digest the operator approved on this command line.
@@ -54,6 +56,7 @@ function parseFlags(arguments_: readonly string[]): InstallFlags {
   const flags: InstallFlags = {
     materializeOnly: false,
     routerAuth: false,
+    rotateIngressSecret: false,
     chatgptTunnel: "reconcile"
   };
   for (const argument of arguments_) {
@@ -63,6 +66,8 @@ function parseFlags(arguments_: readonly string[]): InstallFlags {
       );
     else if (argument === "--materialize-only") flags.materializeOnly = true;
     else if (argument === "--enable-router-auth") flags.routerAuth = true;
+    else if (argument === "--rotate-ingress-secret")
+      flags.rotateIngressSecret = true;
     else if (
       argument === "--enable-chatgpt-tunnel" ||
       argument === "--disable-chatgpt-tunnel"
@@ -154,6 +159,9 @@ export function runInstallCommand(
       process.env.CODEX_ENV_FILE?.trim() || path.join(codexHome, ".env");
     projection = createCodexMcpSource(repositoryRoot);
     ensureBridgeRouterAuth(path.join(codexHome, ".env"));
+    ensureIngressControlSecret(codexHome, {
+      rotate: flags.rotateIngressSecret
+    });
     if (flags.routerAuth) ensureRouterAuth(codexEnvironmentFile, environment);
     if (!flags.materializeOnly) {
       const missingSecrets = checkRequiredKeychainSecrets(

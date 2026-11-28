@@ -335,6 +335,34 @@ const UNOBSERVED_GIT_CHANGES = {
   commitsByAgent: null
 } satisfies UsageGitChangeMetrics;
 
+const UNOBSERVED_AGENT_LAUNCH_SUMMARY = {
+  attempted: null,
+  admitted: null,
+  rejected: null,
+  started: null,
+  failedBeforeStart: null,
+  resolved: null,
+  pending: null,
+  launchSuccessRatePercent: null,
+  succeeded: null,
+  failed: null,
+  cancelled: null,
+  rejectionReasons: null
+};
+
+const UNOBSERVED_AGENT_LAUNCHES = {
+  status: "not-observed" as const,
+  notApplicableReason: null,
+  unsupportedFilters: [],
+  preSelectionApplicable: true,
+  preSelectionUnsupportedFilters: [],
+  breakdownsPartial: false,
+  root: UNOBSERVED_AGENT_LAUNCH_SUMMARY,
+  child: UNOBSERVED_AGENT_LAUNCH_SUMMARY,
+  failedBeforeStartByProvider: null,
+  attemptsByRole: null
+};
+
 /**
 The Runtime's MCP observation read, answered: the Runtime was asked and has
 seen no MCP server.
@@ -435,15 +463,24 @@ test("the icon set holds no glyph that nothing renders", () => {
       recursive: true
     })) {
       const file = join(consoleRoot, dir, relative.toString());
-      if (!/\.tsx?$/u.test(file) || !statSync(file).isFile() || file.endsWith(join("icons", "Icon.ts"))) continue;
+      if (
+        !/\.tsx?$/u.test(file) ||
+        !statSync(file).isFile() ||
+        file.endsWith(join("icons", "Icon.ts"))
+      )
+        continue;
       const source = readFileSync(file, "utf8");
-      // Match the property, not any occurrence of the word: a section name like
-      // "Tools" also appears in prose, in a route path, and in a test id.
+      // Match the property (including ternary expressions like
+      // `name: option === "list" ? "list" : "grid"`), not arbitrary occurrences
+      // of the word in prose or routes.
       for (const match of source.matchAll(
-        /\b(?:name|icon)[:=]\s*["'`]([\w]+)["'`]/gu
+        /\b(?:name|icon)[:=]\s*([^,}\n]+)/gu
       )) {
-        const name = match[1];
-        if (name !== undefined) usage.add(name);
+        const expression = match[1] ?? "";
+        for (const literal of expression.matchAll(/["'`]([\w]+)["'`]/gu)) {
+          const name = literal[1];
+          if (name !== undefined) usage.add(name);
+        }
       }
     }
   }
@@ -540,12 +577,26 @@ test("missing evidence is reported in one word, from one constant", () => {
       recursive: true
     })) {
       const file = join(consoleRoot, dir, relative.toString());
-      if (!file.endsWith(".ts") || !statSync(file).isFile() || VOCABULARY_DECLARATIONS.some((skip) => file.endsWith(skip))) continue;
+      if (
+        !file.endsWith(".ts") ||
+        !statSync(file).isFile() ||
+        VOCABULARY_DECLARATIONS.some((skip) => file.endsWith(skip))
+      )
+        continue;
       const source = readFileSync(file, "utf8");
+      let inBlockComment = false;
       source.split("\n").forEach((line, index) => {
         const trimmed = line.trim();
         // A comment quoting the word is documentation of the rule, not a
         // violation of it, and the component's own doc is mostly that.
+        if (inBlockComment) {
+          if (trimmed.includes("*/")) inBlockComment = false;
+          return;
+        }
+        if (trimmed.startsWith("/*")) {
+          if (!trimmed.includes("*/")) inBlockComment = true;
+          return;
+        }
         if (trimmed.startsWith("//") || trimmed.startsWith("*")) return;
         for (const literal of ['"Unknown"', '"N/A"', '"—"']) {
           if (line.includes(literal)) {
@@ -668,7 +719,7 @@ test("an unrecognised URL filter is named, never resolved into a default", async
     value: "all",
     unapplied: null
   });
-  assert.deepEqual(resolveFilter(' '.repeat(3), SPEC), {
+  assert.deepEqual(resolveFilter(" ".repeat(3), SPEC), {
     value: "all",
     unapplied: null
   });
@@ -870,7 +921,12 @@ function headingRowWithoutWrap(
   match: RegExpMatchArray
 ): boolean {
   const classList = match[1] ?? "";
-  if (!/\bjustify-(?:between|end)\b/u.test(classList) || !/\bitems-center\b/u.test(classList) || /\bflex-(?:wrap|col|reverse)\b/u.test(classList)) return false;
+  if (
+    !/\bjustify-(?:between|end)\b/u.test(classList) ||
+    !/\bitems-center\b/u.test(classList) ||
+    /\bflex-(?:wrap|col|reverse)\b/u.test(classList)
+  )
+    return false;
   const after = source.slice(match.index ?? 0, (match.index ?? 0) + 900);
   return /createElement\(\s*"h[1-6]"/u.test(after);
 }
@@ -4184,7 +4240,7 @@ test("Skills fetcher validates the v2 catalog contract and rejects stale respons
   const payload = {
     schema: "autodev-control-skills-v2",
     source: ".rulesync/skills+execution-contract",
-    readOnly: false,
+    readOnly: true,
     executionContractObserved: true,
     valid: true,
     executionContractRevision: "b".repeat(64),
@@ -4201,7 +4257,8 @@ test("Skills fetcher validates the v2 catalog contract and rejects stale respons
         scopeLocation: "/home/operator/.agents/skills/audit",
         workspace: null,
         observedExposure: null,
-        observedUse: null
+        observedUse: null,
+        observedError: null
       }
     ],
     unresolvedAssignments: []
@@ -4253,15 +4310,12 @@ test("Skills fetcher validates the v2 catalog contract and rejects stale respons
     assert.match(stale.message, /requires the v2 canonical catalog contract/);
   }
 
-  // The skills collection has canonical write paths -- role assignment and the
-  // canonical source -- so a response that claims it is read-only is refused.
-  // The page offers an assignment form and a source editor, and both post to
-  // the write paths that flag names; rendering a catalogue that says the write
-  // path does not exist would offer forms that cannot work.
-  const readOnly = await fetchSkills(config, {
-    fetchImpl: async () => Response.json({ ...payload, readOnly: true })
+  // The skills collection is repository-owned and read-only in the Console
+  // and Control API, so a response that claims it is writable is refused.
+  const writable = await fetchSkills(config, {
+    fetchImpl: async () => Response.json({ ...payload, readOnly: false })
   });
-  assert.equal(readOnly.kind, "invalid-response");
+  assert.equal(writable.kind, "invalid-response");
 
   // The unresolved assignments are null when the catalogue was not read, and
   // a list when it was. The Runtime publishes the first beside a catalogue
@@ -4456,6 +4510,7 @@ test("Usage role and provider breakdowns use distinct semantic chart series", ()
       rows: [{ workspace: "SimulatorLife/AutoDev", count: 3 }],
       partial: false
     },
+    agentLaunches: UNOBSERVED_AGENT_LAUNCHES,
     attemptsByProvider: [{ provider: "codex", count: 5 }],
     attemptsByModel: null,
     callsByTool: []
@@ -4560,6 +4615,7 @@ test("Usage values stay readable at large scales and keep unattributed groups ex
           rows: [{ workspace: "repo-a", count: 126 }],
           partial: false
         },
+        agentLaunches: UNOBSERVED_AGENT_LAUNCHES,
         attemptsByProvider: [{ provider: "codex", count: 3419 }],
         attemptsByModel: null,
         callsByTool: [{ tool: "", count: 1234 }]
@@ -5007,6 +5063,7 @@ test("UsageView with empty arrays still reports no synthetic counts", () => {
         requestsByRole: [],
         requestsByModel: [],
         requestsByWorkspace: { rows: [], partial: false },
+        agentLaunches: UNOBSERVED_AGENT_LAUNCHES,
         attemptsByProvider: [],
         attemptsByModel: [],
         callsByTool: []
@@ -8762,7 +8819,15 @@ function elementChildrenOf(node: React.JSX.Element): React.JSX.Element[] {
       child.forEach(push);
       return;
     }
-    if ((typeof child === "function") || child === null || child === undefined || typeof child === "boolean" || typeof child === "string" || typeof child === "number") return;
+    if (
+      typeof child === "function" ||
+      child === null ||
+      child === undefined ||
+      typeof child === "boolean" ||
+      typeof child === "string" ||
+      typeof child === "number"
+    )
+      return;
     const resolved = resolveForNesting(child);
     if (resolved === null) return;
     const tag = elementTagOf(resolved);
@@ -8789,7 +8854,9 @@ function resolveForNesting(node: React.ReactNode): React.JSX.Element | null {
   const type = node.type;
   if (typeof type !== "function") return node;
   try {
-    const rendered = (type as (properties: unknown) => React.ReactNode)(node.props);
+    const rendered = (type as (properties: unknown) => React.ReactNode)(
+      node.props
+    );
     // Narrowed here rather than widened at the call site. A component that
     // returned an array or a primitive used to be pushed as though it were an
     // element, and the walk then read `.props` off it; every component in this
@@ -9224,7 +9291,10 @@ test("every link whose destination is the history table names an element that is
     };
 
     const byState = new Map<string, Set<string>>();
-    const collect = (label: string, properties: Record<string, unknown>): void => {
+    const collect = (
+      label: string,
+      properties: Record<string, unknown>
+    ): void => {
       const markup = renderEvaluations({ ...shape, ...properties });
       byState.set(label, new Set(captured(/id="([^"]+)"/g, markup)));
     };
@@ -9907,7 +9977,7 @@ test("a run that reports no prompt is counted, not hidden", () => {
     {
       id: "whitespace",
       agentRole: "architect",
-      promptName: ' '.repeat(3),
+      promptName: " ".repeat(3),
       model: "opus",
       metrics: [],
       passed: null,
@@ -11278,7 +11348,7 @@ test("Prompts fetcher validates source state and rejects stale contracts", async
       Response.json({
         schema: "autodev-control-prompts-v2",
         source: ".rulesync/commands",
-        readOnly: false,
+        readOnly: true,
         issues: [],
         valid: true,
         totalCommands: 1,
@@ -11322,7 +11392,7 @@ test("Prompts fetcher validates source state and rejects stale contracts", async
       Response.json({
         schema: "autodev-control-prompts-v2",
         source: ".rulesync/commands",
-        readOnly: false,
+        readOnly: true,
         issues: [],
         valid: true,
         totalCommands: 1,
@@ -11342,7 +11412,7 @@ test("Prompts fetcher validates source state and rejects stale contracts", async
       Response.json({
         schema: "autodev-control-prompts-v2",
         source: ".rulesync/commands",
-        readOnly: false,
+        readOnly: true,
         issues: [],
         valid: true,
         totalCommands: 1,
@@ -11358,16 +11428,14 @@ test("Prompts fetcher validates source state and rejects stale contracts", async
   });
   assert.equal(driftedRolePrompts.kind, "invalid-response");
 
-  // The prompts collection has a canonical write path -- the command's own
-  // source -- so a response that claims it is read-only is refused. The page
-  // offers a source editor that posts to that write path, and a catalogue
-  // that says the path does not exist would offer an editor that cannot work.
-  const readOnly = await fetchPrompts(config, {
+  // The prompts collection is repository-owned and read-only in the Console
+  // and Control API, so a response that claims it is writable is refused.
+  const writable = await fetchPrompts(config, {
     fetchImpl: async () =>
       Response.json({
         schema: "autodev-control-prompts-v2",
         source: ".rulesync/commands",
-        readOnly: true,
+        readOnly: false,
         issues: [],
         valid: true,
         totalCommands: 1,
@@ -11381,7 +11449,7 @@ test("Prompts fetcher validates source state and rejects stale contracts", async
         rolePrompts: []
       })
   });
-  assert.equal(readOnly.kind, "invalid-response");
+  assert.equal(writable.kind, "invalid-response");
 });
 
 test("fetchGithubWorkflows issues authenticated GET to /control/github", async () => {
@@ -12413,7 +12481,7 @@ test("View adapters translate Control API responses without inventing data", () 
   const skillsResponse: ControlApiSkillsResponse = {
     schema: "autodev-control-skills-v2",
     source: ".rulesync/skills+execution-contract",
-    readOnly: false,
+    readOnly: true,
     executionContractObserved: true,
     valid: true,
     executionContractRevision: "a".repeat(64),
@@ -12478,7 +12546,7 @@ test("View adapters translate Control API responses without inventing data", () 
   const prompts = promptsFromControlApi({
     schema: "autodev-control-prompts-v2",
     source: ".rulesync/commands",
-    readOnly: false,
+    readOnly: true,
     issues: [],
     valid: true,
     totalCommands: 1,
@@ -14598,7 +14666,18 @@ test("every provider mutation addresses its canonical Control API path", async (
         agentModels: [],
         previous: null,
         actor: LOCAL_CONTROL_API_ACTOR,
-        reconciliation: { status: {}, history: [] }
+        reconciliation: {
+          status: {
+            convergence: "converged",
+            desiredGeneration: "provider-limits=3",
+            observedGeneration: "provider-limits=3",
+            lastApplyAt: "2026-11-07T12:00:00.000Z",
+            lastObservationAt: "2026-11-07T12:00:00.000Z",
+            lastError: null,
+            explanation: "Provider limits match desired configuration."
+          },
+          history: []
+        }
       });
     },
     async () => {
@@ -14659,7 +14738,19 @@ test("provider-role Console route sends only a same-origin typed PATCH and retur
         priority: "disabled",
         model: null,
         previous: null,
-        actor: LOCAL_CONTROL_API_ACTOR
+        actor: LOCAL_CONTROL_API_ACTOR,
+        reconciliation: {
+          status: {
+            convergence: "converged",
+            desiredGeneration: "provider-role=disabled",
+            observedGeneration: "provider-role=disabled",
+            lastApplyAt: "2026-11-07T12:00:00.000Z",
+            lastObservationAt: "2026-11-07T12:00:00.000Z",
+            lastError: null,
+            explanation: "Provider role assignment converged."
+          },
+          history: []
+        }
       });
     },
     async () => {
@@ -14952,7 +15043,19 @@ test("model Console route sends a typed model PATCH and returns to the toggle's 
         model: "gemini-3.8-flash-high",
         enabled: false,
         previous: true,
-        actor: LOCAL_CONTROL_API_ACTOR
+        actor: LOCAL_CONTROL_API_ACTOR,
+        reconciliation: {
+          status: {
+            convergence: "converged",
+            desiredGeneration: "model=disabled",
+            observedGeneration: "model=disabled",
+            lastApplyAt: "2026-11-07T12:00:00.000Z",
+            lastObservationAt: "2026-11-07T12:00:00.000Z",
+            lastError: null,
+            explanation: "Model enablement converged."
+          },
+          history: []
+        }
       });
     },
     async () => {
@@ -16825,7 +16928,8 @@ test("GET FilterBar submit cancels native document navigation", async () => {
   const fields = React.Children.toArray(filterForm.props.children).flatMap(
     (child): FormElementLike[] => {
       if (!React.isValidElement(child) || child.type !== "input") return [];
-      const properties = child.props as React.InputHTMLAttributes<HTMLInputElement>;
+      const properties =
+        child.props as React.InputHTMLAttributes<HTMLInputElement>;
       if (typeof properties.name !== "string") return [];
       return [
         {
@@ -17733,7 +17837,8 @@ test("one page rhythm: every view body stacks its sections through the shared cl
     const file = join(featuresDir, name);
     if (!file.endsWith(".ts") || !statSync(file).isFile()) continue;
     const source = readFileSync(file, "utf8");
-    if (!source.includes('"data-feature"') || source.includes("PageBody")) continue;
+    if (!source.includes('"data-feature"') || source.includes("PageBody"))
+      continue;
     offenders.push(`${name}: writes data-feature without PageBody`);
   }
   assert.deepEqual(
@@ -17979,7 +18084,12 @@ test("nothing truncates text it cannot give back", () => {
   for (const root of roots) {
     for (const relative of readdirSync(root, { recursive: true })) {
       const file = join(root, relative.toString());
-      if (!file.endsWith(".ts") || !statSync(file).isFile() || SHAPE_OWNERS.has(relative.toString())) continue;
+      if (
+        !file.endsWith(".ts") ||
+        !statSync(file).isFile() ||
+        SHAPE_OWNERS.has(relative.toString())
+      )
+        continue;
       for (const line of unrecoverableTruncations(
         readFileSync(file, "utf8"),
         shapes
@@ -18018,7 +18128,10 @@ function unrecoverableTruncations(
   // the next `truncate` in that file walks straight through.
   const open: { props: string; end: number }[] = [];
   for (let at = source.indexOf("React.createElement("); at !== -1;) {
-    const propertiesStart = source.indexOf("{", at + "React.createElement(".length);
+    const propertiesStart = source.indexOf(
+      "{",
+      at + "React.createElement(".length
+    );
     const propertiesEnd = matchingBrace(source, propertiesStart);
     if (propertiesStart === -1 || propertiesEnd === -1) break;
     while (open.length > 0 && (open.at(-1)?.end ?? -1) < at) open.pop();
@@ -18117,7 +18230,11 @@ Index of the `)` matching the `(` at `from`, or -1 within the bound.
 */
 function matchingParen(source: string, from: number): number {
   let depth = 0;
-  for (let index = from; index < source.length && index < from + 4000; index++) {
+  for (
+    let index = from;
+    index < source.length && index < from + 4000;
+    index++
+  ) {
     const ch = source[index];
     if (ch === "(") depth++;
     else if (ch === ")") {
@@ -18136,9 +18253,12 @@ composes in from a shared shape rather than writes itself.
 function sharedShapeClasses(
   source: string
 ): readonly (readonly [string, string])[] {
-  const out: [string, string][] = Array.from(source.matchAll(
-    /export const ([A-Z][A-Z0-9_]*)\s*=\s*["'`]([^"'`]*)["'`]/gu
-  ), m => [m[1] ?? "", m[2] ?? ""]);
+  const out: [string, string][] = Array.from(
+    source.matchAll(
+      /export const ([A-Z][A-Z0-9_]*)\s*=\s*["'`]([^"'`]*)["'`]/gu
+    ),
+    (m) => [m[1] ?? "", m[2] ?? ""]
+  );
   return out;
 }
 
@@ -18147,7 +18267,11 @@ Index of the `}` matching the `{` at `from`, or -1 within the bound.
 */
 function matchingBrace(source: string, from: number): number {
   let depth = 0;
-  for (let index = from; index < source.length && index < from + 4000; index++) {
+  for (
+    let index = from;
+    index < source.length && index < from + 4000;
+    index++
+  ) {
     const ch = source[index];
     if (ch === "{") depth++;
     else if (ch === "}") {
@@ -18423,6 +18547,10 @@ test("client behavior stays in explicitly approved interaction islands", () => {
     [
       join("src", "features", "usage", "use-usage-telemetry.ts"),
       "Owns the browser-side read of the Usage aggregation route, so the slowest read on a page is never held by the page's own render; the page's Control API reads stay server-owned."
+    ],
+    [
+      join("src", "features", "usage", "UsageFreshnessControls.ts"),
+      "Polls Usage refresh endpoints while visible with exponential backoff, displays observation/last-success timestamps, and retains the last confirmed snapshot marked stale when a refresh fails."
     ],
     [
       join(
@@ -19085,7 +19213,9 @@ test("a Runtime response with no concurrency limit is readable, and says so", as
           ...runtime,
           concurrency: {
             ...observedConcurrency,
-            ...(effectivePerSessionLimit !== undefined && { effectivePerSessionLimit })
+            ...(effectivePerSessionLimit !== undefined && {
+              effectivePerSessionLimit
+            })
           }
         }
       })
@@ -19106,7 +19236,9 @@ test("a Runtime response with no concurrency limit is readable, and says so", as
           ...runtime,
           concurrency: {
             ...observedConcurrency,
-            ...(effectivePerSessionLimit !== undefined && { effectivePerSessionLimit })
+            ...(effectivePerSessionLimit !== undefined && {
+              effectivePerSessionLimit
+            })
           }
         }
       })
@@ -19411,8 +19543,10 @@ test("ChatgptTunnelPanel and fetchChatgptTunnel render status without leaking se
   for (const field of ["grant", "role", "roles", "workspace"])
     assert.doesNotMatch(readyMarkup, new RegExp(`name="${field}"`, "u"));
   assert.doesNotMatch(readyMarkup, /value="configure"/u);
-  const actions = Array.from(readyMarkup.matchAll(/name="action" value="([a-z]+)"/gu), (match) => match[1])
-    .sort();
+  const actions = Array.from(
+    readyMarkup.matchAll(/name="action" value="([a-z]+)"/gu),
+    (match) => match[1]
+  ).sort();
   assert.deepEqual(actions, ["disable", "forget", "rotate"]);
 });
 

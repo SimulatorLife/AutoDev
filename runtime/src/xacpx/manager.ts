@@ -37,6 +37,7 @@ import {
   buildAcpProviderLaunchSpec,
   resolveAcpProviderId
 } from "@simulatorlife/autodev-runtime/acp/provider-profiles";
+import type { AcpPinLedgerPublisher } from "./pin-ledger.ts";
 import {
   evaluateReadOnlyToolCall,
   isShellToolName,
@@ -569,18 +570,21 @@ export class XacpxSessionManager {
   private readonly eventSink: XacpxTurnEventSink | null;
   private readonly acpTransportFactory: AcpTransportFactory;
   private readonly opencliRunner: OpencliRunner;
+  private readonly pinLedger: AcpPinLedgerPublisher | null;
 
   constructor(options?: {
     readonly policy?: RoutingPolicy;
     readonly eventSink?: XacpxTurnEventSink | null;
     readonly acpTransportFactory?: AcpTransportFactory;
     readonly opencliRunner?: OpencliRunner;
+    readonly pinLedger?: AcpPinLedgerPublisher | null;
   }) {
     this.policy = options?.policy ?? ROUTING_POLICY;
     this.eventSink = options?.eventSink ?? null;
     this.acpTransportFactory =
       options?.acpTransportFactory ?? defaultAcpTransportFactory;
     this.opencliRunner = options?.opencliRunner ?? runOpencliRoleTurn;
+    this.pinLedger = options?.pinLedger ?? null;
   }
 
   getPinnedSession(sessionId: string): PinnedSessionRecord | null {
@@ -598,6 +602,7 @@ export class XacpxSessionManager {
   clearPinnedSession(sessionId: string): boolean {
     if (this.opencliSessions.get(sessionId)?.active) return false;
     this.opencliSessions.delete(sessionId);
+    this.pinLedger?.markClosed(sessionId);
     return this.pins.delete(sessionId);
   }
 
@@ -770,8 +775,10 @@ export class XacpxSessionManager {
       parentSessionId: request.parentSessionId ?? null,
       createdAt: new Date().toISOString()
     };
+    const transport = isOpencliProvider(chosen.provider) ? "opencli" : "acp";
     if (!existing) {
       this.pins.set(request.sessionId, session);
+      this.pinLedger?.recordPin({ ...session, transport });
     }
 
     if (isOpencliProvider(chosen.provider)) {
@@ -968,6 +975,10 @@ export class XacpxSessionManager {
           this.acpTransportFactory
         );
         this.liveSessions.set(request.sessionId, handle);
+        this.pinLedger?.recordAcpSession(
+          request.sessionId,
+          handle.acpSessionId
+        );
       }
       executorStarted = true;
       recordLaunch("started", plan.session);

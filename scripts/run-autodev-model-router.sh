@@ -127,6 +127,62 @@ if [[ -z "${NODE_BIN:-}" ]]; then
   exit 127
 fi
 
+resolve_real_path() {
+  local target="$1"
+  local dir
+  dir="$(cd -P -- "$(dirname -- "$target")" 2>/dev/null && pwd -P)" || return 1
+  printf '%s/%s\n' "$dir" "$(basename -- "$target")"
+}
+
+resolve_ingress_dir() {
+  local preferred="$codex_home/run/router-ingress"
+  if [[ ${#preferred} -le 76 ]]; then
+    printf '%s\n' "$preferred"
+    return 0
+  fi
+  local digest=""
+  if command -v shasum >/dev/null 2>&1; then
+    digest="$(printf '%s' "$preferred" | shasum -a 256 | awk '{print substr($1, 1, 16)}')"
+  elif command -v sha256sum >/dev/null 2>&1; then
+    digest="$(printf '%s' "$preferred" | sha256sum | awk '{print substr($1, 1, 16)}')"
+  fi
+  if [[ -n "$digest" ]]; then
+    printf '/tmp/autodev-router-ingress-%s\n' "$digest"
+    return 0
+  fi
+  printf '%s\n' "$preferred"
+}
+
 server_script="$codex_home/src/router/server.ts"
-[[ -f "$server_script" ]] || server_script="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/runtime/src/router/server.ts"
+ingress_script="$codex_home/src/router/ingress-main.ts"
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+[[ -f "$server_script" ]] || server_script="$repo_root/runtime/src/router/server.ts"
+[[ -f "$ingress_script" ]] || ingress_script="$repo_root/runtime/src/router/ingress-main.ts"
+
+resolved_codex_home="$(resolve_real_path "$codex_home" 2>/dev/null || printf '%s\n' "$codex_home")"
+resolved_server_script="$(resolve_real_path "$server_script" 2>/dev/null || printf '%s\n' "$server_script")"
+
+if [[ "$resolved_server_script" == "$resolved_codex_home"/.src-*/router/server.ts ]]; then
+  ingress_dir="$(resolve_ingress_dir)"
+  mkdir -p "$ingress_dir"
+  chmod 0700 "$ingress_dir"
+  ingress_token_file="$ingress_dir/control-token"
+  if [[ ! -s "$ingress_token_file" ]] || [[ $(wc -c < "$ingress_token_file") -lt 32 ]]; then
+    if command -v openssl >/dev/null 2>&1; then
+      (umask 077 && openssl rand -hex 32 > "$ingress_token_file")
+    else
+      (umask 077 && LC_ALL=C tr -dc '0-9a-f' < /dev/urandom | head -c 64 > "$ingress_token_file" && printf '\n' >> "$ingress_token_file")
+    fi
+    chmod 0600 "$ingress_token_file"
+  fi
+  generation_dir="$(basename -- "$(dirname -- "$(dirname -- "$resolved_server_script")")")"
+  ingress_token="$(tr -d '\r\n' < "$ingress_token_file")"
+  export AUTODEV_ROUTER_INGRESS_CONTROL_SOCKET="$ingress_dir/control.sock"
+  export AUTODEV_ROUTER_INGRESS_CONTROL_TOKEN="$ingress_token"
+  export AUTODEV_ROUTER_RELEASES_DIRECTORY="$resolved_codex_home"
+  export AUTODEV_ROUTER_INITIAL_GENERATION_ID="${generation_dir#.}"
+  export AUTODEV_ROUTER_INITIAL_WORKER_ENTRY="$resolved_server_script"
+  exec "$NODE_BIN" "$ingress_script"
+fi
+
 exec "$NODE_BIN" "$server_script"

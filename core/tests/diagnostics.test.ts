@@ -608,3 +608,55 @@ test("the hook denial text separates an empty window from a populated one", () =
   assert.match(populated, /preToolUseDenials=2/u);
   assert.match(populated, /cat \.env/u);
 });
+
+test("diagnostics validator and text renderer support source-confirmed ACP pin attribution", () => {
+  const base = report();
+  const pinnedReport: SessionDiagnosticsReport = {
+    ...base,
+    acpPins: [
+      {
+        sessionId: "child-worker-1",
+        parentSessionId: `local:orchestrator:repo:${SESSION_ID}`,
+        acpSessionId: THREAD_ID,
+        role: "worker",
+        provider: "claude",
+        model: "claude-sonnet-4-5",
+        reasoningEffort: "high",
+        transport: "acp",
+        cwd: "/repo",
+        createdAt: "2026-11-10T12:00:00.000Z",
+        updatedAt: "2026-11-10T12:00:10.000Z",
+        closedAt: null
+      }
+    ],
+    router: [
+      {
+        thread: THREAD_ID,
+        model: null,
+        matchedBy: "acp-pin",
+        pinSessionId: "child-worker-1",
+        pinRole: "worker",
+        pinTransport: "acp",
+        requests: 0,
+        byProvider: {},
+        failures: [],
+        providerSequence: ["claude"],
+        modelSequence: ["claude-sonnet-4-5"]
+      }
+    ]
+  };
+  assert.equal(isSessionDiagnosticsReport(pinnedReport), true);
+  assert.equal(
+    isSessionDiagnosticsReport({
+      ...pinnedReport,
+      acpPins: [{ ...pinnedReport.acpPins![0]!, transport: "bogus" }]
+    }),
+    false
+  );
+  const text = renderSessionDiagnosticsReport(pinnedReport);
+  assert.match(
+    text,
+    /acp-pin \(acp\) role=worker provider=claude model=claude-sonnet-4-5 session=child-worker-1/u
+  );
+  assert.match(text, /== acp session pins \(1\)/u);
+});

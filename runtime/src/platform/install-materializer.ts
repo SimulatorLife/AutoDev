@@ -181,9 +181,16 @@ export const RUNTIME_MODULES = [
   "runtime/src/router/metric-label.ts",
   "runtime/src/router/usage.ts",
   "runtime/src/router/correlation.ts",
+  "runtime/src/router/control-plane-config.ts",
   "runtime/src/router/proxy.ts",
   "runtime/src/router/http.ts",
   "runtime/src/router/server.ts",
+  "runtime/src/router/ingress.ts",
+  "runtime/src/router/ingress-control.ts",
+  "runtime/src/router/ingress-client.ts",
+  "runtime/src/router/ingress-main.ts",
+  "runtime/src/router/shared-state-ipc.ts",
+  "runtime/src/router/xacpx-ipc-proxy.ts",
   "runtime/src/router/auth.ts",
   "runtime/src/router/concurrency/index.ts",
   "runtime/src/router/cooldown/index.ts",
@@ -296,6 +303,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/xacpx/http.ts",
   "runtime/src/xacpx/manager.ts",
   "runtime/src/xacpx/orchestration-ipc.ts",
+  "runtime/src/xacpx/pin-ledger.ts",
   "runtime/src/platform/mcode-profile.ts"
 ] as const;
 export const OBSOLETE_RUNTIME_DATA_FILES = [
@@ -516,8 +524,8 @@ export function checkHookTrust(
         { trusted_hash?: string } | undefined;
       if (userEntry?.trusted_hash !== entry.hash) return false;
     }
-    return Object.keys(stateTable).every(
-      (key) => !key.startsWith(`${projectHooksJson}:`)
+    return Object.keys(stateTable).every((key) =>
+      !key.startsWith(`${projectHooksJson}:`)
     );
   } catch {
     return false;
@@ -607,9 +615,7 @@ const REPOMIX_CONFIG_CANDIDATES = [
   "repomix.config.cjs"
 ] as const;
 
-function repositoryNeedsBootstrapExclusionsRun(
-  options: MaterializeOptions
-): boolean {
+function repositoryNeedsBootstrapExclusionsRun(options: MaterializeOptions): boolean {
   if (process.env.CGC_MODE === "per_repo") {
     return true;
   }
@@ -970,8 +976,7 @@ export function patchCodeGraphContextFalkorDb(cgcDir: string): void {
       "atexit.register(self.shutdown)",
       "atexit.register(self.close_driver)"
     );
-    if (updated !== original)
-      writeFileSync(databaseFalkorFile, updated, "utf8");
+    if (updated !== original) writeFileSync(databaseFalkorFile, updated, "utf8");
   }
   const workerFile = path.join(cgcDir, "core", "falkor_worker.py");
   if (exists(workerFile)) {
@@ -1061,9 +1066,7 @@ function ensureGlobalCodeGraphContext(options: MaterializeOptions): void {
   const cgcDir = path.join(options.home, ".codegraphcontext");
   mkdirSync(cgcDir, { recursive: true });
   const environmentFile = path.join(cgcDir, ".env");
-  const existingEnvironment = exists(environmentFile)
-    ? readFileSync(environmentFile, "utf8")
-    : "";
+  const existingEnvironment = exists(environmentFile) ? readFileSync(environmentFile, "utf8") : "";
   const environmentLines = existingEnvironment.split(LINE_SPLIT_PATTERN);
   let isFound = false;
   const requiredDirectories = CGC_IGNORE_DIRS.split(",");
@@ -1071,9 +1074,7 @@ function ensureGlobalCodeGraphContext(options: MaterializeOptions): void {
     if (IGNORE_DIRS_LINE_PATTERN.test(line)) {
       isFound = true;
       const existingDirectories = extractIgnoreDirectories(line);
-      const set = new Set(
-        existingDirectories.map((d) => d.trim()).filter(Boolean)
-      );
+      const set = new Set(existingDirectories.map((d) => d.trim()).filter(Boolean));
       for (const d of requiredDirectories) set.add(d.trim());
       return `IGNORE_DIRS="${Array.from(set).join(",")}"`;
     }
@@ -1206,7 +1207,8 @@ through (`runtime-dependency-closure.ts`).
 */
 export function runtimeSourceTree(
   repositoryRoot: string,
-  codexHome: string
+  codexHome: string,
+  nodeModules: string = runtimeDependencyClosure(repositoryRoot, codexHome)
 ): RuntimeSourceTree {
   const files = new Map<string, string | Buffer>();
   for (const filePath of RUNTIME_MODULES)
@@ -1224,7 +1226,7 @@ export function runtimeSourceTree(
   );
   return {
     files,
-    nodeModules: runtimeDependencyClosure(repositoryRoot, codexHome)
+    nodeModules
   };
 }
 
@@ -1240,7 +1242,8 @@ function materializeRuntimeTree(
   repositoryRoot: string,
   codexHome: string,
   source: FileTarget,
-  target: FileTarget
+  target: FileTarget,
+  seedClosureFromHome?: string
 ): void {
   const files = [
     ...RUNTIME_MODULES.filter(
@@ -1250,10 +1253,15 @@ function materializeRuntimeTree(
   ];
   for (const filePath of files)
     materializeRuntimeFile(source(filePath), target(filePath), 0o644);
-  materializeRuntimeDependencyClosure(repositoryRoot, codexHome);
+  const { nodeModules } = materializeRuntimeDependencyClosure(
+    repositoryRoot,
+    codexHome,
+    undefined,
+    seedClosureFromHome
+  );
   materializeRuntimeSourceGeneration(
     codexHome,
-    runtimeSourceTree(repositoryRoot, codexHome)
+    runtimeSourceTree(repositoryRoot, codexHome, nodeModules)
   );
   collectRuntimeDependencyClosures(
     codexHome,
@@ -1420,12 +1428,7 @@ export function installedSkillMatches(arguments_: {
   readonly name: string;
 }): boolean {
   return skillLinkMatches(
-    path.join(
-      arguments_.repositoryRoot,
-      ".rulesync",
-      "skills",
-      arguments_.name
-    ),
+    path.join(arguments_.repositoryRoot, ".rulesync", "skills", arguments_.name),
     path.join(arguments_.home, ".agents", "skills", arguments_.name)
   );
 }
@@ -1549,7 +1552,14 @@ const REPOSITORY_RULESYNC_FINGERPRINT_PATHS = [
   ".rulesync",
   ".agents",
   ".agent",
-  ".claude",
+  // Hash only RuleSync-owned `.claude` paths, never Claude Code's own
+  // `.claude/worktrees` or `.claude/cache` directories.
+  path.join(".claude", "commands"),
+  path.join(".claude", "skills"),
+  path.join(".claude", "rules"),
+  path.join(".claude", "memories"),
+  path.join(".claude", "agents"),
+  path.join(".claude", "settings.json"),
   ".codex",
   ".cursor",
   ".gemini",
@@ -2154,11 +2164,7 @@ function readCodexAppCacheEntry(configPath: string): {
       unknown
     >;
   } catch (error) {
-    if (
-      (error as NodeJS.ErrnoException).code === "ENOENT" ||
-      error instanceof SyntaxError
-    )
-      return null;
+    if (((error as NodeJS.ErrnoException).code === "ENOENT") || (error instanceof SyntaxError)) return null;
     throw error;
   }
   const servers = document.mcpServers;
@@ -2376,7 +2382,8 @@ export function materializeInstallation(options: MaterializeOptions): void {
       options.repositoryRoot,
       autodevHome,
       source,
-      (filePath) => runtimeTarget(filePath, autodevHome, autodevHooks)
+      (filePath) => runtimeTarget(filePath, autodevHome, autodevHooks),
+      options.codexHome
     );
     materializeScripts(autodevHooks, source);
     materializeRuntimeFile(

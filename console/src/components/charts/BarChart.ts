@@ -122,7 +122,10 @@ export function BarChart({
         React.createElement(
           "span",
           {
-            className: "truncate font-mono text-fg",
+            // Reserve 4px inside the overflow-hidden truncation box so an
+            // interactive InstantDisplay focus ring (2px width + 2px offset)
+            // is never clipped by the label track edge.
+            className: "truncate p-1 -m-1 font-mono text-fg",
             // The label column is deliberately narrow so the bars keep their
             // length; the untruncated value stays reachable on hover.
             title: item.displayLabel === undefined ? item.label : undefined

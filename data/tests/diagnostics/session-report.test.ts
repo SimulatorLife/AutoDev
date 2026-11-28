@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
-import { isSessionDiagnosticsReport } from "@simulatorlife/autodev-core";
+import {
+  ACP_PIN_LEDGER_SCHEMA,
+  isSessionDiagnosticsReport
+} from "@simulatorlife/autodev-core";
 
 import { buildSessionDiagnosticsReport } from "../../src/diagnostics/session-report.ts";
 import { CHILD, fixture, rolloutLine, ROOT } from "./fixture.ts";
@@ -203,7 +206,7 @@ test("the session aggregates sum each thread's skill reads and keep its prompt m
           rolloutLine("2026-09-18T21:20:00.000Z", "session_meta", {
             id,
             session_id: ROOT,
-            ...((id === CHILD) && { parent_thread_id: ROOT }),
+            ...(id === CHILD && { parent_thread_id: ROOT }),
             cwd: "/tmp/repo"
           }),
           ...lines
@@ -277,6 +280,109 @@ test("session report exposes the root thread clientSurface without fabricating c
     });
     assert.equal(missing.found, false);
     assert.equal(missing.clientSurface, null);
+  } finally {
+    cleanup();
+  }
+});
+
+test("ACP pin ledger attributes threads without router events, discovers child ACP rollouts via coordinator link, and refuses symlinks", async () => {
+  const { home, routerLog, cleanup } = fixture();
+  try {
+    // Remove router log events by pointing to a non-existent router log so
+    // attribution comes strictly from the ACP pin ledger.
+    const emptyRouterLog = path.join(home, "run", "missing-router.err.log");
+    const runDir = path.join(home, "run");
+    mkdirSync(runDir, { recursive: true, mode: 0o700 });
+    chmodSync(runDir, 0o700);
+
+    const acpChildThreadId = "01a0b677-0000-7000-8000-000000000099";
+    const childDay = path.join(home, "sessions", "2026", "11", "27");
+    mkdirSync(childDay, { recursive: true });
+    writeFileSync(
+      path.join(
+        childDay,
+        `rollout-2026-11-27T10-00-00-${acpChildThreadId}.jsonl`
+      ),
+      `${rolloutLine("2026-11-27T10:00:00.000Z", "session_meta", {
+        id: acpChildThreadId,
+        session_id: acpChildThreadId,
+        parent_thread_id: null,
+        role: "worker",
+        model: "autodev/worker",
+        cwd: "/repo"
+      })}\n`
+    );
+
+    const pinsPath = path.join(runDir, "acp-pins.json");
+    writeFileSync(
+      pinsPath,
+      JSON.stringify({
+        schema: ACP_PIN_LEDGER_SCHEMA,
+        pid: process.pid,
+        updatedAt: "2026-11-27T10:00:05.000Z",
+        pins: [
+          {
+            sessionId: "child-worker-abc",
+            parentSessionId: `local:orchestrator:repo:${ROOT}`,
+            acpSessionId: acpChildThreadId,
+            role: "worker",
+            provider: "claude",
+            model: "claude-sonnet-4-5",
+            reasoningEffort: "high",
+            transport: "acp",
+            cwd: "/repo",
+            createdAt: "2026-11-27T10:00:00.000Z",
+            updatedAt: "2026-11-27T10:00:05.000Z",
+            closedAt: null
+          }
+        ]
+      }),
+      { mode: 0o600 }
+    );
+    chmodSync(pinsPath, 0o600);
+
+    const rootReport = await report(home, emptyRouterLog, { id: ROOT });
+    assert.equal(isSessionDiagnosticsReport(rootReport), true);
+    assert.equal(rootReport.acpPins?.length, 1);
+    const acpChildRouter = rootReport.router.find(
+      (entry) => entry.thread === acpChildThreadId
+    );
+    assert.ok(acpChildRouter);
+    assert.equal(acpChildRouter.matchedBy, "acp-pin");
+    assert.deepEqual(acpChildRouter.providerSequence, ["claude"]);
+    assert.deepEqual(acpChildRouter.modelSequence, ["claude-sonnet-4-5"]);
+
+    // Unpinned root thread with no router events keeps providerSequence empty.
+    const rootRouter = rootReport.router.find((entry) => entry.thread === ROOT);
+    assert.ok(rootRouter);
+    assert.deepEqual(rootRouter.providerSequence, []);
+
+    // Lookup by child ACP pin id also resolves the session cleanly.
+    const pinLookup = await report(home, emptyRouterLog, {
+      id: "child-worker-abc"
+    });
+    assert.equal(pinLookup.found, true);
+    assert.equal(pinLookup.rootSessionId, ROOT);
+    assert.ok(
+      pinLookup.threads.some((thread) => thread.id === acpChildThreadId)
+    );
+
+    // Pre-ACP router events stay intact even if an unlinked router log is used.
+    const withRouterLogs = await report(home, routerLog, { id: ROOT });
+    assert.equal(
+      withRouterLogs.router.find((entry) => entry.thread === ROOT)?.matchedBy,
+      "thread"
+    );
+
+    // Symlinked pin ledger must be ignored cleanly.
+    const realPins = path.join(home, "outside.json");
+    writeFileSync(realPins, "{}");
+    const symlinkPins = path.join(runDir, "acp-pins.json");
+    writeFileSync(symlinkPins, "{}");
+    await import("node:fs/promises").then(({ unlink }) => unlink(symlinkPins));
+    symlinkSync(realPins, symlinkPins);
+    const symlinkedReport = await report(home, emptyRouterLog, { id: ROOT });
+    assert.equal(symlinkedReport.acpPins, undefined);
   } finally {
     cleanup();
   }

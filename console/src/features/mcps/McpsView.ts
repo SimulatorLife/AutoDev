@@ -9,6 +9,7 @@ import React from "react";
 import { StatCard } from "../../components/cards/StatCard.ts";
 import { SECTION_HEADING_CLASS } from "../../components/layout/Heading.ts";
 import { PageBody } from "../../components/layout/PageBody.ts";
+import { LiveCountRefresh } from "../../components/navigation/LiveCountRefresh.ts";
 import { NavigationLink } from "../../components/navigation/NavigationLink.ts";
 import { StatGrid } from "../../components/panels/DetailGrid.ts";
 import { SourceValidationIssues } from "../../components/status/SourceValidationIssues.ts";
@@ -226,7 +227,9 @@ export function McpsView({
           "span",
           {
             "data-mcp-connection-observed": observation ? "true" : "false",
-            ...(observation && { "data-mcp-runtime-health": observation.health })
+            ...(observation && {
+              "data-mcp-runtime-health": observation.health
+            })
           },
           React.createElement(McpConnectionBadge, {
             evidence: observation ?? null
@@ -258,6 +261,7 @@ export function McpsView({
           sourceValidity === null ? NOT_OBSERVED_STATUS : String(sourceValidity)
       }
     },
+    React.createElement(LiveCountRefresh),
     React.createElement(SourceValidationIssues, {
       issues: validationIssues,
       testId: "mcp-validation-issues",

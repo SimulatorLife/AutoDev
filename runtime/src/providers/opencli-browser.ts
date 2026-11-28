@@ -12,10 +12,8 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { isPathWithin } from "@simulatorlife/autodev-data/files";
-import {
-  OPENCLI_SITES,
-  type OpencliSite
-} from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
+import { type OpencliSite } from "@simulatorlife/autodev-runtime/shared/provider-model-ids";
+import PQueue from "p-queue";
 import { chromium } from "playwright-core";
 
 const ACTIVE_PORT_LINE_BREAK = /\r?\n/u;
@@ -24,6 +22,44 @@ export class OpencliBrowserUnavailableError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "OpencliBrowserUnavailableError";
+  }
+}
+
+/**
+A background probe asked for a site page that is not open. Nothing was
+launched or opened on its behalf.
+*/
+export class OpencliSitePageNotOpenError extends Error {
+  constructor(site: OpencliSite) {
+    super(`No ${site} page is open in the dedicated browser.`);
+    this.name = "OpencliSitePageNotOpenError";
+  }
+}
+
+/**
+The page a site's turns start from; a tab on the same host is that site's.
+*/
+const SITE_HOME: Readonly<Record<OpencliSite, string>> = {
+  chatgpt: "https://chatgpt.com/",
+  gemini: "https://gemini.google.com/app"
+};
+/**
+Pages Chromium opens with nothing in them, which a site may take over.
+*/
+const BLANK_PAGE_URLS = new Set([
+  "about:blank",
+  "chrome://newtab/",
+  "chrome://new-tab-page/"
+]);
+const EXECUTABLE_MISSING =
+  "dedicated Chromium executable is unavailable from the AutoDev Playwright cache";
+
+function pageHost(url: string | undefined): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
   }
 }
 
@@ -154,8 +190,31 @@ async function defaultCdpCommand(
   });
 }
 
+interface CdpTarget {
+  readonly id?: string;
+  readonly type?: string;
+  readonly url?: string;
+  readonly webSocketDebuggerUrl: string;
+}
+
+export interface OpencliRunOptions {
+  /**
+  The command dispatches native input, so its page must be in front.
+  */
+  readonly requiresVisiblePage?: boolean;
+  /**
+  Start the browser and open the site's page when neither exists. A
+  background probe passes false: it runs only on a page that is already
+  open, and fails with `OpencliSitePageNotOpenError` otherwise.
+  */
+  readonly shouldOpenPage?: boolean;
+}
+
 export interface OpencliBrowserOptions {
   readonly executable: string;
+  /**
+  The most tabs each site may hold: one per concurrent turn its route admits.
+  */
   readonly siteTabs: Readonly<Record<OpencliSite, number>>;
   readonly profileDirectory?: string;
   readonly spawnBrowser?: typeof spawn;
@@ -165,7 +224,14 @@ export interface OpencliBrowserOptions {
 }
 
 /**
-Owns Chromium and leases a distinct CDP page window/target to every command.
+Owns the dedicated Chromium and leases a distinct CDP page target to every
+command.
+
+Nothing opens until a command needs it: the browser starts on the first site
+command, and each site's tabs are found or opened one at a time as
+concurrent turns need them, preferring a tab already on that site, then a
+blank tab, and only then a new tab in the existing window. The browser
+outlives this owner, so a restarted bridge adopts it and its tabs.
 */
 export class OpencliBrowser {
   readonly profileDirectory: string;
@@ -175,7 +241,8 @@ export class OpencliBrowser {
   private readonly slots = new Map<OpencliSite, string[]>();
   private readonly busy = new Set<string>();
   private visibleLease: string | null = null;
-  private readonly visibleQueue: symbol[] = [];
+  private readonly foregroundQueue = new PQueue({ concurrency: 1 });
+  private activeForegroundRelease: (() => void) | null = null;
   private creatingTarget = false;
   /**
   A command settled without process close; its target must not be leased.
@@ -189,35 +256,23 @@ export class OpencliBrowser {
   private generation = 0;
   private starting: Promise<void> | null = null;
   private closing = false;
-  /**
-  A stop that waits for the commands holding leases to finish.
-  */
-  private stopWhenIdle = false;
   private lastError: string | null = null;
   private launchError: Error | null = null;
 
-  get isReady(): boolean {
-    return (
-      this.port !== null &&
-      this.slots.size === OPENCLI_SITES.length &&
-      !this.closing &&
-      this.lastError === null
-    );
-  }
-  get unavailableReason(): string | null {
-    return this.lastError;
+  /**
+  Whether this owner is attached to a running browser.
+  */
+  get isRunning(): boolean {
+    return this.port !== null && this.starting === null && !this.closing;
   }
 
   /**
-  Start eagerly so the proxy does not become healthy before its browser is usable.
+  Why the next command cannot be served, or null when it can. A browser that
+  is not running is not a fault: the next command starts it.
   */
-  async initialize(): Promise<void> {
-    this.stopWhenIdle = false;
-    try {
-      await this.ensureReady();
-    } catch (error) {
-      this.lastError = error instanceof Error ? error.message : String(error);
-    }
+  get unavailableReason(): string | null {
+    if (!this.options.executable) return EXECUTABLE_MISSING;
+    return this.lastError;
   }
 
   private readonly options: OpencliBrowserOptions;
@@ -262,61 +317,179 @@ export class OpencliBrowser {
     site: OpencliSite,
     signal: AbortSignal,
     command: (endpoint: string, releaseForeground: () => void) => Promise<T>,
-    requiresVisiblePage = false
+    options: OpencliRunOptions = {}
   ): Promise<T> {
     if (this.closing) {
       throw new OpencliBrowserUnavailableError(
         "dedicated opencli browser is shutting down"
       );
     }
-    let lease: { endpoint: string; generation: number };
-    this.stopWhenIdle = false;
-    try {
-      await this.ensureReady();
-      lease = await this.acquire(site, signal, requiresVisiblePage);
-      this.lastError = null;
-    } catch (error) {
-      if (signal.aborted) throw error;
+    const requiresVisiblePage = options.requiresVisiblePage ?? false;
+    const shouldOpenPage = options.shouldOpenPage ?? true;
+    const recordAcquireError = (error: unknown): never => {
+      // A probe observes; it neither raises nor clears the browser's fault.
+      if (!shouldOpenPage || signal.aborted) throw error;
       this.lastError = error instanceof Error ? error.message : String(error);
       if (error instanceof OpencliBrowserUnavailableError) throw error;
       throw new OpencliBrowserUnavailableError(
         `Dedicated browser unavailable: ${this.lastError}`,
         { cause: error }
       );
-    }
-    const { endpoint, generation } = lease;
-    let isForegroundReleased = !requiresVisiblePage;
-    const releaseForeground = (): void => {
-      if (isForegroundReleased) return;
-      isForegroundReleased = true;
-      if (this.generation !== generation ||
-        this.visibleLease !== endpoint ||
-        this.quarantined.has(endpoint)) {
-        return;
+    };
+    if (!requiresVisiblePage) {
+      let lease: { endpoint: string; generation: number };
+      try {
+        if (shouldOpenPage) await this.ensureReady();
+        lease = await this.acquire(site, signal, false, shouldOpenPage);
+        if (shouldOpenPage) this.lastError = null;
+      } catch (error) {
+        recordAcquireError(error);
       }
+      try {
+        signal.throwIfAborted();
+        if (this.generation !== lease!.generation || this.closing) {
+          throw new OpencliBrowserUnavailableError(
+            "Dedicated Chromium stopped before command dispatch"
+          );
+        }
+        return await command(lease!.endpoint, () => undefined);
+      } finally {
+        if (
+          this.generation === lease!.generation &&
+          !this.quarantined.has(lease!.endpoint)
+        ) {
+          this.busy.delete(lease!.endpoint);
+          this.notify();
+        }
+      }
+    }
+    return this.runVisible(
+      site,
+      signal,
+      command,
+      shouldOpenPage,
+      recordAcquireError
+    );
+  }
 
-      this.visibleLease = null;
-      this.notify();
+  private async runVisible<T>(
+    site: OpencliSite,
+    signal: AbortSignal,
+    command: (endpoint: string, releaseForeground: () => void) => Promise<T>,
+    shouldOpenPage: boolean,
+    recordAcquireError: (error: unknown) => never
+  ): Promise<T> {
+    const {
+      promise: acquiredPromise,
+      resolve: resolveAcquired,
+      reject: rejectAcquired
+    } = Promise.withResolvers<{
+      endpoint: string;
+      generation: number;
+      releaseForeground: () => void;
+    }>();
+    const enqueueForeground = async (): Promise<void> => {
+      try {
+        await this.foregroundQueue.add(
+          async () => {
+            const { promise: gatePromise, resolve: releaseGate } =
+              Promise.withResolvers<void>();
+            let isGateReleased = false;
+            const finishGate = (): void => {
+              if (isGateReleased) return;
+              isGateReleased = true;
+              if (this.activeForegroundRelease === finishGate) {
+                this.activeForegroundRelease = null;
+              }
+              releaseGate();
+            };
+            this.activeForegroundRelease = finishGate;
+            try {
+              if (shouldOpenPage) await this.ensureReady();
+              const lease = await this.acquire(
+                site,
+                signal,
+                true,
+                shouldOpenPage
+              );
+              try {
+                await this.activateTarget(lease.endpoint, signal);
+                signal.throwIfAborted();
+                if (this.generation !== lease.generation || this.closing) {
+                  throw new OpencliBrowserUnavailableError(
+                    "Dedicated Chromium stopped before command dispatch"
+                  );
+                }
+              } catch (activationError) {
+                if (
+                  this.generation === lease.generation &&
+                  !this.quarantined.has(lease.endpoint)
+                ) {
+                  this.busy.delete(lease.endpoint);
+                  if (this.visibleLease === lease.endpoint) {
+                    this.visibleLease = null;
+                  }
+                  this.notify();
+                }
+                throw activationError;
+              }
+              if (shouldOpenPage) this.lastError = null;
+              resolveAcquired({
+                ...lease,
+                releaseForeground: () => {
+                  if (
+                    this.generation === lease.generation &&
+                    this.visibleLease === lease.endpoint &&
+                    !this.quarantined.has(lease.endpoint)
+                  ) {
+                    this.visibleLease = null;
+                    this.notify();
+                  }
+                  finishGate();
+                }
+              });
+              await gatePromise;
+            } catch (error) {
+              finishGate();
+              rejectAcquired(error);
+            }
+          },
+          { signal }
+        );
+      } catch (error) {
+        if (signal.aborted) {
+          rejectAcquired(
+            new Error(
+              "opencli browser command cancelled while waiting for a tab",
+              { cause: error }
+            )
+          );
+          return;
+        }
+        rejectAcquired(error);
+      }
+    };
+    void enqueueForeground();
+
+    let acquired: {
+      endpoint: string;
+      generation: number;
+      releaseForeground: () => void;
     };
     try {
-      if (requiresVisiblePage) {
-        await this.activateTarget(endpoint, signal);
-      }
-      signal.throwIfAborted();
-      if (this.generation !== generation || this.closing) {
-        throw new OpencliBrowserUnavailableError(
-          "Dedicated Chromium stopped before command dispatch"
-        );
-      }
+      acquired = await acquiredPromise;
+    } catch (error) {
+      recordAcquireError(error);
+    }
+    const { endpoint, generation, releaseForeground } = acquired!;
+    try {
       return await command(endpoint, releaseForeground);
     } finally {
       // Keep the lease held if the CLI outlives its caller's cancellation, and
       // never let a stale crashed-generation command corrupt a new browser run.
       if (this.generation === generation && !this.quarantined.has(endpoint)) {
         this.busy.delete(endpoint);
-        if (this.visibleLease === endpoint) this.visibleLease = null;
-        this.notify();
-        if (this.stopWhenIdle && this.busy.size === 0) void this.shutDown();
+        releaseForeground();
       }
     }
   }
@@ -461,25 +634,11 @@ export class OpencliBrowser {
   releaseQuarantine(endpoint: string): void {
     this.quarantined.delete(endpoint);
     this.busy.delete(endpoint);
-    if (this.visibleLease === endpoint) this.visibleLease = null;
-    this.notify();
-    if (this.stopWhenIdle && this.busy.size === 0) void this.shutDown();
-  }
-
-  /**
-  Shut the browser down when the operator turns the dedicated browser off.
-  
-  Unlike `close`, the owner stays usable: turning the setting back on starts
-  the browser again. Commands already holding a tab finish first.
-  */
-  async stop(): Promise<void> {
-    this.stopWhenIdle = true;
-    this.notify();
-    await this.starting?.catch(() => undefined);
-    if (this.busy.size > 0) {
-      return;
+    if (this.visibleLease === endpoint) {
+      this.visibleLease = null;
+      this.activeForegroundRelease?.();
     }
-    await this.shutDown();
+    this.notify();
   }
 
   private resetState(): void {
@@ -490,41 +649,22 @@ export class OpencliBrowser {
     this.busy.clear();
     this.quarantined.clear();
     this.visibleLease = null;
+    this.activeForegroundRelease?.();
     this.creatingTarget = false;
     this.notify();
   }
 
-  private async shutDown(): Promise<void> {
-    this.stopWhenIdle = false;
-    this.resetState();
-    this.lastError = null;
-    await this.stopChild();
-  }
+  /**
+  Release the browser without closing it.
 
+  Its windows, tabs and sign-in outlive this owner: a restarted bridge
+  adopts them instead of launching a new browser that opens its windows
+  again. The operator closes the browser; the next command relaunches it.
+  */
   async close(): Promise<void> {
     this.closing = true;
-    this.stopWhenIdle = false;
     this.notify();
     await this.starting?.catch(() => undefined);
-    const child = this.child;
-    if (child && child.exitCode === null) {
-      child.kill("SIGTERM");
-      await Promise.race([
-        new Promise<void>((resolve) => {
-          child.once("close", () => resolve());
-        }),
-        delay(2000)
-      ]);
-      if (child.exitCode === null) {
-        child.kill("SIGKILL");
-        await Promise.race([
-          new Promise<void>((resolve) => {
-            child.once("close", () => resolve());
-          }),
-          delay(1000)
-        ]);
-      }
-    }
     this.child = null;
     this.resetState();
   }
@@ -536,8 +676,8 @@ export class OpencliBrowser {
       );
     }
     // Share the entire readiness transaction, including the health probe.
-    // The CDP port is published before the target pool is created; a caller
-    // must not bypass an in-progress start just because /json/version works.
+    // A caller must not bypass an in-progress start just because
+    // /json/version already answers.
     if (!this.starting) {
       this.starting = this.checkReady().finally(() => {
         this.starting = null;
@@ -548,13 +688,7 @@ export class OpencliBrowser {
   }
 
   private async checkReady(): Promise<void> {
-    if (
-      this.port !== null &&
-      this.slots.size === OPENCLI_SITES.length &&
-      (await this.version())
-    ) {
-      return;
-    }
+    if (this.port !== null && (await this.version())) return;
     // An unavailable health endpoint does not prove Chromium has exited.
     // Do not terminate unrelated in-flight turns to recover a new caller.
     if (this.busy.size > 0) {
@@ -573,18 +707,23 @@ export class OpencliBrowser {
         "dedicated opencli browser is shutting down"
       );
     if (!this.options.executable)
-      throw new OpencliBrowserUnavailableError(
-        "dedicated Chromium executable is unavailable from the AutoDev Playwright cache"
-      );
+      throw new OpencliBrowserUnavailableError(EXECUTABLE_MISSING);
     await this.stopChild();
     this.resetState();
-    if (this.closing || this.stopWhenIdle) {
+    if (this.closing) {
       throw new OpencliBrowserUnavailableError(
         "dedicated opencli browser is shutting down"
       );
     }
     mkdirSync(this.profileDirectory, { recursive: true, mode: 0o700 });
     chmodSync(this.profileDirectory, 0o700);
+    if (await this.adoptRunningBrowser()) {
+      this.lastError = null;
+      this.notify();
+      return;
+    }
+    // Launching against a profile another Chromium still holds would only
+    // hand a new window to that browser, so adoption must have ruled it out.
     try {
       unlinkSync(path.join(this.profileDirectory, "DevToolsActivePort"));
     } catch {
@@ -601,9 +740,11 @@ export class OpencliBrowser {
         "--no-first-run",
         "--no-default-browser-check"
       ],
-      { stdio: "ignore", detached: false }
+      // Its own process group, so the browser survives a bridge restart.
+      { stdio: "ignore", detached: true }
     );
     const child = this.child;
+    child.unref();
     this.launchError = null;
     child.once("error", (error) => {
       this.launchError = error;
@@ -614,14 +755,15 @@ export class OpencliBrowser {
         return;
       }
 
+      // The operator quit the browser. That is not a fault: the next command
+      // that needs a page starts it again.
       this.child = null;
       this.resetState();
-      this.lastError = "Dedicated Chromium exited unexpectedly";
     });
     const deadline = Date.now() + (this.options.readinessTimeoutMs ?? 20_000);
     try {
       while (Date.now() < deadline) {
-        if (this.closing || this.stopWhenIdle)
+        if (this.closing)
           throw new Error("dedicated opencli browser is shutting down");
         if (this.launchError) throw this.launchError;
         if (child.exitCode !== null)
@@ -643,13 +785,11 @@ export class OpencliBrowser {
         }
         if (port !== null && Number.isInteger(port) && port > 0) {
           this.port = port;
-          // eslint-disable-next-line no-await-in-loop -- wait for CDP before creating its target pool.
+          // eslint-disable-next-line no-await-in-loop -- the browser is ready once CDP answers.
           if (await this.version()) {
-            if (this.closing || this.stopWhenIdle) {
+            if (this.closing) {
               throw new Error("dedicated opencli browser is shutting down");
             }
-            // eslint-disable-next-line no-await-in-loop -- serial creation makes partial pool rollback deterministic.
-            await this.createPool();
             this.lastError = null;
             this.notify();
             return;
@@ -668,6 +808,40 @@ export class OpencliBrowser {
         { cause: error }
       );
     }
+  }
+
+  /**
+  Attach to a browser a previous bridge started on this private profile.
+
+  The profile's DevToolsActivePort names the port and the browser's own
+  WebSocket path; the browser on that port must report the same path, so a
+  stale file or an unrelated listener on a reused port is never adopted.
+  */
+  private async adoptRunningBrowser(): Promise<boolean> {
+    let activePort: string;
+    try {
+      activePort = readFileSync(
+        path.join(this.profileDirectory, "DevToolsActivePort"),
+        "utf8"
+      );
+    } catch {
+      return false;
+    }
+    const [portLine, browserPath] = activePort.split(ACTIVE_PORT_LINE_BREAK);
+    const port = Number(portLine);
+    if (!Number.isSafeInteger(port) || port <= 0 || !browserPath?.trim()) {
+      return false;
+    }
+    this.port = port;
+    if (
+      (await this.version()) &&
+      this.browserWsUrl?.endsWith(browserPath.trim())
+    ) {
+      return true;
+    }
+    this.port = null;
+    this.browserWsUrl = null;
+    return false;
   }
 
   private async stopChild(): Promise<void> {
@@ -724,9 +898,7 @@ export class OpencliBrowser {
     }
   }
 
-  private async targets(): Promise<
-    Array<{ id?: string; webSocketDebuggerUrl: string }>
-  > {
+  private async targets(): Promise<CdpTarget[]> {
     let response: Response;
     try {
       response = await this.fetcher(`http://127.0.0.1:${this.port}/json/list`, {
@@ -743,10 +915,7 @@ export class OpencliBrowser {
         "dedicated opencli browser target list unavailable"
       );
     try {
-      return (await response.json()) as Array<{
-        id?: string;
-        webSocketDebuggerUrl: string;
-      }>;
+      return (await response.json()) as CdpTarget[];
     } catch (error) {
       throw new OpencliBrowserUnavailableError(
         "dedicated opencli browser returned an invalid target list",
@@ -755,17 +924,70 @@ export class OpencliBrowser {
     }
   }
 
+  /**
+  Every leased endpoint, of every site.
+  */
+  private slottedTargets(): Set<string> {
+    const slotted = new Set<string>();
+    for (const endpoints of this.slots.values()) {
+      for (const endpoint of endpoints) slotted.add(endpoint);
+    }
+    return slotted;
+  }
+
+  /**
+  Find or open one more tab for a site.
+
+  An unclaimed tab already on the site comes first: one the operator opened
+  to sign in, or one a previous bridge left. Opening a page goes on to an
+  unclaimed blank tab, such as the one Chromium starts with, and only then
+  to a new tab in the existing window. Returns null when `shouldOpenPage` is false
+  and the site has no unclaimed tab.
+  */
+  private async findOrOpenSiteTab(
+    site: OpencliSite,
+    inventory: readonly CdpTarget[],
+    shouldOpenPage: boolean
+  ): Promise<string | null> {
+    const slotted = this.slottedTargets();
+    const unclaimed = inventory.filter(
+      (target) =>
+        (target.type === undefined || target.type === "page") &&
+        target.webSocketDebuggerUrl.startsWith("ws://127.0.0.1:") &&
+        !slotted.has(target.webSocketDebuggerUrl)
+    );
+    const siteHost = pageHost(SITE_HOME[site]);
+    const sitePage = unclaimed.find(
+      (target) => pageHost(target.url) === siteHost
+    );
+    if (sitePage) return sitePage.webSocketDebuggerUrl;
+    if (!shouldOpenPage) return null;
+    const blank = unclaimed.find(
+      (target) => target.url !== undefined && BLANK_PAGE_URLS.has(target.url)
+    );
+    if (blank) {
+      try {
+        await this.cdpCommand(blank.webSocketDebuggerUrl, "Page.navigate", {
+          url: SITE_HOME[site]
+        });
+        return blank.webSocketDebuggerUrl;
+      } catch {
+        // The blank tab went away or refused; open a new one instead.
+      }
+    }
+    return this.createTab(site);
+  }
+
   private async createTab(site: OpencliSite): Promise<string> {
-    const url =
-      site === "chatgpt"
-        ? "https://chatgpt.com/"
-        : "https://gemini.google.com/app";
+    const url = SITE_HOME[site];
     if (this.browserWsUrl) {
       try {
+        // A tab in the existing window. Chromium opens a window itself only
+        // when the browser has none left.
         const created = (await this.cdpCommand(
           this.browserWsUrl,
           "Target.createTarget",
-          { url, newWindow: true }
+          { url }
         )) as { targetId?: unknown };
         if (typeof created.targetId === "string" && created.targetId) {
           const listed = await this.targets();
@@ -809,129 +1031,111 @@ export class OpencliBrowser {
     return target.webSocketDebuggerUrl;
   }
 
-  private async createPool(): Promise<void> {
-    const generation = this.generation;
-    this.slots.clear();
-    for (const site of OPENCLI_SITES) {
-      const targets: string[] = [];
-      for (let index = 0; index < this.options.siteTabs[site]; index++) {
-        // One CDP window/tab must be confirmed before requesting the next.
-        // eslint-disable-next-line no-await-in-loop -- CDP tabs must exist before slot state is committed.
-        targets.push(await this.createTab(site));
-        if (
-          generation !== this.generation ||
-          this.closing ||
-          this.stopWhenIdle
-        ) {
-          throw new OpencliBrowserUnavailableError(
-            "Dedicated Chromium stopped during target pool creation"
-          );
-        }
-      }
-      this.slots.set(site, targets);
-    }
+  /**
+  Forget a site's idle tabs the operator closed, and return the rest.
+
+  A tab claimed while the inventory was in flight is missing from that stale
+  list but was not `known` before it, so it stays.
+  */
+  private pruneClosedTabs(
+    site: OpencliSite,
+    inventory: readonly CdpTarget[],
+    known: ReadonlySet<string>
+  ): string[] {
+    const live = new Set(inventory.map((target) => target.webSocketDebuggerUrl));
+    const slots = (this.slots.get(site) ?? []).filter(
+      (endpoint) =>
+        live.has(endpoint) ||
+        !known.has(endpoint) ||
+        this.busy.has(endpoint) ||
+        this.quarantined.has(endpoint)
+    );
+    this.slots.set(site, slots);
+    return slots;
   }
 
   private async acquire(
     site: OpencliSite,
     signal: AbortSignal,
-    requiresVisiblePage: boolean
+    requiresVisiblePage: boolean,
+    shouldOpenPage: boolean
   ): Promise<{ endpoint: string; generation: number }> {
-    const ticket = requiresVisiblePage ? Symbol("visible-lease") : null;
-    if (ticket) this.visibleQueue.push(ticket);
     const canLease = (): boolean =>
       !this.closing &&
-      !this.stopWhenIdle &&
       !this.creatingTarget &&
-      (!requiresVisiblePage ||
-        (this.visibleLease === null && this.visibleQueue[0] === ticket));
-    try {
-      while (!signal.aborted) {
-        const observedRevision = this.changeRevision;
-        if (this.closing || this.stopWhenIdle) {
-          throw new OpencliBrowserUnavailableError(
-            "dedicated opencli browser is shutting down"
-          );
-        }
-        if (this.starting || this.port === null) {
-          // Recover transparently if Chromium exited while waiting, and
-          // await the entire replacement pool before inspecting slots.
-          // eslint-disable-next-line no-await-in-loop -- recovery must precede slot lookup.
-          await this.ensureReady();
-        }
-        if (!canLease()) {
-          // A visible native-input turn owns foreground activation during its
-          // input/submission phase; wait cleanly until notified.
-          // eslint-disable-next-line no-await-in-loop -- wait for the current lease.
-          await this.waitForChange(signal, observedRevision);
-          continue;
-        }
-        const gen = this.generation;
-        const slots = this.slots.get(site) ?? [];
-        const snapshot = [...slots];
-        // A fresh target list is required to detect tabs closed since the last turn.
-        // eslint-disable-next-line no-await-in-loop -- every retry needs a fresh target inventory.
-        const currentTargets = await this.targets();
-        if (gen !== this.generation) continue;
-        const existing = new Set(
-          currentTargets.map((target) => target.webSocketDebuggerUrl)
+      (!requiresVisiblePage || this.visibleLease === null);
+    const lease = (
+      endpoint: string,
+      generation: number
+    ): { endpoint: string; generation: number } => {
+      this.busy.add(endpoint);
+      if (requiresVisiblePage) this.visibleLease = endpoint;
+      return { endpoint, generation };
+    };
+    while (!signal.aborted) {
+      const observedRevision = this.changeRevision;
+      if (this.closing) {
+        throw new OpencliBrowserUnavailableError(
+          "dedicated opencli browser is shutting down"
         );
-        for (let index = 0; index < slots.length; index++) {
-          if (!canLease() || signal.aborted || gen !== this.generation) break;
-          let endpoint = slots[index]!;
-          // Another acquisition may have replaced a slot while our target
-          // inventory was in flight. Never replace a newly assigned or busy
-          // target based on that stale snapshot.
-          if (
-            endpoint !== snapshot[index] ||
-            this.busy.has(endpoint) ||
-            this.quarantined.has(endpoint)
-          ) {
-            continue;
-          }
-          if (!existing.has(endpoint)) {
-            // Creating a target activates it. Skip missing slots while a
-            // foreground turn owns native input; re-evaluate after release
-            // rather than resume this stale inventory inside a nested wait.
-            if (this.visibleLease !== null) continue;
-            this.creatingTarget = true;
-            try {
-              // eslint-disable-next-line no-await-in-loop -- replacement must finish before leasing.
-              endpoint = await this.createTab(site);
-              if (gen !== this.generation) break;
-              slots[index] = endpoint;
-            } finally {
-              if (gen === this.generation) {
-                this.creatingTarget = false;
-                this.notify();
-              }
-            }
-          }
-          if (
-            canLease() &&
-            !signal.aborted &&
-            gen === this.generation &&
-            !this.busy.has(endpoint) &&
-            !this.quarantined.has(endpoint)
-          ) {
-            this.busy.add(endpoint);
-            if (requiresVisiblePage) this.visibleLease = endpoint;
-            return { endpoint, generation: gen };
+      }
+      if (this.starting || this.port === null) {
+        // A probe never starts the browser it observes.
+        if (!shouldOpenPage) throw new OpencliSitePageNotOpenError(site);
+        // Recover transparently if Chromium exited while waiting.
+        // eslint-disable-next-line no-await-in-loop -- recovery must precede slot lookup.
+        await this.ensureReady();
+      }
+      if (!canLease()) {
+        // A visible native-input turn owns foreground activation during its
+        // input/submission phase; wait cleanly until notified.
+        // eslint-disable-next-line no-await-in-loop -- wait for the current lease.
+        await this.waitForChange(signal, observedRevision);
+        continue;
+      }
+      const gen = this.generation;
+      const known = this.slottedTargets();
+      // A fresh target list is required to detect tabs closed since the last turn.
+      // eslint-disable-next-line no-await-in-loop -- every retry needs a fresh target inventory.
+      const inventory = await this.targets();
+      if (gen !== this.generation || !canLease()) continue;
+      const slots = this.pruneClosedTabs(site, inventory, known);
+      const free = slots.find(
+        (endpoint) =>
+          !this.busy.has(endpoint) && !this.quarantined.has(endpoint)
+      );
+      if (free) return lease(free, gen);
+      // Opening a tab activates it, so none opens while a foreground turn
+      // owns native input; re-evaluate after its release.
+      if (
+        slots.length < this.options.siteTabs[site] &&
+        this.visibleLease === null
+      ) {
+        this.creatingTarget = true;
+        let endpoint: string | null;
+        try {
+          // eslint-disable-next-line no-await-in-loop -- the tab must exist before it is leased.
+          endpoint = await this.findOrOpenSiteTab(site, inventory, shouldOpenPage);
+        } finally {
+          if (gen === this.generation) {
+            this.creatingTarget = false;
+            this.notify();
           }
         }
-        // Wait for a lease to free without spinning on target list fetches.
-        // eslint-disable-next-line no-await-in-loop -- wait for another lease to become free.
-        await this.waitForChange(signal, observedRevision);
+        if (gen !== this.generation) continue;
+        if (endpoint === null) throw new OpencliSitePageNotOpenError(site);
+        const current = this.slots.get(site) ?? [];
+        current.push(endpoint);
+        this.slots.set(site, current);
+        if (canLease() && !signal.aborted) return lease(endpoint, gen);
+        continue;
       }
-      throw new Error(
-        "opencli browser command cancelled while waiting for a tab"
-      );
-    } finally {
-      if (ticket) {
-        const index = this.visibleQueue.indexOf(ticket);
-        if (index !== -1) this.visibleQueue.splice(index, 1);
-        this.notify();
-      }
+      // Wait for a lease to free without spinning on target list fetches.
+      // eslint-disable-next-line no-await-in-loop -- wait for another lease to become free.
+      await this.waitForChange(signal, observedRevision);
     }
+    throw new Error(
+      "opencli browser command cancelled while waiting for a tab"
+    );
   }
 }

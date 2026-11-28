@@ -137,7 +137,7 @@ test("ACP executors locate their official CLIs safely", () => {
   );
   assert.match(
     texts["runtime/src/shared/executables.ts"]!,
-    /findExecutable\("copilot", env\.PATH/
+    /findExecutable\("copilot", environment\.PATH/
   );
   assert.match(
     texts["runtime/src/shared/executables.ts"]!,

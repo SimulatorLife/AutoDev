@@ -8,6 +8,7 @@ import {
 
 const NOT_OBSERVED = "Not observed";
 const FIXTURE_BASE_URL = `http://127.0.0.1:${process.env.AUTODEV_PLAYTEST_FIXTURE_PORT ?? "4311"}`;
+const USAGE_FIXTURE_BASE_URL = `http://127.0.0.1:${process.env.AUTODEV_OPENLIT_USAGE_FIXTURE_PORT ?? "4312"}`;
 const SCOPE_LABEL = "Usage scope";
 const TIME_RANGE_LABEL = "Time range";
 const SCOPE_OPTIONS = [
@@ -80,6 +81,26 @@ async function assertDimensionIsUnobserved(
   await expect(select.locator("option")).toHaveText([NOT_OBSERVED]);
 }
 
+async function setMcpRuntimeState(
+  request: APIRequestContext,
+  state: "ready" | "stale"
+): Promise<void> {
+  const response = await request.post(
+    `${FIXTURE_BASE_URL}/fixture/mcp-runtime/state?state=${state}`
+  );
+  expect(response.ok()).toBe(true);
+}
+
+async function setUsageFixtureMode(
+  request: APIRequestContext,
+  mode: "normal" | "http_503"
+): Promise<void> {
+  const response = await request.post(
+    `${USAGE_FIXTURE_BASE_URL}/fixture/usage/state?mode=${mode}`
+  );
+  expect(response.ok()).toBe(true);
+}
+
 /**
 Whether the Runtime's live projection answers.
 
@@ -89,10 +110,10 @@ fixture is told directly, because the Console has no handle on it.
 */
 async function setRuntimeAvailable(
   request: APIRequestContext,
-  available: boolean
+  isAvailable: boolean
 ): Promise<void> {
   const response = await request.post(
-    `${FIXTURE_BASE_URL}/fixture/runtime/state?state=${available ? "observed" : "unavailable"}`
+    `${FIXTURE_BASE_URL}/fixture/runtime/state?state=${isAvailable ? "observed" : "unavailable"}`
   );
   expect(response.ok()).toBe(true);
 }
@@ -197,6 +218,44 @@ test("the provider hop evidence names both providers, the reason and the place",
   await expect(reason).toBeVisible();
   await expect(reason.getByText("fallback")).toBeVisible();
   await expect(reason.getByText("reselection")).toBeVisible();
+});
+
+test("the agent launch counters render root and child admission metrics and breakdowns", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/usage");
+
+  await expect(
+    page.getByRole("heading", { name: "Agent launches", exact: true })
+  ).toBeVisible();
+  const rootLaunches = page.locator('[data-agent-launches-kind="root"]');
+  const childLaunches = page.locator('[data-agent-launches-kind="child"]');
+  await expect(
+    rootLaunches.getByRole("heading", { name: "Root agent launches" })
+  ).toBeVisible();
+  await expect(
+    childLaunches.getByRole("heading", { name: "Child agent delegations" })
+  ).toBeVisible();
+  await expect(
+    rootLaunches
+      .locator('dt:text-is("Attempted")')
+      .locator("xpath=ancestor::dl[1]//dd/div/span[1]")
+  ).toHaveText("6");
+  await expect(
+    childLaunches
+      .locator('dt:text-is("Attempted")')
+      .locator("xpath=ancestor::dl[1]//dd/div/span[1]")
+  ).toHaveText("4");
+  await expect(page.getByText("dispatch_refused").first()).toBeVisible();
+  await expect(page.getByText("concurrency_limit").first()).toBeVisible();
+
+  const launchesByRole = page.getByRole("list", {
+    name: "Agent launch attempts by role"
+  });
+  await expect(launchesByRole).toBeVisible();
+  await expect(launchesByRole.getByText("orchestrator")).toBeVisible();
+  await expect(launchesByRole.getByText("worker")).toBeVisible();
 });
 
 test("the filters tell an observed dimension from an unobserved one", async ({
@@ -325,7 +384,7 @@ test("the Active Sessions scope is its own scope, not a time range", async ({
   // says why there is no list instead of drawing an empty one.
   await expect(
     page.getByText(
-      "The Runtime reports a live session count but no per-session identity yet, so no session list is shown.",
+      "The Runtime did not report per-session identity; no session list is shown.",
       { exact: false }
     )
   ).toBeVisible();
@@ -361,5 +420,111 @@ test("a Runtime that does not answer is not an idle Runtime", async ({
     await expect(page.getByLabel(SCOPE_LABEL)).toBeVisible();
   } finally {
     await setRuntimeAvailable(request, true);
+  }
+});
+
+test("context compactions show the provider breakdown and mark provider filters not applicable", async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/usage");
+
+  await expect(statValue(page, "Context Compactions")).toHaveText("3");
+  const chart = page.getByRole("list", {
+    name: "Source-confirmed context compactions by the provider that served them"
+  });
+  await expect(chart).toBeVisible();
+  await expect(chart.getByText("claude")).toBeVisible();
+  await expect(chart.getByText("codex")).toBeVisible();
+
+  const total = await chart.locator("li").evaluateAll((items) =>
+    items.reduce((sum, item) => {
+      const spans = Array.from(item.querySelectorAll("span"));
+      const value = spans.at(-1)?.textContent ?? "";
+      return sum + Number(value.replaceAll(/[^0-9.]/gu, ""));
+    }, 0)
+  );
+  expect(total).toBe(3);
+
+  await page.goto("/usage?range=24H&provider=claude");
+  const scopeWarning = page.locator("[data-context-compaction-scope]");
+  await expect(scopeWarning).toHaveAttribute(
+    "data-context-compaction-scope",
+    "not-applicable"
+  );
+  await expect(statValue(page, "Context Compactions")).toHaveText(
+    "Not applicable"
+  );
+});
+
+test("MCP servers distinguish live use, exposed-never-used, and stale gateway observations", async ({
+  page,
+  request
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/usage");
+
+  const table = page
+    .getByRole("region", { name: "MCP servers" })
+    .getByRole("table");
+  await expect(table).toBeVisible();
+  await expect(table.locator('[data-mcp-usage-state="used"]')).toHaveCount(1);
+  await expect(
+    table.locator('[data-mcp-usage-state="exposed-never-used"]')
+  ).toHaveCount(1);
+  await expect(page.locator("[data-mcp-runtime-stale]")).toHaveCount(0);
+
+  await setMcpRuntimeState(request, "stale");
+  try {
+    await page.reload();
+    await expect(page.locator('[data-mcp-runtime-stale="true"]')).toBeVisible();
+    await expect(table.locator('[data-mcp-usage-state="stale"]')).toHaveCount(
+      1
+    );
+  } finally {
+    await setMcpRuntimeState(request, "ready");
+  }
+});
+
+test("Usage freshness controls retain a stale snapshot on refresh failure and recover on retry", async ({
+  page,
+  request
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/usage");
+
+  const bar = page.locator("[data-usage-freshness]");
+  await expect(bar).toHaveAttribute("data-usage-freshness", "current");
+  await expect(bar.getByText("Observed")).toBeVisible();
+  await expect(bar.getByText("Last success")).toBeVisible();
+
+  const toggleButton = bar.locator('[data-button="usage-refresh-toggle"]');
+  await toggleButton.click();
+  await expect(bar).toHaveAttribute("data-usage-refresh-paused", "true");
+  await expect(toggleButton).toHaveText("Resume auto-refresh");
+  await toggleButton.click();
+  await expect(bar).toHaveAttribute("data-usage-refresh-paused", "false");
+
+  const refreshButton = bar.locator('[data-button="usage-refresh-now"]');
+  await setUsageFixtureMode(request, "http_503");
+  try {
+    await refreshButton.click();
+    await expect(bar).toHaveAttribute("data-usage-freshness", "stale");
+    await expect(
+      bar.locator(
+        '[data-usage-freshness-error="autodev_openlit_usage_http_503"]'
+      )
+    ).toBeVisible();
+    // Retained last-known metrics must remain visible while labeled stale.
+    await expect(statValue(page, "Logical Routed Requests")).toHaveText(
+      LOGICAL_REQUESTS
+    );
+
+    await setUsageFixtureMode(request, "normal");
+    await refreshButton.click();
+    await expect(bar).toHaveAttribute("data-usage-freshness", "current");
+    await expect(bar.locator("[data-usage-freshness-error]")).toHaveCount(0);
+  } finally {
+    await setUsageFixtureMode(request, "normal");
   }
 });

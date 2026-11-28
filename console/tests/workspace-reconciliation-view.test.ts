@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import type {
@@ -122,4 +123,14 @@ test("a surface with no reconciliation renders no panel rather than an empty one
     /data-feature="reconciliation"/u,
     "no reconciliation means no panel, not a panel with nothing in it"
   );
+});
+
+test("Workspaces list and detail views mount LiveCountRefresh for five-second visible polling", () => {
+  for (const relativePath of [
+    "../src/features/workspaces/WorkspacesView.ts",
+    "../src/features/workspaces/WorkspaceDetailView.ts"
+  ]) {
+    const source = readFileSync(new URL(relativePath, import.meta.url), "utf8");
+    assert.match(source, /React\.createElement\(LiveCountRefresh\)/u);
+  }
 });

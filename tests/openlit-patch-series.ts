@@ -99,7 +99,8 @@ export const OPENLIT_PATCH_NAMES = [
   "80-retire-autodev-memory-ui-routes",
   "81-autodev-usage-models",
   "82-optimize-dockerfile-build-cache",
-  "83-autodev-clickhouse-max-threads"
+  "83-autodev-clickhouse-max-threads",
+  "84-autodev-agent-launches-usage"
 ] as const;
 
 /**

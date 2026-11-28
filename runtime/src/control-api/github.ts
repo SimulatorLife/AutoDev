@@ -1,8 +1,10 @@
 import path from "node:path";
 
 import {
+  CONTROL_API_GITHUB_SCHEMA_ID,
   type ControlApiGithubResponse,
   type GithubActionsRuntimeStatus,
+  type GithubWorkflowCatalogStatus,
   type GithubWorkflowDefinition,
   type GithubWorkflowRun,
   type GithubWorkflowState
@@ -18,7 +20,6 @@ import {
 
 import { resolveRuntimeSourceRoot } from "../shared/runtime-source-root.ts";
 
-const GITHUB_CONTROL_API_SCHEMA = "autodev-control-github-v1";
 const GITHUB_WORKFLOW_YAML_SOURCE = ".github/workflows";
 const DEFAULT_REPO_ROOT = resolveRuntimeSourceRoot(
   import.meta.dirname,
@@ -50,8 +51,6 @@ export interface GithubWorkflowsViewOptions {
   readonly repository?: string;
 }
 
-type GithubWorkflowCatalogStatus = "valid" | "invalid" | "unavailable";
-
 interface GithubUnavailableResponseOptions {
   readonly catalogStatus: GithubWorkflowCatalogStatus;
   readonly totalWorkflows: number | null;
@@ -63,9 +62,9 @@ interface GithubUnavailableResponseOptions {
 
 function unavailableGithubResponse(
   options: GithubUnavailableResponseOptions
-): Record<string, unknown> {
+): ControlApiGithubResponse {
   return {
-    schema: GITHUB_CONTROL_API_SCHEMA,
+    schema: CONTROL_API_GITHUB_SCHEMA_ID,
     source: GITHUB_WORKFLOW_YAML_SOURCE,
     readOnly: true,
     catalogStatus: options.catalogStatus,
@@ -110,7 +109,7 @@ type GithubRuntimeBindingResolution =
     }
   | {
       readonly available: false;
-      readonly response: Record<string, unknown>;
+      readonly response: ControlApiGithubResponse;
     };
 
 function resolveGithubRuntimeBinding(
@@ -278,7 +277,7 @@ access is absent/invalid.
 export async function githubWorkflowsView(
   repositoryRoot?: string,
   options: GithubWorkflowsViewOptions = {}
-): Promise<Record<string, unknown>> {
+): Promise<ControlApiGithubResponse> {
   const root = repositoryRoot ?? DEFAULT_REPO_ROOT;
   const catalog = new GithubWorkflowRepository(root).readWorkflowCatalog();
 
@@ -338,7 +337,7 @@ export async function githubWorkflowsView(
     const projected = projectGithubWorkflows(catalog.workflows, snapshot);
 
     return {
-      schema: GITHUB_CONTROL_API_SCHEMA,
+      schema: CONTROL_API_GITHUB_SCHEMA_ID,
       source: GITHUB_WORKFLOW_YAML_SOURCE,
       readOnly: true,
       catalogStatus: "valid",

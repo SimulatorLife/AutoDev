@@ -278,3 +278,46 @@ test("a checkout edit after install does not change the closure it was installed
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test(
+  "a second Runtime home clones an already-materialized closure with distinct inodes",
+  { skip: process.platform !== "darwin" },
+  () => {
+    const root = fixtureCheckout();
+    const seedHome = temporary("autodev-closure-seed-");
+    const targetHome = temporary("autodev-closure-target-");
+    try {
+      const seeded = materializeRuntimeDependencyClosure(
+        root,
+        seedHome,
+        fakeDeploy([])
+      );
+      const cloned = materializeRuntimeDependencyClosure(
+        root,
+        targetHome,
+        deployWithPnpm,
+        seedHome
+      );
+      assert.equal(cloned.deployed, true);
+      assert.equal(
+        cloned.nodeModules,
+        runtimeDependencyClosure(root, targetHome)
+      );
+      const seedStat = statSync(
+        path.join(seeded.nodeModules, "zod", "package.json")
+      );
+      const clonedStat = statSync(
+        path.join(cloned.nodeModules, "zod", "package.json")
+      );
+      assert.notEqual(
+        clonedStat.ino,
+        seedStat.ino,
+        "cloned closure must not share hard-linked inodes with the seed home"
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(seedHome, { recursive: true, force: true });
+      rmSync(targetHome, { recursive: true, force: true });
+    }
+  }
+);

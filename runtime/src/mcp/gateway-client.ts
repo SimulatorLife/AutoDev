@@ -23,7 +23,7 @@ import {
   type JSONRPCMessage,
   type RequestId
 } from "@modelcontextprotocol/sdk/types.js";
-import { isRecord } from "@simulatorlife/autodev-core";
+import { isRecord, safeAutoDevSessionId } from "@simulatorlife/autodev-core";
 
 import { isEntryPoint } from "../shared/entry-point.ts";
 import { writeErrorLine } from "../shared/output.ts";
@@ -79,10 +79,15 @@ export function resolveGatewayClient(context: GatewayClientContext): {
   if (!url) throw new Error("The AutoDev MCP gateway has no installed state.");
   if (handedOver) return { url, key: admission.key, grant: () => handedOver };
 
+  const threadSession =
+    safeAutoDevSessionId(context.env.AUTODEV_SESSION_ID?.trim()) ??
+    safeAutoDevSessionId(context.env.CODEX_THREAD_ID?.trim()) ??
+    undefined;
   const issued = issueLaunchGrant({
     env: context.env,
     launchDirectory: context.env.AUTODEV_MCP_WORKSPACE?.trim() || context.cwd,
-    role
+    role,
+    ...(threadSession && { session: threadSession, runtimeSession: false })
   });
   let grant = issued.grant;
   let expiresAt = Date.now() + SESSION_GRANT_TTL_MS;
@@ -153,8 +158,10 @@ export async function runGatewayClient(
         .catch(stop);
     }
   };
-  upstream.addEventListener('close', stop);
-  local.addEventListener('close', stop);
+  // eslint-disable-next-line unicorn/prefer-add-event-listener -- MCP SDK transports expose an onclose callback property, not EventTarget.
+  upstream.onclose = stop;
+  // eslint-disable-next-line unicorn/prefer-add-event-listener -- MCP SDK transports expose an onclose callback property, not EventTarget.
+  local.onclose = stop;
   local.onerror = stop;
   upstream.onerror = (error) => {
     if (!isStopping) {

@@ -1,4 +1,5 @@
 import {
+  deriveAgentLaunchSuccessRatePercent,
   deriveContextCompactionRatePercent,
   deriveProviderHopRatePercent,
   isOpenTelemetrySpanId,
@@ -6,6 +7,10 @@ import {
   isRecord,
   safeAutoDevSessionId,
   USAGE_VARIABLE_IDS,
+  type UsageAgentLaunchMetrics,
+  type UsageAgentLaunchPreSelectionFilter,
+  type UsageAgentLaunchSummary,
+  type UsageAgentLaunchUnsupportedFilter,
   type UsageBreakdownCount,
   type UsageCompactionUnsupportedFilter,
   type UsageFilterOptions,
@@ -117,6 +122,12 @@ const USAGE_WIDGET_IDS: readonly UsageWidgetId[] = [
   "provider-hops-by-role",
   "provider-hops-by-workspace",
   "provider-hops-by-reason",
+  "agent-launches-root-stages",
+  "agent-launches-child-stages",
+  "agent-launches-root-rejections",
+  "agent-launches-child-rejections",
+  "agent-launches-failed-before-start-by-provider",
+  "agent-launches-by-role",
   "skill-events-by-event",
   "estimated-cost"
 ];
@@ -318,7 +329,9 @@ export class OpenLITUsageClient {
           body: JSON.stringify({
             sessionId: validatedSessionId,
             range: selection.range,
-            ...((selection.range === "CUSTOM") && { customRange: selection.customRange }),
+            ...(selection.range === "CUSTOM" && {
+              customRange: selection.customRange
+            }),
             limit: page.limit,
             offset: page.offset,
             sortDirection: page.sortDirection
@@ -709,7 +722,12 @@ function parseOpenLITTraceDetail(value: unknown): UsageTraceDetail | null {
 function parseOpenLITUsageResponse(
   value: unknown
 ): OpenLITUsageResponse | null {
-  if (!isRecord(value) || value.schema !== "autodev-openlit-usage-v5" || !Array.isArray(value.widgets)) return null;
+  if (
+    !isRecord(value) ||
+    value.schema !== "autodev-openlit-usage-v5" ||
+    !Array.isArray(value.widgets)
+  )
+    return null;
 
   const widgets: OpenLITWidgetResult[] = [];
   const seenWidgetIds = new Set<UsageWidgetId>();
@@ -824,10 +842,12 @@ function parseWidgetResult(candidate: unknown): OpenLITWidgetResult | null {
     observed: candidate.observed,
     partial: candidate.partial,
     rows: candidate.rows,
-    ...((typeof candidate.valuePath === "string") && { valuePath: candidate.valuePath }),
+    ...(typeof candidate.valuePath === "string" && {
+      valuePath: candidate.valuePath
+    }),
     ...(ratio && { ratio }),
-    ...((typeof candidate.xAxis === "string") && { xAxis: candidate.xAxis }),
-    ...((typeof candidate.yAxis === "string") && { yAxis: candidate.yAxis })
+    ...(typeof candidate.xAxis === "string" && { xAxis: candidate.xAxis }),
+    ...(typeof candidate.yAxis === "string" && { yAxis: candidate.yAxis })
   };
 }
 
@@ -848,7 +868,9 @@ function parseRatio(value: unknown): OpenLITRatio | null {
   return {
     numerator: value.numerator,
     denominator: value.denominator,
-    ...((typeof value.multiplier === "number") && { multiplier: value.multiplier })
+    ...(typeof value.multiplier === "number" && {
+      multiplier: value.multiplier
+    })
   };
 }
 
@@ -1087,7 +1109,13 @@ function workspaceRequestBreakdown(
   widget: OpenLITWidgetResult | undefined,
   observedRequests: number | null
 ): UsageWorkspaceRequestBreakdown | null {
-  if (!widget?.querySucceeded || !widget.observed || !widget.xAxis || !widget.yAxis) return null;
+  if (
+    !widget?.querySucceeded ||
+    !widget.observed ||
+    !widget.xAxis ||
+    !widget.yAxis
+  )
+    return null;
   if (widget.rows.length === 0) {
     return observedRequests === 0
       ? { rows: [], partial: widget.partial }
@@ -1192,6 +1220,235 @@ function gitChangeMetrics(
       commits
     ),
     commitsByAgent: breakdownRows(widgets.get("git-commits-by-agent"), commits)
+  };
+}
+
+const LAUNCH_STAGES = new Set([
+  "attempted",
+  "admitted",
+  "rejected",
+  "started",
+  "failed_before_start",
+  "succeeded",
+  "failed",
+  "cancelled"
+]);
+
+const AGENT_LAUNCH_BREAKDOWN_IDS: readonly UsageWidgetId[] = [
+  "agent-launches-root-rejections",
+  "agent-launches-child-rejections",
+  "agent-launches-failed-before-start-by-provider",
+  "agent-launches-by-role"
+];
+
+function agentLaunchUnsupportedFilters(
+  selection: UsageFilterSelection
+): readonly UsageAgentLaunchUnsupportedFilter[] {
+  return (selection.values.skill?.length ?? 0) > 0 ? ["skill"] : [];
+}
+
+function agentLaunchPreSelectionUnsupportedFilters(
+  selection: UsageFilterSelection
+): readonly UsageAgentLaunchPreSelectionFilter[] {
+  const filters: UsageAgentLaunchPreSelectionFilter[] = [];
+  if ((selection.values.provider?.length ?? 0) > 0) filters.push("provider");
+  if ((selection.values.model?.length ?? 0) > 0) filters.push("model");
+  return filters;
+}
+
+function emptyAgentLaunchSummary(): UsageAgentLaunchSummary {
+  return {
+    attempted: null,
+    admitted: null,
+    rejected: null,
+    started: null,
+    failedBeforeStart: null,
+    resolved: null,
+    pending: null,
+    launchSuccessRatePercent: null,
+    succeeded: null,
+    failed: null,
+    cancelled: null,
+    rejectionReasons: null
+  };
+}
+
+function unavailableAgentLaunches(
+  status: UsageAgentLaunchMetrics["status"],
+  unsupportedFilters: readonly UsageAgentLaunchUnsupportedFilter[],
+  preSelectionUnsupportedFilters: readonly UsageAgentLaunchPreSelectionFilter[],
+  notApplicableReason: UsageAgentLaunchMetrics["notApplicableReason"] = null
+): UsageAgentLaunchMetrics {
+  return {
+    status,
+    notApplicableReason,
+    unsupportedFilters,
+    preSelectionApplicable:
+      status !== NOT_APPLICABLE_KIND &&
+      preSelectionUnsupportedFilters.length === 0,
+    preSelectionUnsupportedFilters,
+    breakdownsPartial: false,
+    root: emptyAgentLaunchSummary(),
+    child: emptyAgentLaunchSummary(),
+    failedBeforeStartByProvider: null,
+    attemptsByRole: null
+  };
+}
+
+function parseStageCounts(
+  widget: OpenLITWidgetResult | undefined
+): ReadonlyMap<string, number> | null {
+  if (!widget?.querySucceeded) return null;
+  const counts = new Map<string, number>();
+  if (!widget.observed && widget.rows.length === 0) return counts;
+  const rows = groupedRows(widget);
+  if (!rows) return null;
+  for (const row of rows) {
+    if (
+      !LAUNCH_STAGES.has(row.name) ||
+      !Number.isSafeInteger(row.count) ||
+      row.count < 0
+    ) {
+      return null;
+    }
+    counts.set(row.name, (counts.get(row.name) ?? 0) + row.count);
+  }
+  return counts;
+}
+
+function buildAgentLaunchSummary(
+  stages: ReadonlyMap<string, number>,
+  rejectionWidget: OpenLITWidgetResult | undefined,
+  isPreSelectionApplicable: boolean
+): UsageAgentLaunchSummary {
+  const count = (stage: string) => stages.get(stage) ?? 0;
+  const admitted = count("admitted");
+  const started = count("started");
+  const failedBeforeStart = count("failed_before_start");
+  const succeeded = count("succeeded");
+  const failed = count("failed");
+  const cancelled = count("cancelled");
+  if (!isPreSelectionApplicable) {
+    return {
+      attempted: null,
+      admitted,
+      rejected: null,
+      started,
+      failedBeforeStart,
+      resolved: null,
+      pending: null,
+      launchSuccessRatePercent: null,
+      succeeded,
+      failed,
+      cancelled,
+      rejectionReasons: null
+    };
+  }
+  const attempted = count("attempted");
+  const rejected = count("rejected");
+  const resolved = started + rejected + failedBeforeStart;
+  return {
+    attempted,
+    admitted,
+    rejected,
+    started,
+    failedBeforeStart,
+    resolved,
+    pending: attempted >= resolved ? attempted - resolved : null,
+    launchSuccessRatePercent: deriveAgentLaunchSuccessRatePercent(
+      started,
+      rejected,
+      failedBeforeStart
+    ),
+    succeeded,
+    failed,
+    cancelled,
+    rejectionReasons: breakdownRows(rejectionWidget, rejected)
+  };
+}
+
+function agentLaunchMetrics(
+  widgets: ReadonlyMap<UsageWidgetId, OpenLITWidgetResult>,
+  selection: UsageFilterSelection
+): UsageAgentLaunchMetrics {
+  const unsupportedFilters = agentLaunchUnsupportedFilters(selection);
+  const preSelectionUnsupportedFilters =
+    agentLaunchPreSelectionUnsupportedFilters(selection);
+  if (selection.range === "ACTIVE_SESSIONS") {
+    return unavailableAgentLaunches(
+      NOT_APPLICABLE_KIND,
+      unsupportedFilters,
+      preSelectionUnsupportedFilters,
+      "active-sessions"
+    );
+  }
+  if (unsupportedFilters.length > 0) {
+    return unavailableAgentLaunches(
+      NOT_APPLICABLE_KIND,
+      unsupportedFilters,
+      preSelectionUnsupportedFilters,
+      "unsupported-filter"
+    );
+  }
+  const rootWidget = widgets.get("agent-launches-root-stages");
+  const childWidget = widgets.get("agent-launches-child-stages");
+  if (
+    rootWidget?.querySucceeded !== true ||
+    childWidget?.querySucceeded !== true
+  ) {
+    return unavailableAgentLaunches(
+      "unavailable",
+      unsupportedFilters,
+      preSelectionUnsupportedFilters
+    );
+  }
+  const rootStages = parseStageCounts(rootWidget);
+  const childStages = parseStageCounts(childWidget);
+  if (!rootStages || !childStages) {
+    return unavailableAgentLaunches(
+      "not-observed",
+      unsupportedFilters,
+      preSelectionUnsupportedFilters
+    );
+  }
+  const isPreSelectionApplicable = preSelectionUnsupportedFilters.length === 0;
+  const root = buildAgentLaunchSummary(
+    rootStages,
+    widgets.get("agent-launches-root-rejections"),
+    isPreSelectionApplicable
+  );
+  const child = buildAgentLaunchSummary(
+    childStages,
+    widgets.get("agent-launches-child-rejections"),
+    isPreSelectionApplicable
+  );
+  const failedBeforeStartTotal =
+    (root.failedBeforeStart ?? 0) + (child.failedBeforeStart ?? 0);
+  const attemptedTotal =
+    isPreSelectionApplicable &&
+    root.attempted !== null &&
+    child.attempted !== null
+      ? root.attempted + child.attempted
+      : null;
+
+  return {
+    status: "observed",
+    notApplicableReason: null,
+    unsupportedFilters,
+    preSelectionApplicable: isPreSelectionApplicable,
+    preSelectionUnsupportedFilters,
+    breakdownsPartial: AGENT_LAUNCH_BREAKDOWN_IDS.some(
+      (id) => widgets.get(id)?.partial === true
+    ),
+    root,
+    child,
+    failedBeforeStartByProvider: breakdownRows(
+      widgets.get("agent-launches-failed-before-start-by-provider"),
+      failedBeforeStartTotal
+    ),
+    attemptsByRole: isPreSelectionApplicable
+      ? breakdownRows(widgets.get("agent-launches-by-role"), attemptedTotal)
+      : null
   };
 }
 
@@ -1377,8 +1634,12 @@ function toUsageSnapshot(
     contextCompactionsByWorkspace: isCompactionsAvailable
       ? compactionsByWorkspace
       : null,
-    contextCompactionsByModel: isCompactionsAvailable ? compactionsByModel : null,
-    contextCompactionsByAgent: isCompactionsAvailable ? compactionsByAgent : null,
+    contextCompactionsByModel: isCompactionsAvailable
+      ? compactionsByModel
+      : null,
+    contextCompactionsByAgent: isCompactionsAvailable
+      ? compactionsByAgent
+      : null,
     contextCompactionsByProvider: isCompactionsAvailable
       ? compactionsByProvider
       : null,
@@ -1412,6 +1673,7 @@ function toUsageSnapshot(
       widgets.get("requests-by-workspace"),
       logicalRequests
     ),
+    agentLaunches: agentLaunchMetrics(widgets, selection),
     attemptsByProvider:
       attempts === null
         ? null

@@ -60,7 +60,7 @@ const EXCERPT = 160;
 const FAILURE_PREVIEW_INPUT_EXCERPT = 180;
 const FAILURE_CAP_PER_CATEGORY = 2;
 const BYTES_PER_MIB = 1_048_576;
-const INDENT = ' '.repeat(3);
+const INDENT = " ".repeat(3);
 const DASH = "-";
 const SKILL_READ_PREVIEW_LIMIT = 8;
 const TRAILING_SEPARATORS_REGEX = /[\\/]+$/u;
@@ -177,6 +177,18 @@ function renderRouterFailureLine(
 
 function renderRouterDetails(router: SessionRouterSummary): string[] {
   const lines: string[] = [];
+  if (router.matchedBy === "acp-pin") {
+    const provider = router.providerSequence.join(" → ") || DASH;
+    const model = router.modelSequence.join(" → ") || DASH;
+    const role = router.pinRole ? ` role=${router.pinRole}` : "";
+    const session = router.pinSessionId
+      ? ` session=${router.pinSessionId}`
+      : "";
+    lines.push(
+      `${INDENT}acp-pin (${router.pinTransport ?? "acp"})${role} provider=${provider} model=${model}${session}`
+    );
+    return lines;
+  }
   const providers = Object.entries(router.byProvider).map(
     ([provider, entry]) =>
       `${provider}: ${entry.requests} req, ${entry.failures} failed, ${Math.round(entry.elapsedMs / 1000)}s, tools=${entry.toolCalls}`
@@ -442,6 +454,15 @@ export function renderSessionDiagnosticsReport(
         efficiency: showEfficiency
       })
     );
+  }
+  if (report.acpPins && report.acpPins.length > 0) {
+    out.push(`== acp session pins (${report.acpPins.length})`);
+    for (const pin of report.acpPins) {
+      const state = pin.closedAt ? `closed=${pin.closedAt}` : "active";
+      out.push(
+        `${INDENT}${pin.sessionId} (${pin.transport}) role=${pin.role} provider=${pin.provider} model=${pin.model} ${state}${pin.acpSessionId ? ` acp=${pin.acpSessionId}` : ""}`
+      );
+    }
   }
   if (options.events) {
     for (const event of report.eventsPage.items)

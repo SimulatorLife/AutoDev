@@ -455,3 +455,111 @@ test("ingress delegates authentication and creates request IDs", async () => {
     await Promise.all([close(ingress.server), close(secured.server)]);
   }
 });
+
+test("session affinity keeps pinned ACP and provider sessions on their generation until end or deadline", async () => {
+  const ingress = new RouterIngress({ retirementDrainTimeoutMs: 400 });
+  const acpFirstServer = await worker("first");
+  const acpSecondServer = await worker("second");
+  // Augment workers with response headers that simulate ACP creation/deletion
+  acpFirstServer.server.removeAllListeners("request");
+  acpFirstServer.server.on("request", (request, response) => {
+    if (request.url === "/health/readiness") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          status: "ready",
+          router: "codex-model-router",
+          lifecycle: { state: "ready", draining: false }
+        })
+      );
+      return;
+    }
+    if (request.url === "/v1/acp/sessions" && request.method === "POST") {
+      response.writeHead(200, {
+        "content-type": "application/json",
+        "x-autodev-session-id": "sess-alpha"
+      });
+      response.end(JSON.stringify({ worker: "first", sessionId: "sess-alpha" }));
+      return;
+    }
+    if (
+      request.url === "/v1/acp/sessions/sess-alpha" &&
+      request.method === "DELETE"
+    ) {
+      response.writeHead(200, {
+        "content-type": "application/json",
+        "x-autodev-session-id": "sess-alpha",
+        "x-autodev-session-ended": "1"
+      });
+      response.end(JSON.stringify({ worker: "first", closed: true }));
+      return;
+    }
+    response.setHeader("x-worker", "first");
+    response.end("first");
+  });
+  try {
+    await ingress.listen(0, "127.0.0.1");
+    const address = ingress.server.address();
+    assert.ok(address && typeof address !== "string");
+    const base = "http://127.0.0.1:" + address.port;
+    await ingress.activateGeneration(acpFirstServer.endpoint);
+
+    // 1. Establish both an ACP session and a pinned provider session on first generation.
+    const created = await fetch(base + "/v1/acp/sessions", { method: "POST" });
+    assert.equal(created.status, 200);
+    assert.equal((await created.json()).worker, "first");
+
+    const pinnedFirst = await fetch(base + "/v1/responses", {
+      headers: { "x-codex-session-id": "provider-pinned-1" }
+    });
+    assert.equal(pinnedFirst.headers.get("x-worker"), "first");
+
+    // 2. Cut over to successor: new unpinned and new session traffic move to second.
+    await ingress.activateGeneration(acpSecondServer.endpoint);
+    assert.equal(
+      ingress.getStatus().generations.find((entry) => entry.id === "first")?.state,
+      "retiring",
+      "first generation stays retiring while ACP and provider sessions remain open"
+    );
+
+    const newTraffic = await fetch(base + "/");
+    assert.equal(newTraffic.headers.get("x-worker"), "second");
+    const newSession = await fetch(base + "/v1/responses", {
+      headers: { "x-codex-session-id": "provider-pinned-2" }
+    });
+    assert.equal(newSession.headers.get("x-worker"), "second");
+
+    // 3. Existing ACP prompt and pinned provider session remain pinned to first.
+    const acpPrompt = await fetch(base + "/v1/acp/sessions/sess-alpha/prompt", {
+      method: "POST"
+    });
+    assert.equal(acpPrompt.headers.get("x-worker"), "first");
+    const pinnedContinuation = await fetch(base + "/v1/responses", {
+      headers: { "x-codex-session-id": "provider-pinned-1" }
+    });
+    assert.equal(pinnedContinuation.headers.get("x-worker"), "first");
+
+    // 4. Ending ACP session explicitly removes it; drain deadline cleans up the unclosed provider pin.
+    const deleted = await fetch(base + "/v1/acp/sessions/sess-alpha", {
+      method: "DELETE"
+    });
+    assert.equal(deleted.status, 200);
+    await ingress.waitForRetirement("first");
+    assert.equal(
+      ingress.getStatus().generations.find((entry) => entry.id === "first")?.state,
+      "retired"
+    );
+
+    // After first retired, re-using that stale session id routes fresh onto second.
+    const postRetire = await fetch(base + "/v1/responses", {
+      headers: { "x-codex-session-id": "provider-pinned-1" }
+    });
+    assert.equal(postRetire.headers.get("x-worker"), "second");
+  } finally {
+    await Promise.all([
+      close(ingress.server),
+      close(acpFirstServer.server),
+      close(acpSecondServer.server)
+    ]);
+  }
+});

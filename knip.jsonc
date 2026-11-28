@@ -70,8 +70,6 @@
         // Started by scripts/run-autodev-console.sh and package scripts (which
         // production mode does not read).
         "src/cli/verify-control-api.ts!",
-        "src/platform/usage-contract.ts!",
-        "src/benchmarks/github-metrics.ts!",
         // Spawned as child processes by the playtesting tests.
         "tests/fixtures/**/*.mjs"
       ],

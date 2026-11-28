@@ -250,3 +250,48 @@ test("UsageFleetDiagnosticsView recent sessions table renders a Client column", 
   assert.match(markup, />Codex app</);
   assert.match(markup, />Not observed</);
 });
+
+test("SessionDiagnosticsView renders ACP pin provider/model attribution directly and lists ACP session pins", () => {
+  const base = sessionDiagnosticsReport();
+  assert.ok(isSessionDiagnosticsReport(base));
+  const summary = base.router[0]!;
+  const pinnedReport = {
+    ...base,
+    acpPins: [
+      {
+        sessionId: "child-worker-1",
+        parentSessionId: `local:orchestrator:repo:${DIAGNOSTICS_SESSION_ID}`,
+        acpSessionId: summary.thread,
+        role: "worker",
+        provider: "claude",
+        model: "claude-sonnet-4-5",
+        reasoningEffort: "high",
+        transport: "acp" as const,
+        cwd: "/repo",
+        createdAt: "2026-11-27T10:00:00.000Z",
+        updatedAt: "2026-11-27T10:00:05.000Z",
+        closedAt: null
+      }
+    ],
+    router: [
+      {
+        ...summary,
+        matchedBy: "acp-pin" as const,
+        pinSessionId: "child-worker-1",
+        pinRole: "worker",
+        pinTransport: "acp" as const,
+        providerSequence: ["claude"],
+        modelSequence: ["claude-sonnet-4-5"]
+      }
+    ]
+  };
+  assert.ok(isSessionDiagnosticsReport(pinnedReport));
+  const overview = render("overview", undefined, pinnedReport);
+  assert.match(overview, /ACP session pins/u);
+  assert.match(overview, /child-worker-1/u);
+  assert.match(overview, />claude</u);
+  assert.doesNotMatch(overview, /claude \(matched by/u);
+
+  const requests = render("requests", undefined, pinnedReport);
+  assert.match(requests, />acp-pin</u);
+});

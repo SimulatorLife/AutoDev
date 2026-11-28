@@ -21,7 +21,9 @@ function controlApiFixture(
     }),
     "/control/providers": Response.json({
       schema: "autodev-control-providers-v5",
+      orchestratorTier: "balanced",
       quotaAxi: null,
+      tiers: [],
       providers: []
     }),
     "/control/provider-models": Response.json({

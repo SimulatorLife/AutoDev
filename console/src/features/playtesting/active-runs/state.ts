@@ -5,7 +5,9 @@ response; nothing infers batch state, and nothing treats a failed read as
 an up-to-date one.
 */
 import {
+  controlApiPlaytestingActiveRunsResponseSchema,
   type ControlApiPlaytestingRunRecord,
+  controlApiPlaytestingRunStatusResponseSchema,
   isCount,
   isRecord,
   type PlaytestCompletionCounts,
@@ -108,32 +110,15 @@ export function readActiveRuns(
   value: unknown,
   workspaceId: string
 ): readonly PlaytestingActiveRun[] | null {
-  if (!isRecord(value) || value.kind !== "ok" || !isRecord(value.data)) {
-    return null;
-  }
-  const { schema, workspaceId: echoed, runs } = value.data;
-  if (
-    schema !== "autodev-control-playtesting-runs-v2" ||
-    echoed !== workspaceId ||
-    !Array.isArray(runs)
-  ) {
+  if (!isRecord(value) || value.kind !== "ok") return null;
+  const response = controlApiPlaytestingActiveRunsResponseSchema.safeParse(
+    value.data
+  );
+  if (!response.success || response.data.workspaceId !== workspaceId) {
     return null;
   }
   const parsed: PlaytestingActiveRun[] = [];
-  for (const entry of runs.slice(0, MAX_TRACKED_RUNS)) {
-    if (
-      !isRecord(entry) ||
-      typeof entry.batchId !== "string" ||
-      entry.batchId.length === 0 ||
-      typeof entry.createdAt !== "string" ||
-      !isCount(entry.assignmentCount) ||
-      entry.assignmentCount < 1 ||
-      !isRecord(entry.status) ||
-      entry.status.batchId !== entry.batchId ||
-      typeof entry.status.status !== "string"
-    ) {
-      return null;
-    }
+  for (const entry of response.data.runs.slice(0, MAX_TRACKED_RUNS)) {
     const sessions = parseSessionReferences(
       entry.sessions,
       entry.batchId,
@@ -145,7 +130,7 @@ export function readActiveRuns(
       assignmentCount: entry.assignmentCount,
       createdAt: entry.createdAt,
       sessions,
-      record: entry.status as unknown as ControlApiPlaytestingRunRecord
+      record: entry.status
     });
   }
   return parsed;
@@ -201,16 +186,14 @@ export function readRunStatus(
   workspaceId: string,
   batchId: string
 ): ControlApiPlaytestingRunRecord | null {
-  if (!isRecord(value) || value.kind !== "ok" || !isRecord(value.data)) {
-    return null;
-  }
-  const { schema, workspaceId: echoed, run } = value.data;
-  return schema === "autodev-control-playtesting-run-status-v1" &&
-    echoed === workspaceId &&
-    isRecord(run) &&
-    run.batchId === batchId &&
-    typeof run.status === "string"
-    ? (run as unknown as ControlApiPlaytestingRunRecord)
+  if (!isRecord(value) || value.kind !== "ok") return null;
+  const parsed = controlApiPlaytestingRunStatusResponseSchema.safeParse(
+    value.data
+  );
+  return parsed.success &&
+    parsed.data.workspaceId === workspaceId &&
+    parsed.data.run.batchId === batchId
+    ? parsed.data.run
     : null;
 }
 

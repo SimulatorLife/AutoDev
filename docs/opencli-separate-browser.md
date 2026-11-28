@@ -15,8 +15,9 @@ following describes the dedicated owner; the installed revision must be
 verified separately.
 
 The bridge owns a separate headed Chromium process, an AutoDev-private
-profile, a loopback-only ephemeral CDP port, and a per-site tab pool sized by
-the admitted route concurrency. Every opencli command gets the exact WebSocket
+profile, a loopback-only ephemeral CDP port, and a per-site tab pool capped by
+the admitted route concurrency. Nothing in it opens before a turn needs it:
+see [Lazy opening and reuse](#lazy-opening-and-reuse). Every opencli command gets the exact WebSocket
 target for its leased tab and uses `--site-session ephemeral`; AutoDev replaces
 a closed target before the next command. The Browser Bridge extension, its
 shared daemon, and `OPENCLI_SITE_SLOTS` are not part of this mode. The
@@ -281,20 +282,30 @@ through the direct CDP transport.
 
 ### Lifecycle ownership
 
-- The bridge starts Chromium before it listens for provider requests. Browser
-  startup or CDP target-transport failures make health report
-  `dedicated_browser_unavailable`, distinct from a site's signed-out state.
-  A successful target lease clears a transient transport failure; if Chromium
-  exits, the next command starts it again.
-- The operator signs in to each site in the dedicated browser. Closing that
-  browser is not a pause control: the next provider command relaunches it.
+- The bridge listens at once and starts Chromium on the first command that
+  needs a site page, never at service start. A browser that is not running
+  is not a fault: health stays green, because the next turn starts it. A
+  failed launch or a CDP target-transport failure makes health report
+  `dedicated_browser_unavailable`, distinct from a site's signed-out state; a
+  successful target lease clears it.
+- Chromium runs in its own process group and outlives the bridge. A
+  restarted bridge (reinstall, `kickstart -k` from the optional-bridge
+  ensure, a crash) adopts the running browser and its tabs instead of
+  launching another: it reads the profile's `DevToolsActivePort` and accepts
+  the browser on that port only when `/json/version` reports the same
+  browser WebSocket path, so a stale file or an unrelated listener is never
+  adopted. Launching against a profile another Chromium still holds would
+  only hand a new window to that browser.
+- The operator signs in to each site in the dedicated browser. Quitting that
+  browser is not a pause control: the next turn that needs a page relaunches
+  it. The bridge never closes it.
 
 ### Tab pool
 
-- The bridge opens one target per concurrent turn per site (the route's
-  `maxConcurrentRequests`, as `routedSiteTabs` computes), preferring native
-  CDP `Target.createTarget` with `newWindow: true` where available, and
-  retaining its `webSocketDebuggerUrl`. It runs each
+- Each site holds at most one target per concurrent turn (the route's
+  `maxConcurrentRequests`, as `routedSiteTabs` computes), and gains one only
+  when every tab it already holds is leased. The bridge retains each tab's
+  `webSocketDebuggerUrl` and runs each
   opencli command with `OPENCLI_CDP_ENDPOINT` set to **that tab's `ws://`
   URL**, so two commands can never attach to the same tab.
   `OPENCLI_CDP_TARGET` alone is not enough: with several tabs on one site,
@@ -303,11 +314,63 @@ through the direct CDP transport.
   owner leases each command a distinct target instead of relying on opencli's
   daemon to pick a free slot.
 - A tab that is closed or crashes (its WebSocket target disappears) is
-  replaced before the next turn, and the turn running in it fails with the
-  existing `not_sent` / retryable classification.
+  forgotten, and the next turn that needs one finds or opens another; the
+  turn running in it fails with the existing `not_sent` / retryable
+  classification.
 - `--site-session ephemeral` is required on every command in this mode.
   Whether opencli releases or navigates the tab afterwards in ephemeral CDP
   mode needs checking. In the tests the tabs stayed open on the last chat.
+
+### Lazy opening and reuse
+
+The operator reported AutoDev opening new browser windows on ChatGPT and
+Gemini over and over (2026-11-27). Three causes compounded:
+
+1. The bridge launched Chromium and built the whole tab pool at service
+   start, before any turn: one startup window plus one window per tab
+   (`Target.createTarget` with `newWindow: true`), five windows for the
+   three ChatGPT and one Gemini tabs the routes admit.
+2. Every bridge restart killed that browser and did it again. The
+   SessionStart optional-bridge ensure (`ensureOpencliProxy`) runs
+   `launchctl kickstart -k` whenever `/health/liveliness` is not 200, and
+   health was 503 while the eager start ran and after the operator quit the
+   browser ("Dedicated Chromium exited unexpectedly"). The live log held 142
+   service starts.
+3. Gemini model discovery (`gemini models`, polled through `/v1/models`)
+   ran through the same lease, so a background probe started the browser
+   and opened a Gemini window when nothing else needed one.
+
+The current contract:
+
+- **Lazy.** No browser or tab opens until a turn needs that site's page.
+  Health reports a missing executable or a failed launch, not "not started".
+- **Find before open.** A site's next tab is, in order: an unclaimed tab
+  already on that site's host (one the operator opened to sign in, or one a
+  previous bridge left), an unclaimed blank tab such as the one Chromium
+  starts with (navigated to the site with `Page.navigate`), and only then a
+  new tab in the existing window (`Target.createTarget` without
+  `newWindow`; Chromium opens a window only when it has none left). An idle
+  tab is always reused before another is opened.
+- **Probes observe.** A background probe (`OpencliRunRequest.existingPageOnly`,
+  the browser's `shouldOpenPage: false`) runs only on a site tab that is
+  already open and never starts the browser, opens, navigates or claims a
+  blank tab. Gemini model discovery is the only such probe; without an open
+  Gemini tab it lists nothing for that site, and the Runtime's discovery
+  service keeps its last non-empty listing.
+- **Survive restarts.** See [Lifecycle ownership](#lifecycle-ownership).
+
+ChatGPT's concurrent tabs share one window; only the active tab renders,
+which the route already relies on ("ChatGPT answers in background tabs").
+A native-input command still activates and raises its own tab first.
+
+Regression tests: `runtime/tests/opencli-browser.test.ts` (nothing opens
+before a command; reuse of an open site tab and the startup blank tab; a
+probe opens nothing; adoption of a surviving browser and refusal of a
+mismatched one; shutdown leaves the browser running; tabs open without
+`newWindow`) and `tests/providers/opencli.test.ts` (discovery passes
+`existingPageOnly`; the runner maps it to `shouldOpenPage`). Not yet verified
+live: needs a Runtime reinstall, after which the bridge restarts once and
+adopts the browser already running.
 
 ### Removal of the extension path
 

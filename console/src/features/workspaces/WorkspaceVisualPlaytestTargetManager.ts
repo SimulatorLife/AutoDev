@@ -1,8 +1,8 @@
 "use client";
 
 import {
-  assertWorkspaceVisualPlaytestTargetApproval,
   type ControlApiWorkspaceVisualPlaytestTargetsResponse,
+  controlApiWorkspaceVisualPlaytestTargetsResponseSchema,
   isRecord,
   playtestVisualProgressPolicy,
   type WorkspaceVisualPlaytestTargetApproval
@@ -57,24 +57,11 @@ function workspaceTargetsFromResponse(
   value: unknown,
   workspaceId: string
 ): ControlApiWorkspaceVisualPlaytestTargetsResponse | null {
-  if (
-    !isRecord(value) ||
-    value.schema !== "autodev-control-workspace-visual-playtest-targets-v1" ||
-    value.workspaceId !== workspaceId ||
-    typeof value.workspaceEnabled !== "boolean" ||
-    !Array.isArray(value.targets)
-  ) {
-    return null;
-  }
-  try {
-    for (const target of value.targets) {
-      assertWorkspaceVisualPlaytestTargetApproval(target);
-      if (target.workspaceId !== workspaceId) return null;
-    }
-  } catch {
-    return null;
-  }
-  return value as unknown as ControlApiWorkspaceVisualPlaytestTargetsResponse;
+  const parsed =
+    controlApiWorkspaceVisualPlaytestTargetsResponseSchema.safeParse(value);
+  return parsed.success && parsed.data.workspaceId === workspaceId
+    ? parsed.data
+    : null;
 }
 
 function targetsFromMutationResponse(

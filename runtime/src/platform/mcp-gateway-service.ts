@@ -634,14 +634,16 @@ async function discoverServerTools(
                 ...(typeof descriptor.bearer_token_env_var === "string" && {
                   bearer_token_env_var: descriptor.bearer_token_env_var
                 }),
-                ...(descriptor.http_headers &&
-                  typeof descriptor.http_headers === "object" &&
-                  !Array.isArray(descriptor.http_headers) && {
-                    http_headers: descriptor.http_headers as Record<
-                      string,
-                      string
-                    >
-                  })
+                ...(Boolean(descriptor.http_headers) &&
+                typeof descriptor.http_headers === "object" &&
+                !Array.isArray(descriptor.http_headers)
+                  ? {
+                      http_headers: descriptor.http_headers as Record<
+                        string,
+                        string
+                      >
+                    }
+                  : {})
               },
               server,
               environment
@@ -680,6 +682,113 @@ async function discoverServerTools(
   }
 }
 
+const reviewedCacheEntrySchema = z
+  .object({
+    policyFile: z.string().refine(path.isAbsolute),
+    policyDigest: z.string().regex(/^[a-f0-9]{64}$/u),
+    reviewed: chatgptGrantsSchema
+  })
+  .strict();
+const reviewedCacheSchema = z
+  .object({
+    version: z.literal(1),
+    roles: z.record(z.string().min(1), reviewedCacheEntrySchema)
+  })
+  .strict();
+type ReviewedCacheEntry = z.infer<typeof reviewedCacheEntrySchema>;
+type ReviewedCache = Record<string, ReviewedCacheEntry>;
+
+function reviewedCacheFile(codexHome: string): string {
+  return path.join(mcpGatewayDirectory(codexHome), "reviewed-cache.json");
+}
+
+function readReviewedCache(codexHome: string): ReviewedCache {
+  const raw = privateRead(reviewedCacheFile(codexHome));
+  if (!raw) return {};
+  try {
+    const parsed = reviewedCacheSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data.roles : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeReviewedCache(codexHome: string, roles: ReviewedCache): void {
+  privateWrite(
+    reviewedCacheFile(codexHome),
+    JSON.stringify({ version: 1, roles }, null, 2) + "\n"
+  );
+}
+
+interface DiscoveredToolEntry {
+  readonly name: string;
+  readonly readOnlyHint: boolean;
+}
+
+async function discoverRawRemoteServerTools(
+  server: string,
+  descriptor: Record<string, unknown>,
+  environment: NodeJS.ProcessEnv
+): Promise<DiscoveredToolEntry[]> {
+  const client = new Client({
+    name: "autodev-mcp-gateway-policy-discovery",
+    version: "1.0.0"
+  });
+  const transport = new StreamableHTTPClientTransport(
+    new URL(String(descriptor.url)),
+    {
+      requestInit: {
+        headers: resolveRemoteMcpHeaders(
+          {
+            url: String(descriptor.url),
+            ...(typeof descriptor.bearer_token_env_var === "string" && {
+              bearer_token_env_var: descriptor.bearer_token_env_var
+            }),
+            ...(Boolean(descriptor.http_headers) &&
+            typeof descriptor.http_headers === "object" &&
+            !Array.isArray(descriptor.http_headers)
+              ? {
+                  http_headers: descriptor.http_headers as Record<
+                    string,
+                    string
+                  >
+                }
+              : {})
+          },
+          server,
+          environment
+        )
+      }
+    }
+  );
+  try {
+    await client.connect(transport, { timeout: 20_000 });
+    const discovered: DiscoveredToolEntry[] = [];
+    const seenNames = new Set<string>();
+    let cursor: string | undefined;
+    const seenCursors = new Set<string>();
+    do {
+      const page = await client.listTools(cursor ? { cursor } : {}, {
+        timeout: 20_000
+      });
+      for (const tool of page.tools) {
+        if (seenNames.has(tool.name)) continue;
+        seenNames.add(tool.name);
+        discovered.push({
+          name: tool.name,
+          readOnlyHint: tool.annotations?.readOnlyHint === true
+        });
+      }
+      cursor = page.nextCursor;
+      if (cursor && seenCursors.has(cursor)) break;
+      if (cursor) seenCursors.add(cursor);
+    } while (cursor);
+    return discovered;
+  } finally {
+    await Promise.allSettled([client.close(), transport.close()]);
+  }
+}
+
 async function resolveReviewedFromRoleContract(
   paths: ServicePaths,
   catalogue: Record<string, Record<string, unknown>>,
@@ -689,9 +798,14 @@ async function resolveReviewedFromRoleContract(
   gatewayEnvironment: Record<string, string>,
   environment: NodeJS.ProcessEnv,
   dependencies: McpGatewayDependencies,
-  prior?: McpGatewayState,
+  prior?: Pick<
+    McpGatewayState,
+    "policyFile" | "policyDigest" | "role" | "reviewed"
+  >,
   // Discovered tool lists shared across roles, by server and confinement.
-  discovered?: Map<string, Promise<string[]>>
+  discovered?: Map<string, Promise<string[]>>,
+  // Raw remote tool listings shared across read-only and writable roles.
+  discoveredRemote?: Map<string, Promise<DiscoveredToolEntry[]>>
 ): Promise<{
   policyFile: string;
   policyDigest: string;
@@ -801,21 +915,42 @@ async function resolveReviewedFromRoleContract(
       const discoverOnce = () => {
         // The Commands backend serves its role's grant, so what it lists
         // depends on the role, not only on read-only confinement.
+        const isReadOnly = contract.readOnly === true;
         const key =
           server === MCP_SERVER_COMMANDS
             ? `${server}:${role}`
-            : `${server}:${contract.readOnly === true}`;
+            : `${server}:${isReadOnly}`;
         const cached = discovered?.get(key);
         if (cached) return cached;
-        const tools = discover(
-          server,
-          descriptor,
-          paths,
-          workspace,
-          node,
-          gatewayEnvironment,
-          environment
-        );
+        const tools =
+          descriptor.url !== undefined &&
+          dependencies.discoverTools === undefined &&
+          discoveredRemote !== undefined
+            ? (() => {
+                let rawPromise = discoveredRemote.get(server);
+                if (!rawPromise) {
+                  rawPromise = discoverRawRemoteServerTools(
+                    server,
+                    descriptor,
+                    environment
+                  );
+                  discoveredRemote.set(server, rawPromise);
+                }
+                return rawPromise.then((entries) =>
+                  entries
+                    .filter((entry) => !isReadOnly || entry.readOnlyHint)
+                    .map((entry) => entry.name)
+                );
+              })()
+            : discover(
+                server,
+                descriptor,
+                paths,
+                workspace,
+                node,
+                gatewayEnvironment,
+                environment
+              );
         discovered?.set(key, tools);
         return tools;
       };
@@ -1095,37 +1230,69 @@ async function resolveLocalSurfaces(
   node: string,
   gatewayEnvironment: Record<string, string>,
   environment: NodeJS.ProcessEnv,
-  dependencies: McpGatewayDependencies
-): Promise<ChatgptRoleSurface[]> {
+  dependencies: McpGatewayDependencies,
+  reviewedCache: ReviewedCache
+): Promise<{
+  readonly surfaces: ChatgptRoleSurface[];
+  readonly updatedCache: ReviewedCache;
+  readonly cacheChanged: boolean;
+}> {
   const discovered = new Map<string, Promise<string[]>>();
-  const surfaces: ChatgptRoleSurface[] = [];
-  for (const role of declaredRoleNames()) {
-    if (roleContract(role).mcp.length === 0) continue;
-    const existing = published.find((surface) => surface.role === role);
-    if (existing) {
-      surfaces.push({
-        role,
-        grants: existing.reviewed,
-        reviewed: existing.reviewed
-      });
-      continue;
-    }
-    const { reviewed } = await resolveReviewedFromRoleContract(
-      paths,
-      catalogue,
-      role,
-      workspace,
-      node,
-      gatewayEnvironment,
-      environment,
-      dependencies,
-      undefined,
-      discovered
-    );
-    if (Object.keys(reviewed).length > 0)
-      surfaces.push({ role, grants: reviewed, reviewed });
-  }
-  return surfaces;
+  const discoveredRemote = new Map<string, Promise<DiscoveredToolEntry[]>>();
+  const updatedCache: ReviewedCache = { ...reviewedCache };
+  let isCacheChanged = false;
+  const resolved = await Promise.all(
+    declaredRoleNames().map(
+      async (role): Promise<ChatgptRoleSurface | null> => {
+        if (roleContract(role).mcp.length === 0) return null;
+        const existing = published.find((surface) => surface.role === role);
+        if (existing) {
+          return {
+            role,
+            grants: existing.reviewed,
+            reviewed: existing.reviewed
+          };
+        }
+        const cached = reviewedCache[role];
+        const result = await resolveReviewedFromRoleContract(
+          paths,
+          catalogue,
+          role,
+          workspace,
+          node,
+          gatewayEnvironment,
+          environment,
+          dependencies,
+          cached ? { ...cached, role } : undefined,
+          discovered,
+          discoveredRemote
+        );
+        if (
+          !cached ||
+          cached.policyFile !== result.policyFile ||
+          cached.policyDigest !== result.policyDigest ||
+          JSON.stringify(cached.reviewed) !== JSON.stringify(result.reviewed)
+        ) {
+          updatedCache[role] = {
+            policyFile: result.policyFile,
+            policyDigest: result.policyDigest,
+            reviewed: result.reviewed
+          };
+          isCacheChanged = true;
+        }
+        return Object.keys(result.reviewed).length > 0
+          ? { role, grants: result.reviewed, reviewed: result.reviewed }
+          : null;
+      }
+    )
+  );
+  return {
+    surfaces: resolved.filter(
+      (surface): surface is ChatgptRoleSurface => surface !== null
+    ),
+    updatedCache,
+    cacheChanged: isCacheChanged
+  };
 }
 
 function renderGateway(
@@ -1340,29 +1507,33 @@ async function reconcileGateway(
           ? prior.grants
           : reviewed
   );
-  const surfaces: ChatgptRoleSurface[] = [];
-  for (const publishedRole of roles) {
-    if (publishedRole === role) {
-      surfaces.push({ role, grants, reviewed });
-      continue;
-    }
-    const resolved = await resolveReviewedFromRoleContract(
-      paths,
-      catalogue,
-      publishedRole,
-      workspace,
-      node,
-      gatewayEnvironment,
-      environment,
-      dependencies
-    );
-    surfaces.push({
-      role: publishedRole,
-      grants: resolved.reviewed,
-      reviewed: resolved.reviewed
-    });
-  }
-  const local = await resolveLocalSurfaces(
+  const reviewedCache = readReviewedCache(paths.codexHome);
+  const additionalPublished = await Promise.all(
+    roles.map(async (publishedRole): Promise<ChatgptRoleSurface> => {
+      if (publishedRole === role) {
+        return { role, grants, reviewed };
+      }
+      const cached = reviewedCache[publishedRole];
+      const resolved = await resolveReviewedFromRoleContract(
+        paths,
+        catalogue,
+        publishedRole,
+        workspace,
+        node,
+        gatewayEnvironment,
+        environment,
+        dependencies,
+        cached ? { ...cached, role: publishedRole } : undefined
+      );
+      return {
+        role: publishedRole,
+        grants: resolved.reviewed,
+        reviewed: resolved.reviewed
+      };
+    })
+  );
+  const surfaces: ChatgptRoleSurface[] = additionalPublished;
+  const localResolution = await resolveLocalSurfaces(
     paths,
     catalogue,
     surfaces,
@@ -1370,8 +1541,13 @@ async function reconcileGateway(
     node,
     gatewayEnvironment,
     environment,
-    dependencies
+    dependencies,
+    reviewedCache
   );
+  const local = localResolution.surfaces;
+  if (localResolution.cacheChanged) {
+    writeReviewedCache(paths.codexHome, localResolution.updatedCache);
+  }
   ensureGatewayAuth(paths.codexHome);
   ensureLocalAdmission(paths.codexHome);
   const rendered = renderGateway(

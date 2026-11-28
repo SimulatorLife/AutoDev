@@ -22,17 +22,31 @@ telemetry costs a fan-out of contended queries and the answer is a
 historical aggregation rather than a live fact.
 */
 
+import { isHistoricalUsageSelection } from "@simulatorlife/autodev-core";
 import { type NextRequest, NextResponse } from "next/server.js";
 
 import {
+  ACTIVE_SESSIONS_REFRESH_SCOPE,
+  DASHBOARD_REFRESH_SCOPE,
   isUsageProviderId,
   USAGE_API_SCHEMA,
   type UsageApiPayload,
   type UsageProviderAttemptSource,
+  type UsageRefreshPayload,
   type UsageToolCallSource,
   type UsageWorkspaceRequestSource
 } from "../../../src/features/usage/usage-api.ts";
-import { readUsageTelemetry } from "../../../src/lib/server/usage-telemetry.ts";
+import { readControlApiConfig } from "../../../src/lib/server/control-api.ts";
+import {
+  describeUsageEndpointFailure,
+  type UsageSearchParams as UsageSearchParameters,
+  usageSelectionFromSearchParams
+} from "../../../src/lib/server/openlit-usage.ts";
+import { loadUsageActiveSessions } from "../../../src/lib/server/usage-active-sessions.ts";
+import {
+  readUsageTelemetry,
+  readUsageTelemetryWithTimestamp
+} from "../../../src/lib/server/usage-telemetry.ts";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -145,9 +159,93 @@ async function toolCallSource(
   return { kind: "available", callsByTool: result.data.metrics.callsByTool };
 }
 
+function okRefresh(body: UsageRefreshPayload): NextResponse {
+  return NextResponse.json(body, {
+    status: 200,
+    headers: NO_STORE_HEADERS
+  });
+}
+
+function usageSearchParameters(
+  searchParameters: URLSearchParams
+): UsageSearchParameters {
+  const collected: Record<string, string | readonly string[]> = {};
+  for (const key of new Set(searchParameters.keys())) {
+    const values = searchParameters.getAll(key);
+    collected[key] = values.length === 1 ? (values[0] ?? "") : values;
+  }
+  return collected;
+}
+
+async function dashboardRefreshResponse(
+  searchParameters: URLSearchParams
+): Promise<NextResponse> {
+  const selection = usageSelectionFromSearchParams(
+    usageSearchParameters(searchParameters)
+  );
+  if (!isHistoricalUsageSelection(selection)) {
+    return refuse("Dashboard refresh requires a historical Usage selection.");
+  }
+  const { result, observedAt } = await readUsageTelemetryWithTimestamp(
+    selection,
+    { forceRefresh: true }
+  );
+  if (result.kind === "ok") {
+    return okRefresh({
+      schema: USAGE_API_SCHEMA,
+      scope: DASHBOARD_REFRESH_SCOPE,
+      status: "ok",
+      observedAt
+    });
+  }
+  const failure = describeUsageEndpointFailure(result);
+  return okRefresh({
+    schema: USAGE_API_SCHEMA,
+    scope: DASHBOARD_REFRESH_SCOPE,
+    status: "error",
+    observedAt,
+    failureCode: failure.code,
+    failureMessage: failure.message,
+    httpStatus: failure.httpStatus
+  });
+}
+
+async function activeSessionsRefreshResponse(): Promise<NextResponse> {
+  const live = await loadUsageActiveSessions(readControlApiConfig());
+  const observedAt = new Date().toISOString();
+  if (live.kind === "ok") {
+    return okRefresh({
+      schema: USAGE_API_SCHEMA,
+      scope: ACTIVE_SESSIONS_REFRESH_SCOPE,
+      status: "ok",
+      observedAt
+    });
+  }
+  return okRefresh({
+    schema: USAGE_API_SCHEMA,
+    scope: ACTIVE_SESSIONS_REFRESH_SCOPE,
+    status: "error",
+    observedAt,
+    failureCode: live.code,
+    failureMessage:
+      live.kind === "not-configured"
+        ? "Set AUTODEV_CONTROL_API_TOKEN in the Next.js server environment to read live session state."
+        : live.message,
+    httpStatus: null
+  });
+}
+
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const parameters = request.nextUrl.searchParams;
   const scope = parameters.get("scope");
+
+  if (scope === DASHBOARD_REFRESH_SCOPE) {
+    return dashboardRefreshResponse(parameters);
+  }
+
+  if (scope === ACTIVE_SESSIONS_REFRESH_SCOPE) {
+    return activeSessionsRefreshResponse();
+  }
 
   if (scope === "workspace-requests") {
     return ok({

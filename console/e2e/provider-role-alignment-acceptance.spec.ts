@@ -67,7 +67,14 @@ for (const route of ROUTES) {
       "the page renders provider role strips"
     ).toBeGreaterThan(0);
     for (const strip of strips) {
-      expect(strip.roles, "each strip carries the two fixed roles").toBe(2);
+      if (route === "/providers") {
+        expect(strip.roles, "each strip carries the two fixed roles").toBe(2);
+      } else {
+        expect(
+          strip.roles,
+          "provider detail carries fixed roles plus per-agent model rows"
+        ).toBeGreaterThanOrEqual(2);
+      }
       expect(
         new Set(strip.priorityLefts).size,
         `the priority column starts at one x position, not ${strip.priorityLefts.join(", ")}`
@@ -132,7 +139,7 @@ test("the Subagent model opens to each agent role and applies a role's own model
     `${FIXTURE_BASE_URL}/fixture/providers/roles?state=reset`
   );
   expect(reset.ok()).toBe(true);
-  await page.goto("/providers/claude");
+  await page.goto("/providers");
   await waitForPageContent(page);
 
   const control = page.locator(
@@ -158,7 +165,7 @@ test("the Subagent model opens to each agent role and applies a role's own model
     .locator('[data-hierarchical-level="explorer"] button[value="sonnet"]')
     .click();
   await waitForPageContent(page);
-  await expect(page).toHaveURL(/\/providers\/claude(?:\?|$)/u);
+  await expect(page).toHaveURL(/\/providers(?:\?|$)/u);
   await expect(
     page.locator('[data-hierarchical-select="select-model-claude-subagent"]')
   ).toContainText("+1");

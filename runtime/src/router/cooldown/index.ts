@@ -135,6 +135,15 @@ export class ProviderCooldowns {
   private readonly failureStreaks = new Map<string, number>();
   private readonly probeStreaks = new Map<string, number>();
   private runtime: CooldownRuntime;
+  private isApplyingRemoteSync = false;
+  private mutationListener:
+    | ((snapshot: {
+        cooldowns: Record<string, CooldownEntry>;
+        modelCooldowns: Record<string, CooldownEntry>;
+        failureStreaks: Record<string, number>;
+        probeStreaks: Record<string, number>;
+      }) => void)
+    | null = null;
 
   readonly config: Readonly<CooldownConfig>;
 
@@ -148,6 +157,80 @@ export class ProviderCooldowns {
 
   setRuntime(runtime: CooldownRuntime): void {
     this.runtime = runtime;
+  }
+
+  setMutationListener(
+    listener:
+      | ((snapshot: {
+          cooldowns: Record<string, CooldownEntry>;
+          modelCooldowns: Record<string, CooldownEntry>;
+          failureStreaks: Record<string, number>;
+          probeStreaks: Record<string, number>;
+        }) => void)
+      | null
+  ): void {
+    this.mutationListener = listener;
+  }
+
+  snapshotSyncState(): {
+    cooldowns: Record<string, CooldownEntry>;
+    modelCooldowns: Record<string, CooldownEntry>;
+    failureStreaks: Record<string, number>;
+    probeStreaks: Record<string, number>;
+  } {
+    return {
+      cooldowns: Object.fromEntries(this.cooldowns),
+      modelCooldowns: Object.fromEntries(this.modelCooldowns),
+      failureStreaks: Object.fromEntries(this.failureStreaks),
+      probeStreaks: Object.fromEntries(this.probeStreaks)
+    };
+  }
+
+  restoreSyncState(snapshot: {
+    cooldowns?: Record<string, CooldownEntry>;
+    modelCooldowns?: Record<string, CooldownEntry>;
+    failureStreaks?: Record<string, number>;
+    probeStreaks?: Record<string, number>;
+  }): void {
+    this.isApplyingRemoteSync = true;
+    try {
+      this.cooldowns.clear();
+      this.modelCooldowns.clear();
+      this.failureStreaks.clear();
+      this.probeStreaks.clear();
+      for (const [provider, entry] of Object.entries(snapshot.cooldowns ?? {})) {
+        if (entry && typeof entry.until === "number") {
+          this.cooldowns.set(provider, { ...entry });
+        }
+      }
+      for (const [key, entry] of Object.entries(snapshot.modelCooldowns ?? {})) {
+        if (entry && typeof entry.until === "number") {
+          this.modelCooldowns.set(key, { ...entry });
+        }
+      }
+      for (const [provider, streak] of Object.entries(
+        snapshot.failureStreaks ?? {}
+      )) {
+        if (typeof streak === "number" && Number.isFinite(streak)) {
+          this.failureStreaks.set(provider, streak);
+        }
+      }
+      for (const [provider, streak] of Object.entries(
+        snapshot.probeStreaks ?? {}
+      )) {
+        if (typeof streak === "number" && Number.isFinite(streak)) {
+          this.probeStreaks.set(provider, streak);
+        }
+      }
+    } finally {
+      this.isApplyingRemoteSync = false;
+    }
+  }
+
+  private emitMutation(): void {
+    if (!this.isApplyingRemoteSync) {
+      this.mutationListener?.(this.snapshotSyncState());
+    }
   }
 
   /**
@@ -182,7 +265,9 @@ export class ProviderCooldowns {
   }
 
   clearModel(provider: string, model: string): void {
-    this.modelCooldowns.delete(modelKey(provider, model));
+    if (this.modelCooldowns.delete(modelKey(provider, model))) {
+      this.emitMutation();
+    }
   }
 
   isCooling(
@@ -208,6 +293,7 @@ export class ProviderCooldowns {
         this.modelCooldowns.delete(key);
     this.failureStreaks.delete(provider);
     this.probeStreaks.delete(provider);
+    this.emitMutation();
   }
 
   clearAll(): void {
@@ -215,6 +301,7 @@ export class ProviderCooldowns {
     this.modelCooldowns.clear();
     this.failureStreaks.clear();
     this.probeStreaks.clear();
+    this.emitMutation();
   }
 
   /**
@@ -224,9 +311,13 @@ export class ProviderCooldowns {
   cannot answer, so it stays until it lapses or a request succeeds.
   */
   clearProbeFailures(provider: string): void {
-    this.probeStreaks.delete(provider);
-    if (this.cooldowns.get(provider)?.kind === "probe")
+    const hadStreak = this.probeStreaks.delete(provider);
+    const hadCooldown =
+      this.cooldowns.get(provider)?.kind === "probe" &&
       this.cooldowns.delete(provider);
+    if (hadStreak || hadCooldown) {
+      this.emitMutation();
+    }
   }
 
   /**
@@ -237,6 +328,7 @@ export class ProviderCooldowns {
     this.modelCooldowns.delete(modelKey(provider, model));
     this.failureStreaks.delete(provider);
     this.probeStreaks.delete(provider);
+    this.emitMutation();
   }
 
   cooldownProvider(
@@ -261,6 +353,7 @@ export class ProviderCooldowns {
         model,
         detail
       });
+      this.emitMutation();
       return {
         provider,
         kind: "config",
@@ -295,6 +388,7 @@ export class ProviderCooldowns {
       const existing = this.cooldowns.get(provider);
       const kept = existing && existing.until > until ? existing : entry;
       this.cooldowns.set(provider, kept);
+      this.emitMutation();
       return {
         provider,
         kind,

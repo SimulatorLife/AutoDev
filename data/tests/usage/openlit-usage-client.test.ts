@@ -295,6 +295,62 @@ const partialPayload = {
       xAxis: "g0",
       yAxis: "hops"
     }),
+    makeWidget("agent-launches-root-stages", {
+      observed: true,
+      rows: [
+        { name: "attempted", count: 6 },
+        { name: "admitted", count: 5 },
+        { name: "rejected", count: 1 },
+        { name: "started", count: 4 },
+        { name: "failed_before_start", count: 1 },
+        { name: "succeeded", count: 3 },
+        { name: "failed", count: 1 },
+        { name: "cancelled", count: 0 }
+      ],
+      xAxis: "name",
+      yAxis: "count"
+    }),
+    makeWidget("agent-launches-child-stages", {
+      observed: true,
+      rows: [
+        { name: "attempted", count: 4 },
+        { name: "admitted", count: 2 },
+        { name: "rejected", count: 2 },
+        { name: "started", count: 2 },
+        { name: "failed_before_start", count: 0 },
+        { name: "succeeded", count: 1 },
+        { name: "cancelled", count: 1 }
+      ],
+      xAxis: "name",
+      yAxis: "count"
+    }),
+    makeWidget("agent-launches-root-rejections", {
+      observed: true,
+      rows: [{ name: "dispatch_refused", count: 1 }],
+      xAxis: "name",
+      yAxis: "count"
+    }),
+    makeWidget("agent-launches-child-rejections", {
+      observed: true,
+      rows: [{ name: "concurrency_limit", count: 2 }],
+      xAxis: "name",
+      yAxis: "count"
+    }),
+    makeWidget("agent-launches-failed-before-start-by-provider", {
+      observed: true,
+      rows: [{ name: "codex", count: 1 }],
+      xAxis: "name",
+      yAxis: "count"
+    }),
+    makeWidget("agent-launches-by-role", {
+      observed: true,
+      rows: [
+        { name: "orchestrator", count: 6 },
+        { name: "worker", count: 4 }
+      ],
+      xAxis: "name",
+      yAxis: "count"
+    }),
     makeWidget("skill-events-by-event", {
       observed: true,
       rows: [{ event: "used", events: "4" }],
@@ -1643,4 +1699,91 @@ test("OpenLITUsageClient and verifyUsageContract honor bounded per-request timeo
     fetchImpl: hangingFetch
   });
   assert.deepEqual(verifyResult, { kind: "unreachable" });
+});
+
+test("Agent launch Usage keeps root and child separate and enforces pre-selection filter limits", async () => {
+  const client = new OpenLITUsageClient({
+    baseUrl: "http://openlit.local",
+    serviceToken: "secret",
+    fetchImpl: async () => response(partialPayload)
+  });
+
+  const unfiltered = await client.query(supportedSelection);
+  assert.equal(unfiltered.kind, "ok");
+  if (unfiltered.kind === "ok") {
+    const launches = unfiltered.data.metrics.agentLaunches;
+    assert.equal(launches.status, "observed");
+    assert.equal(launches.preSelectionApplicable, true);
+    assert.deepEqual(launches.preSelectionUnsupportedFilters, []);
+    assert.equal(launches.root.attempted, 6);
+    assert.equal(launches.root.admitted, 5);
+    assert.equal(launches.root.rejected, 1);
+    assert.equal(launches.root.started, 4);
+    assert.equal(launches.root.failedBeforeStart, 1);
+    assert.equal(launches.root.resolved, 6);
+    assert.equal(launches.root.pending, 0);
+    assert.equal(launches.root.launchSuccessRatePercent, (4 / 6) * 100);
+    assert.equal(launches.root.succeeded, 3);
+    assert.equal(launches.root.failed, 1);
+    assert.equal(launches.root.cancelled, 0);
+    assert.deepEqual(launches.root.rejectionReasons, [
+      { name: "dispatch_refused", count: 1 }
+    ]);
+    assert.equal(launches.child.attempted, 4);
+    assert.equal(launches.child.rejected, 2);
+    assert.equal(launches.child.launchSuccessRatePercent, 50);
+    assert.deepEqual(launches.child.rejectionReasons, [
+      { name: "concurrency_limit", count: 2 }
+    ]);
+    assert.deepEqual(launches.failedBeforeStartByProvider, [
+      { name: "codex", count: 1 }
+    ]);
+    assert.deepEqual(launches.attemptsByRole, [
+      { name: "orchestrator", count: 6 },
+      { name: "worker", count: 4 }
+    ]);
+  }
+
+  const providerFiltered = await client.query({
+    range: "7D",
+    values: { provider: ["codex"] }
+  });
+  assert.equal(providerFiltered.kind, "ok");
+  if (providerFiltered.kind === "ok") {
+    const launches = providerFiltered.data.metrics.agentLaunches;
+    assert.equal(launches.status, "observed");
+    assert.equal(launches.preSelectionApplicable, false);
+    assert.deepEqual(launches.preSelectionUnsupportedFilters, ["provider"]);
+    assert.equal(launches.root.attempted, null);
+    assert.equal(launches.root.rejected, null);
+    assert.equal(launches.root.launchSuccessRatePercent, null);
+    assert.equal(launches.root.rejectionReasons, null);
+    assert.equal(launches.root.admitted, 5);
+    assert.equal(launches.root.started, 4);
+    assert.equal(launches.root.failedBeforeStart, 1);
+    assert.equal(launches.attemptsByRole, null);
+    assert.deepEqual(launches.failedBeforeStartByProvider, [
+      { name: "codex", count: 1 }
+    ]);
+  }
+
+  const skillFiltered = await client.query({
+    range: "7D",
+    values: { skill: ["dry"] }
+  });
+  assert.equal(skillFiltered.kind, "ok");
+  if (skillFiltered.kind === "ok") {
+    assert.equal(
+      skillFiltered.data.metrics.agentLaunches.status,
+      "not-applicable"
+    );
+    assert.equal(
+      skillFiltered.data.metrics.agentLaunches.notApplicableReason,
+      "unsupported-filter"
+    );
+    assert.deepEqual(
+      skillFiltered.data.metrics.agentLaunches.unsupportedFilters,
+      ["skill"]
+    );
+  }
 });

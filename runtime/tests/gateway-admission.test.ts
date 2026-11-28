@@ -697,3 +697,127 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     }
   }
 );
+
+test(
+  "admitted local surfaces with identical launch specs coalesce catalogue discovery onto one spawn while preserving per-role tool grants",
+  { timeout: 15_000 },
+  async () => {
+    using root = mkdtempDisposableSync(
+      path.join(tmpdir(), "autodev-shared-discovery-")
+    );
+    const base = realpathSync(root.path);
+    const script = path.join(base, "discovery.mjs");
+    writeFileSync(
+      script,
+      String.raw`import { createInterface } from "node:readline";
+const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\n");
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const request = JSON.parse(line);
+  if (request.method === "initialize") {
+    send({
+      id: request.id,
+      result: {
+        protocolVersion: request.params.protocolVersion,
+        capabilities: { tools: {} },
+        serverInfo: { name: "shared-discovery", version: "1" }
+      }
+    });
+  } else if (request.method === "tools/list") {
+    send({
+      id: request.id,
+      result: {
+        tools: [
+          { name: "alpha", inputSchema: { type: "object" } },
+          { name: "beta", inputSchema: { type: "object" } }
+        ]
+      }
+    });
+  }
+});
+`
+    );
+    const pool = await startChatgptBackendPool(
+      {
+        version: 1,
+        servers: {
+          "local.explorer.shared": {
+            kind: "admitted",
+            role: "explorer",
+            server: "shared",
+            tools: ["alpha"]
+          },
+          "local.worker.shared": {
+            kind: "admitted",
+            role: "worker",
+            server: "shared",
+            tools: ["alpha", "beta"]
+          }
+        }
+      },
+      {
+        gatewayEnv: {},
+        admission: {
+          secret: SECRET,
+          catalogueWorkspace: base,
+          provision: (server, _role, workspace) => ({
+            server,
+            command: process.execPath,
+            args: [script],
+            cwd: workspace
+          })
+        }
+      }
+    );
+    try {
+      const discover = async (key: string): Promise<string[]> => {
+        const url = `http://127.0.0.1:${pool.port}/mcp/${key}`;
+        const headers = {
+          authorization: `Bearer ${pool.token}`,
+          "content-type": "application/json"
+        };
+        const initResponse = await fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "initialize",
+            params: { protocolVersion: "2025-03-26", capabilities: {} }
+          })
+        });
+        const sessionId = initResponse.headers.get("mcp-session-id")!;
+        assert.ok((await initResponse.json()).result);
+        const listResponse = await fetch(url, {
+          method: "POST",
+          headers: { ...headers, "mcp-session-id": sessionId },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 2,
+            method: "tools/list",
+            params: {}
+          })
+        });
+        const payload = (await listResponse.json()) as {
+          result: { tools: Array<{ name: string }> };
+        };
+        return payload.result.tools.map((tool) => tool.name);
+      };
+
+      const [explorerTools, workerTools] = await Promise.all([
+        discover("local.explorer.shared"),
+        discover("local.worker.shared")
+      ]);
+      assert.deepEqual(explorerTools, ["alpha"]);
+      assert.deepEqual(workerTools, ["alpha", "beta"]);
+      const stats = pool.stats();
+      assert.equal(
+        (stats["local.explorer.shared"]?.spawns ?? 0) +
+          (stats["local.worker.shared"]?.spawns ?? 0),
+        1,
+        "identical admitted catalogue backends should coalesce onto a single discovery spawn"
+      );
+    } finally {
+      await pool.close();
+    }
+  }
+);

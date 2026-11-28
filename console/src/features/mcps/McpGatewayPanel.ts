@@ -147,7 +147,7 @@ export function McpGatewayPanel({
           ),
           React.createElement(
             "div",
-            { className: "flex flex-col gap-2" },
+            { className: "flex min-w-0 flex-col gap-2" },
             React.createElement(
               "h3",
               { className: SECTION_HEADING_CLASS },
@@ -159,7 +159,10 @@ export function McpGatewayPanel({
               renderItem: (surface) =>
                 React.createElement(
                   "span",
-                  { className: "font-mono text-sm", title: surface.url },
+                  {
+                    className: "min-w-0 max-w-full break-all font-mono text-sm",
+                    title: surface.url
+                  },
                   `${surface.role} → ${surface.url}`
                 ),
               emptyLabel: gateway.installed

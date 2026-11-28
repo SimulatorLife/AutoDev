@@ -306,7 +306,25 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
     usageRoute,
     /readGitUsageWidgets\(selection, timeRange, runUsageQuery\)/u
   );
-  assert.match(usageRoute, /widgets: \[\.\.\.widgets, \.\.\.gitWidgets\]/u);
+  assert.match(
+    usageRoute,
+    /readAgentLaunchUsageWidgets\(\s*selection,\s*timeRange,\s*runUsageQuery/u
+  );
+  assert.match(
+    usageRoute,
+    /widgets: \[\.\.\.widgets, \.\.\.gitWidgets, \.\.\.launchWidgets\]/u
+  );
+  const agentLaunchReader = readFileSync(
+    join(dir, "src/client/src/lib/autodev/usage-agent-launches.ts"),
+    "utf8"
+  );
+  assert.match(agentLaunchReader, /autodev\.agent\.launches/u);
+  assert.match(agentLaunchReader, /metricCounterDeltas/u);
+  assert.match(
+    agentLaunchReader,
+    /query\(\(\) =>\s*adapter\.metricCounterDeltas/u,
+    "patch 84 must schedule agent-launch queries through the Usage queue"
+  );
   const gitMetricReader = readFileSync(
     join(dir, "src/client/src/lib/autodev/usage-git-metrics.ts"),
     "utf8"
@@ -1740,7 +1758,10 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
   // "unavailable" and "nothing matched these filters" both rendered — the page
   // contradicted itself. The empty arm must defer to the failed read.
   const signalRecords = readFileSync(
-    join(clientSource_, "components/(playground)/observability/signal-records.tsx"),
+    join(
+      clientSource_,
+      "components/(playground)/observability/signal-records.tsx"
+    ),
     "utf8"
   );
   assert.match(
@@ -1750,7 +1771,10 @@ function assertRemovedOpenlitAdminSurfaces(dir: string) {
   );
   assert.match(
     readFileSync(
-      join(clientSource_, "components/(playground)/observability/signal-list.tsx"),
+      join(
+        clientSource_,
+        "components/(playground)/observability/signal-list.tsx"
+      ),
       "utf8"
     ),
     /unreadable=\{[^}]*\b(listError|error)\b/u,
@@ -2139,9 +2163,11 @@ test(
       // 07-autodev-usage-api
       "src/client/src/lib/autodev/usage-api.ts",
       "src/client/src/lib/autodev/usage-git-metrics.ts",
+      "src/client/src/lib/autodev/usage-agent-launches.ts",
       "src/client/src/app/api/autodev/usage/route.ts",
       "src/client/src/__tests__/lib/autodev/usage-api.test.ts",
       "src/client/src/__tests__/lib/autodev/usage-git-metrics.test.ts",
+      "src/client/src/__tests__/lib/autodev/usage-agent-launches.test.ts",
       "src/client/src/__tests__/app/api/autodev/usage/route.test.ts",
       // 08-autodev-memory-connector
       "src/client/src/lib/platform/connectors/memory/autodev/adapter.ts",
@@ -2210,7 +2236,10 @@ test(
     assert.match(autoDevelopmentMemoryAdapter, /id: "supersede"/u);
     assert.match(autoDevelopmentMemoryAdapter, /id: "promote-skill"/u);
     assert.match(autoDevelopmentMemoryAdapter, /\/why\?/u);
-    assert.match(autoDevelopmentMemoryAdapter, /presentExperience\(experience\)/u);
+    assert.match(
+      autoDevelopmentMemoryAdapter,
+      /presentExperience\(experience\)/u
+    );
     assert.doesNotMatch(
       autoDevelopmentMemoryAdapter,
       /from ["']pg["']|postgres-memory-repository/u
@@ -2579,7 +2608,10 @@ test(
     );
     assert.notEqual(databaseConfigUserUpsertEnd, -1);
     assert.doesNotMatch(
-      seedLibrary.slice(databaseConfigUserUpsertStart, databaseConfigUserUpsertEnd),
+      seedLibrary.slice(
+        databaseConfigUserUpsertStart,
+        databaseConfigUserUpsertEnd
+      ),
       /can(?:Edit|Delete|Share):/u,
       "patch 39 removes deleted permission columns from the seed upsert"
     );
@@ -2820,13 +2852,19 @@ test(
       autoDevelopmentMemoryAdapter,
       /autodev-memory-session-outcome-cohorts-v1/u
     );
-    assert.match(autoDevelopmentMemoryAdapter, /conflictingOutcomeSessionCount/u);
+    assert.match(
+      autoDevelopmentMemoryAdapter,
+      /conflictingOutcomeSessionCount/u
+    );
 
     // Patch 22 extends the same CE AutoDev Control API adapter with
     // curator-authored injection-use assessment reads/writes and a bounded,
     // count-only use cohort query. It does not add percentages or any rate
     // or causal metric.
-    assert.match(autoDevelopmentMemoryAdapter, /readInjectionUseAssessments\(/u);
+    assert.match(
+      autoDevelopmentMemoryAdapter,
+      /readInjectionUseAssessments\(/u
+    );
     assert.match(autoDevelopmentMemoryAdapter, /reportInjectionUse\(/u);
     assert.match(autoDevelopmentMemoryAdapter, /readInjectionUseCohorts\(/u);
     assert.match(
@@ -3347,7 +3385,12 @@ test("27-remove-otter-chat-docs-onboarding-chrome removes Otter/chat/docs/onboar
     for (const line of docsGrep.stdout.split("")) {
       if (!line) continue;
       const rel = line.slice(dir.length + 1);
-      if (rel.includes("__tests__") || rel.endsWith("openground/sdk-usage-dialog.tsx") || rel.endsWith("agents/no-coding-agents.tsx")) continue;
+      if (
+        rel.includes("__tests__") ||
+        rel.endsWith("openground/sdk-usage-dialog.tsx") ||
+        rel.endsWith("agents/no-coding-agents.tsx")
+      )
+        continue;
       docsOffenders.push(rel);
     }
     assert.deepEqual(

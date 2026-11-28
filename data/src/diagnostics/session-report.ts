@@ -9,6 +9,7 @@ report the Console, the CLI and the skill wrapper all read.
 
 import {
   classifyToolFailure,
+  extractCoordinatorThreadId,
   SESSION_DIAGNOSTICS_SCHEMA,
   type SessionDiagnosticsAggregates,
   type SessionDiagnosticsReport,
@@ -22,6 +23,11 @@ import {
   type SessionThreadTrace
 } from "@simulatorlife/autodev-core";
 
+import {
+  linkedAcpPinsForSession,
+  matchThreadAcpPin,
+  readAcpPinLedger
+} from "./acp-pins.ts";
 import {
   buildEfficiencySummary,
   collectLiveDiagnostics,
@@ -448,9 +454,23 @@ machine and not a failure of the read.
 export async function buildSessionDiagnosticsReport(
   options: SessionDiagnosticsOptions
 ): Promise<SessionDiagnosticsReport> {
+  const ledgerPins = readAcpPinLedger(options.codexHome);
+  const initialPins = linkedAcpPinsForSession(
+    new Set([options.id]),
+    ledgerPins
+  );
+  const pinExtraIds = initialPins.flatMap((pin) => {
+    const coordinatorId = extractCoordinatorThreadId(pin.parentSessionId);
+    return [
+      pin.sessionId,
+      ...(pin.acpSessionId ? [pin.acpSessionId] : []),
+      ...(coordinatorId ? [coordinatorId] : [])
+    ];
+  });
   const rollouts = findSessionRollouts(
     rolloutRoots(options.codexHome),
-    options.id
+    options.id,
+    pinExtraIds
   );
   const threads = rollouts.map((file) =>
     traceThread(file, {
@@ -458,6 +478,12 @@ export async function buildSessionDiagnosticsReport(
       codexHome: options.codexHome
     })
   );
+  const seedIds = new Set<string>([options.id]);
+  for (const thread of threads) {
+    seedIds.add(thread.id);
+    if (thread.sessionId) seedIds.add(thread.sessionId);
+  }
+  const acpPins = linkedAcpPinsForSession(seedIds, ledgerPins);
   const stamps = threads
     .flatMap((thread) => [thread.start, thread.end])
     .filter((value): value is string => typeof value === "string")
@@ -471,14 +497,21 @@ export async function buildSessionDiagnosticsReport(
         )
       : [];
   const router = threads.map((thread) =>
-    summarizeRouter(thread, rows, options.includeEvents)
+    summarizeRouter(
+      thread,
+      rows,
+      options.includeEvents,
+      matchThreadAcpPin(thread, acpPins)
+    )
   );
   const bridgeAlerts = readBridgeLogAlerts(options.codexHome);
   const liveResult = await collectLiveDiagnostics({
     codexHome: options.codexHome,
     offline: options.offline,
     ...(options.repoRoot !== undefined && { repoRoot: options.repoRoot }),
-    ...(options.routerStatus !== undefined && { routerStatus: options.routerStatus })
+    ...(options.routerStatus !== undefined && {
+      routerStatus: options.routerStatus
+    })
   });
   const efficiency = options.includeEfficiency
     ? buildEfficiencySummary(options.codexHome, liveResult.status)
@@ -490,13 +523,29 @@ export async function buildSessionDiagnosticsReport(
           (session) => session.id === options.id
         )
       : undefined;
-  const rootThread = threads.find((thread) => thread.parentId === null);
+  const pinRootId =
+    acpPins
+      .map((pin) => extractCoordinatorThreadId(pin.parentSessionId))
+      .find((id): id is string => id !== null) ??
+    acpPins[0]?.sessionId ??
+    null;
+  const childPinThreadIds = new Set(
+    acpPins
+      .filter((pin) => extractCoordinatorThreadId(pin.parentSessionId) !== null)
+      .flatMap((pin) =>
+        pin.acpSessionId ? [pin.sessionId, pin.acpSessionId] : [pin.sessionId]
+      )
+  );
+  const rootThread =
+    threads.find(
+      (thread) => thread.parentId === null && !childPinThreadIds.has(thread.id)
+    ) ?? threads.find((thread) => thread.parentId === null);
   const rootSessionId =
     rootThread?.sessionId ??
     rootThread?.id ??
     threads[0]?.sessionId ??
     native?.id ??
-    null;
+    pinRootId;
   const isMatchedByThreadId =
     rootSessionId !== null && options.id !== rootSessionId;
   const clientSurface =
@@ -515,7 +564,7 @@ export async function buildSessionDiagnosticsReport(
 
   return {
     schema: SESSION_DIAGNOSTICS_SCHEMA,
-    found: threads.length > 0 || native !== undefined,
+    found: threads.length > 0 || native !== undefined || acpPins.length > 0,
     requestedId: options.id,
     rootSessionId,
     matchedByThreadId: isMatchedByThreadId,
@@ -529,6 +578,7 @@ export async function buildSessionDiagnosticsReport(
         workspace: native.workspace
       }
     }),
+    ...(acpPins.length > 0 && { acpPins }),
     threads,
     router,
     logs: readLogSummaries(options.codexHome),

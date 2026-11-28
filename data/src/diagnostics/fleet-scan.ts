@@ -19,6 +19,7 @@ import {
   type ToolFailureCategory
 } from "@simulatorlife/autodev-core";
 
+import { matchThreadAcpPin, readAcpPinLedger } from "./acp-pins.ts";
 import {
   listRecentSessions,
   mergeNativeRecentSessions,
@@ -146,7 +147,10 @@ function accumulateFleetThread(
     accumulator.row.toolFailures += 1;
     const category =
       failure.category ?? classifyToolFailure(failure.detail, failure.input);
-    accumulator.failureCounts.set(category, (accumulator.failureCounts.get(category) ?? 0) + 1);
+    accumulator.failureCounts.set(
+      category,
+      (accumulator.failureCounts.get(category) ?? 0) + 1
+    );
     totals.toolFailuresByCategory[category] =
       (totals.toolFailuresByCategory[category] ?? 0) + 1;
     if (category === "pretooluse-hook") {
@@ -163,7 +167,8 @@ function accumulateFleetThread(
   }
   for (const skipped of router.skipped ?? []) {
     const key = `${skipped.provider ?? "?"}:${skipped.reason}`;
-    accumulator.row.routerSkipped[key] = (accumulator.row.routerSkipped[key] ?? 0) + 1;
+    accumulator.row.routerSkipped[key] =
+      (accumulator.row.routerSkipped[key] ?? 0) + 1;
     skippedReasons.set(key, (skippedReasons.get(key) ?? 0) + 1);
   }
 }
@@ -188,6 +193,7 @@ export async function scanRecentSessions(
     rolloutRoots(options.codexHome),
     options.limit
   );
+  const ledgerPins = readAcpPinLedger(options.codexHome);
   const bySession = rolloutsForSelectedSessions(
     options.codexHome,
     new Set(recent.map((session) => session.id))
@@ -262,7 +268,12 @@ export async function scanRecentSessions(
     for (const trace of traces) {
       accumulateFleetThread(
         trace,
-        summarizeRouter(trace, rows, false),
+        summarizeRouter(
+          trace,
+          rows,
+          false,
+          matchThreadAcpPin(trace, ledgerPins)
+        ),
         accumulator,
         totals,
         preToolReasons,
@@ -271,7 +282,10 @@ export async function scanRecentSessions(
     }
     accumulator.row.cacheHitPct =
       accumulator.row.inputTokens > 0
-        ? round1((accumulator.row.cachedInputTokens / accumulator.row.inputTokens) * 100)
+        ? round1(
+            (accumulator.row.cachedInputTokens / accumulator.row.inputTokens) *
+              100
+          )
         : null;
     const topFailure = [...accumulator.failureCounts.entries()].sort(
       (a, b) => b[1] - a[1]
@@ -313,7 +327,9 @@ export async function scanRecentSessions(
     schema: SESSION_FLEET_SCAN_SCHEMA,
     limit: options.limit,
     sessions: sessionRows,
-    ...(recentSessions.some((session) => !rolloutIds.has(session.id)) && { recentSessions }),
+    ...(recentSessions.some((session) => !rolloutIds.has(session.id)) && {
+      recentSessions
+    }),
     totals: publishedTotals
   };
 }

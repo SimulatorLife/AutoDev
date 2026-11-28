@@ -18,8 +18,9 @@ import { expect, test } from "@playwright/test";
 import { SWEEP_ROUTES, waitForPageContent } from "./acceptance-helpers.ts";
 
 const AGENTS_ROUTE = "/agents";
-const PROMPT_ROUTE = "/prompts/review";
-const PROMPT_PREVIEW = '[data-button="prompt-preview"]';
+const PROVIDERS_ROUTE = "/providers";
+const CHECK_FORM = '[data-provider-check-form="claude"]';
+const CHECK_BUTTON = '[data-provider-check="claude"]';
 const TABLE_REGION = '[role="region"]';
 
 /**
@@ -29,12 +30,12 @@ const PHONE_WIDTH = 390;
 const PHONE_HEIGHT = 844;
 
 /**
-The delay the preview's request is held for.
+The delay the check request is held for.
 
 Without it the pending state is a frame nobody sees, and the measurement
 would be of a control that had already finished working.
 */
-const PREVIEW_DELAY_MS = 1500;
+const CHECK_DELAY_MS = 1500;
 
 test("a table that scrolls is reachable by a keyboard", async ({ page }) => {
   await page.setViewportSize({ width: PHONE_WIDTH, height: PHONE_HEIGHT });
@@ -64,46 +65,44 @@ test("a control that is working keeps the operator's place", async ({
   page
 }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.route("**/api/prompts/preview", async (route) => {
+  await page.route("**/api/providers/*/check", async (route) => {
     await new Promise((resolve) => {
-      setTimeout(resolve, PREVIEW_DELAY_MS);
+      setTimeout(resolve, CHECK_DELAY_MS);
     });
     await route.continue();
   });
-  await page.goto(PROMPT_ROUTE);
+  await page.goto(PROVIDERS_ROUTE);
   await waitForPageContent(page);
 
-  const preview = page.locator(PROMPT_PREVIEW);
-  await preview.focus();
-  await preview.click();
+  const form = page.locator(CHECK_FORM);
+  const control = page.locator(CHECK_BUTTON);
+  await control.focus();
+  await control.click();
 
-  // The control is working: it says so, and it is not a disabled control. A
-  // disabled control is dropped out of the page's focus order the moment it is
-  // disabled, which is the failure this measures.
-  await expect(preview).toHaveAttribute("aria-disabled", "true");
-  await expect(preview).toHaveText("Previewing…");
-  const disabledWhileWorking = await preview.evaluate(
+  // The control is working: the enclosing form is aria-busy while the button
+  // stays enabled (disabled = false) rather than dropping out of focus order.
+  await expect(form).toHaveAttribute("aria-busy", "true");
+  const disabledWhileWorking = await control.evaluate(
     (element) => (element as HTMLButtonElement).disabled
   );
   expect(disabledWhileWorking).toBe(false);
   expect(
     await page.evaluate(
       () =>
-        (document.activeElement as HTMLElement | null)?.dataset.button ?? null
+        (document.activeElement as HTMLElement | null)?.dataset.providerCheck ??
+        null
     )
-  ).toBe("prompt-preview");
+  ).toBe("claude");
 
-  // The answer leaves the focus where the operator left it.
-  await expect(page.locator("[data-prompt-unsaved-preview]")).toHaveAttribute(
-    "data-prompt-unsaved-preview",
-    "observed"
-  );
+  // Once the check finishes, focus remains on the control the operator used.
+  await expect(form).not.toHaveAttribute("aria-busy", "true");
   expect(
     await page.evaluate(
       () =>
-        (document.activeElement as HTMLElement | null)?.dataset.button ?? null
+        (document.activeElement as HTMLElement | null)?.dataset.providerCheck ??
+        null
     )
-  ).toBe("prompt-preview");
+  ).toBe("claude");
 });
 
 /**
@@ -140,7 +139,12 @@ test("a control that can act is a pointer target", async ({ page }) => {
         document.querySelectorAll<HTMLButtonElement>("button")
       )) {
         const style = getComputedStyle(element);
-        if (style.display === "none" || style.visibility === "hidden" || element.closest("[hidden]")) continue;
+        if (
+          style.display === "none" ||
+          style.visibility === "hidden" ||
+          element.closest("[hidden]")
+        )
+          continue;
         // A control that cannot act is not a target, so it is not asked to
         // look like one.
         if (element.disabled) continue;

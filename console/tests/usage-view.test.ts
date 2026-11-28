@@ -50,6 +50,35 @@ const unobservedGitChanges: UsageMetricsData["gitChanges"] = {
   commitsByAgent: null
 };
 
+const unobservedAgentLaunchSummary: UsageMetricsData["agentLaunches"]["root"] =
+  {
+    attempted: null,
+    admitted: null,
+    rejected: null,
+    started: null,
+    failedBeforeStart: null,
+    resolved: null,
+    pending: null,
+    launchSuccessRatePercent: null,
+    succeeded: null,
+    failed: null,
+    cancelled: null,
+    rejectionReasons: null
+  };
+
+const unobservedAgentLaunches: UsageMetricsData["agentLaunches"] = {
+  status: "not-observed",
+  notApplicableReason: null,
+  unsupportedFilters: [],
+  preSelectionApplicable: true,
+  preSelectionUnsupportedFilters: [],
+  breakdownsPartial: false,
+  root: unobservedAgentLaunchSummary,
+  child: unobservedAgentLaunchSummary,
+  failedBeforeStartByProvider: null,
+  attemptsByRole: null
+};
+
 const observedMetrics: UsageMetricsData = {
   logicalRequests: 42,
   totalInputTokens: 1200,
@@ -113,6 +142,47 @@ const observedMetrics: UsageMetricsData = {
   requestsByWorkspace: {
     rows: [{ workspace: "repo-a", count: 42 }],
     partial: false
+  },
+  agentLaunches: {
+    status: "observed",
+    notApplicableReason: null,
+    unsupportedFilters: [],
+    preSelectionApplicable: true,
+    preSelectionUnsupportedFilters: [],
+    breakdownsPartial: false,
+    root: {
+      attempted: 6,
+      admitted: 5,
+      rejected: 1,
+      started: 4,
+      failedBeforeStart: 1,
+      resolved: 6,
+      pending: 0,
+      launchSuccessRatePercent: (4 / 6) * 100,
+      succeeded: 3,
+      failed: 1,
+      cancelled: 0,
+      rejectionReasons: [{ name: "dispatch_refused", count: 1 }]
+    },
+    child: {
+      attempted: 4,
+      admitted: 2,
+      rejected: 2,
+      started: 2,
+      failedBeforeStart: 0,
+      resolved: 4,
+      pending: 0,
+      launchSuccessRatePercent: 50,
+      succeeded: 1,
+      failed: 0,
+      cancelled: 1,
+      rejectionReasons: [{ name: "concurrency_limit", count: 2 }]
+    },
+    failedBeforeStartByProvider: [{ name: "codex", count: 1 }],
+    attemptsByRole: [
+      { name: "orchestrator", count: 6 },
+      { name: "worker", count: 4 }
+    ]
   },
   attemptsByProvider: [{ provider: "openai", count: 48 }],
   attemptsByModel: [
@@ -400,6 +470,7 @@ test("unobserved Git status alone does not make the Usage page look observed", (
     attemptsByProvider: null,
     attemptsByModel: null,
     callsByTool: null,
+    agentLaunches: unobservedAgentLaunches,
     gitChanges: unobservedGitChanges
   };
   const markup = renderToStaticMarkup(
@@ -925,5 +996,91 @@ test("UsageView renders explicit unavailable state when Control API MCP inventor
   assert.doesNotMatch(
     runtimeUnavailable,
     /data-mcp-usage-state="exposed-never-used"/u
+  );
+
+  const staleRuntime: ControlApiMcpRuntimeResponse = {
+    ...sampleMcpRuntime,
+    health: { ready: 0, error: 0, stale: 2, configured: 0, observed: 0 },
+    servers: sampleMcpRuntime.servers.map((server) => ({
+      ...server,
+      health: "stale"
+    }))
+  };
+  const staleMarkup = renderToStaticMarkup(
+    React.createElement(UsageView, {
+      metrics: observedMetrics,
+      mcpInventory: {
+        kind: "observed",
+        servers: sampleMcpServers,
+        sourceValidity: true,
+        validationIssues: [],
+        runtime: staleRuntime,
+        runtimeFailure: null
+      }
+    })
+  );
+  assert.match(staleMarkup, /data-mcp-runtime-stale="true"/u);
+  assert.match(staleMarkup, /data-mcp-usage-state="stale"/u);
+  assert.match(staleMarkup, /Stale/u);
+  assert.match(
+    staleMarkup,
+    /3 configured · 2 exposed · 2 used · 1 exposed, never used · 2 stale/u
+  );
+});
+
+test("UsageView separates root launches from child delegations and marks pre-selection metrics not applicable under provider/model filters", () => {
+  const fullMarkup = renderToStaticMarkup(
+    React.createElement(UsageView, { metrics: observedMetrics })
+  );
+  assert.match(fullMarkup, /data-agent-launches="observed"/u);
+  assert.match(fullMarkup, /data-agent-launches-kind="root"/u);
+  assert.match(fullMarkup, /data-agent-launches-kind="child"/u);
+  assert.match(fullMarkup, /Root agent launches/u);
+  assert.match(fullMarkup, /Child agent delegations/u);
+  assert.match(fullMarkup, /dispatch_refused/u);
+  assert.match(fullMarkup, /concurrency_limit/u);
+  assert.match(fullMarkup, /Failed Before Start by Provider/iu);
+  assert.match(fullMarkup, /Launch Attempts by Role/u);
+
+  const filteredMetrics: UsageMetricsData = {
+    ...observedMetrics,
+    agentLaunches: {
+      ...observedMetrics.agentLaunches,
+      preSelectionApplicable: false,
+      preSelectionUnsupportedFilters: ["provider"],
+      root: {
+        ...observedMetrics.agentLaunches.root,
+        attempted: null,
+        rejected: null,
+        resolved: null,
+        pending: null,
+        launchSuccessRatePercent: null,
+        rejectionReasons: null
+      },
+      child: {
+        ...observedMetrics.agentLaunches.child,
+        attempted: null,
+        rejected: null,
+        resolved: null,
+        pending: null,
+        launchSuccessRatePercent: null,
+        rejectionReasons: null
+      },
+      attemptsByRole: null
+    }
+  };
+  const filteredMarkup = renderToStaticMarkup(
+    React.createElement(UsageView, {
+      metrics: filteredMetrics,
+      selection: { range: "7D", values: { provider: ["codex"] } }
+    })
+  );
+  assert.match(
+    filteredMarkup,
+    /data-agent-launches-preselection="not-applicable"/u
+  );
+  assert.match(
+    filteredMarkup,
+    /Not applicable: pre-selection provider filter is active/u
   );
 });

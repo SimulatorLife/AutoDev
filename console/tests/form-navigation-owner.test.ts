@@ -778,7 +778,7 @@ test("POST followed redirects surface provider, model, skill, and prompt failure
       {
         router,
         fetch: fetchImpl,
-        currentUrl: "http://console.test/current",
+        currentUrl: "https://console.test/current",
         onStatusChange: (status, message) => statuses.push({ status, message })
       }
     );

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import type {
@@ -454,4 +455,12 @@ test("readOverview keeps failed and thrown sources unavailable, not zero", async
     "boom"
   );
   assert.equal(data.telemetry.status, "unavailable");
+});
+
+test("Overview page mounts LiveCountRefresh for five-second visible polling", () => {
+  const pageSource = readFileSync(
+    new URL("../app/overview/page.tsx", import.meta.url),
+    "utf8"
+  );
+  assert.match(pageSource, /LiveCountRefresh/u);
 });

@@ -23,6 +23,7 @@ import {
   NESTED_PANEL_CLASS
 } from "../../components/layout/Panel.ts";
 import { Breadcrumbs } from "../../components/navigation/Breadcrumbs.ts";
+import { LiveCountRefresh } from "../../components/navigation/LiveCountRefresh.ts";
 import {
   FIELD_BOX_CLASS,
   FieldBox,
@@ -955,6 +956,7 @@ export function McpDetailView({
   return React.createElement(
     PageBody,
     { feature: "mcp-detail", as: "article" },
+    React.createElement(LiveCountRefresh),
     React.createElement(
       "header",
       {

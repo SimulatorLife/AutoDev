@@ -7,6 +7,7 @@ of it. Every consumer -- the Console, the CLI, the skill wrapper -- speaks
 this shape.
 */
 
+export * from "./acp-pins.ts";
 export * from "./client-surface.ts";
 export * from "./format.ts";
 export * from "./types.ts";

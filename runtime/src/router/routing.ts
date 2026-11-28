@@ -592,6 +592,8 @@ export class RoutingPolicy {
   readonly routes: readonly ProviderRoute[];
   readonly configFile: string;
   private runtime: RoutingRuntime;
+  private isApplyingRemoteSync = false;
+  private mutationListener: ((state: RoutingPolicyState) => void) | null = null;
   /**
   Per-provider, per-role priority and model. A provider absent from this map
   has never been configured for a role, which is a different answer from
@@ -632,6 +634,18 @@ export class RoutingPolicy {
 
   setRuntime(runtime: RoutingRuntime): void {
     this.runtime = runtime;
+  }
+
+  setMutationListener(
+    listener: ((state: RoutingPolicyState) => void) | null
+  ): void {
+    this.mutationListener = listener;
+  }
+
+  private emitMutation(): void {
+    if (!this.isApplyingRemoteSync) {
+      this.mutationListener?.(this.runtimeState());
+    }
   }
 
   private providerKey(provider: string): string {
@@ -766,6 +780,7 @@ export class RoutingPolicy {
       ...(assignment.reasoningEffort && { reasoningEffort: assignment.reasoningEffort })
     };
     this.roleAssignments.set(key, existing);
+    this.emitMutation();
   }
 
   /**
@@ -784,6 +799,7 @@ export class RoutingPolicy {
     delete next[role];
     if (Object.keys(next).length === 0) this.roleAssignments.delete(key);
     else this.roleAssignments.set(key, next);
+    this.emitMutation();
   }
 
   isProviderDisabled(provider: unknown): boolean {
@@ -796,10 +812,12 @@ export class RoutingPolicy {
     if (!Object.hasOwn(this.config.providers, key)) return;
     if (enabled) this.disabledProviders.delete(key);
     else this.disabledProviders.add(key);
+    this.emitMutation();
   }
 
   resetDisabledProviders(): void {
     this.disabledProviders.clear();
+    this.emitMutation();
   }
 
   /**
@@ -816,6 +834,7 @@ export class RoutingPolicy {
       if (Object.keys(next).length === 0) this.roleAssignments.delete(provider);
       else this.roleAssignments.set(provider, next);
     }
+    this.emitMutation();
   }
 
   /**
@@ -825,7 +844,9 @@ export class RoutingPolicy {
   */
   clearProviderLimits(provider: unknown): void {
     if (typeof provider !== "string" || !provider.trim()) return;
-    this.providerLimits.delete(this.providerKey(provider));
+    if (this.providerLimits.delete(this.providerKey(provider))) {
+      this.emitMutation();
+    }
   }
 
   limitsFor(provider: unknown): ProviderAgentLimits | undefined {
@@ -868,6 +889,7 @@ export class RoutingPolicy {
       perSession: normaliseLimit(limits.perSession),
       acrossSessions: normaliseLimit(limits.acrossSessions)
     });
+    this.emitMutation();
   }
 
   /**
@@ -909,6 +931,7 @@ export class RoutingPolicy {
     else next[role] = model.trim();
     if (Object.keys(next).length === 0) this.agentModels.delete(key);
     else this.agentModels.set(key, next);
+    this.emitMutation();
   }
 
   /**
@@ -960,6 +983,7 @@ export class RoutingPolicy {
         else this.agentModels.set(key, kept);
       }
     }
+    if (isForgot) this.emitMutation();
     return isForgot;
   }
 
@@ -996,6 +1020,7 @@ export class RoutingPolicy {
     this.disabledProviders.clear();
     this.disabledModels.clear();
     this.providerLimits.clear();
+    this.emitMutation();
     return counts;
   }
 
@@ -1123,10 +1148,12 @@ export class RoutingPolicy {
     const key = model.trim();
     if (enabled) this.disabledModels.delete(key);
     else this.disabledModels.add(key);
+    this.emitMutation();
   }
 
   resetDisabledModels(): void {
     this.disabledModels.clear();
+    this.emitMutation();
   }
 
   /**
@@ -1179,23 +1206,32 @@ export class RoutingPolicy {
     };
   }
 
-  restoreRuntimeState(state: unknown): void {
-    this.roleAssignments.clear();
-    this.disabledProviders.clear();
-    this.disabledModels.clear();
-    this.disabledAgentRoles.clear();
-    this.agentEnablementRevisions.clear();
-    this.providerLimits.clear();
-    this.agentModels.clear();
-    if (!isRecord(state)) return;
+  restoreRuntimeState(state: unknown, options: { fromSync?: boolean } = {}): void {
+    const previousApplying = this.isApplyingRemoteSync;
+    this.isApplyingRemoteSync = true;
+    try {
+      this.roleAssignments.clear();
+      this.disabledProviders.clear();
+      this.disabledModels.clear();
+      this.disabledAgentRoles.clear();
+      this.agentEnablementRevisions.clear();
+      this.providerLimits.clear();
+      this.agentModels.clear();
+      if (!isRecord(state)) return;
 
-    this.restoreRoleAssignments(state.roleAssignments);
-    this.restoreDisabledModels(state.disabledModels);
-    this.restoreDisabledProviders(state.disabledProviders);
-    this.restoreDisabledAgentRoles(state.disabledAgentRoles);
-    this.restoreAgentEnablementRevisions(state.agentEnablementRevisions);
-    this.restoreProviderLimits(state.providerLimits);
-    this.restoreAgentModels(state.agentModels);
+      this.restoreRoleAssignments(state.roleAssignments);
+      this.restoreDisabledModels(state.disabledModels);
+      this.restoreDisabledProviders(state.disabledProviders);
+      this.restoreDisabledAgentRoles(state.disabledAgentRoles);
+      this.restoreAgentEnablementRevisions(state.agentEnablementRevisions);
+      this.restoreProviderLimits(state.providerLimits);
+      this.restoreAgentModels(state.agentModels);
+    } finally {
+      this.isApplyingRemoteSync = previousApplying;
+    }
+    if (!options.fromSync) {
+      this.emitMutation();
+    }
   }
 
   /**
@@ -1587,6 +1623,7 @@ export class RoutingPolicy {
       role,
       (this.agentEnablementRevisions.get(role) ?? 0) + 1
     );
+    this.emitMutation();
     return true;
   }
 

@@ -17,7 +17,7 @@ contract before it exits. A runner failure is therefore a failure of the
 stack, not of the caller that invoked it.
 */
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createConnection } from "node:net";
 import path from "node:path";
 
@@ -120,6 +120,37 @@ function runUsageCommand(
     env: options.env
   });
   return { status: result.status, error: result.error };
+}
+
+function runUsageCommandAsync(
+  command: string,
+  arguments_: readonly string[],
+  options: UsageStackCommandOptions
+): Promise<UsageStackCommandResult> {
+  return new Promise((resolve) => {
+    const child = spawn(command, [...arguments_], {
+      cwd: options.cwd,
+      stdio: options.stdio,
+      env: options.env
+    });
+    let isSettled = false;
+    const finish = (result: UsageStackCommandResult): void => {
+      if (isSettled) return;
+      isSettled = true;
+      if (timer) clearTimeout(timer);
+      resolve(result);
+    };
+    const timer =
+      options.timeoutMs === undefined
+        ? null
+        : setTimeout(() => {
+            child.kill("SIGTERM");
+            finish({ status: null, error: new Error("command timed out") });
+          }, options.timeoutMs);
+    timer?.unref();
+    child.once("error", (error) => finish({ status: null, error }));
+    child.once("close", (status) => finish({ status }));
+  });
 }
 
 function defaultDependencies(): UsageStackDependencies {
@@ -255,15 +286,23 @@ export async function ensureUsageStack(
   dependencies.writeLine(
     `[${options.label}] Reconciling the OpenLIT and ClickHouse Usage services...`
   );
-  const started = dependencies.runCommand(
-    "bash",
-    [path.join(options.repositoryRoot, "scripts", "openlit", "up.sh")],
-    {
-      cwd: options.repositoryRoot,
-      stdio: "inherit",
-      env: dependencies.runnerEnv
-    }
-  );
+  const upOptions: UsageStackCommandOptions = {
+    cwd: options.repositoryRoot,
+    stdio: "inherit",
+    env: dependencies.runnerEnv
+  };
+  const started =
+    overrides.runCommand === undefined
+      ? await runUsageCommandAsync(
+          "bash",
+          [path.join(options.repositoryRoot, "scripts", "openlit", "up.sh")],
+          upOptions
+        )
+      : dependencies.runCommand(
+          "bash",
+          [path.join(options.repositoryRoot, "scripts", "openlit", "up.sh")],
+          upOptions
+        );
   if (!commandSucceeded(started)) {
     const detail = started.error?.message;
     throw new Error(

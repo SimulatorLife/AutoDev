@@ -1050,7 +1050,8 @@ async function runCommandsMain(): Promise<void> {
           process.off("SIGTERM", shutdown);
         });
     };
-    running.server.server.server.addEventListener('close', shutdown);
+    // eslint-disable-next-line unicorn/prefer-add-event-listener -- MCP SDK Server exposes an onclose callback property, not EventTarget.
+    running.server.server.server.onclose = shutdown;
     process.stdin.once("end", shutdown);
     process.once("SIGINT", shutdown);
     process.once("SIGTERM", shutdown);

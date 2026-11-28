@@ -464,6 +464,81 @@ function loadSharedTelemetry(): Promise<typeof import("./mcp-telemetry.ts")> {
   return sharedTelemetryPromise;
 }
 
+interface CachedInitialize {
+  readonly serverInfo: unknown;
+  readonly capabilities: JsonRecord;
+  readonly fetchRawTools: () => Promise<readonly unknown[]>;
+}
+
+class CatalogueDiscoveryCache {
+  private readonly initEntries = new Map<string, Promise<CachedInitialize>>();
+  private readonly toolEntries = new Map<string, Promise<readonly unknown[]>>();
+
+  publishInit(key: string, init: CachedInitialize): void {
+    if (!this.initEntries.has(key)) {
+      this.initEntries.set(key, Promise.resolve(init));
+    }
+  }
+
+  publishTools(key: string, rawTools: readonly unknown[]): void {
+    if (!this.toolEntries.has(key)) {
+      this.toolEntries.set(key, Promise.resolve(rawTools));
+    }
+  }
+
+  getOrComputeInit(
+    key: string,
+    compute: () => Promise<CachedInitialize>
+  ): Promise<CachedInitialize> {
+    const existing = this.initEntries.get(key);
+    if (existing) return existing;
+    const pending = compute().catch((error: unknown) => {
+      if (this.initEntries.get(key) === pending) this.initEntries.delete(key);
+      throw error;
+    });
+    this.initEntries.set(key, pending);
+    return pending;
+  }
+
+  getOrComputeTools(
+    key: string,
+    compute: () => Promise<readonly unknown[]>
+  ): Promise<readonly unknown[]> {
+    const existing = this.toolEntries.get(key);
+    if (existing) return existing;
+    const pending = compute().catch((error: unknown) => {
+      if (this.toolEntries.get(key) === pending) this.toolEntries.delete(key);
+      throw error;
+    });
+    this.toolEntries.set(key, pending);
+    return pending;
+  }
+}
+
+function discoveryCacheKey(spec: PooledBackendSpec): string | null {
+  if (spec.kind === "remote") {
+    return JSON.stringify([
+      "remote",
+      spec.url,
+      spec.bearer_token_env_var ?? null,
+      spec.http_headers ?? null
+    ]);
+  }
+  if (spec.conversationScopedEnv !== undefined) return null;
+  return JSON.stringify([
+    "stdio",
+    spec.server,
+    spec.command,
+    spec.args,
+    spec.cwd
+  ]);
+}
+
+interface ControllerDiscoveryOptions {
+  readonly cache: CatalogueDiscoveryCache;
+  readonly shareDiscovery: boolean;
+}
+
 class PooledBackendController {
   readonly name: string;
   private readonly spec: PooledBackendSpec;
@@ -473,6 +548,9 @@ class PooledBackendController {
   private readonly idleTimeoutMs: number;
   private readonly toolCallTimeoutMs: number;
   private readonly requestTimeoutMs: number;
+  private readonly discoveryCache: CatalogueDiscoveryCache | null;
+  private readonly discoveryKey: string | null;
+  private readonly shareDiscovery: boolean;
   private readonly observations: GatewayCallObservations | null;
 
   private live: LiveBackend | null = null;
@@ -498,7 +576,8 @@ class PooledBackendController {
   constructor(
     name: string,
     spec: PooledBackendSpec,
-    options: ChatgptBackendPoolOptions
+    options: ChatgptBackendPoolOptions,
+    discovery?: ControllerDiscoveryOptions
   ) {
     this.name = name;
     this.spec = spec;
@@ -509,6 +588,10 @@ class PooledBackendController {
       options.idleTimeoutMs ?? DEFAULT_BACKEND_IDLE_TIMEOUT_MS;
     this.toolCallTimeoutMs = options.toolCallTimeoutMs ?? TOOL_CALL_TIMEOUT_MS;
     this.requestTimeoutMs = options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
+    this.discoveryCache = discovery?.cache ?? null;
+    this.discoveryKey = discovery ? discoveryCacheKey(spec) : null;
+    this.shareDiscovery =
+      discovery?.shareDiscovery === true && this.discoveryKey !== null;
     this.observations = options.observations ?? null;
   }
 
@@ -1025,14 +1108,15 @@ class PooledBackendController {
         Surface errors through pending requests rather than leaking URLs/headers.
         */
       };
-      transport.addEventListener("close", () => {
+      // eslint-disable-next-line unicorn/prefer-add-event-listener -- MCP SDK StreamableHTTPClientTransport exposes an onclose callback property, not EventTarget.
+      transport.onclose = () => {
         if (isClosed) {
           return;
         }
 
         isClosed = true;
         this.handleBackendExit(live, `Remote MCP "${this.name}" closed`);
-      });
+      };
       return live;
     }
 
@@ -1234,6 +1318,14 @@ class PooledBackendController {
             ...(isRecord(rawCaps.tasks) && { tasks: rawCaps.tasks })
           }
         };
+        if (this.discoveryCache && this.discoveryKey) {
+          this.discoveryCache.publishInit(this.discoveryKey, {
+            serverInfo: this.cachedInitialize.serverInfo,
+            capabilities: this.cachedInitialize.capabilities,
+            fetchRawTools: async () =>
+              this.fetchRawTools(await this.ensureStarted())
+          });
+        }
         backend.send({
           jsonrpc: "2.0",
           method: "notifications/initialized"
@@ -1258,49 +1350,99 @@ class PooledBackendController {
     return tracked;
   }
 
+  private filterAllowedTools(rawTools: readonly unknown[]): unknown[] {
+    const collected: unknown[] = [];
+    for (const tool of rawTools) {
+      if (
+        isRecord(tool) &&
+        typeof tool.name === "string" &&
+        this.allowed.has(tool.name)
+      ) {
+        collected.push(tool);
+      }
+    }
+    return collected;
+  }
+
+  private async fetchRawTools(backend: LiveBackend): Promise<unknown[]> {
+    const collected: unknown[] = [];
+    let cursor: string | undefined;
+    const seenCursors = new Set<string>();
+    do {
+      const resp = await this.sendRawRequest(
+        backend,
+        "tools/list",
+        cursor ? { cursor } : {},
+        0,
+        null,
+        this.requestTimeoutMs
+      );
+      if (resp.error || !isRecord(resp.result)) {
+        throw new Error(
+          isRecord(resp.error) && typeof resp.error.message === "string"
+            ? resp.error.message
+            : `Backend "${this.name}" failed tools/list`
+        );
+      }
+      if (Array.isArray(resp.result.tools)) {
+        collected.push(...resp.result.tools);
+      }
+      const next =
+        typeof resp.result.nextCursor === "string"
+          ? resp.result.nextCursor
+          : undefined;
+      if (!next || seenCursors.has(next)) break;
+      seenCursors.add(next);
+      cursor = next;
+    } while (cursor);
+    return collected;
+  }
+
+  private async ensureSharedInitialize(): Promise<CachedInitialize> {
+    return this.discoveryCache!.getOrComputeInit(
+      this.discoveryKey!,
+      async () => {
+        await this.ensureStarted();
+        return {
+          serverInfo: this.cachedInitialize!.serverInfo,
+          capabilities: this.cachedInitialize!.capabilities,
+          fetchRawTools: async () =>
+            this.fetchRawTools(await this.ensureStarted())
+        };
+      }
+    );
+  }
+
   private async fetchFilteredTools(): Promise<unknown[]> {
     if (this.cachedTools !== null) return this.cachedTools;
+    if (this.shareDiscovery && this.discoveryCache && this.discoveryKey) {
+      const init = await this.ensureSharedInitialize();
+      this.cachedInitialize ??= {
+        serverInfo: init.serverInfo,
+        capabilities: init.capabilities
+      };
+      const rawTools = await this.discoveryCache.getOrComputeTools(
+        this.discoveryKey,
+        init.fetchRawTools
+      );
+      const collected = this.filterAllowedTools(rawTools);
+      this.cachedTools = collected;
+      return collected;
+    }
     if (this.toolsRefreshInFlight) return this.toolsRefreshInFlight;
     const fetchPromise = (async (): Promise<unknown[]> => {
       const backend = await this.ensureStarted();
-      const collected: unknown[] = [];
-      let cursor: string | undefined;
-      const seenCursors = new Set<string>();
-      do {
-        const resp = await this.sendRawRequest(
-          backend,
-          "tools/list",
-          cursor ? { cursor } : {},
-          0,
-          null,
-          this.requestTimeoutMs
-        );
-        if (resp.error || !isRecord(resp.result)) {
-          throw new Error(
-            isRecord(resp.error) && typeof resp.error.message === "string"
-              ? resp.error.message
-              : `Backend "${this.name}" failed tools/list`
-          );
-        }
-        if (Array.isArray(resp.result.tools)) {
-          for (const tool of resp.result.tools) {
-            if (
-              isRecord(tool) &&
-              typeof tool.name === "string" &&
-              this.allowed.has(tool.name)
-            ) {
-              collected.push(tool);
-            }
-          }
-        }
-        const next =
-          typeof resp.result.nextCursor === "string"
-            ? resp.result.nextCursor
-            : undefined;
-        if (!next || seenCursors.has(next)) break;
-        seenCursors.add(next);
-        cursor = next;
-      } while (cursor);
+      const rawTools = await this.fetchRawTools(backend);
+      if (this.discoveryCache && this.discoveryKey && this.cachedInitialize) {
+        this.discoveryCache.publishInit(this.discoveryKey, {
+          serverInfo: this.cachedInitialize.serverInfo,
+          capabilities: this.cachedInitialize.capabilities,
+          fetchRawTools: async () =>
+            this.fetchRawTools(await this.ensureStarted())
+        });
+        this.discoveryCache.publishTools(this.discoveryKey, rawTools);
+      }
+      const collected = this.filterAllowedTools(rawTools);
       this.cachedTools = collected;
       return collected;
     })();
@@ -1395,7 +1537,15 @@ class PooledBackendController {
         requestedProtocol === "2024-11-05" ? "2024-11-05" : "2025-03-26";
       if (!this.cachedInitialize) {
         try {
-          await this.ensureStarted();
+          if (this.shareDiscovery) {
+            const init = await this.ensureSharedInitialize();
+            this.cachedInitialize = {
+              serverInfo: init.serverInfo,
+              capabilities: init.capabilities
+            };
+          } else {
+            await this.ensureStarted();
+          }
         } catch (error) {
           return errorResponse(
             id,
@@ -1654,13 +1804,19 @@ class ScopedController {
     name: string,
     catalogueSpec: PooledBackendSpec,
     resolve: (message: JsonRecord) => ScopeResolution,
-    options: ChatgptBackendPoolOptions
+    options: ChatgptBackendPoolOptions,
+    catalogueDiscovery?: ControllerDiscoveryOptions
   ) {
     this.name = name;
     this.resolve = resolve;
     this.options = options;
     this.maxScopes = options.maxConversations ?? DEFAULT_MAX_CONVERSATIONS;
-    this.catalogue = new PooledBackendController(name, catalogueSpec, options);
+    this.catalogue = new PooledBackendController(
+      name,
+      catalogueSpec,
+      options,
+      catalogueDiscovery
+    );
   }
 
   private scope(
@@ -1823,7 +1979,8 @@ function conversationScoped(
 function admitted(
   name: string,
   spec: AdmittedBackendSpec,
-  options: ChatgptBackendPoolOptions
+  options: ChatgptBackendPoolOptions,
+  discoveryCache: CatalogueDiscoveryCache
 ): ScopedController {
   const admission = options.admission;
   if (!admission)
@@ -1874,7 +2031,8 @@ function admitted(
         message: { ...message, params: { ...parameters, _meta: forwardedMeta } }
       };
     },
-    options
+    options,
+    { cache: discoveryCache, shareDiscovery: true }
   );
 }
 
@@ -1883,12 +2041,17 @@ type BackendRoute = PooledBackendController | ScopedController;
 function backendRoute(
   name: string,
   spec: PooledBackendSpec | AdmittedBackendSpec,
-  options: ChatgptBackendPoolOptions
+  options: ChatgptBackendPoolOptions,
+  discoveryCache: CatalogueDiscoveryCache
 ): BackendRoute {
-  if (spec.kind === "admitted") return admitted(name, spec, options);
+  if (spec.kind === "admitted")
+    return admitted(name, spec, options, discoveryCache);
   return spec.kind === "stdio" && spec.conversationScopedEnv !== undefined
     ? conversationScoped(name, spec as ConversationScopedSpec, options)
-    : new PooledBackendController(name, spec, options);
+    : new PooledBackendController(name, spec, options, {
+        cache: discoveryCache,
+        shareDiscovery: spec.kind === "remote" && name.startsWith("local.")
+      });
 }
 
 async function readBody(request: IncomingMessage): Promise<string> {
@@ -1916,9 +2079,10 @@ export async function startChatgptBackendPool(
 ): Promise<ChatgptBackendPoolHandle> {
   const config = chatgptBackendPoolConfigSchema.parse(rawConfig);
   const token = options.token?.trim() || randomBytes(32).toString("hex");
+  const discoveryCache = new CatalogueDiscoveryCache();
   const controllers = new Map<string, BackendRoute>();
   for (const [name, spec] of Object.entries(config.servers)) {
-    controllers.set(name, backendRoute(name, spec, options));
+    controllers.set(name, backendRoute(name, spec, options, discoveryCache));
   }
 
   const server = createServer((request, res) => {

@@ -80,8 +80,10 @@ test("the palette finds a resource by name and by what it is for", async ({
   // it is for.
   const results = page.locator("[data-command-palette] a");
   await expect.poll(() => results.count()).toBeGreaterThanOrEqual(14);
-  await expect(results.first()).toContainText("Agents");
-  await expect(results.first()).toContainText("Configured agent roles");
+  await expect(results.first()).toContainText("Overview");
+  await expect(results.filter({ hasText: "Agents" }).first()).toContainText(
+    "Configured agent roles"
+  );
 
   // The purpose is searchable, which is the reason the palette exists.
   await page.locator("#command-palette-input").fill("playtest sessions");
@@ -257,10 +259,13 @@ test("the palette selects a result the keyboard can move", async ({ page }) => {
   // command palette the operator already knows behaves.
   const selected = page.locator("[data-active-item]");
   await expect(selected).toHaveCount(1);
-  await expect(selected).toContainText("Agents");
+  await expect(selected).toContainText("Overview");
 
   // The arrow keys move the selection -- and the focus stays in the field,
   // because the field is where the next keystroke belongs.
+  await page.keyboard.press("ArrowDown");
+  await expect(selected).toHaveCount(1);
+  await expect(selected).toContainText("Agents");
   await page.keyboard.press("ArrowDown");
   await expect(selected).toHaveCount(1);
   await expect(selected).toContainText("Providers");
@@ -308,9 +313,22 @@ test("the open palette is legible, whole and named", async ({ page }) => {
     const findings: string[] = [];
     for (const element of Array.from(overlay.querySelectorAll("*"))) {
       const style = getComputedStyle(element);
-      if (style.display === "none" || style.visibility === "hidden" || !element.checkVisibility()) continue;
+      if (
+        style.display === "none" ||
+        style.visibility === "hidden" ||
+        !element.checkVisibility()
+      )
+        continue;
       const box = element.getBoundingClientRect();
-      if (box.width <= 1 || box.height <= 1 || style.overflowX === "auto" || style.overflowX === "scroll" || (style.textOverflow === "ellipsis") || (element.clientWidth === 0)) continue;
+      if (
+        box.width <= 1 ||
+        box.height <= 1 ||
+        style.overflowX === "auto" ||
+        style.overflowX === "scroll" ||
+        style.textOverflow === "ellipsis" ||
+        element.clientWidth === 0
+      )
+        continue;
       const over = element.scrollWidth - element.clientWidth;
       if (over <= 1) continue;
       findings.push(
@@ -334,8 +352,12 @@ test("the open palette is legible, whole and named", async ({ page }) => {
   const unnamed = nodes
     .filter((node) => {
       const role = node.role?.value;
-      if (role === undefined ||
-        !["link", "button", "textbox", "option", "checkbox"].includes(role) || (node.ignored === true)) return false;
+      if (
+        role === undefined ||
+        !["link", "button", "textbox", "option", "checkbox"].includes(role) ||
+        node.ignored === true
+      )
+        return false;
       return (node.name?.value ?? "").trim() === "";
     })
     .map((node) => node.role?.value ?? "");

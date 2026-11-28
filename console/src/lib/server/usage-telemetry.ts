@@ -76,7 +76,16 @@ A cached read and the instant it stops being served.
 */
 interface CachedUsageTelemetry {
   readonly result: ConsoleUsageResult;
+  readonly observedAt: string;
   readonly expiresAt: number;
+}
+
+/**
+One Usage telemetry read paired with the UTC instant when OpenLIT answered.
+*/
+export interface UsageTelemetrySnapshot {
+  readonly result: ConsoleUsageResult;
+  readonly observedAt: string;
 }
 
 /**
@@ -94,7 +103,7 @@ twice would cost twice as much for the same answer.
 */
 const USAGE_TELEMETRY_IN_FLIGHT = new Map<
   string,
-  Promise<ConsoleUsageResult>
+  Promise<UsageTelemetrySnapshot>
 >();
 
 export interface UsageTelemetryOptions {
@@ -105,6 +114,13 @@ export interface UsageTelemetryOptions {
   minutes for it.
   */
   readonly ttlMs?: number;
+  /**
+  Bypass any cached entry and perform a fresh OpenLIT read.
+
+  Explicit and scheduled refreshes on `/usage` bypass the 5-minute navigation
+  cache while leaving concurrent in-flight deduplication intact.
+  */
+  readonly forceRefresh?: boolean;
   /**
   The clock the cache reads.
   
@@ -151,32 +167,42 @@ export function usageTelemetryCacheKey(
   return JSON.stringify({
     range: selection.range,
     values,
-    ...(selection.customRange !== undefined && { customRange: selection.customRange })
+    ...(selection.customRange !== undefined && {
+      customRange: selection.customRange
+    })
   });
 }
 
 /**
-Read the Usage telemetry, from the cache when the cache can answer.
+Read the Usage telemetry along with its observation timestamp, from the cache
+when the cache can answer and `forceRefresh` is not requested.
 
 The read is the one the whole Console shares. A caller that arrives inside
 the window gets the cached answer; a caller that arrives while a read is
 running shares that read; a caller that arrives after either gets a read
 of its own.
 */
-export function readUsageTelemetry(
+export function readUsageTelemetryWithTimestamp(
   selection: UsageFilterSelection,
   options: UsageTelemetryOptions = {}
-): Promise<ConsoleUsageResult> {
+): Promise<UsageTelemetrySnapshot> {
   const key = usageTelemetryCacheKey(selection);
   const now = options.now ?? Date.now;
   const ttlMs = options.ttlMs ?? USAGE_TELEMETRY_TTL_MS;
-  const cached = USAGE_TELEMETRY_CACHE.get(key);
-  if (cached !== undefined) {
-    if (cached.expiresAt > now()) return Promise.resolve(cached.result);
-    // The entry has expired. It is dropped rather than kept: a stale answer
-    // is not an answer, and leaving it in the map would let a later caller
-    // read it as one.
-    USAGE_TELEMETRY_CACHE.delete(key);
+  if (options.forceRefresh !== true) {
+    const cached = USAGE_TELEMETRY_CACHE.get(key);
+    if (cached !== undefined) {
+      if (cached.expiresAt > now()) {
+        return Promise.resolve({
+          result: cached.result,
+          observedAt: cached.observedAt
+        });
+      }
+      // The entry has expired. It is dropped rather than kept: a stale answer
+      // is not an answer, and leaving it in the map would let a later caller
+      // read it as one.
+      USAGE_TELEMETRY_CACHE.delete(key);
+    }
   }
   const inFlight = USAGE_TELEMETRY_IN_FLIGHT.get(key);
   if (inFlight !== undefined) return inFlight;
@@ -185,6 +211,8 @@ export function readUsageTelemetry(
   const read = load(selection).then(
     (result) => {
       USAGE_TELEMETRY_IN_FLIGHT.delete(key);
+      const completedAt = now();
+      const observedAt = new Date(completedAt).toISOString();
       // Only a read that produced telemetry is cached. A source that was
       // unreachable, refused the credential, or answered with something the
       // Console cannot use is a fact about this moment, not a fact about the
@@ -193,10 +221,11 @@ export function readUsageTelemetry(
       if (result.kind === "ok") {
         USAGE_TELEMETRY_CACHE.set(key, {
           result,
-          expiresAt: now() + ttlMs
+          observedAt,
+          expiresAt: completedAt + ttlMs
         });
       }
-      return result;
+      return { result, observedAt };
     },
     (error: unknown) => {
       // A read that threw is not cached either, but the callers waiting on
@@ -208,6 +237,18 @@ export function readUsageTelemetry(
   );
   USAGE_TELEMETRY_IN_FLIGHT.set(key, read);
   return read;
+}
+
+/**
+Read the Usage telemetry, from the cache when the cache can answer.
+*/
+export function readUsageTelemetry(
+  selection: UsageFilterSelection,
+  options: UsageTelemetryOptions = {}
+): Promise<ConsoleUsageResult> {
+  return readUsageTelemetryWithTimestamp(selection, options).then(
+    (snapshot) => snapshot.result
+  );
 }
 
 /**

@@ -5,6 +5,7 @@ import {
   openSync,
   readFileSync,
   readSync,
+  realpathSync,
   statSync
 } from "node:fs";
 import { homedir } from "node:os";
@@ -15,11 +16,20 @@ import { parseNonNegativeInteger } from "@simulatorlife/autodev-runtime/shared/e
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import { SERVICE_TEMPORARY_FAILURE_EXIT_CODE } from "@simulatorlife/autodev-runtime/shared/service-lifecycle";
 
+import {
+  activateIngressGeneration,
+  generationIdForRelease,
+  queryIngressStatus
+} from "../router/ingress-client.ts";
 import { buildConsole } from "./console-build.ts";
 import {
   LABEL_AUTODEV_CONSOLE as CONSOLE_SERVICE_LABEL,
   resolveConsolePort
 } from "./console-ensure.ts";
+import {
+  ingressControlSocketPath,
+  readIngressControlSecret
+} from "./install-state.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
 import { resolveCommandOnPath } from "./runtime-files.ts";
 import { sleep } from "./sleep.ts";
@@ -52,6 +62,7 @@ interface ManagedServicePaths {
   readonly launcher: string;
   readonly root: "repository" | "codex";
   readonly executable: readonly string[];
+  readonly legacyExecutable?: readonly string[];
 }
 
 const SERVICE_PATHS = {
@@ -63,7 +74,8 @@ const SERVICE_PATHS = {
   [LABEL_MODEL_ROUTER]: {
     launcher: "run-autodev-model-router.sh",
     root: "codex",
-    executable: ["src", "router", "server.ts"]
+    executable: ["src", "router", "ingress-main.ts"],
+    legacyExecutable: ["src", "router", "server.ts"]
   },
   [LABEL_OPENCLI_PROXY]: {
     launcher: "run-autodev-opencli-proxy.sh",
@@ -124,6 +136,14 @@ export interface ServiceRestartDeps {
   merely starting.
   */
   readonly ensureUsageStack: () => Promise<boolean>;
+  /**
+  Attempt zero-downtime generation activation against an already-running Router ingress.
+  Returns `"activated"` (generation cut over or already active), `"unavailable"` (no healthy ingress),
+  or `"failed"` (ingress was reachable but successor activation failed).
+  */
+  readonly tryActivateRouterGeneration?: (
+    options: ServiceRestartOptions
+  ) => Promise<"activated" | "unavailable" | "failed">;
 }
 
 /**
@@ -399,6 +419,64 @@ function defaultDependencies(options: ServiceRestartOptions): ServiceRestartDeps
         );
         return false;
       }
+    },
+    tryActivateRouterGeneration: async (restartOptions) => {
+      const controlSocket = ingressControlSocketPath(restartOptions.codexHome);
+      const token = readIngressControlSecret(restartOptions.codexHome);
+      if (!token) return "unavailable";
+      const status = await queryIngressStatus(controlSocket, token);
+      if (!status) return "unavailable";
+      const workerEntryLink = path.join(
+        restartOptions.codexHome,
+        "src",
+        "router",
+        "server.ts"
+      );
+      if (!existsSync(workerEntryLink)) return "unavailable";
+      let workerEntry: string;
+      let resolvedCodexHome: string;
+      try {
+        workerEntry = realpathSync(workerEntryLink);
+        resolvedCodexHome = realpathSync(restartOptions.codexHome);
+      } catch {
+        return "unavailable";
+      }
+      const releaseDir = path.basename(path.dirname(path.dirname(workerEntry)));
+      if (
+        !workerEntry.startsWith(`${resolvedCodexHome}${path.sep}.src-`) ||
+        !releaseDir.startsWith(".src-")
+      ) {
+        return "unavailable";
+      }
+      const releaseBaseId = releaseDir.replace(/^\.+/u, "");
+      if (
+        status.activeGenerationId &&
+        (status.activeGenerationId === releaseBaseId ||
+          status.activeGenerationId.startsWith(`${releaseBaseId}.`))
+      ) {
+        writeErrorLine(
+          `Router generation ${status.activeGenerationId} already active on zero-downtime ingress.`
+        );
+        return "activated";
+      }
+      const nextGenerationId = generationIdForRelease(workerEntry, status);
+      try {
+        const result = await activateIngressGeneration(
+          controlSocket,
+          token,
+          nextGenerationId,
+          workerEntry
+        );
+        writeErrorLine(
+          `Activated Router generation ${result.activeGenerationId} via zero-downtime ingress (retiring: ${result.retiringGenerationId ?? "none"}).`
+        );
+        return "activated";
+      } catch (error) {
+        writeErrorLine(
+          `Router zero-downtime generation activation failed; keeping active generation ${status.activeGenerationId ?? "none"}: ${errorText(error)}`
+        );
+        return "failed";
+      }
     }
   };
 }
@@ -413,14 +491,23 @@ function plistPath(
 function servicePaths(
   options: ServiceRestartOptions,
   label: ManagedServiceLabel
-): { readonly launcher: string; readonly hook: string } {
-  const service = SERVICE_PATHS[label];
+): {
+  readonly launcher: string;
+  readonly hook: string;
+  readonly legacyHook?: string;
+} {
+  const service = SERVICE_PATHS[label] as ManagedServicePaths & {
+    readonly legacyExecutable?: readonly string[];
+  };
   if (!service) throw new Error(`unknown managed service label: ${label}`);
   const root =
     service.root === "repository" ? options.repositoryRoot : options.codexHome;
   return {
     launcher: path.join(options.codexHome, "hooks", service.launcher),
-    hook: path.join(root, ...service.executable)
+    hook: path.join(root, ...service.executable),
+    ...(service.legacyExecutable && {
+      legacyHook: path.join(root, ...service.legacyExecutable)
+    })
   };
 }
 
@@ -458,8 +545,12 @@ function serviceOwnership(
       // launchd job started it or a dev session did.
       workingDirectory: path.join(options.repositoryRoot, "console")
     };
+  const resolvedPaths = servicePaths(options, label);
   return {
-    commandLinePaths: [servicePaths(options, label).hook],
+    commandLinePaths: [
+      resolvedPaths.hook,
+      ...(resolvedPaths.legacyHook ? [resolvedPaths.legacyHook] : [])
+    ],
     workingDirectory: null
   };
 }
@@ -772,7 +863,13 @@ function readLaunchdJobDump(
   return "";
 }
 
-type ReloadResult = "ok" | "no-plist" | "failed" | "blocked" | "build-failed";
+type ReloadResult =
+  | "ok"
+  | "no-plist"
+  | "failed"
+  | "activation-failed"
+  | "blocked"
+  | "build-failed";
 
 function foreignLabels(
   dependencies: ServiceRestartDeps,
@@ -848,6 +945,16 @@ async function reloadOneLabel(
 ): Promise<ReloadResult> {
   const plist = plistPath(options, label);
   if (!dependencies.fileExists(plist)) return "no-plist";
+  if (
+    label === LABEL_MODEL_ROUTER &&
+    dependencies.launchd.isLoaded(label) &&
+    dependencies.tryActivateRouterGeneration
+  ) {
+    const activationOutcome =
+      await dependencies.tryActivateRouterGeneration(options);
+    if (activationOutcome === "activated") return "ok";
+    if (activationOutcome === "failed") return "activation-failed";
+  }
   try {
     dependencies.launchd.bootout(label);
   } catch (error) {
@@ -885,28 +992,35 @@ reason to wait, not a reason to start the dependent and let it fail.
 async function awaitDependency(
   dependencies: ServiceRestartDeps,
   options: ServiceRestartOptions,
-  label: ManagedServiceLabel
+  label: ManagedServiceLabel,
+  usageStackPromise?: Promise<boolean>
 ): Promise<ServiceCheck> {
-  if (label === CONSOLE_SERVICE_LABEL && !(await dependencies.ensureUsageStack())) {
+  const dependency = SERVICE_DEPENDENCIES[label];
+  const spec =
+    dependency === undefined
+      ? undefined
+      : serviceSpecs(options).find((candidate) => candidate.label === dependency);
+  const [usageReady, dependencyCheck] = await Promise.all([
+    label === CONSOLE_SERVICE_LABEL
+      ? (usageStackPromise ?? dependencies.ensureUsageStack())
+      : Promise.resolve(true),
+    spec === undefined
+      ? Promise.resolve<ServiceCheck>({ ready: true })
+      : checkService(dependencies, options, spec)
+  ]);
+  if (!usageReady) {
     return {
       ready: false,
       reason: "the OpenLIT and ClickHouse Usage services are not serving",
       stderrPath: null
     };
   }
-  const dependency = SERVICE_DEPENDENCIES[label];
-  if (dependency === undefined) return { ready: true };
-  const spec = serviceSpecs(options).find(
-    (candidate) => candidate.label === dependency
-  );
-  if (spec === undefined) return { ready: true };
-  const check = await checkService(dependencies, options, spec);
-  if (!check.ready) {
+  if (!dependencyCheck.ready && dependency !== undefined) {
     writeErrorLine(
-      `${dependency} is not running: ${check.reason}; ${label} was not reloaded because it reads the Model Router's Control API`
+      `${dependency} is not running: ${dependencyCheck.reason}; ${label} was not reloaded because it reads the Model Router's Control API`
     );
   }
-  return check;
+  return dependencyCheck;
 }
 
 function ensureConsoleBuildBeforeLaunch(
@@ -945,11 +1059,24 @@ async function reloadLabels(
   options: ServiceRestartOptions,
   index = 0,
   results: ReloadResult[] = [],
-  logOffsets?: Map<ManagedServiceLabel, number>
+  logOffsets?: Map<ManagedServiceLabel, number>,
+  usageStackPromise?: Promise<boolean>
 ): Promise<ReloadResult[]> {
   const label = MANAGED_SERVICE_LABELS[index];
   if (label === undefined) return results;
-  const dependency = await awaitDependency(dependencies, options, label);
+  // Reconcile the Usage stack concurrently with reloading the Model Router
+  // and OpenCLI proxy so it is ready by the time the Console needs it.
+  const activeUsageStackPromise =
+    usageStackPromise ??
+    (MANAGED_SERVICE_LABELS.includes(CONSOLE_SERVICE_LABEL)
+      ? dependencies.ensureUsageStack()
+      : undefined);
+  const dependency = await awaitDependency(
+    dependencies,
+    options,
+    label,
+    activeUsageStackPromise
+  );
   if (!dependency.ready) {
     writeErrorLine(`${label} was not reloaded: ${dependency.reason}.`);
     results.push("blocked");
@@ -963,7 +1090,14 @@ async function reloadLabels(
     return results;
   }
   results.push(await reloadOneLabel(dependencies, options, label, logOffsets));
-  return reloadLabels(dependencies, options, index + 1, results, logOffsets);
+  return reloadLabels(
+    dependencies,
+    options,
+    index + 1,
+    results,
+    logOffsets,
+    activeUsageStackPromise
+  );
 }
 
 export async function restartServices(
@@ -1015,7 +1149,8 @@ export async function restartServices(
   }
   const logOffsets = new Map<ManagedServiceLabel, number>();
   const results = await reloadLabels(dependencies, options, 0, [], logOffsets);
-  if (results.includes("build-failed")) return 1;
+  if (results.includes("build-failed") || results.includes("activation-failed"))
+    return 1;
   const blockedLabels = MANAGED_SERVICE_LABELS.filter(
     (_label, index) => results[index] === "blocked"
   );

@@ -1,9 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   appendFileSync,
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync
 } from "node:fs";
@@ -38,6 +39,90 @@ export const BRIDGE_ROUTER_AUTH_VARIABLES = {
 } as const;
 
 const LINE_SPLIT_PATTERN = /\r?\n/u;
+const INGRESS_SOCKET_DIR_MAX_BYTES = 76;
+const MIN_INGRESS_CONTROL_TOKEN_LENGTH = 32;
+
+/**
+Private directory holding the Router ingress Unix sockets (`0700`, user-owned).
+Falls back to a deterministic short `/tmp` directory when `$CODEX_HOME` is too
+long for macOS's 104-byte `sun_path` limit.
+*/
+export function ingressSocketDirectory(codexHome: string): string {
+  const preferred = path.join(codexHome, "run", "router-ingress");
+  if (Buffer.byteLength(preferred, "utf8") <= INGRESS_SOCKET_DIR_MAX_BYTES) {
+    return preferred;
+  }
+  const digest = createHash("sha256")
+    .update(preferred)
+    .digest("hex")
+    .slice(0, 16);
+  return path.join("/tmp", `autodev-router-ingress-${digest}`);
+}
+
+export function ingressControlSocketPath(codexHome: string): string {
+  return path.join(ingressSocketDirectory(codexHome), "control.sock");
+}
+
+export function ingressControlTokenFile(codexHome: string): string {
+  return path.join(ingressSocketDirectory(codexHome), "control-token");
+}
+
+export function ingressGenerationsStateFile(codexHome: string): string {
+  return path.join(ingressSocketDirectory(codexHome), "generations-state.json");
+}
+
+export function readIngressControlSecret(codexHome: string): string | null {
+  const tokenFile = ingressControlTokenFile(codexHome);
+  if (!existsSync(tokenFile)) return null;
+  try {
+    const token = readFileSync(tokenFile, "utf8").trim();
+    return token.length >= MIN_INGRESS_CONTROL_TOKEN_LENGTH ? token : null;
+  } catch {
+    return null;
+  }
+}
+
+function ensurePrivateDirectory(directory: string): void {
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  chmodSync(directory, 0o700);
+  const stats = lstatSync(directory);
+  if (
+    !stats.isDirectory() ||
+    (stats.mode & 0o077) !== 0 ||
+    (process.getuid && stats.uid !== process.getuid())
+  ) {
+    throw new Error(
+      `Ingress socket directory must be a private (0700) directory owned by this user: ${directory}`
+    );
+  }
+}
+
+/**
+Provision the Router ingress control directory (`0700`) and per-install bearer
+secret (`0600`), or rotate the secret cleanly when requested.
+*/
+export function ensureIngressControlSecret(
+  codexHome: string,
+  options: { readonly rotate?: boolean } = {}
+): { token: string; created: boolean; rotated: boolean; tokenFile: string } {
+  const socketDirectory = ingressSocketDirectory(codexHome);
+  ensurePrivateDirectory(socketDirectory);
+  const tokenFile = ingressControlTokenFile(codexHome);
+  const existing = options.rotate ? null : readIngressControlSecret(codexHome);
+  if (existing) {
+    chmodSync(tokenFile, 0o600);
+    return { token: existing, created: false, rotated: false, tokenFile };
+  }
+  const hadFile = existsSync(tokenFile);
+  const token = randomBytes(32).toString("hex");
+  atomicWriteSync(tokenFile, `${token}\n`, { mode: 0o600 });
+  return {
+    token,
+    created: !hadFile,
+    rotated: Boolean(options.rotate && hadFile),
+    tokenFile
+  };
+}
 
 function existingToken(filePath: string, variable: string): string | null {
   if (!existsSync(filePath)) return null;

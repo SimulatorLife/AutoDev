@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 /**
 Control API compatibility handshake shared by the Runtime and Console.
 
@@ -165,7 +167,13 @@ export const CONTROL_API_CONTRACT = {
   version: 42
 } as const;
 
-export type ControlApiContractResponse = {
-  readonly schema: typeof CONTROL_API_CONTRACT.schema;
-  readonly version: typeof CONTROL_API_CONTRACT.version;
-};
+export const controlApiContractResponseSchema = z
+  .object({
+    schema: z.literal(CONTROL_API_CONTRACT.schema),
+    version: z.literal(CONTROL_API_CONTRACT.version)
+  })
+  .readonly();
+
+export type ControlApiContractResponse = z.infer<
+  typeof controlApiContractResponseSchema
+>;

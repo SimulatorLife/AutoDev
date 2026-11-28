@@ -164,3 +164,61 @@ test("model router launcher preserves explicit MINIMAX_API_KEY over .env and fal
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("model router launcher provisions ingress secret directory and boots ingress-main inside .src-* releases", () => {
+  const directory = mkdtempSync(join(tmpdir(), "autodev-ingress-launcher-"));
+  try {
+    const codexHome = join(directory, "codex-home");
+    const releaseDir = join(codexHome, ".src-abc12345");
+    mkdirSync(join(releaseDir, "router"), { recursive: true });
+    writeFileSync(join(releaseDir, "router", "server.ts"), "// worker\n");
+    writeFileSync(join(releaseDir, "router", "ingress-main.ts"), "// ingress\n");
+    execFileSync("ln", ["-s", ".src-abc12345", join(codexHome, "src")]);
+
+    writeFileSync(
+      join(codexHome, "openlit-secrets.env"),
+      [
+        `OPENLIT_OTLP_API_KEY=${"a".repeat(64)}`,
+        `AUTODEV_CONTROL_API_TOKEN=${"b".repeat(64)}`
+      ].join("\n") + "\n",
+      { mode: 0o600 }
+    );
+    const fakeNode = join(directory, "node");
+    writeFileSync(
+      fakeNode,
+      [
+        "#!/usr/bin/env bash",
+        // Plain string: `${#...}` is Bash's length expansion, not a template slot.
+        'printf "%s\\n" "$1" "$AUTODEV_ROUTER_INGRESS_CONTROL_SOCKET" "$AUTODEV_ROUTER_RELEASES_DIRECTORY" "$AUTODEV_ROUTER_INITIAL_GENERATION_ID" "$AUTODEV_ROUTER_INITIAL_WORKER_ENTRY" "${#AUTODEV_ROUTER_INGRESS_CONTROL_TOKEN}"',
+        ""
+      ].join("\n"),
+      { mode: 0o700 }
+    );
+    chmodSync(fakeNode, 0o700);
+    const result = spawnSync(
+      "bash",
+      [join(repositoryRoot, "scripts/run-autodev-model-router.sh")],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          HOME: directory,
+          CODEX_HOME: codexHome,
+          AUTODEV_REPO_ROOT: repositoryRoot,
+          AUTODEV_NODE_BIN: fakeNode,
+          AUTODEV_SKIP_LAUNCHCTL: "1"
+        }
+      }
+    );
+    assert.equal(result.status, 0, result.stderr);
+    const lines = result.stdout.trim().split("\n");
+    assert.ok(lines[0]?.endsWith("/src/router/ingress-main.ts"));
+    assert.ok(lines[1]?.endsWith("/control.sock"));
+    assert.match(lines[2] ?? "", /codex-home$/u);
+    assert.equal(lines[3], "src-abc12345");
+    assert.ok(lines[4]?.endsWith("/.src-abc12345/router/server.ts"));
+    assert.ok(Number(lines[5]) >= 64);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

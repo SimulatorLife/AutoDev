@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import {
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -19,10 +20,16 @@ import {
   OpencliBrowser,
   OpencliBrowserUnavailableError,
   type OpencliCdpCommand,
+  OpencliSitePageNotOpenError,
   resolveOpencliBrowserExecutable
 } from "../src/providers/opencli-browser.ts";
 
-type Target = { id: string; webSocketDebuggerUrl: string };
+type Target = {
+  id: string;
+  webSocketDebuggerUrl: string;
+  type?: string;
+  url?: string;
+};
 type FakeChild = ChildProcess &
   EventEmitter & { exitCode: number | null; killed: boolean };
 
@@ -38,6 +45,7 @@ function fakeChild(): FakeChild {
     queueMicrotask(() => child.emit("close", child.exitCode, signal));
     return true;
   }) as ChildProcess["kill"];
+  child.unref = () => child;
   return child;
 }
 
@@ -52,6 +60,7 @@ async function fixture(
     readonly setListStatus: (status: number) => void;
     readonly setVersionStatus: (status: number) => void;
     readonly setNewFailures: (count: number) => void;
+    readonly newRequests: () => number;
     readonly pauseNextRequest: (pathname: string) => {
       entered: Promise<void>;
       release(): void;
@@ -68,6 +77,7 @@ async function fixture(
   let listStatus = 200;
   let versionStatus = 200;
   let newFailures = 0;
+  let newRequests = 0;
   let nextId = 0;
   const port = 9333;
   const pauses = new Map<string, () => Promise<void>>();
@@ -88,6 +98,7 @@ async function fixture(
       return Response.json(snapshot, { status: listStatus });
     }
     if (url.pathname === "/json/new") {
+      newRequests += 1;
       if (newFailures > 0) {
         newFailures -= 1;
         return new Response(null, { status: 503 });
@@ -125,7 +136,8 @@ async function fixture(
       options: unknown
     ) => {
       arguments_.push([command, ...commandArguments]);
-      assert.equal((options as { detached: boolean }).detached, false);
+      // The browser runs in its own process group so it outlives the bridge.
+      assert.equal((options as { detached: boolean }).detached, true);
       child = fakeChild();
       children.push(child);
       writeFileSync(
@@ -152,6 +164,7 @@ async function fixture(
       setNewFailures: (count) => {
         newFailures = count;
       },
+      newRequests: () => newRequests,
       pauseNextRequest(pathname) {
         const entered = Promise.withResolvers<void>();
         const resume = Promise.withResolvers<void>();
@@ -199,28 +212,23 @@ test("starts visible Chromium with a private profile, ephemeral loopback CDP, an
   });
 });
 
-test("concurrent startup does not expose a partially created target pool", async () => {
-  await fixture(async ({ browser, pauseNextRequest, children, targets }) => {
-    const firstTarget = pauseNextRequest("/json/new");
-    const initializing = browser.initialize();
-    await firstTarget.entered;
-    const turn = browser.run(
+test("concurrent first commands share one browser launch", async () => {
+  await fixture(async ({ browser, children, targets }) => {
+    const chatgpt = browser.run(
+      "chatgpt",
+      AbortSignal.timeout(1000),
+      async (endpoint) => endpoint
+    );
+    const gemini = browser.run(
       "gemini",
       AbortSignal.timeout(1000),
-      async (endpoint) => {
-        assert.equal(targets.length, 3);
-        return endpoint;
-      }
+      async (endpoint) => endpoint
     );
-    try {
-      assert.equal(browser.isReady, false);
-    } finally {
-      firstTarget.release();
-    }
-    await initializing;
-    assert.ok(await turn);
+    // Neither command may use the browser before its launch completes.
+    assert.equal(browser.isRunning, false);
+    assert.notEqual(await chatgpt, await gemini);
     assert.equal(children.length, 1);
-    assert.equal(browser.isReady, true);
+    assert.equal(targets.length, 2);
   });
 });
 
@@ -302,14 +310,14 @@ test("a stale target inventory cannot replace a concurrently recovered slot", as
       staleList.release();
       // Let the stale response resume while the replacement is leased.
       await delay(0);
-      assert.equal(targets.length, 3);
+      assert.equal(targets.length, 1);
     } finally {
       staleList.release();
       release.resolve();
     }
     assert.equal(await second, replacement);
     assert.equal(await first, replacement);
-    assert.equal(targets.length, 3);
+    assert.equal(targets.length, 1);
   });
 });
 
@@ -367,7 +375,7 @@ test("foreground lease activates the exact target and excludes competing native 
         entered();
         await hold;
       },
-      true
+      { requiresVisiblePage: true }
     );
     await started;
     const waiting = new AbortController();
@@ -377,7 +385,7 @@ test("foreground lease activates the exact target and excludes competing native 
       async () => {
         assert.fail("A competing turn must not steal foreground");
       },
-      true
+      { requiresVisiblePage: true }
     );
     waiting.abort();
     await assert.rejects(second, /cancelled/u);
@@ -388,7 +396,7 @@ test("foreground lease activates the exact target and excludes competing native 
       "gemini",
       AbortSignal.timeout(1000),
       async (endpoint) => endpoint,
-      true
+      { requiresVisiblePage: true }
     );
     assert.equal(
       activatedTargets.at(-1),
@@ -442,18 +450,119 @@ test("cancels while waiting for a leased site tab", async () => {
   });
 });
 
-test("eager initialization makes the browser ready before any provider command", async () => {
-  await fixture(async ({ browser }) => {
-    assert.equal(browser.isReady, false);
-    await browser.initialize();
-    assert.equal(browser.isReady, true);
+test("nothing opens until a command needs a site page, and then only that site's tab", async () => {
+  await fixture(async ({ browser, args, targets }) => {
+    assert.equal(args.length, 0);
+    assert.equal(browser.isRunning, false);
+    // Not running is not a fault: health stays green until a launch fails.
+    assert.equal(browser.unavailableReason, null);
     await browser.run("gemini", AbortSignal.timeout(1000), async () => "ready");
+    assert.equal(args.length, 1);
+    assert.equal(targets.length, 1);
+    // The idle tab is reused by the next turn instead of opening another.
+    await browser.run("gemini", AbortSignal.timeout(1000), async () => "again");
+    assert.equal(targets.length, 1);
+  });
+});
+
+test("reuses an open site tab and the startup blank tab before opening a new one", async () => {
+  const navigations: Array<{ wsUrl: string; url: unknown }> = [];
+  await fixture(
+    async ({ browser, targets, newRequests }) => {
+      targets.push(
+        {
+          id: "startup",
+          type: "page",
+          url: "chrome://newtab/",
+          webSocketDebuggerUrl: "ws://127.0.0.1:9333/devtools/page/startup"
+        },
+        {
+          id: "signed-in",
+          type: "page",
+          url: "https://chatgpt.com/c/abc",
+          webSocketDebuggerUrl: "ws://127.0.0.1:9333/devtools/page/signed-in"
+        },
+        {
+          id: "worker",
+          type: "service_worker",
+          url: "https://gemini.google.com/sw.js",
+          webSocketDebuggerUrl: "ws://127.0.0.1:9333/devtools/page/worker"
+        }
+      );
+      const hold = Promise.withResolvers<void>();
+      const chatgpt = browser.run(
+        "chatgpt",
+        AbortSignal.timeout(1000),
+        async (endpoint) => {
+          await hold.promise;
+          return endpoint;
+        }
+      );
+      const gemini = await browser.run(
+        "gemini",
+        AbortSignal.timeout(1000),
+        async (endpoint) => endpoint
+      );
+      assert.equal(gemini, "ws://127.0.0.1:9333/devtools/page/startup");
+      assert.deepEqual(navigations, [
+        { wsUrl: gemini, url: "https://gemini.google.com/app" }
+      ]);
+      assert.equal(newRequests(), 0);
+      // A second concurrent ChatGPT turn needs a second tab: only now is one opened.
+      const second = await browser.run(
+        "chatgpt",
+        AbortSignal.timeout(1000),
+        async (endpoint) => endpoint
+      );
+      assert.equal(newRequests(), 1);
+      hold.resolve();
+      assert.equal(
+        await chatgpt,
+        "ws://127.0.0.1:9333/devtools/page/signed-in"
+      );
+      assert.notEqual(second, await chatgpt);
+    },
+    {
+      cdpCommand: async (wsUrl, method, parameters = {}) => {
+        if (method === "Page.navigate") {
+          navigations.push({ wsUrl, url: parameters.url });
+        }
+        return {};
+      }
+    }
+  );
+});
+
+test("a background probe never launches the browser or opens a site page", async () => {
+  await fixture(async ({ browser, args, targets, newRequests }) => {
+    const probe = (): Promise<string> =>
+      browser.run(
+        "gemini",
+        AbortSignal.timeout(1000),
+        async (endpoint) => endpoint,
+        { shouldOpenPage: false }
+      );
+    await assert.rejects(probe(), OpencliSitePageNotOpenError);
+    assert.equal(args.length, 0);
+    // A running browser without a Gemini tab still opens none for a probe.
+    await browser.run("chatgpt", AbortSignal.timeout(1000), async () => "ok");
+    await assert.rejects(probe(), OpencliSitePageNotOpenError);
+    assert.equal(newRequests(), 1);
+    assert.equal(browser.unavailableReason, null);
+    // Once a turn opened the Gemini tab, the probe runs on it.
+    const opened = await browser.run(
+      "gemini",
+      AbortSignal.timeout(1000),
+      async (endpoint) => endpoint
+    );
+    assert.equal(await probe(), opened);
+    assert.equal(targets.length, 2);
+    assert.equal(args.length, 1);
   });
 });
 
 test("site command errors propagate unchanged and do not mark the browser unavailable", async () => {
   await fixture(async ({ browser }) => {
-    await browser.initialize();
     const siteError = new OpencliCommandError(
       "ChatGPT requires an authenticated session",
       "AUTH_REQUIRED",
@@ -465,12 +574,12 @@ test("site command errors propagate unchanged and do not mark the browser unavai
       }),
       (error) => error === siteError
     );
-    assert.equal(browser.isReady, true);
+    assert.equal(browser.isRunning, true);
     assert.equal(browser.unavailableReason, null);
   });
 });
 
-test("does not leave Chromium running after shutdown", async () => {
+test("shutdown leaves the browser and its tabs for the next bridge", async () => {
   await fixture(async ({ browser, args, children }) => {
     assert.equal(args.length, 0);
     await browser.run(
@@ -478,51 +587,22 @@ test("does not leave Chromium running after shutdown", async () => {
       AbortSignal.timeout(1000),
       async () => "started"
     );
-    assert.equal(browser.isReady, true);
+    assert.equal(browser.isRunning, true);
     await browser.close();
-    assert.equal(browser.isReady, false);
-    assert.equal(children[0]?.killed, true);
+    assert.equal(browser.isRunning, false);
+    assert.equal(children[0]?.killed, false);
   });
 });
 
-test("stopping the dedicated browser waits for leased commands, and the next run starts it again", async () => {
-  await fixture(async ({ browser, args, children }) => {
-    let release: () => void = () => undefined;
-    const held = browser.run(
-      "chatgpt",
-      AbortSignal.timeout(1000),
-      () =>
-        new Promise<string>((resolve) => {
-          release = () => resolve("done");
-        })
-    );
-    // Let the command take its lease before the setting changes.
-    while (args.length === 0) await delay(5);
-    await delay(20);
-    await browser.stop();
-    assert.equal(children[0]?.killed, false, "a leased command was cut off");
-    release();
-    assert.equal(await held, "done");
-    await delay(20);
-    assert.equal(children[0]?.killed, true);
-    assert.equal(browser.isReady, false);
-    assert.equal(browser.unavailableReason, null);
-    // Unlike shutdown, the owner stays usable.
-    await browser.run("gemini", AbortSignal.timeout(1000), async () => "again");
-    assert.equal(args.length, 2);
-    assert.equal(browser.isReady, true);
-  });
-});
-
-test("cleans up and retries after partial tab-pool startup", async () => {
+test("a failed tab open is reported and the next command retries it in the same browser", async () => {
   await fixture(async ({ browser, args, children, setNewFailures }) => {
     setNewFailures(1);
     await assert.rejects(
       browser.run("chatgpt", AbortSignal.timeout(1000), async () => "bad"),
       OpencliBrowserUnavailableError
     );
-    assert.equal(browser.isReady, false);
-    assert.equal(children[0]?.killed, true);
+    assert.match(browser.unavailableReason ?? "", /could not create/u);
+    assert.equal(children[0]?.killed, false);
     assert.equal(
       await browser.run(
         "chatgpt",
@@ -531,7 +611,8 @@ test("cleans up and retries after partial tab-pool startup", async () => {
       ),
       "recovered"
     );
-    assert.equal(args.length, 2);
+    assert.equal(browser.unavailableReason, null);
+    assert.equal(args.length, 1);
   });
 });
 
@@ -547,8 +628,11 @@ test("browser process startup failure is returned as unavailable without escapin
     spawnBrowser: (() => child) as never
   });
   try {
-    await browser.initialize();
-    assert.equal(browser.isReady, false);
+    await assert.rejects(
+      browser.run("gemini", AbortSignal.timeout(1000), async () => "bad"),
+      OpencliBrowserUnavailableError
+    );
+    assert.equal(browser.isRunning, false);
     assert.match(
       browser.unavailableReason ?? "",
       /exited before CDP became ready/u
@@ -571,13 +655,12 @@ test("fails closed when CDP target listing is unavailable", async () => {
 
 test("reports CDP transport loss as unavailable and recovers on the next lease", async () => {
   await fixture(async ({ browser, setListStatus }) => {
-    await browser.initialize();
+    await browser.run("chatgpt", AbortSignal.timeout(1000), async () => "ok");
     setListStatus(503);
     await assert.rejects(
       browser.run("chatgpt", AbortSignal.timeout(1000), async () => "bad"),
       OpencliBrowserUnavailableError
     );
-    assert.equal(browser.isReady, false);
     assert.equal(
       browser.unavailableReason,
       "dedicated opencli browser target list unavailable"
@@ -585,7 +668,6 @@ test("reports CDP transport loss as unavailable and recovers on the next lease",
 
     setListStatus(200);
     await browser.run("chatgpt", AbortSignal.timeout(1000), async () => "ok");
-    assert.equal(browser.isReady, true);
     assert.equal(browser.unavailableReason, null);
   });
 });
@@ -607,7 +689,94 @@ test("resolver rejects cache paths outside AutoDev's dedicated provider runtime"
   );
 });
 
-test("creates new-window CDP targets and restores minimized windows before activation", async () => {
+test("adopts the browser and site tabs a previous bridge left running instead of launching another", async () => {
+  const root = mkdtempSync(join(tmpdir(), "opencli-browser-adopt-"));
+  const profile = join(root, "private-profile");
+  const port = 9555;
+  const browserPath = "/devtools/browser/left-running";
+  const spawned: string[][] = [];
+  const created: string[] = [];
+  mkdirSync(profile, { recursive: true });
+  writeFileSync(join(profile, "DevToolsActivePort"), `${port}\n${browserPath}`);
+  const browser = new OpencliBrowser({
+    executable: "/dedicated/chromium",
+    siteTabs: { chatgpt: 1, gemini: 1 },
+    profileDirectory: profile,
+    readinessTimeoutMs: 50,
+    fetch: (async (input) => {
+      const url = new URL(typeof input === "string" ? input : input.toString());
+      if (url.pathname === "/json/version") {
+        return Response.json({
+          webSocketDebuggerUrl: `ws://127.0.0.1:${port}${browserPath}`
+        });
+      }
+      if (url.pathname === "/json/list") {
+        return Response.json([
+          {
+            id: "kept",
+            type: "page",
+            url: "https://gemini.google.com/app/abc",
+            webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/page/kept`
+          }
+        ]);
+      }
+      return new Response(null, { status: 404 });
+    }) as typeof fetch,
+    cdpCommand: async (_wsUrl, method) => {
+      if (method === "Target.createTarget") created.push(method);
+      return {};
+    },
+    spawnBrowser: ((command: string, commandArguments: readonly string[]) => {
+      spawned.push([command, ...commandArguments]);
+      const child = fakeChild();
+      child.exitCode = 1;
+      return child;
+    }) as never
+  });
+  try {
+    assert.equal(
+      await browser.run(
+        "gemini",
+        AbortSignal.timeout(1000),
+        async (endpoint) => endpoint
+      ),
+      `ws://127.0.0.1:${port}/devtools/page/kept`
+    );
+    assert.equal(spawned.length, 0);
+    assert.equal(created.length, 0);
+  } finally {
+    await browser.close();
+  }
+  // A listener on the same port that is not this profile's browser is never adopted.
+  const stranger = new OpencliBrowser({
+    executable: "/dedicated/chromium",
+    siteTabs: { chatgpt: 1, gemini: 1 },
+    profileDirectory: profile,
+    readinessTimeoutMs: 50,
+    fetch: (async () =>
+      Response.json({
+        webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/browser/other`
+      })) as typeof fetch,
+    spawnBrowser: ((command: string, commandArguments: readonly string[]) => {
+      spawned.push([command, ...commandArguments]);
+      const child = fakeChild();
+      child.exitCode = 1;
+      return child;
+    }) as never
+  });
+  try {
+    await assert.rejects(
+      stranger.run("gemini", AbortSignal.timeout(1000), async () => "bad"),
+      OpencliBrowserUnavailableError
+    );
+    assert.equal(spawned.length, 1);
+  } finally {
+    await stranger.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("opens CDP tabs in the existing window and restores minimized windows before activation", async () => {
   const root = mkdtempSync(join(tmpdir(), "opencli-browser-cdp-"));
   const profile = join(root, "private-profile");
   const targets: Target[] = [];
@@ -663,15 +832,14 @@ test("creates new-window CDP targets and restores minimized windows before activ
     }) as never
   });
   try {
-    await browser.run(
-      "chatgpt",
-      AbortSignal.timeout(1000),
-      async () => "ok",
-      true
-    );
+    await browser.run("chatgpt", AbortSignal.timeout(1000), async () => "ok", {
+      requiresVisiblePage: true
+    });
     const created = cdpCalls.filter((c) => c.method === "Target.createTarget");
-    assert.equal(created.length, 2);
-    assert.equal(created[0]?.params.newWindow, true);
+    // Only the site the command needs, and as a tab rather than a window.
+    assert.equal(created.length, 1);
+    assert.equal(created[0]?.params.url, "https://chatgpt.com/");
+    assert.equal(created[0]?.params.newWindow, undefined);
     assert.ok(
       cdpCalls.some(
         (c) =>
@@ -706,14 +874,14 @@ test("releasing foreground after submission allows concurrent visible turns acro
         });
         return endpoint;
       },
-      true
+      { requiresVisiblePage: true }
     );
     await submitted;
     const secondEndpoint = await browser.run(
       "gemini",
       AbortSignal.timeout(1000),
       async (endpoint) => endpoint,
-      true
+      { requiresVisiblePage: true }
     );
     assert.ok(secondEndpoint.includes("/devtools/page/"));
     finishFirst();
@@ -739,12 +907,14 @@ test("unexpected Chromium exit clears stale leases and recovers on the next run"
         });
         return "stale";
       },
-      true
+      { requiresVisiblePage: true }
     );
     await inFirst;
     children[0]!.exitCode = 1;
     children[0]!.emit("close", 1, null);
-    assert.equal(browser.isReady, false);
+    assert.equal(browser.isRunning, false);
+    // The operator quitting the browser is not a fault.
+    assert.equal(browser.unavailableReason, null);
 
     // Next turn restarts Chromium and takes foreground without being blocked by
     // the crashed generation's lease, even before the stale callback resolves.
@@ -752,14 +922,14 @@ test("unexpected Chromium exit clears stale leases and recovers on the next run"
       "gemini",
       AbortSignal.timeout(1000),
       async () => "recovered",
-      true
+      { requiresVisiblePage: true }
     );
     assert.equal(second, "recovered");
-    assert.equal(browser.isReady, true);
+    assert.equal(browser.isRunning, true);
     releaseFirst();
     assert.equal(await first, "stale");
     // Late completion of crashed-generation callback does not drop ready state.
-    assert.equal(browser.isReady, true);
+    assert.equal(browser.isRunning, true);
   });
 });
 
@@ -771,7 +941,7 @@ test("a foreground lease raises the leased page so native input is dispatched", 
         "chatgpt",
         AbortSignal.timeout(2000),
         async (endpoint) => endpoint,
-        true
+        { requiresVisiblePage: true }
       );
       const raised = cdpCalls.find(
         (call) => call.method === "Page.bringToFront"
@@ -795,12 +965,9 @@ test("a foreground lease reports a page that stayed hidden", async () => {
   await fixture(
     async ({ browser }) => {
       await assert.rejects(
-        browser.run(
-          "chatgpt",
-          AbortSignal.timeout(2000),
-          async () => "ok",
-          true
-        ),
+        browser.run("chatgpt", AbortSignal.timeout(2000), async () => "ok", {
+          requiresVisiblePage: true
+        }),
         (error: unknown) => {
           assert.ok(error instanceof OpencliBrowserUnavailableError);
           assert.match(error.message, /not visible/u);
@@ -823,7 +990,7 @@ test("a foreground lease continues when the page visibility cannot be observed",
         "chatgpt",
         AbortSignal.timeout(2000),
         async () => "ok",
-        true
+        { requiresVisiblePage: true }
       );
       assert.equal(result, "ok");
     },

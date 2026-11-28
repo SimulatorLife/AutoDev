@@ -5,15 +5,27 @@ Stable launchd entrypoint. Install this file and its local ingress modules
 in an immutable release; never run it from a mutable checkout in production.
 Worker code is loaded only in independently spawned child processes.
 */
-import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
+import { createServer, type Server } from "node:http";
 
+import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
+import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
+
+import { configuredControlApiListener } from "./control-plane-config.ts";
 import { RouterIngress } from "./ingress.ts";
 import { RouterIngressSupervisor } from "./ingress-control.ts";
 import { recordRouterIngressEvent } from "./telemetry.ts";
+import { resolvePublicXacpxSocketPath } from "./xacpx-ipc-proxy.ts";
+
+export interface RouterIngressProcessHandle {
+  ingress: RouterIngress;
+  supervisor: RouterIngressSupervisor;
+  controlApiServer: Server | null;
+  close(): Promise<void>;
+}
 
 export async function startRouterIngressProcess(
   environment: NodeJS.ProcessEnv = process.env
-): Promise<{ ingress: RouterIngress; supervisor: RouterIngressSupervisor }> {
+): Promise<RouterIngressProcessHandle> {
   const controlSocket = environment.AUTODEV_ROUTER_INGRESS_CONTROL_SOCKET;
   const controlToken = environment.AUTODEV_ROUTER_INGRESS_CONTROL_TOKEN;
   const releasesDirectory = environment.AUTODEV_ROUTER_RELEASES_DIRECTORY;
@@ -30,6 +42,12 @@ export async function startRouterIngressProcess(
   const drainTimeout = environment.AUTODEV_ROUTER_INGRESS_DRAIN_MS;
   const workerShutdownTimeout =
     environment.AUTODEV_ROUTER_INGRESS_WORKER_SHUTDOWN_MS;
+  const configuredXacpx =
+    environment.AUTODEV_XACPX_ORCHESTRATION_SOCKET?.trim();
+  const xacpxSocketPath =
+    configuredXacpx === "none"
+      ? null
+      : resolvePublicXacpxSocketPath(undefined, environment);
   const ingress = new RouterIngress({
     onEvent: recordRouterIngressEvent,
     ...(drainTimeout !== undefined && {
@@ -41,18 +59,93 @@ export async function startRouterIngressProcess(
     controlSocket,
     controlToken,
     releasesDirectory,
+    xacpxSocketPath,
     ...(workerShutdownTimeout !== undefined && {
       workerShutdownTimeoutMs: Number(workerShutdownTimeout)
     })
   });
   await supervisor.listen();
+
+  const controlListener = configuredControlApiListener(port, environment);
+  let controlApiServer: Server | null = null;
   try {
     await ingress.listen(port, host);
+    if (controlListener) {
+      const boundControlApiServer = createServer((request, response) =>
+        ingress.forwardActiveOnly(request, response)
+      );
+      boundControlApiServer.keepAliveTimeout = 65_000;
+      boundControlApiServer.headersTimeout = 66_000;
+      await new Promise<void>((resolve, reject) => {
+        boundControlApiServer.once("error", reject);
+        boundControlApiServer.listen(
+          controlListener.port,
+          controlListener.host,
+          () => {
+            boundControlApiServer.off("error", reject);
+            resolve();
+          }
+        );
+      });
+      controlApiServer = boundControlApiServer;
+      writeErrorLine(
+        `AutoDev Control API ingress listening at http://${controlListener.host}:${controlListener.port}`
+      );
+    }
   } catch (error) {
-    supervisor.controlServer.close();
+    if (controlApiServer?.listening) {
+      controlApiServer.closeAllConnections();
+      await new Promise<void>((resolve) =>
+        controlApiServer!.close(() => resolve())
+      );
+    }
+    if (ingress.server.listening) {
+      ingress.server.closeAllConnections();
+      await new Promise<void>((resolve) => ingress.server.close(() => resolve()));
+    }
+    await supervisor.close().catch(() => undefined);
     throw error;
   }
-  return { ingress, supervisor };
+
+  let closed = false;
+  const close = async (): Promise<void> => {
+    if (closed) return;
+    closed = true;
+    if (controlApiServer?.listening) {
+      controlApiServer.closeAllConnections();
+      await new Promise<void>((resolve) =>
+        controlApiServer!.close(() => resolve())
+      );
+    }
+    if (ingress.server.listening) {
+      ingress.server.closeAllConnections();
+      await new Promise<void>((resolve) => ingress.server.close(() => resolve()));
+    }
+    await supervisor.close();
+  };
+
+  if (isEntryPoint(import.meta.url)) {
+    const shutdown = () => {
+      void close().finally(() => process.exit(0));
+    };
+    process.once("SIGINT", shutdown);
+    process.once("SIGTERM", shutdown);
+  }
+
+  const initialGenerationId =
+    environment.AUTODEV_ROUTER_INITIAL_GENERATION_ID?.trim();
+  const initialWorkerEntry =
+    environment.AUTODEV_ROUTER_INITIAL_WORKER_ENTRY?.trim();
+  if (initialGenerationId && initialWorkerEntry) {
+    try {
+      await supervisor.activate(initialGenerationId, initialWorkerEntry);
+    } catch (error) {
+      await close().catch(() => undefined);
+      throw error;
+    }
+  }
+
+  return { ingress, supervisor, controlApiServer, close };
 }
 
 if (isEntryPoint(import.meta.url)) {

@@ -24,9 +24,11 @@ started still import from it.
 */
 import { createHash } from "node:crypto";
 import {
+  existsSync,
   lstatSync,
   mkdirSync,
   readdirSync,
+  readFileSync,
   readlinkSync,
   renameSync,
   rmSync,
@@ -35,6 +37,8 @@ import {
   writeFileSync
 } from "node:fs";
 import path from "node:path";
+
+import { ingressGenerationsStateFile } from "./install-state.ts";
 
 /**
 The `$CODEX_HOME` entry every launcher, hook and service imports through.
@@ -114,13 +118,16 @@ export function currentRuntimeSourceGeneration(
 
 /**
 Publish `tree` as a generation, make it current, and collect generations
-past their retention. Idempotent: an install whose tree is already current
-changes nothing.
+past their retention while never collecting protected live or rollback
+generations. Idempotent: an install whose tree is already current changes nothing.
 */
 export function materializeRuntimeSourceGeneration(
   codexHome: string,
   tree: RuntimeSourceTree,
-  now = Date.now()
+  now = Date.now(),
+  protectedGenerations: ReadonlySet<string> = resolveProtectedRuntimeGenerations(
+    codexHome
+  )
 ): RuntimeSourceGenerationResult {
   const generation = runtimeSourceGenerationName(tree);
   const previous = currentRuntimeSourceGeneration(codexHome);
@@ -133,8 +140,43 @@ export function materializeRuntimeSourceGeneration(
   return {
     generation,
     swapped: isSwapped,
-    collected: collectGenerations(codexHome, generation, now)
+    collected: collectGenerations(
+      codexHome,
+      generation,
+      now,
+      protectedGenerations
+    )
   };
+}
+
+/**
+Read live active/retiring/rollback release directory names recorded by the
+Router ingress supervisor so garbage collection never deletes them or their
+dependency closures.
+*/
+export function resolveProtectedRuntimeGenerations(
+  codexHome: string
+): Set<string> {
+  const protectedSet = new Set<string>();
+  const current = currentRuntimeSourceGeneration(codexHome);
+  if (current) protectedSet.add(current);
+  const stateFile = ingressGenerationsStateFile(codexHome);
+  if (!existsSync(stateFile)) return protectedSet;
+  try {
+    const parsed = JSON.parse(readFileSync(stateFile, "utf8")) as {
+      protectedReleases?: unknown;
+    };
+    if (Array.isArray(parsed.protectedReleases)) {
+      for (const item of parsed.protectedReleases) {
+        if (typeof item === "string" && item.startsWith(GENERATION_PREFIX)) {
+          protectedSet.add(item);
+        }
+      }
+    }
+  } catch {
+    /* ignore unreadable or mid-write state file */
+  }
+  return protectedSet;
 }
 
 /**
@@ -209,7 +251,8 @@ directories and swap links of installs that died before finishing.
 function collectGenerations(
   codexHome: string,
   current: string,
-  now: number
+  now: number,
+  protectedGenerations: ReadonlySet<string> = new Set()
 ): string[] {
   const collected: string[] = [];
   for (const name of readdirSync(codexHome)) {
@@ -222,6 +265,7 @@ function collectGenerations(
     } else if (
       !name.startsWith(GENERATION_PREFIX) ||
       name === current ||
+      protectedGenerations.has(name) ||
       now - lstatSync(entry).mtimeMs < GENERATION_RETENTION_MS
     ) {
       continue;

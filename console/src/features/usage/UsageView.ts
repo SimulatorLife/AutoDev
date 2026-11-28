@@ -6,6 +6,8 @@ import {
   type RuleSyncValidationIssue,
   USAGE_VARIABLE_IDS,
   type UsageActiveSessions,
+  type UsageAgentLaunchMetrics,
+  type UsageAgentLaunchSummary,
   type UsageFilterOptions,
   type UsageFilterSelection,
   type UsageGitChangeMetrics,
@@ -61,6 +63,10 @@ import {
   MUTED_BODY_CLASS,
   MUTED_META_CLASS
 } from "../../components/ui/text-classes.ts";
+import {
+  UsageFreshnessControls,
+  type UsageFreshnessProperties
+} from "./UsageFreshnessControls.ts";
 
 /**
 Observability Usage view.
@@ -115,6 +121,10 @@ export interface UsageViewProps {
   rather than an empty server list.
   */
   readonly mcpInventory?: UsageMcpInventory | undefined;
+  /**
+  Observation/freshness metadata and live auto-refresh configuration.
+  */
+  readonly freshness?: UsageFreshnessProperties | undefined;
 }
 
 export type UsageMcpInventory =
@@ -687,7 +697,8 @@ function renderFilterControls(
 function usageHref(selection: UsageFilterSelection, spanId?: string): string {
   const parameters = new URLSearchParams({ range: selection.range });
   for (const id of USAGE_VARIABLE_IDS) {
-    for (const value of selection.values[id] ?? []) parameters.append(id, value);
+    for (const value of selection.values[id] ?? [])
+      parameters.append(id, value);
   }
   if (selection.customRange) {
     parameters.set("startDate", selection.customRange.startDate);
@@ -803,7 +814,10 @@ function traceSpanColumns(
             href: usageHref(selection, span.spanId),
             className: `font-mono text-xs ${ACTION_LINK_CLASS}`,
             "aria-label": `Inspect span ${span.spanId}${span.spanId === selectedSpanId ? ", selected" : ""}`,
-            ...((span.spanId === selectedSpanId) && { "aria-current": "true", "data-trace-selected": "true" })
+            ...(span.spanId === selectedSpanId && {
+              "aria-current": "true",
+              "data-trace-selected": "true"
+            })
           },
           span.spanId
         ),
@@ -1076,6 +1090,250 @@ Render the historical (non-Active-Sessions) metrics widgets. Split out of
 add to that function's cognitive complexity; `UsageView` only decides
 *whether* to call this, never *what* it renders.
 */
+function launchSummaryCardValue(
+  isApplicable: boolean,
+  value: number | null,
+  formatter: (candidate: number | null) => string = formatCount
+): string {
+  return isApplicable ? formatter(value) : "Not applicable";
+}
+
+function renderLaunchSummaryGrid(
+  kind: "root" | "child",
+  title: string,
+  summary: UsageAgentLaunchSummary,
+  isPreSelectionApplicable: boolean
+): React.JSX.Element {
+  return React.createElement(
+    "div",
+    {
+      className: PAGE_SECTION_STACK_CLASS,
+      "data-agent-launches-kind": kind
+    },
+    React.createElement("h3", { className: SECTION_HEADING_CLASS }, title),
+    React.createElement(
+      StatGrid,
+      { columns: 4 },
+      React.createElement(StatCard, {
+        title: "Attempted",
+        value: launchSummaryCardValue(
+          isPreSelectionApplicable,
+          summary.attempted
+        ),
+        subtitle: "Total launch attempts submitted"
+      }),
+      React.createElement(StatCard, {
+        title: "Admitted",
+        value: formatCount(summary.admitted),
+        subtitle: "Passed capacity & policy checks"
+      }),
+      React.createElement(StatCard, {
+        title: "Rejected",
+        value: launchSummaryCardValue(
+          isPreSelectionApplicable,
+          summary.rejected
+        ),
+        subtitle: "Refused before admission"
+      }),
+      React.createElement(StatCard, {
+        title: "Launch Success Rate",
+        value: launchSummaryCardValue(
+          isPreSelectionApplicable,
+          summary.launchSuccessRatePercent,
+          formatCacheRate
+        ),
+        subtitle: "Started / (started + rejected + failed before start)"
+      }),
+      React.createElement(StatCard, {
+        title: "Started",
+        value: formatCount(summary.started),
+        subtitle: "Entered active execution"
+      }),
+      React.createElement(StatCard, {
+        title: "Failed Before Start",
+        value: formatCount(summary.failedBeforeStart),
+        subtitle: "Admitted but failed before turn started"
+      }),
+      React.createElement(StatCard, {
+        title: "Pending",
+        value: launchSummaryCardValue(
+          isPreSelectionApplicable,
+          summary.pending
+        ),
+        subtitle: "Attempted minus resolved pre-start outcomes"
+      }),
+      React.createElement(StatCard, {
+        title: "Work Outcomes (OK / Fail / Cancel)",
+        value: `${formatCount(summary.succeeded)} / ${formatCount(summary.failed)} / ${formatCount(summary.cancelled)}`,
+        subtitle: "Post-start execution outcomes"
+      })
+    )
+  );
+}
+
+function renderAgentLaunchMetrics(
+  metrics: UsageAgentLaunchMetrics
+): React.JSX.Element {
+  if (metrics.status === NOT_APPLICABLE_STATUS) {
+    const reason =
+      metrics.notApplicableReason === "active-sessions"
+        ? "Agent launch counters are historical and have no Active Sessions scope."
+        : `Agent launch counters are unavailable for the selected ${metrics.unsupportedFilters.join(" and ")} filter; launch stages do not carry those dimensions.`;
+    return React.createElement(
+      "section",
+      { "data-agent-launches": NOT_APPLICABLE_STATUS },
+      React.createElement(
+        "h2",
+        { className: SECTION_HEADING_CLASS },
+        "Agent launches"
+      ),
+      React.createElement(
+        "p",
+        { className: CALLOUT_WARNING_CLASS, role: "status" },
+        reason
+      )
+    );
+  }
+
+  const unavailableMessage =
+    metrics.status === "unavailable"
+      ? "Agent launch counters are unavailable for this time range."
+      : metrics.status === "not-observed"
+        ? "No agent launch events were observed in this time range."
+        : null;
+  const preSelectionUnavailableText = metrics.preSelectionApplicable
+    ? "Pre-selection rejection telemetry not observed."
+    : `Not applicable: pre-selection ${metrics.preSelectionUnsupportedFilters.join(" and ")} filter is active; rejections and initial attempts occur before provider/model selection.`;
+
+  return React.createElement(
+    "section",
+    {
+      className: PAGE_SECTION_STACK_CLASS,
+      "data-agent-launches": metrics.status
+    },
+    React.createElement(
+      "h2",
+      { className: SECTION_HEADING_CLASS },
+      "Agent launches"
+    ),
+    unavailableMessage === null
+      ? null
+      : React.createElement(
+          "p",
+          {
+            className:
+              metrics.status === "unavailable"
+                ? CALLOUT_WARNING_CLASS
+                : MUTED_BODY_CLASS,
+            role: "status"
+          },
+          unavailableMessage
+        ),
+    metrics.preSelectionApplicable
+      ? null
+      : React.createElement(
+          "p",
+          {
+            className: CALLOUT_WARNING_CLASS,
+            role: "status",
+            "data-agent-launches-preselection": NOT_APPLICABLE_STATUS
+          },
+          `Pre-selection launch counters (Attempted, Rejected, Launch Success Rate, Pending, rejection reasons, and attempts by role) are Not applicable under the selected ${metrics.preSelectionUnsupportedFilters.join(" and ")} filter. Admitted, Started, Failed Before Start, and work outcome counters remain filtered.`
+        ),
+    metrics.breakdownsPartial
+      ? React.createElement(
+          "p",
+          {
+            className: CALLOUT_WARNING_CLASS,
+            role: "status",
+            "data-agent-launches-breakdowns": "partial"
+          },
+          "An agent-launch breakdown reached its result limit; shown categories may be partial."
+        )
+      : null,
+    renderLaunchSummaryGrid(
+      "root",
+      "Root agent launches",
+      metrics.root,
+      metrics.preSelectionApplicable
+    ),
+    renderLaunchSummaryGrid(
+      "child",
+      "Child agent delegations",
+      metrics.child,
+      metrics.preSelectionApplicable
+    ),
+    React.createElement(
+      "div",
+      { className: gridRowClass(2, "gap-6") },
+      ...[
+        {
+          title: "Root Rejections by Reason",
+          data: metrics.root.rejectionReasons,
+          label: "Root launch rejections by reason",
+          notObservedMessage: preSelectionUnavailableText,
+          emptyMessage: "No root agent launches were rejected in this range.",
+          barClass: CHART_PALETTE.series1.bar,
+          valueClass: CHART_PALETTE.series1.value
+        },
+        {
+          title: "Child Rejections by Reason",
+          data: metrics.child.rejectionReasons,
+          label: "Child delegation rejections by reason",
+          notObservedMessage: preSelectionUnavailableText,
+          emptyMessage: "No child delegations were rejected in this range.",
+          barClass: CHART_PALETTE.series2.bar,
+          valueClass: CHART_PALETTE.series2.value
+        },
+        {
+          title: "Failed Before Start by Provider",
+          data: metrics.failedBeforeStartByProvider,
+          label: "Pre-start launch failures by provider",
+          notObservedMessage: "Pre-start failure telemetry not observed.",
+          emptyMessage:
+            "No admitted launches failed before start in this range.",
+          barClass: CHART_PALETTE.series5.bar,
+          valueClass: CHART_PALETTE.series5.value
+        },
+        {
+          title: "Launch Attempts by Role",
+          data: metrics.attemptsByRole,
+          label: "Agent launch attempts by role",
+          notObservedMessage: preSelectionUnavailableText,
+          emptyMessage: "No agent launch attempts were observed in this range.",
+          barClass: CHART_PALETTE.series3.bar,
+          valueClass: CHART_PALETTE.series3.value
+        }
+      ].map((panel) =>
+        React.createElement(
+          "div",
+          { key: panel.title, className: LIST_PANEL_CLASS },
+          React.createElement(
+            "h3",
+            { className: SECTION_HEADING_CLASS },
+            panel.title
+          ),
+          React.createElement(BarChart, {
+            data:
+              panel.data === null
+                ? null
+                : panel.data.map((item) => ({
+                    label: formatDimension(item.name),
+                    value: item.count,
+                    valueText: formatCount(item.count)
+                  })),
+            label: panel.label,
+            notObservedMessage: panel.notObservedMessage,
+            emptyMessage: panel.emptyMessage,
+            barClass: panel.barClass,
+            valueClass: panel.valueClass
+          })
+        )
+      )
+    )
+  );
+}
+
 function renderGitChangeMetrics(
   metrics: UsageGitChangeMetrics
 ): React.JSX.Element {
@@ -1511,6 +1769,7 @@ interface UsageMcpServerRow {
     | "disabled"
     | "not-exposed"
     | "observed-unconfigured"
+    | "stale"
     | "not-observed";
   readonly toolCalls: number | null;
   readonly failures: number | null;
@@ -1526,7 +1785,8 @@ function buildUsageMcpRows(
   servers: readonly McpServerResource[],
   runtime: ControlApiMcpRuntimeResponse | null
 ): readonly UsageMcpServerRow[] {
-  const isRuntimeObserved = runtime !== null && runtime.observedServers !== null;
+  const isRuntimeObserved =
+    runtime !== null && runtime.observedServers !== null;
   const observationsByName = new Map(
     (runtime?.servers ?? []).map((server) => [server.name, server] as const)
   );
@@ -1549,15 +1809,18 @@ function buildUsageMcpRows(
     const toolCalls = observation?.toolCalls ?? 0;
     const failures = observation?.failures ?? 0;
     const hasActivity = toolCalls > 0 || failures > 0;
-    const usageState: UsageMcpServerRow["usageState"] = hasActivity
-      ? failures > 0
-        ? "used-with-errors"
-        : "used"
-      : server.enabled === false
-        ? "disabled"
-        : server.roles.length > 0
-          ? "exposed-never-used"
-          : "not-exposed";
+    const usageState: UsageMcpServerRow["usageState"] =
+      observation?.health === "stale"
+        ? "stale"
+        : hasActivity
+          ? failures > 0
+            ? "used-with-errors"
+            : "used"
+          : server.enabled === false
+            ? "disabled"
+            : server.roles.length > 0
+              ? "exposed-never-used"
+              : "not-exposed";
     return {
       name: server.name,
       configured: true,
@@ -1579,7 +1842,8 @@ function buildUsageMcpRows(
         roles: [],
         usedByRoles: observedRoles(observed),
         enabled: null,
-        usageState: "observed-unconfigured",
+        usageState:
+          observed.health === "stale" ? "stale" : "observed-unconfigured",
         toolCalls: observed.toolCalls,
         failures: observed.failures
       });
@@ -1593,7 +1857,8 @@ const MCP_USAGE_BADGE_DESCRIPTORS: Readonly<
   Record<
     UsageMcpServerRow["usageState"],
     {
-      readonly status: "configured" | "invalid" | typeof NOT_OBSERVED_STATUS;
+      readonly status:
+        "configured" | "invalid" | "unavailable" | typeof NOT_OBSERVED_STATUS;
       readonly label: string;
     }
   >
@@ -1610,6 +1875,7 @@ const MCP_USAGE_BADGE_DESCRIPTORS: Readonly<
     status: "configured",
     label: "Observed (unconfigured)"
   },
+  stale: { status: "unavailable", label: "Stale" },
   "not-observed": { status: NOT_OBSERVED_STATUS, label: NOT_OBSERVED_LABEL }
 };
 
@@ -1686,8 +1952,13 @@ function renderMcpServersPanel(
     (row) =>
       row.usageState === "used" ||
       row.usageState === "used-with-errors" ||
-      row.usageState === "observed-unconfigured"
+      row.usageState === "observed-unconfigured" ||
+      (row.usageState === "stale" &&
+        ((row.toolCalls ?? 0) > 0 || (row.failures ?? 0) > 0))
   ).length;
+  const staleCount = rows.filter((row) => row.usageState === "stale").length;
+  const isRuntimeStale =
+    staleCount > 0 || (mcpInventory.runtime?.health?.stale ?? 0) > 0;
   const exposedNeverUsedCount = rows.filter(
     (row) => row.usageState === "exposed-never-used"
   ).length;
@@ -1706,7 +1977,7 @@ function renderMcpServersPanel(
           },
           server.name
         ),
-      meta: { weight: 190 }
+      meta: { weight: 140 }
     },
     {
       id: "roles",
@@ -1719,7 +1990,7 @@ function renderMcpServersPanel(
             : "Not in catalog",
           testId: "usage-mcp-roles"
         }),
-      meta: { align: "tokens", weight: 210 }
+      meta: { align: "tokens", weight: 145 }
     },
     {
       id: "usedByRoles",
@@ -1732,7 +2003,7 @@ function renderMcpServersPanel(
               emptyLabel: "No verified role",
               testId: "usage-mcp-used-by-roles"
             }),
-      meta: { align: "tokens", weight: 210 }
+      meta: { align: "tokens", weight: 140 }
     },
     {
       id: "enabled",
@@ -1747,25 +2018,25 @@ function renderMcpServersPanel(
                 ? "Enabled"
                 : "Disabled"
         }),
-      meta: { weight: 130 }
+      meta: { weight: 155 }
     },
     {
       id: "usage",
       header: "Runtime use",
       cell: ({ row: { original: server } }) => mcpUsageBadge(server.usageState),
-      meta: { weight: 185 }
+      meta: { weight: 200 }
     },
     {
       id: "calls",
       header: "Calls (since start)",
       cell: ({ row: { original: server } }) => formatCount(server.toolCalls),
-      meta: { weight: 145 }
+      meta: { weight: 105 }
     },
     {
       id: "failures",
       header: "Failures (since start)",
       cell: ({ row: { original: server } }) => formatCount(server.failures),
-      meta: { weight: 155 }
+      meta: { weight: 105 }
     }
   ];
 
@@ -1780,7 +2051,6 @@ function renderMcpServersPanel(
   return React.createElement(
     "div",
     {
-      className: LIST_PANEL_CLASS,
       "data-mcp-inventory-status": isRuntimeObserved
         ? "observed"
         : "runtime-unavailable"
@@ -1805,9 +2075,24 @@ function renderMcpServersPanel(
       : null,
     isRuntimeObserved
       ? React.createElement(
-          "p",
-          { className: `${MUTED_BODY_CLASS} mb-3` },
-          `${COUNT_FORMATTER.format(mcpInventory.servers.length)} configured · ${COUNT_FORMATTER.format(exposedCount)} exposed · ${COUNT_FORMATTER.format(usedCount)} used · ${COUNT_FORMATTER.format(exposedNeverUsedCount)} exposed, never used`
+          React.Fragment,
+          null,
+          isRuntimeStale
+            ? React.createElement(
+                "p",
+                {
+                  className: `${CALLOUT_WARNING_CLASS} mb-3`,
+                  role: "status",
+                  "data-mcp-runtime-stale": "true"
+                },
+                "Runtime MCP observations are stale: the shared MCP gateway process has exited, so shown calls and failures reflect the last ledger written before exit."
+              )
+            : null,
+          React.createElement(
+            "p",
+            { className: `${MUTED_BODY_CLASS} mb-3` },
+            `${COUNT_FORMATTER.format(mcpInventory.servers.length)} configured · ${COUNT_FORMATTER.format(exposedCount)} exposed · ${COUNT_FORMATTER.format(usedCount)} used · ${COUNT_FORMATTER.format(exposedNeverUsedCount)} exposed, never used${staleCount > 0 ? ` · ${COUNT_FORMATTER.format(staleCount)} stale` : ""}`
+          )
         )
       : React.createElement(
           "p",
@@ -2346,6 +2631,7 @@ function renderHistoricalMetrics(
       })
     ),
     renderMcpServersPanel(mcpInventory),
+    renderAgentLaunchMetrics(metrics.agentLaunches),
     renderGitChangeMetrics(metrics.gitChanges)
   );
 }
@@ -2434,6 +2720,7 @@ function usageMetricsObserved(metrics: UsageMetricsData | undefined): boolean {
   ];
   return (
     metrics.gitChanges.status === "observed" ||
+    metrics.agentLaunches.status === "observed" ||
     signals.some((value) => value !== null)
   );
 }
@@ -2448,7 +2735,8 @@ export function UsageView({
   sessionScope,
   sessionView,
   fleetView,
-  mcpInventory
+  mcpInventory,
+  freshness
 }: UsageViewProps): React.JSX.Element {
   const selectedValues = selection.values;
   const todayUtc = new Date().toISOString().slice(0, 10);
@@ -2544,6 +2832,9 @@ export function UsageView({
             .map(([name]) => name)
             .join(", ")}) are not applied. Clear the session to use them.`
         )
+      : null,
+    !isSessionScoped && freshness !== undefined
+      ? React.createElement(UsageFreshnessControls, freshness)
       : null,
     isSessionScoped
       ? sessionView

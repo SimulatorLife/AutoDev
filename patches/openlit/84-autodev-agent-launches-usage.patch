@@ -1,0 +1,982 @@
+diff --git a/src/client/src/__tests__/app/api/autodev/usage/route.test.ts b/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
+index a36b518..fd2fa70 100644
+--- a/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
++++ b/src/client/src/__tests__/app/api/autodev/usage/route.test.ts
+@@ -9,6 +9,7 @@ const mockGetTelemetryAdapter = jest.fn();
+ const mockListSpans = jest.fn();
+ const mockRunWidgetQuery = jest.fn();
+ const mockReadGitUsageWidgets = jest.fn();
++const mockReadAgentLaunchUsageWidgets = jest.fn();
+ 
+ jest.mock("@/lib/platform/dashboard-variables", () => ({
+   fetchVariableAllowedValues: (...args: unknown[]) =>
+@@ -25,6 +26,10 @@ jest.mock("@/lib/platform/manage-dashboard/widget", () => ({
+ jest.mock("@/lib/autodev/usage-git-metrics", () => ({
+   readGitUsageWidgets: (...args: unknown[]) => mockReadGitUsageWidgets(...args)
+ }));
++jest.mock("@/lib/autodev/usage-agent-launches", () => ({
++  readAgentLaunchUsageWidgets: (...args: unknown[]) =>
++    mockReadAgentLaunchUsageWidgets(...args)
++}));
+ 
+ const previousUsageToken = process.env.AUTODEV_OPENLIT_USAGE_TOKEN;
+ process.env.AUTODEV_OPENLIT_USAGE_TOKEN = "server-only-usage-test-token";
+@@ -74,6 +79,24 @@ describe("AutoDev Usage endpoint filter lookup", () => {
+       partial: false,
+       rows: []
+     })));
++    mockReadAgentLaunchUsageWidgets.mockReset();
++    mockReadAgentLaunchUsageWidgets.mockResolvedValue([
++      "agent-launches-root-stages",
++      "agent-launches-child-stages",
++      "agent-launches-root-rejections",
++      "agent-launches-child-rejections",
++      "agent-launches-failed-before-start-by-provider",
++      "agent-launches-by-role"
++    ].map((key) => ({
++      key,
++      querySucceeded: true,
++      observed: false,
++      partial: false,
++      rows: [],
++      xAxis: "name",
++      yAxis: "count",
++      resultLimit: 20
++    })));
+   });
+ 
+   it("fetches filter values across AutoDev logical and MCP spans", async () => {
+@@ -239,6 +262,11 @@ describe("AutoDev Usage endpoint filter lookup", () => {
+       expect.objectContaining({ start: expect.any(Date), end: expect.any(Date) }),
+       expect.any(Function)
+     );
++    expect(
++      body.widgets.filter((widget: { key: string }) =>
++        widget.key.startsWith("agent-launches-")
++      )
++    ).toHaveLength(6);
+   });
+ 
+   it("runs source-confirmed compaction time-series and bounded breakdown widgets", async () => {
+diff --git a/src/client/src/__tests__/lib/autodev/usage-agent-launches.test.ts b/src/client/src/__tests__/lib/autodev/usage-agent-launches.test.ts
+new file mode 100644
+index 0000000..4f50424
+--- /dev/null
++++ b/src/client/src/__tests__/lib/autodev/usage-agent-launches.test.ts
+@@ -0,0 +1,227 @@
++const mockResolveTelemetrySourceDescriptor = jest.fn();
++const mockGetTelemetryAdapter = jest.fn();
++const mockMetricCounterDeltas = jest.fn();
++
++jest.mock("@/lib/telemetry-source", () => ({
++	resolveTelemetrySourceDescriptor: (...args: unknown[]) =>
++		mockResolveTelemetrySourceDescriptor(...args),
++	getTelemetryAdapter: (...args: unknown[]) =>
++		mockGetTelemetryAdapter(...args),
++}));
++
++import {
++	buildAgentLaunchMetricQuery,
++	readAgentLaunchUsageWidgets,
++} from "@/lib/autodev/usage-agent-launches";
++import type { UsageSelection } from "@/lib/autodev/usage-api";
++
++const runImmediately = <T>(task: () => Promise<T>) => task();
++
++const selection: UsageSelection = {
++	range: "7D",
++	values: {
++		workspace: ["repo-a"],
++		provider: ["claude"],
++		model: ["claude-sonnet-4-5"],
++		agent: ["worker"],
++	},
++};
++const range = {
++	start: new Date("2026-11-20T00:00:00.000Z"),
++	end: new Date("2026-11-27T00:00:00.000Z"),
++};
++
++function point(
++	kind: "root" | "child",
++	stage: string,
++	value: number,
++	extra: Record<string, string> = {},
++) {
++	return {
++		metricName: "autodev.agent.launches",
++		serviceName: "autodev-router",
++		timestamp: "2026-11-27T00:00:00.000Z",
++		value,
++		attributes: {
++			"autodev.launch.kind": kind,
++			"autodev.launch.stage": stage,
++			...extra,
++		},
++		resourceAttributes: {},
++	};
++}
++
++function adapterWith(rows: readonly ReturnType<typeof point>[]) {
++	mockGetTelemetryAdapter.mockResolvedValue({
++		capabilities: () => ({ cumulativeCounterDeltas: true }),
++		metricCounterDeltas: mockMetricCounterDeltas,
++	});
++	mockMetricCounterDeltas.mockResolvedValue({ rows, meta: {} });
++}
++
++describe("Usage agent-launch metric query", () => {
++	beforeEach(() => {
++		mockResolveTelemetrySourceDescriptor.mockReset();
++		mockResolveTelemetrySourceDescriptor.mockResolvedValue({
++			type: "clickhouse",
++			id: "builtin:default-db",
++		});
++		mockGetTelemetryAdapter.mockReset();
++		mockMetricCounterDeltas.mockReset();
++	});
++
++	it("builds bounded metric filters for workspace, provider, model, and agent", () => {
++		const query = buildAgentLaunchMetricQuery(selection, range);
++		expect(query.signal).toBe("metrics");
++		expect(query.aiSelector).toBe(false);
++		expect(query.filters).toEqual(
++			expect.arrayContaining([
++				expect.objectContaining({
++					target: "spanName",
++					op: "in",
++					value: ["autodev.agent.launches"],
++				}),
++				expect.objectContaining({
++					key: "autodev.workspace",
++					op: "in",
++					value: ["repo-a"],
++				}),
++				expect.objectContaining({
++					key: "gen_ai.provider.name",
++					op: "in",
++					value: ["claude"],
++				}),
++				expect.objectContaining({
++					key: "gen_ai.request.model",
++					op: "in",
++					value: ["claude-sonnet-4-5"],
++				}),
++				expect.objectContaining({
++					key: "autodev.agent.role",
++					op: "in",
++					value: ["worker"],
++				}),
++			]),
++		);
++	});
++
++	it("aggregates root/child stages, rejection reasons, failed-before-start providers, and roles", async () => {
++		adapterWith([
++			point("root", "attempted", 6, { "autodev.agent.role": "orchestrator" }),
++			point("root", "admitted", 5, {
++				"autodev.agent.role": "orchestrator",
++				"gen_ai.provider.name": "claude",
++			}),
++			point("root", "rejected", 1, {
++				"autodev.agent.role": "orchestrator",
++				"autodev.launch.reason": "dispatch_refused",
++			}),
++			point("root", "started", 4, {
++				"autodev.agent.role": "orchestrator",
++				"gen_ai.provider.name": "claude",
++			}),
++			point("root", "failed_before_start", 1, {
++				"autodev.agent.role": "orchestrator",
++				"gen_ai.provider.name": "codex",
++			}),
++			point("root", "succeeded", 3, {
++				"autodev.agent.role": "orchestrator",
++				"gen_ai.provider.name": "claude",
++			}),
++			point("child", "attempted", 4, { "autodev.agent.role": "worker" }),
++			point("child", "rejected", 2, {
++				"autodev.agent.role": "worker",
++				"autodev.launch.reason": "concurrency_limit",
++			}),
++			point("child", "admitted", 2, {
++				"autodev.agent.role": "worker",
++				"gen_ai.provider.name": "minimax",
++			}),
++			point("child", "started", 2, {
++				"autodev.agent.role": "worker",
++				"gen_ai.provider.name": "minimax",
++			}),
++			point("child", "cancelled", 1, {
++				"autodev.agent.role": "worker",
++				"gen_ai.provider.name": "minimax",
++			}),
++		]);
++
++		const widgets = await readAgentLaunchUsageWidgets(
++			{ range: "7D", values: {} },
++			range,
++			runImmediately,
++		);
++		const widget = (key: string) =>
++			widgets.find((candidate) => candidate.key === key);
++
++		expect(widgets).toHaveLength(6);
++		expect(widget("agent-launches-root-stages")).toMatchObject({
++			querySucceeded: true,
++			observed: true,
++			rows: expect.arrayContaining([
++				{ name: "attempted", count: 6 },
++				{ name: "admitted", count: 5 },
++				{ name: "rejected", count: 1 },
++				{ name: "started", count: 4 },
++				{ name: "failed_before_start", count: 1 },
++				{ name: "succeeded", count: 3 },
++			]),
++		});
++		expect(widget("agent-launches-child-stages")).toMatchObject({
++			querySucceeded: true,
++			observed: true,
++			rows: expect.arrayContaining([
++				{ name: "attempted", count: 4 },
++				{ name: "rejected", count: 2 },
++				{ name: "admitted", count: 2 },
++				{ name: "started", count: 2 },
++				{ name: "cancelled", count: 1 },
++			]),
++		});
++		expect(widget("agent-launches-root-rejections")?.rows).toEqual([
++			{ name: "dispatch_refused", count: 1 },
++		]);
++		expect(widget("agent-launches-child-rejections")?.rows).toEqual([
++			{ name: "concurrency_limit", count: 2 },
++		]);
++		expect(
++			widget("agent-launches-failed-before-start-by-provider")?.rows,
++		).toEqual([{ name: "codex", count: 1 }]);
++		expect(widget("agent-launches-by-role")?.rows).toEqual([
++			{ name: "orchestrator", count: 6 },
++			{ name: "worker", count: 4 },
++		]);
++	});
++
++	it("fails closed on skill filter, unsupported adapters, and malformed points", async () => {
++		let widgets = await readAgentLaunchUsageWidgets(
++			{ range: "7D", values: { skill: ["dry"] } },
++			range,
++			runImmediately,
++		);
++		expect(widgets.every((candidate) => !candidate.querySucceeded)).toBe(true);
++		expect(mockResolveTelemetrySourceDescriptor).not.toHaveBeenCalled();
++
++		adapterWith([
++			point("root", "attempted", 1),
++			{
++				metricName: "autodev.agent.launches",
++				serviceName: "autodev-router",
++				timestamp: "2026-11-27T00:00:00.000Z",
++				value: 1,
++				attributes: {
++					"autodev.launch.kind": "unknown-kind",
++					"autodev.launch.stage": "attempted",
++				},
++				resourceAttributes: {},
++			} as ReturnType<typeof point>,
++		]);
++		widgets = await readAgentLaunchUsageWidgets(
++			{ range: "7D", values: {} },
++			range,
++			runImmediately,
++		);
++		expect(widgets.every((candidate) => !candidate.querySucceeded)).toBe(true);
++	});
++});
+diff --git a/src/client/src/__tests__/lib/platform/datasource/clickhouse-counter-deltas.test.ts b/src/client/src/__tests__/lib/platform/datasource/clickhouse-counter-deltas.test.ts
+index 63b327a..6c4a703 100644
+--- a/src/client/src/__tests__/lib/platform/datasource/clickhouse-counter-deltas.test.ts
++++ b/src/client/src/__tests__/lib/platform/datasource/clickhouse-counter-deltas.test.ts
+@@ -172,4 +172,62 @@ describe("ClickHouse cumulative metric windows", () => {
+ 			/dimension filter/u,
+ 		);
+ 	});
++
++	it("supports autodev.agent.launches cumulative windows with workspace, provider, model, and role filters", async () => {
++		const launchQuery: OpenLITQuery = {
++			signal: "metrics",
++			timeRange: query.timeRange,
++			aiSelector: false,
++			filters: [
++				{
++					target: "spanName",
++					op: "in",
++					value: ["autodev.agent.launches"],
++				},
++				{
++					target: "attribute",
++					scope: "resource",
++					key: "service.name",
++					op: "eq",
++					value: "autodev-router",
++				},
++				{
++					target: "attribute",
++					scope: "metric",
++					key: "gen_ai.request.model",
++					op: "in",
++					value: ["claude-sonnet-4-5"],
++				},
++			],
++		};
++		const prepared = buildCounterDeltaQuery(launchQuery);
++		expect(prepared.sql).not.toContain("attribution_key");
++		expect(prepared.params.metric_names).toEqual(["autodev.agent.launches"]);
++		expect(prepared.params.dimension_0_key).toBe("gen_ai.request.model");
++		expect(prepared.params.dimension_0_values).toEqual(["claude-sonnet-4-5"]);
++
++		mockQueryConnectorMetrics.mockResolvedValueOnce({
++			data: [
++				row({
++					MetricName: "autodev.agent.launches",
++					Attributes: {
++						"autodev.launch.kind": "root",
++						"autodev.launch.stage": "started",
++						"gen_ai.request.model": "claude-sonnet-4-5",
++					},
++					currentValue: 5,
++					baselineValue: 2,
++					baselinePoints: 1,
++				}),
++			],
++		});
++		const delta = await readCounterDeltaSeries(launchQuery, "db-1");
++		expect(delta.rows).toEqual([
++			expect.objectContaining({
++				metricName: "autodev.agent.launches",
++				value: 3,
++				serviceName: "autodev-router",
++			}),
++		]);
++	});
+ });
+diff --git a/src/client/src/app/api/autodev/usage/route.ts b/src/client/src/app/api/autodev/usage/route.ts
+index c057b31..03955d9 100644
+--- a/src/client/src/app/api/autodev/usage/route.ts
++++ b/src/client/src/app/api/autodev/usage/route.ts
+@@ -1,6 +1,7 @@
+ import { NextRequest } from "next/server";
+ import usageDashboard from "@/clickhouse/seed-data/openlit-dashboard-AutoDev-Usage-layout.json";
+ import type { MetricParams } from "@/lib/platform/common";
++import { readAgentLaunchUsageWidgets } from "@/lib/autodev/usage-agent-launches";
+ import { readGitUsageWidgets } from "@/lib/autodev/usage-git-metrics";
+ import type { NormalizedSpan, OpenLITQuery } from "@/lib/platform/connectors/datasource/types";
+ import {
+@@ -234,16 +235,23 @@ export async function POST(request: NextRequest): Promise<Response> {
+ 	);
+ 	const traceListPromise = readRecentAttempts(adapter, selection, timeRange);
+ 	const gitWidgetsPromise = readGitUsageWidgets(selection, timeRange, runUsageQuery);
+-	const [filterOptions, widgets, traceList, gitWidgets] = await Promise.all([
+-		filterOptionsPromise,
+-		widgetQueries,
+-		traceListPromise,
+-		gitWidgetsPromise,
+-	]);
++	const launchWidgetsPromise = readAgentLaunchUsageWidgets(
++		selection,
++		timeRange,
++		runUsageQuery,
++	);
++	const [filterOptions, widgets, traceList, gitWidgets, launchWidgets] =
++		await Promise.all([
++			filterOptionsPromise,
++			widgetQueries,
++			traceListPromise,
++			gitWidgetsPromise,
++			launchWidgetsPromise,
++		]);
+ 
+ 	return Response.json({
+ 		schema: "autodev-openlit-usage-v5",
+-		widgets: [...widgets, ...gitWidgets],
++		widgets: [...widgets, ...gitWidgets, ...launchWidgets],
+ 		filterOptions,
+ 		traceList,
+ 	});
+diff --git a/src/client/src/lib/autodev/usage-agent-launches.ts b/src/client/src/lib/autodev/usage-agent-launches.ts
+new file mode 100644
+index 0000000..e8f6725
+--- /dev/null
++++ b/src/client/src/lib/autodev/usage-agent-launches.ts
+@@ -0,0 +1,305 @@
++import {
++	getTelemetryAdapter,
++	resolveTelemetrySourceDescriptor,
++} from "@/lib/telemetry-source";
++import type {
++	NormalizedFilter,
++	NormalizedMetricPoint,
++	OpenLITQuery,
++} from "@/lib/platform/connectors/datasource/types";
++import type { UsageSelection } from "@/lib/autodev/usage-api";
++import type { runUsageQuery } from "@/lib/autodev/usage-query-scheduler";
++
++const METRIC_NAME = "autodev.agent.launches";
++const LAUNCH_KIND_KEY = "autodev.launch.kind";
++const LAUNCH_STAGE_KEY = "autodev.launch.stage";
++const LAUNCH_REASON_KEY = "autodev.launch.reason";
++const SERVICE_NAME = "autodev-router";
++const BREAKDOWN_LIMIT = 20;
++
++const VALID_LAUNCH_KINDS = new Set(["root", "child"]);
++const VALID_LAUNCH_STAGES = new Set([
++	"attempted",
++	"admitted",
++	"rejected",
++	"started",
++	"failed_before_start",
++	"succeeded",
++	"failed",
++	"cancelled",
++]);
++
++const WIDGET_KEYS = [
++	"agent-launches-root-stages",
++	"agent-launches-child-stages",
++	"agent-launches-root-rejections",
++	"agent-launches-child-rejections",
++	"agent-launches-failed-before-start-by-provider",
++	"agent-launches-by-role",
++] as const;
++
++export type AgentLaunchWidgetKey = (typeof WIDGET_KEYS)[number];
++
++export interface AgentLaunchUsageWidget {
++	readonly key: AgentLaunchWidgetKey;
++	readonly querySucceeded: boolean;
++	readonly observed: boolean;
++	readonly partial: boolean;
++	readonly rows: readonly Record<string, string | number>[];
++	readonly xAxis: "name";
++	readonly yAxis: "count";
++	readonly resultLimit: number;
++}
++
++interface LaunchObservation {
++	readonly kind: "root" | "child";
++	readonly stage: string;
++	readonly reason: string | null;
++	readonly value: number;
++	readonly attributes: Readonly<Record<string, string>>;
++}
++
++/** Create the fixed, typed OpenLIT metrics query for `autodev.agent.launches`. */
++export function buildAgentLaunchMetricQuery(
++	selection: UsageSelection,
++	range: { readonly start: Date; readonly end: Date },
++): OpenLITQuery {
++	const filters: NormalizedFilter[] = [
++		{ target: "spanName", op: "in", value: [METRIC_NAME] },
++		{
++			target: "attribute",
++			scope: "resource",
++			key: "service.name",
++			op: "eq",
++			value: SERVICE_NAME,
++		},
++	];
++	for (const [id, key] of [
++		["workspace", "autodev.workspace"],
++		["provider", "gen_ai.provider.name"],
++		["model", "gen_ai.request.model"],
++		["agent", "autodev.agent.role"],
++	] as const) {
++		const values = selection.values[id];
++		if (values?.length) {
++			filters.push({
++				target: "attribute",
++				scope: "metric",
++				key,
++				op: "in",
++				value: [...values],
++			});
++		}
++	}
++	return {
++		signal: "metrics",
++		timeRange: { start: range.start, end: range.end },
++		filters,
++		aiSelector: false,
++	};
++}
++
++/** Read stage-level agent launch counters and translate them into fixed Usage widgets. */
++export async function readAgentLaunchUsageWidgets(
++	selection: UsageSelection,
++	range: { readonly start: Date; readonly end: Date },
++	query: typeof runUsageQuery,
++): Promise<readonly AgentLaunchUsageWidget[]> {
++	const unavailable = unavailableWidgets();
++	if ((selection.values.skill?.length ?? 0) > 0) {
++		return unavailable;
++	}
++
++	try {
++		const descriptor = await resolveTelemetrySourceDescriptor({
++			signal: "metrics",
++		});
++		if (descriptor.type !== "clickhouse") return unavailable;
++		const adapter = await getTelemetryAdapter({
++			signal: "metrics",
++			sourceId: descriptor.id,
++		});
++		if (
++			adapter.capabilities().cumulativeCounterDeltas !== true ||
++			typeof adapter.metricCounterDeltas !== "function"
++		) {
++			return unavailable;
++		}
++		const frame = await query(() =>
++			adapter.metricCounterDeltas!(
++				buildAgentLaunchMetricQuery(selection, range),
++			),
++		);
++		if (frame.meta?.truncated) return unavailable;
++		const observations = parseLaunchObservations(frame.rows);
++		if (!observations) return unavailable;
++		return widgetsFromObservations(observations);
++	} catch {
++		return unavailable;
++	}
++}
++
++function parseLaunchObservations(
++	rows: readonly NormalizedMetricPoint[],
++): LaunchObservation[] | null {
++	const observations: LaunchObservation[] = [];
++	for (const row of rows) {
++		if (
++			row.metricName !== METRIC_NAME ||
++			row.serviceName !== SERVICE_NAME ||
++			!isRecord(row.attributes)
++		) {
++			return null;
++		}
++		const value = finiteCounter(row.value);
++		if (value === null) return null;
++		const attributes: Record<string, string> = {};
++		for (const [key, candidate] of Object.entries(row.attributes)) {
++			if (typeof candidate !== "string") return null;
++			attributes[key] = candidate;
++		}
++		const kind = attributes[LAUNCH_KIND_KEY];
++		const stage = attributes[LAUNCH_STAGE_KEY];
++		if (
++			!kind ||
++			!VALID_LAUNCH_KINDS.has(kind) ||
++			!stage ||
++			!VALID_LAUNCH_STAGES.has(stage)
++		) {
++			return null;
++		}
++		const reason = safeLabel(attributes[LAUNCH_REASON_KEY]);
++		observations.push({
++			kind: kind as "root" | "child",
++			stage,
++			reason,
++			value,
++			attributes,
++		});
++	}
++	return observations;
++}
++
++function widgetsFromObservations(
++	observations: readonly LaunchObservation[],
++): readonly AgentLaunchUsageWidget[] {
++	const root = observations.filter((row) => row.kind === "root");
++	const child = observations.filter((row) => row.kind === "child");
++	const rootRejections = root.filter((row) => row.stage === "rejected");
++	const childRejections = child.filter((row) => row.stage === "rejected");
++	const failedBeforeStart = observations.filter(
++		(row) => row.stage === "failed_before_start",
++	);
++	const attempted = observations.filter((row) => row.stage === "attempted");
++
++	return [
++		groupedWidget(
++			"agent-launches-root-stages",
++			root,
++			(row) => row.stage,
++			root.length > 0,
++		),
++		groupedWidget(
++			"agent-launches-child-stages",
++			child,
++			(row) => row.stage,
++			child.length > 0,
++		),
++		groupedWidget(
++			"agent-launches-root-rejections",
++			rootRejections,
++			(row) => row.reason,
++			root.length > 0,
++		),
++		groupedWidget(
++			"agent-launches-child-rejections",
++			childRejections,
++			(row) => row.reason,
++			child.length > 0,
++		),
++		groupedWidget(
++			"agent-launches-failed-before-start-by-provider",
++			failedBeforeStart,
++			(row) => safeLabel(row.attributes["gen_ai.provider.name"]),
++			observations.length > 0,
++		),
++		groupedWidget(
++			"agent-launches-by-role",
++			attempted,
++			(row) => safeLabel(row.attributes["autodev.agent.role"]),
++			attempted.length > 0,
++		),
++	];
++}
++
++function groupedWidget(
++	key: AgentLaunchWidgetKey,
++	items: readonly LaunchObservation[],
++	keySelector: (row: LaunchObservation) => string | null,
++	observed: boolean,
++): AgentLaunchUsageWidget {
++	const counts = new Map<string, number>();
++	for (const item of items) {
++		const name = keySelector(item);
++		if (name) counts.set(name, (counts.get(name) ?? 0) + item.value);
++	}
++	const rows = Array.from(counts.entries())
++		.sort(
++			([leftName, leftCount], [rightName, rightCount]) =>
++				rightCount - leftCount || leftName.localeCompare(rightName),
++		)
++		.slice(0, BREAKDOWN_LIMIT)
++		.map(([name, count]) => ({ name, count }));
++	return {
++		key,
++		querySucceeded: true,
++		observed,
++		partial: counts.size > BREAKDOWN_LIMIT,
++		rows,
++		xAxis: "name",
++		yAxis: "count",
++		resultLimit: BREAKDOWN_LIMIT,
++	};
++}
++
++function unavailableWidgets(): readonly AgentLaunchUsageWidget[] {
++	return WIDGET_KEYS.map((key) => ({
++		key,
++		querySucceeded: false,
++		observed: false,
++		partial: false,
++		rows: [],
++		xAxis: "name",
++		yAxis: "count",
++		resultLimit: BREAKDOWN_LIMIT,
++	}));
++}
++
++function finiteCounter(value: unknown): number | null {
++	const parsed = typeof value === "number" ? value : Number(value);
++	return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
++}
++
++function hasControlCharacter(value: string): boolean {
++	for (let index = 0; index < value.length; index += 1) {
++		if (value.charCodeAt(index) < 0x20) return true;
++	}
++	return false;
++}
++
++function safeLabel(value: unknown): string | null {
++	if (
++		typeof value !== "string" ||
++		value.length === 0 ||
++		value.length > 128 ||
++		value.trim() !== value ||
++		hasControlCharacter(value)
++	) {
++		return null;
++	}
++	return value;
++}
++
++function isRecord(value: unknown): value is Record<string, unknown> {
++	return value !== null && typeof value === "object" && !Array.isArray(value);
++}
+diff --git a/src/client/src/lib/platform/connectors/datasource/clickhouse/counter-deltas.ts b/src/client/src/lib/platform/connectors/datasource/clickhouse/counter-deltas.ts
+index a7deb12..5eba5e6 100644
+--- a/src/client/src/lib/platform/connectors/datasource/clickhouse/counter-deltas.ts
++++ b/src/client/src/lib/platform/connectors/datasource/clickhouse/counter-deltas.ts
+@@ -15,16 +15,49 @@ const GIT_METRIC_NAMES = [
+ 	"autodev.git.lines_added",
+ 	"autodev.git.lines_removed",
+ ] as const;
+-const ATTRIBUTE_FILTERS = new Set([
+-	"autodev.workspace",
+-	"gen_ai.provider.name",
+-	"autodev.agent.role",
+-]);
++const AGENT_LAUNCH_METRIC_NAMES = ["autodev.agent.launches"] as const;
+ const MAX_COUNTER_SERIES = 10_000;
+-const MAX_COUNTER_WINDOW_MS = 90 * 24 * 60 * 60 * 1_000;
+ const SERVICE_NAME = "autodev-router";
+-const ATTRIBUTION_KEY = "autodev.git.attribution";
+-const ATTRIBUTION_VALUE = "commit_identity";
++const GIT_ATTRIBUTION_KEY = "autodev.git.attribution";
++const GIT_ATTRIBUTION_VALUE = "commit_identity";
++
++interface CounterFamily {
++	readonly metricNames: readonly string[];
++	readonly requiredMetricFilter: {
++		readonly key: string;
++		readonly value: string;
++	} | null;
++	readonly allowedDimensions: ReadonlySet<string>;
++	readonly missingIdentityError: string;
++}
++
++const COUNTER_FAMILIES: readonly CounterFamily[] = [
++	{
++		metricNames: GIT_METRIC_NAMES,
++		requiredMetricFilter: {
++			key: GIT_ATTRIBUTION_KEY,
++			value: GIT_ATTRIBUTION_VALUE,
++		},
++		allowedDimensions: new Set([
++			"autodev.workspace",
++			"gen_ai.provider.name",
++			"autodev.agent.role",
++		]),
++		missingIdentityError:
++			"Cumulative counters require the AutoDev router and commit identity",
++	},
++	{
++		metricNames: AGENT_LAUNCH_METRIC_NAMES,
++		requiredMetricFilter: null,
++		allowedDimensions: new Set([
++			"autodev.workspace",
++			"gen_ai.provider.name",
++			"gen_ai.request.model",
++			"autodev.agent.role",
++		]),
++		missingIdentityError: "Cumulative counters require the AutoDev router",
++	},
++];
+ 
+ interface CounterDeltaQuery {
+ 	readonly sql: string;
+@@ -46,7 +79,7 @@ export async function readCounterDeltaSeries(
+ 	query: OpenLITQuery,
+ 	dbConfigId?: string,
+ ): Promise<DataFrame<NormalizedMetricPoint>> {
+-	const prepared = buildCounterDeltaQuery(query);
++	const { family, prepared } = prepareCounterDeltaQuery(query);
+ 	const startedAt = Date.now();
+ 	const result = await queryConnectorMetrics(prepared.sql, dbConfigId, {
+ 		...prepared.params,
+@@ -59,7 +92,9 @@ export async function readCounterDeltaSeries(
+ 	if (result.data.length > MAX_COUNTER_SERIES) {
+ 		throw new Error("ClickHouse metric-counter result exceeded its bound");
+ 	}
+-	const rows = (result.data as CounterDeltaRow[]).map(toCounterDeltaPoint);
++	const rows = (result.data as CounterDeltaRow[]).map((row) =>
++		toCounterDeltaPoint(row, family),
++	);
+ 	if (rows.some((row) => row === null)) {
+ 		throw new Error(
+ 			"Cumulative metric window has an incomplete or invalid baseline",
+@@ -72,17 +107,24 @@ export async function readCounterDeltaSeries(
+ 	};
+ }
+ 
+-export function buildCounterDeltaQuery(query: OpenLITQuery): CounterDeltaQuery {
+-	const filters = validateCounterQuery(query);
++function prepareCounterDeltaQuery(query: OpenLITQuery): {
++	readonly family: CounterFamily;
++	readonly prepared: CounterDeltaQuery;
++} {
++	const { family, dimensions } = validateCounterQuery(query);
+ 	const params: Record<string, unknown> = {
+-		metric_names: [...GIT_METRIC_NAMES],
++		metric_names: [...family.metricNames],
+ 		service_name: SERVICE_NAME,
+-		attribution_key: ATTRIBUTION_KEY,
+-		attribution_value: ATTRIBUTION_VALUE,
++		...(family.requiredMetricFilter
++			? {
++					attribution_key: family.requiredMetricFilter.key,
++					attribution_value: family.requiredMetricFilter.value,
++				}
++			: {}),
+ 		start: query.timeRange.start.toISOString(),
+ 		end: query.timeRange.end.toISOString(),
+ 	};
+-	const dimensionFilters = filters.flatMap((filter, index) => {
++	const dimensionFilters = dimensions.flatMap((filter, index) => {
+ 		const key = filter.key!;
+ 		const values = filter.value as string[];
+ 		params[`dimension_${index}_key`] = key;
+@@ -91,6 +133,9 @@ export function buildCounterDeltaQuery(query: OpenLITQuery): CounterDeltaQuery {
+ 			`AND Attributes[{dimension_${index}_key:String}] IN {dimension_${index}_values:Array(String)}`,
+ 		];
+ 	});
++	const attributionWhere = family.requiredMetricFilter
++		? "AND Attributes[{attribution_key:String}] = {attribution_value:String}"
++		: "";
+ 	const selectionWhere = dimensionFilters.join("\n\t\t");
+ 	const start = "parseDateTime64BestEffort({start:String}, 9, 'UTC')";
+ 	const end = "parseDateTime64BestEffort({end:String}, 9, 'UTC')";
+@@ -98,7 +143,7 @@ export function buildCounterDeltaQuery(query: OpenLITQuery): CounterDeltaQuery {
+ 		AND ServiceName = {service_name:String}
+ 		AND IsMonotonic = 1
+ 		AND AggregationTemporality = 2
+-		AND Attributes[{attribution_key:String}] = {attribution_value:String}
++		${attributionWhere}
+ 		${selectionWhere}
+ 		AND TimeUnix <= ${end}`;
+ 	const sql = `
+@@ -174,10 +219,17 @@ LEFT JOIN baseline_latest ON
+ 	AND window_latest.StartTimeUnix = baseline_latest.StartTimeUnix
+ ORDER BY window_latest.MetricName, window_latest.attributes_key, window_latest.StartTimeUnix
+ LIMIT ${MAX_COUNTER_SERIES + 1}`;
+-	return { sql, params };
++	return { family, prepared: { sql, params } };
+ }
+ 
+-function validateCounterQuery(query: OpenLITQuery): NormalizedFilter[] {
++export function buildCounterDeltaQuery(query: OpenLITQuery): CounterDeltaQuery {
++	return prepareCounterDeltaQuery(query).prepared;
++}
++
++function validateCounterQuery(query: OpenLITQuery): {
++	readonly family: CounterFamily;
++	readonly dimensions: NormalizedFilter[];
++} {
+ 	if (
+ 		query.signal !== "metrics" ||
+ 		query.aiSelector !== false ||
+@@ -194,11 +246,15 @@ function validateCounterQuery(query: OpenLITQuery): NormalizedFilter[] {
+ 	const metricNames = metricFilters.flatMap((filter) =>
+ 		Array.isArray(filter.value) ? filter.value : [filter.value],
+ 	);
+-	if (
+-		metricFilters.length !== 1 ||
+-		metricNames.length !== GIT_METRIC_NAMES.length ||
+-		GIT_METRIC_NAMES.some((name) => !metricNames.includes(name))
+-	) {
++	const family =
++		metricFilters.length === 1
++			? COUNTER_FAMILIES.find(
++					(candidate) =>
++						metricNames.length === candidate.metricNames.length &&
++						candidate.metricNames.every((name) => metricNames.includes(name)),
++				)
++			: undefined;
++	if (!family) {
+ 		throw new Error(
+ 			"Unsupported metric names for cumulative counter query",
+ 		);
+@@ -207,36 +263,37 @@ function validateCounterQuery(query: OpenLITQuery): NormalizedFilter[] {
+ 		(filter) =>
+ 			filter.target === "attribute" && filter.key === "service.name",
+ 	);
+-	const attributionFilters = allFilters.filter(
+-		(filter) =>
+-			filter.target === "attribute" && filter.key === ATTRIBUTION_KEY,
+-	);
++	const requiredKey = family.requiredMetricFilter?.key;
++	const attributionFilters = requiredKey
++		? allFilters.filter(
++				(filter) => filter.target === "attribute" && filter.key === requiredKey,
++			)
++		: [];
+ 	if (
+ 		serviceFilters.length !== 1 ||
+ 		serviceFilters[0]?.scope !== "resource" ||
+ 		serviceFilters[0]?.op !== "eq" ||
+ 		serviceFilters[0]?.value !== SERVICE_NAME ||
+-		attributionFilters.length !== 1 ||
+-		attributionFilters[0]?.scope !== "metric" ||
+-		attributionFilters[0]?.op !== "eq" ||
+-		attributionFilters[0]?.value !== ATTRIBUTION_VALUE
++		(family.requiredMetricFilter !== null &&
++			(attributionFilters.length !== 1 ||
++				attributionFilters[0]?.scope !== "metric" ||
++				attributionFilters[0]?.op !== "eq" ||
++				attributionFilters[0]?.value !== family.requiredMetricFilter.value))
+ 	) {
+-		throw new Error(
+-			"Cumulative counters require the AutoDev router and commit identity",
+-		);
++		throw new Error(family.missingIdentityError);
+ 	}
+ 	const dimensions = allFilters.filter(
+ 		(filter) =>
+ 			filter.target === "attribute" &&
+ 			filter.key !== "service.name" &&
+-			filter.key !== ATTRIBUTION_KEY,
++			filter.key !== requiredKey,
+ 	);
+ 	const invalidDimension = dimensions.some((filter) => {
+ 		if (
+ 			filter.target !== "attribute" ||
+ 			filter.scope !== "metric" ||
+ 			!filter.key ||
+-			!ATTRIBUTE_FILTERS.has(filter.key) ||
++			!family.allowedDimensions.has(filter.key) ||
+ 			filter.op !== "in" ||
+ 			!Array.isArray(filter.value) ||
+ 			filter.value.length === 0 ||
+@@ -251,20 +308,23 @@ function validateCounterQuery(query: OpenLITQuery): NormalizedFilter[] {
+ 				value.trim() === value,
+ 		);
+ 	});
+-	if (allFilters.length !== 3 + dimensions.length || invalidDimension) {
++	const expectedBaseCount = 2 + (family.requiredMetricFilter ? 1 : 0);
++	if (
++		allFilters.length !== expectedBaseCount + dimensions.length ||
++		invalidDimension
++	) {
+ 		throw new Error("Unsupported metric dimension filter");
+ 	}
+-	return dimensions;
++	return { family, dimensions };
+ }
+ 
+ function toCounterDeltaPoint(
+ 	row: CounterDeltaRow,
++	family: CounterFamily,
+ ): NormalizedMetricPoint | null {
+ 	if (
+ 		typeof row.MetricName !== "string" ||
+-		!GIT_METRIC_NAMES.includes(
+-			row.MetricName as (typeof GIT_METRIC_NAMES)[number],
+-		) ||
++		!family.metricNames.includes(row.MetricName) ||
+ 		!isRecord(row.Attributes)
+ 	) {
+ 		return null;
+@@ -288,7 +348,13 @@ function toCounterDeltaPoint(
+ 		if (typeof value !== "string") return null;
+ 		attributes[key] = value;
+ 	}
+-	if (attributes[ATTRIBUTION_KEY] !== ATTRIBUTION_VALUE) return null;
++	if (
++		family.requiredMetricFilter &&
++		attributes[family.requiredMetricFilter.key] !==
++			family.requiredMetricFilter.value
++	) {
++		return null;
++	}
+ 	const timestampMillis = Number(row.timestampMs);
+ 	const timestamp = new Date(timestampMillis);
+ 	if (

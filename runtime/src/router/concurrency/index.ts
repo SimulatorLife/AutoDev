@@ -198,6 +198,21 @@ export function parseConcurrencyConfig(
   return result;
 }
 
+export interface SharedConcurrencyMutator {
+  patchLimit(options: {
+    storedLimit: number | null | undefined;
+    resetToConfigFile: boolean;
+    expectedRevision?: number;
+  }): Promise<
+    | { ok: true; revision: number }
+    | { ok: false; conflict: true; currentRevision: number }
+    | { ok: false; persistenceFailed: true }
+  >;
+  recordDenial?(input: string | ConcurrencyDenialRecord, at: number | string): void;
+  resetTelemetry?(): void;
+  syncLocalSlots?(slotsBySession: Record<string, number>): void;
+}
+
 export class ConcurrencyManager {
   private readonly agentActivity: AgentActivityTracker;
   private readonly config: ConcurrencyConfig;
@@ -210,6 +225,9 @@ export class ConcurrencyManager {
       } | null)
     | undefined;
   private readonly openSubagentSlots = new Map<string, string[]>();
+  private readonly externalSlotCountsBySession = new Map<string, number>();
+  private sharedMutator: SharedConcurrencyMutator | null = null;
+  private isApplyingSharedSync = false;
   private subagentSlotSequence = 0;
   private storedLimit: number | null | undefined = undefined;
   public revision = 1;
@@ -272,15 +290,109 @@ export class ConcurrencyManager {
     return { ok: true, revision: this.revision };
   }
 
+  setSharedMutator(mutator: SharedConcurrencyMutator | null): void {
+    this.sharedMutator = mutator;
+  }
+
+  get hasSharedMutator(): boolean {
+    return this.sharedMutator !== null;
+  }
+
+  setExternalSlotCounts(counts: Record<string, number>): void {
+    this.externalSlotCountsBySession.clear();
+    for (const [sessionKey, count] of Object.entries(counts)) {
+      if (typeof count === "number" && Number.isFinite(count) && count > 0) {
+        this.externalSlotCountsBySession.set(sessionKey, count);
+      }
+    }
+  }
+
+  applySharedSyncState(state: {
+    storedLimit: number | null | undefined;
+    revision: number;
+    denials: number;
+    denialsByReason: Record<string, number>;
+    lastDenial: ConcurrencyDenialRecord | null;
+    externalSlotCounts: Record<string, number>;
+  }): void {
+    this.isApplyingSharedSync = true;
+    try {
+      this.storedLimit = state.storedLimit;
+      this.revision = state.revision;
+      this.telemetry.denials = state.denials;
+      this.telemetry.denialsByReason = { ...state.denialsByReason };
+      this.telemetry.lastDenial = state.lastDenial;
+      this.setExternalSlotCounts(state.externalSlotCounts);
+    } finally {
+      this.isApplyingSharedSync = false;
+    }
+  }
+
+  private emitLocalSlots(): void {
+    if (this.isApplyingSharedSync || !this.sharedMutator?.syncLocalSlots) return;
+    const summary: Record<string, number> = {};
+    for (const [sessionKey, stack] of this.openSubagentSlots) {
+      if (stack.length > 0) summary[sessionKey] = stack.length;
+    }
+    this.sharedMutator.syncLocalSlots(summary);
+  }
+
+  async setMaxConcurrentThreadsPerSessionShared(
+    limit: number | null,
+    expectedRevision?: number
+  ): ReturnType<SharedConcurrencyMutator["patchLimit"]> {
+    if (this.sharedMutator) {
+      const outcome = await this.sharedMutator.patchLimit({
+        storedLimit: limit,
+        resetToConfigFile: false,
+        ...(expectedRevision !== undefined && { expectedRevision })
+      });
+      if (outcome.ok) {
+        this.storedLimit = limit;
+        this.revision = outcome.revision;
+      }
+      return outcome;
+    }
+    return this.setMaxConcurrentThreadsPerSession(limit, expectedRevision);
+  }
+
+  async clearStoredLimitShared(
+    expectedRevision?: number
+  ): ReturnType<SharedConcurrencyMutator["patchLimit"]> {
+    if (this.sharedMutator) {
+      const outcome = await this.sharedMutator.patchLimit({
+        storedLimit: undefined,
+        resetToConfigFile: true,
+        ...(expectedRevision !== undefined && { expectedRevision })
+      });
+      if (outcome.ok) {
+        this.storedLimit = undefined;
+        this.revision = outcome.revision;
+      }
+      return outcome;
+    }
+    return this.clearStoredLimit(expectedRevision);
+  }
+
   activeSubagentThreads(at?: number): number {
-    return this.agentActivity.countLive({ kind: SUBAGENT_SLOT_KIND }, at);
+    let externalTotal = 0;
+    for (const count of this.externalSlotCountsBySession.values()) {
+      externalTotal += count;
+    }
+    return (
+      this.agentActivity.countLive({ kind: SUBAGENT_SLOT_KIND }, at) +
+      externalTotal
+    );
   }
 
   tryAcquireSubagentSlot(sessionKey: string): string | null {
-    const sessionActive = this.agentActivity.countLive({
+    const localActive = this.agentActivity.countLive({
       kind: SUBAGENT_SLOT_KIND,
       tag: sessionKey
     });
+    const externalActive =
+      this.externalSlotCountsBySession.get(sessionKey) ?? 0;
+    const sessionActive = localActive + externalActive;
     const perSessionLimit = this.effectivePerSessionLimit();
     if (perSessionLimit !== null && sessionActive >= perSessionLimit) {
       return "max_concurrent_threads_per_session";
@@ -305,6 +417,7 @@ export class ConcurrencyManager {
     const stack = this.openSubagentSlots.get(sessionKey) ?? [];
     stack.push(subject);
     this.openSubagentSlots.set(sessionKey, stack);
+    this.emitLocalSlots();
     return null;
   }
 
@@ -321,6 +434,7 @@ export class ConcurrencyManager {
     if (remaining === 0 && this.getOrchestratorSession?.(sessionKey)) {
       this.agentActivity.noteSubagentResolved(sessionKey);
     }
+    this.emitLocalSlots();
   }
 
   touchOpenSubagentSlots(sessionKey: string): void {
@@ -359,14 +473,21 @@ export class ConcurrencyManager {
         reason
       };
     }
+    if (!this.isApplyingSharedSync) {
+      this.sharedMutator?.recordDenial?.(input, at);
+    }
   }
 
   resetConcurrencyTelemetry(): void {
     this.openSubagentSlots.clear();
+    this.externalSlotCountsBySession.clear();
     this.agentActivity.reset();
     this.telemetry.denials = 0;
     this.telemetry.denialsByReason = {};
     this.telemetry.lastDenial = null;
+    if (!this.isApplyingSharedSync) {
+      this.sharedMutator?.resetTelemetry?.();
+    }
   }
 
   restoreTelemetry(saved?: Partial<ConcurrencyTelemetry> | null): void {
@@ -416,10 +537,20 @@ export class ConcurrencyManager {
   }
 
   concurrencyStatus(at = Date.now()): ConcurrencyStatus {
-    const processFallbackActiveThreads = this.agentActivity.countLive(
-      { kind: SUBAGENT_SLOT_KIND, tag: PROCESS_FALLBACK_SESSION_KEY },
+    const processFallbackActiveThreads =
+      this.agentActivity.countLive(
+        { kind: SUBAGENT_SLOT_KIND, tag: PROCESS_FALLBACK_SESSION_KEY },
+        at
+      ) +
+      (this.externalSlotCountsBySession.get(PROCESS_FALLBACK_SESSION_KEY) ?? 0);
+    const localSessions = this.agentActivity.distinctTags(
+      { kind: SUBAGENT_SLOT_KIND },
       at
     );
+    const combinedSessions = new Set(localSessions);
+    for (const [sessionKey, count] of this.externalSlotCountsBySession) {
+      if (count > 0) combinedSessions.add(sessionKey);
+    }
     const isStored = this.storedLimit !== undefined;
     const configuredLimit = this.config.maxConcurrentThreadsPerSession;
     // Where the limit in force came from. A stored override wins outright; a
@@ -443,14 +574,8 @@ export class ConcurrencyManager {
       // the cap the operator configured".
       ...(configuredLimit !== undefined && { maxConcurrentThreadsPerSession: configuredLimit }),
       effectivePerSessionLimit: this.effectivePerSessionLimit(),
-      activeSubagentThreads: this.agentActivity.countLive(
-        { kind: SUBAGENT_SLOT_KIND },
-        at
-      ),
-      activeSessions: this.agentActivity.distinctTags(
-        { kind: SUBAGENT_SLOT_KIND },
-        at
-      ).length,
+      activeSubagentThreads: this.activeSubagentThreads(at),
+      activeSessions: combinedSessions.size,
       processFallbackActiveThreads,
       processFallbackEnforcement: processFallbackActiveThreads > 0,
       denials: this.telemetry.denials,

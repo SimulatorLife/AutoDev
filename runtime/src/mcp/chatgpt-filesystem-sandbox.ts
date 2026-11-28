@@ -93,9 +93,13 @@ function resolveLauncherScript(runtimeSource: string): string {
   return realpathSync(path.join(runtimeSource, "mcp", "launcher.ts"));
 }
 
+const directNodeExecutableCache = new Map<string, string>();
+
 function resolveDirectNodeExecutable(node: string, cwd: string): string {
   const resolved = realpathSync(node);
   if (resolved === realpathSync(process.execPath)) return resolved;
+  const cached = directNodeExecutableCache.get(resolved);
+  if (cached !== undefined) return cached;
   // Version-manager/package-manager shims (such as ~/Library/pnpm/bin/node)
   // re-exec the real Node binary at runtime, which Seatbelt's closed sandbox
   // blocks. Resolve the underlying Node executable before building the profile.
@@ -111,7 +115,9 @@ function resolveDirectNodeExecutable(node: string, cwd: string): string {
       }
     ).trim();
     if (target && path.isAbsolute(target) && existsSync(target)) {
-      return realpathSync(target);
+      const physical = realpathSync(target);
+      directNodeExecutableCache.set(resolved, physical);
+      return physical;
     }
   } catch {
     /*

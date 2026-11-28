@@ -231,8 +231,88 @@ function isBreakdown(value: unknown): value is UsageWorkspaceRequestBreakdown {
   );
 }
 
+export const DASHBOARD_REFRESH_SCOPE = "dashboard-refresh";
+export const ACTIVE_SESSIONS_REFRESH_SCOPE = "active-sessions-refresh";
+
+export type UsageRefreshScope =
+  typeof DASHBOARD_REFRESH_SCOPE | typeof ACTIVE_SESSIONS_REFRESH_SCOPE;
+
+export type UsageRefreshPayload =
+  | {
+      readonly schema: typeof USAGE_API_SCHEMA;
+      readonly scope: UsageRefreshScope;
+      readonly status: "ok";
+      readonly observedAt: string;
+    }
+  | {
+      readonly schema: typeof USAGE_API_SCHEMA;
+      readonly scope: UsageRefreshScope;
+      readonly status: "error";
+      readonly observedAt: string;
+      readonly failureCode: string;
+      readonly failureMessage: string;
+      readonly httpStatus: number | null;
+    };
+
 /**
-Read a payload the browser was handed.
+The address of one live refresh probe for the Usage dashboard or live scope.
+*/
+export function usageRefreshUrl(
+  scope: UsageRefreshScope,
+  queryString = ""
+): string {
+  const parameters = new URLSearchParams(queryString);
+  parameters.set("scope", scope);
+  return `/api/usage?${parameters.toString()}`;
+}
+
+/**
+Validate a Usage refresh probe payload returned by `/api/usage`.
+*/
+export function parseUsageRefreshPayload(
+  json: unknown
+): UsageRefreshPayload | null {
+  if (!isRecord(json) || json.schema !== USAGE_API_SCHEMA) return null;
+  if (
+    json.scope !== DASHBOARD_REFRESH_SCOPE &&
+    json.scope !== ACTIVE_SESSIONS_REFRESH_SCOPE
+  ) {
+    return null;
+  }
+  if (typeof json.observedAt !== "string" || json.observedAt.trim() === "") {
+    return null;
+  }
+  if (json.status === "ok") {
+    return {
+      schema: USAGE_API_SCHEMA,
+      scope: json.scope,
+      status: "ok",
+      observedAt: json.observedAt
+    };
+  }
+  if (
+    json.status === "error" &&
+    typeof json.failureCode === "string" &&
+    json.failureCode.length > 0 &&
+    typeof json.failureMessage === "string" &&
+    json.failureMessage.length > 0 &&
+    (json.httpStatus === null || isNonNegativeSafeInteger(json.httpStatus))
+  ) {
+    return {
+      schema: USAGE_API_SCHEMA,
+      scope: json.scope,
+      status: "error",
+      observedAt: json.observedAt,
+      failureCode: json.failureCode,
+      failureMessage: json.failureMessage,
+      httpStatus: json.httpStatus
+    };
+  }
+  return null;
+}
+
+/**
+Validate a payload the browser was handed.
 
 The answer is validated rather than trusted: the payload is a JSON body
 that crossed a network, and a body that does not match the contract is
@@ -241,7 +321,7 @@ cannot read becomes an unavailable state, which the surfaces render as
 the absence of evidence rather than as a measurement.
 */
 export function parseUsageApiPayload(json: unknown): UsageApiPayload | null {
-  if (!isRecord(json) || (json.schema !== USAGE_API_SCHEMA)) return null;
+  if (!isRecord(json) || json.schema !== USAGE_API_SCHEMA) return null;
   const source = json.source;
   if (!isRecord(source)) return null;
   if (json.scope === WORKSPACE_REQUESTS_SCOPE) {

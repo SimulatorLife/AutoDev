@@ -9,6 +9,7 @@ import {
   buildReconciliationView,
   CHATGPT_TUNNEL_CONTROL_PATH,
   CONTROL_API_CONTRACT,
+  CONTROL_API_EVALUATIONS_SCHEMA_ID,
   CONTROL_API_PROVIDER_MODEL_DISCOVERY_SCHEMA_ID,
   CONTROL_API_REVISION_PATTERN,
   type ControlApiAgentDetailResponse,
@@ -55,6 +56,7 @@ import {
   type ControlApiRuntimeResponse,
   type ControlApiSkillContentResponse,
   type ControlApiSkillsResponse,
+  CONTROL_API_TOOLS_SCHEMA_ID,
   type ControlApiToolsResponse,
   type ControlApiWorkspacePatchResponse,
   type ControlApiWorkspacesResponse,
@@ -75,7 +77,6 @@ import {
   type ReconciliationView,
   type SkillScopeFacts,
   type ToolCatalogItem,
-  type ToolCatalogView,
   workspaceConfigurationHealth,
   type WorkspaceRuntimeAvailability
 } from "@simulatorlife/autodev-core";
@@ -1943,7 +1944,7 @@ function toolCatalogItems(
 function deriveCoverage(
   catalog: Map<string, ToolCatalogSource>,
   rulesyncValidity: "valid" | "invalid" | "not-observed"
-): ToolCatalogView["coverage"] {
+): ControlApiToolsResponse["coverage"] {
   if (catalog.size === 0) {
     return rulesyncValidity === "valid" ? "unavailable" : "unknown";
   }
@@ -1956,7 +1957,7 @@ function deriveCoverage(
   return "partial";
 }
 
-function toolsView(): ToolCatalogView {
+function toolsView(): ControlApiToolsResponse {
   const adapter = new ToolCatalogAdapter();
   const rulesyncCatalog = adapter.load();
   const catalog = new Map<string, ToolCatalogSource>();
@@ -1979,7 +1980,7 @@ function toolsView(): ToolCatalogView {
 
   if (roles.length === 0 && rulesyncCatalog.tools.length === 0) {
     return {
-      schema: "autodev-control-tools-v2",
+      schema: CONTROL_API_TOOLS_SCHEMA_ID,
       source: rulesyncCatalog.source,
       readOnly: true,
       coverage:
@@ -1996,7 +1997,7 @@ function toolsView(): ToolCatalogView {
       totalTools: catalogueObserved ? 0 : null,
       tools: [],
       usageLink: "/usage"
-    } satisfies ControlApiToolsResponse;
+    };
   }
 
   for (const [role, contract] of roles) {
@@ -2011,7 +2012,7 @@ function toolsView(): ToolCatalogView {
 
   const tools = toolCatalogItems(catalog);
   return {
-    schema: "autodev-control-tools-v2",
+    schema: CONTROL_API_TOOLS_SCHEMA_ID,
     source: rulesyncCatalog.source,
     readOnly: true,
     coverage: deriveCoverage(catalog, rulesyncCatalog.validity),
@@ -2024,7 +2025,7 @@ function toolsView(): ToolCatalogView {
     totalTools: catalogueObserved ? tools.length : null,
     tools,
     usageLink: "/usage"
-  } satisfies ControlApiToolsResponse;
+  };
 }
 
 /**
@@ -2619,11 +2620,11 @@ async function patchWorkspace(
   );
 }
 
-async function evaluationsView(): Promise<Record<string, unknown>> {
+async function evaluationsView(): Promise<ControlApiEvaluationsResponse> {
   const repository = new EvaluationRepository();
   const page = await repository.listEvaluations();
   return {
-    schema: "autodev-control-evaluations-v1",
+    schema: CONTROL_API_EVALUATIONS_SCHEMA_ID,
     source: "openlit_evaluation",
     readOnly: true,
     // The table's own size, not the size of the window. This used to be
@@ -5360,36 +5361,29 @@ async function patchConcurrencyLimit(
 
   await serializeRouterStateMutation(ROUTER_STATE_MUTATION_KEY, async () => {
     const previousLimit = manager.effectivePerSessionLimit();
+    const isRemote = manager.hasSharedMutator;
     const mutationResult =
       nextLimit === undefined
-        ? manager.clearStoredLimit(expectedRevision)
-        : manager.setMaxConcurrentThreadsPerSession(
+        ? await manager.clearStoredLimitShared(expectedRevision)
+        : await manager.setMaxConcurrentThreadsPerSessionShared(
             nextLimit,
             expectedRevision
           );
 
     if (!mutationResult.ok) {
-      audit(
-        "error",
-        { expectedRevision, currentRevision: mutationResult.currentRevision },
-        "conflict"
-      );
-      sendControlError(
-        response,
-        409,
-        "autodev_control_api_conflict",
-        "Concurrency limit configuration was changed by another operator. Reload to see current state."
-      );
-      return;
-    }
-
-    try {
-      await persistRoutingPolicy();
-    } catch {
-      if (previousLimit === undefined) {
-        manager.clearStoredLimit();
-      } else {
-        manager.setMaxConcurrentThreadsPerSession(previousLimit);
+      if ("conflict" in mutationResult && mutationResult.conflict) {
+        audit(
+          "error",
+          { expectedRevision, currentRevision: mutationResult.currentRevision },
+          "conflict"
+        );
+        sendControlError(
+          response,
+          409,
+          "autodev_control_api_conflict",
+          "Concurrency limit configuration was changed by another operator. Reload to see current state."
+        );
+        return;
       }
       audit("error", { nextLimit, previousLimit }, "persistence_failed");
       sendControlError(
@@ -5399,6 +5393,26 @@ async function patchConcurrencyLimit(
         "Concurrency limit change could not be persisted."
       );
       return;
+    }
+
+    if (!isRemote) {
+      try {
+        await persistRoutingPolicy();
+      } catch {
+        if (previousLimit === undefined) {
+          manager.clearStoredLimit();
+        } else {
+          manager.setMaxConcurrentThreadsPerSession(previousLimit);
+        }
+        audit("error", { nextLimit, previousLimit }, "persistence_failed");
+        sendControlError(
+          response,
+          500,
+          "autodev_control_api_persistence_failed",
+          "Concurrency limit change could not be persisted."
+        );
+        return;
+      }
     }
 
     const updatedStatus = manager.concurrencyStatus(Date.now());

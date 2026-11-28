@@ -33,17 +33,14 @@ test("the Skills list says where each skill is installed and where its roles app
   const scopeHeader = page.getByRole("columnheader", { name: "Scope" });
   await expect(scopeHeader).toBeVisible();
 
-  // The row states the scope and the workspace the skill belongs to.
+  // The row states the scope, the workspace the skill belongs to, and the
+  // read-only eligible roles that can invoke it.
   const row = page.locator("tbody tr").filter({ hasText: "code-review" });
   await expect(row).toHaveCount(1);
   await expect(row.getByText("Repo", { exact: true })).toBeVisible();
   await expect(row.getByText("fixture/game", { exact: true })).toBeVisible();
-
-  // And the assignment says where the write lands, before the operator makes
-  // it.
-  await expect(
-    page.getByText("Roles apply inside fixture/game.", { exact: false })
-  ).toBeVisible();
+  await expect(row.getByText("Assigned", { exact: true })).toBeVisible();
+  await expect(row.getByText("worker", { exact: true })).toBeVisible();
 });
 
 test("a skill that is installed nowhere says so rather than naming a scope", async ({
@@ -62,9 +59,7 @@ test("a skill that is installed nowhere says so rather than naming a scope", asy
   await expect(row.getByText("Not installed", { exact: true })).toBeVisible();
   await expect(row.getByText("Unreachable", { exact: true })).toBeVisible();
   await expect(
-    row.getByText("Unassigned — no agent role can invoke this skill.", {
-      exact: false
-    })
+    row.getByText("No roles assigned", { exact: true })
   ).toBeVisible();
 
   // Every row states a scope or says the skill is installed nowhere. A row

@@ -25,8 +25,7 @@ import {
 } from "../shared/private-service-files.ts";
 import { mcpGatewayDirectory } from "./gateway-admission.ts";
 
-export const MCP_GATEWAY_OBSERVATIONS_SCHEMA =
-  "autodev-mcp-gateway-observations-v1";
+const MCP_GATEWAY_OBSERVATIONS_SCHEMA = "autodev-mcp-gateway-observations-v1";
 
 /**
 Bounds that keep the ledger finite whatever the catalogue holds.
@@ -131,6 +130,27 @@ export class GatewayCallObservations {
     this.#startedAt = this.#now().toISOString();
   }
 
+  #serverLedger(
+    name: string,
+    at: string,
+    status: GatewayCallStatus
+  ): ServerLedger | null {
+    const existing = this.#servers.get(name);
+    if (existing) return existing;
+    if (this.#servers.size >= MAX_SERVERS) return null;
+    const created: ServerLedger = {
+      calls: 0,
+      failures: 0,
+      totalDurationMs: 0,
+      lastCallAt: at,
+      lastStatus: status,
+      roles: new Map(),
+      tools: new Map()
+    };
+    this.#servers.set(name, created);
+    return created;
+  }
+
   record(call: GatewayToolCall): void {
     const at = this.#now().toISOString();
     const server = this.#serverLedger(call.server, at, call.status);
@@ -160,27 +180,6 @@ export class GatewayCallObservations {
     this.#onRecord();
   }
 
-  #serverLedger(
-    name: string,
-    at: string,
-    status: GatewayCallStatus
-  ): ServerLedger | null {
-    const existing = this.#servers.get(name);
-    if (existing) return existing;
-    if (this.#servers.size >= MAX_SERVERS) return null;
-    const created: ServerLedger = {
-      calls: 0,
-      failures: 0,
-      totalDurationMs: 0,
-      lastCallAt: at,
-      lastStatus: status,
-      roles: new Map(),
-      tools: new Map()
-    };
-    this.#servers.set(name, created);
-    return created;
-  }
-
   snapshot(): GatewayObservations {
     return {
       schema: MCP_GATEWAY_OBSERVATIONS_SCHEMA,
@@ -206,7 +205,7 @@ export class GatewayCallObservations {
   }
 }
 
-export function mcpGatewayObservationsFile(codexHome: string): string {
+function mcpGatewayObservationsFile(codexHome: string): string {
   return path.join(mcpGatewayDirectory(codexHome), "observations.json");
 }
 

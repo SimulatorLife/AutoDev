@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   rmSync,
   statSync
 } from "node:fs";
@@ -77,6 +78,10 @@ import {
 import {
   checkRequiredKeychainSecrets,
   findPlaintextKeychainSecrets,
+  ingressControlTokenFile,
+  ingressGenerationsStateFile,
+  ingressSocketDirectory,
+  readIngressControlSecret,
   REQUIRED_INSTALL_KEYCHAIN_SECRETS
 } from "./install-state.ts";
 import {
@@ -591,6 +596,7 @@ function checkRuntimeAndOt(
     !isSymlinkPath(path.join(paths.codexHome, "node_modules")),
     failures
   );
+  checkRouterGenerations(paths, failures);
   for (const role of PROMPT_ROLES)
     check(
       `prompt role ${role}`,
@@ -604,6 +610,82 @@ function checkRuntimeAndOt(
       ),
       failures
     );
+}
+
+function checkRouterGenerations(
+  paths: RunInstallPaths,
+  failures: { value: number }
+): void {
+  const socketDirectory = ingressSocketDirectory(paths.codexHome);
+  if (existsSync(socketDirectory)) {
+    const stats = lstatSync(socketDirectory);
+    const isPrivateDir =
+      stats.isDirectory() &&
+      (stats.mode & 0o077) === 0 &&
+      (process.getuid ? stats.uid === process.getuid() : true);
+    check(
+      `router ingress socket directory ${socketDirectory} is mode 0700`,
+      isPrivateDir,
+      failures
+    );
+    const tokenFile = ingressControlTokenFile(paths.codexHome);
+    if (existsSync(tokenFile)) {
+      const tokenStats = lstatSync(tokenFile);
+      const isPrivateFile =
+        tokenStats.isFile() &&
+        (tokenStats.mode & 0o077) === 0 &&
+        readIngressControlSecret(paths.codexHome) !== null;
+      check(
+        "router ingress control secret is mode 0600 and valid",
+        isPrivateFile,
+        failures
+      );
+    }
+  }
+
+  let currentGeneration: string | null = null;
+  try {
+    currentGeneration = path.basename(
+      readlinkSync(path.join(paths.codexHome, RUNTIME_SOURCE_LINK))
+    );
+  } catch {
+    currentGeneration = null;
+  }
+
+  let active = currentGeneration;
+  let retiring = "none";
+  let rollback = "none";
+  const stateFile = ingressGenerationsStateFile(paths.codexHome);
+  if (lstatSafe(stateFile)) {
+    try {
+      const state = JSON.parse(readFileSync(stateFile, "utf8")) as {
+        activeGenerationId?: unknown;
+        rollbackGenerationId?: unknown;
+        retiringGenerationIds?: unknown;
+      };
+      if (typeof state.activeGenerationId === "string") {
+        active = state.activeGenerationId;
+      }
+      if (typeof state.rollbackGenerationId === "string") {
+        rollback = state.rollbackGenerationId;
+      }
+      if (
+        Array.isArray(state.retiringGenerationIds) &&
+        state.retiringGenerationIds.length > 0
+      ) {
+        retiring = state.retiringGenerationIds.join(",");
+      }
+    } catch {
+      /* ignore unreadable state snapshot in read-only check */
+    }
+  }
+
+  const retained = readdirSync(paths.codexHome)
+    .filter((name) => name.startsWith(".src-") && !name.includes(".tmp-"))
+    .sort();
+  writeErrorLine(
+    `info router generations: active=${active ?? "none"} retiring=${retiring} rollback=${rollback} retained=[${retained.join(",")}]`
+  );
 }
 
 function projectedCommandFiles(

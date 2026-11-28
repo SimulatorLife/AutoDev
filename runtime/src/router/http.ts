@@ -113,6 +113,7 @@ import {
   errorBody,
   EXHAUSTION_WAIT_MS,
   getActiveRequests,
+  getGlobalActiveRequestsSnapshot,
   LAST_RESORT_MAX_ATTEMPTS,
   PROBE_TIMEOUT_MS,
   probeProvider,
@@ -120,6 +121,8 @@ import {
   ROUTER_INSTANCE_ID,
   type RouterSession,
   sendJson,
+  setExternalProviderRequests,
+  setLocalProviderRequestsListener,
   STREAM_IDLE_TIMEOUT_MS,
   transportErrorInfo,
   UPSTREAM_RETRY_BASE_MS,
@@ -127,6 +130,11 @@ import {
   UPSTREAM_TIMEOUT_MS,
   UPSTREAM_TRANSPORT_MAX_ATTEMPTS
 } from "./proxy.ts";
+import {
+  SharedRouterStateClient,
+  type SharedRouterStateSnapshot,
+  sumCountsExcludingGeneration
+} from "./shared-state-ipc.ts";
 import { QUOTA_POLL } from "./quota-poll.ts";
 import {
   AGENT_EVENTS_PATH,
@@ -550,11 +558,14 @@ module, so asking whether *this* module is the entry script said "no" in the
 running router: state was written only at shutdown, and a router that was
 killed lost everything it had learned since it started.
 */
+const IS_WORKER_GENERATION = Boolean(
+  process.env.AUTODEV_ROUTER_WORKER_GENERATION?.trim()
+);
 const IS_ROUTER_PROCESS = isEntryPoint(new URL("server.ts", import.meta.url));
 
 const routerPersistence = new RouterPersistence({
   stateFile: () => effectiveStateFile(),
-  isMain: IS_ROUTER_PROCESS,
+  isMain: IS_ROUTER_PROCESS && !IS_WORKER_GENERATION,
   debounceMs: 500,
   getSnapshot: () => ({
     ...ROUTING_POLICY.runtimeState(),
@@ -1191,7 +1202,7 @@ function buildRouterStatus(now = Date.now()) {
     concurrency: getDefaultConcurrencyManager().concurrencyStatus(now),
     subagents: subagentStatus(),
     spawnFailures: spawnFailureStatus(),
-    inFlightRequests: Object.fromEntries(activeProviderRequests),
+    inFlightRequests: getGlobalActiveRequestsSnapshot(),
     liveActivity: projection.canonicalTotal,
     providers,
     recentEvents: statusRecentEvents,
@@ -1944,4 +1955,151 @@ export async function handle(
       */
     }
   }
+}
+
+function collectPassThroughSections(): Record<string, unknown> {
+  return {
+    providerTelemetry: Object.fromEntries(providerTelemetry),
+    providerModelDiscovery: providerModelDiscoveryPersistenceSnapshot(),
+    usage: getDefaultUsageTracker().usagePersistenceSnapshot(),
+    subagents: subagentRegistry.subagentTelemetry,
+    spawnFailures: subagentRegistry.spawnFailureTelemetry,
+    quotaPoll: QUOTA_POLL.persistenceSnapshot(),
+    recentEvents: routerEvents.getRecentEvents(false),
+    liveFeed: liveFeedEvents.getRecentEvents(false, true),
+    correlation: correlationSnapshot()
+  };
+}
+
+function applySharedStateSnapshot(
+  snapshot: SharedRouterStateSnapshot,
+  generationId: string,
+  options: { isInitial?: boolean } = {}
+): void {
+  ROUTING_POLICY.restoreRuntimeState(snapshot.persistedSections, {
+    fromSync: true
+  });
+  COOLDOWNS.restoreSyncState(snapshot.cooldowns);
+  concurrencyManager.applySharedSyncState({
+    ...snapshot.concurrency,
+    externalSlotCounts: sumCountsExcludingGeneration(
+      snapshot.subagentSlotsByGeneration,
+      generationId
+    )
+  });
+  setExternalProviderRequests(
+    sumCountsExcludingGeneration(
+      snapshot.activeProviderRequestsByGeneration,
+      generationId
+    )
+  );
+  if (options.isInitial) {
+    for (const [section, value] of Object.entries(snapshot.persistedSections)) {
+      if (ROUTING_POLICY_PERSISTENCE_SECTIONS.has(section)) continue;
+      if (Object.hasOwn(PERSISTED_SECTION_RESTORERS, section)) {
+        PERSISTED_SECTION_RESTORERS[section]!(
+          value,
+          snapshot.persistedSections
+        );
+      }
+    }
+  }
+}
+
+/**
+Connect an ingress-managed worker generation to the supervisor's single
+authoritative cross-process state server so routing policy, cooldowns,
+concurrency limits/slots, active requests, and disk persistence are shared.
+*/
+export async function initializeWorkerSharedState(): Promise<SharedRouterStateClient | null> {
+  const socketPath = process.env.AUTODEV_ROUTER_SHARED_STATE_SOCKET?.trim();
+  const generationId = process.env.AUTODEV_ROUTER_WORKER_GENERATION?.trim();
+  if (!socketPath || !generationId) return null;
+
+  let isInitialApplied = false;
+  const client = new SharedRouterStateClient({
+    socketPath,
+    generationId,
+    onSync: (snapshot) => {
+      applySharedStateSnapshot(snapshot, generationId, {
+        isInitial: !isInitialApplied
+      });
+      isInitialApplied = true;
+    }
+  });
+  await client.connectAndSync();
+
+  ROUTING_POLICY.setMutationListener((state) => {
+    client.notify("patch_routing_policy", {
+      routingPolicy: state
+    });
+  });
+  COOLDOWNS.setMutationListener((cooldownSnapshot) => {
+    client.notify("update_cooldowns", {
+      cooldowns: cooldownSnapshot
+    });
+  });
+  setLocalProviderRequestsListener((counts) => {
+    client.notify("update_active_provider_requests", {
+      generationId,
+      counts
+    });
+  });
+  concurrencyManager.setSharedMutator({
+    patchLimit: async ({ storedLimit, resetToConfigFile, expectedRevision }) =>
+      (await client.call("set_concurrency_limit", {
+        storedLimit,
+        resetToConfigFile,
+        ...(expectedRevision !== undefined && { expectedRevision })
+      })) as
+        | { ok: true; revision: number }
+        | { ok: false; conflict: true; currentRevision: number }
+        | { ok: false; persistenceFailed: true },
+    recordDenial: (input, at) => {
+      const reason =
+        typeof input === "string" ? input : (input.reason ?? "unknown");
+      const timestamp =
+        typeof at === "number"
+          ? new Date(at).toISOString()
+          : typeof input === "object" && input !== null
+            ? (input.timestamp ?? at)
+            : at;
+      const lastDenial =
+        typeof input === "object" && input !== null
+          ? { ...input, timestamp, reason }
+          : { timestamp, reason };
+      client.notify("record_concurrency_denial", { reason, lastDenial });
+    },
+    resetTelemetry: () => {
+      client.notify("reset_concurrency_telemetry", {});
+    },
+    syncLocalSlots: (slotsBySession) => {
+      client.notify("set_generation_subagent_slots", {
+        generationId,
+        slotsBySession
+      });
+    }
+  });
+  routerPersistence.setIsMain(false);
+  routerPersistence.setRemoteHandlers({
+    persistNow: async () => {
+      const response = (await client.call("patch_routing_policy", {
+        routingPolicy: ROUTING_POLICY.runtimeState(),
+        persistNow: true
+      })) as { ok?: boolean };
+      if (!response?.ok) return false;
+      const sectionResult = (await client.call("report_persisted_sections", {
+        sections: collectPassThroughSections(),
+        persistNow: true
+      })) as { ok?: boolean };
+      return sectionResult?.ok !== false;
+    },
+    schedulePersist: () => {
+      client.notify("report_persisted_sections", {
+        sections: collectPassThroughSections(),
+        persistNow: false
+      });
+    }
+  });
+  return client;
 }

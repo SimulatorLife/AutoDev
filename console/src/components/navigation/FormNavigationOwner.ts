@@ -345,7 +345,8 @@ export function extractFormData(
   form: HTMLFormElement | FormLike,
   submitter?: HTMLElement | FormElementLike | SubmitterLike | null | undefined
 ): URLSearchParams {
-  const parameters = extractNativeFormData(form) ?? extractSyntheticFormData(form);
+  const parameters =
+    extractNativeFormData(form) ?? extractSyntheticFormData(form);
   appendSubmitterEntry(parameters, submitter);
   return parameters;
 }
@@ -503,7 +504,8 @@ function hasNativeOptOut(
 function captureScrollAndFocus(): ScrollAndFocusSnapshot {
   const win = globalThis.window;
   const document = globalThis.document;
-  const activeElement = document?.activeElement as HTMLElement | null | undefined;
+  const activeElement = document?.activeElement as
+    HTMLElement | null | undefined;
   return {
     scrollX: win?.scrollX ?? 0,
     scrollY: win?.scrollY ?? 0,
@@ -600,7 +602,8 @@ function fragmentTarget(): HTMLElement | null {
   if (id.length === 0) return null;
   const escaped = escapeCssSelector(id);
   const element = globalThis.document.querySelector<HTMLElement>(
-    `[id="${CSS.escape(escaped)}"]`
+    // eslint-disable-next-line unicorn/require-css-escape -- escapeCssSelector delegates to CSS.escape when available
+    `[id="${escaped}"]`
   );
   if (element === null) return null;
   return typeof element.focus === "function" ? element : null;
@@ -616,7 +619,8 @@ function restoreScrollAndFocus(snapshot: ScrollAndFocusSnapshot): void {
 
   if (snapshot.activeId) {
     const escapedId = escapeCssSelector(snapshot.activeId);
-    const element = document.querySelector<HTMLElement>(`[id="${CSS.escape(escapedId)}"]`);
+    // eslint-disable-next-line unicorn/require-css-escape -- escapeCssSelector delegates to CSS.escape when available
+    const element = document.querySelector<HTMLElement>(`[id="${escapedId}"]`);
     if (element && typeof element.focus === "function") {
       element.focus({ preventScroll: true });
       return;
@@ -636,7 +640,8 @@ function restoreScrollAndFocus(snapshot: ScrollAndFocusSnapshot): void {
     try {
       const escapedName = escapeCssSelector(snapshot.activeName);
       const matches = document.querySelectorAll<HTMLElement>(
-        `[name="${CSS.escape(escapedName)}"]`
+        // eslint-disable-next-line unicorn/require-css-escape -- escapeCssSelector delegates to CSS.escape when available
+        `[name="${escapedName}"]`
       );
       const only = matches.length === 1 ? matches[0] : undefined;
       if (only) {
@@ -711,7 +716,9 @@ function isKnownFailureDestination(destinationUrl: URL): boolean {
     return true;
   }
   const saveParameter = destinationUrl.searchParams.get("save");
-  return (saveParameter !== null && SKILL_PROMPT_SAVE_FAILURES.has(saveParameter));
+  return (
+    saveParameter !== null && SKILL_PROMPT_SAVE_FAILURES.has(saveParameter)
+  );
 }
 
 async function handlePostSubmission(
@@ -996,7 +1003,10 @@ export function registerFormNavigation(
 
   const handleClick = (event: Event): void => {
     const targetElement = (event as MouseEvent).target;
-    if (targetElement && typeof (targetElement as Element).closest === "function") {
+    if (
+      targetElement &&
+      typeof (targetElement as Element).closest === "function"
+    ) {
       const submitter = (targetElement as Element).closest(
         'button[type="submit"], input[type="submit"], button:not([type]), input[type="image"]'
       );
@@ -1055,8 +1065,12 @@ export function registerFormNavigation(
   };
 
   const eventTarget = target as EventTarget;
-  eventTarget.addEventListener("click", handleClick as EventListener, {capture: true});
-  eventTarget.addEventListener("submit", handleSubmit as EventListener, {capture: false});
+  eventTarget.addEventListener("click", handleClick as EventListener, {
+    capture: true
+  });
+  eventTarget.addEventListener("submit", handleSubmit as EventListener, {
+    capture: false
+  });
 
   return () => {
     if (clearSubmitterTimer !== null) {
@@ -1154,6 +1168,97 @@ export function FormNavigationOwner({
     const heading = document.querySelector<HTMLHeadingElement>("main h1");
     heading?.focus({ preventScroll: true });
   }, [currentPathname]);
+
+  // Same-pathname links carrying `#fragment` (such as opening a detail drawer
+  // via `/evaluations?evaluationId=...#evaluation-detail-drawer`) keep both
+  // `usePathname()` and the table link in place, so watch fragment navigation
+  // commits directly and move focus to the requested target element once it
+  // settles in the DOM.
+  React.useEffect(() => {
+    if (typeof document === "undefined" || typeof window === "undefined") {
+      return;
+    }
+    let pending: { readonly url: string; readonly fragmentId: string } | null =
+      null;
+    let observer: MutationObserver | null = null;
+
+    const clearPending = (): void => {
+      pending = null;
+      observer?.disconnect();
+      observer = null;
+    };
+
+    const tryFocusPending = (): void => {
+      if (!pending) return;
+      const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      if (current !== pending.url) return;
+      const escaped = escapeCssSelector(pending.fragmentId);
+      const element = document.querySelector<HTMLElement>(`[id="${escaped}"]`);
+      if (element && typeof element.focus === "function") {
+        clearPending();
+        element.focus({ preventScroll: true });
+      }
+    };
+
+    const handleAnchorClick = (event: MouseEvent): void => {
+      if (
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey ||
+        event.button !== 0
+      ) {
+        return;
+      }
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const anchor = target.closest<HTMLAnchorElement>("a[href]");
+      if (!anchor) return;
+      const anchorTarget = anchor.getAttribute("target");
+      if (anchorTarget !== null && anchorTarget !== "_self") return;
+      let parsed: URL;
+      try {
+        parsed = new URL(anchor.href, window.location.href);
+      } catch {
+        return;
+      }
+      if (parsed.origin !== window.location.origin || parsed.hash.length < 2) {
+        return;
+      }
+      let fragmentId: string;
+      try {
+        fragmentId = decodeURIComponent(parsed.hash.slice(1));
+      } catch {
+        return;
+      }
+      if (fragmentId.length === 0) return;
+
+      clearPending();
+      pending = {
+        url: `${parsed.pathname}${parsed.search}${parsed.hash}`,
+        fragmentId
+      };
+      observer = new MutationObserver(() => {
+        tryFocusPending();
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+      window.requestAnimationFrame(() => tryFocusPending());
+    };
+
+    const handleHashChange = (): void => {
+      tryFocusPending();
+    };
+
+    document.addEventListener("click", handleAnchorClick, { capture: true });
+    window.addEventListener("hashchange", handleHashChange);
+    return () => {
+      clearPending();
+      document.removeEventListener("click", handleAnchorClick, {
+        capture: true
+      });
+      window.removeEventListener("hashchange", handleHashChange);
+    };
+  }, []);
 
   const publishFeedback = React.useCallback(
     (status: FormNavigationStatus, message: string) => {
