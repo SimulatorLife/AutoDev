@@ -339,16 +339,21 @@ export function createCommandsMcpServer(
                   };
                 }
                 if (execution.cancelling) {
-                  if (!execution.cleanupVerified || !isAuthorized()) {
+                  if (!execution.cleanupVerified) {
                     store.interrupt(
                       task.taskId,
-                      execution.cleanupVerified
-                        ? "The command was aborted when the execution grant ended."
-                        : "Command cleanup is uncertain; workspace lease retained."
+                      "Command cleanup is uncertain; workspace lease retained."
+                    );
+                  } else if (!isClosed && !isAuthorized()) {
+                    store.interrupt(
+                      task.taskId,
+                      "The command was aborted when the execution grant ended."
                     );
                   }
-                  // Otherwise the SDK's cancellation path owns the terminal
-                  // state, after verified cleanup.
+                  // Otherwise the cancellation's owner records the terminal
+                  // state after verified cleanup: a closing backend records
+                  // its own interruption, and the SDK's cancellation path
+                  // records a requested cancel.
                 } else if (isAuthorized()) {
                   // Only a command that succeeded is a completed task. Every
                   // other outcome keeps its own reason in the payload, and
