@@ -30,6 +30,7 @@ import {
 import * as ts from "typescript";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
+const PATH_ORDER = new Intl.Collator("en");
 
 function relativeImports(modulePath: string): string[] {
   return relativeImportsFromSource(
@@ -42,15 +43,18 @@ function runtimeSourceFiles(): string[] {
   const root = join(repositoryRoot, "runtime/src");
   const files: string[] = [];
   const visit = (directory: string): void => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const entries = readdirSync(directory, { withFileTypes: true });
+    for (const entry of entries) {
       const absolute = join(directory, entry.name);
       if (entry.isDirectory()) visit(absolute);
-      else if (entry.name.endsWith(".ts"))
-        files.push(normalize(join("runtime/src", relative(root, absolute))));
+      else if (entry.name.endsWith(".ts")) {
+        const sourcePath = join("runtime/src", relative(root, absolute));
+        files.push(normalize(sourcePath));
+      }
     }
   };
   visit(root);
-  return files.sort();
+  return files.sort(PATH_ORDER.compare);
 }
 
 const BARE_PACKAGE_IMPORT_PATTERN =
@@ -80,9 +84,10 @@ function assertInstalledSourceDependencies(
   const isRuntimeSource = modulePath.startsWith("runtime/");
   const dependencies = isRuntimeSource ? runtimeDependencies : rootDependencies;
   const modulesRoot = isRuntimeSource ? "runtime/node_modules" : "node_modules";
-  for (const packageName of packageImports(
+  const imported = packageImports(
     readFileSync(join(repositoryRoot, modulePath), "utf8")
-  )) {
+  );
+  for (const packageName of imported) {
     const isSelfImport = isRuntimeSource && packageName === runtimePackageName;
     if (!isSelfImport) {
       assert.ok(
@@ -121,8 +126,8 @@ test("the installed source tree is exactly the manifest's runtime/src modules", 
     .filter((modulePath) => modulePath.startsWith("runtime/src/"))
     .map((modulePath) => modulePath.slice("runtime/src/".length));
   assert.deepEqual(
-    [...tree.files.keys()].sort(),
-    [...expected, "package.json"].sort()
+    tree.files.keys().toArray().sort(PATH_ORDER.compare),
+    [...expected, "package.json"].sort(PATH_ORDER.compare)
   );
   assert.equal(
     tree.nodeModules,
@@ -264,7 +269,7 @@ test("runtime manifest is closed under package imports", () => {
     }
   }
   assert.deepEqual(
-    gaps.sort(),
+    gaps.sort(PATH_ORDER.compare),
     [],
     `RUNTIME_MODULES does not own every module the installed tree imports by package name; add these entries to runtime/src/platform/install-materializer.ts:\n${gaps.join("\n")}`
   );
@@ -315,7 +320,7 @@ test("every Runtime module resolved by path is materialized into CODEX_HOME", ()
     }
   }
   assert.deepEqual(
-    gaps.sort(),
+    gaps.sort(PATH_ORDER.compare),
     [],
     `modules resolved by path must be materialized into CODEX_HOME/src; add these entries to runtime/src/platform/install-materializer.ts:\n${gaps.join("\n")}`
   );
@@ -341,7 +346,7 @@ test("the playtest analyst dispatch is fully materialized into the installed tre
       if (target.endsWith(".ts")) pending.push(target);
   }
   assert.deepEqual(
-    gaps.sort(),
+    gaps.sort(PATH_ORDER.compare),
     [],
     `the playtest analyst dispatch must be materialized in full; add these entries to runtime/src/platform/install-materializer.ts:\n${gaps.join("\n")}`
   );
@@ -1211,16 +1216,17 @@ test("the CODEX_HOME copy resolves every bare import through the protected depen
     if (!modulePath.endsWith(".ts")) continue;
     const installedPath = runtimeTarget(modulePath, codexHome);
     const inClosureWalk = installedPath.startsWith(`${closureRoot}${sep}`);
-    for (const packageName of packageImports(
+    const imported = packageImports(
       readFileSync(join(repositoryRoot, modulePath), "utf8")
-    ))
+    );
+    for (const packageName of imported)
       if (!inClosureWalk || !closure.has(packageName))
         unresolvable.push(
           `${modulePath} -> ${installedPath} imports "${packageName}"`
         );
   }
   assert.deepEqual(
-    unresolvable.sort(),
+    unresolvable.sort(PATH_ORDER.compare),
     [],
     `installed sources cannot resolve these packages from CODEX_HOME; declare each as a Runtime production dependency:\n${unresolvable.join("\n")}`
   );
