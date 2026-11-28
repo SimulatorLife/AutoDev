@@ -1,5 +1,14 @@
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, normalize, relative, sep } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -14,57 +23,13 @@ import {
 } from "@simulatorlife/autodev-runtime/platform/install-materializer";
 import { runtimeDependencyClosure } from "@simulatorlife/autodev-runtime/platform/runtime-dependency-closure";
 import { runtimeTarget } from "@simulatorlife/autodev-runtime/platform/runtime-files";
+import {
+  relativeImportsFromSource,
+  runtimeManifestGaps
+} from "@simulatorlife/autodev-runtime/platform/runtime-module-closure";
 import * as ts from "typescript";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
-
-function relativeImportsFromSource(
-  modulePath: string,
-  source: string
-): string[] {
-  const file = ts.createSourceFile(
-    modulePath,
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS
-  );
-  const directory = dirname(modulePath);
-  const imports: string[] = [];
-  const addRelativeSpecifier = (specifier: ts.Expression | undefined): void => {
-    if (
-      specifier &&
-      ts.isStringLiteralLike(specifier) &&
-      specifier.text.startsWith(".")
-    ) {
-      imports.push(normalize(join(directory, specifier.text)));
-    }
-  };
-
-  for (const statement of file.statements) {
-    if (ts.isImportDeclaration(statement)) {
-      if (!statement.importClause?.isTypeOnly)
-        addRelativeSpecifier(statement.moduleSpecifier);
-      continue;
-    }
-    if (ts.isExportDeclaration(statement) && !statement.isTypeOnly) {
-      addRelativeSpecifier(statement.moduleSpecifier);
-    }
-  }
-
-  const visit = (node: ts.Node): void => {
-    if (
-      ts.isCallExpression(node) &&
-      node.expression.kind === ts.SyntaxKind.ImportKeyword &&
-      node.arguments.length === 1
-    ) {
-      addRelativeSpecifier(node.arguments[0]);
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(file);
-  return imports;
-}
 
 function relativeImports(modulePath: string): string[] {
   return relativeImportsFromSource(
@@ -190,27 +155,36 @@ test("runtime manifest closure follows runtime imports but ignores erased type-o
 });
 
 test("runtime manifest is closed under relative imports", () => {
-  const listed = new Set<string>(RUNTIME_MODULES);
-  const pending: string[] = RUNTIME_MODULES.filter((entry) =>
-    entry.endsWith(".ts")
-  );
-  const visited = new Set<string>();
-  const gaps: string[] = [];
-  while (pending.length > 0) {
-    const modulePath = pending.pop();
-    if (modulePath === undefined || visited.has(modulePath)) continue;
-    visited.add(modulePath);
-    for (const target of relativeImports(modulePath)) {
-      if (!listed.has(target))
-        gaps.push(`${target} (imported by ${modulePath})`);
-      if (target.endsWith(".ts")) pending.push(target);
-    }
-  }
+  const gaps = runtimeManifestGaps(repositoryRoot, RUNTIME_MODULES);
   assert.deepEqual(
-    gaps.sort(),
+    gaps,
     [],
     `RUNTIME_MODULES is not self-contained; add these entries to runtime/src/platform/install-materializer.ts:\n${gaps.join("\n")}`
   );
+});
+
+test("the installer refuses a Runtime tree whose manifest misses an imported module", () => {
+  const root = mkdtempSync(join(tmpdir(), "autodev-manifest-gap-"));
+  try {
+    mkdirSync(join(root, "runtime/src/xacpx"), { recursive: true });
+    writeFileSync(
+      join(root, "runtime/src/xacpx/http.ts"),
+      'import { probe } from "./discovery-probe.ts";\nexport const run = probe;\n'
+    );
+    writeFileSync(join(root, "runtime/src/xacpx/discovery-probe.ts"), "export const probe = 1;\n");
+    assert.deepEqual(runtimeManifestGaps(root, ["runtime/src/xacpx/http.ts"]), [
+      "runtime/src/xacpx/discovery-probe.ts (imported by runtime/src/xacpx/http.ts)"
+    ]);
+    assert.deepEqual(
+      runtimeManifestGaps(root, [
+        "runtime/src/xacpx/http.ts",
+        "runtime/src/xacpx/discovery-probe.ts"
+      ]),
+      []
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 /**

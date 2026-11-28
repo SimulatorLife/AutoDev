@@ -41,6 +41,7 @@
     "./platform/dependencies": "./src/platform/dependencies.ts",
     "./platform/health-probe": "./src/platform/health-probe.ts",
     "./platform/hook-trust": "./src/platform/hook-trust.ts",
+    "./platform/runtime-module-closure": "./src/platform/runtime-module-closure.ts",
     "./platform/host-arch": "./src/platform/host-arch.ts",
     "./platform/install-check": "./src/platform/install-check.ts",
     "./platform/install-command": "./src/platform/install-command.ts",

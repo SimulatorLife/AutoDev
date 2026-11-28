@@ -87,6 +87,7 @@ import {
   readRuntimePackageManifest,
   renderRuntimeMirrorPackage
 } from "./runtime-mirror-package.ts";
+import { runtimeManifestGaps } from "./runtime-module-closure.ts";
 import { removeStalePaths } from "./runtime-reconciliation.ts";
 import {
   materializeRuntimeSourceGeneration,
@@ -276,6 +277,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/platform/runtime-reconciliation.ts",
   "runtime/src/platform/runtime-source-generation.ts",
   "runtime/src/platform/runtime-dependency-closure.ts",
+  "runtime/src/platform/runtime-module-closure.ts",
   "runtime/src/platform/command-catalogue-approval.ts",
   "runtime/src/platform/user-level-skills.ts",
   "runtime/src/platform/service-restart.ts",
@@ -1212,6 +1214,11 @@ export function runtimeSourceTree(
   codexHome: string,
   nodeModules: string = runtimeDependencyClosure(repositoryRoot, codexHome)
 ): RuntimeSourceTree {
+  const gaps = runtimeManifestGaps(repositoryRoot, RUNTIME_MODULES);
+  if (gaps.length > 0)
+    throw new Error(
+      `RUNTIME_MODULES is not closed under its imports, so the installed Runtime would fail to load; add these entries to runtime/src/platform/install-materializer.ts:\n${gaps.join("\n")}`
+    );
   const files = new Map<string, string | Buffer>();
   for (const filePath of RUNTIME_MODULES)
     if (filePath.startsWith(RUNTIME_SOURCE_PREFIX))

@@ -112,7 +112,7 @@ Constraint: the CI agent workflows (`agent-invoke.yml` `@agent` comments, `targe
 - New `runtime/src/delivery/github-pr-state.ts`: `fetchPullRequestGateState()` makes one bounded GraphQL call with the same token. It reuses the query shape of `runtime/src/memory/git-curation.ts` `githubReferenceState`, extended with head/base OIDs, `mergeable`, reviews with commit OIDs, and each thread's last comment.
 - In the same module, add `waitForPullRequestChecks({ owner, repo, number, headSha, timeoutMs })`. It makes one blocking call with internal backoff (starting at 15 s, capped), returns when the rollup for that head is terminal or the timeout passes, and returns the gate state plus a summary of failing checks (name, conclusion, details URL).
 - Expose it as the typed CLI command `pnpm autodev -- pr wait-checks <owner/repo> <number> --head <sha> [--timeout 30m]` in `runtime/src/cli/`. The command prints JSON. The orchestrator runs it as one `exec` cell with the `// @exec: {"yield_time_ms"}` pragma, so it waits once instead of polling across turns. Its read is allowed for the root; add it to the hook policy's allowed command set.
-- `runtime/src/platform/install-materializer.ts`: add every new `runtime/src` file to `RUNTIME_MODULES` **and `git add` it** (otherwise `~/.codex` crash-loops).
+- `runtime/src/platform/install-materializer.ts`: add every new `runtime/src` file to `RUNTIME_MODULES` **and `git add` it**. The installer refuses a manifest that misses an imported module.
 - Tests: `runtime/tests/workspace-delivery.test.ts` (temp repo and catalog) and `runtime/tests/github-pr-state.test.ts` (stubbed fetch).
 
 ### 6. Hook enforcement
