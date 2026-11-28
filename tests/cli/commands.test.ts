@@ -18,7 +18,9 @@ test("CLI dispatches router, provider, hook, and install through typed backends"
         calls.push("router ensure");
         return 12;
       },
-      status: () => ({ router: "running" })
+      status: () => ({ router: "running" }),
+      rollback: () =>
+        Promise.resolve({ activeGenerationId: "a", retiringGenerationId: null })
     }
   });
   assert.equal(result, 11);
@@ -165,7 +167,12 @@ test("router status uses its typed status result", async () => {
             state: "running",
             endpoint: "http://127.0.0.1:4100",
             pid: 42
-          })
+          }),
+          rollback: () =>
+            Promise.resolve({
+              activeGenerationId: "a",
+              retiringGenerationId: null
+            })
         }
       }),
       0

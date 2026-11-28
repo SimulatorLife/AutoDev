@@ -19,11 +19,7 @@ import {
   type TomlTable,
   type TomlValue
 } from "@simulatorlife/autodev-runtime/config";
-import {
-  createDefaultRouterEnsureDeps,
-  resolveRouterEnsureOptions,
-  runRouterEnsure
-} from "@simulatorlife/autodev-runtime/platform";
+import { ensureModelRouter } from "@simulatorlife/autodev-runtime/platform";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { resolveCodexBinary } from "@simulatorlife/autodev-runtime/shared/executables";
 import {
@@ -1154,11 +1150,7 @@ async function checkProviderAgentRole(
 }
 
 async function ensureRouter(environment: NodeJS.ProcessEnv): Promise<void> {
-  const options = resolveRouterEnsureOptions(environment, process.pid);
-  const result = await runRouterEnsure(
-    createDefaultRouterEnsureDeps(options),
-    options
-  );
+  const result = await ensureModelRouter(environment, process.pid);
   if (result.exitCode !== 0)
     throw new Error(result.message ?? "model router ensure failed");
 }

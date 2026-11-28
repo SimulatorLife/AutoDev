@@ -70,7 +70,9 @@ const STUBS = {
       state: "running" as const,
       endpoint: "http://127.0.0.1:4100",
       pid: 1
-    })
+    }),
+    rollback: () =>
+      Promise.resolve({ activeGenerationId: "a", retiringGenerationId: null })
   },
   provider: { start: () => 0 },
   hook: { run: () => 0 },
@@ -93,7 +95,7 @@ test("a command invoked without its subcommand names the values it accepts", () 
   // the owning subsystem migration", which is not something a caller can do.
   for (const [command, label, expected] of [
     ["render", "render target", "agents, contract, mcp, or catalog"],
-    ["router", "router command", "run, ensure, or status"],
+    ["router", "router command", "run, ensure, status, or rollback"],
     ["provider", "provider", "claude, mcode, copilot, or antigravity"],
     ["hook", "hook", "session-start, or skill-read"],
     ["repo", "repo subcommand", "bootstrap"],
@@ -153,7 +155,7 @@ function acceptedList(command: string): string {
       return "agents, contract, mcp, or catalog";
     }
     case "router": {
-      return "run, ensure, or status";
+      return "run, ensure, status, or rollback";
     }
     case "provider": {
       return "claude, mcode, copilot, or antigravity";

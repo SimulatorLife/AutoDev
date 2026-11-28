@@ -1,12 +1,10 @@
 /**
 Descendant termination for a confined command.
 
-A process group is not a command's whole tree. The executor runs the command
-in its own group, so a group signal reaches the ordinary tree -- but a
-descendant that detached into its own session left that group behind and
-survived it. These tests drive the real executor under the real macOS
-Seatbelt profile and prove that a cancelled, an expired and a still-running
-command leave nothing of their own behind.
+A process group is not a command's lifetime. Non-interactive package
+scripts may use independent groups, and must remain alive until their work
+finishes. These tests drive the real executor under macOS Seatbelt and
+verify normal execution, completion, cancellation and timeout cleanup.
 */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -16,7 +14,8 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
-  rmSync
+  rmSync,
+  writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -25,6 +24,7 @@ import test from "node:test";
 import type { CommandDefinition } from "../src/mcp/commands-catalogue.ts";
 import {
   type ApprovedCommandScope,
+  resolveTrustedExecutables,
   runApprovedCommand
 } from "../src/mcp/commands-execution.ts";
 
@@ -116,11 +116,8 @@ function readPids(pidFile: string): { group: number; detached: number } {
 /**
 The process groups the operating system reports, recorded continuously.
 
-A detached descendant does not stay alive: the executor terminates it on its
-own sweep, a few hundred milliseconds after the command started. Sampling the
-listing once, after the fixture has reported its process ids, can therefore
-miss it entirely on a loaded runner. Recording the listing continuously keeps
-the sighting the assertion is about.
+Recording the listing continuously captures the process group transition
+independently of the fixture's own report.
 
 Every group a process was ever seen in is kept, because a process that
 detaches is briefly visible in its parent's group before it has called
@@ -211,6 +208,60 @@ async function waitForPids(
 }
 
 test(
+  "an already cancelled command never launches or records a process",
+  async (t) => {
+    const root = mkdtempSync(path.join(tmpdir(), "autodev-command-pre-abort-"));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const scope = scopeFixture(root);
+    const controller = new AbortController();
+    controller.abort();
+    const result = await runApprovedCommand(
+      "cancelled",
+      fixture,
+      fixture.args,
+      scope,
+      controller.signal,
+      () => assert.fail("a cancelled command started")
+    );
+    assert.equal(result.status, "cancelled");
+    assert.equal(result.exitCode, null);
+  }
+);
+
+test(
+  "a failed lease registration stops the spawned command before returning",
+  { skip: process.platform !== "darwin" || !existsSync(SANDBOX) },
+  async (t) => {
+    const root = mkdtempSync(path.join(tmpdir(), "autodev-command-registration-"));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const scope = scopeFixture(root);
+    const definition = {
+      ...fixture,
+      executable: "sh",
+      args: ["-c", "sleep 120"],
+      timeoutMs: 30_000
+    } satisfies CommandDefinition;
+    let startedPid: number | undefined;
+    const result = await runApprovedCommand(
+      "registration_failure",
+      definition,
+      definition.args,
+      scope,
+      AbortSignal.timeout(35_000),
+      (pid) => {
+        startedPid = pid;
+        t.after(() => killIfAlive(pid));
+        throw new Error("fixture lease recording failure");
+      }
+    );
+    assert.ok(startedPid);
+    assert.equal(result.status, "infrastructure_error");
+    assert.match(result.stderr, /workspace lease/u);
+    assert.equal(isAlive(startedPid), false);
+  }
+);
+
+test(
   "a cancelled command leaves no descendant running, not even a detached one",
   {
     skip: process.platform !== "darwin" || !existsSync(SANDBOX)
@@ -296,7 +347,7 @@ test(
 );
 
 test(
-  "a descendant that detached is terminated while its command is still running",
+  "a detached descendant can finish legitimate work while its command is running",
   {
     skip: process.platform !== "darwin" || !existsSync(SANDBOX)
   },
@@ -327,20 +378,100 @@ test(
       killIfAlive(pids.group);
       killIfAlive(pids.detached);
     });
-    // The command is still running, so the descendant that left its process
-    // group is terminated on its own rather than left behind.
-    const deadline = Date.now() + 15_000;
-    while (Date.now() < deadline && isAlive(pids.detached)) {
-      await new Promise((resolve) => {
-        setTimeout(resolve, 100);
-      });
-    }
-    assert.equal(isAlive(pids.detached), false);
-    // The descendant that stayed in the command's group is the command's own
-    // business and is still running.
+    // Cross multiple observation intervals. A separate process group is
+    // normal for pnpm scripts and must not trigger an unsolicited kill.
+    await new Promise((resolve) => {
+      setTimeout(resolve, 1000);
+    });
+    assert.equal(isAlive(pids.detached), true);
     assert.equal(isAlive(pids.group), true);
     controller.abort();
-    await pending;
+    const result = await pending;
+    assert.equal(result.status, "cancelled");
+    assert.equal(isAlive(pids.group), false);
+    assert.equal(isAlive(pids.detached), false);
+  }
+);
+
+test(
+  "normal completion reaps an observed detached descendant but allows awaited detached work",
+  {
+    skip: process.platform !== "darwin" || !existsSync(SANDBOX)
+  },
+  async (t) => {
+    const root = mkdtempSync(path.join(tmpdir(), "autodev-command-completion-"));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const scope = scopeFixture(root);
+    const pidFile = path.join(scope.workspace, "leftover.pid");
+    const script = [
+      'const { spawn } = require("node:child_process");',
+      'const { writeFileSync } = require("node:fs");',
+      'const leftover = spawn("/bin/sleep", ["120"], { detached: true, stdio: "ignore" });',
+      'leftover.unref();',
+      `writeFileSync(${JSON.stringify(pidFile)}, String(leftover.pid));`,
+      'const work = spawn("/bin/sleep", ["1"], { detached: true, stdio: "ignore" });',
+      'work.on("exit", (code, signal) => { if (code !== 0 || signal) process.exitCode = 1; });'
+    ].join(" ");
+    const definition = {
+      ...fixture,
+      executable: "node",
+      args: ["-e", script],
+      timeoutMs: 15_000
+    } satisfies CommandDefinition;
+    const result = await runApprovedCommand(
+      "completed",
+      definition,
+      definition.args,
+      scope,
+      AbortSignal.timeout(20_000)
+    );
+    const leftover = Number(readFileSync(pidFile, "utf8"));
+    t.after(() => killIfAlive(leftover));
+    assert.equal(result.status, "succeeded", result.stderr);
+    assert.equal(result.exitCode, 0);
+    assert.equal(isAlive(leftover), false);
+  }
+);
+
+test(
+  "pnpm runs nested lifecycle scripts non-interactively under the command sandbox",
+  { skip: process.platform !== "darwin" || !existsSync(SANDBOX) },
+  async (t) => {
+    const trusted = resolveTrustedExecutables(["pnpm"]);
+    if (!trusted.executables.pnpm) {
+      t.skip("pnpm is unavailable");
+      return;
+    }
+    const root = mkdtempSync(path.join(tmpdir(), "autodev-command-pnpm-"));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const scope = { ...scopeFixture(root), ...trusted };
+    writeFileSync(
+      path.join(scope.workspace, "package.json"),
+      JSON.stringify({
+        name: "command-lifecycle-fixture",
+        private: true,
+        scripts: {
+          typecheck: "pnpm run typecheck:root",
+          "typecheck:root": 'node -e "setTimeout(() => console.log(42), 1000)"'
+        }
+      })
+    );
+    const definition = {
+      ...fixture,
+      executable: "pnpm",
+      args: ["run", "typecheck"],
+      timeoutMs: 30_000
+    } satisfies CommandDefinition;
+    const result = await runApprovedCommand(
+      "typecheck",
+      definition,
+      definition.args,
+      scope,
+      AbortSignal.timeout(35_000)
+    );
+    assert.equal(result.status, "succeeded", result.stdout + result.stderr);
+    assert.equal(result.exitCode, 0);
+    assert.match(result.stdout, /\b42\b/u);
   }
 );
 
@@ -364,9 +495,7 @@ test(
       timeoutMs: 60_000
     } satisfies CommandDefinition;
     const controller = new AbortController();
-    // The listing is recorded from before the command starts, so the
-    // detached descendant is seen even though the executor terminates it on
-    // its own sweep moments later.
+    // Record from before the command starts to capture the group transition.
     const recorder = startProcessGroupRecorder();
     t.after(() => recorder.stop());
     const pending = runApprovedCommand(

@@ -92,14 +92,15 @@ export interface CommandWorkspaceLease {
   Record the command the lease was taken for.
 
   A command's process id exists only once it has started, so the lease
-  carries it after the fact. A lease whose command was never recorded cannot
-  be proven abandoned, and is never reclaimed on a guess.
+  carries it after the fact. A missing PID is not proof of settlement;
+  only verified cleanup (or a command that never started) permits release.
   */
   noteCommand(pid: number): void;
   /**
-  Release the lease.
+  Release the lease after verified cleanup, or retain its durable lock
+  when the executor cannot establish that the workspace is idle.
   */
-  release(): void;
+  release(cleanupVerified?: boolean): void;
 }
 
 /**
@@ -289,6 +290,7 @@ export function createCommandsMcpServer(
             }, REVOCATION_CHECK_MS);
             revocationCheck.unref();
             execution.done = (async () => {
+              let cleanupVerified = true;
               try {
                 const started = performance.now();
                 let result: CommandResult;
@@ -304,7 +306,10 @@ export function createCommandsMcpServer(
                         argv,
                         grant.scope,
                         execution.controller.signal,
-                        (pid) => lease.noteCommand(pid)
+                        (pid) => lease.noteCommand(pid),
+                        () => {
+                          cleanupVerified = false;
+                        }
                       ),
                     extra._meta
                   );
@@ -349,7 +354,7 @@ export function createCommandsMcpServer(
                 clearInterval(revocationCheck);
                 extra.signal.removeEventListener("abort", abortRequest);
                 active.delete(task.taskId);
-                lease.release();
+                lease.release(cleanupVerified);
               }
             })();
             return { task };

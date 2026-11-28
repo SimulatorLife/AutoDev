@@ -112,22 +112,59 @@ test("a lease never acquires or removes a lock in a replacement run directory", 
   }
 });
 
-test("a lease whose holder and command are both gone is taken over", () => {
+test("a settled lease whose holder and command are both gone is taken over", () => {
   const root = mkdtempSync(path.join(tmpdir(), "autodev-command-lease-"));
   try {
     const lease = createWorkspaceLease(root, WORKSPACE_KEY);
     const held = lease.tryAcquire();
     assert.ok(held);
-    // The server that took the lease died, and so did the command it was
-    // taken for: the lease protects a command that has finished.
+    // The executor proved cleanup before the server died, but the lock
+    // survived. Dead root and holder PIDs alone would not prove this.
     held.noteCommand(exitedProcessId());
     writeLeaseRecord(root, {
       holder: exitedProcessId(),
-      command: exitedProcessId()
+      command: exitedProcessId(),
+      settled: true
     });
     const taken = lease.tryAcquire();
     assert.ok(taken, "an abandoned lease kept the workspace closed");
     taken.release();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("unsettled leases remain closed even after the holder and root exit", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "autodev-command-lease-"));
+  try {
+    const lease = createWorkspaceLease(root, WORKSPACE_KEY);
+    const held = lease.tryAcquire();
+    assert.ok(held);
+    const command = exitedProcessId();
+    held.noteCommand(command);
+    held.release(false);
+    const lock = path.join(root, `command-${WORKSPACE_KEY}.lock`);
+    assert.equal(
+      readFileSync(lock, "utf8"),
+      `holder=${process.pid}\ncommand=${command}\n`
+    );
+    assert.equal(lease.tryAcquire(), null);
+    // Simulate the broker later exiting. Its root also exited, but the
+    // unverified descendants may still be running.
+    writeLeaseRecord(root, { holder: exitedProcessId(), command });
+    assert.equal(inspectCommandLeases(root)[0]!.state, "unverifiable");
+    assert.equal(lease.tryAcquire(), null);
+    assert.equal(
+      releaseCommandLease(root, WORKSPACE_KEY, { force: false }).released,
+      false
+    );
+    assert.equal(
+      releaseCommandLease(root, WORKSPACE_KEY, { force: true }).released,
+      true
+    );
+    const next = lease.tryAcquire();
+    assert.ok(next);
+    next.release();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -157,7 +194,8 @@ test("a lease whose command is still running is never taken over", () => {
     // process, so the workspace is not idle.
     writeLeaseRecord(root, {
       holder: exitedProcessId(),
-      command: process.pid
+      command: process.pid,
+      settled: true
     });
     assert.equal(lease.tryAcquire(), null);
   } finally {
@@ -215,10 +253,11 @@ test("the operator sees what each lease is, and releases only what is provable",
     assert.equal(refused.released, false);
     assert.match(refused.reason, /running server/u);
 
-    // The same lease once its command is gone is released on that evidence.
+    // The lease is released on recorded settlement and dead processes.
     writeLeaseRecord(root, {
       holder: exitedProcessId(),
-      command: exitedProcessId()
+      command: exitedProcessId(),
+      settled: true
     });
     const released = releaseCommandLease(root, WORKSPACE_KEY, { force: false });
     assert.equal(released.released, true);
@@ -325,10 +364,15 @@ Write the record a lease file holds, as the server that took it would have.
 */
 function writeLeaseRecord(
   run: string,
-  record: { readonly holder: number; readonly command?: number }
+  record: {
+    readonly holder: number;
+    readonly command?: number;
+    readonly settled?: boolean;
+  }
 ): void {
   const lines = [`holder=${record.holder}`];
   if (record.command !== undefined) lines.push(`command=${record.command}`);
+  if (record.settled) lines.push("settled=1");
   writeFileSync(
     path.join(run, `command-${WORKSPACE_KEY}.lock`),
     lines.join("\n") + "\n",

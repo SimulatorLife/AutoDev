@@ -17,7 +17,7 @@ export interface IngressActivationResponse {
   readonly retiringGenerationId: string | null;
 }
 
-async function controlRequest<T>(options: {
+function controlRequest<T>(options: {
   controlSocket: string;
   controlToken: string;
   method: "GET" | "POST";
@@ -27,7 +27,7 @@ async function controlRequest<T>(options: {
 }): Promise<{ status: number; body: T }> {
   const payload =
     options.body === undefined ? undefined : JSON.stringify(options.body);
-  return await new Promise<{ status: number; body: T }>((resolve, reject) => {
+  return new Promise<{ status: number; body: T }>((resolve, reject) => {
     const request = httpRequest(
       {
         socketPath: options.controlSocket,
@@ -45,7 +45,9 @@ async function controlRequest<T>(options: {
       },
       (response) => {
         const chunks: Buffer[] = [];
-        response.on("data", (chunk: Buffer) => chunks.push(chunk));
+        response.on("data", (chunk: Buffer) => {
+          chunks.push(chunk);
+        });
         response.once("end", () => {
           try {
             const parsed = JSON.parse(
@@ -66,7 +68,9 @@ async function controlRequest<T>(options: {
       }
     );
     request.once("timeout", () => {
-      request.destroy(new Error(`Ingress request timed out: ${options.pathname}`));
+      request.destroy(
+        new Error(`Ingress request timed out: ${options.pathname}`)
+      );
     });
     request.once("error", reject);
     if (payload !== undefined) request.write(payload);
@@ -146,24 +150,37 @@ export async function rollbackIngressGeneration(
   return result.body;
 }
 
+const GENERATION_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,110}$/u;
+const LEADING_DOTS = /^\.+/u;
+
 /**
-Derive a valid, unique ingress generation ID (`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`)
-for a content-addressed `.src-<hash>` release entry.
+Derive a valid ingress generation ID (`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`)
+from `base` that no generation in `status` already uses. A base outside the
+ID grammar becomes `release`; a used one gains the first free `.<n>` suffix.
+*/
+export function uniqueGenerationId(
+  base: string,
+  status: IngressStatusResponse | null
+): string {
+  const candidate = GENERATION_ID_PATTERN.test(base) ? base : "release";
+  const used = new Set(status?.generations.map((item) => item.id));
+  if (!used.has(candidate)) return candidate;
+  let counter = 2;
+  while (used.has(`${candidate}.${counter}`)) counter += 1;
+  return `${candidate}.${counter}`;
+}
+
+/**
+Derive a unique ingress generation ID for a content-addressed `.src-<hash>`
+release entry.
 */
 export function generationIdForRelease(
   workerEntryPath: string,
   status: IngressStatusResponse | null
 ): string {
-  const routerDirectory = path.dirname(workerEntryPath);
-  const releaseDirectory = path.dirname(routerDirectory);
-  const rawName = path.basename(releaseDirectory).replace(/^\.+/u, "");
-  const base =
-    /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,110}$/u.test(rawName)
-      ? rawName
-      : "release";
-  const used = new Set(status?.generations.map((item) => item.id) ?? []);
-  if (!used.has(base)) return base;
-  let counter = 2;
-  while (used.has(`${base}.${counter}`)) counter += 1;
-  return `${base}.${counter}`;
+  const releaseDirectory = path.dirname(path.dirname(workerEntryPath));
+  return uniqueGenerationId(
+    path.basename(releaseDirectory).replace(LEADING_DOTS, ""),
+    status
+  );
 }

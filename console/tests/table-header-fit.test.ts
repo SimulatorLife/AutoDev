@@ -10,6 +10,7 @@ import {
   DataTable,
   type DataTableFeatures
 } from "../src/components/tables/DataTable.ts";
+import { modelAvailabilityColumn } from "../src/features/providers/ProviderTableColumns.ts";
 
 /**
 A table header is a label, and a label has to fit its column.
@@ -67,11 +68,16 @@ function sourceOf(relativePath: string): string {
 
 test("a one-word header declares the weight its own header needs", () => {
   // "Availability" is one long word: it cannot wrap at a word boundary, so
-  // its column has to be wide enough to hold it. The workspaces table
-  // declares this header at 160, and the acceptance measures it fitting at
-  // 390px there; the two model tables carry the same header and owe the same
-  // weight.
-  const tables = [
+  // its column has to be wide enough to hold it. Both model tables share
+  // `modelAvailabilityColumn()`, which declares the same weight as Workspaces.
+  const availabilityColumn = modelAvailabilityColumn();
+  assert.equal(availabilityColumn.header, "Availability");
+  assert.ok(
+    typeof availabilityColumn.meta?.weight === "number" &&
+      availabilityColumn.meta.weight >= 160,
+    "modelAvailabilityColumn declares at least 160px weight for its header"
+  );
+  for (const [name, path] of [
     [
       "the provider detail's model table",
       "../src/features/providers/ProviderDetailView.ts"
@@ -80,17 +86,11 @@ test("a one-word header declares the weight its own header needs", () => {
       "the providers list's model table",
       "../src/features/providers/ProviderTableColumns.ts"
     ]
-  ] as const;
-  for (const [name, path] of tables) {
-    const source = sourceOf(path);
-    const header = source.indexOf('header: "Availability"');
-    assert.notEqual(header, -1, `${name} has an availability column`);
-    const column = source.slice(header, source.indexOf("\n    }", header));
+  ] as const) {
     assert.match(
-      column,
-      /weight:\s*\d+/u,
-      `${name} declares a weight for the availability column: a column's weight ` +
-        "has to be large enough for its own header"
+      sourceOf(path),
+      /modelAvailabilityColumn\(/u,
+      `${name} uses shared modelAvailabilityColumn()`
     );
   }
 });

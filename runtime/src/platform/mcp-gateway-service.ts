@@ -45,6 +45,7 @@ import {
   CANONICAL_EXECUTION_CONTRACT_RELATIVE,
   chatgptGrantsSchema,
   type ChatgptRoleSurface,
+  chatgptRoleEnvironment,
   chatgptSupergatewayEnvironment,
   DEFAULT_CHATGPT_MCP_PORT,
   DEFAULT_CHATGPT_ROLE,
@@ -122,6 +123,11 @@ import {
   resolveLaunchAgentValues
 } from "./macos/launchagent.ts";
 import { LaunchdClient } from "./macos/launchd.ts";
+import {
+  availableGrantSelection,
+  computePolicyDigest,
+  previousGrantSelection
+} from "./mcp-gateway-policy-review.ts";
 import { resolveCommandOnPath } from "./runtime-files.ts";
 import { RUNTIME_SOURCE_LINK } from "./runtime-source-generation.ts";
 import { sleep } from "./sleep.ts";
@@ -153,6 +159,9 @@ const gatewayStateSchema = z
     policyDigest: z.string().regex(/^[a-f0-9]{64}$/u),
     reviewed: chatgptGrantsSchema,
     grants: chatgptGrantsSchema,
+    // Operator selection is distinct from the currently available grants.
+    // Absence means the published role follows its reviewed surface.
+    grantSelection: chatgptGrantsSchema.optional(),
     generation: z.string().regex(/^generation-[a-zA-Z0-9_-]+$/u),
     mcpPort: z.number().int().min(1024).max(65_535),
     node: z.string().refine(path.isAbsolute),
@@ -497,29 +506,6 @@ function remoteSecretAvailability(
   );
 }
 
-function computePolicyDigest(
-  role: string,
-  rawContract: string,
-  rawPolicy: string,
-  catalogue: Record<string, Record<string, unknown>>,
-  secretAvailability: Record<string, boolean>,
-  commandCatalogue: string | null
-): string {
-  return createHash("sha256")
-    .update(role)
-    .update("\n")
-    .update(rawContract)
-    .update("\n")
-    .update(rawPolicy)
-    .update("\n")
-    .update(JSON.stringify(catalogue))
-    .update("\n")
-    .update(JSON.stringify(secretAvailability))
-    .update("\n")
-    .update(commandCatalogue ?? "")
-    .digest("hex");
-}
-
 type ServiceLaunchd = Pick<
   LaunchdClient,
   "isLoaded" | "bootout" | "disable" | "enable" | "bootstrap" | "print"
@@ -814,7 +800,9 @@ async function resolveReviewedFromRoleContract(
     rawPolicy,
     catalogue,
     remoteSecretAvailability(catalogue, hasSecret, environment),
-    commandCatalogue
+    commandCatalogue,
+    realpathSync(installedRuntimeSource(paths)),
+    workspace
   );
   if (
     prior?.policyFile === policyFile &&
@@ -825,6 +813,10 @@ async function resolveReviewedFromRoleContract(
   }
 
   const contract = roleContract(role);
+  const roleEnvironment = {
+    ...gatewayEnvironment,
+    ...chatgptRoleEnvironment(role, workspace)
+  };
   const roleAllowedServers = new Set(contract.mcp);
   const roleMcpTools = (contract.mcpTools ?? {}) as Record<string, string[]>;
   const permissions = parseRulesyncExternalMcpPermissions(rawPolicy);
@@ -930,7 +922,7 @@ async function resolveReviewedFromRoleContract(
                 paths,
                 workspace,
                 node,
-                gatewayEnvironment,
+                roleEnvironment,
                 environment
               );
         discovered?.set(key, tools);
@@ -1475,19 +1467,22 @@ async function reconcileGateway(
         .digest("hex")
     : canonical.policyDigest;
   const reviewed = canonical.reviewed;
+  const grantSelection = config_
+    ? Object.keys(config_.grants).length > 0
+      ? config_.grants
+      : undefined
+    : policyOverride
+      ? chatgptGrantsSchema.parse(JSON.parse(readFileSync(policyFile, "utf8")))
+      : previousGrantSelection(prior, role, policyFile);
+  // Explicit operator input is validated by rendering and must fail if
+  // outside policy. Automatic reconciliation retains the selection but
+  // only publishes its currently authorized and discovered intersection.
   const grants = chatgptGrantsSchema.parse(
-    config_
-      ? Object.keys(config_.grants).length === 0
-        ? reviewed
-        : config_.grants
-      : policyOverride
-        ? JSON.parse(readFileSync(policyFile, "utf8"))
-        : prior &&
-            prior.role === role &&
-            prior.policyFile === policyFile &&
-            prior.policyDigest === policyDigest
-          ? prior.grants
-          : reviewed
+    grantSelection
+      ? config_ || policyOverride
+        ? grantSelection
+        : availableGrantSelection(grantSelection, reviewed)
+      : reviewed
   );
   const reviewedCache = readReviewedCache(paths.codexHome);
   const additionalPublished = await Promise.all(
@@ -1552,6 +1547,7 @@ async function reconcileGateway(
       policyDigest,
       reviewed,
       grants,
+      ...(grantSelection && { grantSelection }),
       generation,
       mcpPort,
       node,

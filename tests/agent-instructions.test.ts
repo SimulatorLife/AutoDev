@@ -46,10 +46,14 @@ test("no other instruction copies exist", () => {
   const expected = readFileSync(agentsPath);
   const copies = tracked.filter((relativePath) => {
     const absolutePath = join(repositoryRoot, relativePath);
+    if (relativePath === "AGENTS.md" || !isPresent(absolutePath))
+      return false;
+    const stat = lstatSync(absolutePath);
+    // An exact copy must have the same byte length. Avoid reading unrelated
+    // tracked files (including protected configuration) unnecessarily.
     return (
-      relativePath !== "AGENTS.md" &&
-      isPresent(absolutePath) &&
-      !lstatSync(absolutePath).isSymbolicLink() &&
+      stat.isFile() &&
+      stat.size === expected.length &&
       readFileSync(absolutePath).equals(expected)
     );
   });

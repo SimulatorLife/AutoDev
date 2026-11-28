@@ -317,21 +317,22 @@ function sameDirectory(
 Who holds a lease, and which command it was taken for.
 
 The holder is the server process that took the lease; the command is the
-process the lease protects, recorded once it has started.
+root process recorded after launch. Only an explicit settlement record
+establishes that the executor finished its descendant cleanup.
 */
 interface CommandLeaseRecord {
   readonly holder: number;
   readonly command: number | null;
+  readonly settled: boolean;
 }
 
 /**
 What a lease's record says about the workspace it protects.
 
-`held` is a lease whose holder is alive. `abandoned` is one whose holder and
-whose command are both gone: the command it protected has finished, and the
-lease was never released. `unverifiable` is everything else -- a record that
-cannot be read, a holder that is gone but whose command was never recorded,
-or a command that is still running.
+`held` is a lease whose holder is alive. `abandoned` is one whose holder is
+gone, whose command is no longer alive and whose settlement was recorded.
+Without that proof, the lease is `unverifiable`: a root PID disappearing
+does not establish that its detached descendants have exited.
 */
 type CommandLeaseState = "held" | "abandoned" | "unverifiable";
 
@@ -356,6 +357,7 @@ const LEASE_FILE_PREFIX = "command-";
 const LEASE_FILE_SUFFIX = ".lock";
 const LEASE_HOLDER_KEY = "holder";
 const LEASE_COMMAND_KEY = "command";
+const LEASE_SETTLED_KEY = "settled";
 
 /**
 Whether a process is still running.
@@ -370,7 +372,7 @@ function isProcessAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
   }
 }
 
@@ -383,12 +385,19 @@ whose provenance is unknown is never reclaimed.
 function readLeaseRecord(content: string): CommandLeaseRecord | null {
   let holder: number | null = null;
   let command: number | null = null;
+  let settled = false;
   for (const line of content.split("\n")) {
     if (line.length === 0) continue;
     const separator = line.indexOf("=");
     if (separator <= 0) return null;
     const key = line.slice(0, separator);
     const value = line.slice(separator + 1);
+    if (settled) return null;
+    if (key === LEASE_SETTLED_KEY) {
+      if (value !== "1" || holder === null) return null;
+      settled = true;
+      continue;
+    }
     if (!LEASE_PROCESS_ID.test(value)) return null;
     const pid = Number(value);
     if (!Number.isSafeInteger(pid) || pid <= 0) return null;
@@ -403,7 +412,7 @@ function readLeaseRecord(content: string): CommandLeaseRecord | null {
     }
   }
   if (holder === null) return null;
-  return { holder, command };
+  return { holder, command, settled };
 }
 
 /**
@@ -448,29 +457,16 @@ function assessLease(
   const isCommandAlive =
     record.command !== null && isProcessAlive(record.command);
   return {
-    state: leaseState(isHolderAlive, record.command),
+    state: isHolderAlive
+      ? "held"
+      : record.settled && !isCommandAlive
+        ? "abandoned"
+        : "unverifiable",
     holder: record.holder,
     command: record.command,
     isHolderAlive,
     isCommandAlive
   };
-}
-
-/**
-The state a lease's record and the operating system's view imply.
-
-A lease is held while its holder runs. It is abandoned only when its holder
-is gone *and* the command it was taken for has finished: a lease whose
-command was never recorded, or whose command is still running, cannot say
-that the workspace is idle.
-*/
-function leaseState(
-  isHolderAlive: boolean,
-  command: number | null
-): CommandLeaseState {
-  if (isHolderAlive) return "held";
-  if (command === null || isProcessAlive(command)) return "unverifiable";
-  return "abandoned";
 }
 
 /**
@@ -501,7 +497,7 @@ function openLease(lockPath: string): number | null {
 }
 
 /**
-Reclaim a lease whose holder and whose command are both gone.
+Reclaim a settled lease whose holder and command are no longer alive.
 
 The lock file is removed only when the record proves the workspace is idle.
 Anything unproven leaves the lease in place: an uncertain overlap between two
@@ -554,10 +550,9 @@ export function createWorkspaceLease(
       if (!sameDirectory(physicalRun, runIdentity)) return null;
       let descriptor = openLease(lockPath);
       if (descriptor === null) {
-        // The lease exists. It is abandoned only when the process that took
-        // it and the command it was taken for are both gone; anything else
-        // keeps the workspace closed. Opening it again succeeds only when
-        // the reclaim really removed it.
+        // The lease exists. Only recorded settlement and dead holder/root
+        // permit automatic reclaim. Root exit alone proves nothing about
+        // descendants. Opening again succeeds only after actual removal.
         reclaimAbandonedLease(lockPath);
         descriptor = openLease(lockPath);
         if (descriptor === null) return null;
@@ -574,21 +569,21 @@ export function createWorkspaceLease(
       let isReleased = false;
       return {
         noteCommand(pid: number): void {
-          if (isReleased || !Number.isSafeInteger(pid) || pid <= 0) return;
-          try {
-            writeSync(descriptor, `${LEASE_COMMAND_KEY}=${pid}\n`);
-          } catch {
-            // The lease stays held; its record simply does not name the
-            // command, so it can never be proven abandoned later.
-          }
+          if (isReleased || !Number.isSafeInteger(pid) || pid <= 0)
+            throw new Error("Cannot record the command process.");
+          writeSync(descriptor, `${LEASE_COMMAND_KEY}=${pid}\n`);
         },
-        release(): void {
+        release(cleanupVerified = true): void {
           if (isReleased) return;
           isReleased = true;
           try {
+            // Never mark uncertain cleanup as settled, even when the root
+            // has already exited. Close the descriptor but retain the lock.
+            if (!cleanupVerified) return;
             if (!sameDirectory(physicalRun, runIdentity)) return;
             const current = lstatSync(lockPath);
             if (current.dev === identity.dev && current.ino === identity.ino) {
+              writeSync(descriptor, `${LEASE_SETTLED_KEY}=1\n`);
               unlinkSync(lockPath);
             }
           } catch {
@@ -638,10 +633,9 @@ export function inspectCommandLeases(
 /**
 Release one lease, when the operator has decided it may be released.
 
-A lease whose holder and whose command are both gone is released on that
-evidence. A lease that cannot be read, or whose command may still be
-running, is released only when the operator forces it: they are the only
-authority on whether the workspace is really idle.
+A settled lease whose holder and command are gone is released on that
+evidence. A readable lease without proof of settlement requires explicit
+operator confirmation after the holder has stopped.
 */
 export function releaseCommandLease(
   runDirectory: string,
@@ -674,7 +668,7 @@ export function releaseCommandLease(
     }
     return {
       released: true,
-      reason: "the lease's holder and its command are both gone"
+      reason: "the lease was settled and its holder and command are gone"
     };
   }
   if (!options.force) {

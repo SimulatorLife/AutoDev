@@ -310,6 +310,22 @@ export function createDefaultRouterEnsureDeps(
 
 export { resolveRouterEnsureOptionsFromEnvironment as resolveRouterEnsureOptions };
 
+/**
+Ensure the model Router is serving with the host's own launchd and fallback
+dependencies. The one production composition of {@link runRouterEnsure}, so
+the CLI and the provider launcher start the Router the same way.
+*/
+export function ensureModelRouter(
+  environment: NodeJS.ProcessEnv,
+  callerPid: number
+): Promise<RouterEnsureResult> {
+  const options = resolveRouterEnsureOptionsFromEnvironment(
+    environment,
+    callerPid
+  );
+  return runRouterEnsure(createDefaultRouterEnsureDeps(options), options);
+}
+
 function parseLaunchdPid(output: string): number | null {
   for (const line of output.split("\n")) {
     const match = LAUNCHD_PID_LINE_PATTERN.exec(line);

@@ -248,69 +248,6 @@ mapping, and enable/disable control: the Providers table folded those facts
 into Status and the row's own controls, but a model is still an item with its
 own lifecycle, so it keeps a list of its own.
 */
-export function modelActiveAgentsColumn(
-  liveAgents: ControlApiLiveAgentCounts | null | undefined
-): ColumnDef<DataTableFeatures, ProviderModelRow> {
-  return {
-    id: "activeAgents",
-    header: "Active Agents",
-    cell: ({ row: { original: model } }) =>
-      React.createElement(
-        "span",
-        {
-          className: NUMERIC_VALUE_CLASS,
-          "data-live-agent-model": model.id
-        },
-        liveAgentCount(liveAgents, "byModel", `${model.provider}/${model.id}`)
-      ),
-    meta: {
-      weight: 112,
-      cellTitle: (model) =>
-        liveAgentRoleBreakdown(
-          liveAgents,
-          "byModelRole",
-          `${model.provider}/${model.id}`
-        )
-    }
-  };
-}
-
-export function modelAvailabilityColumn(): ColumnDef<
-  DataTableFeatures,
-  ProviderModelRow
-> {
-  return {
-    id: "availability",
-    header: "Availability",
-    cell: ({ row: { original: model } }) =>
-      React.createElement(ProviderModelAvailabilityBadge, {
-        availability: model.availability
-      }),
-    meta: {
-      // "Availability" is one long word, and a column's weight has to be
-      // large enough for its own header. The workspaces table declares the
-      // same header at the same weight, and the acceptance measures it
-      // fitting at 390px there.
-      weight: 160
-    }
-  };
-}
-
-export function modelEnabledColumn(
-  returnTo: string
-): ColumnDef<DataTableFeatures, ProviderModelRow> {
-  return {
-    id: "enabled",
-    header: "Enabled",
-    cell: ({ row: { original: model } }) =>
-      React.createElement(ModelToggle, {
-        model: model.id,
-        enablement: model.enablement ?? undefined,
-        returnTo
-      })
-  };
-}
-
 export function modelColumns(
   returnTo: string,
   liveAgents: ControlApiLiveAgentCounts | null | undefined
@@ -380,4 +317,67 @@ export function modelColumns(
     modelAvailabilityColumn(),
     modelEnabledColumn(returnTo)
   ];
+}
+
+export function modelActiveAgentsColumn(
+  liveAgents: ControlApiLiveAgentCounts | null | undefined
+): ColumnDef<DataTableFeatures, ProviderModelRow> {
+  return {
+    id: "activeAgents",
+    header: "Active Agents",
+    cell: ({ row: { original: model } }) =>
+      React.createElement(
+        "span",
+        {
+          className: NUMERIC_VALUE_CLASS,
+          "data-live-agent-model": model.id
+        },
+        liveAgentCount(liveAgents, "byModel", `${model.provider}/${model.id}`)
+      ),
+    meta: {
+      weight: 112,
+      cellTitle: (model) =>
+        liveAgentRoleBreakdown(
+          liveAgents,
+          "byModelRole",
+          `${model.provider}/${model.id}`
+        )
+    }
+  };
+}
+
+export function modelAvailabilityColumn(): ColumnDef<
+  DataTableFeatures,
+  ProviderModelRow
+> {
+  return {
+    id: "availability",
+    header: "Availability",
+    cell: ({ row: { original: model } }) =>
+      React.createElement(ProviderModelAvailabilityBadge, {
+        availability: model.availability
+      }),
+    meta: {
+      // "Availability" is one long word, and a column's weight has to be
+      // large enough for its own header. The workspaces table declares the
+      // same header at the same weight, and the acceptance measures it
+      // fitting at 390px there.
+      weight: 160
+    }
+  };
+}
+
+export function modelEnabledColumn(
+  returnTo: string
+): ColumnDef<DataTableFeatures, ProviderModelRow> {
+  return {
+    id: "enabled",
+    header: "Enabled",
+    cell: ({ row: { original: model } }) =>
+      React.createElement(ModelToggle, {
+        model: model.id,
+        enablement: model.enablement ?? undefined,
+        returnTo
+      })
+  };
 }

@@ -1654,6 +1654,108 @@ test(
 );
 
 test(
+  "gateway rediscovery follows Runtime generation and workspace without widening explicit grants",
+  { timeout: 30_000 },
+  async () => {
+    const root = realpathSync(
+      mkdtempSync(path.join(tmpdir(), "mcp-gateway-discovery-"))
+    );
+    try {
+      const { codexHome, workspace, paths, gatewayDeps } = serviceFixture(root);
+      const environment = { HOME: paths.home };
+      const link = path.join(codexHome, "src");
+      const selectGeneration = (id: string) => {
+        const generation = path.join(codexHome, ".src-" + id);
+        mkdirSync(generation, { recursive: true });
+        rmSync(link);
+        symlinkSync(generation, link);
+      };
+      let xacpxTools: string[] = [];
+      let xacpxDiscoveries = 0;
+      const commandRoles = new Set<string>();
+      const dependencies: McpGatewayDependencies = {
+        ...gatewayDeps,
+        commandCatalogue: () => "sha256:approved-fixture",
+        discoverTools: async (server, ...rest) => {
+          if (server === "xacpx") {
+            xacpxDiscoveries += 1;
+            return xacpxTools;
+          }
+          if (server === "commands") {
+            const role = rest[4].AUTODEV_AGENT_ROLE!;
+            commandRoles.add(role);
+          }
+          return gatewayDeps.discoverTools!(server, ...rest);
+        }
+      };
+      const reconcile = () =>
+        ensureMcpGateway(paths, environment, undefined, dependencies);
+      const initial = await reconcile();
+      assert.equal(initial.reviewed.xacpx, undefined);
+      assert.ok(commandRoles.has("orchestrator"));
+      assert.ok(commandRoles.has("validator"));
+      assert.ok(commandRoles.has("worker"));
+      const discoveries = xacpxDiscoveries;
+      await reconcile();
+      assert.equal(xacpxDiscoveries, discoveries, "unchanged context is cached");
+
+      // No policy or catalogue change: only the installed backend changes.
+      xacpxTools = ["delegate_request", "task_watch"];
+      selectGeneration("new");
+      const upgraded = await reconcile();
+      assert.notEqual(upgraded.policyDigest, initial.policyDigest);
+      assert.deepEqual(upgraded.grants.xacpx, xacpxTools);
+
+      const selection = {
+        filesystem: ["read_text_file"],
+        xacpx: ["delegate_request"]
+      };
+      await ensureMcpGateway(
+        paths,
+        environment,
+        { workspace, grants: selection },
+        dependencies
+      );
+
+      // An unavailable selected tool disappears from the effective surface,
+      // but not from the operator's persisted selection.
+      xacpxTools = ["task_watch"];
+      selectGeneration("without-delegate");
+      const reduced = await reconcile();
+      assert.deepEqual(reduced.grants, { filesystem: ["read_text_file"] });
+      assert.deepEqual(reduced.grantSelection, selection);
+
+      // A different workspace must also rediscover the backend, even with
+      // the same installed release and policy.
+      xacpxTools = ["delegate_request", "task_watch", "task_get"];
+      const otherWorkspace = path.join(paths.home, "another-project");
+      mkdirSync(otherWorkspace);
+      const moved = await ensureMcpGateway(
+        paths,
+        { ...environment, AUTODEV_MCP_GATEWAY_WORKSPACE: otherWorkspace },
+        undefined,
+        dependencies
+      );
+      assert.notEqual(moved.policyDigest, reduced.policyDigest);
+      assert.deepEqual(moved.reviewed.xacpx, xacpxTools);
+      assert.deepEqual(moved.grants, selection);
+      assert.deepEqual(moved.grantSelection, selection);
+
+      const reset = await ensureMcpGateway(
+        paths,
+        environment,
+        { workspace: otherWorkspace, grants: {} },
+        dependencies
+      );
+      assert.deepEqual(reset.grants, reset.reviewed);
+      assert.equal(reset.grantSelection, undefined);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+);
+
+test(
   "the ChatGPT tunnel publishes the live gateway, stores its credential in Keychain, and disabling it leaves the gateway serving",
   { timeout: 30_000 },
   async () => {

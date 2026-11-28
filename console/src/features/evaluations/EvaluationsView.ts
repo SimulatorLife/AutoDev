@@ -424,9 +424,10 @@ function traceReferenceOf(
   return { kind: "openable", spanId: evaluation.spanId };
 }
 
-function traceReference(
+function traceReferenceNode(
   evaluation: EvaluationResult,
-  nav: EvaluationsNav
+  nav: EvaluationsNav,
+  variant: "table" | "drawer"
 ): React.ReactNode {
   const reference = traceReferenceOf(evaluation);
   if (reference.kind === "none") {
@@ -452,12 +453,22 @@ function traceReference(
         nav.tab,
         nav.page
       ),
-      className: `font-mono text-xs font-medium ${ACTION_LINK_CLASS}`,
+      className:
+        variant === "table"
+          ? `font-mono text-xs font-medium ${ACTION_LINK_CLASS}`
+          : `font-mono text-xs ${ACTION_LINK_CLASS}`,
       "aria-label": `View trace for evaluation ${evaluation.id}`,
       dataAttributes: { "data-evaluation-trace-span-id": reference.spanId }
     },
-    "View trace"
+    variant === "table" ? "View trace" : reference.spanId
   );
+}
+
+function traceReference(
+  evaluation: EvaluationResult,
+  nav: EvaluationsNav
+): React.ReactNode {
+  return traceReferenceNode(evaluation, nav, "table");
 }
 
 function spanLink(
@@ -913,36 +924,7 @@ function drawerTraceValue(
   evaluation: EvaluationResult,
   nav: EvaluationsNav
 ): React.ReactNode {
-  const reference = traceReferenceOf(evaluation);
-  if (reference.kind === "none") {
-    return React.createElement(StatusBadge, {
-      status: NOT_OBSERVED_STATUS,
-      label: NOT_OBSERVED_LABEL,
-      title: "This evaluation did not report a trace reference."
-    });
-  }
-  if (reference.kind === "invalid") {
-    return React.createElement(StatusBadge, {
-      status: "invalid",
-      label: "Invalid span",
-      title: `The reported trace reference is not a valid OpenTelemetry span id: ${reference.reported}`
-    });
-  }
-  return React.createElement(
-    NavigationLink,
-    {
-      href: evaluationTraceHref(
-        nav.filters,
-        reference.spanId,
-        nav.tab,
-        nav.page
-      ),
-      className: `font-mono text-xs ${ACTION_LINK_CLASS}`,
-      "aria-label": `View trace for evaluation ${evaluation.id}`,
-      dataAttributes: { "data-evaluation-trace-span-id": reference.spanId }
-    },
-    reference.spanId
-  );
+  return traceReferenceNode(evaluation, nav, "drawer");
 }
 
 /**
@@ -1015,42 +997,45 @@ function renderResultDetail(
             label: NOT_OBSERVED_LABEL,
             title: "This evaluation reported no metrics, so none were observed."
           })
-        : React.createElement<DataTableProperties<EvaluationMetric>>(DataTable, {
-            data: evaluation.metrics,
-            keyExtractor: (metric) => metric.name,
-            emptyMessage: "No metrics were observed for this evaluation.",
-            columns: [
-              {
-                id: "metric",
-                header: "Metric",
-                cell: ({ row: { original: metric } }) => metric.name,
-                meta: {
-                  weight: 260,
-                  align: "tokens"
+        : React.createElement<DataTableProperties<EvaluationMetric>>(
+            DataTable,
+            {
+              data: evaluation.metrics,
+              keyExtractor: (metric) => metric.name,
+              emptyMessage: "No metrics were observed for this evaluation.",
+              columns: [
+                {
+                  id: "metric",
+                  header: "Metric",
+                  cell: ({ row: { original: metric } }) => metric.name,
+                  meta: {
+                    weight: 260,
+                    align: "tokens"
+                  }
+                },
+                {
+                  id: "value",
+                  header: "Value",
+                  cell: ({ row: { original: metric } }) => String(metric.value),
+                  meta: {
+                    weight: 140,
+                    align: "tokens"
+                  }
+                },
+                {
+                  id: "verdict",
+                  header: "Verdict",
+                  cell: ({ row: { original: metric } }) =>
+                    React.createElement(StatusBadge, {
+                      ...verdictOf(metric.pass)
+                    }),
+                  meta: {
+                    weight: 150
+                  }
                 }
-              },
-              {
-                id: "value",
-                header: "Value",
-                cell: ({ row: { original: metric } }) => String(metric.value),
-                meta: {
-                  weight: 140,
-                  align: "tokens"
-                }
-              },
-              {
-                id: "verdict",
-                header: "Verdict",
-                cell: ({ row: { original: metric } }) =>
-                  React.createElement(StatusBadge, {
-                    ...verdictOf(metric.pass)
-                  }),
-                meta: {
-                  weight: 150
-                }
-              }
-            ]
-          })
+              ]
+            }
+          )
     )
   );
 }
@@ -1519,10 +1504,18 @@ function renderViewCaveats({
       className: "flex flex-col gap-1 text-xs text-fg-secondary",
       role: "status",
       "data-evaluations-caveats": "true",
-      ...(contradictory !== undefined && { "data-evaluations-contradictory-window": "true" }),
-      ...((unplaceable > 0) && { "data-evaluations-unplaceable": String(unplaceable) }),
-      ...((promptless > 0) && { "data-evaluations-promptless": String(promptless) }),
-      ...(oldestReadAt !== undefined && { "data-evaluations-unread-window": String(oldestReadAt) })
+      ...(contradictory !== undefined && {
+        "data-evaluations-contradictory-window": "true"
+      }),
+      ...(unplaceable > 0 && {
+        "data-evaluations-unplaceable": String(unplaceable)
+      }),
+      ...(promptless > 0 && {
+        "data-evaluations-promptless": String(promptless)
+      }),
+      ...(oldestReadAt !== undefined && {
+        "data-evaluations-unread-window": String(oldestReadAt)
+      })
     },
     ...lines.map((line, index) =>
       React.createElement("p", { key: index }, line, ".")
@@ -2004,18 +1997,21 @@ export function EvaluationsView({
             },
             "Evaluation history"
           ),
-          React.createElement<DataTableProperties<EvaluationResult>>(DataTable, {
-            // The slice, not the window. The table renders every row it is
-            // given, and handing it a full read window put a thousand rows and
-            // 25,913 nodes into one response -- 2.9MiB of markup for a page that
-            // lays out in 8ms, so all of that cost was emitting and parsing rows
-            // an operator was never going to scroll past. Every row stays
-            // reachable through the pager below.
-            data: evaluationsPageRows(evaluations, page),
-            columns,
-            keyExtractor: (evaluation: EvaluationResult) => evaluation.id,
-            emptyMessage
-          }),
+          React.createElement<DataTableProperties<EvaluationResult>>(
+            DataTable,
+            {
+              // The slice, not the window. The table renders every row it is
+              // given, and handing it a full read window put a thousand rows and
+              // 25,913 nodes into one response -- 2.9MiB of markup for a page that
+              // lays out in 8ms, so all of that cost was emitting and parsing rows
+              // an operator was never going to scroll past. Every row stays
+              // reachable through the pager below.
+              data: evaluationsPageRows(evaluations, page),
+              columns,
+              keyExtractor: (evaluation: EvaluationResult) => evaluation.id,
+              emptyMessage
+            }
+          ),
           renderPager(filters, tab, page, evaluations.length)
         )
       : React.createElement(

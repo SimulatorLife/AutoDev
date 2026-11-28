@@ -23,10 +23,7 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/executables";
 import { execa } from "execa";
 
-import {
-  terminateCommandProcessTree,
-  terminateDetachedCommandDescendants
-} from "./command-process-tree.ts";
+import { CommandProcessTree } from "./command-process-tree.ts";
 import {
   type CommandDefinition,
   commandExecutableNameSchema,
@@ -39,11 +36,11 @@ The most output a single command may return, in either stream.
 */
 const OUTPUT_LIMIT_BYTES = 256 * 1024;
 /**
-How often a running command is checked for a descendant that left its process
-group. Such a descendant is terminated as soon as it is seen, so it cannot
-outlive the command it belongs to.
+How often the command's live descendant identities are recorded. A new
+process group is valid during execution; cleanup belongs to the command's
+lifetime, not its process group.
 */
-const STRAY_SWEEP_INTERVAL_MS = 250;
+const PROCESS_OBSERVATION_INTERVAL_MS = 250;
 
 /**
 The stable key one workspace's command scope is named by.
@@ -611,14 +608,14 @@ The exit status is the one the process reported. A failed test is a
 completed command with a nonzero status, not a transport failure, and the
 result never claims a status that was not observed.
 
-Cancellation and the command's own deadline are handled here rather than by
-the executor's process-group signal, because a group signal does not reach a
-descendant that detached into its own session. The tree is terminated while
-the parent-child relationship still identifies every descendant.
+Cancellation, deadline and normal completion share descendant cleanup.
+The observer retains known descendants across reparenting; an independent
+process group does not itself imply an escape. The Seatbelt profile remains
+inherited by every descendant.
 
 `onStarted` receives the command's process id once it exists. The workspace
-lease records it, so a lease left behind by a server that died can later be
-told apart from a lease whose command is still running.
+lease records it for diagnostics. `onCleanupUncertain` tells the admission
+owner to retain its lease rather than claim the workspace is idle.
 */
 export async function runApprovedCommand(
   commandId: string,
@@ -626,9 +623,21 @@ export async function runApprovedCommand(
   arguments_: readonly string[],
   scope: ApprovedCommandScope,
   signal: AbortSignal,
-  onStarted?: (pid: number) => void
+  onStarted?: (pid: number) => void,
+  onCleanupUncertain?: () => void
 ): Promise<CommandResult> {
   const started = performance.now();
+  if (signal.aborted) {
+    return {
+      commandId,
+      status: "cancelled",
+      exitCode: null,
+      durationMs: 0,
+      stdout: "",
+      stderr: "",
+      outputTruncated: false
+    };
+  }
   let prepared: PreparedCommand;
   try {
     prepared = prepareCommand(scope, definition, arguments_);
@@ -654,58 +663,99 @@ export async function runApprovedCommand(
     maxBuffer: OUTPUT_LIMIT_BYTES,
     killDescendants: true
   });
-  if (onStarted && child.pid !== undefined) onStarted(child.pid);
+  const tree = new CommandProcessTree(child.pid);
   let termination: "cancelled" | "timed_out" | null = null;
-  const terminate = async (
-    reason: "cancelled" | "timed_out"
-  ): Promise<void> => {
+  let cleanupFailed = false;
+  let recordingFailed = false;
+  let cleanup: Promise<void> | undefined;
+  const terminate = (): Promise<void> => {
+    cleanup ??= tree.terminate().catch(() => {
+      cleanupFailed = true;
+      // A failed host process inspection must not leave the root running.
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // Cleanup is already uncertain; the caller must retain its lease.
+      }
+    });
+    return cleanup;
+  };
+  const requestTermination = (reason: "cancelled" | "timed_out"): void => {
     if (termination !== null) return;
     termination = reason;
-    await terminateCommandProcessTree(child.pid);
-    // The group's own signal is the backstop for anything the walk did not
-    // reach, such as a descendant that started between two walks.
-    child.kill("SIGKILL");
+    void terminate();
   };
+  const observe = (): void => {
+    if (cleanup) return;
+    try {
+      tree.observe();
+    } catch {
+      cleanupFailed = true;
+      void terminate();
+    }
+  };
+  // The exit event precedes stream settlement. Reap known descendants
+  // immediately, including those holding the command's output pipes open.
+  child.nodeChildProcess.once("exit", () => {
+    tree.markRootExited();
+    void terminate();
+  });
+  observe();
   const deadline = setTimeout(() => {
-    void terminate("timed_out");
+    requestTermination("timed_out");
   }, definition.timeoutMs);
   const onAbort = (): void => {
-    void terminate("cancelled");
+    requestTermination("cancelled");
   };
   signal.addEventListener("abort", onAbort, { once: true });
   if (signal.aborted) onAbort();
-  // A descendant that detached while the command was running is terminated as
-  // soon as it is seen, so it cannot outlive the command it belongs to.
-  const strays = setInterval(() => {
-    terminateDetachedCommandDescendants(child.pid);
-  }, STRAY_SWEEP_INTERVAL_MS);
-  strays.unref();
+  const observations = setInterval(observe, PROCESS_OBSERVATION_INTERVAL_MS);
+  observations.unref();
   let result: Awaited<typeof child>;
   try {
+    try {
+      if (onStarted && child.pid !== undefined) onStarted(child.pid);
+    } catch {
+      // Admission bookkeeping is part of execution. Never leave a spawned
+      // command running when the workspace lease could not record it.
+      recordingFailed = true;
+      void terminate();
+    }
     result = await child;
   } finally {
     clearTimeout(deadline);
-    clearInterval(strays);
+    clearInterval(observations);
     signal.removeEventListener("abort", onAbort);
+    // The exit listener, not promise settlement, proves root exit.
+    await terminate();
+    if (cleanupFailed) onCleanupUncertain?.();
   }
-  const status: CommandResult["status"] = result.isMaxBuffer
-    ? "output_limit"
-    : termination === "timed_out"
-      ? "timed_out"
-      : termination === "cancelled"
-        ? "cancelled"
-        : result.exitCode === 0 && !result.failed
-          ? "succeeded"
-          : result.exitCode === undefined
-            ? "infrastructure_error"
-            : "failed";
+  const status: CommandResult["status"] = cleanupFailed || recordingFailed
+    ? "infrastructure_error"
+    : result.isMaxBuffer
+      ? "output_limit"
+      : termination === "timed_out"
+        ? "timed_out"
+        : termination === "cancelled"
+          ? "cancelled"
+          : result.exitCode === 0 && !result.failed
+            ? "succeeded"
+            : result.exitCode === undefined
+              ? "infrastructure_error"
+              : "failed";
   return {
     commandId,
     status,
     exitCode: result.exitCode ?? null,
     durationMs: Math.round(performance.now() - started),
     stdout: (result.stdout ?? "").slice(0, OUTPUT_LIMIT_BYTES),
-    stderr: (result.stderr ?? "").slice(0, OUTPUT_LIMIT_BYTES),
+    stderr: (
+      cleanupFailed
+        ? "Command descendant cleanup could not be verified."
+        : recordingFailed
+          ? "Command process could not be recorded in the workspace lease."
+          : (result.stderr ?? "")
+    ).slice(0, OUTPUT_LIMIT_BYTES),
     outputTruncated: result.isMaxBuffer
   };
 }

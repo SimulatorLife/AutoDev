@@ -81,6 +81,8 @@ workspace. A command that cannot reach the network is expected to fail:
 dependency installation goes through the backend's own loopback registry proxy,
 and every other command runs with the network denied.
 
+Gateway tool discovery is reconciled against the installed immutable Runtime generation, the selected workspace, the canonical role and permission policy, and the approved Commands catalogue. A new generation or workspace invalidates the reviewed inventory; unchanged inputs reuse the reviewed cache. Explicit operator tool selections persist independently of temporary backend availability and are intersected with current reviewed tools on automatic reconciliation. An empty selection restores the role's reviewed default. If the connected app advertises a tool but a call returns `Unknown tool`, compare fresh gateway and tunnel `tools/list` results and the backend's actual listing and call behavior after a managed install; do not add duplicate tools or broaden grants to work around stale discovery.
+
 The installed Runtime resolves its dependencies from a protected closure that
 the installer deploys with `pnpm deploy --prod` into
 `$CODEX_HOME/.deps-<hash>/node_modules`; it no longer links the checkout's
@@ -91,7 +93,7 @@ Provider-specific `ensure-*` and `run-*` scripts are intentionally separate so a
 
 ### Router ingress retirement and generation cutover
 
-The installed-source launcher starts the ingress for immutable Router releases; installed end-to-end cutover acceptance remains pending. For the ingress entrypoint, `AUTODEV_ROUTER_INGRESS_DRAIN_MS` defaults to `30000` (30 seconds) and starts when a ready successor takes over. At expiry, unfinished requests and session affinity on only the retiring generation are terminated; the ingress does not retry or migrate them. A normally drained generation proceeds immediately to graceful worker shutdown. The ingress also retains XACPX coordinator affinity until the deadline because the IPC protocol has no coordinator-close method. All live worker releases, pending crash recovery and the rollback target remain protected from generation GC. `AUTODEV_ROUTER_INGRESS_WORKER_SHUTDOWN_MS` defaults to `60000` (60 seconds) and starts when the supervisor sends `SIGTERM`. The supervisor sends `SIGKILL` if the worker still has not exited at the end of this grace. Both settings must be positive integer milliseconds within the native Node timer limit (2,147,483,647). Keep the worker shutdown grace longer than the worker's own `CODEX_ROUTER_SHUTDOWN_DRAIN_MS` plus cleanup time. The authenticated Unix-socket retirement endpoint reports HTTP `202` until both traffic retirement and process exit have been observed, then `200`; the ingress status's `retired` state describes traffic retirement alone. See the [migration tracker](autodev-console-migration.md#zero-downtime-router-generation-deployment--pending) for outstanding cutover requirements.
+The installed-source launcher starts the ingress for immutable Router releases; installed end-to-end cutover acceptance remains pending. For the ingress entrypoint, `AUTODEV_ROUTER_INGRESS_DRAIN_MS` defaults to `30000` (30 seconds) and starts when a ready successor takes over. At expiry, unfinished requests and session affinity on only the retiring generation are terminated; the ingress does not retry or migrate them. A normally drained generation proceeds immediately to graceful worker shutdown. The ingress also retains XACPX coordinator affinity until the deadline because the IPC protocol has no coordinator-close method. All live worker releases, pending crash recovery and the rollback target remain protected from generation GC. `AUTODEV_ROUTER_INGRESS_WORKER_SHUTDOWN_MS` defaults to `60000` (60 seconds) and starts when the supervisor sends `SIGTERM`. The supervisor sends `SIGKILL` if the worker still has not exited at the end of this grace. Both settings must be positive integer milliseconds within the native Node timer limit (2,147,483,647). Keep the worker shutdown grace longer than the worker's own `CODEX_ROUTER_SHUTDOWN_DRAIN_MS` plus cleanup time. The authenticated Unix-socket retirement endpoint reports HTTP `202` until both traffic retirement and process exit have been observed, then `200`; the ingress status's `retired` state describes traffic retirement alone. `pnpm autodev -- router rollback` reactivates the retained prior release through the same authenticated control socket and readiness gate as a forward activation, under a new generation ID named after the restored release, and prints the activation result; it refuses when the control secret is not installed, the ingress does not answer, or no prior generation is retained. `pnpm autodev -- router ensure` starts the Router through launchd (or the tracked fallback launcher) exactly as provider launches do. See the [migration tracker](autodev-console-migration.md#zero-downtime-router-generation-deployment--pending) for outstanding cutover requirements.
 
 ### Typed CLI commands
 
@@ -106,11 +108,14 @@ Usage: pnpm autodev -- <command> [subcommand] [options]
 Commands:
   check
   render agents|contract|mcp|catalog
-  router run|ensure|status
-  provider claude|minimax|copilot|antigravity
+  router run|ensure|status|rollback
+  provider claude|mcode|copilot|antigravity
   hook session-start|skill-read
   repo bootstrap
+  diagnostics
+  playtest init|check|conformance
   install
+  lease list|release
 ```
 
 Render target arguments (after `render`; bracketed options are optional):

@@ -183,10 +183,9 @@ launchd services and the live provider surfaces still carry the previous state.
   trusted authority), provisions private scratch, cache and task-record roots
   outside the workspace, and takes a
   workspace-wide exclusive lease so two sessions cannot race over the same
-  build outputs. The lease records the process that holds it and the command
-  it was taken for, so it is never taken over on the basis of its age: it is
-  taken over only when that holder and that command are both gone, and
-  anything it cannot prove fails closed. An operator can inspect and release
+  build outputs. The lease records its holder, command root and explicit
+  settlement. Reclaim requires settlement and dead holder/root; uncertainty
+  fails closed even if the root has exited. An operator can inspect and release
   a lease with `autodev lease list` and `autodev lease release`. The approved
   catalogue read refuses final-file symlinks, multiple hard links, and
   non-owner/group-or-other-writable files. The parent directory and installed
@@ -225,8 +224,8 @@ launchd services and the live provider surfaces still carry the previous state.
   command at all.
 - `runtime/tests/command-workspace-lease.test.ts` covers the workspace lease:
   that it is exclusive across sessions and released on completion, that it is
-  never taken over on the basis of its age, that it is taken over only when
-  its holder and its command are both gone, that a lease whose command is
+  never taken over on the basis of its age, that it is taken over only with
+  recorded settlement and dead holder/root, that a lease whose command is
   still running, whose command was never recorded, or whose record cannot be
   read is never taken over, that a replaced run directory is never used, and
   that the operator sees each lease's state and releases only what is
@@ -401,7 +400,7 @@ the evidence.
 | Output bounds | "output beyond the bound is reported as truncated ..."; "a command's output is bounded and its exit status is the observed one" |
 | Deadline and cancellation | "a command that outlives its deadline is stopped and reported as timed out"; "a cancelled command is stopped and reported as cancelled"; "registered commands match discovery, and request cancellation and revocation stop execution" |
 | Env filtering | "a command's environment carries no operator credentials and no host paths"; "a confined command cannot read the operator's Git configuration" |
-| Concurrent requests: workspace serialization | "a workspace lease is exclusive across sessions and released on completion"; "an old lease is not proof that its command stopped"; "a lease whose holder and command are both gone is taken over"; "a lease whose command is still running is never taken over". Busy admission is rejected, not queued (no queue exists, so no queue time is observed) |
+| Concurrent requests: workspace serialization | "a workspace lease is exclusive across sessions and released on completion"; "an old lease is not proof that its command stopped"; "a settled lease whose holder and command are both gone is taken over"; "a lease whose command is still running is never taken over". Busy admission is rejected, not queued (no queue exists, so no queue time is observed) |
 | Configuration drift | execution-contract `--check` above; "the installed catalogue is a valid, generic catalogue"; approval suite |
 | Unlisted command, unknown role, read-only role | "a read-only role is refused the command surface entirely"; "a role's grant decides the effective command set, ..." |
 | Traversal and symlink escape | "a symlink in the workspace cannot be used to reach outside it"; "the admitted command workspace cannot be redirected after scope resolution"; "workspace keys are physical, ..." |
@@ -782,12 +781,12 @@ Run the repository's prescribed typecheck, lint, test and relevant integration/s
 - [ ] Individual strict named tools discovered and authorized via shared gateway.
 - [x] Trusted executable, role, workspace, session, argv and env bound server-side.
 - [x] Configuration/launcher integrity, OS descendant confinement, credential and network policies verified.
-- [x] Bounded concurrency, queue, deadline, output, result retention and cancellation verified.
+- [ ] Bounded concurrency, queue, deadline, output, result retention and cancellation requalified after the 2026-11-27 lifecycle correction.
 - [ ] Native task support and gateway/backend lifetimes validated end-to-end.
 - [ ] Task ownership, revocation, reconnect and restart behavior proven.
 - [ ] Installer/reconciliation, rollback, health and existing Console MCP management verified.
 - [ ] OpenTelemetry/OpenLIT observations correlated without sensitive output or duplicate instrumentation.
-- [x] Unit, integration, real OS security and regression tests pass.
+- [ ] Unit, integration, real OS security and regression tests pass against the current lifecycle implementation (previous 2026-11-26 evidence is historical).
 - [ ] Actual ChatGPT development scenario passes without delegated model execution.
 - [ ] Equivalent capabilities verified across eligible providers; unresolved gaps explicitly tracked.
 - [x] No direct-provider, unsandboxed, generic shell or custom text-based fallback.
@@ -829,48 +828,45 @@ answers them.
 
 ### Descendant termination
 
-A process group is not a command's whole tree. The executor runs the command
-in its own group, so a group signal reaches the ordinary tree -- but a
-descendant that detached into its own session left that group behind, and
-macOS reparents it to the system, so neither the group signal nor a later
-parent walk reaches it. The executor therefore terminates the tree itself
-(`runtime/src/mcp/command-process-tree.ts`), while the parent-child
-relationship still identifies every descendant:
+**2026-11-27 regression (source correction, installed acceptance pending).**
+Through the installed ChatGPT Commands surface, Git status succeeded (64 ms),
+but typecheck returned infrastructure_error with SIGKILL after 351 ms and
+test after 445 ms. The previous 250 ms sweep killed every descendant in a
+different process group. pnpm explicitly uses independent process groups for
+non-interactive lifecycle scripts (see [pnpm script lifecycle](https://pnpm.io/scripts)),
+so this policy can kill ordinary nested validation scripts. This is the
+leading explanation for the observed failures, not yet a deployed causal
+reproduction.
 
-- The tree is read from the operating system (`ps`), not from the command, so
-  a command cannot hide a descendant by describing it differently.
-- The tree is frozen before it is terminated: a stopped process cannot create
-  another descendant, so the walk converges instead of chasing a command that
-  keeps forking, and no descendant is reparented away between the walk and the
-  signal that reaches it.
-- The deepest descendant is killed first and the command's own process last,
-  so no live descendant is orphaned before it is reached.
-- A descendant that detached while the command was running is terminated as
-  soon as it is seen, so it cannot outlive the command it belongs to.
+The command's lifetime, not its process group, now defines cleanup:
 
-The evidence is the real executor under the real macOS Seatbelt profile
-(`runtime/tests/command-process-tree.test.ts`): a cancelled command and an
-expired command each leave no descendant running -- neither the descendant
-that stayed in the command's process group nor the one that detached into a
-session of its own -- and a descendant that detached is terminated while its
-command is still running. The tests were shown able to go red: removing the
-descendant termination from the tree walk fails the cancellation case, and
-removing the detached-descendant detection fails the running-command case.
+- Observe OS process snapshots while the command runs, tracking live
+  descendants by PID and reported start time, including known descendants
+  that are reparented and their own children.
+- Do not terminate normal running subprocesses merely for changing groups.
+  All still inherit the unchanged mandatory Seatbelt profile.
+- On cancellation, timeout or root exit, freeze and terminate the observed
+  tree deepest first; await bounded cleanup before publishing the result.
+  A failed host observation or cleanup is reported as infrastructure_error.
+- Root exit triggers cleanup before output-stream settlement, so an observed
+  child retaining inherited pipes does not prevent cleanup.
 
-One consequence of the executor's own behaviour shapes how that evidence has
-to be gathered. A detached descendant is terminated as soon as the sweep sees
-it, so it is gone within a few hundred milliseconds of the command starting.
-The test that shows the operating system reporting it in a process group of
-its own therefore records the process listing continuously from before the
-command starts, rather than sampling it once afterwards; a single sample
-taken later can miss a descendant the executor has already terminated, and
-would report the runner's timing rather than the code's behaviour.
+The prior macOS evidence applied to the old policy and must not be treated
+as proof of the replacement. The updated real-OS tests cover cancellation,
+timeout, survival of independent process groups during execution, successful
+awaited detached work with cleanup of a leftover child, and a real nested
+pnpm lifecycle script. Re-run these and the negative OS security suites
+through an operator-qualified install before marking acceptance complete.
+A child that forks and is reparented entirely between snapshots remains
+undiscoverable by the ps-based observer; PID/start-time checks reduce but
+cannot eliminate PID-reuse races. These residuals remain open; the
+mandatory Seatbelt boundary is unchanged.
 
-The one residual is a property of macOS rather than of the executor: a
-descendant that detaches *and* whose parent exits before the executor's next
-sweep is reparented to the system and can no longer be identified. Such a
-descendant stays inside the same Seatbelt profile -- it cannot read secrets,
-write outside the workspace or reach the network -- but it is not terminated.
+The same live test run failed the instruction-copy test before termination.
+That test read all tracked files, including the protected .codex/config.toml.
+The source now checks exact byte length and regular-file status before
+reading candidate duplicates; it does not skip a same-sized protected file
+or relax the sandbox. Re-run to verify this independent hypothesis.
 
 ### The network boundary, proved against the operating system
 
@@ -918,33 +914,32 @@ half of that is proved in the next section.
 
 ### A lease that outlived the server that took it
 
-A workspace-wide exclusive lease keeps two sessions from running commands
-against one workspace at the same time. It is taken when a command starts and
-released when it finishes, so a server that dies in between leaves the lease
-behind -- and the workspace closed, for good, because nothing released it.
+**2026-11-27 follow-up (source implemented; acceptance pending).** A dead
+broker and root PID do not establish that detached descendants have exited.
+The lease now records explicit settlement immediately before removal, only
+after the executor's cleanup completes without observed failure. The same
+workspace stays closed if the executor cannot verify cleanup; the broker
+closes its descriptor but leaves the durable lease unsettled.
 
-A timestamp cannot settle that: an old file says nothing about whether a
-command is still running. The lease therefore records _who_ holds it, the
-server process, and _which command_ it was taken for, the command's own
-process id. A later server asks the operating system about those two
-processes, and takes the lease over only when the holder and the command are
-both gone. Everything else fails closed: a lease whose command is still
-running, whose command was never recorded, or whose record cannot be read is
-never taken over, because an uncertain overlap between two commands is worse
-than a workspace that stays closed.
+Automatic reclaim requires a readable settled record, a dead holder, and
+no live recorded root. An unsettled record remains unverifiable even
+after both PIDs disappear. A prior-format record without settlement proof
+also fails closed. A command cancelled before launch does not spawn a
+process; failure to record a newly launched PID triggers cleanup before
+returning an infrastructure error.
 
-What cannot be settled by the Runtime is settled by the operator.
-`autodev lease list` shows every lease with the state of its holder and its
-command, and `autodev lease release <workspace-key>` releases one -- on the
-evidence when there is evidence, and only with `--force` when the operator
-has checked the workspace themselves.
+Use `autodev lease list` to inspect the holder and root. If an unsettled lease
+remains, stop its broker, confirm the workspace and descendants are idle,
+then use `autodev lease release <workspace-key> --force`. A live holder
+cannot be overridden. Do not treat a dead root as proof of cleanup.
 
-The behaviour is proven against the real operating system
-(`runtime/tests/command-workspace-lease.test.ts`), the operator's command by
-`tests/cli/lease.test.ts`, and each guard was shown able to go red: dropping the check that the command has finished takes over
-a lease whose command is still running; dropping the check that the holder
-is gone takes over a live server's lease; and treating an unreadable record
-as abandoned takes over a lease nobody can vouch for.
+The lease tests now require settlement for automatic reclaim and cover
+unverified cleanup, broker exit, and explicit operator recovery. The
+executor regression tests cover pre-cancelled invocation and failed PID
+registration. These changes still require execution on the qualified host;
+the previous successful lease suites are historical evidence, not proof
+of this revision. Snapshot observation still has the residual described
+under Descendant termination.
 
 ### A real dependency installation, proved against the operating system
 
