@@ -551,17 +551,25 @@ test("root website research uses native search while Playwright stays role-scope
       .filter((line) => !line.trimStart().startsWith("//"))
       .join("\n")
   ) as { codexcli?: { tools?: { web_search?: boolean } } };
-  assert.equal(permissions.codexcli?.tools?.web_search, true);
+  assert.equal(permissions.codexcli?.tools?.web_search, false);
   const mcp = JSON.parse(
     await readFile(path.join(root, ".rulesync", "mcp.jsonc"), "utf8")
   );
   assert.equal(Boolean(mcp.codexcli.mcpServers.playwright.disabled), true);
+  assert.equal(Boolean(mcp.codexcli.mcpServers.exa.disabled), true);
   for (const role of ["docs-researcher", "smart", "orchestrator"]) {
     const source = await readFile(
       path.join(root, "agents", "roles", `${role}.toml`),
       "utf8"
     );
-    assert.match(source, /web_search = true/, role);
+    assert.match(source, /web_search = false/, role);
+  }
+  for (const role of ["docs-researcher", "smart"]) {
+    const source = await readFile(
+      path.join(root, "agents", "roles", `${role}.toml`),
+      "utf8"
+    );
+    assert.match(source, /\[mcp_servers\.exa\]\nenabled = true/, role);
   }
 });
 

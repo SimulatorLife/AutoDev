@@ -14,7 +14,7 @@
   //   uniformly across every local and external provider, including ChatGPT.
   "permission": {
     "webfetch": {
-      "*": "allow"
+      "*": "deny"
     },
     "bash": {
       // CLIs (should only be invoked via MCPs)
@@ -146,6 +146,9 @@
     "mcp__googleDeveloperKnowledge": {
       "*": "allow"
     },
+    "mcp__exa": {
+      "*": "allow"
+    },
     "mcp__playwright": {
       "*": "deny"
     },
@@ -158,7 +161,7 @@
     "approval_policy": "never",
     "approvals_reviewer": "user",
     "tools": {
-      "web_search": true
+      "web_search": false
     }
   },
   "antigravity-cli": {

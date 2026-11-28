@@ -30,6 +30,7 @@ import {
   playtestEpisodeRecordId,
   type PlaytestEpisodeStep,
   type PlaytestEvidenceLocator,
+  type PlaytestHighlightClip,
   type PlaytestJsonValue,
   type PlaytestMetricRegistry,
   type PlaytestMissingReason,
@@ -56,6 +57,10 @@ import {
   type PlaytestSandboxResult,
   readStagedPlaytestArtifact
 } from "./docker-sandbox.ts";
+import {
+  buildEpisodeHighlightClips,
+  type HighlightStepSignal
+} from "./highlight-gif.ts";
 import { PlaytestLoopGuard } from "./loop-guard.ts";
 import type { PlaytestPolicy, PlaytestPolicyDecision } from "./policies.ts";
 import { projectPlaytestVisibleObservation } from "./visible-observation.ts";
@@ -1298,10 +1303,42 @@ function adapterExecutionProvenance(
   return provenance;
 }
 
+function highlightSignalsFor(
+  context: EpisodeExecutionContext
+): readonly HighlightStepSignal[] {
+  const signals: HighlightStepSignal[] = [];
+  if (context.loopDetectedAtStep !== null) {
+    signals.push({
+      step: context.loopDetectedAtStep,
+      isAnomaly: true,
+      label: `Loop detected at step ${context.loopDetectedAtStep}`
+    });
+  } else if (context.failure !== null && context.drafts.length > 0) {
+    const lastStep = context.drafts.at(-1)!.step;
+    signals.push({
+      step: lastStep,
+      isAnomaly: true,
+      label: `Episode ${context.failure.category} around step ${lastStep}`
+    });
+  }
+  for (const draft of context.drafts) {
+    if (draft.events.length > 0) {
+      signals.push({
+        step: draft.step,
+        isEventTransition: true,
+        label: `Key event at step ${draft.step}`
+      });
+      break;
+    }
+  }
+  return signals;
+}
+
 function assembleEpisode(
   context: EpisodeExecutionContext,
   trace: PlaytestArtifactReference | null,
-  frameReferences: readonly PlaytestEvidenceLocator[]
+  frameReferences: readonly PlaytestEvidenceLocator[],
+  highlightClips: readonly PlaytestHighlightClip[]
 ): PlaytestAdapterEpisode | null {
   const { options } = context;
   if (context.reset === null || context.capabilities === null) return null;
@@ -1386,6 +1423,7 @@ function assembleEpisode(
     trace:
       trace === null ? null : { kind: "replay-segment", id: trace.artifactId },
     frames: frameReferences,
+    ...(highlightClips.length > 0 && { highlightClips }),
     stepCount: context.drafts.filter((draft) => draft.executed).length,
     metrics,
     findingIds: [],
@@ -1541,8 +1579,13 @@ export async function runPlaytestEpisode(
 
   importBranchSnapshot(context);
   const frames = importFrames(context);
+  const highlightClips = buildEpisodeHighlightClips({
+    artifacts: options.artifacts,
+    frames,
+    signals: highlightSignalsFor(context)
+  });
   const trace = persistTrace(context);
-  const episode = assembleEpisode(context, trace, frames);
+  const episode = assembleEpisode(context, trace, frames, highlightClips);
   const steps =
     trace === null
       ? []

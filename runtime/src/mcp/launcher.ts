@@ -1,14 +1,9 @@
-import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
-import { isRecord } from "@simulatorlife/autodev-core";
-import {
-  atomicWriteSync,
-  isPathWithin,
-  pathsOverlap
-} from "@simulatorlife/autodev-data/files";
+import { isPathWithin, pathsOverlap } from "@simulatorlife/autodev-data/files";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import {
   isExecutable,
@@ -32,6 +27,7 @@ import {
   MCP_SERVER_XACPX
 } from "@simulatorlife/autodev-runtime/shared/tool-names";
 
+import { withXacpxLaunchEnvironment } from "../xacpx/mcp-launch-environment.ts";
 import { resolveXacpxOrchestrationSocketPath } from "../xacpx/orchestration-ipc.ts";
 
 /**
@@ -314,54 +310,6 @@ export function resolveCocoindexInitRoot(
   return root;
 }
 
-export function ensureXacpxConfig(
-  configPath: string,
-  workspaceKey: string | undefined,
-  workspaceDir: string
-): void {
-  let existing: Record<string, unknown> = {};
-  if (existsSync(configPath)) {
-    try {
-      const parsed: unknown = JSON.parse(readFileSync(configPath, "utf8"));
-      if (isRecord(parsed)) existing = parsed;
-    } catch {
-      existing = {};
-    }
-  }
-  const transport = isRecord(existing.transport)
-    ? existing.transport
-    : { type: "acpx-bridge" };
-  const channel = isRecord(existing.channel)
-    ? existing.channel
-    : { type: "weixin", replyMode: "verbose" };
-  // This projection is owned by AutoDev. XACPX advertises the keys in
-  // agents verbatim; retaining retired roles or provider aliases makes
-  // discovery promise targets that Runtime's role admission rejects.
-  const agents = Object.fromEntries(
-    declaredDelegatedRoleNames().map((role) => [role, { driver: "codex" }])
-  );
-  const workspaces: Record<string, unknown> = isRecord(existing.workspaces)
-    ? { ...existing.workspaces }
-    : {};
-  if (!isRecord(workspaces.home)) {
-    workspaces.home = { cwd: "~", description: "home directory" };
-  }
-  if (workspaceKey) {
-    workspaces[workspaceKey] = { cwd: workspaceDir };
-  }
-  const next = {
-    ...existing,
-    transport,
-    channel,
-    agents,
-    workspaces
-  };
-  atomicWriteSync(configPath, JSON.stringify(next, null, 2) + "\n", {
-    mode: 0o600,
-    skipUnchanged: true
-  });
-}
-
 /**
 Run one AutoDev MCP server. `serverArguments` are the arguments the launcher's
 caller supplied after the server name -- the trusted renderer that wrote the
@@ -373,48 +321,57 @@ export function runMcp(
   repositoryRoot: string,
   environment: NodeJS.ProcessEnv = process.env,
   serverArguments: readonly string[] = []
-): number {
-  const command = resolveMcpCommand(name, environment);
+): number | Promise<number> {
   const workspace = resolveMcpWorkspace(environment);
+  if (name === MCP_SERVER_XACPX) {
+    return withXacpxLaunchEnvironment(
+      workspace,
+      {
+        ...environment,
+        XACPX_ORCHESTRATION_SOCKET: resolveXacpxOrchestrationSocketPath(
+          undefined,
+          environment
+        )
+      },
+      declaredDelegatedRoleNames(),
+      (launchEnvironment) =>
+        runMcpCommand(
+          name,
+          repositoryRoot,
+          workspace,
+          launchEnvironment,
+          serverArguments
+        )
+    );
+  }
+  return runMcpCommand(
+    name,
+    repositoryRoot,
+    workspace,
+    environment,
+    serverArguments
+  );
+}
+
+function runMcpCommand(
+  name: string,
+  repositoryRoot: string,
+  workspace: string,
+  environment: NodeJS.ProcessEnv,
+  serverArguments: readonly string[]
+): number | Promise<number> {
+  const command = resolveMcpCommand(name, environment);
   if (!isExecutable(command.binary))
     throw new Error(
       `AutoDev MCP binary is missing or not executable: ${command.binary}`
     );
-  const xacpxEnvironment: Record<string, string> = {};
-  if (name === MCP_SERVER_XACPX) {
-    const home = environment.HOME?.trim() || homedir();
-    const codexHome = environment.CODEX_HOME?.trim() || path.join(home, ".codex");
-    const xacpxRunDir = path.join(codexHome, "run", "xacpx");
-    if (!environment.XACPX_ORCHESTRATION_SOCKET?.trim()) {
-      xacpxEnvironment.XACPX_ORCHESTRATION_SOCKET = resolveXacpxOrchestrationSocketPath(
-        codexHome,
-        environment
-      );
-    }
-    const configPath =
-      environment.XACPX_CONFIG?.trim() || path.join(xacpxRunDir, "config.json");
-    if (!environment.XACPX_CONFIG?.trim()) {
-      xacpxEnvironment.XACPX_CONFIG = configPath;
-    }
-    if (!environment.XACPX_STATE?.trim()) {
-      xacpxEnvironment.XACPX_STATE = path.join(xacpxRunDir, "state.json");
-    }
-    ensureXacpxConfig(
-      configPath,
-      environment.AUTODEV_XACPX_WORKSPACE?.trim(),
-      physicalPath(workspace)
-    );
-  }
   const childEnvironment =
-    command.pathPrepend.length > 0 || Object.keys(xacpxEnvironment).length > 0
+    command.pathPrepend.length > 0
       ? {
           ...environment,
-          ...xacpxEnvironment,
-          ...((command.pathPrepend.length > 0) && {
-                PATH: [...command.pathPrepend, environment.PATH ?? ""]
-                  .filter(Boolean)
-                  .join(path.delimiter)
-              })
+          PATH: [...command.pathPrepend, environment.PATH ?? ""]
+            .filter(Boolean)
+            .join(path.delimiter)
         }
       : environment;
   if (name === "cocoindex-code" && !findCocoindexProjectRoot(workspace)) {
@@ -437,11 +394,36 @@ export function runMcp(
         : filesystemDirectoryArgs(workspace, repositoryRoot)
       : [])
   ];
-  const result = spawnSync(command.binary, arguments_, {
+  const options = {
     cwd: workspace,
     env: childEnvironment,
-    stdio: "inherit"
-  });
+    stdio: "inherit" as const
+  };
+  if (name === MCP_SERVER_XACPX) {
+    // Keep the launcher alive to dispose its private config after the
+    // vendor process exits. Forward termination even when only the launcher
+    // (rather than its entire process group) receives the signal.
+    return new Promise<number>((resolve, reject) => {
+      const child = spawn(command.binary, arguments_, options);
+      const terminate = () => child.kill("SIGTERM");
+      const interrupt = () => child.kill("SIGINT");
+      const detach = () => {
+        process.off("SIGTERM", terminate);
+        process.off("SIGINT", interrupt);
+      };
+      process.on("SIGTERM", terminate);
+      process.on("SIGINT", interrupt);
+      child.once("error", (error) => {
+        detach();
+        reject(error);
+      });
+      child.once("close", (code) => {
+        detach();
+        resolve(code ?? 1);
+      });
+    });
+  }
+  const result = spawnSync(command.binary, arguments_, options);
   if (result.error) throw result.error;
   return result.status ?? 1;
 }
@@ -452,7 +434,7 @@ if (isEntryPoint(import.meta.url)) {
       import.meta.dirname,
       process.env.AUTODEV_REPO_ROOT
     );
-    process.exitCode = runMcp(
+    process.exitCode = await runMcp(
       process.argv[2] ?? "",
       repositoryRoot,
       process.env,

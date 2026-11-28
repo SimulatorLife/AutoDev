@@ -41,9 +41,11 @@ test("permission update projects .rulesync/permissions.jsonc, preserves user gra
     assert.ok(baseline.deny.includes("unsandboxed(ccc)"));
     assert.ok(baseline.deny.includes("mcp(playwright/*)"));
     assert.ok(baseline.deny.includes("mcp(playtest/*)"));
+    assert.ok(baseline.deny.includes("read_url"));
     assert.ok(baseline.allow.includes("mcp(filesystem/*)"));
     assert.ok(baseline.allow.includes("mcp(context7/*)"));
     assert.ok(baseline.allow.includes("mcp(googleDeveloperKnowledge/*)"));
+    assert.ok(baseline.allow.includes("mcp(exa/*)"));
     assert.equal(baseline.topLevelOverrides.agentMode, "accept-edits");
 
     writeFileSync(
@@ -90,7 +92,8 @@ test("permission update projects .rulesync/permissions.jsonc, preserves user gra
     assert.equal(config.other, true);
     assert.equal(config.agentMode, "accept-edits");
     assert.ok(config.permissions.allow.includes("user-grant"));
-    assert.ok(config.permissions.allow.includes("read_url"));
+    assert.ok(config.permissions.deny.includes("read_url"));
+    assert.equal(config.permissions.allow.includes("read_url"), false);
     assert.ok(config.permissions.allow.includes("unsandboxed(pwd)"));
     assert.ok(config.permissions.allow.includes("unsandboxed(pnpm test)"));
     assert.deepEqual(

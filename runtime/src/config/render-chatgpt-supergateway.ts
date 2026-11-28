@@ -165,7 +165,7 @@ function localSurfacePath(role: string, server: string): string {
   return `/local/${role}/${server}`;
 }
 
-function localSurfaceName(role: string, server: string): string {
+export function localSurfaceName(role: string, server: string): string {
   return `local-${role}-${server}`;
 }
 
@@ -729,7 +729,6 @@ export function chatgptSupergatewayEnvironment(
   const workspaceName = path.basename(workspace) || "workspace";
   const coordinatorSession =
     options.coordinatorSession?.trim() || `chatgpt:${role}:${workspaceName}`;
-  const xacpxRunDir = path.join(paths.codexHome, "run", "xacpx");
   const xacpxSocketPath =
     options.xacpxSocketPath?.trim() ||
     resolveXacpxOrchestrationSocketPath(paths.codexHome, {});
@@ -743,8 +742,6 @@ export function chatgptSupergatewayEnvironment(
     AUTODEV_AGENT_ROLE: role,
     AUTODEV_XACPX_WORKSPACE: workspace,
     AUTODEV_XACPX_COORDINATOR_SESSION: coordinatorSession,
-    XACPX_ORCHESTRATION_SOCKET: xacpxSocketPath,
-    XACPX_CONFIG: path.join(xacpxRunDir, "config.json"),
-    XACPX_STATE: path.join(xacpxRunDir, "state.json")
+    XACPX_ORCHESTRATION_SOCKET: xacpxSocketPath
   };
 }

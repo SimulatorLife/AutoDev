@@ -89,8 +89,12 @@ import { SESSION_GRANT_META_KEY, verifySessionGrant } from "./session-grant.ts";
 type JsonRecord = Record<string, unknown>;
 type JsonRpcId = string | number;
 
-function errorResponse(id: JsonRpcId, message: string): JsonRecord {
-  return { jsonrpc: "2.0", id, error: { code: -32_601, message } };
+function errorResponse(
+  id: JsonRpcId,
+  message: string,
+  code = -32_601
+): JsonRecord {
+  return { jsonrpc: "2.0", id, error: { code, message } };
 }
 
 const identifier = z.string().regex(/^[a-zA-Z0-9_.-]+$/u);
@@ -737,7 +741,7 @@ class PooledBackendController {
     if (response.error || !parsed.success) {
       // A malformed list or upstream error may contain another owner's
       // private task data. Never bypass the ownership projection.
-      return errorResponse(id, "Backend task list unavailable");
+      return errorResponse(id, "Backend task list unavailable", -32_603);
     }
     this.pruneTaskPins();
     const { tasks, nextCursor } = parsed.data;

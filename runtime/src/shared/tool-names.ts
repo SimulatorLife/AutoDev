@@ -104,6 +104,7 @@ export const MCP_SERVER_OPENAI_DEVELOPER_DOCS = "openaiDeveloperDocs" as const;
 export const MCP_SERVER_CONTEXT7 = "context7" as const;
 export const MCP_SERVER_GOOGLE_DEVELOPER_KNOWLEDGE =
   "googleDeveloperKnowledge" as const;
+export const MCP_SERVER_EXA = "exa" as const;
 export const MCP_SERVER_PLAYTEST = "playtest" as const;
 export const MCP_SERVER_GITHUB = "github" as const;
 export const MCP_SERVER_XACPX = "xacpx" as const;
@@ -147,6 +148,29 @@ export const WEB_SEARCH_TOOL = "web_search" as const;
 Codex's hosted web fetch.
 */
 export const WEB_FETCH_TOOL = "web_fetch" as const;
+
+const DISABLED_NATIVE_WEB_TOOLS: ReadonlySet<string> = new Set([
+  "web_search",
+  "web_fetch",
+  "websearch",
+  "webfetch",
+  "search_web",
+  "read_url_content",
+  "fetch_url",
+  "google_web_search"
+]);
+
+/**
+Whether `toolName` is a provider-native web search or web fetch tool disabled
+in favor of the Exa MCP server (`exa`).
+*/
+export function isDisabledNativeWebTool(toolName: string): boolean {
+  const normalized = toolName
+    .trim()
+    .toLowerCase()
+    .replaceAll(/[\s-]+/gu, "_");
+  return DISABLED_NATIVE_WEB_TOOLS.has(normalized);
+}
 
 // ---------------------------------------------------------------------------
 // Naming convention enforcement.

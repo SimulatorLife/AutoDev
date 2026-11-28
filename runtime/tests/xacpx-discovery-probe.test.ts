@@ -38,8 +38,14 @@ test(
       process.execPath,
       process.env.PATH ?? "/usr/bin:/bin"
     );
-    const liveConfig = environment.XACPX_CONFIG!;
-    const liveState = environment.XACPX_STATE!;
+    const liveConfig = path.join(liveDirectory, "config.json");
+    const liveState = path.join(liveDirectory, "state.json");
+    // Simulate a stale inherited vendor config/state from a previous install.
+    const staleEnvironment = {
+      ...environment,
+      XACPX_CONFIG: liveConfig,
+      XACPX_STATE: liveState
+    };
     writeFileSync(liveConfig, "live config sentinel");
     writeFileSync(liveState, "live state sentinel");
     let probeDirectory = "";
@@ -47,12 +53,10 @@ test(
       await withXacpxDiscoveryProbe(
         workspace,
         repositoryRoot,
-        environment,
+        staleEnvironment,
         async (probe) => {
-          probeDirectory = path.dirname(probe.XACPX_CONFIG!);
+          probeDirectory = path.dirname(probe.XACPX_ORCHESTRATION_SOCKET!);
           assert.equal(statSync(probeDirectory).mode & 0o777, 0o700);
-          assert.notEqual(probe.XACPX_CONFIG, liveConfig);
-          assert.notEqual(probe.XACPX_STATE, liveState);
           assert.notEqual(
             probe.XACPX_ORCHESTRATION_SOCKET,
             environment.XACPX_ORCHESTRATION_SOCKET
@@ -100,7 +104,19 @@ test(
             ]) {
               assert.ok(listed.has(tool), tool);
             }
-            assert.ok(existsSync(probe.XACPX_CONFIG!));
+            // Exercise the real vendor tool dispatcher, not only the listing.
+            const list = await client.callTool({
+              name: "task_list",
+              arguments: {}
+            });
+            assert.notEqual(list.isError, true);
+            assert.deepEqual(list.structuredContent, { tasks: [] });
+            const missing = await client.callTool({
+              name: "task_get",
+              arguments: { taskId: "missing-fixture-task" }
+            });
+            assert.notEqual(missing.isError, true);
+            assert.deepEqual(missing.structuredContent, { task: null });
           } finally {
             await Promise.allSettled([client.close(), transport.close()]);
           }
@@ -117,7 +133,7 @@ test(
           repositoryRoot,
           environment,
           (probe) => {
-            probeDirectory = path.dirname(probe.XACPX_CONFIG!);
+            probeDirectory = path.dirname(probe.XACPX_ORCHESTRATION_SOCKET!);
             return Promise.reject(new Error("fixture discovery failure"));
           }
         ),

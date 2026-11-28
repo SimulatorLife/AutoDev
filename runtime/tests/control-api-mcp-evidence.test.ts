@@ -5,13 +5,15 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { handleControlApiRequest } from "../src/control-api/request-handler.ts";
 import { mcpGatewayDirectory } from "../src/mcp/gateway-admission.ts";
 import {
   GatewayCallObservations,
   mcpRuntimeServersFromGateway,
-  publishedGatewayCallObservations
+  publishedGatewayCallObservations,
+  readMcpGatewayObservations
 } from "../src/mcp/gateway-observations.ts";
 import { ensurePrivateDirectory } from "../src/shared/private-service-files.ts";
 import { responseRecorder } from "./support/control-api-harness.ts";
@@ -172,9 +174,10 @@ test("a running gateway that has served nothing is an observation of nothing", a
 
 test("the MCP runtime read publishes the calls the gateway served", async () => {
   const home = gatewayHome();
+  const at = new Date();
   const ledger = publishedGatewayCallObservations(home.codexHome, {
     delayMs: 0,
-    now: () => AT
+    now: () => at
   });
   const h = harness(home.codexHome);
   try {
@@ -198,8 +201,8 @@ test("the MCP runtime read publishes the calls the gateway served", async () => 
       status: "error",
       durationMs: 10
     });
-    ledger.close();
-
+    // Allow the coalesced publication, without stopping the publisher.
+    await delay(0);
     const read = await h.call("GET", "/control/mcp-runtime");
     assert.equal(read.status, 200);
     assert.equal(read.body?.observedServers, 2);
@@ -214,7 +217,7 @@ test("the MCP runtime read publishes the calls the gateway served", async () => 
       {
         name: "context7",
         health: "error",
-        lastSeenAt: AT.toISOString(),
+        lastSeenAt: at.toISOString(),
         lastStatus: "error",
         initAttempts: null,
         toolDiscoveryAttempts: null,
@@ -228,7 +231,7 @@ test("the MCP runtime read publishes the calls the gateway served", async () => 
       {
         name: "lsp",
         health: "ready",
-        lastSeenAt: AT.toISOString(),
+        lastSeenAt: at.toISOString(),
         lastStatus: "ok",
         initAttempts: null,
         toolDiscoveryAttempts: null,
@@ -239,14 +242,25 @@ test("the MCP runtime read publishes the calls the gateway served", async () => 
           {
             role: "worker",
             health: "ready",
-            lastSeenAt: AT.toISOString(),
+            lastSeenAt: at.toISOString(),
             lastStatus: "ok"
           }
         ],
         tools: [{ name: "lsp_goto_definition", count: 2, errors: 0 }]
       }
     ]);
+    ledger.close();
+    const stopped = await h.call("GET", "/control/mcp-runtime");
+    assert.equal(stopped.body?.observedServers, 2);
+    assert.deepEqual(stopped.body?.health, {
+      ready: 0,
+      error: 0,
+      stale: 2,
+      configured: 0,
+      observed: 0
+    });
   } finally {
+    ledger.close();
     h.restore();
     home.remove();
   }
@@ -263,9 +277,81 @@ test("a ledger whose gateway has exited describes the past, not a server that is
   });
   const [server] = mcpRuntimeServersFromGateway(
     observations.snapshot(),
-    () => false
-  );
+    () => false,
+    AT.getTime()
+  ) ?? [];
   assert.equal(server?.health, "stale");
   assert.equal(server?.roles[0]?.health, "stale");
   assert.equal(server?.toolCalls, 1);
+});
+
+test("freshness requires a running recent publisher, including when its PID is reused", () => {
+  const observations = new GatewayCallObservations({ now: () => AT });
+  const empty = observations.snapshot();
+  const now = AT.getTime();
+  assert.deepEqual(mcpRuntimeServersFromGateway(empty, () => true, now), []);
+  assert.equal(mcpRuntimeServersFromGateway(empty, () => false, now), null);
+  assert.equal(
+    mcpRuntimeServersFromGateway(empty, () => true, now + 10001),
+    null
+  );
+  assert.equal(mcpRuntimeServersFromGateway(empty, () => true, now - 1), null);
+  observations.record({
+    server: "lsp",
+    tool: "lsp_hover",
+    role: "explorer",
+    status: "ok",
+    durationMs: 5
+  });
+  const snapshot = observations.snapshot();
+  assert.equal(
+    mcpRuntimeServersFromGateway(snapshot, () => true, now)?.[0]?.health,
+    "ready"
+  );
+  const stale = mcpRuntimeServersFromGateway(
+    snapshot,
+    () => true,
+    now + 10001
+  )?.[0];
+  assert.equal(stale?.health, "stale");
+  assert.equal(stale?.toolCalls, 1);
+  assert.equal(stale?.roles[0]?.health, "stale");
+});
+
+test("an idle publisher renews its evidence and a stopped empty publisher is unavailable", async () => {
+  const home = gatewayHome();
+  const h = harness(home.codexHome);
+  let now = Date.now();
+  const ledger = publishedGatewayCallObservations(home.codexHome, {
+    now: () => new Date(now),
+    heartbeatMs: 10
+  });
+  try {
+    const initial = readMcpGatewayObservations(home.codexHome);
+    assert.ok(initial);
+    now += 1;
+    await delay(30);
+    const renewed = readMcpGatewayObservations(home.codexHome);
+    assert.equal(renewed?.publishedAt, new Date(now).toISOString());
+    assert.equal(renewed?.startedAt, initial.startedAt);
+    assert.deepEqual(renewed?.servers, []);
+    ledger.close();
+    const read = await h.call("GET", "/control/mcp-runtime");
+    assert.equal(read.body?.observedServers, null);
+    assert.equal(read.body?.health, null);
+    assert.equal(
+      readMcpGatewayObservations(home.codexHome)?.publisher,
+      "stopped"
+    );
+    now += 1;
+    await delay(30);
+    assert.equal(
+      readMcpGatewayObservations(home.codexHome)?.publishedAt,
+      renewed?.publishedAt
+    );
+  } finally {
+    ledger.close();
+    h.restore();
+    home.remove();
+  }
 });

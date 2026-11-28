@@ -25,10 +25,11 @@ const MCP_ORDER: Record<string, number> = {
   openaiDeveloperDocs: 5,
   context7: 6,
   googleDeveloperKnowledge: 7,
-  github: 8,
-  xacpx: 9,
-  playtest: 10,
-  commands: 11
+  exa: 8,
+  github: 9,
+  xacpx: 10,
+  playtest: 11,
+  commands: 12
 };
 const SKILL_ORDER: Record<string, number> = {
   orchestration: 0,
@@ -47,7 +48,7 @@ const SKILL_ORDER: Record<string, number> = {
 };
 const ROLE_FILE_EXTENSION = /\.toml$/u;
 const collator = new Intl.Collator();
-const RESEARCH_ROLES = new Set(["docs-researcher", "smart", "orchestrator"]);
+const WEB_RESEARCH_MCP_ROLES = new Set(["docs-researcher", "smart"]);
 const DELEGATION_MODES = new Set(["xacpx", "none"]);
 const MCP_INGRESS_MODES = new Set(["gateway", "local", "site-native", "none"]);
 
@@ -292,11 +293,10 @@ export function renderExecutionContract(
     );
   }
 
-  for (const roleName of RESEARCH_ROLES) {
-    const webResearch = roles[roleName]?.webResearch;
-    if (!webResearch?.search || !webResearch.fetch)
+  for (const roleName of WEB_RESEARCH_MCP_ROLES) {
+    if (!roles[roleName]?.mcp.includes("exa"))
       throw new ConfigError(
-        `role '${roleName}' must declare webResearch with search and fetch enabled`
+        `role '${roleName}' must enable the 'exa' MCP server for web search and fetch`
       );
   }
   if (!roles.orchestrator)

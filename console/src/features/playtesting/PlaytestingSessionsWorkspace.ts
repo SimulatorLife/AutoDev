@@ -313,6 +313,11 @@ export function PlaytestingSessionsWorkspace({
               const isAtLimit =
                 !checked &&
                 selectedEpisodeIds.length >= PLAYTESTS_MAX_ANALYSIS_SESSIONS;
+              const primaryHighlight = episode.highlightClips?.[0] ?? null;
+              const highlightSource =
+                primaryHighlight !== null
+                  ? `/api/playtesting/episodes/${encodeURIComponent(episode.episodeId)}/media/${encodeURIComponent(primaryHighlight.id)}?workspaceId=${encodeURIComponent(episode.identity.workspaceId)}`
+                  : null;
               return React.createElement(
                 "li",
                 {
@@ -332,6 +337,34 @@ export function PlaytestingSessionsWorkspace({
                   "aria-label": `Include session ${episode.episodeId} in analyst review`,
                   "data-playtesting-session-select": episode.episodeId
                 }),
+                highlightSource !== null && primaryHighlight !== null
+                  ? React.createElement(
+                      NavigationLink,
+                      {
+                        href: playtestingEpisodeHref(
+                          scope,
+                          episode.episodeId,
+                          null
+                        ),
+                        className:
+                          layout === "grid"
+                            ? "block w-full overflow-hidden rounded border border-border bg-surface-raised"
+                            : "block shrink-0 overflow-hidden rounded border border-border bg-surface-raised",
+                        "aria-label": `View highlight GIF for session ${episode.episodeId}`
+                      },
+                      React.createElement("img", {
+                        src: highlightSource,
+                        alt: `${primaryHighlight.title} thumbnail`,
+                        loading: "lazy",
+                        decoding: "async",
+                        className:
+                          layout === "grid"
+                            ? "h-36 w-full object-cover"
+                            : "h-12 w-20 object-cover",
+                        "data-playtest-highlight-thumb": primaryHighlight.id
+                      })
+                    )
+                  : null,
                 React.createElement(
                   "div",
                   { className: "min-w-0 flex-1" },

@@ -161,6 +161,7 @@ test("source declares each launch definition consistently", () => {
     "codegraphcontext",
     "commands",
     "context7",
+    "exa",
     "filesystem",
     "github",
     "googleDeveloperKnowledge",
@@ -179,6 +180,7 @@ test("source declares each launch definition consistently", () => {
   assert.deepEqual(shared.googleDeveloperKnowledge?.headers, {
     "X-Goog-Api-Key": "${GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY}"
   });
+  assert.equal(shared.exa?.url, "https://mcp.exa.ai/mcp");
   for (const target of [
     "codexcli",
     "claudecode",

@@ -1,6 +1,13 @@
 /** Review identity and effective grant selection for the managed MCP gateway. */
 import { createHash } from "node:crypto";
 
+interface ReviewedPolicy {
+  role: string;
+  policyFile: string;
+  policyDigest: string;
+  reviewed: Record<string, string[]>;
+}
+
 interface GatewayGrantState {
   role: string;
   policyFile: string;
@@ -38,6 +45,27 @@ export function computePolicyDigest(
     .update("\n")
     .update(workspace)
     .digest("hex");
+}
+
+/**
+A positive review may be reused only for the same policy identity and when
+every required server has a nonempty reviewed inventory. In particular a
+degraded discovery result must not become a permanent negative cache.
+*/
+export function canReuseReviewedPolicy(
+  prior: ReviewedPolicy | undefined,
+  role: string,
+  policyFile: string,
+  policyDigest: string,
+  requiredServers: readonly string[]
+): prior is ReviewedPolicy {
+  return (
+    prior !== undefined &&
+    prior.role === role &&
+    prior.policyFile === policyFile &&
+    prior.policyDigest === policyDigest &&
+    requiredServers.every((server) => (prior.reviewed[server]?.length ?? 0) > 0)
+  );
 }
 
 /**

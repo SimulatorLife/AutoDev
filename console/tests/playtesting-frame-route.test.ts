@@ -56,6 +56,40 @@ test("frame proxy keeps service credentials server-side and returns bounded rast
   }
 });
 
+test("frame proxy streams bounded highlight GIF89a bytes", async () => {
+  const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
+  const previousBase = process.env.AUTODEV_CONTROL_API_BASE_URL;
+  const previousFetch = fetch;
+  process.env.AUTODEV_CONTROL_API_TOKEN = TOKEN;
+  process.env.AUTODEV_CONTROL_API_BASE_URL = "http://127.0.0.1:4101";
+  const gifBytes = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x3b]);
+  globalThis.fetch = (async () =>
+    new Response(gifBytes, {
+      status: 200,
+      headers: { "content-type": "image/gif" }
+    })) as typeof fetch;
+  try {
+    const response = await GET(
+      new NextRequest(
+        "http://console.test/api/playtesting/episodes/episode-1/media/gif-1?workspaceId=owner%2Fgame"
+      ),
+      {
+        params: Promise.resolve({
+          episodeId: "episode-1",
+          artifactId: "gif-1"
+        })
+      }
+    );
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "image/gif");
+    assert.deepEqual(new Uint8Array(await response.arrayBuffer()), gifBytes);
+  } finally {
+    globalThis.fetch = previousFetch;
+    restoreEnvironment("AUTODEV_CONTROL_API_TOKEN", previousToken);
+    restoreEnvironment("AUTODEV_CONTROL_API_BASE_URL", previousBase);
+  }
+});
+
 test("frame proxy refuses missing workspace scope before any backend read", async () => {
   const previousToken = process.env.AUTODEV_CONTROL_API_TOKEN;
   const previousFetch = fetch;

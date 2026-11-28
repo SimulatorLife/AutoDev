@@ -2257,3 +2257,58 @@ test("the session list offers a search that the server applies", () => {
   assert.doesNotMatch(view, /type="search"/u);
   assert.match(view, /name="q" value="ep-b141d962"/u);
 });
+
+test("session detail and session list render recorded highlight GIFs and thumbnails", () => {
+  const clip = {
+    id: "gif-clip-1",
+    mediaType: "image/gif" as const,
+    sha256: "a".repeat(64),
+    bytes: 1024,
+    title: "Stuck loop around step 4",
+    reason: "anomaly-or-termination" as const,
+    startStep: 2,
+    endStep: 5,
+    frameCount: 4,
+    durationMs: 2600,
+    frameIds: ["frame-2", "frame-3", "frame-4", "frame-5"]
+  };
+  const withHighlights = { ...episode(), highlightClips: [clip] };
+
+  const listHtml = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionsWorkspace, {
+      scope: scope({ view: "sessions" }),
+      rows: [withHighlights],
+      total: 1,
+      nextCursor: null
+    })
+  );
+  assert.match(listHtml, /data-playtest-highlight-thumb="gif-clip-1"/u);
+  assert.match(
+    listHtml,
+    /\/api\/playtesting\/episodes\/episode-17\/media\/gif-clip-1\?workspaceId=owner%2Fgame/u
+  );
+
+  const detailHtml = renderToStaticMarkup(
+    React.createElement(PlaytestingSessionView, {
+      detail: {
+        schema: "autodev-control-playtesting-detail-v1",
+        workspaceId: WORKSPACE,
+        resource: "episodes",
+        record: withHighlights,
+        latestReview: null,
+        latestDiscoveryReview: null,
+        visualAssignment: null
+      },
+      scope: scope({ view: "sessions" }),
+      traceScope: scope({ view: "sessions" }),
+      window: null,
+      windowUnavailable: false
+    })
+  );
+  assert.match(detailHtml, /data-playtest-highlights="true"/u);
+  assert.match(detailHtml, /Highlight GIFs/u);
+  assert.match(detailHtml, /data-playtest-highlight-img="gif-clip-1"/u);
+  assert.match(detailHtml, /Stuck loop around step 4/u);
+  assert.match(detailHtml, /Steps 2–5 · 4 frames · 2\.6s/u);
+  assert.match(detailHtml, /Inspect step 2/u);
+});

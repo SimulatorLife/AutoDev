@@ -942,7 +942,12 @@ async function readEpisodeWindow(
   return response;
 }
 
-const FRAME_MEDIA_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
+const FRAME_MEDIA_TYPES = [
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif"
+] as const;
 const MAX_CONSOLE_FRAME_BYTES = 8 * 1024 * 1024;
 
 function matchesImageSignature(mediaType: string, bytes: Uint8Array): boolean {
@@ -958,6 +963,13 @@ function matchesImageSignature(mediaType: string, bytes: Uint8Array): boolean {
       bytes[1] === 0xd8 &&
       bytes[2] === 0xff
     );
+  }
+  if (mediaType === "image/gif") {
+    const header =
+      bytes.length >= 6
+        ? Buffer.from(bytes.subarray(0, 6)).toString("ascii")
+        : "";
+    return header === "GIF87a" || header === "GIF89a";
   }
   return (
     mediaType === "image/webp" &&
@@ -977,10 +989,11 @@ async function readEpisodeFrame(
   const mediaId = route.mediaId;
   if (episodeId === null || mediaId === null) return null;
   const episode = await repository.getEpisode(workspaceId, episodeId);
-  if (
-    episode === null ||
-    episode.frames.every((frame) => frame.id !== mediaId)
-  ) {
+  const isEpisodeMedia =
+    episode !== null &&
+    (episode.frames.some((frame) => frame.id === mediaId) ||
+      (episode.highlightClips?.some((clip) => clip.id === mediaId) ?? false));
+  if (!isEpisodeMedia) {
     return null;
   }
   const store = artifactStoreForWorkspace(workspaceId);

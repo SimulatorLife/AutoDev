@@ -57,6 +57,11 @@ enabled = true
 [mcp_servers.googleDeveloperKnowledge]
 enabled = true
 
+# Exa MCP provides web search and page fetching in place of provider-native
+# web_search / web_fetch tools.
+[mcp_servers.exa]
+enabled = true
+
 [mcp_servers."cocoindex-code"]
 enabled = true
 default_tools_approval_mode = "approve"
@@ -74,7 +79,7 @@ enabled_tools = [
 env_vars = ["HOME"]
 
 [tools]
-web_search = true
+web_search = false
 
 
 [[skills.config]]

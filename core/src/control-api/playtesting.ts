@@ -7,17 +7,18 @@ against one contract without re-spelled local type guards.
 */
 import { z } from "zod";
 
-import type {
-  HumanPlaytestStudy,
-  PlaytestBatch,
-  PlaytestBatchCancellationReason,
-  PlaytestBenchmark,
-  PlaytestCrossSessionSynthesis,
-  PlaytestDiscoverySessionReview,
-  PlaytestEpisode,
-  PlaytestEvidencePacket,
-  PlaytestExperiment,
-  PlaytestSessionReview
+import {
+  assertPlaytestHighlightClips,
+  type HumanPlaytestStudy,
+  type PlaytestBatch,
+  type PlaytestBatchCancellationReason,
+  type PlaytestBenchmark,
+  type PlaytestCrossSessionSynthesis,
+  type PlaytestDiscoverySessionReview,
+  type PlaytestEpisode,
+  type PlaytestEvidencePacket,
+  type PlaytestExperiment,
+  type PlaytestSessionReview
 } from "../playtesting/artifacts.ts";
 import { assertPlaytestCoverageManifest } from "../playtesting/coverage.ts";
 import { assertPlaytestDiscoverySessionReview } from "../playtesting/discovery-evidence-packet.ts";
@@ -1403,6 +1404,9 @@ function isValidEpisodeRecord(
   try {
     assertPlaytestExecutionProvenance(episode.executionProvenance);
     assertPlaytestNumericResults(episode.metrics);
+    if (episode.highlightClips !== undefined) {
+      assertPlaytestHighlightClips(episode.highlightClips);
+    }
   } catch {
     return false;
   }

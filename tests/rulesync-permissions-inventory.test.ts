@@ -97,7 +97,7 @@ test("Antigravity static permissions live in .rulesync/permissions.jsonc and dyn
   const agyPermission = asObject(agyOverride.permission);
 
   assert.equal(agyOverride.agentMode, "accept-edits");
-  assert.deepEqual(sharedPermission.webfetch, { "*": "allow" });
+  assert.deepEqual(sharedPermission.webfetch, { "*": "deny" });
   assert.deepEqual(sharedPermission.mcp__filesystem, { "*": "allow" });
   assert.deepEqual(sharedPermission["mcp__cocoindex-code__search"], {
     "*": "allow"
@@ -109,6 +109,7 @@ test("Antigravity static permissions live in .rulesync/permissions.jsonc and dyn
   assert.deepEqual(sharedPermission.mcp__googleDeveloperKnowledge, {
     "*": "allow"
   });
+  assert.deepEqual(sharedPermission.mcp__exa, { "*": "allow" });
   assert.deepEqual(sharedPermission.mcp__playwright, { "*": "deny" });
   assert.deepEqual(sharedPermission.mcp__playtest, { "*": "deny" });
   for (const tool of [

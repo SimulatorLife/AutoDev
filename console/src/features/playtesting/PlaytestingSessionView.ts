@@ -2936,6 +2936,95 @@ export function PlaytestingSessionView({
       heading("episode-review-heading", "Analyst review"),
       reviewPanel(detail, scope)
     ),
+    episode.highlightClips && episode.highlightClips.length > 0
+      ? React.createElement(
+          "section",
+          {
+            className: LIST_PANEL_CLASS,
+            "aria-labelledby": "episode-highlights-heading",
+            "data-playtest-highlights": "true"
+          },
+          heading("episode-highlights-heading", "Highlight GIFs"),
+          React.createElement(
+            "p",
+            { className: MUTED_META_CLASS },
+            `${episode.highlightClips.length} animated highlight clip${episode.highlightClips.length === 1 ? "" : "s"} recorded from episode frames.`
+          ),
+          React.createElement(
+            "ul",
+            {
+              className: "mt-3 grid gap-4 sm:grid-cols-2",
+              "aria-label": "Recorded highlight GIFs"
+            },
+            ...episode.highlightClips.map((clip) => {
+              const source = `/api/playtesting/episodes/${encodeURIComponent(episode.episodeId)}/media/${encodeURIComponent(clip.id)}?workspaceId=${encodeURIComponent(detail.workspaceId)}`;
+              const stepHref = playtestingEpisodeHref(
+                traceScope,
+                episode.episodeId,
+                clip.startStep
+              );
+              return React.createElement(
+                "li",
+                {
+                  key: clip.id,
+                  className:
+                    "rounded border border-border bg-surface-raised p-3",
+                  "data-playtest-highlight-clip": clip.id
+                },
+                React.createElement(
+                  "figure",
+                  { className: "flex flex-col gap-2" },
+                  React.createElement("img", {
+                    src: source,
+                    alt: `${clip.title} (steps ${clip.startStep}–${clip.endStep})`,
+                    loading: "lazy",
+                    decoding: "async",
+                    className: "max-h-[24rem] w-full rounded object-contain",
+                    "data-playtest-highlight-img": clip.id
+                  }),
+                  React.createElement(
+                    "figcaption",
+                    { className: "flex flex-col gap-1" },
+                    React.createElement(
+                      "div",
+                      { className: "flex flex-wrap items-center justify-between gap-2" },
+                      React.createElement(
+                        "span",
+                        { className: "text-sm font-medium text-fg" },
+                        clip.title
+                      ),
+                      React.createElement(StatusBadge, {
+                        status:
+                          clip.reason === "anomaly-or-termination"
+                            ? "unavailable"
+                            : "not-observed",
+                        label: clip.reason.replaceAll("-", " ")
+                      })
+                    ),
+                    React.createElement(
+                      "div",
+                      { className: `flex flex-wrap items-center justify-between gap-2 ${MUTED_META_CLASS}` },
+                      React.createElement(
+                        "span",
+                        null,
+                        `Steps ${clip.startStep}–${clip.endStep} · ${clip.frameCount} frames · ${(clip.durationMs / 1000).toFixed(1)}s`
+                      ),
+                      React.createElement(
+                        NavigationLink,
+                        {
+                          href: stepHref,
+                          className: ACTION_LINK_CLASS
+                        },
+                        `Inspect step ${clip.startStep}`
+                      )
+                    )
+                  )
+                )
+              );
+            })
+          )
+        )
+      : null,
     React.createElement(
       "section",
       {

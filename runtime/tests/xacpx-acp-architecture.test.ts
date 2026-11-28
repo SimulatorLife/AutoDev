@@ -41,7 +41,7 @@ import {
   readLocalAdmission
 } from "../src/mcp/gateway-admission.ts";
 import { MCP_GRANT_ENV } from "../src/mcp/gateway-client.ts";
-import { ensureXacpxConfig, resolveMcpCommand } from "../src/mcp/launcher.ts";
+import { resolveMcpCommand } from "../src/mcp/launcher.ts";
 import { verifySessionGrant } from "../src/mcp/session-grant.ts";
 import {
   buildOpencliRoleTaskSpec,
@@ -51,6 +51,7 @@ import { COOLDOWNS } from "../src/router/cooldown/index.ts";
 import { ROUTING_POLICY, RoutingPolicy } from "../src/router/routing.ts";
 import { autodevHome, autodevStateHome } from "../src/shared/autodev-home.ts";
 import { findMcodeBinary } from "../src/shared/executables.ts";
+import { withXacpxLaunchEnvironment } from "../src/xacpx/mcp-launch-environment.ts";
 import { declaredDelegatedRoleNames, roleContract } from "../src/shared/execution-contract.ts";
 import {
   extractSkillReadPath,
@@ -305,6 +306,15 @@ test("ACP MCP tools are checked against canonical role permissions", () => {
     ["worker", "mcp__commands__test", "allow"],
     ["explorer", "mcp__commands__test", "reject"],
     ["worker", "mcp__playwright__browser_navigate", "reject"],
+    ["docs-researcher", "mcp__exa__web_search_exa", "allow"],
+    ["smart", "mcp__exa__web_fetch_exa", "allow"],
+    ["worker", "mcp__exa__web_search_exa", "reject"],
+    ["docs-researcher", "web_search", "reject"],
+    ["docs-researcher", "web_fetch", "reject"],
+    ["smart", "WebSearch", "reject"],
+    ["smart", "WebFetch", "reject"],
+    ["smart", "search_web", "reject"],
+    ["smart", "read_url_content", "reject"],
     ["worker", "mcp__filesystem", "reject"],
     ["worker", "mcp__cocoindex_code__search", "reject"],
     ["worker", "mcp__malformed", "reject"],
@@ -449,41 +459,24 @@ test("Antigravity app-data names are relative, stable, and isolated by session a
   assert.notEqual(directory({}, "/tmp/autodev-b"), first);
 });
 
-test("XACPX config advertises only current delegated roles, not stale providers or orchestrators", () => {
-  const directory = mkdtempSync(path.join(tmpdir(), "autodev-xacpx-config-"));
-  try {
-    const config = path.join(directory, "config.json");
-    writeFileSync(
-      config,
-      JSON.stringify({
-        transport: { type: "acpx-bridge" },
-        channel: { replyMode: "verbose" },
-        agents: {
-          codex: { driver: "codex" },
-          claude: { driver: "claude" },
-          orchestrator: { driver: "codex" },
-          retired: { driver: "codex" }
-        },
-        workspaces: { preserved: { cwd: REPO_ROOT } }
-      })
-    );
-    ensureXacpxConfig(config, "current", REPO_ROOT);
-    const first = readFileSync(config, "utf8");
-    const projected = JSON.parse(first);
-    assert.deepEqual(
-      Object.keys(projected.agents),
-      declaredDelegatedRoleNames()
-    );
-    for (const denied of ["codex", "claude", "orchestrator", "retired"]) {
-      assert.equal(Object.hasOwn(projected.agents, denied), false);
+test("XACPX config advertises exactly canonical delegated roles", async () => {
+  await withXacpxLaunchEnvironment(
+    REPO_ROOT,
+    {},
+    declaredDelegatedRoleNames(),
+    (env) => {
+      const projected = JSON.parse(readFileSync(env.XACPX_CONFIG!, "utf8"));
+      assert.deepEqual(
+        Object.keys(projected.agents),
+        declaredDelegatedRoleNames()
+      );
+      for (const denied of ["codex", "claude", "orchestrator", "retired"]) {
+        assert.equal(Object.hasOwn(projected.agents, denied), false);
+      }
+      const workspace = realpathSync(REPO_ROOT);
+      assert.deepEqual(projected.workspaces, { [workspace]: { cwd: workspace } });
     }
-    assert.deepEqual(projected.workspaces.preserved, { cwd: REPO_ROOT });
-    assert.deepEqual(projected.workspaces.current, { cwd: REPO_ROOT });
-    ensureXacpxConfig(config, "current", REPO_ROOT);
-    assert.equal(readFileSync(config, "utf8"), first);
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
+  );
 });
 
 test("a vendor ACP executor is spawned from where it is installed, with only the host variables it needs", () => {

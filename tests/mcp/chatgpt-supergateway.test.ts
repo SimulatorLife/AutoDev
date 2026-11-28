@@ -369,9 +369,7 @@ test("Supergateway receives an explicit credential-free role-aware process envir
     AUTODEV_XACPX_WORKSPACE: "/project",
     AUTODEV_XACPX_COORDINATOR_SESSION: "chatgpt:orchestrator:project",
     XACPX_ORCHESTRATION_SOCKET:
-      "/home/test/.codex/run/xacpx-orchestration.sock",
-    XACPX_CONFIG: "/home/test/.codex/run/xacpx/config.json",
-    XACPX_STATE: "/home/test/.codex/run/xacpx/state.json"
+      "/home/test/.codex/run/xacpx-orchestration.sock"
   });
   assert.equal("AUTODEV_MCP_READ_ONLY" in orchestratorEnvironment, false);
   assert.equal("AUTODEV_MCP_WORKSPACE_ONLY" in orchestratorEnvironment, false);

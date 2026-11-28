@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   availableGrantSelection,
+  canReuseReviewedPolicy,
   computePolicyDigest,
   previousGrantSelection
 } from "../src/platform/mcp-gateway-policy-review.ts";
@@ -24,6 +25,39 @@ test("review identity changes with the installed generation and workspace", () =
   assert.equal(first, digest("/home/.codex/.src-a", "/project"));
   assert.notEqual(first, digest("/home/.codex/.src-b", "/project"));
   assert.notEqual(first, digest("/home/.codex/.src-a", "/other-project"));
+});
+
+test("a required server's missing review cannot become a permanent cache hit", () => {
+  const role = "orchestrator";
+  const policyFile = "/project/permissions.jsonc";
+  const policyDigest = "fixture";
+  const required = ["xacpx"];
+  const degraded = {
+    role,
+    policyFile,
+    policyDigest,
+    reviewed: { filesystem: ["read_text_file"] }
+  };
+  const reusable = (prior: Parameters<typeof canReuseReviewedPolicy>[0]) =>
+    canReuseReviewedPolicy(prior, role, policyFile, policyDigest, required);
+  assert.equal(reusable(undefined), false);
+  assert.equal(reusable(degraded), false);
+  assert.equal(
+    reusable({ ...degraded, reviewed: { ...degraded.reviewed, xacpx: [] } }),
+    false
+  );
+  const complete = {
+    ...degraded,
+    reviewed: { ...degraded.reviewed, xacpx: ["delegate_request"] }
+  };
+  assert.equal(reusable(complete), true);
+  assert.equal(reusable({ ...complete, policyDigest: "changed" }), false);
+  assert.equal(reusable({ ...complete, policyFile: "/other/policy" }), false);
+  assert.equal(reusable({ ...complete, role: "worker" }), false);
+  assert.equal(
+    canReuseReviewedPolicy(degraded, role, policyFile, policyDigest, []),
+    true
+  );
 });
 
 test("default grants follow review; an existing narrow grant remains explicit", () => {

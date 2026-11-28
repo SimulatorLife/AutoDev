@@ -225,11 +225,20 @@ test("playtest-analyst reuses autodev/smart model tier without inheriting smart 
   assert.doesNotMatch(smartRaw, /^# role-access: read-only$/mu);
   assert.match(analystRaw, /^# role-access: read-only$/mu);
 
-  // smart role has web_search enabled; analyst MUST disable it:
+  // Native web_search is disabled on both roles (smart uses the Exa MCP;
+  // analyst must not enable either native web_search or the Exa MCP):
   const smartTools = smartRole.tools as Record<string, unknown> | undefined;
   const analystTools = analystRole.tools as Record<string, unknown> | undefined;
-  assert.equal(smartTools?.web_search, true);
+  assert.equal(smartTools?.web_search, false);
   assert.equal(analystTools?.web_search, false);
+  const smartMcps = smartRole.mcp_servers as
+    | Record<string, { enabled?: boolean }>
+    | undefined;
+  const analystMcps = analystRole.mcp_servers as
+    | Record<string, { enabled?: boolean }>
+    | undefined;
+  assert.equal(smartMcps?.exa?.enabled, true);
+  assert.notEqual(analystMcps?.exa?.enabled, true);
   assert.equal(
     analystTools?.view_image,
     undefined,

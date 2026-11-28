@@ -32,9 +32,14 @@ enabled = true
 [mcp_servers.googleDeveloperKnowledge]
 enabled = true
 
-# General documentation research uses Codex's native web_search tool. The
-# browser automation MCP is for UI testing/debugging and is intentionally not
-# exposed to this role.
+# Exa MCP provides web search and page fetching in place of provider-native
+# web_search / web_fetch tools.
+[mcp_servers.exa]
+enabled = true
+
+# General documentation research uses the Exa MCP server rather than native
+# web_search. The browser automation MCP is for UI testing/debugging and is
+# intentionally not exposed to this role.
 [mcp_servers.playwright]
 enabled = false
 
@@ -46,7 +51,7 @@ default_tools_approval_mode = "approve"
 enabled = false
 
 [tools]
-web_search = true
+web_search = false
 
 
 [[skills.config]]

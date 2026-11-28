@@ -412,7 +412,7 @@ export function fetchControlApi<T>(
 
 export interface ControlApiBinaryData {
   readonly bytes: Uint8Array;
-  readonly mediaType: "image/png" | "image/jpeg" | "image/webp";
+  readonly mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif";
 }
 
 const BINARY_RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
@@ -424,7 +424,8 @@ const WORKSPACE_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/u;
 const DISPLAYABLE_FRAME_TYPES = [
   "image/png",
   "image/jpeg",
-  "image/webp"
+  "image/webp",
+  "image/gif"
 ] as const;
 
 function validPlaytestFramePath(path: string): boolean {

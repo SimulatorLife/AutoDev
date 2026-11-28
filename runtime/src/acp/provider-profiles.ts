@@ -119,7 +119,9 @@ const COPILOT_EXCLUDED_NATIVE_TOOLS = [
   "apply_patch",
   "glob",
   "grep",
-  "task"
+  "task",
+  "web_search",
+  "web_fetch"
 ] as const;
 
 /**

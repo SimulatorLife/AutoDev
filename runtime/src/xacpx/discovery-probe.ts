@@ -6,9 +6,9 @@ import { startXacpxOrchestrationIpcServer } from "./orchestration-ipc.ts";
 
 /**
 Install-time discovery must never register a coordinator against the live
-Router or rewrite its XACPX configuration and state. Both gateway probes
-use this private, disposable instance of the canonical orchestration IPC
-server. A short physical path also fits macOS's Unix socket path limit.
+Router. Both gateway probes use this private, disposable instance of the
+canonical orchestration IPC server. A short physical path also fits macOS's
+Unix socket path limit.
 */
 export async function withXacpxDiscoveryProbe<T>(
   workspace: string,
@@ -29,8 +29,6 @@ export async function withXacpxDiscoveryProbe<T>(
       return await run({
         ...environment,
         XACPX_ORCHESTRATION_SOCKET: socketPath,
-        XACPX_CONFIG: path.join(directory, "config.json"),
-        XACPX_STATE: path.join(directory, "state.json"),
         AUTODEV_XACPX_WORKSPACE: workspace,
         AUTODEV_XACPX_COORDINATOR_SESSION: "gateway:policy-probe"
       });

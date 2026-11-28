@@ -1661,7 +1661,8 @@ test(
       mkdtempSync(path.join(tmpdir(), "mcp-gateway-discovery-"))
     );
     try {
-      const { codexHome, workspace, paths, gatewayDeps } = serviceFixture(root);
+      const { codexHome, workspace, paths, gatewayDeps, events } =
+        serviceFixture(root);
       const environment = { HOME: paths.home };
       const link = path.join(codexHome, "src");
       const selectGeneration = (id: string) => {
@@ -1690,8 +1691,18 @@ test(
       };
       const reconcile = () =>
         ensureMcpGateway(paths, environment, undefined, dependencies);
+      // A fresh install cannot publish a supposedly healthy orchestrator
+      // with no delegation surface.
+      await assert.rejects(
+        reconcile(),
+        /required XACPX delegation inventory is empty/u
+      );
+      assert.equal(readMcpGatewayState(codexHome), undefined);
+      assert.equal(events.length, 0);
+
+      xacpxTools = ["delegate_request", "task_watch"];
       const initial = await reconcile();
-      assert.equal(initial.reviewed.xacpx, undefined);
+      assert.deepEqual(initial.reviewed.xacpx, xacpxTools);
       assert.ok(commandRoles.has("orchestrator"));
       assert.ok(commandRoles.has("validator"));
       assert.ok(commandRoles.has("worker"));
@@ -1699,8 +1710,37 @@ test(
       await reconcile();
       assert.equal(xacpxDiscoveries, discoveries, "unchanged context is cached");
 
-      // No policy or catalogue change: only the installed backend changes.
+      // Model an already-installed degraded review, with the same policy
+      // digest. It must not qualify as ready or be reused on reconciliation.
+      const stateFile = path.join(codexHome, "mcp-gateway", "gateway.json");
+      const degradedReviewed = { ...initial.reviewed };
+      const degradedGrants = { ...initial.grants };
+      delete degradedReviewed.xacpx;
+      delete degradedGrants.xacpx;
+      const degraded = {
+        ...initial,
+        reviewed: degradedReviewed,
+        grants: degradedGrants
+      };
+      privateWrite(stateFile, JSON.stringify(degraded) + "\n");
+      assert.equal(await checkMcpGateway(paths, dependencies), false);
+      const beforeFailure = events.length;
+      xacpxTools = [];
+      await assert.rejects(
+        reconcile(),
+        /required XACPX delegation inventory is empty/u
+      );
+      assert.equal(events.length, beforeFailure);
+      assert.deepEqual(readMcpGatewayState(codexHome), degraded);
+
+      // Recovery needs no policy, workspace or generation change.
       xacpxTools = ["delegate_request", "task_watch"];
+      const recovered = await reconcile();
+      assert.equal(recovered.policyDigest, initial.policyDigest);
+      assert.deepEqual(recovered.reviewed.xacpx, xacpxTools);
+      assert.equal(await checkMcpGateway(paths, dependencies), true);
+
+      // No policy or catalogue change: only the installed backend changes.
       selectGeneration("new");
       const upgraded = await reconcile();
       assert.notEqual(upgraded.policyDigest, initial.policyDigest);
@@ -1710,6 +1750,26 @@ test(
         filesystem: ["read_text_file"],
         xacpx: ["delegate_request"]
       };
+      const narrowed = await ensureMcpGateway(
+        paths,
+        environment,
+        { workspace, grants: { filesystem: ["read_text_file"] } },
+        dependencies
+      );
+      assert.equal(narrowed.grants.xacpx, undefined);
+      assert.deepEqual(narrowed.reviewed.xacpx, xacpxTools);
+      assert.equal(await checkMcpGateway(paths, dependencies), true);
+      const manifestFile = path.join(
+        codexHome, "mcp-gateway", narrowed.generation, "backend-pool.json"
+      );
+      const originalManifest = privateRead(manifestFile);
+      const incomplete = JSON.parse(originalManifest);
+      delete incomplete.servers["local.orchestrator.xacpx"];
+      privateWrite(manifestFile, JSON.stringify(incomplete));
+      assert.equal(await checkMcpGateway(paths, dependencies), false);
+      privateWrite(manifestFile, originalManifest + "\n");
+      assert.equal(await checkMcpGateway(paths, dependencies), true);
+
       await ensureMcpGateway(
         paths,
         environment,

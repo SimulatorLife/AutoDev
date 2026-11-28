@@ -647,9 +647,10 @@ test("context7 is enabled on docs-researcher and explorer only", () => {
     openaiDeveloperDocs: 5,
     context7: 6,
     googleDeveloperKnowledge: 7,
-    codex_app: 8,
-    github: 9,
-    xacpx: 10
+    exa: 8,
+    codex_app: 9,
+    github: 10,
+    xacpx: 11
   };
   for (const [roleName, roleConfig] of Object.entries(contract.roles)) {
     const mcp = roleConfig.mcp ?? [];
@@ -691,6 +692,35 @@ test("googleDeveloperKnowledge is enabled on the documentation roles only", () =
     assert.ok(
       !(roleConfig.mcp ?? []).includes("googleDeveloperKnowledge"),
       `${roleName} must not enable googleDeveloperKnowledge`
+    );
+  }
+});
+
+test("exa is enabled on the documentation roles only and native web_search is disabled", () => {
+  const contract = JSON.parse(
+    readFileSync("config/execution-contract.json", "utf8")
+  ) as { roles: Record<string, { mcp?: string[]; webResearch?: unknown }> };
+
+  const enabledRoles = new Set(["docs-researcher", "smart"]);
+  for (const roleName of enabledRoles) {
+    const roleConfig = contract.roles[roleName];
+    assert.ok(roleConfig, `${roleName} role must be declared`);
+    assert.ok(
+      (roleConfig.mcp ?? []).includes("exa"),
+      `${roleName} must enable exa`
+    );
+  }
+
+  for (const [roleName, roleConfig] of Object.entries(contract.roles)) {
+    assert.equal(
+      roleConfig.webResearch,
+      undefined,
+      `${roleName} must not enable native webResearch`
+    );
+    if (enabledRoles.has(roleName)) continue;
+    assert.ok(
+      !(roleConfig.mcp ?? []).includes("exa"),
+      `${roleName} must not enable exa`
     );
   }
 });

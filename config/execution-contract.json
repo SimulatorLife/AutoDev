@@ -127,18 +127,14 @@
         "filesystem",
         "openaiDeveloperDocs",
         "context7",
-        "googleDeveloperKnowledge"
+        "googleDeveloperKnowledge",
+        "exa"
       ],
       "skills": [
         "source-driven-development"
       ],
       "mcpApprovalMode": {
         "filesystem": "approve"
-      },
-      "webResearch": {
-        "search": true,
-        "fetch": true,
-        "optionalMcp": []
       }
     },
     "explorer": {
@@ -264,11 +260,6 @@
         "codegraphcontext": [
           "HOME"
         ]
-      },
-      "webResearch": {
-        "search": true,
-        "fetch": true,
-        "optionalMcp": []
       }
     },
     "playtest-analyst": {
@@ -400,7 +391,8 @@
         "codegraphcontext",
         "playwright",
         "openaiDeveloperDocs",
-        "googleDeveloperKnowledge"
+        "googleDeveloperKnowledge",
+        "exa"
       ],
       "skills": [
         "ccc",
@@ -456,13 +448,6 @@
       },
       "reasoning": {
         "summary": "none"
-      },
-      "webResearch": {
-        "search": true,
-        "fetch": true,
-        "optionalMcp": [
-          "playwright"
-        ]
       }
     },
     "validator": {

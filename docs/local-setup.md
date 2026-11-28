@@ -111,6 +111,10 @@ and every other command runs with the network denied.
 
 Gateway tool discovery is reconciled against the installed immutable Runtime generation, the selected workspace, the canonical role and permission policy, and the approved Commands catalogue. A new generation or workspace invalidates the reviewed inventory; unchanged inputs reuse the reviewed cache. Explicit operator tool selections persist independently of temporary backend availability and are intersected with current reviewed tools on automatic reconciliation. An empty selection restores the role's reviewed default. If the connected app advertises a tool but a call returns `Unknown tool`, compare fresh gateway and tunnel `tools/list` results and the backend's actual listing and call behavior after a managed install; do not add duplicate tools or broaden grants to work around stale discovery.
 
+A role whose canonical contract includes XACPX requires a nonempty, actually discovered delegation inventory. A previous empty review is not reusable even with an unchanged policy digest. If rediscovery still returns no authorized tools (or the backend declaration is absent), reconciliation stops before publishing or restarting the gateway; the existing generation is retained. Installed readiness also requires the role's local XACPX endpoint and admitted backend route. This does not override an operator's explicit narrowing of the external combined surface. If reconciliation reports `required XACPX delegation inventory is empty`, investigate the canonical declaration and isolated discovery handshake, then rerun the managed installer. Do not add synthetic tools, change permissions, or delete the review cache to force a successful install. A nonempty review establishes only the inventory requirement, not live spawning or complete lifecycle parity.
+
+XACPX's native `mcp-stdio` client no longer uses shared `run/xacpx/config.json` or `state.json` files. The launcher generates a private per-process projection of the admitted workspace and canonical child roles, and allocates a fresh vendor-state path; existing files from earlier installations are not read or modified. This removes concurrent configuration overwrite and stale vendor-state conflicts without resetting Router-owned tasks. Reinstallation and a tool refresh are required to exercise the corrected live launcher.
+
 The installed Runtime resolves its dependencies from a protected closure that
 the installer deploys with `pnpm deploy --prod` into
 `$CODEX_HOME/.deps-<hash>/node_modules`; it no longer links the checkout's
@@ -341,7 +345,12 @@ servers and must not be represented as enabled-only role tables.
 
 `.rulesync/mcp.jsonc` declares the `codegraphcontext`, `lsp`, `cocoindex-code`,
 and `playwright` MCP servers through the installed `run-autodev-mcp.sh` launcher,
-`openaiDeveloperDocs` by URL, and `context7` and `googleDeveloperKnowledge` by URL.
+`openaiDeveloperDocs`, `exa`, `context7`, and `googleDeveloperKnowledge` by URL.
+`exa` (`https://mcp.exa.ai/mcp`) provides web search and page fetching for the
+`docs-researcher` and `smart` roles in place of provider-native web search and
+web fetch tools, which are disabled across all providers (`webfetch: deny`,
+`codexcli.tools.web_search = false`, role `web_search = false`, Copilot
+`--excluded-tools`, and ACP `session/request_permission`).
 `context7` is the hosted
 `https://mcp.context7.com/mcp` server that resolves third-party library IDs and
 returns version-pinned docs and source snippets; the operator supplies the

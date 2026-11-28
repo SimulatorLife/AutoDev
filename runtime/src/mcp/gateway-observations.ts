@@ -25,7 +25,7 @@ import {
 } from "../shared/private-service-files.ts";
 import { mcpGatewayDirectory } from "./gateway-admission.ts";
 
-const MCP_GATEWAY_OBSERVATIONS_SCHEMA = "autodev-mcp-gateway-observations-v1";
+const MCP_GATEWAY_OBSERVATIONS_SCHEMA = "autodev-mcp-gateway-observations-v2";
 
 /**
 Bounds that keep the ledger finite whatever the catalogue holds.
@@ -37,6 +37,10 @@ const MAX_ENTRIES_PER_SERVER = 256;
 How long the published file may lag the ledger after a call completes.
 */
 const PUBLISH_DELAY_MS = 1000;
+// Idle gateways must publish too: a successful old call and an existing
+// PID do not establish that the observer is still making progress.
+const HEARTBEAT_INTERVAL_MS = 2000;
+const OBSERVATION_MAX_AGE_MS = 10000;
 
 export type GatewayCallStatus = "ok" | "error";
 
@@ -91,6 +95,8 @@ const observationsSchema = z
     schema: z.literal(MCP_GATEWAY_OBSERVATIONS_SCHEMA),
     pid: z.number().int().positive(),
     startedAt: z.iso.datetime(),
+    publishedAt: z.iso.datetime(),
+    publisher: z.enum(["running", "stopped"]),
     servers: z.array(serverSchema)
   })
   .strict();
@@ -180,11 +186,15 @@ export class GatewayCallObservations {
     this.#onRecord();
   }
 
-  snapshot(): GatewayObservations {
+  snapshot(
+    publisher: GatewayObservations["publisher"] = "running"
+  ): GatewayObservations {
     return {
       schema: MCP_GATEWAY_OBSERVATIONS_SCHEMA,
       pid: process.pid,
       startedAt: this.#startedAt,
+      publishedAt: this.#now().toISOString(),
+      publisher,
       servers: [...this.#servers]
         .sort(([left], [right]) => COLLATOR.compare(left, right))
         .map(([name, server]) => ({
@@ -210,36 +220,56 @@ function mcpGatewayObservationsFile(codexHome: string): string {
 }
 
 /**
-A ledger whose snapshot the gateway publishes to its private directory: once
-at start (so a read can tell "running, nothing called yet" from "no gateway"),
-then at most once per `delayMs` after calls, and on `close()`.
+Publish at start, after coalesced calls, periodically even when idle, and
+once with a stopped marker on close. The timestamp advances only in the
+file successfully written by the publisher; a failed write cannot renew
+the reader's freshness evidence.
 */
 export function publishedGatewayCallObservations(
   codexHome: string,
-  options: { readonly delayMs?: number; readonly now?: () => Date } = {}
+  options: {
+    readonly delayMs?: number;
+    readonly heartbeatMs?: number;
+    readonly now?: () => Date;
+  } = {}
 ): { readonly observations: GatewayCallObservations; close(): void } {
   const file = mcpGatewayObservationsFile(codexHome);
   let timer: NodeJS.Timeout | null = null;
+  let closed = false;
   const publish = (): void => {
+    if (timer) clearTimeout(timer);
     timer = null;
     try {
-      privateWrite(file, JSON.stringify(observations.snapshot()) + "\n");
+      privateWrite(
+        file,
+        JSON.stringify(observations.snapshot(closed ? "stopped" : "running")) +
+          "\n"
+      );
     } catch {
       // Publishing is evidence, never a reason to fail the call it observes.
+      // The previous successful snapshot will age out at the reader.
     }
   };
   const observations = new GatewayCallObservations({
     ...(options.now && { now: options.now }),
     onRecord: () => {
+      if (closed) return;
       timer ??= setTimeout(publish, options.delayMs ?? PUBLISH_DELAY_MS);
       timer.unref();
     }
   });
   publish();
+  const heartbeat = setInterval(
+    publish,
+    options.heartbeatMs ?? HEARTBEAT_INTERVAL_MS
+  );
+  heartbeat.unref();
   return {
     observations,
     close: () => {
-      if (timer) clearTimeout(timer);
+      if (closed) return;
+      closed = true;
+      clearInterval(heartbeat);
       publish();
     }
   };
@@ -274,15 +304,38 @@ function isProcessAlive(pid: number): boolean {
 }
 
 /**
-The published observations in the Control API's per-server shape. A ledger
-whose gateway process has exited is still true about the past, but it no
-longer describes a server that is up, so every verdict becomes `stale`.
+A live observation requires a recent successful publication, a running
+publisher marker, and a live PID. The heartbeat is observer freshness,
+not a probe of every backend's current readiness.
+*/
+function mcpGatewayObservationsAreFresh(
+  observations: GatewayObservations,
+  isAlive: (pid: number) => boolean = isProcessAlive,
+  now: number = Date.now()
+): boolean {
+  const publishedAt = Date.parse(observations.publishedAt);
+  const age = now - publishedAt;
+  return (
+    observations.publisher === "running" &&
+    publishedAt >= Date.parse(observations.startedAt) &&
+    age >= 0 &&
+    age <= OBSERVATION_MAX_AGE_MS &&
+    isAlive(observations.pid)
+  );
+}
+
+/**
+Keep completed call evidence when its publisher stops or stalls, but mark
+every verdict stale. An empty stale ledger is unavailable, not observed
+zero. A fresh verdict still describes the last observed call only.
 */
 export function mcpRuntimeServersFromGateway(
   observations: GatewayObservations,
-  isAlive: (pid: number) => boolean = isProcessAlive
-): ControlApiMcpRuntimeServer[] {
-  const isLive = isAlive(observations.pid);
+  isAlive: (pid: number) => boolean = isProcessAlive,
+  now: number = Date.now()
+): ControlApiMcpRuntimeServer[] | null {
+  const isLive = mcpGatewayObservationsAreFresh(observations, isAlive, now);
+  if (!isLive && observations.servers.length === 0) return null;
   const verdict = (status: GatewayCallStatus) =>
     isLive ? (status === "ok" ? "ready" : "error") : "stale";
   return observations.servers.map((server) => ({

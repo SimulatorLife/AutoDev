@@ -34,7 +34,7 @@ enabled = true
 default_tools_approval_mode = "approve"
 
 [tools]
-web_search = true
+web_search = false
 
 [mcp_servers.commands]
 enabled = true
@@ -89,6 +89,9 @@ enabled = false
 # Documentation research belongs to the documentation roles, so the root turn
 # never picks the documentation MCP servers up itself.
 [mcp_servers.googleDeveloperKnowledge]
+enabled = false
+
+[mcp_servers.exa]
 enabled = false
 
 [[skills.config]]

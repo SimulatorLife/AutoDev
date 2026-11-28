@@ -76,6 +76,9 @@
       "headers": {
         "X-Goog-Api-Key": "${GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY}"
       }
+    },
+    "exa": {
+      "url": "https://mcp.exa.ai/mcp"
     }
   },
   "codexcli": {
@@ -151,6 +154,10 @@
         "headers": {
           "X-Goog-Api-Key": "${GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY}"
         },
+        "disabled": true
+      },
+      "exa": {
+        "url": "https://mcp.exa.ai/mcp",
         "disabled": true
       },
       "playwright": {

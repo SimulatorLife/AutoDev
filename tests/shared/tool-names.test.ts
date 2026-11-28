@@ -14,11 +14,13 @@ import {
   COPILOT_NATIVE_TOOL_EXCEPTIONS,
   EXEC_TOOL,
   isCanonicalToolName,
+  isDisabledNativeWebTool,
   MCP_NAMESPACE,
   MCP_SERVER_COCOINDEX,
   MCP_SERVER_CODEGRAPHCONTEXT,
   MCP_SERVER_CODEX_APP,
   MCP_SERVER_CONTEXT7,
+  MCP_SERVER_EXA,
   MCP_SERVER_GOOGLE_DEVELOPER_KNOWLEDGE,
   MCP_SERVER_LSP,
   MCP_SERVER_OPENAI_DEVELOPER_DOCS,
@@ -60,7 +62,31 @@ test("MCP server names are pinned", () => {
     MCP_SERVER_GOOGLE_DEVELOPER_KNOWLEDGE,
     "googleDeveloperKnowledge"
   );
+  assert.equal(MCP_SERVER_EXA, "exa");
   assert.equal(MCP_SERVER_CODEX_APP, "codex_app");
+});
+
+test("isDisabledNativeWebTool catches provider-native web search and fetch tools", () => {
+  for (const name of [
+    "web_search",
+    "web_fetch",
+    "WebSearch",
+    "WebFetch",
+    "search_web",
+    "read_url_content",
+    "fetch_url",
+    "google_web_search"
+  ]) {
+    assert.equal(isDisabledNativeWebTool(name), true, name);
+  }
+  for (const allowed of [
+    "mcp__exa__web_search_exa",
+    "mcp__exa__web_fetch_exa",
+    "mcp__context7__query-docs",
+    "exec"
+  ]) {
+    assert.equal(isDisabledNativeWebTool(allowed), false, allowed);
+  }
 });
 
 test("multiAgentToolName and mcpToolName produce the documented form", () => {

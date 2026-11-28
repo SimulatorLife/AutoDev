@@ -2983,6 +2983,15 @@ test("Control API surfaces all 13 typed resource families", async () => {
     assert.deepEqual(googleDeveloperKnowledge.targetOverrides, [
       { target: "codexcli", enabled: false }
     ]);
+    const exa = mcps.body.servers.find(
+      (server: { name: string }) => server.name === "exa"
+    );
+    assert.ok(exa);
+    assert.equal(exa.enabled, true);
+    assert.equal(exa.url, "https://mcp.exa.ai/mcp");
+    assert.deepEqual(exa.targetOverrides, [
+      { target: "codexcli", enabled: false }
+    ]);
     // The public /control/mcps summary omits authentication headers and env
     // var names so no credential or auth reference leaks into the listing.
     assert.doesNotMatch(
@@ -3023,10 +3032,7 @@ test("Control API surfaces all 13 typed resource families", async () => {
         tool.source === "native" &&
         tool.sourceAuthority === "codex-native"
     );
-    assert.ok(webSearch);
-    assert.ok(webSearch.exposedRoles.includes("docs-researcher"));
-    assert.equal(webSearch.availability, "configured");
-    assert.ok(webSearch.canonicalEditSurface);
+    assert.equal(webSearch, undefined);
     const appTool = tools.body.tools.find(
       (tool: { name: string; source: string; sourceAuthority: string }) =>
         tool.name === "request_user_input" &&
@@ -3035,7 +3041,7 @@ test("Control API surfaces all 13 typed resource families", async () => {
     );
     assert.ok(appTool);
     assert.deepEqual(appTool.exposedRoles, []);
-    assert.equal("status" in webSearch, false);
+    assert.equal("status" in appTool, false);
     // The RuleSync plugin entry for codex_app surfaces through the
     // composite catalog so the Console can pivot to its canonical edit
     // surface (MCP codex_app) without inventing per-tool evidence.

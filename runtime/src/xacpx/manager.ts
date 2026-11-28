@@ -63,7 +63,10 @@ import {
 import { resolveChatgptMcpApp } from "@simulatorlife/autodev-runtime/shared/opencli-mcp-app";
 import { composeRoleSystemPrompt } from "@simulatorlife/autodev-runtime/shared/role-prompts";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
-import { mcpToolName } from "@simulatorlife/autodev-runtime/shared/tool-names";
+import {
+  isDisabledNativeWebTool,
+  mcpToolName
+} from "@simulatorlife/autodev-runtime/shared/tool-names";
 
 import {
   buildOpencliRoleTaskSpec,
@@ -338,7 +341,11 @@ export function resolveAcpPermissionResponse(
     request.toolCall.title ??
     ""
   ).trim();
-  if (!toolName || isDisabledNativeFileTool(toolName)) {
+  if (
+    !toolName ||
+    isDisabledNativeFileTool(toolName) ||
+    isDisabledNativeWebTool(toolName)
+  ) {
     return rejectPermissionResponse(request);
   }
   if (

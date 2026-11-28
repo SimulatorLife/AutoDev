@@ -52,6 +52,8 @@ import {
   DEFAULT_CHATGPT_SESSION_TIMEOUT_MS,
   isApprovedHeaderTemplates,
   isApprovedRemoteUrl,
+  localPoolServerKey,
+  localSurfaceName,
   parseRulesyncExternalMcpPermissions,
   renderChatgptBackendPoolConfig,
   renderChatgptSupergatewayConfig,
@@ -121,6 +123,7 @@ import {
 import { LaunchdClient } from "./macos/launchd.ts";
 import {
   availableGrantSelection,
+  canReuseReviewedPolicy,
   computePolicyDigest,
   previousGrantSelection
 } from "./mcp-gateway-policy-review.ts";
@@ -790,10 +793,13 @@ async function resolveReviewedFromRoleContract(
   // XACPX review from an earlier degraded installation. The reviewed
   // inventory is distinct from the operator's external grant selection.
   if (
-    prior?.policyFile === policyFile &&
-    prior.policyDigest === policyDigest &&
-    prior.role === role &&
-    (!requiresDelegation || (prior.reviewed[MCP_SERVER_XACPX]?.length ?? 0) > 0)
+    canReuseReviewedPolicy(
+      prior,
+      role,
+      policyFile,
+      policyDigest,
+      requiresDelegation ? [MCP_SERVER_XACPX] : []
+    )
   ) {
     return { policyFile, policyDigest, reviewed: prior.reviewed };
   }
@@ -913,12 +919,11 @@ async function resolveReviewedFromRoleContract(
         discovered?.set(key, tools);
         return tools;
       };
-      // The Commands backend serves only the approved catalogue's commands
-      // that the role holds and the workspace admits. The checkout's role
-      // contract can name commands a pending catalogue revision proposes,
-      // so its list is a ceiling and the backend's listing is the grant.
+      // Commands and required delegation must be discovered even when the
+      // role names explicit tools: a grant is an authorization ceiling, not
+      // proof that the installed backend actually exposes that capability.
       const tools =
-        server === MCP_SERVER_COMMANDS
+        server === MCP_SERVER_COMMANDS || server === MCP_SERVER_XACPX
           ? (await discoverOnce()).filter(
               (tool) => !explicit?.length || explicit.includes(tool)
             )
@@ -941,7 +946,7 @@ async function resolveReviewedFromRoleContract(
   );
   if (requiresDelegation && !reviewed[MCP_SERVER_XACPX]?.length) {
     throw new Error(
-      `MCP gateway (${role}): required XACPX delegation inventory is empty; verify the canonical backend declaration and isolated MCP discovery before reconciling. Previous service configuration retained.`
+      `MCP gateway (${role}): required XACPX delegation inventory is empty; verify the canonical backend declaration and isolated MCP discovery before reconciling. No gateway generation changes applied.`
     );
   }
   return { policyFile, policyDigest, reviewed };
@@ -1330,8 +1335,26 @@ export async function checkMcpGateway(
       !readLocalAdmission(paths.codexHome)
     )
       return false;
-    chatgptBackendPoolConfigSchema.parse(JSON.parse(poolRaw));
+    const pool = chatgptBackendPoolConfigSchema.parse(JSON.parse(poolRaw));
     const config = supergatewayConfigSchema.parse(JSON.parse(supergatewayRaw));
+    // Every delegation-owning role has a required local XACPX route even
+    // when the operator narrows the combined external tool selection.
+    for (const role of declaredRoleNames()) {
+      if (!roleContract(role).mcp.includes(MCP_SERVER_XACPX)) continue;
+      const member = pool.servers[localPoolServerKey(role, MCP_SERVER_XACPX)];
+      const surface =
+        config.mcpServers[localSurfaceName(role, MCP_SERVER_XACPX)];
+      if (
+        member?.kind !== "admitted" ||
+        member.role !== role ||
+        member.server !== MCP_SERVER_XACPX ||
+        !member.tools.length ||
+        !surface ||
+        "mcpServers" in surface ||
+        (role === state.role && !state.reviewed[MCP_SERVER_XACPX]?.length)
+      )
+        return false;
+    }
     const { keyFile } = mcpGatewayAuthPaths(paths.codexHome);
     const surfaces = Object.entries(config.mcpServers);
     if (
@@ -1718,43 +1741,48 @@ export async function runMcpGatewayDaemon(
     { role: state.role }
   );
   const ledger = publishedGatewayCallObservations(paths.codexHome);
-  const backendPool: ChatgptBackendPoolHandle = await startChatgptBackendPool(
-    chatgptBackendPoolConfigSchema.parse(JSON.parse(poolRaw)),
-    {
-      gatewayEnv: gatewayEnvironment,
-      secretEnv: environment,
-      observations: ledger.observations,
-      admission: createGatewayAdmission({
-        repositoryRoot: paths.repositoryRoot,
-        node: state.node,
-        home: paths.home,
-        codexHome: paths.codexHome,
-        catalogueWorkspace: state.workspace,
-        // Launchd runs this module from a physical source generation.
-        // A failed or concurrent install may already have repointed src;
-        // dynamic backends must use the same generation as this daemon.
-        runtimeSource: path.resolve(import.meta.dirname, ".."),
-        ...(dependencies.backend && { backend: dependencies.backend })
-      })
-    }
-  );
-  const gateway = (dependencies.spawnProcess ?? spawn)(
-    state.supergateway,
-    ["--config", config, "--exitWithProcess", String(process.pid)],
-    {
-      cwd: state.workspace,
-      env: {
-        ...gatewayEnvironment,
-        [CHATGPT_MCP_POOL_PORT_ENV]: String(backendPool.port),
-        [CHATGPT_MCP_POOL_TOKEN_ENV]: backendPool.token
-      },
-      stdio: ["pipe", "inherit", "inherit"]
-    }
-  );
-  return superviseChild(gateway, "Supergateway", async () => {
-    await backendPool.close();
+  let backendPool: ChatgptBackendPoolHandle | undefined;
+  try {
+    backendPool = await startChatgptBackendPool(
+      chatgptBackendPoolConfigSchema.parse(JSON.parse(poolRaw)),
+      {
+        gatewayEnv: gatewayEnvironment,
+        secretEnv: environment,
+        observations: ledger.observations,
+        admission: createGatewayAdmission({
+          repositoryRoot: paths.repositoryRoot,
+          node: state.node,
+          home: paths.home,
+          codexHome: paths.codexHome,
+          catalogueWorkspace: state.workspace,
+          // Launchd runs this module from a physical source generation.
+          // A failed or concurrent install may already have repointed src;
+          // dynamic backends must use the same generation as this daemon.
+          runtimeSource: path.resolve(import.meta.dirname, ".."),
+          ...(dependencies.backend && { backend: dependencies.backend })
+        })
+      }
+    );
+    const gateway = (dependencies.spawnProcess ?? spawn)(
+      state.supergateway,
+      ["--config", config, "--exitWithProcess", String(process.pid)],
+      {
+        cwd: state.workspace,
+        env: {
+          ...gatewayEnvironment,
+          [CHATGPT_MCP_POOL_PORT_ENV]: String(backendPool.port),
+          [CHATGPT_MCP_POOL_TOKEN_ENV]: backendPool.token
+        },
+        stdio: ["pipe", "inherit", "inherit"]
+      }
+    );
+    return await superviseChild(gateway, "Supergateway");
+  } finally {
+    // Stop publishing live evidence as soon as the gateway is no longer
+    // serving, even if backend shutdown takes longer or fails.
     ledger.close();
-  });
+    await backendPool?.close().catch(() => {});
+  }
 }
 
 /**
