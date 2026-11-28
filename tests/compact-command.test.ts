@@ -11,10 +11,8 @@ assert.ok(match, "RuleSync frontmatter is required");
 const metadata = match[1];
 assert.ok(metadata !== undefined, "RuleSync frontmatter is empty");
 const prompt = source.slice(match[0].length);
-const openTags = [...prompt.matchAll(/^<compacted-summary>$/gmu)];
-const closeTags = [...prompt.matchAll(/^<\/compacted-summary>$/gmu)];
-const template =
-  /^<compacted-summary>\n([\s\S]*?)\n<\/compacted-summary>$/mu.exec(prompt);
+const openFences = [...prompt.matchAll(/^```markdown$/gmu)];
+const template = /^```markdown\n([\s\S]*?)\n```$/mu.exec(prompt);
 
 test("command metadata targets every agent and stays out of the prompt", () => {
   assert.match(metadata, /^targets: \["\*"\]$/mu);
@@ -23,11 +21,10 @@ test("command metadata targets every agent and stays out of the prompt", () => {
   assert.ok(!prompt.includes("description:"));
 });
 
-test("checkpoint wrapper and sections are stable", () => {
-  assert.equal(openTags.length, 1);
-  assert.equal(closeTags.length, 1);
+test("checkpoint template and sections are stable", () => {
+  assert.equal(openFences.length, 1);
   assert.ok(template?.[1] !== undefined);
-  assert.ok(prompt.trimEnd().endsWith("</compacted-summary>"));
+  assert.ok(prompt.trimEnd().endsWith("```"));
   assert.deepEqual(
     Array.from(template[1].matchAll(/^## (.+)$/gmu), (heading) => heading[1]),
     [
@@ -40,13 +37,13 @@ test("checkpoint wrapper and sections are stable", () => {
     ]
   );
   assert.match(prompt, /current user goal in 1–2 sentences/iu);
-  assert.match(prompt, /Output only one `<compacted-summary>` block/u);
+  assert.match(prompt, /Output only one summary/u);
   assert.doesNotMatch(prompt, /This command writes a checkpoint/u);
 });
 
 const policyCases: Record<string, RegExp[]> = {
   "repeated-checkpoint": [
-    /If a prior `<compacted-summary>` exists/u,
+    /If a prior hand-off\/summary exists/u,
     /merge still-relevant facts/u,
     /Remove resolved blockers/u
   ],
