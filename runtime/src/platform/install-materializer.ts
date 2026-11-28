@@ -301,6 +301,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/hooks/role-sandbox.ts",
   "runtime/src/hooks/file-surface.ts",
   "runtime/src/acp/provider-profiles.ts",
+  "runtime/src/xacpx/discovery-probe.ts",
   "runtime/src/xacpx/http.ts",
   "runtime/src/xacpx/manager.ts",
   "runtime/src/xacpx/orchestration-ipc.ts",
