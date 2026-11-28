@@ -231,8 +231,7 @@ function renderThreadEfficiency(efficiency: SessionThreadEfficiency): string[] {
   const promptLine =
     `${INDENT}prompt dev=${formatBytes(prompt.initialDeveloperBytes)}/${prompt.initialDeveloperChars} chars/` +
     `${prompt.initialDeveloperTokens ?? QUESTION} tokens skills-block=${formatBytes(prompt.skillsCatalogBytes)} ` +
-    `loaded=${prompt.skillsLoaded} (${roots || "none"}) read=${prompt.skillsRead.length}${skillReadPreview(prompt)} ` +
-    `telemetry-reads=${prompt.skillTelemetryReads ?? QUESTION}`;
+    `loaded=${prompt.skillsLoaded} (${roots || "none"}) read=${prompt.skillsRead.length}${skillReadPreview(prompt)}`;
   return [tokenLine, compLine, promptLine];
 }
 

@@ -33,7 +33,7 @@ Start every efficiency audit with AutoDev's bundled diagnostics before writing a
    # or, through the skill's wrapper (identical output):
    node .rulesync/skills/autodev-session-diagnostics/scripts/session-trace.ts <session-or-thread-id> --efficiency --failures
    ```
-   - `--efficiency` includes per-thread cumulative token usage (input, cached %, output, reasoning %, peak input, >50% cache drops), compaction count & retained image/payload sizes, initial developer-prompt byte size, loaded skills grouped by source root vs `SKILL.md` reads & `$CODEX_HOME/run/skill-read-telemetry`, router `ROUTER SKIPPED` / `ROUTER RETRIES` events, and categorized `TOOL FAILURES` (capped at 2 samples per category by default; add `--all-failures` for full inputs and every occurrence, `--json` for scripting).
+   - `--efficiency` includes per-thread cumulative token usage (input, cached %, output, reasoning %, peak input, >50% cache drops), compaction count & retained image/payload sizes, initial developer-prompt byte size, loaded skills grouped by source root vs `SKILL.md` reads, router `ROUTER SKIPPED` / `ROUTER RETRIES` events, and categorized `TOOL FAILURES` (capped at 2 samples per category by default; add `--all-failures` for full inputs and every occurrence, `--json` for scripting).
 2. **Cross-session sizing & hook friction:**
    ```bash
    pnpm autodev -- diagnostics --scan-recent 15

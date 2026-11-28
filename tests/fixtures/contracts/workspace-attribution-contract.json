@@ -1,5 +1,5 @@
 {
-  "schema": "autodev-workspace-attribution-v3",
+  "schema": "autodev-workspace-attribution-v4",
   "description": "Deterministic contract for workspace-scoped skill attribution on the router's live bridge-observation path. It freezes fail-closed unavailable-versus-empty behavior, exposure-versus-use separation, bridge evidence deduplication, and privacy normalization. MCP and tool evidence is the shared MCP gateway's, not the router's. Refreshing this fixture is the intentional signal that attribution ownership or wire shape changed.",
   "scenarios": {
     "empty_workspace_is_unavailable": {
@@ -29,45 +29,19 @@
         }
       ]
     },
-    "skill_exposure_and_use_are_distinct": {
+    "a_retried_skill_read_is_one_use": {
       "operations": [
         {
-          "op": "bridgeRequest",
-          "requestId": "skill-1",
-          "workspace": "SimulatorLife/Skills",
-          "provider": "claude",
-          "model": "sonnet",
-          "role": "default"
+          "op": "skillRead",
+          "eventId": "read:1111111111111111111111111111111111111111111111111111111111111111",
+          "skill": "ccc",
+          "workspace": "SimulatorLife/Skills"
         },
         {
-          "op": "bridgeEvents",
-          "requestId": "skill-1",
-          "events": [
-            {
-              "type": "skill_exposed",
-              "skill": "ccc",
-              "source": "role_contract",
-              "pluginId": "plugin-ccc"
-            },
-            {
-              "type": "skill_used",
-              "skill": "ccc",
-              "source": "skill_read",
-              "eventId": "read-1"
-            },
-            {
-              "type": "skill_used",
-              "skill": "ccc",
-              "source": "skill_read",
-              "eventId": "read-1"
-            }
-          ]
-        },
-        {
-          "op": "assert",
-          "workspace": "SimulatorLife/Skills",
-          "field": "skillsExposed",
-          "expected": 1
+          "op": "skillRead",
+          "eventId": "read:1111111111111111111111111111111111111111111111111111111111111111",
+          "skill": "ccc",
+          "workspace": "SimulatorLife/Skills"
         },
         {
           "op": "assert",
@@ -96,13 +70,13 @@
         {
           "op": "assert",
           "workspace": "SimulatorLife/Skills",
-          "field": "bridgeSkills",
-          "expected": [
-            {
-              "skill": "ccc",
-              "count": 1
-            }
-          ]
+          "field": "skillsExposed",
+          "expected": 0
+        },
+        {
+          "op": "assertFieldAbsent",
+          "workspace": "SimulatorLife/Skills",
+          "field": "bridgeSkills"
         }
       ]
     },

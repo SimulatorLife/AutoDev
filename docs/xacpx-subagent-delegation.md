@@ -7,7 +7,7 @@
 ## Architecture Overview
 
 1. **Single Policy Authority (AutoDev Router):**
-   - `runtime/src/router/routing.ts` (`ROUTING_POLICY`), `runtime/src/router/cooldown/`, `runtime/src/router/concurrency/`, `runtime/src/router/usage.ts`, `runtime/src/router/correlation.ts`, and `runtime/src/router/telemetry.ts` remain AutoDev's sole authority for role -> tier -> provider/model allocation, cooldowns, concurrency limits, usage attribution, and OTLP telemetry.
+   - `runtime/src/router/routing.ts` (`ROUTING_POLICY`), `runtime/src/router/cooldown/`, `runtime/src/router/concurrency/`, `runtime/src/router/usage.ts`, and `runtime/src/router/telemetry.ts` remain AutoDev's sole authority for role -> tier -> provider/model allocation, cooldowns, concurrency limits, usage attribution, and OTLP telemetry.
 2. **Live ACP Execution & Session Pinning (`XacpxSessionManager` + `/v1/acp/sessions`):**
    - `runtime/src/xacpx/manager.ts` pins each session strictly to one provider/model on creation (no mid-session cross-provider hops) and manages native ACP connections (`ClientApp` + `ndJsonStream`) against:
      - `claude` -> `claude-agent-acp`

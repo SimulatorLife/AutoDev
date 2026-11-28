@@ -473,11 +473,6 @@ test("usagePersistenceSnapshot and restoreUsagePersistenceSnapshot preserve full
     class: null,
     status: null
   });
-
-  // Verify clearWorkspaceCapabilities
-  cleanTracker.clearWorkspaceCapabilities();
-  assert.equal(restoredWs.skillsCapable, false);
-  assert.equal(restoredWs.skillUses, 0);
 });
 
 test("default instance convenience exports delegate correctly", () => {
@@ -504,7 +499,38 @@ test("default instance convenience exports delegate correctly", () => {
   const status = getDefaultUsageTracker().usageStatus();
   assert.equal(status.totals.attempts, 1);
 
-  getDefaultUsageTracker().clearWorkspaceCapabilities();
   getDefaultUsageTracker().resetUsageTelemetry();
   assert.equal(getDefaultUsageTracker().usageStatus().totals.attempts, 0);
+});
+
+test("a skill read counts once under its workspace, and a read with none is unattributed", () => {
+  const tracker = new UsageTracker();
+  const read = {
+    eventId: `read:${"b".repeat(64)}`,
+    skill: "orchestration",
+    workspace: "AutoDev"
+  };
+  assert.equal(tracker.recordSkillRead(read), true);
+  // A retried post carries the same identity and is the same read.
+  assert.equal(tracker.recordSkillRead(read), false);
+  assert.equal(
+    tracker.recordSkillRead({
+      eventId: `read:${"c".repeat(64)}`,
+      skill: "orchestration",
+      workspace: null
+    }),
+    true
+  );
+
+  const bucket = tracker.usageTelemetry.byWorkspace.AutoDev;
+  assert.equal(bucket?.skillUses, 1);
+  assert.equal(bucket?.skillsCapable, true);
+  assert.equal(bucket?.skills.get("orchestration")?.uses, 1);
+  const diagnostics = tracker.attributionDiagnosticsStatus();
+  assert.equal(diagnostics.attributed, 1);
+  assert.equal(diagnostics.byReason.missing_workspace, 1);
+
+  // A reset forgets the identities with the counts they produced.
+  tracker.resetUsageTelemetry();
+  assert.equal(tracker.recordSkillRead(read), true);
 });

@@ -95,7 +95,6 @@ type PromptTotals = Pick<
   | "skillsByRoot"
   | "uniqueSkillsRead"
   | "skillReadCounts"
-  | "skillTelemetryReads"
 >;
 
 type RouterTotals = Pick<
@@ -128,14 +127,6 @@ The larger of two optional measurements; null only when both are absent.
 function maxOrNull(current: number | null, next: number | null): number | null {
   if (next === null) return current;
   return current === null ? next : Math.max(current, next);
-}
-
-/**
-The sum of two optional counts; null only when both are absent.
-*/
-function sumOrNull(current: number | null, next: number | null): number | null {
-  if (next === null) return current;
-  return (current ?? 0) + next;
 }
 
 /**
@@ -255,8 +246,7 @@ function promptTotals(
     maxSkillsLoaded: 0,
     skillsByRoot: {},
     uniqueSkillsRead: 0,
-    skillReadCounts: {},
-    skillTelemetryReads: null
+    skillReadCounts: {}
   };
   const skillsByRoot: Record<string, number> = {};
   const skillReadCounts: Record<string, number> = {};
@@ -283,10 +273,6 @@ function promptTotals(
     );
     addCounts(skillsByRoot, prompt.skillsByRoot);
     addCounts(skillReadCounts, prompt.skillReadCounts);
-    totals.skillTelemetryReads = sumOrNull(
-      totals.skillTelemetryReads,
-      prompt.skillTelemetryReads
-    );
   }
   const sortedReadCounts = sortedCounts(skillReadCounts);
   return {
@@ -473,10 +459,7 @@ export async function buildSessionDiagnosticsReport(
     pinExtraIds
   );
   const threads = rollouts.map((file) =>
-    traceThread(file, {
-      items: options.includeItems,
-      codexHome: options.codexHome
-    })
+    traceThread(file, { items: options.includeItems })
   );
   const seedIds = new Set<string>([options.id]);
   for (const thread of threads) {

@@ -220,8 +220,7 @@ export function sessionDiagnosticsReport(): Record<string, unknown> {
             skillsLoaded: 2,
             skillsByRoot: { "/repo/.agents/skills": 2 },
             skillsRead: ["autodev-session-diagnostics"],
-            skillReadCounts: { "autodev-session-diagnostics": 1 },
-            skillTelemetryReads: 1
+            skillReadCounts: { "autodev-session-diagnostics": 1 }
           }
         }
       }
@@ -329,7 +328,6 @@ export function sessionDiagnosticsReport(): Record<string, unknown> {
       skillsByRoot: { "/repo/.agents/skills": 2 },
       uniqueSkillsRead: 1,
       skillReadCounts: { "autodev-session-diagnostics": 1 },
-      skillTelemetryReads: 1,
       turnsTotal: 2,
       turnsByOutcome: { completed: 2 },
       gapsCount: 0,

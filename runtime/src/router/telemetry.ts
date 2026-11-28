@@ -83,6 +83,7 @@ import {
   registerTracerProvider
 } from "@simulatorlife/autodev-runtime/telemetry/tracer-provider";
 
+import { SKILL_READ_SOURCE } from "../shared/skill-read-observation.ts";
 import { createRouterWorkspaceGitCommitObserver } from "./git-commit-observation.ts";
 import type { RouterIngressEvent } from "./ingress.ts";
 import { safeMetricLabel } from "./metric-label.ts";
@@ -972,40 +973,31 @@ export function endLogicalRequestSpan(
   }
 }
 
-export type SkillObservationEvent =
-  "exposed" | "used" | "unavailable" | "error";
-
 const SAFE_SKILL_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
-const SKILL_SOURCES = new Set(["role_contract", "skill_read"]);
 
 /**
-Record one accepted skill fact at the router's semantic boundary. Skill
-names and source are span-only; metric dimensions are the bounded event,
+Record one hook-observed skill read at the router's semantic boundary.
+The skill name is span-only; metric dimensions are the bounded event,
 workspace, and allowlisted agent role. Never attach paths, request IDs,
-plugin IDs, or skill content.
+read identities, or skill content.
 */
-export function recordSkillObservation(options: {
-  event: SkillObservationEvent;
+export function recordSkillReadTelemetry(options: {
   skill: string;
-  source?: string | null;
-  role?: string | null;
-  workspace?: { key?: string | null } | null;
+  role: string | null;
+  workspace: string | null;
 }): boolean {
   const name = safeTrim(options.skill);
   if (!name || !SAFE_SKILL_NAME_PATTERN.test(name)) return false;
 
   ensureOtelInitialized();
   const attributes: Record<string, string> = {
-    "autodev.skill.event": options.event,
-    "autodev.skill.name": name
+    "autodev.skill.event": "used",
+    "autodev.skill.name": name,
+    "autodev.skill.source": SKILL_READ_SOURCE
   };
-  const source = safeTrim(options.source);
-  if (source && SKILL_SOURCES.has(source)) {
-    attributes["autodev.skill.source"] = source;
-  }
   const role = safeAutoDevAgentRole(options.role);
   if (role) attributes[ATTR_AUTODEV_AGENT_ROLE] = role;
-  const workspace = safeAutoDevWorkspaceKey(options.workspace?.key);
+  const workspace = safeAutoDevWorkspaceKey(options.workspace);
   if (workspace) attributes[ATTR_AUTODEV_WORKSPACE] = workspace;
 
   try {
@@ -1013,18 +1005,11 @@ export function recordSkillObservation(options: {
       kind: SpanKind.INTERNAL,
       attributes
     });
-    if (options.event === "error") {
-      span.setStatus({
-        code: SpanStatusCode.ERROR,
-        message: "skill operation failed"
-      });
-    } else {
-      span.setStatus({ code: SpanStatusCode.OK });
-    }
+    span.setStatus({ code: SpanStatusCode.OK });
     span.end();
 
     instruments?.skillEvents.add(1, {
-      "autodev.skill.event": options.event,
+      "autodev.skill.event": "used",
       ...(role &&
         METRIC_AGENT_ROLES.has(role) && { [ATTR_AUTODEV_AGENT_ROLE]: role }),
       ...(workspace && { [ATTR_AUTODEV_WORKSPACE]: workspace })

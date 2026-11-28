@@ -9,7 +9,7 @@ import test from "node:test";
 import { executionContractRevision } from "@simulatorlife/autodev-data";
 
 import { handleControlApiRequest } from "../src/control-api/request-handler.ts";
-import { reloadExecutionContract } from "../src/router/subagents.ts";
+import { reloadExecutionContract } from "../src/router/execution-contract.ts";
 import { responseRecorder } from "./support/control-api-harness.ts";
 
 /**

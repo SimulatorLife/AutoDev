@@ -166,7 +166,6 @@ export interface SessionThreadPromptOverhead {
   than once is one read; each further call is another.
   */
   readonly skillReadCounts: Readonly<Record<string, number>>;
-  readonly skillTelemetryReads: number | null;
 }
 
 /**
@@ -474,7 +473,6 @@ export interface SessionDiagnosticsAggregates {
   SKILL.md reads per skill, summed over every thread of the session.
   */
   readonly skillReadCounts: Readonly<Record<string, number>>;
-  readonly skillTelemetryReads: number | null;
   readonly turnsTotal: number;
   readonly turnsByOutcome: Readonly<Record<string, number>>;
   readonly gapsCount: number;
@@ -829,8 +827,7 @@ const sessionThreadPromptOverheadSchema = z
     skillsLoaded: finiteNumberSchema,
     skillsByRoot: countMapSchema,
     skillsRead: stringListSchema,
-    skillReadCounts: countMapSchema,
-    skillTelemetryReads: nullableFiniteNumberSchema
+    skillReadCounts: countMapSchema
   })
   .superRefine(validateSkillReadCounts);
 
@@ -1036,7 +1033,6 @@ const sessionDiagnosticsAggregatesSchema = z
     skillsByRoot: countMapSchema,
     uniqueSkillsRead: finiteNumberSchema,
     skillReadCounts: countMapSchema,
-    skillTelemetryReads: nullableFiniteNumberSchema,
     turnsTotal: finiteNumberSchema,
     turnsByOutcome: countMapSchema,
     gapsCount: finiteNumberSchema,

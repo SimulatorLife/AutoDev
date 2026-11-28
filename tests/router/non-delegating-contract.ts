@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { reloadExecutionContract } from "@simulatorlife/autodev-runtime/router/subagents";
+import { reloadExecutionContract } from "@simulatorlife/autodev-runtime/router/execution-contract";
 
 /**
 Point the Runtime at a copy of the shipped execution contract in which one

@@ -52,7 +52,7 @@ import {
 import {
   getDefaultExecutionContract,
   setExecutionContractForTests
-} from "@simulatorlife/autodev-runtime/router/subagents";
+} from "@simulatorlife/autodev-runtime/router/execution-contract";
 import {
   getFinishedSpans,
   resetTelemetryExporter,

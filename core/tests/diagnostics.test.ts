@@ -56,7 +56,6 @@ function aggregates(): SessionDiagnosticsAggregates {
     skillsByRoot: {},
     uniqueSkillsRead: 0,
     skillReadCounts: {},
-    skillTelemetryReads: null,
     turnsTotal: 1,
     turnsByOutcome: { completed: 1 },
     gapsCount: 0,
@@ -198,8 +197,7 @@ function threadEfficiency(): SessionThreadEfficiency {
       skillsLoaded: 2,
       skillsByRoot: { r2: 2 },
       skillsRead: ["bug-fix", "kiss"],
-      skillReadCounts: { "bug-fix": 3, kiss: 1 },
-      skillTelemetryReads: null
+      skillReadCounts: { "bug-fix": 3, kiss: 1 }
     }
   };
 }

@@ -48,6 +48,7 @@ import {
   startXacpxOrchestrationIpcServer,
   type XacpxOrchestrationIpcHandle
 } from "../xacpx/orchestration-ipc.ts";
+import { configuredControlApiListener } from "./control-plane-config.ts";
 import {
   agentActivity,
   checkProvider,
@@ -58,7 +59,6 @@ import {
   PORT,
   recordProviderSignIn
 } from "./http.ts";
-import { configuredControlApiListener } from "./control-plane-config.ts";
 import {
   isClientDisconnectError,
   ROUTER_INSTANCE_ID,
@@ -497,6 +497,7 @@ if (IS_MAIN) {
   startRouterServer(PORT, HOST);
 }
 
+export { providerCapabilities } from "./execution-contract.ts";
 export {
   AGENT_ACTIVITY_TTL_MS,
   agentActivity,
@@ -504,7 +505,6 @@ export {
   getRouterStatus,
   handle,
   handleRequest,
-  ingestAgentEvents,
   limitsStatus,
   loadCatalog,
   requestClientSurface,
@@ -512,8 +512,7 @@ export {
   resetRouterTelemetry,
   resolveTurnMetadataHeader,
   routingStatus,
-  workspaceContextFromRequest,
-  workspaceMetadataForSession
+  workspaceContextFromRequest
 } from "./http.ts";
 export {
   activeProviderRequests,
@@ -525,34 +524,6 @@ export {
   isClientDisconnectError,
   ROUTER_INSTANCE_ID
 } from "./proxy.ts";
-export {
-  AGENT_EVENTS_PATH,
-  AGENT_EVENTS_URL_HEADER,
-  bridgeTelemetryHeaders,
-  closeBridgeSubagentsForRequest,
-  FORWARDED_REQUEST_HEADERS,
-  hasActiveBridgeSubagentsForSession,
-  lookupBridgeSessionContext,
-  mcpContractForRole,
-  noteBridgeRequest,
-  noteBridgeSession,
-  noteOrchestratorSession,
-  ORCHESTRATOR_AGENT_ROLE,
-  orchestratorProviderForSession,
-  orchestratorSessionInfo,
-  providerCapabilities,
-  recallBridgeSessionRequestId,
-  recordSpawnFailure,
-  recordSubagentSpawn,
-  resetSubagentTelemetry,
-  roleCapabilityRequirements,
-  SESSION_ID_HEADER,
-  SESSION_SCOPE_HEADER,
-  spawnFailureStatus,
-  subagentStatus,
-  THREAD_ID_HEADER,
-  UNATTRIBUTED_SUBAGENT_ROLE
-} from "./subagents.ts";
 export { safeAgentIdentity, safePrivacyWorkspace } from "./usage.ts";
 export {
   isLoopbackAddress,

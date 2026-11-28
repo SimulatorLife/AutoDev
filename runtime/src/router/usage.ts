@@ -19,6 +19,11 @@ type LiveAgentActivity = ReturnType<AgentActivityTracker["listLive"]>[number];
 
 export const UNATTRIBUTED_DIMENSION = "unattributed";
 export const MAX_UNKNOWN_WORKSPACE_IDS = 100;
+/**
+How many skill-read identities the tracker remembers to absorb a hook's
+retry. A retry arrives within the same turn, so recent identities suffice.
+*/
+export const MAX_REMEMBERED_SKILL_READS = 5000;
 
 /**
 Records `id` as the most recent entry, dropping the oldest beyond `limit`.
@@ -848,6 +853,8 @@ export class UsageTracker {
   readonly workspaceIdRegistry: Map<string, string>;
   readonly workspaceIdConflicts: Set<string>;
   readonly attributionDiagnostics: AttributionDiagnostics;
+  // Recent skill-read identities, oldest first, so a retried post is one read.
+  private readonly skillReadIds = new Set<string>();
 
   constructor(options: UsageTrackerOptions = {}) {
     this.roleNames = options.roleNames ?? ROLE_NAMES;
@@ -1360,15 +1367,49 @@ export class UsageTracker {
     this.sessionClientSurfaces.clear();
     this.workspaceIdRegistry.clear();
     this.workspaceIdConflicts.clear();
+    this.skillReadIds.clear();
     this.resetAttributionDiagnostics();
   }
 
-  clearWorkspaceCapabilities(): void {
-    for (const bucket of Object.values(this.usageTelemetry.byWorkspace)) {
-      bucket.skills?.clear();
-      bucket.skillUses = 0;
-      bucket.skillsCapable = false;
+  /**
+  Count one hook-observed `SKILL.md` read under its workspace.
+
+  The read's identity is stable per turn and skill, so a retried post is the
+  same read and is not counted again. A read whose session reported no
+  workspace is counted as an unattributed observation rather than assigned to
+  one. Returns whether the read was new.
+  */
+  recordSkillRead(read: {
+    eventId: string;
+    skill: string;
+    workspace: string | null;
+  }): boolean {
+    if (this.skillReadIds.has(read.eventId)) return false;
+    this.skillReadIds.add(read.eventId);
+    if (this.skillReadIds.size > MAX_REMEMBERED_SKILL_READS) {
+      const [oldest] = this.skillReadIds;
+      if (oldest !== undefined) this.skillReadIds.delete(oldest);
     }
+    if (read.workspace === null) {
+      this.recordAttributionDiagnostic({
+        attributed: false,
+        reason: "missing_workspace"
+      });
+      return true;
+    }
+    this.recordAttributionDiagnostic({ attributed: true });
+    const bucket = this.workspaceBucket(
+      this.usageTelemetry.byWorkspace,
+      safePrivacyWorkspace(read.workspace)
+    );
+    bucket.skillsCapable = true;
+    bucket.skillUses += 1;
+    const skill = workspaceSkillBucket(
+      bucket,
+      safeMetricLabel(read.skill, "unknown")
+    );
+    skill.uses += 1;
+    return true;
   }
 
   /**

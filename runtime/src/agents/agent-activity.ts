@@ -718,8 +718,8 @@ export function createAgentActivityTracker({
   }
 
   /**
-  Applies a normalized lifecycle event, as accepted over the existing
-  agent-events endpoint: `{ state, eventId?, timestamp? }` where `state`
+  Applies a normalized lifecycle event: `{ state, eventId?, timestamp? }`
+  where `state`
   is one of user_wait/subagent_wait/tool_wait/resumed/finished/failed.
   Unknown states are rejected (returns null) rather than silently ignored,
   so a caller can tell a malformed event from a legitimate no-op.

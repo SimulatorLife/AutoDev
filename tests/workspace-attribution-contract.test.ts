@@ -1,17 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { resetCorrelation } from "@simulatorlife/autodev-runtime/router/correlation";
 import { recordRouterEvent } from "@simulatorlife/autodev-runtime/router/events";
 import {
   getRouterStatus,
-  ingestAgentEvents,
   resetRouterTelemetry
 } from "@simulatorlife/autodev-runtime/router/http";
-import {
-  noteBridgeRequest,
-  resetSubagentTelemetry
-} from "@simulatorlife/autodev-runtime/router/subagents";
 import {
   getDefaultUsageTracker,
   safePrivacyWorkspace
@@ -26,14 +20,12 @@ const contract = await import(
   "./fixtures/contracts/workspace-attribution-contract.json",
   { with: { type: "json" } }
 ).then((m) => (m.default ?? m) as Contract);
-assert.equal(contract.schema, "autodev-workspace-attribution-v3");
+assert.equal(contract.schema, "autodev-workspace-attribution-v4");
 
 const stringValue = (op: Operation, key: string): string => String(op[key]);
 
 function resetAll() {
-  resetCorrelation();
   resetRouterTelemetry();
-  resetSubagentTelemetry();
   getDefaultUsageTracker().resetAttributionDiagnostics();
 }
 
@@ -105,20 +97,11 @@ function runOperation(name: string, op: Operation): void {
     });
     return;
   }
-  if (op.op === "bridgeRequest") {
-    noteBridgeRequest(stringValue(op, "requestId"), {
-      activitySubject: `req:${stringValue(op, "requestId")}`,
-      provider: stringValue(op, "provider"),
-      model: stringValue(op, "model"),
-      role: stringValue(op, "role"),
+  if (op.op === "skillRead") {
+    getDefaultUsageTracker().recordSkillRead({
+      eventId: stringValue(op, "eventId"),
+      skill: stringValue(op, "skill"),
       workspace: stringValue(op, "workspace")
-    });
-    return;
-  }
-  if (op.op === "bridgeEvents") {
-    ingestAgentEvents({
-      requestId: stringValue(op, "requestId"),
-      events: op.events
     });
     return;
   }

@@ -582,20 +582,18 @@ test("remaining router implementations are Runtime-owned and installed from Runt
     readFileSync(join(repositoryRoot, "runtime/package.json"), "utf8")
   ) as { exports: Record<string, string> };
   const moduleNames = [
+    "execution-contract",
     "http",
-    "correlation",
     "proxy",
     "server",
-    "subagents",
     "telemetry",
     "usage"
   ];
   const packageExports = new Set([
+    "execution-contract",
     "http",
-    "correlation",
     "proxy",
     "server",
-    "subagents",
     "telemetry",
     "usage"
   ]);
@@ -991,10 +989,6 @@ test("telemetry helpers are Runtime-owned behind the telemetry workspace export"
     "./src/telemetry/index.ts"
   );
   assert.equal(
-    existsSync(join(repositoryRoot, "runtime/src/telemetry/agent-events.ts")),
-    true
-  );
-  assert.equal(
     existsSync(join(repositoryRoot, "runtime/src/telemetry/github-metrics.ts")),
     true
   );
@@ -1006,13 +1000,6 @@ test("telemetry helpers are Runtime-owned behind the telemetry workspace export"
     false,
     "Runtime telemetry must resolve through CODEX_HOME/node_modules, not copied legacy source"
   );
-  assert.match(
-    readFileSync(
-      join(repositoryRoot, "runtime/src/telemetry/index.ts"),
-      "utf8"
-    ),
-    /from "\.\/agent-events\.ts"/
-  );
 });
 
 test("retired router memory, bridge, and tool-call-ownership paths are decommissioned", () => {
@@ -1020,6 +1007,10 @@ test("retired router memory, bridge, and tool-call-ownership paths are decommiss
   for (const retiredPath of [
     "runtime/src/router/memory/index.ts",
     "runtime/src/router/tool-call-ownership/index.ts",
+    "runtime/src/router/agent-event-ingest.ts",
+    "runtime/src/router/correlation.ts",
+    "runtime/src/router/subagents.ts",
+    "runtime/src/telemetry/agent-events.ts",
     "runtime/src/memory/index.ts",
     "runtime/src/providers/claude.ts",
     "runtime/src/providers/antigravity.ts",

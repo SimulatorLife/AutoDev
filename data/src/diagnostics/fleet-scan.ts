@@ -204,7 +204,7 @@ export async function scanRecentSessions(
 
   for (const session of recent) {
     const traces = (bySession.get(session.id) ?? []).map((file) =>
-      traceThread(file, { items: false, codexHome: options.codexHome })
+      traceThread(file, { items: false })
     );
     tracedBySession.set(session.id, traces);
     totalThreads += traces.length;

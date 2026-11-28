@@ -37,9 +37,8 @@ test("safeMetricLabel is exported by the router barrel", async () => {
 
 test("the router has one owner for safeMetricLabel", () => {
   const routerSources = [
-    "runtime/src/router/subagents.ts",
+    "runtime/src/router/execution-contract.ts",
     "runtime/src/router/usage.ts",
-    "runtime/src/router/correlation.ts",
     "runtime/src/router/http.ts",
     "runtime/src/router/index.ts"
   ];
@@ -51,29 +50,4 @@ test("the router has one owner for safeMetricLabel", () => {
     /export function safeMetricLabel\b/.test(read(relativePath))
   );
   assert.deepEqual(definitions, []);
-
-  // No router module may reach it through the subagent registry. Walk the
-  // binding lists that precede each `from "./subagents.ts"` instead of
-  // scanning the file text, because `http.ts` and the barrel legitimately
-  // import other things from `subagents.ts`.
-  const misplaced: string[] = [];
-  for (const relativePath of routerSources) {
-    const source = read(relativePath);
-    const specifier = 'from "./subagents.ts"';
-    let at = source.indexOf(specifier);
-    while (at !== -1) {
-      const open = source.lastIndexOf("{", at);
-      const close = source.lastIndexOf("}", at);
-      if (open !== -1 && close > open) {
-        const bindings = source
-          .slice(open + 1, close)
-          .split(",")
-          .map((binding) => binding.replace(/^\s*type\s+/, "").trim())
-          .filter(Boolean);
-        if (bindings.includes("safeMetricLabel")) misplaced.push(relativePath);
-      }
-      at = source.indexOf(specifier, at + specifier.length);
-    }
-  }
-  assert.deepEqual(misplaced, []);
 });

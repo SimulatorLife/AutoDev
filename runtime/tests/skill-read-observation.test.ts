@@ -13,8 +13,11 @@ import {
   ensureLocalAdmission,
   readLocalAdmission
 } from "../src/mcp/gateway-admission.ts";
-import { getDefaultCorrelationTracker } from "../src/router/correlation.ts";
 import { handleRequest } from "../src/router/http.ts";
+import {
+  getDefaultUsageTracker,
+  safePrivacyWorkspace
+} from "../src/router/usage.ts";
 import { SKILL_READ_EVENTS_PATH } from "../src/shared/skill-read-observation.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
@@ -115,10 +118,18 @@ test("the Runtime records an authenticated read once and refuses an unauthentica
     workspace: "AutoDev"
   };
   try {
-    const skillUsed = () =>
-      getDefaultCorrelationTracker().correlationStatus().bridgeEvents
-        .skillUsed.total;
-    const before = skillUsed();
+    // The read is counted under its workspace's skill uses.
+    const skillUsed = () => {
+      const bucket =
+        getDefaultUsageTracker().usageTelemetry.byWorkspace[
+          safePrivacyWorkspace("AutoDev")
+        ];
+      return [
+        bucket?.skillUses ?? 0,
+        bucket?.skills?.get("orchestration")?.uses ?? 0
+      ];
+    };
+    const [beforeUses = 0, beforeSkill = 0] = skillUsed();
 
     assert.equal((await post(null, observation)).status, 401);
     assert.equal((await post("Bearer wrong", observation)).status, 401);
@@ -126,13 +137,13 @@ test("the Runtime records an authenticated read once and refuses an unauthentica
       (await post(`Bearer ${key}`, { ...observation, extra: 1 })).status,
       400
     );
-    assert.equal(skillUsed(), before);
+    assert.deepEqual(skillUsed(), [beforeUses, beforeSkill]);
 
     const first = await post(`Bearer ${key}`, observation);
     assert.deepEqual(await first.json(), { accepted: true });
     const retry = await post(`Bearer ${key}`, observation);
     assert.deepEqual(await retry.json(), { accepted: false });
-    assert.equal(skillUsed(), before + 1);
+    assert.deepEqual(skillUsed(), [beforeUses + 1, beforeSkill + 1]);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }

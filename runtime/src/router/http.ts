@@ -77,7 +77,6 @@ import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import {
   isDirectory,
   parseTurnMetadataJson,
-  resolveCwd,
   WORKSPACE_KEYS
 } from "@simulatorlife/autodev-runtime/shared/resolve-workspace";
 
@@ -105,15 +104,7 @@ import {
   skillReadObservationSchema
 } from "../shared/skill-read-observation.ts";
 import { didHandleAcpRoute } from "../xacpx/http.ts";
-import { createAgentEventIngest } from "./agent-event-ingest.ts";
-import {
-  correlationSnapshot,
-  correlationStatus,
-  CorrelationTracker,
-  recordBridgeSkillUsed,
-  restoreCorrelation,
-  setDefaultCorrelationTracker
-} from "./correlation.ts";
+import { providerCapabilities } from "./execution-contract.ts";
 import {
   CHAIN_SELECTION_DEADLINE_MS,
   CONCRETE_STATUS_MAX_ATTEMPTS,
@@ -126,7 +117,6 @@ import {
   probeProvider,
   type ProviderProbeResult,
   ROUTER_INSTANCE_ID,
-  type RouterSession,
   sendJson,
   setExternalProviderRequests,
   setLocalProviderRequestsListener,
@@ -144,28 +134,13 @@ import {
   sumCountsExcludingGeneration
 } from "./shared-state-ipc.ts";
 import {
-  AGENT_EVENTS_PATH,
-  closeBridgeSubagentsForRequest,
-  getDefaultExecutionContract,
-  getWorkspaceMetadata,
-  getWorkspacePath,
-  providerCapabilities,
-  recordSpawnFailure,
-  rememberWorkspaceMetadata,
-  resetSpawnFailureTelemetry,
-  resetSubagentTelemetry,
-  setDefaultSubagentRegistry,
-  spawnFailureStatus,
-  SubagentRegistry,
-  subagentStatus
-} from "./subagents.ts";
-import {
-  observeRouterWorkspaceGitCommits,
+  recordSkillReadTelemetry,
   withExtractedTraceContext
 } from "./telemetry.ts";
 import {
   getDefaultUsageTracker,
   type RecordUsageEventParams as RecordUsageEventParameters,
+  safePrivacyWorkspace,
   safeWorkspaceId,
   usageOrigin,
   type UsageTracker
@@ -229,11 +204,6 @@ const MAX_RECENT_EVENTS = Number.parseInt(
   process.env.CODEX_ROUTER_MAX_RECENT_EVENTS ?? "100"
 );
 const liveFeedEvents = new LiveFeedRecorder();
-
-export const ingestAgentEvents = createAgentEventIngest({
-  agentActivity,
-  liveFeedEvents
-});
 
 function usageWorkspaceForEvent(
   workspaceKey: string | null,
@@ -342,13 +312,6 @@ function applyProviderHealthEvent(event: RouterEvent): void {
   }
 }
 
-// A routed request's turn boundaries: the baseline before the provider is
-// called and the measurement after it answered.
-const GIT_OBSERVATION_PHASES: ReadonlySet<string> = new Set([
-  "selected",
-  "result"
-]);
-
 const routerEvents = new RouterEventRecorder({
   maxRecentEvents: MAX_RECENT_EVENTS,
   routerInstanceId: ROUTER_INSTANCE_ID,
@@ -357,24 +320,6 @@ const routerEvents = new RouterEventRecorder({
     // Native observations are persisted by the existing event recorder, but
     // are not model routing, provider health, Git or managed usage events.
     if (event.phase === "native_session") return;
-    if (GIT_OBSERVATION_PHASES.has(event.phase)) {
-      const workspaceSessionKey =
-        event.thread ??
-        (event.activitySubject?.startsWith("thread:")
-          ? event.activitySubject.slice("thread:".length)
-          : event.activitySubject);
-      void observeRouterWorkspaceGitCommits({
-        workspaceKey: event.workspace,
-        // The observer reads the workspace's repository, and the session is
-        // what knows which directory that is. The remembered turn metadata
-        // is a JSON document rather than a path, and handing that over made
-        // the observer's directory check fail for every request -- so no
-        // commit was ever measured, and the Git metrics stayed empty no
-        // matter what the agents committed.
-        workspacePath: getWorkspacePath(workspaceSessionKey),
-        routerInstanceId: ROUTER_INSTANCE_ID
-      });
-    }
     liveFeedEvents.record({
       category: "routing",
       type: `routing.${event.phase}`,
@@ -399,39 +344,11 @@ const routerEvents = new RouterEventRecorder({
     });
     const usageEvent = usageEventFromRouterEvent(event, input.workspace);
     if (usageEvent) getDefaultUsageTracker().recordUsageEvent(usageEvent);
-    if (event.phase === "result")
-      closeBridgeSubagentsForRequest(
-        String(event.requestId ?? ""),
-        String(event.outcome ?? "") as "success" | "failure",
-        event.elapsedMs
-      );
     applyProviderHealthEvent(event);
     scheduleRouterStatePersist();
   }
 });
 setDefaultRouterEventRecorder(routerEvents);
-
-const subagentRegistry = new SubagentRegistry({
-  agentActivity,
-  executionContract: getDefaultExecutionContract(),
-  onRecordRouterEvent: (event) => recordRouterEvent(event),
-  onRecordUsageEvent: (event) =>
-    getDefaultUsageTracker().recordUsageEvent(event),
-  onSchedulePersist: () => scheduleRouterStatePersist(),
-  getSpawnCapableProviders: () =>
-    Object.keys(ROUTING.providers).filter(
-      (provider) => providerCapabilities(provider).subagentSpawn
-    )
-});
-setDefaultSubagentRegistry(subagentRegistry);
-
-const otelTracker = new CorrelationTracker({
-  usageTracker: getDefaultUsageTracker(),
-  getConversationThread: () => null,
-  getBridgeRequestContext: (id) => subagentRegistry.getBridgeRequestContext(id),
-  onSchedulePersist: () => scheduleRouterStatePersist()
-});
-setDefaultCorrelationTracker(otelTracker);
 
 const CODEX_CONFIG_FILE =
   process.env.CODEX_ROUTER_CODEX_CONFIG_FILE ?? `${CODEX_HOME}/config.toml`;
@@ -440,8 +357,7 @@ const concurrencyManager = new ConcurrencyManager({
   configFile: CODEX_CONFIG_FILE,
   configFileSource: process.env.CODEX_ROUTER_CODEX_CONFIG_FILE
     ? "env_override"
-    : "default_codex_home",
-  getOrchestratorSession: (key) => subagentRegistry.orchestratorSessionInfo(key)
+    : "default_codex_home"
 });
 setDefaultConcurrencyManager(concurrencyManager);
 
@@ -489,13 +405,6 @@ const PERSISTED_SECTION_RESTORERS: Readonly<
     getDefaultUsageTracker().restoreUsagePersistenceSnapshot(value),
   concurrency: (value) => {
     if (isRecord(value)) concurrencyManager.restorePersistence(value);
-  },
-  spawnFailures: (value) => {
-    if (isRecord(value)) subagentRegistry.restoreSpawnFailureTelemetry(value);
-  },
-  correlation: (value) => restoreCorrelation(value),
-  subagents: (value) => {
-    if (isRecord(value)) subagentRegistry.restoreSubagentTelemetry(value);
   },
   quotaPoll: (value) => warnDiscarded(QUOTA_POLL.restore(value), "quota poll"),
   providerCooldowns: (value) => {
@@ -580,13 +489,10 @@ const routerPersistence = new RouterPersistence({
     providerModelDiscovery: providerModelDiscoveryPersistenceSnapshot(),
     usage: getDefaultUsageTracker().usagePersistenceSnapshot(),
     concurrency: concurrencyManager.persistenceSnapshot(),
-    subagents: subagentRegistry.subagentTelemetry,
-    spawnFailures: subagentRegistry.spawnFailureTelemetry,
     providerCooldowns: COOLDOWNS.persistedHardEntries(),
     quotaPoll: QUOTA_POLL.persistenceSnapshot(),
     recentEvents: routerEvents.getRecentEvents(false),
-    liveFeed: liveFeedEvents.getRecentEvents(false, true),
-    correlation: correlationSnapshot()
+    liveFeed: liveFeedEvents.getRecentEvents(false, true)
   }),
   restoreSection: (section, value, parsed) => {
     restorePersistedSection({ section, value, parsed });
@@ -642,8 +548,6 @@ export function resetRouterTelemetry(): void {
   }
   getDefaultUsageTracker().resetUsageTelemetry();
   getDefaultConcurrencyManager().resetConcurrencyTelemetry();
-  resetSubagentTelemetry();
-  resetSpawnFailureTelemetry();
   COOLDOWNS.clearAll();
   scheduleRouterStatePersist();
 }
@@ -802,12 +706,6 @@ export function recordConcurrencyDenial(denial: unknown): void {
     typeof denial === "string"
       ? { reason: denial }
       : ((denial as Record<string, unknown>) ?? {});
-  recordSpawnFailure({
-    requestId: (info.requestId as string | undefined) ?? null,
-    role: (info.role as string | undefined) ?? null,
-    requestedModel: (info.requestedModel as string | undefined) ?? null,
-    reason: (info.reason as string | undefined) ?? "unknown"
-  });
   recordRouterEvent({
     phase: "denied",
     requestId: (info.requestId as string | undefined) ?? null,
@@ -1204,11 +1102,8 @@ function buildRouterStatus(now = Date.now()) {
       missingProvider: projection.missingProvider,
       missingModel: projection.missingModel
     },
-    correlation: correlationStatus(),
     agents: agentsStatus(now),
     concurrency: getDefaultConcurrencyManager().concurrencyStatus(now),
-    subagents: subagentStatus(),
-    spawnFailures: spawnFailureStatus(),
     inFlightRequests: getGlobalActiveRequestsSnapshot(),
     liveActivity: projection.canonicalTotal,
     providers,
@@ -1599,103 +1494,6 @@ export function addWorkspaceIdToTurnMetadata(
   return JSON.stringify({ ...parsed, workspace_id: context.workspace_id });
 }
 
-/**
-The client's own entry for one workspace, as a one-entry `workspaces` map.
-
-The client's map carries the workspace's git identity in each entry, and a
-remembered copy that dropped it would label the workspace by its path
-basename on every later turn. Only the entry for the workspace that was
-resolved is kept: the map's shape stays one workspace per map, which is
-what the downstream resolver treats as unambiguous.
-*/
-function clientWorkspaceEntry(
-  workspaces: Record<string, Record<string, unknown>>,
-  workspacePath: string
-): Record<string, Record<string, unknown>> | null {
-  const direct = workspaces[workspacePath];
-  if (direct && typeof direct === "object" && !Array.isArray(direct)) {
-    return { [workspacePath]: direct };
-  }
-  for (const [key, entry] of Object.entries(workspaces)) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-    const record = entry as Record<string, unknown>;
-    const paths = [
-      key,
-      record.path,
-      ...WORKSPACE_KEYS.map((name) => record[name])
-    ];
-    if (
-      paths.some(
-        (candidate) =>
-          typeof candidate === "string" && candidate === workspacePath
-      )
-    ) {
-      return { [workspacePath]: entry };
-    }
-  }
-  return null;
-}
-
-export function workspaceMetadataForSession(
-  payload: Record<string, unknown> | null | undefined,
-  turnMetadataHeader: string | null,
-  session: RouterSession | null
-): string | null {
-  const headers = turnMetadataHeader
-    ? { "x-codex-turn-metadata": turnMetadataHeader }
-    : {};
-  let workspacePath: string | null = null;
-  try {
-    workspacePath = resolveCwd(payload, headers);
-  } catch {
-    /*
-    ignore unresolvable
-    */
-  }
-  if (workspacePath) {
-    if (session?.scope === "identified") {
-      // The client's own workspace entry is remembered alongside the path: it
-      // carries the workspace's git identity, and a remembered copy that
-      // dropped it would relabel the workspace by its basename on every later
-      // turn, splitting the per-workspace Usage breakdown in two.
-      const workspaces = resolveTurnMetadataWorkspaces(turnMetadataHeader);
-      const clientEntry = clientWorkspaceEntry(workspaces, workspacePath);
-      rememberWorkspaceMetadata(session.key, workspacePath, clientEntry);
-      if (session.thread && session.thread !== session.key) {
-        rememberWorkspaceMetadata(session.thread, workspacePath, clientEntry);
-      }
-    }
-    return addWorkspaceIdToTurnMetadata(
-      payload,
-      turnMetadataHeader ??
-        JSON.stringify({ workspaces: { [workspacePath]: {} } })
-    );
-  }
-  if (
-    session?.scope === "identified" &&
-    !hasWorkspaceClaim(payload, turnMetadataHeader)
-  ) {
-    const rememberedJson =
-      getWorkspaceMetadata(session.key) ??
-      (session.thread ? getWorkspaceMetadata(session.thread) : null);
-    let metadata = turnMetadataHeader;
-    if (rememberedJson) {
-      const rememberedParsed = parseTurnMetadataJson(rememberedJson);
-      const incomingParsed = parseTurnMetadataJson(turnMetadataHeader);
-      if (incomingParsed && rememberedParsed?.workspaces) {
-        metadata = JSON.stringify({
-          ...incomingParsed,
-          workspaces: rememberedParsed.workspaces
-        });
-      } else {
-        metadata = rememberedJson;
-      }
-    }
-    return addWorkspaceIdToTurnMetadata(payload, metadata);
-  }
-  return turnMetadataHeader;
-}
-
 export function sendRouterAuthFailure(response: ServerResponse): void {
   sendJson(
     response,
@@ -1816,21 +1614,13 @@ async function handleSkillReadObservation(
     sendJson(response, 400, errorBody("Invalid skill read observation"));
     return;
   }
-  const context = {
-    sessionId: observed.sessionId,
-    role: observed.role,
-    provider: observed.provider,
-    model: observed.model,
-    workspace: observed.workspace
-  };
-  const event = {
-    type: "skill_used",
-    skill: observed.skill,
-    source: SKILL_READ_SOURCE,
-    eventId: observed.eventId
-  };
-  const accepted = recordBridgeSkillUsed({ event, context });
-  if (accepted)
+  const accepted = getDefaultUsageTracker().recordSkillRead(observed);
+  if (accepted) {
+    recordSkillReadTelemetry({
+      skill: observed.skill,
+      role: observed.role,
+      workspace: observed.workspace && safePrivacyWorkspace(observed.workspace)
+    });
     liveFeedEvents.record({
       category: "skills",
       type: "skill_used",
@@ -1854,6 +1644,7 @@ async function handleSkillReadObservation(
       hook: null,
       handlerType: null
     });
+  }
   sendJson(response, 200, { accepted });
 }
 
@@ -1923,32 +1714,6 @@ export async function handleRequest(
     await handleSkillReadObservation(request, response);
     return;
   }
-  if (pathname === AGENT_EVENTS_PATH && request.method === "POST") {
-    try {
-      const result = ingestAgentEvents(JSON.parse(await requestBody(request)));
-      if (result.reason === "unknown_request_id") {
-        sendJson(
-          response,
-          404,
-          errorBody(
-            "No router request matches the reported request id.",
-            "router_unknown_request",
-            { code: "router_unknown_request" }
-          )
-        );
-        return;
-      }
-      sendJson(response, 200, result);
-    } catch {
-      sendJson(
-        response,
-        400,
-        errorBody("Agent event request must be valid JSON")
-      );
-    }
-    return;
-  }
-
   if (await didHandleAcpRoute(request, response, pathname)) return;
 
   sendJson(response, 404, errorBody("not found"));
@@ -2045,12 +1810,9 @@ function collectPassThroughSections(): Record<string, unknown> {
     providerTelemetry: Object.fromEntries(providerTelemetry),
     providerModelDiscovery: providerModelDiscoveryPersistenceSnapshot(),
     usage: getDefaultUsageTracker().usagePersistenceSnapshot(),
-    subagents: subagentRegistry.subagentTelemetry,
-    spawnFailures: subagentRegistry.spawnFailureTelemetry,
     quotaPoll: QUOTA_POLL.persistenceSnapshot(),
     recentEvents: routerEvents.getRecentEvents(false),
-    liveFeed: liveFeedEvents.getRecentEvents(false, true),
-    correlation: correlationSnapshot()
+    liveFeed: liveFeedEvents.getRecentEvents(false, true)
   };
 }
 

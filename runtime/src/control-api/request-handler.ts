@@ -12,6 +12,7 @@ import {
   CONTROL_API_EVALUATIONS_SCHEMA_ID,
   CONTROL_API_PROVIDER_MODEL_DISCOVERY_SCHEMA_ID,
   CONTROL_API_REVISION_PATTERN,
+  CONTROL_API_TOOLS_SCHEMA_ID,
   type ControlApiAgentDetailResponse,
   type ControlApiAgentEnablementPatchResponse,
   type ControlApiAgentRecord,
@@ -56,7 +57,6 @@ import {
   type ControlApiRuntimeResponse,
   type ControlApiSkillContentResponse,
   type ControlApiSkillsResponse,
-  CONTROL_API_TOOLS_SCHEMA_ID,
   type ControlApiToolsResponse,
   type ControlApiWorkspacePatchResponse,
   type ControlApiWorkspacesResponse,
@@ -153,12 +153,12 @@ import type { QuotaAxiResponse } from "quota-axi";
 
 import type { PlaytestRunControl } from "../playtesting/run-control.ts";
 import { getDefaultPlaytestRunControl } from "../playtesting/run-control-service.ts";
-import { errorBody, ROUTER_INSTANCE_ID, sendJson } from "../router/proxy.ts";
 import {
   executionContractFile,
-  executionContractObserved,
-  getDefaultExecutionContract
-} from "../router/subagents.ts";
+  getDefaultExecutionContract,
+  isExecutionContractObserved
+} from "../router/execution-contract.ts";
+import { errorBody, ROUTER_INSTANCE_ID, sendJson } from "../router/proxy.ts";
 import { routerTelemetryTracer } from "../router/telemetry.ts";
 import { readControlApiJsonObject } from "./body.ts";
 import { githubWorkflowsView } from "./github.ts";
@@ -1974,7 +1974,7 @@ function toolsView(): ControlApiToolsResponse {
   // for the half that was read and merely incomplete for the half that was
   // not -- so the count is a number only when both reads were observed. One
   // unread read never turns the other's count into a zero.
-  const contractObserved = executionContractObserved();
+  const contractObserved = isExecutionContractObserved();
   const catalogueObserved =
     rulesyncCatalog.validity === "valid" && contractObserved;
 
@@ -2188,7 +2188,7 @@ function skillsView(
     // empty contract and a contract nobody read look the same to a caller
     // that only sees the roles. The eligibility a card counts, and the
     // assignment form's roles, both depend on which one it was.
-    executionContractObserved: executionContractObserved(),
+    executionContractObserved: isExecutionContractObserved(),
     executionContractRevision:
       contractFile === null
         ? null
@@ -2813,7 +2813,7 @@ function agentsView(
       };
     }
   );
-  const contractObserved = executionContractObserved();
+  const contractObserved = isExecutionContractObserved();
   return {
     schema: "autodev-control-agents-v2",
     source: EXECUTION_CONTRACT_SOURCE,
@@ -2896,7 +2896,7 @@ function agentDetailView(
     // contract and a contract nobody read look the same to a caller that only
     // sees the roles. A 404 here would say the role does not exist, which is
     // a claim the contract never made.
-    if (!executionContractObserved()) {
+    if (!isExecutionContractObserved()) {
       return {
         status: "unreadable",
         code: "autodev_control_api_execution_contract_not_observed",
@@ -3603,7 +3603,7 @@ function permissionsView(
       skills: Array.isArray(entry.skills) ? entry.skills : []
     };
   }
-  const contractObserved = executionContractObserved();
+  const contractObserved = isExecutionContractObserved();
   return {
     schema: "autodev-control-permissions-v2",
     source: state.source,

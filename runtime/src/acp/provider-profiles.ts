@@ -239,10 +239,7 @@ function sharedIsolationEnvironment(
     AUTODEV_MCP_WORKSPACE: options.cwd,
     AUTODEV_ROLE_SHELL_ENABLED: contract.shell === false ? "0" : "1",
     AUTODEV_ROLE_HOOKS_ENABLED: contract.hooks === false ? "0" : "1",
-    ...((contract.readOnly === true) && { AUTODEV_MCP_READ_ONLY: "1" }),
-    AUTODEV_AGENT_EVENTS_URL:
-      options.env?.AUTODEV_AGENT_EVENTS_URL ??
-      "http://127.0.0.1:4100/v1/agent-events"
+    ...((contract.readOnly === true) && { AUTODEV_MCP_READ_ONLY: "1" })
   };
 }
 

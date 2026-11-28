@@ -18,7 +18,7 @@ import {
   handleControlApiRequest,
   resetOperationHistoryForTests
 } from "../src/control-api/request-handler.ts";
-import { reloadExecutionContract } from "../src/router/subagents.ts";
+import { reloadExecutionContract } from "../src/router/execution-contract.ts";
 import { responseRecorder } from "./support/control-api-harness.ts";
 
 const SERVICE_TOKEN = "s".repeat(64);

@@ -25,7 +25,7 @@ function typescriptFiles(directory: string): string[] {
 
 test("no router module re-exports a symbol owned by another module", () => {
   // `http.ts` used to hand out `proxy.ts`'s response helpers with no consumer
-  // at all, and `subagents.ts`/`server.ts` passed through a concurrency and a
+  // at all, and the subagent registry and `server.ts` passed through a concurrency and a
   // routing constant, so every consumer had two documented import paths for
   // one value. A single-symbol `export { X } from "..."` is the shape that
   // creates that: it advertises a second home for a value without saying which
@@ -64,10 +64,6 @@ test("the owning module is still where each narrowed symbol is declared", () => 
     source("runtime/src/router/routing.ts"),
     /export const ORCHESTRATOR_ALIAS = /u
   );
-  assert.match(
-    source("runtime/src/router/subagents.ts"),
-    /import \{[^}]*\} from "@simulatorlife\/autodev-runtime\/router\/concurrency";/su
-  );
   assert.match(source("runtime/src/router/http.ts"), /from "\.\/proxy\.ts";/su);
 });
 
@@ -75,7 +71,7 @@ test("tests import pass-throughed constants from the module that owns them", () 
   // A constant reachable from two modules is two places to look and two
   // places to change. Tests are the consumers that made these look public.
   assert.match(
-    source("tests/router/subagents.test.ts"),
+    source("tests/router/concurrency.test.ts"),
     /PROCESS_FALLBACK_SESSION_KEY[^}]*\} from "@simulatorlife\/autodev-runtime\/router\/concurrency";/su
   );
 });

@@ -13,9 +13,7 @@ export {
   getDefaultExecutionContract,
   getDefaultPersistenceManager,
   getDefaultRouterLifecycle,
-  getDefaultSubagentRegistry,
   ROUTES,
-  ROUTING_POLICY,
-  SubagentRegistry
+  ROUTING_POLICY
 } from "./router/index.ts";
 export * as telemetry from "./telemetry/index.ts";

@@ -14,7 +14,7 @@ a report.
 */
 
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -1204,61 +1204,6 @@ function accumulateTraceRecord(
   incrementCount(accumulator, record.type);
 }
 
-function inferCodexHomeFromRolloutPath(file: string): string | null {
-  const resolved = path.resolve(file);
-  const parts = resolved.split(path.sep);
-  const rootIndex = parts.findIndex(
-    (segment) => segment === "sessions" || segment === "archived_sessions"
-  );
-  if (rootIndex <= 0) return null;
-  return parts.slice(0, rootIndex).join(path.sep) || path.sep;
-}
-
-function collectTelemetryTurnHashes(
-  turns: Record<string, unknown>,
-  allowedTurnIds: Set<string> | null
-): number {
-  const hashes = new Set<string>();
-  for (const [turnId, rawEntry] of Object.entries(turns)) {
-    if (allowedTurnIds && !allowedTurnIds.has(turnId)) continue;
-    if (!isRecord(rawEntry) || !Array.isArray(rawEntry.has)) continue;
-    for (const hash of rawEntry.has) {
-      if (typeof hash === "string" && hash.length > 0) hashes.add(hash);
-    }
-  }
-  return hashes.size;
-}
-
-function readSkillTelemetryCount(
-  codexHome: string | null,
-  threadId: string,
-  sessionId: string | null,
-  turnIds: readonly string[]
-): number | null {
-  if (!codexHome) return null;
-  const dir = path.join(codexHome, "run", "skill-read-telemetry");
-  const candidates: { file: string; filter: Set<string> | null }[] = [
-    { file: path.join(dir, `${threadId}.json`), filter: null }
-  ];
-  if (sessionId && sessionId !== threadId && turnIds.length > 0) {
-    candidates.push({
-      file: path.join(dir, `${sessionId}.json`),
-      filter: new Set(turnIds)
-    });
-  }
-  for (const candidate of candidates) {
-    if (!existsSync(candidate.file)) continue;
-    try {
-      const parsed: unknown = JSON.parse(readFileSync(candidate.file, "utf8"));
-      if (!isRecord(parsed) || !isRecord(parsed.turns)) continue;
-      return collectTelemetryTurnHashes(parsed.turns, candidate.filter);
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-
 function skillReadSummary(counts: ReadonlyMap<string, number>): {
   skillsRead: string[];
   skillReadCounts: Record<string, number>;
@@ -1271,10 +1216,7 @@ function skillReadSummary(counts: ReadonlyMap<string, number>): {
 }
 
 function buildThreadEfficiency(
-  accumulator: ThreadTraceAccumulator,
-  codexHome: string | null,
-  threadId: string,
-  sessionId: string | null
+  accumulator: ThreadTraceAccumulator
 ): SessionThreadEfficiency {
   const state = accumulator.tokenState;
   const inputTokens = state.offsetIn + (state.prevRawIn ?? 0);
@@ -1324,13 +1266,7 @@ function buildThreadEfficiency(
       skillsCatalogBytes: prompt.skillsCatalogBytes,
       skillsLoaded: prompt.loadedSkills.size,
       skillsByRoot: prompt.skillsByRoot,
-      ...skillReadSummary(prompt.skillReadCounts),
-      skillTelemetryReads: readSkillTelemetryCount(
-        codexHome,
-        threadId,
-        sessionId,
-        accumulator.turns.map((turn) => turn.turnId).filter(Boolean)
-      )
+      ...skillReadSummary(prompt.skillReadCounts)
     }
   };
 }
@@ -1352,13 +1288,12 @@ function buildThreadTrace(
   meta: SessionMetaPayload,
   context: TurnContextPayload,
   accumulator: ThreadTraceAccumulator,
-  options: { withItems: boolean; codexHome?: string | undefined }
+  options: { withItems: boolean }
 ): SessionThreadTrace {
   const { start, end } = timestampBounds(records);
   const id = typeof meta.id === "string" ? meta.id : file;
   const sessionId =
     typeof meta.session_id === "string" ? meta.session_id : null;
-  const resolvedHome = options.codexHome ?? inferCodexHomeFromRolloutPath(file);
   return {
     id,
     sessionId,
@@ -1395,7 +1330,7 @@ function buildThreadTrace(
             samples: accumulator.tagOnlySamples
           }
         }),
-    efficiency: buildThreadEfficiency(accumulator, resolvedHome, id, sessionId),
+    efficiency: buildThreadEfficiency(accumulator),
     investigation: accumulator.investigation,
     ...(options.withItems && { items: accumulator.items.map((item) => ({ ...item, threadId: id })) })
   };
@@ -1409,10 +1344,6 @@ export interface TraceThreadOptions {
   Collect the truncated rollout items as well as the summary.
   */
   readonly items: boolean;
-  /**
-  The `$CODEX_HOME` the rollout belongs to; inferred from the path when absent.
-  */
-  readonly codexHome?: string | undefined;
 }
 
 /**
@@ -1431,8 +1362,7 @@ export function traceThread(
   for (const record of records)
     accumulateTraceRecord(record, options.items, accumulator);
   return buildThreadTrace(file, records, meta, context, accumulator, {
-    withItems: options.items,
-    codexHome: options.codexHome
+    withItems: options.items
   });
 }
 

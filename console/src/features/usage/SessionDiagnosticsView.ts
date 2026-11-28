@@ -1069,13 +1069,6 @@ function renderThreadDetail(
     ),
     React.createElement(
       DetailValue,
-      { label: "Skill-read telemetry" },
-      efficiency === undefined || efficiency.prompt.skillTelemetryReads === null
-        ? NOT_OBSERVED_LABEL
-        : String(efficiency.prompt.skillTelemetryReads)
-    ),
-    React.createElement(
-      DetailValue,
       { label: "Pre-edit investigation" },
       thread.investigation.observed
         ? `${count(thread.investigation.toolCalls)} calls, ${count(
