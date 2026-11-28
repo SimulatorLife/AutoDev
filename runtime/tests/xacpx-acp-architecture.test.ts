@@ -422,7 +422,10 @@ test("Antigravity app-data names are relative, stable, and isolated by session a
     model: "gemini-3.8-flash",
     cwd: REPO_ROOT,
     systemPrompt: "Worker",
-    sessionId: "../another/session"
+    // A session id that is not a safe name never reaches the app-data path:
+    // the gateway session grant refuses it first. The name is a digest, so
+    // even a valid id with dot segments cannot shape the directory.
+    sessionId: "session:..:one"
   };
   const directory = (
     overrides: Partial<typeof options> = {},
@@ -442,7 +445,7 @@ test("Antigravity app-data names are relative, stable, and isolated by session a
   };
   const first = directory();
   assert.equal(directory(), first);
-  assert.notEqual(directory({ sessionId: "another-session" }), first);
+  assert.notEqual(directory({ sessionId: "session:..:two" }), first);
   assert.notEqual(directory({}, "/tmp/autodev-b"), first);
 });
 
