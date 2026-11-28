@@ -77,12 +77,13 @@ Whether a `PreToolUse` payload is a native file tool, and why it is refused.
 */
 export function evaluateFileSurfaceHook(
   rawInput: string,
-  environment: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env,
+  arguments_: readonly string[] = process.argv.slice(2)
 ): FileSurfaceDecision {
   const payload = parseHookPayload(rawInput);
   if (
     !payload ||
-    extractHookContext(payload, environment).origin === "unmanaged"
+    extractHookContext(payload, environment, arguments_).origin === "unmanaged"
   )
     return { denied: false, reason: null };
   const call = extractHookToolCall(payload, environment);
@@ -97,13 +98,14 @@ export function evaluateFileSurfaceHook(
 
 export function runFileSurfaceHook(
   raw = readFileSync(0, "utf8"),
-  environment: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env,
+  arguments_: readonly string[] = process.argv.slice(2)
 ): number {
-  const decision = evaluateFileSurfaceHook(raw, environment);
+  const decision = evaluateFileSurfaceHook(raw, environment, arguments_);
   if (!decision.denied || decision.reason === null) return 0;
   const payload = parseHookPayload(raw);
   const call = payload ? extractHookToolCall(payload, environment) : null;
-  const context = extractHookContext(payload, environment);
+  const context = extractHookContext(payload, environment, arguments_);
   logPreToolUseDenial({
     hook: "file-surface",
     policy: "file-surface",

@@ -4,8 +4,7 @@ import test from "node:test";
 import {
   copilotOrchestratorDenyToolArgs as copilotOrchestratorDenyToolArguments,
   evaluateOrchestratorToolCall,
-  GIT_HISTORY_SUBCOMMANDS,
-  isRootOrchestratorModel
+  GIT_HISTORY_SUBCOMMANDS
 } from "../src/agents/orchestrator-policy.ts";
 
 const shell = (command: unknown) =>
@@ -13,25 +12,6 @@ const shell = (command: unknown) =>
     toolName: "exec_command",
     toolInput: { cmd: command }
   });
-
-test("only the explicit AutoDev root alias identifies root model policy", () => {
-  assert.equal(isRootOrchestratorModel("autodev/orchestrator"), true);
-  for (const model of [
-    "",
-    "gpt-5.5",
-    "gpt-5.3-codex",
-    "unrecognized-native-model",
-    "autodev/worker",
-    "autodev/explorer",
-    "claude-opus-5-5",
-    "opus",
-    "gemini-3.8-flash",
-    "MiniMax-M3",
-    "copilot",
-    "opencli-chatgpt"
-  ])
-    assert.equal(isRootOrchestratorModel(model), false, model);
-});
 
 test("every history subcommand is refused, however the command is wrapped", () => {
   for (const subcommand of GIT_HISTORY_SUBCOMMANDS)

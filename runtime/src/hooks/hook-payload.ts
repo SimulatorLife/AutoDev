@@ -20,14 +20,22 @@ the hook can check:
   the session and the role it assigned (`AUTODEV_SESSION_ID`,
   `AUTODEV_AGENT_ROLE`) into that process's environment, and the host's hooks
   inherit it.
-- `autodev_routed`: a host turn served through the AutoDev model router, which
-  the host names by an `autodev/<alias>` model (the Codex root session and the
-  roles AutoDev projects into Codex).
+- `enrolled_root`: a root session of a host AutoDev enrolls as its
+  orchestrator. Codex is that host: every Codex session runs AutoDev's root
+  configuration, and the hooks AutoDev projects into Codex carry
+  {@link CODEX_HOST_ARGUMENT}, which no other host's projection does. The
+  session runs on the host's own account and model, so the model names no
+  role; the role is the orchestrator's.
 - `unmanaged`: anything else -- a native chat in Claude Code, Copilot or
   Antigravity that only shares the repository's projected hooks. Runtime role
   policies never apply to it.
 */
-export type HookSessionOrigin = "runtime" | "autodev_routed" | "unmanaged";
+export type HookSessionOrigin = "runtime" | "enrolled_root" | "unmanaged";
+
+/**
+The argument AutoDev's Codex hook projection appends to every hook command.
+*/
+export const CODEX_HOST_ARGUMENT = "--client=codex";
 
 export interface NormalizedHookContext {
   readonly origin: HookSessionOrigin;
@@ -52,11 +60,6 @@ export interface NormalizedHookContext {
   readonly provider: string | null;
   readonly cwd: string | null;
 }
-
-/**
-The model-id namespace the AutoDev model router serves.
-*/
-const AUTODEV_ROUTED_MODEL_PREFIX = "autodev/";
 
 const TOOL_NAME_KEYS = ["tool_name", "toolName", "name"] as const;
 const ARGUMENT_KEYS = [
@@ -225,7 +228,8 @@ env, and the session origin that decides which of it Runtime policy may use.
 */
 export function extractHookContext(
   payload: unknown,
-  environment: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env,
+  arguments_: readonly string[] = process.argv.slice(2)
 ): NormalizedHookContext {
   const record = isRecord(payload) ? payload : {};
   const metadata = isRecord(record.metadata) ? record.metadata : null;
@@ -243,10 +247,10 @@ export function extractHookContext(
   const reportedRole =
     pickHookString(record, ROLE_KEYS) ??
     (metadata ? pickHookString(metadata, ROLE_KEYS) : null);
-  const hostModel =
+  const model =
+    stringOrNull(environment.AUTODEV_MODEL) ??
     stringOrNull(record.model) ??
     (metadata ? stringOrNull(metadata.model) : null);
-  const model = stringOrNull(environment.AUTODEV_MODEL) ?? hostModel;
   const provider =
     stringOrNull(environment.AUTODEV_PROVIDER) ??
     stringOrNull(record.provider) ??
@@ -257,12 +261,16 @@ export function extractHookContext(
 
   let origin: HookSessionOrigin = "unmanaged";
   if (runtimeSessionId && assignedRole) origin = "runtime";
-  else if (hostModel?.startsWith(AUTODEV_ROUTED_MODEL_PREFIX))
-    origin = "autodev_routed";
+  else if (arguments_.includes(CODEX_HOST_ARGUMENT)) origin = "enrolled_root";
   const runtimeRole = origin === "runtime" ? assignedRole : null;
   // The calling thread's own reported role is the more specific one (a child
   // thread inside a Runtime-launched session), so it is read first.
-  const role = origin === "unmanaged" ? null : (reportedRole ?? runtimeRole);
+  const role =
+    origin === "unmanaged"
+      ? null
+      : (reportedRole ??
+        runtimeRole ??
+        (origin === "enrolled_root" ? "orchestrator" : null));
 
   return {
     origin,

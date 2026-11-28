@@ -869,20 +869,6 @@ function checkPortableConfig(
     ),
     failures
   );
-  const portable = readFileSync(
-    path.join(paths.repositoryRoot, "config/config.autodev.toml"),
-    "utf8"
-  );
-  check(
-    "provider config local_model_router",
-    portable.includes("[model_providers.local_model_router]"),
-    failures
-  );
-  check(
-    "provider auth boundary",
-    portable.includes("requires_openai_auth = false"),
-    failures
-  );
 }
 
 function checkUserConfigAndAgents(

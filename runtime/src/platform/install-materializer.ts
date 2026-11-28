@@ -26,6 +26,7 @@ import {
   serializeToml,
   type TomlTable
 } from "@simulatorlife/autodev-runtime/config";
+import { CODEX_HOST_ARGUMENT } from "@simulatorlife/autodev-runtime/hooks/hook-payload";
 import { autodevHome as resolveAutodevHome } from "@simulatorlife/autodev-runtime/shared/autodev-home";
 import { listBundledPlugins } from "@simulatorlife/autodev-runtime/shared/bundled-plugins";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
@@ -1663,10 +1664,32 @@ export function renderCodexUserHooks(repositoryRoot: string): string {
       },
       projectedHome
     );
-    return readFileSync(path.join(projectedHome, ".codex", HOOKS_JSON), "utf8");
+    return withCodexHostArgument(
+      readFileSync(path.join(projectedHome, ".codex", HOOKS_JSON), "utf8")
+    );
   } finally {
     rmSync(projectedHome, { recursive: true, force: true });
   }
+}
+
+/**
+Mark every projected Codex hook command with {@link CODEX_HOST_ARGUMENT}.
+
+Codex runs on its own account and model, so nothing in a hook's payload says
+the session is AutoDev's orchestrator root; the argument does, and only this
+projection adds it (see `HookSessionOrigin`).
+*/
+function withCodexHostArgument(hooksJson: string): string {
+  const projection = JSON.parse(hooksJson) as {
+    hooks?: Record<string, Array<{ hooks?: Array<{ command?: unknown }> }>>;
+  };
+  const handlers = Object.values(projection.hooks ?? {})
+    .flat()
+    .flatMap((group) => group.hooks ?? []);
+  for (const handler of handlers)
+    if (typeof handler.command === "string")
+      handler.command = `${handler.command} ${CODEX_HOST_ARGUMENT}`;
+  return `${JSON.stringify(projection, null, 2)}\n`;
 }
 
 /**

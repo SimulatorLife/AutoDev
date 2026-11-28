@@ -40,10 +40,7 @@ that drift.
 
 import { readFileSync } from "node:fs";
 
-import {
-  evaluateOrchestratorToolCall,
-  isRootOrchestratorModel
-} from "@simulatorlife/autodev-runtime/agents/orchestrator-policy";
+import { evaluateOrchestratorToolCall } from "@simulatorlife/autodev-runtime/agents/orchestrator-policy";
 import { evaluateReadOnlyToolCall } from "@simulatorlife/autodev-runtime/agents/read-only-policy";
 import { isEntryPoint } from "@simulatorlife/autodev-runtime/shared/entry-point";
 import { errorMessage } from "@simulatorlife/autodev-runtime/shared/error-message";
@@ -89,11 +86,12 @@ function emptyEvaluation(): RoleSandboxEvaluation {
 
 function evaluateRoleSandboxDetailed(
   rawInput: string,
-  environment: NodeJS.ProcessEnv
+  environment: NodeJS.ProcessEnv,
+  arguments_: readonly string[]
 ): RoleSandboxEvaluation {
   const payload = parseHookPayload(rawInput);
   if (!payload) return emptyEvaluation();
-  const context = extractHookContext(payload, environment);
+  const context = extractHookContext(payload, environment, arguments_);
   if (context.origin === "unmanaged") return emptyEvaluation();
   const extracted = extractHookToolCall(payload, environment);
   const toolName = extracted?.toolName ?? "";
@@ -104,10 +102,7 @@ function evaluateRoleSandboxDetailed(
   const turn = context.turnId;
   const tool = toolName || null;
   const call = { toolName, toolInput };
-  if (
-    role === "orchestrator" ||
-    (role === null && isRootOrchestratorModel(model ?? ""))
-  ) {
+  if (role === "orchestrator") {
     const decision = evaluateOrchestratorToolCall(call);
     return decision.allowed
       ? emptyEvaluation()
@@ -151,20 +146,26 @@ function evaluateRoleSandboxDetailed(
 
 export function evaluateRoleSandboxHook(
   rawInput: string,
-  environment: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env,
+  arguments_: readonly string[] = process.argv.slice(2)
 ): {
   readonly denied: boolean;
   readonly reason: string | null;
 } {
-  const { denied, reason } = evaluateRoleSandboxDetailed(rawInput, environment);
+  const { denied, reason } = evaluateRoleSandboxDetailed(
+    rawInput,
+    environment,
+    arguments_
+  );
   return { denied, reason };
 }
 
 export function runRoleSandboxHook(
   raw = readFileSync(0, "utf8"),
-  environment: NodeJS.ProcessEnv = process.env
+  environment: NodeJS.ProcessEnv = process.env,
+  arguments_: readonly string[] = process.argv.slice(2)
 ): number {
-  const outcome = evaluateRoleSandboxDetailed(raw, environment);
+  const outcome = evaluateRoleSandboxDetailed(raw, environment, arguments_);
   if (!outcome.denied) return 0;
   const reason = outcome.reason ?? "This role runs in a read-only sandbox.";
   if (outcome.policy) {

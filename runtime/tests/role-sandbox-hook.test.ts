@@ -5,10 +5,26 @@ import path from "node:path";
 import test from "node:test";
 
 import { sanitizeCommandHead } from "../src/hooks/hook-log.ts";
+import { CODEX_HOST_ARGUMENT } from "../src/hooks/hook-payload.ts";
 import {
   evaluateRoleSandboxHook,
   runRoleSandboxHook
 } from "../src/hooks/role-sandbox.ts";
+
+/**
+The arguments AutoDev's Codex hook projection gives every hook.
+*/
+const CODEX = [CODEX_HOST_ARGUMENT];
+
+/**
+The role sandbox as it runs in Codex, under AutoDev's Codex projection.
+*/
+function evaluateInCodex(
+  raw: string,
+  environment: NodeJS.ProcessEnv = {}
+): ReturnType<typeof evaluateRoleSandboxHook> {
+  return evaluateRoleSandboxHook(raw, environment, CODEX);
+}
 
 /**
 A `PreToolUse` payload as Codex sends it.
@@ -26,7 +42,7 @@ function payload(input: {
     session_id: "session",
     cwd: "/Users/henrykirk/AutoDev",
     hook_event_name: "PreToolUse",
-    model: input.model ?? "autodev/explorer",
+    model: input.model ?? "gpt-6-luna",
     permission_mode: "default",
     tool_name: input.toolName,
     tool_input: input.toolInput ?? {},
@@ -38,7 +54,7 @@ function payload(input: {
 }
 
 test("a read-only role may not write a file", () => {
-  const outcome = evaluateRoleSandboxHook(
+  const outcome = evaluateInCodex(
     payload({
       agentType: "explorer",
       toolName: "apply_patch",
@@ -50,7 +66,7 @@ test("a read-only role may not write a file", () => {
 });
 
 test("a read-only role may not run a command that writes", () => {
-  const outcome = evaluateRoleSandboxHook(
+  const outcome = evaluateInCodex(
     payload({
       agentType: "explorer",
       toolName: "exec_command",
@@ -61,7 +77,7 @@ test("a read-only role may not run a command that writes", () => {
 });
 
 test("a read-only role may read", () => {
-  const outcome = evaluateRoleSandboxHook(
+  const outcome = evaluateInCodex(
     payload({
       agentType: "explorer",
       toolName: "exec_command",
@@ -74,7 +90,7 @@ test("a read-only role may read", () => {
 
 test("a role that declares no read-only sandbox is left to the session's own", () => {
   for (const agentType of ["worker", "orchestrator", "smart", "validator"]) {
-    const outcome = evaluateRoleSandboxHook(
+    const outcome = evaluateInCodex(
       payload({
         agentType,
         toolName: "exec_command",
@@ -88,7 +104,7 @@ test("a role that declares no read-only sandbox is left to the session's own", (
 test("the root session's own turns are left to the session's sandbox", () => {
   // The root session runs in the policy's sandbox, and nothing here narrows
   // it. A payload with no role at all is the root session's.
-  const outcome = evaluateRoleSandboxHook(
+  const outcome = evaluateInCodex(
     payload({
       toolName: "exec_command",
       toolInput: { cmd: "rm -rf build" }
@@ -108,11 +124,12 @@ function runtimeEnvironment(role: string): NodeJS.ProcessEnv {
   };
 }
 
-test("explicit orchestrator roles and the AutoDev root alias may not read git history", () => {
-  // The root alias is served through the AutoDev router; a concrete model is
-  // an orchestrator only in a process the Runtime launched as one.
+test("explicit orchestrator roles and the enrolled Codex root may not read git history", () => {
+  // A Codex session under AutoDev's projection is the orchestrator whatever
+  // model it runs; elsewhere a model is an orchestrator only in a process
+  // the Runtime launched as one.
   for (const [agentType, model, environment] of [
-    [undefined, "autodev/orchestrator", {}],
+    [undefined, "gpt-6-luna", {}],
     ["orchestrator", "gpt-5.5", runtimeEnvironment("orchestrator")],
     ["orchestrator", "claude-opus", runtimeEnvironment("orchestrator")],
     [undefined, "claude-opus", runtimeEnvironment("orchestrator")]
@@ -125,7 +142,7 @@ test("explicit orchestrator roles and the AutoDev root alias may not read git hi
       "GIT_PAGER=cat git log",
       "bash -lc 'git reflog'"
     ]) {
-      const outcome = evaluateRoleSandboxHook(
+      const outcome = evaluateInCodex(
         payload({
           ...(agentType !== undefined && { agentType }),
           model,
@@ -148,14 +165,11 @@ test("the root orchestrator still integrates and delegates", () => {
     ["exec_command", { cmd: "pnpm test" }],
     ["exec_command", { cmd: "grep -rn 'git log' docs" }],
     [
-      "multi_agent_v1__spawn_agent",
-      { agent_type: "worker", message: "git log -p" }
-    ],
-    ["exec", { code: "await tools.multi_agent_v1__spawn_agent({})" }]
+      "mcp__xacpx__delegate_request",
+      { role: "worker", prompt: "git log -p" }
+    ]
   ] as const) {
-    const outcome = evaluateRoleSandboxHook(
-      payload({ model: "autodev/orchestrator", toolName, toolInput })
-    );
+    const outcome = evaluateInCodex(payload({ toolName, toolInput }));
     assert.equal(
       outcome.denied,
       false,
@@ -164,30 +178,39 @@ test("the root orchestrator still integrates and delegates", () => {
   }
 });
 
-test("children and unrelated standalone sessions may read git history", () => {
-  // A concrete native model, or no model at all, is not an AutoDev role.
-  for (const [agentType, model] of [
-    ["worker", "autodev/worker"],
-    ["explorer", "autodev/explorer"],
-    [undefined, ""],
-    [undefined, "gpt-5.5"],
-    [undefined, "unrecognized-native-model"]
-  ] as const) {
+test("leaf roles and unrelated standalone sessions may read git history", () => {
+  const gitLog = (agentType?: string) =>
+    payload({
+      ...(agentType !== undefined && { agentType }),
+      toolName: "exec_command",
+      toolInput: { cmd: "git log -p -5 -- src/a.ts" }
+    });
+  for (const role of ["worker", "explorer"]) {
+    assert.equal(
+      evaluateRoleSandboxHook(gitLog(), runtimeEnvironment(role)).denied,
+      false,
+      `${role} was denied`
+    );
+  }
+  // Outside AutoDev's Codex projection and the Runtime, a session with no
+  // role, whatever its model, is not an AutoDev role.
+  for (const model of ["", "gpt-5.5", "unrecognized-native-model"]) {
     const outcome = evaluateRoleSandboxHook(
       payload({
-        ...(agentType !== undefined && { agentType }),
         model,
         toolName: "exec_command",
-        toolInput: { cmd: "git log -p -5 -- src/a.ts" }
-      })
+        toolInput: { cmd: "git log" }
+      }),
+      {},
+      []
     );
-    assert.equal(outcome.denied, false, `${agentType ?? "root"} was denied`);
+    assert.equal(outcome.denied, false, `${model} was denied`);
   }
 });
 
 test("unrelated native chats sharing the projected hooks are never governed", () => {
   // A Claude Code or Copilot chat in this repository: no Runtime environment
-  // and no AutoDev-routed model. Its agent types are the host's own subagent
+  // and no AutoDev Codex projection. Its agent types are the host's own subagent
   // names, including ones that collide with AutoDev role names.
   for (const agentType of [
     undefined,
@@ -205,7 +228,7 @@ test("unrelated native chats sharing the projected hooks are never governed", ()
         ...(agentType && { agent_type: agentType })
       });
       assert.equal(
-        evaluateRoleSandboxHook(raw, {}).denied,
+        evaluateRoleSandboxHook(raw, {}, []).denied,
         false,
         `${agentType ?? "root"}: ${command} was denied`
       );
@@ -226,7 +249,7 @@ test("a Runtime-assigned read-only role is enforced without a host-reported role
 });
 
 test("a child thread cannot widen a Runtime-launched read-only session", () => {
-  const outcome = evaluateRoleSandboxHook(
+  const outcome = evaluateInCodex(
     payload({
       agentType: "worker",
       model: "claude-opus",
@@ -251,13 +274,13 @@ test("a Runtime-assigned role the contract does not describe fails closed", () =
 
 test("a payload that cannot be read is left alone rather than refused blindly", () => {
   for (const raw of ["", "not json", "[]", "null", '"text"']) {
-    const outcome = evaluateRoleSandboxHook(raw);
+    const outcome = evaluateInCodex(raw);
     assert.equal(outcome.denied, false, `"${raw}" was denied`);
   }
 });
 
 test("a role the contract does not describe fails closed as read-only", () => {
-  const outcome = evaluateRoleSandboxHook(
+  const outcome = evaluateInCodex(
     payload({
       agentType: "no-such-role",
       toolName: "exec_command",
@@ -299,7 +322,10 @@ function runHookCapturing(
     return true;
   }) as typeof process.stderr.write;
   try {
-    return { status: runRoleSandboxHook(raw), output: chunks.join("") };
+    return {
+      status: runRoleSandboxHook(raw, process.env, CODEX),
+      output: chunks.join("")
+    };
   } finally {
     process.stdout.write = originalWrite;
     process.stderr.write = originalError;
@@ -338,7 +364,6 @@ test("the hook allows the call silently when the role may make it", () => {
 test("the hook denies a root orchestrator's git-history call with the reason Codex reads", () => {
   const { status, output } = runHookCapturing(
     payload({
-      model: "autodev/orchestrator",
       toolName: "exec_command",
       toolInput: { cmd: "git show HEAD~3" }
     })
@@ -381,7 +406,6 @@ test("PreToolUse denials append structured records to hooks.log and allowed call
     );
     runHookCapturing(
       payload({
-        model: "autodev/orchestrator",
         toolName: "exec_command",
         toolInput: { cmd: "git show HEAD~3" }
       }),

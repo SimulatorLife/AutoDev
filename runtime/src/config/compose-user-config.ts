@@ -244,6 +244,72 @@ const REMOVED_PERMISSION_KEYS = new Set([
   "sandbox_workspace_write"
 ]);
 
+/**
+The values AutoDev wrote when Codex turns ran through the Router's retired
+`/v1/responses` path: the `autodev/<role>` model aliases, the
+`local_model_router` provider, the Router's base URL and model catalogue.
+Codex now runs on its own account and models, and every one of these values
+sends a turn to an endpoint that no longer exists. The composed config keeps
+every key the portable source does not declare, so each is removed by value:
+a key the operator has since set to something else is theirs and stays.
+*/
+const RETIRED_ROUTER_VALUES: ReadonlyMap<string, (value: TomlValue) => boolean> =
+  new Map([
+    ["model", (value) => typeof value === "string" && value.startsWith("autodev/")],
+    ["model_provider", (value) => value === RETIRED_ROUTER_PROVIDER],
+    ["openai_base_url", (value) => value === "http://127.0.0.1:4100/v1"],
+    ["model_catalog_json", (value) => value === "./codex-model-catalog.json"]
+  ]);
+
+const RETIRED_ROUTER_PROVIDER = "local_model_router";
+
+/**
+The `[agents]` table was AutoDev's alone -- the portable source replaced it
+on every compose -- and declared Codex-native child roles. Delegation runs
+only through the xacpx MCP, so the table is retired whole.
+*/
+const RETIRED_TABLE_KEYS = new Set(["agents"]);
+
+function isRetiredRouterValue(key: string, value: TomlValue): boolean {
+  return RETIRED_ROUTER_VALUES.get(key)?.(value) === true;
+}
+
+function withoutRetiredProvider(value: TomlValue): TomlTable | null {
+  const kept = Object.fromEntries(
+    Object.entries(table(value)).filter(
+      ([name]) => name !== RETIRED_ROUTER_PROVIDER
+    )
+  );
+  return Object.keys(kept).length > 0 ? kept : null;
+}
+
+/**
+What an existing key the portable source does not declare keeps in the
+composed config; `null` drops it.
+*/
+function carriedExistingValue(
+  key: string,
+  value: TomlValue,
+  bundledPlugins: readonly string[]
+): TomlValue | null {
+  if (
+    REMOVED_PERMISSION_KEYS.has(key) ||
+    RETIRED_TABLE_KEYS.has(key) ||
+    isRetiredRouterValue(key, value)
+  )
+    return null;
+  if (key === "model_providers") return withoutRetiredProvider(value);
+  if (key === "hooks") return hooksState(value) ?? null;
+  if (key === "plugins") {
+    // The portable source omits a plugins table only when it allows no
+    // plugin at all, and the bundled lockdown does not depend on that
+    // table: an installed bundled plugin stays disabled either way.
+    const kept = mergePlugins({}, table(value), bundledPlugins);
+    return Object.keys(kept).length > 0 ? kept : null;
+  }
+  return value;
+}
+
 export function compose(
   portable: TomlTable,
   existing: TomlTable,
@@ -261,21 +327,9 @@ export function compose(
     if (composed !== undefined) result[key] = composed;
   }
   for (const [key, value] of Object.entries(existing)) {
-    if (key in portable || REMOVED_PERMISSION_KEYS.has(key)) continue;
-    if (key === "hooks") {
-      const kept = hooksState(value);
-      if (kept !== undefined) result[key] = kept;
-      continue;
-    }
-    if (key === "plugins") {
-      // The portable source omits a plugins table only when it allows no
-      // plugin at all, and the bundled lockdown does not depend on that
-      // table: an installed bundled plugin stays disabled either way.
-      const kept = mergePlugins({}, table(value), bundledPlugins);
-      if (Object.keys(kept).length > 0) result[key] = kept;
-      continue;
-    }
-    if (value !== undefined) result[key] = value;
+    if (value === undefined || Object.hasOwn(portable, key)) continue;
+    const carried = carriedExistingValue(key, value, bundledPlugins);
+    if (carried !== null) result[key] = carried;
   }
   return result;
 }

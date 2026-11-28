@@ -7,15 +7,11 @@
 # hooks.state trusted hashes, projects trust entries, marketplaces, TUI/
 # notice/desktop/apps/plugins/memories settings, node_repl/cua_repl servers,
 # Composed into $CODEX_HOME/config.toml by runtime/src/config/compose-user-config.ts; preserve AutoDev-owned keys here only.
-model = "autodev/orchestrator"
-model_provider = "local_model_router"
-openai_base_url = "http://127.0.0.1:4100/v1"
 model_verbosity = "low"
 model_reasoning_effort = "xhigh"
 personality = "pragmatic"
 suppress_unstable_features_warning = true
 service_tier = "default"
-model_catalog_json = "./codex-model-catalog.json"
 background_terminal_max_timeout = 600000
 
 [otel]
@@ -32,7 +28,7 @@ enabled = true
 shell_snapshot = true
 unified_exec = true
 steer = true
-multi_agent = true
+multi_agent = false
 multi_agent_v2 = false
 js_repl = false
 memories = false
@@ -50,45 +46,6 @@ image_generation = false
 # `approvals_reviewer`, `[tools].web_search`) is declared in
 # `.rulesync/permissions.jsonc`, and MCP servers are declared in
 # `.rulesync/mcp.jsonc`; the composer merges both into `$CODEX_HOME/config.toml`.
-
-[model_providers.local_model_router]
-name = "Local model-aware AutoDev Router"
-base_url = "http://127.0.0.1:4100/v1"
-env_key = "CODEX_ROUTER_AUTH_TOKEN"
-wire_api = "responses"
-requires_openai_auth = false
-request_max_retries = 1
-stream_max_retries = 2
-stream_idle_timeout_ms = 300000
-
-[agents]
-enabled = true
-max_concurrent_threads_per_session = 2
-max_depth = 1
-default_subagent_model = "autodev/default"
-default_subagent_reasoning_effort = "medium"
-
-[agents.explorer]
-description = "Read-only codebase explorer."
-config_file = "./agents/explorer.toml"
-[agents.worker]
-description = "General-purpose worker/coder."
-config_file = "./agents/worker.toml"
-[agents.validator]
-description = "Validation agent."
-config_file = "./agents/validator.toml"
-[agents.smart]
-description = "Full-capability smart agent with browser, documentation, and workspace-write access."
-config_file = "./agents/smart.toml"
-[agents.default]
-description = "General-purpose developer."
-config_file = "./agents/default.toml"
-[agents."docs-researcher"]
-description = "Documentation researcher with authoritative website access."
-config_file = "./agents/docs-researcher.toml"
-[agents."browser-tester"]
-description = "Read-only browser tester."
-config_file = "./agents/browser-tester.toml"
 
 # MCP servers are not declared here. `.rulesync/mcp.jsonc` is their only source;
 # the installer generates the Codex projection from it and the composer merges
@@ -369,8 +326,8 @@ NODE_OPTIONS = "--disable-warning=ExperimentalWarning"
 
 # The bundled Codex App tools plugin owns request_user_input, which Plan mode
 # instructs the model to call. AutoDev enables the plugin and narrows it to that
-# single tool: thread lifecycle (create/fork/handoff/read/wait/list/archive) is
-# owned by Codex's own multi_agent_v1 delegation surface, not by codex_app.
+# single tool: child-session lifecycle (spawn/message/wait/list/cancel/close)
+# is owned by the xacpx MCP, AutoDev's only delegation interface.
 # Declaring it here makes compose re-assert both gates on every install, even
 # after Codex Desktop regenerates its plugin cache.
 [plugins."codex-app-tools@openai-bundled"]

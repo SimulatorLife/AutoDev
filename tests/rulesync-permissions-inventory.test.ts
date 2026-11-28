@@ -78,12 +78,6 @@ test("Codex permissions and rules are owned by .rulesync/permissions.jsonc, not 
     false,
     "agents/rules/default.rules must be removed in favor of .rulesync/permissions.jsonc"
   );
-  const modelProviders = Object.values(
-    asObject(portableConfig.model_providers)
-  );
-  for (const provider of modelProviders) {
-    assert.equal(asObject(provider).wire_api, "responses");
-  }
   assert.equal(Object.hasOwn(portableConfig, "mcp_servers"), false);
   for (const server of Object.values(
     asObject(asObject(rulesyncMcp).codexcli).mcpServers as JsonObject

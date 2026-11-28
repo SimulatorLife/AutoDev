@@ -64,16 +64,6 @@ export const GIT_HISTORY_SUBCOMMANDS: readonly string[] = [
 
 const GIT_HISTORY: ReadonlySet<string> = new Set(GIT_HISTORY_SUBCOMMANDS);
 
-/**
-The explicit AutoDev orchestrator alias is a restrictive hook-policy signal
-for native Codex turns that do not report a role. A concrete provider model
-is not a role identifier. Neither the alias nor a hook payload grants
-Runtime/MCP authorization; that is enforced independently.
-*/
-export function isRootOrchestratorModel(model: string): boolean {
-  return model === "autodev/orchestrator";
-}
-
 const ENVIRONMENT_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/u;
 
 /**

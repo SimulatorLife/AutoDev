@@ -15,6 +15,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { CODEX_HOST_ARGUMENT } from "../src/hooks/hook-payload.ts";
 import { RUNTIME_MODULES } from "../src/platform/install-materializer.ts";
 import { renderRuntimeMirrorPackage } from "../src/platform/runtime-mirror-package.ts";
 
@@ -89,7 +90,7 @@ function runInstalledHook(
     session_id: "session",
     cwd: repositoryRoot,
     hook_event_name: "PreToolUse",
-    model: "autodev/explorer",
+    model: "gpt-6-luna",
     permission_mode: "default",
     tool_name: input.toolName,
     tool_input: input.toolInput,
@@ -101,7 +102,7 @@ function runInstalledHook(
   try {
     const output = execFileSync(
       process.execPath,
-      [path.join(codexHome, "src/hooks/role-sandbox.ts")],
+      [path.join(codexHome, "src/hooks/role-sandbox.ts"), CODEX_HOST_ARGUMENT],
       {
         input: payload,
         env: { ...process.env, CODEX_HOME: codexHome },

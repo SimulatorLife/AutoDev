@@ -34,7 +34,6 @@ const EXPECTED_SECTIONS = Object.freeze([
   "shell_environment_policy",
   "plugins"
 ]);
-const EXPECTED_MODEL_PROVIDERS = Object.freeze(["local_model_router"]);
 const EXPECTED_SKILLS = Object.freeze([
   "lsp-mcp-server",
   "ccc",
@@ -84,8 +83,6 @@ type PortableFixture = {
   scalars: Record<string, unknown>;
   requiredSections: string[];
   sectionShapes: Record<string, unknown>;
-  modelProviders: Array<{ name: string; attributes: unknown }>;
-  modelProviderOrder: string[];
   skillsConfigNamesRequired: string[];
 };
 
@@ -177,17 +174,14 @@ test("six required sections are present and shaped", async () => {
     );
   }
 
-  // Exactly eight top-level sections are pinned by the contract; any new
+  // Exactly six top-level sections are pinned by the contract; any new
   // section on the source must either be added to the fixture or surface
   // here as drift.
   const sourceTopLevelSections = new Set(EXPECTED_SECTIONS);
   for (const [key, value] of Object.entries(portable)) {
     if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-    // model_providers, agents, hooks are containers of named entries tested
-    // separately; skip them here.
-    if (key === "model_providers" || key === "agents" || key === "hooks") {
-      continue;
-    }
+    // hooks is a container of named entries tested separately.
+    if (key === "hooks") continue;
     assert.ok(
       sourceTopLevelSections.has(key),
       `portable source declared a new top-level section ${key} not pinned by the contract fixture`
@@ -195,40 +189,24 @@ test("six required sections are present and shaped", async () => {
   }
 });
 
-test("four model_providers entries are pinned with byte-for-byte attributes", async () => {
-  const fixture = await readFixture();
+test("Codex runs on its own provider and models, with no native child agents", () => {
   const portable = loadPortable(PORTABLE_PATH);
-
-  assert.deepEqual(fixture.modelProviderOrder, EXPECTED_MODEL_PROVIDERS);
-
-  const providers = (portable.model_providers ?? {}) as Record<string, unknown>;
-  assert.ok(
-    providers && !Array.isArray(providers),
-    "model_providers must be a TOML table"
-  );
-
-  for (const name of EXPECTED_MODEL_PROVIDERS) {
-    assert.ok(
-      Object.hasOwn(providers, name),
-      `portable source missing model_providers entry: ${name}`
-    );
-  }
-  assert.deepEqual(
-    Object.keys(providers).sort(),
-    [...EXPECTED_MODEL_PROVIDERS].sort(),
-    `portable source must declare exactly ${EXPECTED_MODEL_PROVIDERS.length} model_providers entries`
-  );
-
-  const fixtureByName = new Map(
-    fixture.modelProviders.map((entry) => [entry.name, entry.attributes])
-  );
-  for (const name of EXPECTED_MODEL_PROVIDERS) {
-    assert.deepEqual(
-      providers[name],
-      fixtureByName.get(name),
-      `model_providers.${name} drifted from the contract fixture`
-    );
-  }
+  // The Router's `/v1/responses` path is retired: a model alias, provider
+  // or base URL here would send every Codex turn to an endpoint that no
+  // longer exists. Delegation runs only through the xacpx MCP, so Codex's
+  // native child agents stay off.
+  for (const key of [
+    "model",
+    "model_provider",
+    "model_providers",
+    "openai_base_url",
+    "model_catalog_json",
+    "agents"
+  ])
+    assert.ok(!Object.hasOwn(portable, key), `portable source declares ${key}`);
+  const features = portable.features as Record<string, unknown>;
+  assert.equal(features.multi_agent, false);
+  assert.equal(features.multi_agent_v2, false);
 });
 
 test("the bundled OpenAI marketplace is disabled apart from the Codex App tools plugin", () => {

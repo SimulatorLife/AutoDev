@@ -17,6 +17,7 @@ import { join, relative } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { CODEX_HOST_ARGUMENT } from "@simulatorlife/autodev-runtime/hooks/hook-payload";
 import {
   generateRepositoryRulesync,
   writeCodexUserHooks
@@ -321,16 +322,18 @@ test("install projects Codex hooks once, at user level only", () => {
       );
     const installed = join(codexHome, "hooks.json");
     assert.equal(lstatSync(installed).isFile(), true);
-    // The installed document carries the canonical hook commands, not the
-    // output of the module that wrote it.
+    // The installed document carries the canonical hook commands, each
+    // marked as running under AutoDev's Codex projection.
     const installedHooks = asObject(readJson(installed).hooks);
     const installedCommands = groupedCommands(installedHooks);
-    assert.deepEqual(new Set(installedCommands), new Set(sourceCommands));
+    const marked = (projected: readonly string[]) =>
+      new Set(projected.map((command) => `${command} ${CODEX_HOST_ARGUMENT}`));
+    assert.deepEqual(new Set(installedCommands), marked(sourceCommands));
     assert.equal(new Set(installedCommands).size, installedCommands.length);
     const projectedCodexHooks = asObject(document("codexcli").hooks);
     assert.deepEqual(
       new Set(installedCommands),
-      new Set(groupedCommands(projectedCodexHooks))
+      marked(groupedCommands(projectedCodexHooks))
     );
   } finally {
     rmSync(repository, { recursive: true, force: true });

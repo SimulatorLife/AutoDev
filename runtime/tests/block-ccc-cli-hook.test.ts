@@ -12,6 +12,7 @@ import {
   runBlockCccCli,
   splitShellSegments
 } from "../src/hooks/block-ccc-cli.ts";
+import { CODEX_HOST_ARGUMENT } from "../src/hooks/hook-payload.ts";
 
 test("isCccInvocation identifies direct and compound ccc CLI invocations", () => {
   const blocked = [
@@ -184,11 +185,11 @@ test("runBlockCccCli exits with code 2 on ccc command and logs denial without lo
       session_id: "sess-1",
       turn_id: "turn-2",
       agent_type: "explorer",
-      model: "autodev/explorer",
+      model: "gpt-6-luna",
       tool_name: "exec_command",
       arguments: { cmd: "ccc index" }
     });
-    assert.equal(runBlockCccCli(blockedPayload), 2);
+    assert.equal(runBlockCccCli(blockedPayload, [CODEX_HOST_ARGUMENT]), 2);
     const record = JSON.parse(readFileSync(logPath, "utf8").trim()) as Record<
       string,
       unknown

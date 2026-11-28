@@ -272,6 +272,44 @@ test("composition drops legacy permission and sandbox keys outside the portable 
   assert.equal(result.notify, "desktop");
 });
 
+test("composition retires the Router's Codex routing and keeps the operator's own model choices", () => {
+  const routed = compose(
+    { model_verbosity: "low" },
+    {
+      model: "autodev/orchestrator",
+      model_provider: "local_model_router",
+      openai_base_url: "http://127.0.0.1:4100/v1",
+      model_catalog_json: "./codex-model-catalog.json",
+      model_providers: {
+        local_model_router: { base_url: "http://127.0.0.1:4100/v1" },
+        azure: { base_url: "https://example.invalid/openai" }
+      },
+      agents: {
+        max_depth: 1,
+        worker: { config_file: "./agents/worker.toml" }
+      },
+      notify: "desktop"
+    }
+  );
+  assert.deepEqual(routed, {
+    model_verbosity: "low",
+    model_providers: { azure: { base_url: "https://example.invalid/openai" } },
+    notify: "desktop"
+  });
+
+  const chosen = compose(
+    {},
+    {
+      model: "gpt-6-luna",
+      model_provider: "azure",
+      model_providers: {
+        local_model_router: { base_url: "http://127.0.0.1:4100/v1" }
+      }
+    }
+  );
+  assert.deepEqual(chosen, { model: "gpt-6-luna", model_provider: "azure" });
+});
+
 test("the root config takes the orchestrator role's per-server MCP settings", async () => {
   const directory = await mkdtemp(join(tmpdir(), "autodev-root-role-"));
   try {

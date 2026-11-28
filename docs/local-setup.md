@@ -1015,11 +1015,12 @@ AutoDev runs Codex without OS-level `sandbox_mode` (`default_permissions = ":dan
   hook therefore classifies its session origin first
   (`runtime/src/hooks/hook-payload.ts`, `HookSessionOrigin`): `runtime` when
   the Runtime launched the provider process (`AUTODEV_SESSION_ID` and
-  `AUTODEV_AGENT_ROLE` in its environment), `autodev_routed` when the host
-  names an `autodev/<alias>` model served through the AutoDev router (the
-  Codex root and the roles projected into Codex), and `unmanaged` otherwise.
+  `AUTODEV_AGENT_ROLE` in its environment), `enrolled_root` when the hook
+  runs under AutoDev's Codex projection (every command in
+  `$CODEX_HOME/hooks.json` carries `--client=codex`; the session is the
+  orchestrator whatever model it runs), and `unmanaged` otherwise.
   The role sandbox, the orchestrator git-history policy and the file-surface
-  refusal apply only to `runtime` and `autodev_routed` sessions; an
+  refusal apply only to `runtime` and `enrolled_root` sessions; an
   `unmanaged` session has no AutoDev role and is never governed. Within an
   AutoDev session a role the contract does not declare still fails closed as
   read-only, and a child thread reporting a write-capable role cannot widen a

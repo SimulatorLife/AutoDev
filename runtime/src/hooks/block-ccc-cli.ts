@@ -282,7 +282,10 @@ export function evaluatePreToolUse(rawInput: string): {
   return { blocked: false };
 }
 
-export function runBlockCccCli(raw = readFileSync(0, "utf8")): number {
+export function runBlockCccCli(
+  raw = readFileSync(0, "utf8"),
+  arguments_: readonly string[] = process.argv.slice(2)
+): number {
   const result = evaluatePreToolUse(raw);
   if (result.blocked) {
     const reason = result.reason ?? REDIRECTION_MESSAGE;
@@ -290,7 +293,7 @@ export function runBlockCccCli(raw = readFileSync(0, "utf8")): number {
     if (parsed) {
       const command = extractCommandString(parsed);
       const call = extractHookToolCall(parsed);
-      const context = extractHookContext(parsed);
+      const context = extractHookContext(parsed, process.env, arguments_);
       logPreToolUseDenial({
         hook: "block-ccc-cli",
         policy: "block-ccc-cli",
