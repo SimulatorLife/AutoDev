@@ -200,6 +200,87 @@ test("a live backend's task is not reconciled by a sibling backend", async () =>
   }
 });
 
+test("task IDs cannot address another scope or escape the task directory", async () => {
+  const root = directoryFixture();
+  const directory = path.join(root, "tasks");
+  const siblingDirectory = path.join(root, "sibling");
+  try {
+    const store = new DurableCommandTaskStore({
+      directory,
+      authorize: () => {}
+    });
+    const sibling = new DurableCommandTaskStore({
+      directory: siblingDirectory,
+      authorize: () => {}
+    });
+    const task = await sibling.createTask({ ttl: 600_000 }, 1, request);
+    const traversal = `../sibling/${task.taskId}`;
+    assert.equal(await store.getTask(traversal), null);
+    await assert.rejects(store.getTaskResult(traversal), /not found/u);
+    await assert.rejects(
+      store.updateTaskStatus(traversal, "cancelled"),
+      /not found/u
+    );
+    store.interrupt(traversal, "not authorized");
+    assert.equal((await sibling.getTask(task.taskId))?.status, "working");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a sibling backend may read a task but cannot mutate its lifecycle", async () => {
+  const directory = directoryFixture();
+  try {
+    const owner = new DurableCommandTaskStore({
+      directory,
+      authorize: () => {}
+    });
+    const task = await owner.createTask({ ttl: 600_000 }, 1, request);
+    const sibling = new DurableCommandTaskStore({
+      directory,
+      authorize: () => {},
+      cancel: async () => assert.fail("a sibling cannot cancel the owner")
+    });
+    assert.equal((await sibling.getTask(task.taskId))?.status, "working");
+    await assert.rejects(
+      sibling.updateTaskStatus(task.taskId, "cancelled"),
+      /another backend/u
+    );
+    await assert.rejects(
+      sibling.storeTaskResult(task.taskId, "completed", { content: [] }),
+      /another backend/u
+    );
+    sibling.interrupt(task.taskId, "not the owner");
+    assert.equal((await owner.getTask(task.taskId))?.status, "working");
+    await owner.storeTaskResult(task.taskId, "completed", { content: [] });
+    assert.equal((await sibling.getTask(task.taskId))?.status, "completed");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("cancellation cannot overwrite a terminal result published during cleanup", async () => {
+  const directory = directoryFixture();
+  try {
+    const gate = Promise.withResolvers<void>();
+    const store = new DurableCommandTaskStore({
+      directory,
+      authorize: () => {},
+      cancel: () => gate.promise
+    });
+    const task = await store.createTask({ ttl: 600_000 }, 1, request);
+    const cancellation = store.updateTaskStatus(task.taskId, "cancelled");
+    const rejected = assert.rejects(cancellation, /terminal status/u);
+    store.interrupt(task.taskId, "Cleanup uncertain.");
+    gate.resolve();
+    await rejected;
+    assert.equal((await store.getTask(task.taskId))?.status, "failed");
+    assert.equal((await store.getTaskResult(task.taskId)).isError, true);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("the task store is bounded by count and by retention", async () => {
   const directory = directoryFixture();
   try {

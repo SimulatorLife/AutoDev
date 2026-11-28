@@ -24,6 +24,17 @@ test("ESLint ignores generated probe, scratch, and staged Next artifacts", async
 
   try {
     const eslint = new ESLint({ cwd: repositoryRoot });
+    // Do not create or inspect files in the protected Codex configuration.
+    assert.equal(
+      await eslint.isPathIgnored(
+        path.join(repositoryRoot, ".codex", "generated.ts")
+      ),
+      true
+    );
+    assert.equal(
+      await eslint.isPathIgnored(path.join(repositoryRoot, ".codex")),
+      true
+    );
     for (const source of sources) {
       assert.equal(await eslint.isPathIgnored(source), true, source);
     }

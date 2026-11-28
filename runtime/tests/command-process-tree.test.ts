@@ -394,7 +394,7 @@ test(
 );
 
 test(
-  "normal completion reaps an observed detached descendant but allows awaited detached work",
+  "normal completion reaps an observed detached descendant holding inherited output pipes",
   {
     skip: process.platform !== "darwin" || !existsSync(SANDBOX)
   },
@@ -406,11 +406,11 @@ test(
     const script = [
       'const { spawn } = require("node:child_process");',
       'const { writeFileSync } = require("node:fs");',
-      'const leftover = spawn("/bin/sleep", ["120"], { detached: true, stdio: "ignore" });',
+      'const leftover = spawn("/bin/sleep", ["120"], { detached: true, stdio: ["ignore", "inherit", "inherit"] });',
       'leftover.unref();',
       `writeFileSync(${JSON.stringify(pidFile)}, String(leftover.pid));`,
       'const work = spawn("/bin/sleep", ["1"], { detached: true, stdio: "ignore" });',
-      'work.on("exit", (code, signal) => { if (code !== 0 || signal) process.exitCode = 1; });'
+      'work.on("exit", (code, signal) => { if (code !== 0 || signal) process.exitCode = 1; else console.log("awaited work finished"); });'
     ].join(" ");
     const definition = {
       ...fixture,
@@ -429,6 +429,9 @@ test(
     t.after(() => killIfAlive(leftover));
     assert.equal(result.status, "succeeded", result.stderr);
     assert.equal(result.exitCode, 0);
+    assert.match(result.stdout, /awaited work finished/u);
+    assert.equal(result.outputTruncated, false);
+    assert.ok(result.durationMs < definition.timeoutMs);
     assert.equal(isAlive(leftover), false);
   }
 );

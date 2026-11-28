@@ -39,6 +39,9 @@ export async function startRouterIngressProcess(
   if (!Number.isInteger(port) || port < 0 || port > 65_535) {
     throw new Error("Invalid ingress public port");
   }
+  // Every configuration error is raised before anything listens, so a bad
+  // setting cannot leave the supervisor's control socket open behind it.
+  const controlListener = configuredControlApiListener(port, environment);
   const drainTimeout = environment.AUTODEV_ROUTER_INGRESS_DRAIN_MS;
   const workerShutdownTimeout =
     environment.AUTODEV_ROUTER_INGRESS_WORKER_SHUTDOWN_MS;
@@ -66,7 +69,6 @@ export async function startRouterIngressProcess(
   });
   await supervisor.listen();
 
-  const controlListener = configuredControlApiListener(port, environment);
   let controlApiServer: Server | null = null;
   try {
     await ingress.listen(port, host);

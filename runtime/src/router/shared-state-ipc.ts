@@ -661,6 +661,10 @@ export class SharedRouterStateServer {
             });
         }
       });
+      // A worker that dies mid-reply resets or closes its end; the close
+      // that follows drops the client, so the error itself is only absorbed
+      // instead of taking the supervisor down as an uncaught EPIPE.
+      socket.on("error", () => undefined);
       socket.once("close", () => {
         this.clients.delete(socket);
       });
@@ -743,7 +747,10 @@ export class SharedRouterStateClient {
       });
       socket.once("error", reject);
     });
+    // The socket keeps the worker alive only while a call awaits its reply
+    // (see `call`), so an idle connection never holds a worker open.
     socket.unref();
+    socket.on("error", () => undefined);
     this.socket = socket;
     socket.on("data", (chunk: Buffer) => {
       buffer += chunk.toString("utf8");
@@ -809,10 +816,16 @@ export class SharedRouterStateClient {
       action,
       payload
     };
-    return await new Promise<unknown>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.socket!.write(`${JSON.stringify(request)}\n`);
-    });
+    const socket = this.socket;
+    socket.ref();
+    try {
+      return await new Promise<unknown>((resolve, reject) => {
+        this.pending.set(id, { resolve, reject });
+        socket.write(`${JSON.stringify(request)}\n`);
+      });
+    } finally {
+      if (this.pending.size === 0) socket.unref();
+    }
   }
 
   notify(action: string, payload: Record<string, unknown>): void {

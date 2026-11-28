@@ -313,6 +313,7 @@ interface PendingRpc {
   // Who may see the task this request creates or names.
   readonly taskOwner: string | null;
   readonly timer: NodeJS.Timeout;
+  readonly detachAbort: () => void;
   cancelled: boolean;
   resolve(message: JsonRecord): void;
   reject(error: Error): void;
@@ -924,6 +925,28 @@ class PooledBackendController {
     this.idleTimer.unref();
   }
 
+  private removePending(entry: PendingRpc): void {
+    this.pending.delete(entry.internalId);
+    clearTimeout(entry.timer);
+    entry.detachAbort();
+  }
+
+  private cancelPending(entry: PendingRpc): void {
+    if (this.pending.get(entry.internalId) !== entry) return;
+    entry.cancelled = true;
+    if (entry.createsTask) this.uncertainTaskBackend = entry.backend;
+    this.removePending(entry);
+    entry.backend.send({
+      jsonrpc: "2.0",
+      method: "notifications/cancelled",
+      params: { requestId: entry.internalId }
+    });
+    entry.resolve(
+      errorResponse(entry.clientId, "External MCP request cancelled")
+    );
+    this.armIdleTimer();
+  }
+
   private handleBackendMessage(
     backend: LiveBackend,
     message: JsonRecord | null
@@ -965,8 +988,7 @@ class PooledBackendController {
     const key = String(id);
     const pending = this.pending.get(key);
     if (!pending || pending.backend !== backend) return;
-    this.pending.delete(key);
-    clearTimeout(pending.timer);
+    this.removePending(pending);
     if (pending.cancelled) {
       this.armIdleTimer();
       return;
@@ -985,10 +1007,9 @@ class PooledBackendController {
       this.cachedInitialize = null;
       this.cachedTools = null;
     }
-    for (const [key, entry] of [...this.pending.entries()]) {
+    for (const entry of this.pending.values()) {
       if (entry.backend !== backend) continue;
-      this.pending.delete(key);
-      clearTimeout(entry.timer);
+      this.removePending(entry);
       entry.reject(new Error(reason));
     }
   }
@@ -1071,8 +1092,7 @@ class PooledBackendController {
                 const entry = this.pending.get(id);
                 if (entry && entry.backend === live) {
                   if (entry.createsTask) this.uncertainTaskBackend = live;
-                  this.pending.delete(id);
-                  clearTimeout(entry.timer);
+                  this.removePending(entry);
                   entry.resolve(
                     errorResponse(
                       entry.clientId,
@@ -1186,8 +1206,13 @@ class PooledBackendController {
     clientId: JsonRpcId,
     sessionId: string | null,
     timeoutMs: number,
-    taskOwner: string | null = null
+    taskOwner: string | null = null,
+    signal?: AbortSignal
   ): Promise<JsonRecord> {
+    if (signal?.aborted)
+      return Promise.resolve(
+        errorResponse(clientId, "External MCP request cancelled")
+      );
     const createsTask =
       method === "tools/call" &&
       isRecord(parameters) &&
@@ -1215,7 +1240,7 @@ class PooledBackendController {
       const timer = setTimeout(() => {
         const entry = this.pending.get(internalId);
         if (!entry) return;
-        this.pending.delete(internalId);
+        this.removePending(entry);
         if (entry.createsTask) this.uncertainTaskBackend = backend;
         if (!entry.cancelled) {
           backend.send({
@@ -1243,6 +1268,10 @@ class PooledBackendController {
         void backend.close().catch(() => {});
       }, timeoutMs);
       timer.unref();
+      const onAbort = () => {
+        const entry = this.pending.get(internalId);
+        if (entry) this.cancelPending(entry);
+      };
       this.pending.set(internalId, {
         backend,
         internalId,
@@ -1254,10 +1283,12 @@ class PooledBackendController {
         taskOwner,
         ...(progressToken.success && { progressToken: progressToken.data }),
         timer,
+        detachAbort: () => signal?.removeEventListener("abort", onAbort),
         cancelled: false,
         resolve,
         reject
       });
+      signal?.addEventListener("abort", onAbort, { once: true });
       backend.send({
         jsonrpc: "2.0",
         id: internalId,
@@ -1469,22 +1500,13 @@ class PooledBackendController {
     );
     const [entry] = matches;
     if (!entry || matches.length !== 1) return;
-    entry.cancelled = true;
-    if (entry.createsTask) this.uncertainTaskBackend = entry.backend;
-    clearTimeout(entry.timer);
-    entry.backend.send({
-      jsonrpc: "2.0",
-      method: "notifications/cancelled",
-      params: { requestId: entry.internalId }
-    });
-    this.pending.delete(entry.internalId);
-    entry.resolve(errorResponse(requestId, "External MCP request cancelled"));
-    this.armIdleTimer();
+    this.cancelPending(entry);
   }
 
   async handleRequest(
     message: JsonRecord,
     sessionId: string | null,
+    signal?: AbortSignal,
     // Set when the caller's scope already established who owns its tasks.
     ownerOverride?: string,
     // The admission facts the caller verified, for the call's span.
@@ -1522,6 +1544,8 @@ class PooledBackendController {
     }
 
     if (id === null) return null;
+    if (signal?.aborted)
+      return errorResponse(id, "External MCP request cancelled");
 
     if (method === "ping") {
       return { jsonrpc: "2.0", id, result: {} };
@@ -1602,7 +1626,8 @@ class PooledBackendController {
             id,
             sessionId,
             this.toolCallTimeoutMs,
-            owner
+            owner,
+            signal
           );
           const resultObject = isRecord(response.result)
             ? response.result
@@ -1671,7 +1696,8 @@ class PooledBackendController {
         id,
         sessionId,
         this.requestTimeoutMs,
-        owner
+        owner,
+        signal
       );
       return method === "tasks/list"
         ? this.ownedTaskList(response, owner, id)
@@ -1693,9 +1719,8 @@ class PooledBackendController {
     for (const sessionId of [...this.sessions.keys()]) {
       this.deleteSession(sessionId);
     }
-    for (const [key, entry] of [...this.pending.entries()]) {
-      this.pending.delete(key);
-      clearTimeout(entry.timer);
+    for (const entry of this.pending.values()) {
+      this.removePending(entry);
       entry.reject(new Error("Backend pool shutting down"));
     }
     const starting = this.starting;
@@ -1865,7 +1890,8 @@ class ScopedController {
 
   async handleRequest(
     message: JsonRecord,
-    sessionId: string | null
+    sessionId: string | null,
+    signal?: AbortSignal
   ): Promise<JsonRecord | null> {
     const method = message.method;
     if (method === "notifications/cancelled") {
@@ -1879,17 +1905,21 @@ class ScopedController {
       if (owner === null) return null;
       await this.scopes
         .get(resolution.key)
-        ?.handleRequest(resolution.message, sessionId, owner);
+        ?.handleRequest(resolution.message, sessionId, signal, owner);
       return null;
     }
     if (
       typeof method !== "string" ||
       (method !== "tools/call" && !method.startsWith("tasks/"))
     )
-      return this.catalogue.handleRequest(message, sessionId);
+      return this.catalogue.handleRequest(message, sessionId, signal);
     const rawId = message.id;
     const id =
       typeof rawId === "string" || typeof rawId === "number" ? rawId : null;
+    if (signal?.aborted)
+      return id === null
+        ? null
+        : errorResponse(id, "External MCP request cancelled");
     const resolution = this.resolve(message);
     if (typeof resolution === "string")
       return id === null ? null : errorResponse(id, resolution);
@@ -1904,6 +1934,7 @@ class ScopedController {
     return controller.handleRequest(
       resolution.message,
       sessionId,
+      signal,
       resolution.owner,
       resolution.correlation
     );
@@ -2208,12 +2239,33 @@ export async function startChatgptBackendPool(
         return;
       }
 
+      // The HTTP response owns this invocation, not the session's SSE
+      // stream or another request with the same client JSON-RPC ID.
+      const invocation = new AbortController();
+      const onClose = () => {
+        if (!res.writableFinished) invocation.abort();
+      };
+      res.once("close", onClose);
+      if (res.destroyed) invocation.abort();
       const responses: JsonRecord[] = [];
-      for (const message of messages) {
-        // Sequential per-POST message ordering matches JSON-RPC batch semantics.
-        // eslint-disable-next-line no-await-in-loop -- preserve message order within one POST batch
-        const reply = await controller.handleRequest(message, session.id);
-        if (reply) responses.push(reply);
+      try {
+        for (const message of messages) {
+          if (invocation.signal.aborted) break;
+          // Sequential per-POST message ordering matches JSON-RPC batch semantics.
+          // eslint-disable-next-line no-await-in-loop -- preserve message order within one POST batch
+          const reply = await controller.handleRequest(
+            message,
+            session.id,
+            invocation.signal
+          );
+          if (reply) responses.push(reply);
+        }
+      } finally {
+        res.off("close", onClose);
+      }
+      if (invocation.signal.aborted) {
+        if (hasInitialize) controller.deleteSession(session.id);
+        return;
       }
 
       // If initialization failed, do not retain an uninitialized session entry.

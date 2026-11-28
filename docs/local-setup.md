@@ -62,6 +62,15 @@ still collect it. Records are visible only to the session that created them and
 are dropped once their retention window passes. A task id is a handle, not a
 credential: a session that presents another session's task id is refused.
 
+If the backend pool observes an unfinished HTTP response disconnecting, it
+cancels only that response's pending RPC using the translated backend request
+ID. A native task already acknowledged by the backend remains retained;
+unconfirmed task creation retains its existing uncertainty boundary. This
+does not prove that every tunnel or client timeout propagates disconnects
+through Supergateway, so long Commands still require native task lifecycle
+acceptance. Do not retry a command whose outcome is unknown or discard its
+workspace lease.
+
 Verifying the Commands surface after an install uses the existing Control API
 reads, not a separate dashboard. `GET /control/mcps` carries the Commands
 backend's own entry with the approval state of each Runtime home -- `approved`,
@@ -441,6 +450,19 @@ incremental semantic index in the workspace's `.cocoindex_code/` directory and
 is used only when the relevant concept or implementation location remains
 unknown after graph discovery. Its MCP search refreshes changed files; `ccc init`
 is needed only if the MCP reports that the repository is not initialized.
+
+`pnpm clean` deliberately prunes `.cocoindex_code/` from both artifact
+cleanup walks. Unlike a build cache, this directory holds live daemon-owned
+incremental state as well as project settings. Deleting it while the daemon
+is running can leave semantic search unusable even with refresh enabled
+(see [CocoIndex issue #210](https://github.com/cocoindex-io/cocoindex-code/issues/210)).
+For an already broken index, the operator should first run `ccc doctor` in
+the affected checkout. If the target index is missing or stale and ordinary
+indexing fails, use the upstream supported recovery: `ccc reset -f` followed
+by `ccc index` in that checkout. This resets generated index data, not source
+code; do not use `reset --all`, remove the settings, or reset other projects.
+Agents continue using the authorized MCP interface; these are operator
+maintenance commands, not new agent shell permissions.
 
 The CodeGraphContext allowlist, in every code-capable role TOML and (through
 the orchestrator role) the root config, exposes only `list_indexed_repositories`,

@@ -105,11 +105,7 @@ import {
   MCP_SERVER_FILESYSTEM,
   MCP_SERVER_XACPX
 } from "../shared/tool-names.ts";
-import { XacpxSessionManager } from "../xacpx/manager.ts";
-import {
-  startXacpxOrchestrationIpcServer,
-  type XacpxOrchestrationIpcHandle
-} from "../xacpx/orchestration-ipc.ts";
+import { withXacpxDiscoveryProbe } from "../xacpx/discovery-probe.ts";
 import {
   approvedCommandCataloguePath,
   installedCommandCatalogueDigest
@@ -603,87 +599,71 @@ async function discoverServerTools(
   backendResolver: typeof externalMcpBackend,
   role: string
 ): Promise<string[]> {
-  const isReadOnly = roleContract(role).readOnly === true;
-  const client = new Client({
-    name: "autodev-mcp-gateway-policy-discovery",
-    version: "1.0.0"
-  });
-  // `xacpx mcp-stdio` validates coordinator registration over its orchestration
-  // Unix socket even during `tools/list`. For offline/install-time discovery,
-  // bind a disposable in-process IPC server on a short temp socket so real
-  // `@ganglion/xacpx` tool discovery succeeds without requiring or mutating a
-  // running router daemon.
-  let probeXacpxIpc: XacpxOrchestrationIpcHandle | undefined;
-  let probeGatewayEnvironment = gatewayEnvironment;
-  if (server === MCP_SERVER_XACPX && descriptor.url === undefined) {
-    const probeSocket = path.join(
-      "/tmp",
-      `autodev-xacpx-probe-${randomBytes(8).toString("hex")}.sock`
-    );
-    probeXacpxIpc = await startXacpxOrchestrationIpcServer({
-      socketPath: probeSocket,
-      manager: new XacpxSessionManager(),
-      authorizedWorkspaceRoot: workspace,
-      repositoryRoot: paths.repositoryRoot
+  const discover = async (
+    discoveryEnvironment: Record<string, string>
+  ): Promise<string[]> => {
+    const isReadOnly = roleContract(role).readOnly === true;
+    const client = new Client({
+      name: "autodev-mcp-gateway-policy-discovery",
+      version: "1.0.0"
     });
-    probeGatewayEnvironment = {
-      ...gatewayEnvironment,
-      XACPX_ORCHESTRATION_SOCKET: probeSocket,
-      AUTODEV_XACPX_COORDINATOR_SESSION: "gateway:policy-probe"
-    };
-  }
-  const transport =
-    descriptor.url === undefined
-      ? (() => {
-          const backend = backendResolver(
-            server,
-            paths.repositoryRoot,
-            workspace,
-            node,
-            paths.home,
-            paths.codexHome,
-            {
-              role,
-              readOnly: isReadOnly,
-              runtimeSource: installedRuntimeSource(paths)
-            }
-          );
-          return new StdioClientTransport({
-            command: backend.command,
-            args: backend.args,
-            cwd: workspace,
-            env:
-              server === MCP_SERVER_FILESYSTEM
-                ? {
-                    HOME: workspace,
-                    PATH: "/usr/bin:/bin",
-                    LANG: "en_US.UTF-8"
-                  }
-                : probeGatewayEnvironment,
-            stderr: "pipe"
-          });
-        })()
-      : createRemoteMcpTransport(server, descriptor, environment);
-  try {
-    await client.connect(transport, { timeout: 20_000 });
-    const discovered: string[] = [];
-    await listPaginatedMcpTools(client, (tool) => {
-      if (
-        !isReadOnly ||
-        server === MCP_SERVER_FILESYSTEM ||
-        tool.annotations?.readOnlyHint === true
-      ) {
-        discovered.push(tool.name);
-      }
-    });
-    return [...new Set(discovered)];
-  } finally {
-    await Promise.allSettled([
-      client.close(),
-      transport.close(),
-      ...(probeXacpxIpc ? [probeXacpxIpc.close()] : [])
-    ]);
-  }
+    const transport =
+      descriptor.url === undefined
+        ? (() => {
+            const backend = backendResolver(
+              server,
+              paths.repositoryRoot,
+              workspace,
+              node,
+              paths.home,
+              paths.codexHome,
+              {
+                role,
+                readOnly: isReadOnly,
+                runtimeSource: installedRuntimeSource(paths)
+              }
+            );
+            return new StdioClientTransport({
+              command: backend.command,
+              args: backend.args,
+              cwd: workspace,
+              env:
+                server === MCP_SERVER_FILESYSTEM
+                  ? {
+                      HOME: workspace,
+                      PATH: "/usr/bin:/bin",
+                      LANG: "en_US.UTF-8"
+                    }
+                  : discoveryEnvironment,
+              stderr: "pipe"
+            });
+          })()
+        : createRemoteMcpTransport(server, descriptor, environment);
+    try {
+      await client.connect(transport, { timeout: 20_000 });
+      const discovered: string[] = [];
+      await listPaginatedMcpTools(client, (tool) => {
+        if (
+          !isReadOnly ||
+          server === MCP_SERVER_FILESYSTEM ||
+          tool.annotations?.readOnlyHint === true
+        ) {
+          discovered.push(tool.name);
+        }
+      });
+      return [...new Set(discovered)];
+    } finally {
+      await Promise.allSettled([client.close(), transport.close()]);
+    }
+  };
+  return server === MCP_SERVER_XACPX && descriptor.url === undefined
+    ? withXacpxDiscoveryProbe(
+        workspace,
+        paths.repositoryRoot,
+        gatewayEnvironment,
+        discover
+      )
+    : discover(gatewayEnvironment);
 }
 
 const reviewedCacheEntrySchema = z

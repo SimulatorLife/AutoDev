@@ -51,6 +51,7 @@ interface ActiveCommand {
   readonly controller: AbortController;
   done: Promise<void>;
   cancelling: boolean;
+  cleanupVerified: boolean;
 }
 
 export interface CommandsServerGrant {
@@ -74,6 +75,7 @@ export interface CommandsServerGrant {
   Existing Runtime admission owner must serialize across workspace sessions.
   */
   readonly tryAcquireWorkspace: () => CommandWorkspaceLease | null;
+  readonly describeWorkspaceBlock?: () => string;
 }
 
 /**
@@ -206,7 +208,7 @@ export function createCommandsMcpServer(
     authorize,
     cancel: async (taskId: string): Promise<void> => {
       const execution = active.get(taskId);
-      if (!execution) return;
+      if (!execution) throw new Error("Command is not active in this backend.");
       execution.cancelling = true;
       execution.controller.abort();
       // Do not release the lease or acknowledge cancellation before the
@@ -214,6 +216,10 @@ export function createCommandsMcpServer(
       // have descendants running, and reporting it as finished early would
       // let a second command start against the same workspace.
       await execution.done;
+      if (!execution.cleanupVerified)
+        throw new Error(
+          "Command cleanup is uncertain; workspace lease retained."
+        );
     }
   });
   const server = new McpServer(
@@ -260,19 +266,25 @@ export function createCommandsMcpServer(
           );
           const lease = grant.tryAcquireWorkspace();
           if (!lease)
-            throw new Error("Workspace already has an active command.");
+            throw new Error(
+              grant.describeWorkspaceBlock?.() ??
+                "Workspace command lease is unavailable."
+            );
+          let createdTaskId: string | undefined;
           try {
             authorize();
             const task = await extra.taskStore.createTask({
               ttl: definition.timeoutMs + RETENTION_MS,
               pollInterval: 1000
             });
+            createdTaskId = task.taskId;
             // Closing/revocation may have interleaved with task creation.
             // Never start an invocation after its admission has ended.
             authorize();
             const execution: ActiveCommand = {
               controller: new AbortController(),
               cancelling: false,
+              cleanupVerified: true,
               done: Promise.resolve()
             };
             active.set(task.taskId, execution);
@@ -290,7 +302,6 @@ export function createCommandsMcpServer(
             }, REVOCATION_CHECK_MS);
             revocationCheck.unref();
             execution.done = (async () => {
-              let cleanupVerified = true;
               try {
                 const started = performance.now();
                 let result: CommandResult;
@@ -308,7 +319,7 @@ export function createCommandsMcpServer(
                         execution.controller.signal,
                         (pid) => lease.noteCommand(pid),
                         () => {
-                          cleanupVerified = false;
+                          execution.cleanupVerified = false;
                         }
                       ),
                     extra._meta
@@ -328,8 +339,16 @@ export function createCommandsMcpServer(
                   };
                 }
                 if (execution.cancelling) {
-                  // The client cancelled the task, and the SDK's cancel path
-                  // owns the terminal state it reports.
+                  if (!execution.cleanupVerified || !isAuthorized()) {
+                    store.interrupt(
+                      task.taskId,
+                      execution.cleanupVerified
+                        ? "The command was aborted when the execution grant ended."
+                        : "Command cleanup is uncertain; workspace lease retained."
+                    );
+                  }
+                  // Otherwise the SDK's cancellation path owns the terminal
+                  // state, after verified cleanup.
                 } else if (isAuthorized()) {
                   // Only a command that succeeded is a completed task. Every
                   // other outcome keeps its own reason in the payload, and
@@ -354,12 +373,20 @@ export function createCommandsMcpServer(
                 clearInterval(revocationCheck);
                 extra.signal.removeEventListener("abort", abortRequest);
                 active.delete(task.taskId);
-                lease.release(cleanupVerified);
+                lease.release(execution.cleanupVerified);
               }
             })();
             return { task };
           } catch (error) {
-            lease.release();
+            try {
+              if (createdTaskId)
+                store.interrupt(
+                  createdTaskId,
+                  "Command admission ended before launch."
+                );
+            } finally {
+              lease.release();
+            }
             throw error;
           }
         },

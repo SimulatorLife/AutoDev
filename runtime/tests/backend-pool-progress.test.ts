@@ -181,3 +181,142 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     }
   }
 );
+
+test(
+  "disconnect cancels only the invocation on that HTTP response",
+  { timeout: 15_000 },
+  async (t) => {
+    const temporary = mkdtempDisposableSync(
+      path.join(tmpdir(), "autodev-pool-disconnect-")
+    );
+    const script = path.join(temporary.path, "backend.mjs");
+    writeFileSync(
+      script,
+      String.raw`import { createInterface } from "node:readline";
+const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\n");
+const pending = new Map();
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const request = JSON.parse(line);
+  if (request.method === "initialize") {
+    send({ id: request.id, result: {
+      protocolVersion: request.params.protocolVersion,
+      capabilities: { tools: {} },
+      serverInfo: { name: "disconnect-fixture", version: "1" }
+    } });
+  } else if (request.method === "tools/call") {
+    pending.set(request.params.arguments.label, request);
+    if (pending.size === 2) {
+      const first = pending.get("disconnect");
+      send({ method: "notifications/progress",
+        params: { progressToken: first.params._meta.progressToken, progress: 1, message: "both admitted" } });
+    }
+  } else if (request.method === "notifications/cancelled") {
+    if (request.params.requestId !== pending.get("disconnect").id) {
+      throw new Error("wrong invocation cancelled");
+    }
+    send({ id: pending.get("disconnect").id, result: { content: [{type:"text",text:"late"}] } });
+    send({ id: pending.get("survive").id, result: { content: [{type:"text",text:"survived"}] } });
+  }
+});
+`
+    );
+    const disconnect = new AbortController();
+    const streamAbort = new AbortController();
+    let pool: Awaited<ReturnType<typeof startChatgptBackendPool>> | undefined;
+    try {
+      pool = await startChatgptBackendPool(
+        {
+          version: 1,
+          servers: {
+            fixture: {
+              kind: "stdio",
+              server: "fixture",
+              command: process.execPath,
+              args: [script],
+              cwd: temporary.path,
+              tools: ["echo"]
+            }
+          }
+        },
+        { gatewayEnv: {}, toolCallTimeoutMs: 60_000 }
+      );
+      const url = `http://127.0.0.1:${pool.port}/mcp/fixture`;
+      const headers = {
+        authorization: `Bearer ${pool.token}`,
+        "content-type": "application/json"
+      };
+      const request = (
+        session: string | null,
+        body: unknown,
+        signal = t.signal
+      ) =>
+        fetch(url, {
+          method: "POST",
+          headers: session ? { ...headers, "mcp-session-id": session } : headers,
+          body: JSON.stringify(body),
+          signal
+        });
+      const open = async () => {
+        const reply = await request(null, {
+          jsonrpc: "2.0",
+          id: 0,
+          method: "initialize",
+          params: { protocolVersion: "2025-03-26", capabilities: {} }
+        });
+        const session = reply.headers.get("mcp-session-id");
+        assert.ok(session);
+        assert.ok((await reply.json()).result);
+        return session;
+      };
+      const [first, second] = await Promise.all([open(), open()]);
+      const stream = await fetch(url, {
+        headers: {
+          ...headers,
+          "mcp-session-id": first,
+          accept: "text/event-stream"
+        },
+        signal: AbortSignal.any([streamAbort.signal, t.signal])
+      });
+      const reader = stream.body!.getReader();
+      const call = (session: string, label: string, signal?: AbortSignal) =>
+        request(
+          session,
+          {
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: {
+              name: "echo",
+              arguments: { label },
+              _meta: { progressToken: 0 }
+            }
+          },
+          signal
+        );
+      const abandoned = assert.rejects(
+        call(first, "disconnect", AbortSignal.any([disconnect.signal, t.signal]))
+      );
+      const surviving = call(second, "survive");
+      void surviving.catch(() => undefined);
+      let received = "";
+      const decoder = new TextDecoder();
+      while (!received.includes("both admitted")) {
+        const chunk = await reader.read();
+        assert.equal(chunk.done, false);
+        received += decoder.decode(chunk.value, { stream: true });
+      }
+      disconnect.abort();
+      await abandoned;
+      const reply = await surviving;
+      assert.equal((await reply.json()).result.content[0].text, "survived");
+      assert.equal(pool.stats().fixture?.activeCalls, 0);
+      assert.equal(pool.stats().fixture?.spawns, 1);
+      await reader.cancel();
+    } finally {
+      disconnect.abort();
+      streamAbort.abort();
+      await pool?.close();
+      temporary.remove();
+    }
+  }
+);

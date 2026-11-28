@@ -868,6 +868,38 @@ The source now checks exact byte length and regular-file status before
 reading candidate duplicates; it does not skip a same-sized protected file
 or relax the sandbox. Re-run to verify this independent hypothesis.
 
+### Bounded output settlement and task ownership
+
+**2026-11-27 follow-up (source implemented; live acceptance pending).**
+The executor now bounds the wait for Execa output settlement to one second
+after its process-tree cleanup. A descendant missed by the observer can
+retain inherited output descriptors after root exit. When the grace expires,
+the executor closes its read streams, reports an infrastructure error with
+truncated output, and notifies admission to retain the workspace lease.
+This bounds the caller's wait without claiming that a missed descendant was
+terminated. Successful settlement preserves actual output and exit status.
+
+The durable task store validates its generated 32-character hexadecimal
+task IDs before resolving record paths, checks that the on-disk ID matches
+the filename, and restricts mutation to the store instance that created
+the invocation. A sibling backend can read authorized retained results but
+cannot claim to have cancelled another backend's running command.
+Cancellation re-reads and re-authorizes the record after awaiting cleanup;
+it cannot overwrite a terminal state or resurrect an expired task. The
+server refuses to acknowledge cancellation when the command is not active
+locally or cleanup is uncertain, records interrupted admissions as failed,
+and preserves the existing fail-closed lease behavior.
+
+Regression fixtures cover traversal across task scopes, sibling mutation,
+terminal-state races during cancellation, and successful cleanup of an
+observed detached descendant retaining inherited output pipes. Language
+server diagnostics report zero errors in the five affected TypeScript
+files. The installed Commands interface refused Git status with
+`Workspace already has an active command.` before and after this pass.
+No lease was forcibly released. The current test suite and macOS/gateway
+acceptance remain pending, as does stronger event-driven process identity
+and orphan tracking.
+
 ### The network boundary, proved against the operating system
 
 The profile names the one network peer a dependency install may reach: the
@@ -940,6 +972,47 @@ registration. These changes still require execution on the qualified host;
 the previous successful lease suites are historical evidence, not proof
 of this revision. Snapshot observation still has the residual described
 under Descendant termination.
+
+### Lease recovery diagnostics and serialization
+
+**2026-11-27 follow-up (source implemented; installed acceptance pending).**
+The installed Commands interface still refuses Git status with
+`Workspace already has an active command.` The private run directory is
+not readable through the agent's authorized filesystem tools, so this
+observation does not identify the actual lease holder or establish that
+the workspace is idle.
+
+The operator listing now reports explicit settlement state (settled,
+uncertain, unrecorded or unreadable) alongside holder and root liveness.
+Uncertain cleanup writes a durable diagnostic marker but never authorizes
+reclaim. Admission distinguishes that condition from a live holder or
+unavailable lease without exposing private paths or command output.
+Lease keys are validated without lossy rewriting; lease reads are bounded,
+descriptor-based, nonblocking, no-follow and require a private regular file
+owned by the operator. Partial records, symlinks and oversized records
+cannot authorize deletion.
+
+Automatic and operator recovery now share an exclusive per-lease recovery
+guard. Revalidate the observed record and both process identities after
+acquiring it, then remove the lock. This serializes cooperating recovery
+attempts so a slower reclaimer cannot unlink a newly acquired lease.
+Even explicit force refuses a live recorded root or holder.
+
+Run `pnpm autodev -- lease list` from the repository to inspect the current
+state home and lease key. Only after verifying the workspace and its
+descendants are idle may the operator release an unsettled readable lease
+with `pnpm autodev -- lease release <workspace-key> --force`. An interrupted
+recovery may leave an empty `command-<workspace-key>.lock.recovery` directory
+in the reported run directory. That guard blocks further recovery, not
+normal acquisition if the lease is absent. After quiescing all Commands
+brokers and confirming no recovery is in progress, the operator may remove
+only that empty guard directory with `rmdir` and reassess the lease. Never
+remove a live lease or a recovery guard based on age alone.
+
+Regression fixtures cover retained uncertainty, refusal to force-release
+a live root, exact key handling, unsafe and partial records, and competing
+recovery admission. Current macOS and installed gateway acceptance remain
+pending; no live lease was modified or force-released.
 
 ### A real dependency installation, proved against the operating system
 

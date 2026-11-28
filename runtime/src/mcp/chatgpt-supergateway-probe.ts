@@ -1,8 +1,7 @@
 import { spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
 import { once } from "node:events";
-import { existsSync, readFileSync } from "node:fs";
-import { createConnection, createServer } from "node:net";
+import { readFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { availableParallelism } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -17,11 +16,7 @@ import {
 } from "../config/render-chatgpt-supergateway.ts";
 import { isEntryPoint } from "../shared/entry-point.ts";
 import { MCP_SERVER_XACPX } from "../shared/tool-names.ts";
-import { XacpxSessionManager } from "../xacpx/manager.ts";
-import {
-  startXacpxOrchestrationIpcServer,
-  type XacpxOrchestrationIpcHandle
-} from "../xacpx/orchestration-ipc.ts";
+import { withXacpxDiscoveryProbe } from "../xacpx/discovery-probe.ts";
 import {
   CHATGPT_MCP_POOL_PORT_ENV,
   CHATGPT_MCP_POOL_TOKEN_ENV,
@@ -30,21 +25,6 @@ import {
   startChatgptBackendPool
 } from "./chatgpt-backend-pool.ts";
 import { createGatewayAdmission } from "./gateway-admission.ts";
-
-function isUnixSocketReachable(socketPath: string): Promise<boolean> {
-  if (!socketPath || !existsSync(socketPath)) return Promise.resolve(false);
-  return new Promise<boolean>((resolve) => {
-    const connection = createConnection(socketPath);
-    const finish = (ok: boolean): void => {
-      connection.removeAllListeners();
-      connection.destroy();
-      resolve(ok);
-    };
-    connection.setTimeout(500, () => finish(false));
-    connection.once("connect", () => finish(true));
-    connection.once("error", () => finish(false));
-  });
-}
 
 async function allocateLoopbackPort(): Promise<number> {
   const server = createServer();
@@ -167,6 +147,47 @@ export async function probeSupergateway(
   const config = supergatewayConfigSchema.parse(
     JSON.parse(readFileSync(configFile, "utf8"))
   );
+  const poolConfig = chatgptBackendPoolConfigSchema.parse(
+    JSON.parse(
+      readFileSync(
+        path.join(path.dirname(configFile), "backend-pool.json"),
+        "utf8"
+      )
+    )
+  );
+  const run = (probeEnvironment: Record<string, string>) =>
+    probeConfiguredSupergateway(
+      executable,
+      configFile,
+      config,
+      poolConfig,
+      probeEnvironment,
+      reportPhase
+    );
+  if (
+    Object.values(poolConfig.servers).some(
+      (spec) => spec.kind !== "remote" && spec.server === MCP_SERVER_XACPX
+    )
+  ) {
+    reportPhase("prepare XACPX discovery coordinator");
+    return withXacpxDiscoveryProbe(
+      environment.AUTODEV_XACPX_WORKSPACE || process.cwd(),
+      environment.AUTODEV_REPO_ROOT || process.cwd(),
+      environment,
+      run
+    );
+  }
+  return run(environment);
+}
+
+async function probeConfiguredSupergateway(
+  executable: string,
+  configFile: string,
+  config: ReturnType<typeof supergatewayConfigSchema.parse>,
+  poolConfig: ReturnType<typeof chatgptBackendPoolConfigSchema.parse>,
+  environment: Record<string, string>,
+  reportPhase: (phase: string) => void
+): Promise<void> {
   const surfaces = Object.entries(config.mcpServers).flatMap(
     ([name, surface]) =>
       "mcpServers" in surface ? [[name, surface] as const] : []
@@ -181,45 +202,13 @@ export async function probeSupergateway(
   if (!token) throw new Error("Supergateway API key file is empty");
 
   const probePort = await allocateLoopbackPort();
-  const poolConfigPath = path.join(
-    path.dirname(configFile),
-    "backend-pool.json"
-  );
-  reportPhase("prepare XACPX discovery coordinator");
-  let probeXacpxIpc: XacpxOrchestrationIpcHandle | undefined;
-  let effectiveEnvironment = environment;
-  if (
-    surfaces.some(([, surface]) =>
-      Object.hasOwn(surface.mcpServers, MCP_SERVER_XACPX)
-    ) &&
-    !(await isUnixSocketReachable(environment.XACPX_ORCHESTRATION_SOCKET ?? ""))
-  ) {
-    const probeSocket = path.join(
-      "/tmp",
-      `autodev-xacpx-probe-${randomBytes(8).toString("hex")}.sock`
-    );
-    probeXacpxIpc = await startXacpxOrchestrationIpcServer({
-      socketPath: probeSocket,
-      manager: new XacpxSessionManager(),
-      authorizedWorkspaceRoot: environment.AUTODEV_XACPX_WORKSPACE || process.cwd(),
-      repositoryRoot: environment.AUTODEV_REPO_ROOT || process.cwd()
-    });
-    effectiveEnvironment = {
-      ...environment,
-      XACPX_ORCHESTRATION_SOCKET: probeSocket,
-      AUTODEV_XACPX_COORDINATOR_SESSION: "chatgpt:policy-probe"
-    };
-  }
   // Every gateway member is a route on the sibling backend pool, admitting
   // local sessions exactly as the service does.
   reportPhase("start admitted backend pool");
-  const poolConfig = chatgptBackendPoolConfigSchema.parse(
-    JSON.parse(readFileSync(poolConfigPath, "utf8"))
-  );
   const pool: ChatgptBackendPoolHandle = await startChatgptBackendPool(
     poolConfig,
     {
-      gatewayEnv: effectiveEnvironment,
+      gatewayEnv: environment,
       secretEnv: environment,
       ...((localSurfaces.length > 0) && {
             admission: createGatewayAdmission({
@@ -234,7 +223,7 @@ export async function probeSupergateway(
     }
   );
   const gatewayEnvironment = {
-    ...effectiveEnvironment,
+    ...environment,
     [CHATGPT_MCP_POOL_PORT_ENV]: String(pool.port),
     [CHATGPT_MCP_POOL_TOKEN_ENV]: pool.token
   };
@@ -410,7 +399,6 @@ export async function probeSupergateway(
       }
     }
     await pool.close().catch(() => {});
-    if (probeXacpxIpc) await probeXacpxIpc.close().catch(() => {});
   }
 }
 

@@ -84,6 +84,9 @@ const baseIgnorePatterns = [
   // Generated from .rulesync/ by `rulesync generate`; the source is linted.
   ".agents/**",
   ".claude/**",
+  // Generated Codex settings can be unreadable inside the Commands sandbox.
+  // Prune the directory itself, not just files reached during traversal.
+  ".codex/",
   ".github/skills/**"
 ];
 

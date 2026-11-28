@@ -18,6 +18,7 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  symlinkSync,
   utimesSync,
   writeFileSync
 } from "node:fs";
@@ -134,6 +135,43 @@ test("a settled lease whose holder and command are both gone is taken over", () 
   }
 });
 
+test("recovery cannot remove a lease while another recovery owns its guard", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "autodev-command-lease-"));
+  try {
+    const lease = createWorkspaceLease(root, WORKSPACE_KEY);
+    const lock = path.join(root, `command-${WORKSPACE_KEY}.lock`);
+    const guard = `${lock}.recovery`;
+    writeLeaseRecord(root, {
+      holder: exitedProcessId(),
+      command: exitedProcessId(),
+      settled: true
+    });
+    const original = readFileSync(lock, "utf8");
+    mkdirSync(guard, { mode: 0o700 });
+    assert.equal(inspectCommandLeases(root)[0]!.recoveryGuardPresent, true);
+    assert.equal(lease.tryAcquire(), null);
+    assert.match(lease.describeBlock(), /recovery/u);
+    assert.equal(
+      releaseCommandLease(root, WORKSPACE_KEY, { force: true }).released,
+      false
+    );
+    assert.equal(readFileSync(lock, "utf8"), original);
+    rmSync(guard, { recursive: true });
+    const held = lease.tryAcquire();
+    assert.ok(held);
+    assert.equal(existsSync(guard), false);
+    held.release();
+
+    // A guard alone does not prevent ordinary exclusive acquisition.
+    mkdirSync(guard, { mode: 0o700 });
+    const next = lease.tryAcquire();
+    assert.ok(next);
+    next.release();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("unsettled leases remain closed even after the holder and root exit", () => {
   const root = mkdtempSync(path.join(tmpdir(), "autodev-command-lease-"));
   try {
@@ -146,9 +184,11 @@ test("unsettled leases remain closed even after the holder and root exit", () =>
     const lock = path.join(root, `command-${WORKSPACE_KEY}.lock`);
     assert.equal(
       readFileSync(lock, "utf8"),
-      `holder=${process.pid}\ncommand=${command}\n`
+      `holder=${process.pid}\ncommand=${command}\nuncertain=1\n`
     );
+    assert.equal(inspectCommandLeases(root)[0]!.settlement, "uncertain");
     assert.equal(lease.tryAcquire(), null);
+    assert.match(lease.describeBlock(), /cleanup is uncertain/u);
     // Simulate the broker later exiting. Its root also exited, but the
     // unverified descendants may still be running.
     writeLeaseRecord(root, { holder: exitedProcessId(), command });
@@ -198,6 +238,9 @@ test("a lease whose command is still running is never taken over", () => {
       settled: true
     });
     assert.equal(lease.tryAcquire(), null);
+    const forced = releaseCommandLease(root, WORKSPACE_KEY, { force: true });
+    assert.equal(forced.released, false);
+    assert.match(forced.reason, /running command/u);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -231,6 +274,46 @@ test("a lease with an unreadable record is never taken over", () => {
   }
 });
 
+test("lease keys are exact and unsafe records never authorize removal", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "autodev-command-lease-"));
+  try {
+    const lease = createWorkspaceLease(root, WORKSPACE_KEY);
+    const lock = path.join(root, `command-${WORKSPACE_KEY}.lock`);
+    assert.throws(
+      () => releaseCommandLease(root, "../workspace-key", { force: true }),
+      /Invalid command workspace lease key/u
+    );
+    const target = path.join(root, "other-record");
+    writeFileSync(target, `holder=${exitedProcessId()}\nsettled=1\n`, {
+      mode: 0o600
+    });
+    symlinkSync(target, lock);
+    assert.equal(inspectCommandLeases(root)[0]!.settlement, "unreadable");
+    assert.equal(lease.tryAcquire(), null);
+    assert.equal(
+      releaseCommandLease(root, WORKSPACE_KEY, { force: true }).released,
+      false
+    );
+    assert.ok(existsSync(target));
+    rmSync(lock);
+    for (const content of [
+      `holder=${exitedProcessId()}\nsettled=1`,
+      "x".repeat(1025)
+    ]) {
+      writeFileSync(lock, content, { mode: 0o600 });
+      assert.equal(inspectCommandLeases(root)[0]!.settlement, "unreadable");
+      assert.equal(lease.tryAcquire(), null);
+      assert.equal(
+        releaseCommandLease(root, WORKSPACE_KEY, { force: true }).released,
+        false
+      );
+      rmSync(lock);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("the operator sees what each lease is, and releases only what is provable", () => {
   const root = mkdtempSync(path.join(tmpdir(), "autodev-command-lease-"));
   try {
@@ -247,6 +330,7 @@ test("the operator sees what each lease is, and releases only what is provable",
     assert.equal(reports[0]!.isHolderAlive, true);
     assert.equal(reports[0]!.command, process.pid);
     assert.equal(reports[0]!.isCommandAlive, true);
+    assert.equal(reports[0]!.settlement, "unrecorded");
 
     // A lease that is held is never released, however it is asked for.
     const refused = releaseCommandLease(root, WORKSPACE_KEY, { force: true });

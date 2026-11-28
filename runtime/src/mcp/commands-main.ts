@@ -11,15 +11,14 @@ import { createHash } from "node:crypto";
 import {
   closeSync,
   constants,
-  existsSync,
   fstatSync,
   lstatSync,
   mkdirSync,
   openSync,
   readdirSync,
-  readFileSync,
   readSync,
   realpathSync,
+  rmdirSync,
   statSync,
   unlinkSync,
   writeSync
@@ -324,6 +323,7 @@ interface CommandLeaseRecord {
   readonly holder: number;
   readonly command: number | null;
   readonly settled: boolean;
+  readonly cleanupUncertain: boolean;
 }
 
 /**
@@ -336,19 +336,9 @@ does not establish that its detached descendants have exited.
 */
 type CommandLeaseState = "held" | "abandoned" | "unverifiable";
 
-export interface CommandLeaseReport {
+export interface CommandLeaseReport extends CommandLeaseAssessment {
   readonly workspaceKey: string;
-  readonly state: CommandLeaseState;
-  readonly holder: number | null;
-  readonly command: number | null;
-  /*
-  Whether the holder is still running, as the operating system reports it.
-  */
-  readonly isHolderAlive: boolean;
-  /*
-  Whether the command is still running, as the operating system reports it.
-  */
-  readonly isCommandAlive: boolean;
+  readonly recoveryGuardPresent: boolean;
 }
 
 const LEASE_PROCESS_ID = /^[0-9]+$/u;
@@ -358,6 +348,19 @@ const LEASE_FILE_SUFFIX = ".lock";
 const LEASE_HOLDER_KEY = "holder";
 const LEASE_COMMAND_KEY = "command";
 const LEASE_SETTLED_KEY = "settled";
+const LEASE_UNCERTAIN_KEY = "uncertain";
+const LEASE_WORKSPACE_KEY = /^[A-Za-z0-9._-]{1,128}$/u;
+const MAX_LEASE_BYTES = 1024;
+const LEASE_RECOVERY_SUFFIX = ".recovery";
+
+function leaseRecoveryGuardPresent(lockPath: string): boolean {
+  try {
+    lstatSync(`${lockPath}${LEASE_RECOVERY_SUFFIX}`);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ENOENT";
+  }
+}
 
 /**
 Whether a process is still running.
@@ -386,16 +389,20 @@ function readLeaseRecord(content: string): CommandLeaseRecord | null {
   let holder: number | null = null;
   let command: number | null = null;
   let settled = false;
+  let cleanupUncertain = false;
+  // A partial write is not a settlement record.
+  if (!content.endsWith("\n")) return null;
   for (const line of content.split("\n")) {
     if (line.length === 0) continue;
     const separator = line.indexOf("=");
     if (separator <= 0) return null;
     const key = line.slice(0, separator);
     const value = line.slice(separator + 1);
-    if (settled) return null;
-    if (key === LEASE_SETTLED_KEY) {
+    if (settled || cleanupUncertain) return null;
+    if (key === LEASE_SETTLED_KEY || key === LEASE_UNCERTAIN_KEY) {
       if (value !== "1" || holder === null) return null;
-      settled = true;
+      settled = key === LEASE_SETTLED_KEY;
+      cleanupUncertain = key === LEASE_UNCERTAIN_KEY;
       continue;
     }
     if (!LEASE_PROCESS_ID.test(value)) return null;
@@ -412,18 +419,60 @@ function readLeaseRecord(content: string): CommandLeaseRecord | null {
     }
   }
   if (holder === null) return null;
-  return { holder, command, settled };
+  return { holder, command, settled, cleanupUncertain };
 }
 
 /**
 Read the lease file, if it is a readable regular file with a readable record.
 */
-function readLeaseFile(lockPath: string): CommandLeaseRecord | null {
+interface CommandLeaseSnapshot {
+  readonly record: CommandLeaseRecord;
+  readonly identity: ReturnType<typeof fstatSync>;
+}
+
+function readLeaseSnapshot(lockPath: string): CommandLeaseSnapshot | null {
+  let descriptor: number | undefined;
   try {
-    if (!lstatSync(lockPath).isFile()) return null;
-    return readLeaseRecord(readFileSync(lockPath, "utf8"));
+    descriptor = openSync(
+      lockPath,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+    );
+    const identity = fstatSync(descriptor);
+    if (
+      !identity.isFile() ||
+      identity.nlink !== 1 ||
+      (identity.mode & 0o077) !== 0 ||
+      (process.getuid && identity.uid !== process.getuid()) ||
+      identity.size > MAX_LEASE_BYTES
+    )
+      return null;
+    const buffer = Buffer.alloc(MAX_LEASE_BYTES + 1);
+    let bytes = 0;
+    while (bytes < buffer.length) {
+      const count = readSync(
+        descriptor,
+        buffer,
+        bytes,
+        buffer.length - bytes,
+        null
+      );
+      if (count === 0) break;
+      bytes += count;
+    }
+    const after = fstatSync(descriptor);
+    if (
+      bytes !== identity.size ||
+      after.size !== identity.size ||
+      after.mtimeMs !== identity.mtimeMs ||
+      after.ctimeMs !== identity.ctimeMs
+    )
+      return null;
+    const record = readLeaseRecord(buffer.toString("utf8", 0, bytes));
+    return record ? { record, identity } : null;
   } catch {
     return null;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
   }
 }
 
@@ -436,6 +485,7 @@ interface CommandLeaseAssessment {
   readonly command: number | null;
   readonly isHolderAlive: boolean;
   readonly isCommandAlive: boolean;
+  readonly settlement: "settled" | "uncertain" | "unrecorded" | "unreadable";
 }
 
 /**
@@ -450,7 +500,8 @@ function assessLease(
       holder: null,
       command: null,
       isHolderAlive: false,
-      isCommandAlive: false
+      isCommandAlive: false,
+      settlement: "unreadable"
     };
   }
   const isHolderAlive = isProcessAlive(record.holder);
@@ -465,7 +516,12 @@ function assessLease(
     holder: record.holder,
     command: record.command,
     isHolderAlive,
-    isCommandAlive
+    isCommandAlive,
+    settlement: record.settled
+      ? "settled"
+      : record.cleanupUncertain
+        ? "uncertain"
+        : "unrecorded"
   };
 }
 
@@ -476,9 +532,11 @@ function commandWorkspaceLeasePath(
   runDirectory: string,
   workspaceKey: string
 ): string {
+  if (!LEASE_WORKSPACE_KEY.test(workspaceKey))
+    throw new CommandsAdmissionError("Invalid command workspace lease key.");
   return path.join(
     runDirectory,
-    `${LEASE_FILE_PREFIX}${workspaceKey.replaceAll(/[^A-Za-z0-9._-]/gu, "_")}${LEASE_FILE_SUFFIX}`
+    `${LEASE_FILE_PREFIX}${workspaceKey}${LEASE_FILE_SUFFIX}`
   );
 }
 
@@ -504,28 +562,53 @@ Anything unproven leaves the lease in place: an uncertain overlap between two
 commands is worse than a workspace that stays closed until the operator has
 looked at it.
 */
-function reclaimAbandonedLease(lockPath: string): void {
-  let identity: ReturnType<typeof lstatSync>;
+function removeObservedLease(
+  lockPath: string,
+  snapshot: CommandLeaseSnapshot
+): boolean {
+  // Exclusive recovery ownership serializes automatic reclaim and operator
+  // release. Otherwise two reclaimers could both check an old inode, then
+  // the slower unlink could remove a newly acquired lease. Normal command
+  // release still belongs to the live holder and needs no recovery guard.
+  const recoveryPath = `${lockPath}${LEASE_RECOVERY_SUFFIX}`;
   try {
-    identity = lstatSync(lockPath);
+    mkdirSync(recoveryPath, { mode: 0o700 });
   } catch {
-    return;
-  }
-  // A record that cannot be read leaves the lease unverifiable, which is not
-  // the same as abandoned.
-  if (
-    !identity.isFile() ||
-    assessLease(readLeaseFile(lockPath)).state !== "abandoned"
-  ) {
-    return;
+    // A concurrent or interrupted recovery must not be overridden by age.
+    return false;
   }
   try {
-    const current = lstatSync(lockPath);
-    if (current.dev !== identity.dev || current.ino !== identity.ino) return;
+    const current = readLeaseSnapshot(lockPath);
+    if (
+      !current ||
+      current.identity.dev !== snapshot.identity.dev ||
+      current.identity.ino !== snapshot.identity.ino ||
+      current.identity.mtimeMs !== snapshot.identity.mtimeMs ||
+      current.identity.ctimeMs !== snapshot.identity.ctimeMs ||
+      current.identity.size !== snapshot.identity.size ||
+      JSON.stringify(current.record) !== JSON.stringify(snapshot.record)
+    )
+      return false;
+    const assessment = assessLease(current.record);
+    if (assessment.isHolderAlive || assessment.isCommandAlive) return false;
     unlinkSync(lockPath);
+    return true;
   } catch {
-    // The lease could not be removed, so it stays held.
+    return false;
+  } finally {
+    try {
+      rmdirSync(recoveryPath);
+    } catch {
+      // An interrupted recovery guard blocks later recovery, not normal
+      // acquisition of a new lease. Never recursively remove it.
+    }
   }
+}
+
+function reclaimAbandonedLease(lockPath: string): void {
+  const snapshot = readLeaseSnapshot(lockPath);
+  if (snapshot && assessLease(snapshot.record).state === "abandoned")
+    removeObservedLease(lockPath, snapshot);
 }
 
 /**
@@ -541,11 +624,25 @@ export function createWorkspaceLease(
   workspaceKey: string
 ): {
   tryAcquire(): CommandWorkspaceLease | null;
+  describeBlock(): string;
 } {
   const physicalRun = ensureCommandRunDirectory(runDirectory);
   const runIdentity = commandDirectoryIdentity(physicalRun, false);
   const lockPath = commandWorkspaceLeasePath(physicalRun, workspaceKey);
   return {
+    describeBlock(): string {
+      if (!sameDirectory(physicalRun, runIdentity))
+        return "Command state directory changed; execution refused.";
+      const snapshot = readLeaseSnapshot(lockPath);
+      const assessment = assessLease(snapshot?.record ?? null);
+      if (leaseRecoveryGuardPresent(lockPath))
+        return "Workspace lease recovery is already in progress or was interrupted; inspect it with autodev lease list.";
+      if (assessment.settlement === "uncertain")
+        return "Workspace command cleanup is uncertain; inspect the retained lease with autodev lease list.";
+      if (assessment.isHolderAlive || assessment.isCommandAlive)
+        return "Workspace already has an active command or a live lease holder.";
+      return "Workspace lease could not be acquired safely; inspect it with autodev lease list.";
+    },
     tryAcquire(): CommandWorkspaceLease | null {
       if (!sameDirectory(physicalRun, runIdentity)) return null;
       let descriptor = openLease(lockPath);
@@ -579,12 +676,14 @@ export function createWorkspaceLease(
           try {
             // Never mark uncertain cleanup as settled, even when the root
             // has already exited. Close the descriptor but retain the lock.
-            if (!cleanupVerified) return;
             if (!sameDirectory(physicalRun, runIdentity)) return;
             const current = lstatSync(lockPath);
             if (current.dev === identity.dev && current.ino === identity.ino) {
-              writeSync(descriptor, `${LEASE_SETTLED_KEY}=1\n`);
-              unlinkSync(lockPath);
+              const marker = cleanupVerified
+                ? LEASE_SETTLED_KEY
+                : LEASE_UNCERTAIN_KEY;
+              writeSync(descriptor, `${marker}=1\n`);
+              if (cleanupVerified) unlinkSync(lockPath);
             }
           } catch {
             // The lock is already gone or cannot safely be inspected.
@@ -610,7 +709,6 @@ export function inspectCommandLeases(
   const entries = readdirSync(physicalRun, { withFileTypes: true });
   for (const entry of entries) {
     if (
-      !entry.isFile() ||
       !entry.name.startsWith(LEASE_FILE_PREFIX) ||
       !entry.name.endsWith(LEASE_FILE_SUFFIX)
     ) {
@@ -620,10 +718,14 @@ export function inspectCommandLeases(
       LEASE_FILE_PREFIX.length,
       entry.name.length - LEASE_FILE_SUFFIX.length
     );
-    const assessment = assessLease(
-      readLeaseFile(path.join(physicalRun, entry.name))
-    );
-    reports.push({ workspaceKey, ...assessment });
+    if (!LEASE_WORKSPACE_KEY.test(workspaceKey)) continue;
+    const lockPath = path.join(physicalRun, entry.name);
+    const assessment = assessLease(readLeaseSnapshot(lockPath)?.record ?? null);
+    reports.push({
+      workspaceKey,
+      ...assessment,
+      recoveryGuardPresent: leaseRecoveryGuardPresent(lockPath)
+    });
   }
   return reports.sort((left, right) =>
     LEASE_KEY_ORDER.compare(left.workspaceKey, right.workspaceKey)
@@ -635,7 +737,7 @@ Release one lease, when the operator has decided it may be released.
 
 A settled lease whose holder and command are gone is released on that
 evidence. A readable lease without proof of settlement requires explicit
-operator confirmation after the holder has stopped.
+operator confirmation after both recorded processes have stopped.
 */
 export function releaseCommandLease(
   runDirectory: string,
@@ -644,48 +746,47 @@ export function releaseCommandLease(
 ): { readonly released: boolean; readonly reason: string } {
   const physicalRun = ensureCommandRunDirectory(runDirectory);
   const lockPath = commandWorkspaceLeasePath(physicalRun, workspaceKey);
-  const record = readLeaseFile(lockPath);
-  if (!record) {
+  const snapshot = readLeaseSnapshot(lockPath);
+  if (!snapshot) {
     return {
       released: false,
       reason: "there is no readable lease for that workspace"
     };
   }
-  const assessment = assessLease(record);
-  if (assessment.state === "held") {
+  const assessment = assessLease(snapshot.record);
+  if (assessment.isHolderAlive) {
     return {
       released: false,
       reason: "the lease is held by a running server"
     };
   }
-  if (assessment.state === "abandoned") {
-    reclaimAbandonedLease(lockPath);
-    if (existsSync(lockPath)) {
-      return {
-        released: false,
-        reason: "the lease changed while it was being released"
-      };
-    }
+  if (assessment.isCommandAlive) {
     return {
-      released: true,
-      reason: "the lease was settled and its holder and command are gone"
+      released: false,
+      reason: "the lease still names a running command"
     };
   }
-  if (!options.force) {
+  if (assessment.state !== "abandoned" && !options.force) {
     return {
       released: false,
       reason:
         "the lease cannot be verified as abandoned; release it with --force once you have checked the workspace"
     };
   }
-  try {
-    unlinkSync(lockPath);
-  } catch {
-    return { released: false, reason: "the lease could not be removed" };
+  if (!removeObservedLease(lockPath, snapshot)) {
+    return {
+      released: false,
+      reason: leaseRecoveryGuardPresent(lockPath)
+        ? "lease recovery is in progress or was interrupted"
+        : "the lease changed or could not be safely removed"
+    };
   }
   return {
     released: true,
-    reason: "the lease was released on the operator's authority"
+    reason:
+      assessment.state === "abandoned"
+        ? "the lease was settled and its holder and command are gone"
+        : "the lease was released on the operator's authority"
   };
 }
 
@@ -975,7 +1076,8 @@ async function startCommandsServer(resolved: ResolvedCommandsScope): Promise<{
       scope,
       taskDirectory: resolved.taskDirectory,
       isAuthorized: resolved.isAuthorized,
-      tryAcquireWorkspace: lease.tryAcquire
+      tryAcquireWorkspace: lease.tryAcquire,
+      describeWorkspaceBlock: lease.describeBlock
     });
     await created.server.connect(new StdioServerTransport());
   } catch (error) {

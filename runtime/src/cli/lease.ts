@@ -17,6 +17,7 @@ import {
 } from "@simulatorlife/autodev-runtime/shared/output";
 
 import {
+  type CommandLeaseReport,
   inspectCommandLeases,
   releaseCommandLease
 } from "../mcp/commands-main.ts";
@@ -60,14 +61,7 @@ The state is the point of the listing: `held` is a workspace that is busy,
 released, and `unverifiable` is one that cannot be judged and needs the
 operator's own eyes.
 */
-function describeLease(report: {
-  readonly workspaceKey: string;
-  readonly state: string;
-  readonly holder: number | null;
-  readonly isHolderAlive: boolean;
-  readonly command: number | null;
-  readonly isCommandAlive: boolean;
-}): string {
+function describeLease(report: CommandLeaseReport): string {
   const holder =
     report.holder === null
       ? "unknown"
@@ -76,7 +70,8 @@ function describeLease(report: {
     report.command === null
       ? "not recorded"
       : `${report.command}${report.isCommandAlive ? " (running)" : " (gone)"}`;
-  return `${report.workspaceKey}  ${report.state}  holder ${holder}  command ${command}`;
+  const recovery = report.recoveryGuardPresent ? "  recovery guard present" : "";
+  return `${report.workspaceKey}  ${report.state}  holder ${holder}  command ${command}  settlement ${report.settlement}${recovery}`;
 }
 
 const defaultLeaseBackend: LeaseCommandBackend = {

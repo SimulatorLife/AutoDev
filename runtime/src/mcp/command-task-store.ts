@@ -48,6 +48,7 @@ const MAX_RETAINED_TASKS = 32;
 How many tasks one listing page returns.
 */
 const PAGE_SIZE = 10;
+const TASK_ID = /^[a-f0-9]{32}$/u;
 /**
 The status a task that outlived its backend is reconciled to.
 */
@@ -112,7 +113,7 @@ function isProcessAlive(pid: number): boolean {
     return true;
   } catch (error) {
     // EPERM means the process exists but belongs to another user.
-    return (error as NodeJS.ErrnoException).code === "EPERM";
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
   }
 }
 
@@ -121,7 +122,9 @@ function readRecord(value: unknown): TaskRecord | null {
   const record = value as Partial<TaskRecord>;
   if (
     typeof record.sessionKey !== "string" ||
-    typeof record.ownerPid !== "number"
+    typeof record.ownerPid !== "number" ||
+    !Number.isSafeInteger(record.ownerPid) ||
+    record.ownerPid <= 0
   )
     return null;
   const task = record.task;
@@ -129,6 +132,7 @@ function readRecord(value: unknown): TaskRecord | null {
     !task ||
     typeof task !== "object" ||
     typeof task.taskId !== "string" ||
+    !TASK_ID.test(task.taskId) ||
     typeof task.status !== "string"
   )
     return null;
@@ -184,6 +188,9 @@ export class DurableCommandTaskStore implements TaskStore {
   private readonly authorize: () => void;
   private readonly cancel: ((taskId: string) => Promise<void>) | undefined;
   private readonly maxTasks: number;
+  // A sibling backend may read durable records, but only this store's
+  // own invocations may publish results or acknowledge cancellation.
+  private readonly ownedTasks = new Set<string>();
 
   constructor(options: DurableCommandTaskStoreOptions) {
     this.directory = path.resolve(options.directory);
@@ -206,6 +213,7 @@ export class DurableCommandTaskStore implements TaskStore {
   }
 
   private recordPath(taskId: string): string {
+    if (!TASK_ID.test(taskId)) throw new Error("Invalid command task ID.");
     return path.join(this.directory, `${taskId}.json`);
   }
 
@@ -250,17 +258,20 @@ export class DurableCommandTaskStore implements TaskStore {
     }
     const records: TaskRecord[] = [];
     for (const entry of entries) {
-      if (!entry.endsWith(".json")) continue;
-      const file = path.join(this.directory, entry);
+      const taskId = entry.slice(0, -5);
+      if (!entry.endsWith(".json") || !TASK_ID.test(taskId)) continue;
+      const file = this.recordPath(taskId);
       const record = this.read(file);
-      if (!record) {
+      if (!record || record.task.taskId !== taskId) {
         // A record that cannot be read is not trustworthy. Drop it rather
         // than serve a task whose state is unknown.
         rmSync(file, { force: true });
+        this.ownedTasks.delete(taskId);
         continue;
       }
       if (record.expiresAt !== null && record.expiresAt <= Date.now()) {
         rmSync(file, { force: true });
+        this.ownedTasks.delete(taskId);
         continue;
       }
       records.push(record);
@@ -280,11 +291,13 @@ export class DurableCommandTaskStore implements TaskStore {
   credential.
   */
   private find(taskId: string, sessionId?: string): TaskRecord | null {
+    if (!TASK_ID.test(taskId)) return null;
     const file = this.recordPath(taskId);
     const record = this.read(file);
-    if (!record) return null;
+    if (!record || record.task.taskId !== taskId) return null;
     if (record.expiresAt !== null && record.expiresAt <= Date.now()) {
       rmSync(file, { force: true });
+      this.ownedTasks.delete(taskId);
       return null;
     }
     if (record.sessionKey !== this.sessionKey(sessionId)) return null;
@@ -304,7 +317,7 @@ export class DurableCommandTaskStore implements TaskStore {
     // so it is removed once its writer is gone rather than kept forever.
     try {
       for (const entry of readdirSync(this.directory)) {
-        const writer = /\.json\.(\d+)\.\d+\.tmp$/u.exec(entry);
+        const writer = /^[a-f0-9]{32}\.json\.(\d+)\.\d+\.tmp$/u.exec(entry);
         if (writer && !isProcessAlive(Number(writer[1]))) {
           rmSync(path.join(this.directory, entry), { force: true });
         }
@@ -357,6 +370,7 @@ export class DurableCommandTaskStore implements TaskStore {
         ownerPid: process.pid,
         expiresAt: ttl === null ? null : Date.now() + ttl
       });
+      this.ownedTasks.add(task.taskId);
       return task;
     });
   }
@@ -395,6 +409,7 @@ export class DurableCommandTaskStore implements TaskStore {
           `Cannot store result for task ${taskId} in terminal status '${record.task.status}'. Task results can only be stored once.`
         );
       }
+      this.assertOwner(taskId, record);
       const task: Task = {
         ...record.task,
         status,
@@ -406,7 +421,13 @@ export class DurableCommandTaskStore implements TaskStore {
         result,
         expiresAt: task.ttl === null ? null : Date.now() + task.ttl
       });
+      this.ownedTasks.delete(taskId);
     });
+  }
+
+  private assertOwner(taskId: string, record: TaskRecord): void {
+    if (record.ownerPid !== process.pid || !this.ownedTasks.has(taskId))
+      throw new Error("Command task belongs to another backend.");
   }
 
   async updateTaskStatus(
@@ -415,19 +436,25 @@ export class DurableCommandTaskStore implements TaskStore {
     statusMessage?: string,
     sessionId?: string
   ): Promise<void> {
-    this.authorize();
-    const record = this.find(taskId, sessionId);
-    if (!record) throw new Error(`Task ${taskId} not found`);
-    if (isTerminal(record.task.status)) {
-      throw new Error(
-        `Cannot update task ${taskId} from terminal status '${record.task.status}' to '${status}'. Terminal states (completed, failed, cancelled) cannot transition to other states.`
-      );
-    }
+    const writableRecord = (): TaskRecord => {
+      this.authorize();
+      const record = this.find(taskId, sessionId);
+      if (!record) throw new Error(`Task ${taskId} not found`);
+      if (isTerminal(record.task.status)) {
+        throw new Error(
+          `Cannot update task ${taskId} from terminal status '${record.task.status}' to '${status}'. Terminal states (completed, failed, cancelled) cannot transition to other states.`
+        );
+      }
+      this.assertOwner(taskId, record);
+      return record;
+    };
+    let record = writableRecord();
     if (status === "cancelled" && this.cancel) {
       await this.cancel(taskId);
+      // Cancellation may have interleaved with a result, interruption,
+      // expiry or revocation. Never overwrite the newer record.
+      record = writableRecord();
     }
-    // The grant may have ended while the command was settling.
-    this.authorize();
     const task: Task = {
       ...record.task,
       status,
@@ -439,6 +466,7 @@ export class DurableCommandTaskStore implements TaskStore {
       task,
       expiresAt: task.ttl === null ? null : Date.now() + task.ttl
     });
+    if (isTerminal(status)) this.ownedTasks.delete(taskId);
   }
 
   /**
@@ -450,8 +478,16 @@ export class DurableCommandTaskStore implements TaskStore {
   result says the outcome is unknown.
   */
   interrupt(taskId: string, statusMessage: string): void {
+    if (!this.ownedTasks.has(taskId)) return;
     const record = this.read(this.recordPath(taskId));
-    if (!record || isTerminal(record.task.status)) return;
+    if (
+      !record ||
+      record.task.taskId !== taskId ||
+      record.ownerPid !== process.pid ||
+      (record.expiresAt !== null && record.expiresAt <= Date.now()) ||
+      isTerminal(record.task.status)
+    )
+      return;
     const task: Task = {
       ...record.task,
       status: "failed",
@@ -464,6 +500,7 @@ export class DurableCommandTaskStore implements TaskStore {
       result: interruptedResult(taskId),
       expiresAt: task.ttl === null ? null : Date.now() + task.ttl
     });
+    this.ownedTasks.delete(taskId);
   }
 
   listTasks(

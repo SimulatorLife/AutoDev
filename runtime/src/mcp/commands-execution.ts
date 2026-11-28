@@ -41,6 +41,11 @@ process group is valid during execution; cleanup belongs to the command's
 lifetime, not its process group.
 */
 const PROCESS_OBSERVATION_INTERVAL_MS = 250;
+/**
+After process cleanup, bound the remaining wait for inherited output pipes.
+A child not seen by the observer may still hold those descriptors open.
+*/
+const OUTPUT_SETTLEMENT_GRACE_MS = 1000;
 
 /**
 The stable key one workspace's command scope is named by.
@@ -668,16 +673,30 @@ export async function runApprovedCommand(
   let cleanupFailed = false;
   let recordingFailed = false;
   let cleanup: Promise<void> | undefined;
+  let settlementTimer: ReturnType<typeof setTimeout> | undefined;
+  const unsettled = Promise.withResolvers<undefined>();
   const terminate = (): Promise<void> => {
-    cleanup ??= tree.terminate().catch(() => {
-      cleanupFailed = true;
-      // A failed host process inspection must not leave the root running.
-      try {
-        child.kill("SIGKILL");
-      } catch {
-        // Cleanup is already uncertain; the caller must retain its lease.
-      }
-    });
+    cleanup ??= tree
+      .terminate()
+      .catch(() => {
+        cleanupFailed = true;
+        // A failed host process inspection must not leave the root running.
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // Cleanup is already uncertain; the caller retains its lease.
+        }
+      })
+      .then(() => {
+        settlementTimer = setTimeout(() => {
+          cleanupFailed = true;
+          // Stop waiting on descriptors whose writers may have escaped
+          // observation. Do not claim successful cleanup or release the lease.
+          unsettled.resolve(undefined);
+          child.stdout?.destroy();
+          child.stderr?.destroy();
+        }, OUTPUT_SETTLEMENT_GRACE_MS);
+      });
     return cleanup;
   };
   const requestTermination = (reason: "cancelled" | "timed_out"): void => {
@@ -711,7 +730,7 @@ export async function runApprovedCommand(
   if (signal.aborted) onAbort();
   const observations = setInterval(observe, PROCESS_OBSERVATION_INTERVAL_MS);
   observations.unref();
-  let result: Awaited<typeof child>;
+  let result: Awaited<typeof child> | undefined;
   try {
     try {
       if (onStarted && child.pid !== undefined) onStarted(child.pid);
@@ -721,14 +740,26 @@ export async function runApprovedCommand(
       recordingFailed = true;
       void terminate();
     }
-    result = await child;
+    result = await Promise.race([child, unsettled.promise]);
   } finally {
     clearTimeout(deadline);
     clearInterval(observations);
     signal.removeEventListener("abort", onAbort);
     // The exit listener, not promise settlement, proves root exit.
     await terminate();
+    clearTimeout(settlementTimer);
     if (cleanupFailed) onCleanupUncertain?.();
+  }
+  if (!result) {
+    return {
+      commandId,
+      status: "infrastructure_error",
+      exitCode: child.nodeChildProcess.exitCode,
+      durationMs: Math.round(performance.now() - started),
+      stdout: "",
+      stderr: "Command output did not settle after process cleanup; workspace lease retained.",
+      outputTruncated: true
+    };
   }
   const status: CommandResult["status"] = cleanupFailed || recordingFailed
     ? "infrastructure_error"
