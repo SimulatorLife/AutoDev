@@ -52,8 +52,9 @@ catalogue, approve exactly that revision on the command line (never through
 bash scripts/install.sh --approve-command-catalogue=sha256:<digest>
 ```
 
-A command that runs long enough to outlive the request is exposed as a native
-MCP task. Its lifecycle is kept in the Runtime home's private run directory,
+The Commands backend supports native MCP tasks for commands that outlive a
+request, provided the client and gateway negotiate and route the task lifecycle.
+Its lifecycle is kept in the Runtime home's private run directory,
 under `run/command-tasks/<role>-<workspace>/`, one owner-only record per task:
 a task that was still running when its backend ended is reconciled as **failed**
 with the reason, never as completed, and its command is never replayed, while a
@@ -70,6 +71,24 @@ does not prove that every tunnel or client timeout propagates disconnects
 through Supergateway, so long Commands still require native task lifecycle
 acceptance. Do not retry a command whose outcome is unknown or discard its
 workspace lease.
+
+Check the installed combined endpoint's native task listing separately from
+gateway readiness and tool discovery:
+
+```bash
+pnpm autodev -- gateway check-tasks
+```
+
+The operator-only check authenticates to the configured local external role
+surfaces, opens a fresh MCP session, and performs only `tasks/list` when it is
+advertised. It prints role, negotiated protocol and a bounded status (no task
+handles, results or credentials). An empty set of surfaces or any non-OK status
+exits nonzero. A `method-not-found` result is expected with the confirmed
+Supergateway 4.2.2 combined-task routing limitation; `not-advertised`,
+`listing-failed` and `initialize-failed` distinguish other failures.
+`unexpected-tasks` indicates an isolation concern, and `listing-incomplete`
+is not a pass. This is a loopback listing check only, not full lifecycle or
+tunnel acceptance. See [Commands migration](commands-mcp-migration.md#13-open-decisions-and-known-blockers).
 
 Verifying the Commands surface after an install uses the existing Control API
 reads, not a separate dashboard. `GET /control/mcps` carries the Commands

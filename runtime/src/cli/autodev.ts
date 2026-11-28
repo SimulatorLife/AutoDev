@@ -22,6 +22,11 @@ import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/
 import { unsupportedChoice } from "./command-choice.ts";
 import { runDiagnosticsCommand } from "./diagnostics.ts";
 import {
+  dispatchGatewayCommand,
+  GATEWAY_COMMANDS,
+  type GatewayCommandBackend
+} from "./gateway.ts";
+import {
   dispatchHookCommand,
   HOOK_NAMES,
   type HookCommandBackend
@@ -230,7 +235,8 @@ const COMMAND_ROWS: readonly (readonly [string, string])[] = [
   ["diagnostics", ""],
   ["playtest", PLAYTESTS_SUBCOMMANDS.join("|")],
   ["install", ""],
-  ["lease", LEASE_SUBCOMMANDS.join("|")]
+  ["lease", LEASE_SUBCOMMANDS.join("|")],
+  ["gateway", GATEWAY_COMMANDS.join("|")]
 ];
 
 const RENDER_ARGUMENTS: Record<
@@ -295,6 +301,7 @@ export interface CliBackends {
   install?: InstallCommandBackend;
   playtest?: PlaytestCommandBackend;
   lease?: LeaseCommandBackend;
+  gateway?: GatewayCommandBackend;
 }
 
 export function runMain(
@@ -352,6 +359,9 @@ export function runMain(
   }
   if (command === "lease") {
     return dispatchLeaseCommand(subcommand ?? "", rest, backends.lease);
+  }
+  if (command === "gateway") {
+    return dispatchGatewayCommand(subcommand ?? "", rest, backends.gateway);
   }
   if (command === "install") {
     const arguments_ = [subcommand, ...rest].filter(

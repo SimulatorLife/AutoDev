@@ -784,15 +784,20 @@ async function resolveReviewedFromRoleContract(
     realpathSync(installedRuntimeSource(paths)),
     workspace
   );
+  const contract = roleContract(role);
+  const requiresDelegation = contract.mcp.includes(MCP_SERVER_XACPX);
+  // A role that owns delegation must not indefinitely reuse an empty
+  // XACPX review from an earlier degraded installation. The reviewed
+  // inventory is distinct from the operator's external grant selection.
   if (
     prior?.policyFile === policyFile &&
     prior.policyDigest === policyDigest &&
-    prior.role === role
+    prior.role === role &&
+    (!requiresDelegation || (prior.reviewed[MCP_SERVER_XACPX]?.length ?? 0) > 0)
   ) {
     return { policyFile, policyDigest, reviewed: prior.reviewed };
   }
 
-  const contract = roleContract(role);
   const roleEnvironment = {
     ...gatewayEnvironment,
     ...chatgptRoleEnvironment(role, workspace)
@@ -927,17 +932,19 @@ async function resolveReviewedFromRoleContract(
     })
   );
 
-  return {
-    policyFile,
-    policyDigest,
-    reviewed: chatgptGrantsSchema.parse(
-      Object.fromEntries(
-        resolvedEntries.filter(
-          (entry): entry is readonly [string, string[]] => entry !== null
-        )
+  const reviewed = chatgptGrantsSchema.parse(
+    Object.fromEntries(
+      resolvedEntries.filter(
+        (entry): entry is readonly [string, string[]] => entry !== null
       )
     )
-  };
+  );
+  if (requiresDelegation && !reviewed[MCP_SERVER_XACPX]?.length) {
+    throw new Error(
+      `MCP gateway (${role}): required XACPX delegation inventory is empty; verify the canonical backend declaration and isolated MCP discovery before reconciling. Previous service configuration retained.`
+    );
+  }
+  return { policyFile, policyDigest, reviewed };
 }
 
 // ---------------------------------------------------------------------------

@@ -292,6 +292,7 @@ export const RUNTIME_MODULES = [
   "runtime/src/platform/console-build.ts",
   "runtime/src/platform/console-ensure.ts",
   "runtime/src/platform/install-materializer.ts",
+  "runtime/src/platform/mcp-gateway-task-listing.ts",
   "runtime/src/platform/install-command.ts",
   "runtime/src/platform/chatgpt-tunnel-install.ts",
   "runtime/src/platform/mcp-gateway-policy-review.ts",

@@ -79,6 +79,7 @@ const STUBS = {
   repo: { bootstrap: () => 0 },
   playtest: { init: () => 0, check: () => 0, conformance: () => 0 },
   install: { install: () => 0 },
+  gateway: { checkTasks: () => Promise.resolve([]) },
   lease: {
     location: "/tmp/run",
     list: () => [],
@@ -100,7 +101,8 @@ test("a command invoked without its subcommand names the values it accepts", () 
     ["hook", "hook", "session-start, or skill-read"],
     ["repo", "repo subcommand", "bootstrap"],
     ["playtest", "playtest subcommand", "init, check, or conformance"],
-    ["lease", "lease subcommand", "list, or release"]
+    ["lease", "lease subcommand", "list, or release"],
+    ["gateway", "gateway command", "check-tasks"]
   ] as const) {
     assert.throws(
       () => runMain([command], STUBS),
@@ -127,7 +129,8 @@ test("an unusable value reports what was accepted, not just what was typed", () 
     ["hook", "hook"],
     ["repo", "repo subcommand"],
     ["playtest", "playtest subcommand"],
-    ["lease", "lease subcommand"]
+    ["lease", "lease subcommand"],
+    ["gateway", "gateway command"]
   ] as const) {
     assert.throws(
       () => runMain([command, "definitely-not-a-command"], STUBS),
@@ -172,6 +175,9 @@ function acceptedList(command: string): string {
     case "lease": {
       return "list, or release";
     }
+    case "gateway": {
+      return "check-tasks";
+    }
     default: {
       throw new Error(`no accepted list for ${command}`);
     }
@@ -184,7 +190,7 @@ test("an unknown command lists the families instead of blaming a migration", () 
     (error: unknown) => {
       assert.equal(
         messageOf(error),
-        "unsupported command: definitely-not-a-command (expected one of: check, render, router, provider, hook, repo, diagnostics, playtest, install, or lease)"
+        "unsupported command: definitely-not-a-command (expected one of: check, render, router, provider, hook, repo, diagnostics, playtest, install, lease, or gateway)"
       );
       return true;
     }
@@ -210,7 +216,8 @@ test("help advertises exactly what each command accepts", async () => {
       "diagnostics",
       "playtest",
       "install",
-      "lease"
+      "lease",
+      "gateway"
     ]
   );
 
@@ -283,4 +290,37 @@ test("help discloses the provider and hook vocabularies", async () => {
   assert.match(help, / {2}hook session-start\|skill-read/u);
   assert.doesNotMatch(help, / {2}provider <name>/u);
   assert.doesNotMatch(help, / {2}hook <name>/u);
+});
+
+test("gateway task check fails for absent or unqualified surfaces", async () => {
+  for (const [roles, expected] of [
+    [[], 1],
+    [[{ role: "orchestrator", status: "method-not-found" as const }], 1],
+    [[{ role: "orchestrator", status: "ok" as const }], 0]
+  ] as const) {
+    const output: string[] = [];
+    const originalWrite = process.stdout.write;
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      output.push(String(chunk));
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      assert.equal(
+        await runMain(["gateway", "check-tasks"], {
+          gateway: { checkTasks: () => Promise.resolve(roles) }
+        }),
+        expected
+      );
+      assert.deepEqual(JSON.parse(output.join("")), {
+        ok: expected === 0,
+        roles
+      });
+    } finally {
+      process.stdout.write = originalWrite;
+    }
+  }
+  assert.throws(
+    () => runMain(["gateway", "check-tasks", "extra"], STUBS),
+    /do not accept positional arguments/u
+  );
 });

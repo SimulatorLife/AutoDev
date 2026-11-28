@@ -14,6 +14,7 @@ import {
 
 import { startChatgptBackendPool } from "../src/mcp/chatgpt-backend-pool.ts";
 import { GatewayCallObservations } from "../src/mcp/gateway-observations.ts";
+import { probeNativeTaskListing } from "../src/platform/mcp-gateway-task-listing.ts";
 
 const TTL_MS = 500;
 const IDLE_MS = 80;
@@ -21,7 +22,10 @@ const IDLE_MS = 80;
 async function fixture(
   conversationScoped = false,
   observations?: GatewayCallObservations,
-  backendProtocol?: string
+  options: {
+    backendProtocol?: string;
+    taskListing?: "missing" | "not-advertised";
+  } = {}
 ) {
   const temporary = mkdtempDisposableSync(
     path.join(tmpdir(), "autodev-pool-task-")
@@ -42,8 +46,8 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       send({ id: request.id, error: { code: -32602, message: "Pool must offer the latest SDK protocol" } });
       return;
     }
-    reply({ protocolVersion: ${JSON.stringify(backendProtocol ?? null)} ?? request.params.protocolVersion,
-      capabilities: { tools: {}, tasks: {} },
+    reply({ protocolVersion: ${JSON.stringify(options.backendProtocol ?? null)} ?? request.params.protocolVersion,
+      capabilities: { tools: {}, tasks: ${JSON.stringify(options.taskListing === "not-advertised" ? {} : { list: {} })} },
       serverInfo: { name: "task-fixture", version: "1" } });
   } else if (request.method === "tools/call") {
     if (request.params.arguments?.loseReply) return;
@@ -77,6 +81,10 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   } else if (request.method === "tasks/result") {
     reply({ content: [{ type: "text", text: "retained result" }] });
   } else if (request.method === "tasks/list") {
+    if (${JSON.stringify(options.taskListing === "missing")}) {
+      send({ id: request.id, error: { code: -32601, message: "Method not found" } });
+      return;
+    }
     const mode = request.params?._meta?.fixtureList;
     const privateData = "foreign-task-fixture-private";
     if (mode === "malformed") {
@@ -154,14 +162,18 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         capabilities: {}
       });
       assert.ok(response.session);
-      assert.equal(response.body.result?.protocolVersion, LATEST_PROTOCOL_VERSION);
-      assert.deepEqual(response.body.result.capabilities.tasks, {});
+      assert.equal(
+        response.body.result?.protocolVersion,
+        LATEST_PROTOCOL_VERSION
+      );
+      assert.deepEqual(response.body.result.capabilities.tasks, { list: {} });
       return response.session;
     };
     return {
       pool,
       open,
       request,
+      endpoint: new URL(url),
       close: async () => {
         try {
           await pool.close();
@@ -209,7 +221,9 @@ test("protocol negotiation follows the pinned SDK on both MCP boundaries", async
 });
 
 test("unsupported backend protocol fails initialization without publishing capabilities", async () => {
-  const f = await fixture(false, undefined, "unsupported-fixture");
+  const f = await fixture(false, undefined, {
+    backendProtocol: "unsupported-fixture"
+  });
   try {
     const { body } = await f.request(null, "initialize", {
       protocolVersion: LATEST_PROTOCOL_VERSION,
@@ -223,6 +237,28 @@ test("unsupported backend protocol fails initialization without publishing capab
     assert.equal(f.pool.stats().fixture?.running, false);
   } finally {
     await f.close();
+  }
+});
+
+test("read-only task listing detects capability and routing gaps", async () => {
+  for (const [taskListing, expected] of [
+    [undefined, "ok"],
+    ["not-advertised", "not-advertised"],
+    ["missing", "listing-failed"]
+  ] as const) {
+    const f = await fixture(false, undefined, {
+      ...(taskListing && { taskListing })
+    });
+    try {
+      const report = await probeNativeTaskListing(f.endpoint, f.pool.token);
+      assert.deepEqual(report, {
+        status: expected,
+        protocolVersion: LATEST_PROTOCOL_VERSION
+      });
+      assert.equal(f.pool.stats().fixture?.retainedTasks, 0);
+    } finally {
+      await f.close();
+    }
   }
 });
 
