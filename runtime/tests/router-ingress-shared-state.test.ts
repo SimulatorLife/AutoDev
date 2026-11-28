@@ -340,18 +340,39 @@ test("concurrent generations share concurrency limits, cooldowns, state persiste
     });
     assert.equal((xacpxRegB.result as { generationId: string }).generationId, "gen-b");
 
-    // 3. Finish A's SSE stream -> A retires and its 1 slot is purged automatically on B!
+    // 3. A's HTTP request is done, but its live XACPX coordinator must
+    // retain the predecessor until the generation drain deadline.
     await readerA.cancel();
-    for (let attempt = 0; attempt < 40; attempt += 1) {
+    assert.equal(
+      (await controlCall(controlSocket, token, "GET", "/v1/generations/gen-a/retirement")).status,
+      202
+    );
+    const afterStream = await xacpxRpc(xacpxSocket, "task.get", {
+      coordinatorSession: "coord-a",
+      taskId: "t-1"
+    });
+    assert.deepEqual(afterStream.result, {
+      generationId: "gen-a", coordinatorSession: "coord-a", known: true
+    });
+    // The IPC protocol has no coordinator-close RPC, so the bounded drain
+    // deadline is the explicit termination boundary.
+    const deadline = performance.now() + 15_000;
+    let retired = false;
+    while (performance.now() < deadline) {
       const retire = await controlCall(
         controlSocket,
         token,
         "GET",
         "/v1/generations/gen-a/retirement"
       );
-      if (retire.status === 200) break;
+      if (retire.status === 200) {
+        retired = true;
+        break;
+      }
+      assert.equal(retire.status, 202);
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
+    assert.equal(retired, true, "predecessor must retire at its bounded deadline");
     const postRetireStatus = (await (await fetch(`${controlBase}/status`)).json()) as {
       concurrency: { activeSubagentThreads: number };
     };

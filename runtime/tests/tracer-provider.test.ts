@@ -14,7 +14,10 @@ import {
   SimpleSpanProcessor,
   type TracerProvider
 } from "@opentelemetry/sdk-trace";
-import { registerTracerProvider } from "@simulatorlife/autodev-runtime/telemetry/tracer-provider";
+import {
+  buildOtlpSpanProcessors,
+  registerTracerProvider
+} from "@simulatorlife/autodev-runtime/telemetry/tracer-provider";
 
 function resetOtelGlobals(): void {
   trace.disable();
@@ -141,4 +144,34 @@ test("registerTracerProvider re-registers cleanly after global teardown without 
     await firstExporter.shutdown();
     await secondExporter.shutdown();
   }
+});
+
+test("buildOtlpSpanProcessors configures OTLP and test exporters cleanly", async () => {
+  const testExporter = new InMemorySpanExporter();
+  let errors = 0;
+
+  const empty = buildOtlpSpanProcessors({
+    endpoint: null,
+    headers: undefined,
+    testExporter: null,
+    onExporterError: () => {
+      errors += 1;
+    }
+  });
+  assert.equal(empty.hasOtlpExporter, false);
+  assert.equal(empty.processors.length, 0);
+
+  const valid = buildOtlpSpanProcessors({
+    endpoint: "http://127.0.0.1:4318/v1/traces",
+    headers: { authorization: "Bearer token" },
+    testExporter,
+    onExporterError: () => {
+      errors += 1;
+    }
+  });
+  assert.equal(valid.hasOtlpExporter, true);
+  assert.equal(valid.processors.length, 2);
+  assert.equal(errors, 0);
+  await Promise.all(valid.processors.map((processor) => processor.shutdown()));
+  await testExporter.shutdown();
 });

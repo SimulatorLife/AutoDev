@@ -87,16 +87,17 @@ coordinator/task/session state until that generation exits cleanly or crashes.
 export class XacpxOrchestrationSocketRouter {
   readonly socketPath: string;
   private server: Server | null = null;
-  private activeGenerationId: string | null = null;
   private readonly workerSockets = new Map<string, string>();
-  private readonly coordinatorPins = new Map<string, string>();
+  private readonly resolveGeneration: (
+    coordinatorSession: string | null
+  ) => string | null;
 
-  constructor(socketPath: string) {
+  constructor(
+    socketPath: string,
+    resolveGeneration: (coordinatorSession: string | null) => string | null
+  ) {
     this.socketPath = socketPath;
-  }
-
-  setActiveGeneration(generationId: string | null): void {
-    this.activeGenerationId = generationId;
+    this.resolveGeneration = resolveGeneration;
   }
 
   registerGeneration(generationId: string, workerSocketPath: string): void {
@@ -105,37 +106,13 @@ export class XacpxOrchestrationSocketRouter {
 
   unregisterGeneration(generationId: string): void {
     this.workerSockets.delete(generationId);
-    for (const [coordinator, owner] of this.coordinatorPins) {
-      if (owner === generationId) {
-        this.coordinatorPins.delete(coordinator);
-      }
-    }
-    if (this.activeGenerationId === generationId) {
-      this.activeGenerationId = null;
-    }
   }
 
-  private resolveTargetGeneration(coordinatorSession: string | null): {
-    generationId: string;
-    workerSocketPath: string;
-  } | null {
-    if (coordinatorSession) {
-      const pinned = this.coordinatorPins.get(coordinatorSession);
-      if (pinned) {
-        const pinnedPath = this.workerSockets.get(pinned);
-        if (pinnedPath) {
-          return { generationId: pinned, workerSocketPath: pinnedPath };
-        }
-        this.coordinatorPins.delete(coordinatorSession);
-      }
-    }
-    if (!this.activeGenerationId) return null;
-    const activePath = this.workerSockets.get(this.activeGenerationId);
-    if (!activePath) return null;
-    return {
-      generationId: this.activeGenerationId,
-      workerSocketPath: activePath
-    };
+  private resolveWorkerSocket(coordinatorSession: string | null): string | null {
+    const generationId = this.resolveGeneration(coordinatorSession);
+    return generationId
+      ? this.workerSockets.get(generationId) ?? null
+      : null;
   }
 
   private forwardLine(
@@ -158,8 +135,8 @@ export class XacpxOrchestrationSocketRouter {
     }
 
     const coordinatorSession = extractCoordinatorSession(parsed);
-    const target = this.resolveTargetGeneration(coordinatorSession);
-    if (!target) {
+    const workerSocket = this.resolveWorkerSocket(coordinatorSession);
+    if (!workerSocket) {
       writeRpcError(
         clientSocket,
         parsed.id,
@@ -169,11 +146,7 @@ export class XacpxOrchestrationSocketRouter {
       return;
     }
 
-    if (coordinatorSession && !this.coordinatorPins.has(coordinatorSession)) {
-      this.coordinatorPins.set(coordinatorSession, target.generationId);
-    }
-
-    const upstream = connectUnixSocket(target.workerSocketPath);
+    const upstream = connectUnixSocket(workerSocket);
     let settled = false;
     let buffer = "";
 
@@ -261,7 +234,6 @@ export class XacpxOrchestrationSocketRouter {
       });
     }
     this.workerSockets.clear();
-    this.coordinatorPins.clear();
     try {
       if (statSync(this.socketPath).isSocket()) {
         rmSync(this.socketPath, { force: true });

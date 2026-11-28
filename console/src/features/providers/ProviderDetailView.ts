@@ -37,11 +37,9 @@ import {
   MONO_VALUE_CLASS,
   MUTED_BODY_CLASS,
   MUTED_META_CLASS,
-  MUTED_TEXT_CLASS,
-  NUMERIC_VALUE_CLASS
+  MUTED_TEXT_CLASS
 } from "../../components/ui/text-classes.ts";
 import { liveAgentCount, liveAgentRoleBreakdown } from "../live-agent-count.ts";
-import { ModelToggle } from "./ModelToggle.ts";
 import { modelPath, providerPath, PROVIDERS_PATH } from "./paths.ts";
 import {
   CLI_VERSIONS_NOT_OBSERVED,
@@ -59,12 +57,14 @@ import {
 import { CredentialBadge, ProviderStatusBadge } from "./provider-status.ts";
 import { ProviderExternalLinks } from "./ProviderExternalLinks.ts";
 import { ProviderLimitsControls } from "./ProviderLimitsControls.ts";
-import {
-  ProviderModelAvailabilityBadge,
-  ProviderModelDiscoveryBadge
-} from "./ProviderModelAvailabilityBadge.ts";
+import { ProviderModelDiscoveryBadge } from "./ProviderModelAvailabilityBadge.ts";
 import type { ProviderQuotaExhaustion } from "./ProviderQuota.ts";
 import { ProviderRoleControls } from "./ProviderRoleControls.ts";
+import {
+  modelActiveAgentsColumn,
+  modelAvailabilityColumn,
+  modelEnabledColumn
+} from "./ProviderTableColumns.ts";
 
 export interface ProviderDetailViewProps {
   readonly provider: ControlApiProviderRecord;
@@ -251,57 +251,9 @@ function ModelsPanel({
           model.tiers.length === 0 ? "Not mapped" : model.tiers.join(", ")
         )
     },
-    {
-      id: "activeAgents",
-      header: "Active Agents",
-      cell: ({ row: { original: model } }) =>
-        React.createElement(
-          "span",
-          {
-            className: NUMERIC_VALUE_CLASS,
-            "data-live-agent-model": model.id
-          },
-          liveAgentCount(
-            runtime?.liveAgents,
-            "byModel",
-            `${model.provider}/${model.id}`
-          )
-        ),
-      meta: {
-        weight: 112,
-        cellTitle: (model) =>
-          liveAgentRoleBreakdown(
-            runtime?.liveAgents,
-            "byModelRole",
-            `${model.provider}/${model.id}`
-          )
-      }
-    },
-    {
-      id: "availability",
-      header: "Availability",
-      cell: ({ row: { original: model } }) =>
-        React.createElement(ProviderModelAvailabilityBadge, {
-          availability: model.availability
-        }),
-      meta: {
-        // "Availability" is one long word, and a column's weight has to be
-        // large enough for its own header. The workspaces table declares the
-        // same header at the same weight, and the acceptance measures it
-        // fitting at 390px there.
-        weight: 160
-      }
-    },
-    {
-      id: "enabled",
-      header: "Enabled",
-      cell: ({ row: { original: model } }) =>
-        React.createElement(ModelToggle, {
-          model: model.id,
-          enablement: model.enablement ?? undefined,
-          returnTo
-        })
-    }
+    modelActiveAgentsColumn(runtime?.liveAgents),
+    modelAvailabilityColumn(),
+    modelEnabledColumn(returnTo)
   ];
   return React.createElement(
     "section",
@@ -580,7 +532,7 @@ function HealthPanel({
       React.createElement(
         DetailValue,
         { label: "Last-resort eligible" },
-        (cooldown === null) || cooldown.lastResortEligible ? "Yes" : "No"
+        cooldown === null || cooldown.lastResortEligible ? "Yes" : "No"
       ),
       React.createElement(
         DetailValue,

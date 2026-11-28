@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync
@@ -40,7 +41,7 @@ import {
   readLocalAdmission
 } from "../src/mcp/gateway-admission.ts";
 import { MCP_GRANT_ENV } from "../src/mcp/gateway-client.ts";
-import { resolveMcpCommand } from "../src/mcp/launcher.ts";
+import { ensureXacpxConfig, resolveMcpCommand } from "../src/mcp/launcher.ts";
 import { verifySessionGrant } from "../src/mcp/session-grant.ts";
 import {
   buildOpencliRoleTaskSpec,
@@ -50,7 +51,7 @@ import { COOLDOWNS } from "../src/router/cooldown/index.ts";
 import { ROUTING_POLICY, RoutingPolicy } from "../src/router/routing.ts";
 import { autodevHome, autodevStateHome } from "../src/shared/autodev-home.ts";
 import { findMcodeBinary } from "../src/shared/executables.ts";
-import { roleContract } from "../src/shared/execution-contract.ts";
+import { declaredDelegatedRoleNames, roleContract } from "../src/shared/execution-contract.ts";
 import {
   extractSkillReadPath,
   matchSkillReadTarget
@@ -412,6 +413,74 @@ test("ACP provider profiles project canonical role capabilities, native mcpServe
   assert.match(ghTask.prompt, /Raise a PR to AutoDev/u);
   assert.equal(ghTask.mcpApp, "AutoDev");
   assert.equal(ghTask.site, "chatgpt");
+});
+
+test("Antigravity app-data names are relative, stable, and isolated by session and Runtime home", () => {
+  const options = {
+    provider: "antigravity" as const,
+    role: "worker",
+    model: "gemini-3.8-flash",
+    cwd: REPO_ROOT,
+    systemPrompt: "Worker",
+    sessionId: "../another/session"
+  };
+  const directory = (
+    overrides: Partial<typeof options> = {},
+    home = "/tmp/autodev-a"
+  ) => {
+    const spec = buildAcpProviderLaunchSpec({
+      ...options,
+      ...overrides,
+      env: { ...process.env, AUTODEV_HOME: home }
+    });
+    const flag = spec.args.indexOf("--app-data-dir");
+    assert.ok(flag >= 0);
+    const value = spec.args[flag + 1]!;
+    assert.match(value, /^autodev-acp-[0-9a-f]{64}$/u);
+    assert.equal(path.isAbsolute(value), false);
+    return value;
+  };
+  const first = directory();
+  assert.equal(directory(), first);
+  assert.notEqual(directory({ sessionId: "another-session" }), first);
+  assert.notEqual(directory({}, "/tmp/autodev-b"), first);
+});
+
+test("XACPX config advertises only current delegated roles, not stale providers or orchestrators", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "autodev-xacpx-config-"));
+  try {
+    const config = path.join(directory, "config.json");
+    writeFileSync(
+      config,
+      JSON.stringify({
+        transport: { type: "acpx-bridge" },
+        channel: { replyMode: "verbose" },
+        agents: {
+          codex: { driver: "codex" },
+          claude: { driver: "claude" },
+          orchestrator: { driver: "codex" },
+          retired: { driver: "codex" }
+        },
+        workspaces: { preserved: { cwd: REPO_ROOT } }
+      })
+    );
+    ensureXacpxConfig(config, "current", REPO_ROOT);
+    const first = readFileSync(config, "utf8");
+    const projected = JSON.parse(first);
+    assert.deepEqual(
+      Object.keys(projected.agents),
+      declaredDelegatedRoleNames()
+    );
+    for (const denied of ["codex", "claude", "orchestrator", "retired"]) {
+      assert.equal(Object.hasOwn(projected.agents, denied), false);
+    }
+    assert.deepEqual(projected.workspaces.preserved, { cwd: REPO_ROOT });
+    assert.deepEqual(projected.workspaces.current, { cwd: REPO_ROOT });
+    ensureXacpxConfig(config, "current", REPO_ROOT);
+    assert.equal(readFileSync(config, "utf8"), first);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("a vendor ACP executor is spawned from where it is installed, with only the host variables it needs", () => {

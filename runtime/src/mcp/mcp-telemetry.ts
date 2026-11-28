@@ -71,20 +71,16 @@ import {
   trace,
   type Tracer
 } from "@opentelemetry/api";
-import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import {
   detectResources,
   envDetector,
   type Resource,
   resourceFromAttributes
 } from "@opentelemetry/resources";
-import {
-  BatchSpanProcessor,
-  type ReadableSpan,
-  SimpleSpanProcessor,
-  type SpanExporter,
-  type SpanProcessor,
-  type TracerProvider
+import type {
+  ReadableSpan,
+  SpanExporter,
+  TracerProvider
 } from "@opentelemetry/sdk-trace";
 // Stable attributes come from the versioned package. MCP/GenAI names below
 // are sourced from the pinned Development model, not the package's deprecated
@@ -104,7 +100,10 @@ import {
   safeAutoDevAgentRole,
   safeAutoDevWorkspaceKey
 } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
-import { registerTracerProvider } from "@simulatorlife/autodev-runtime/telemetry/tracer-provider";
+import {
+  buildOtlpSpanProcessors,
+  registerTracerProvider
+} from "@simulatorlife/autodev-runtime/telemetry/tracer-provider";
 
 import type { CommandDefinition, CommandResult } from "./commands-catalogue.ts";
 
@@ -248,34 +247,6 @@ function logTelemetryError(message: string): void {
   }
 }
 
-function buildSpanProcessors(): SpanProcessor[] {
-  const processors: SpanProcessor[] = [];
-  const endpoint = externalTelemetry?.endpoint ?? readOtlpTraceEndpoint();
-  if (endpoint) {
-    try {
-      processors.push(
-        new BatchSpanProcessor({
-          exporter: new OTLPTraceExporter({
-            url: endpoint,
-            headers: externalTelemetry?.headers ?? readOtlpHeaders("traces")
-          })
-        })
-      );
-      state.otlpExporterInstalled = true;
-    } catch {
-      // Keep the tool call healthy if exporter construction fails. Do not
-      // log the endpoint because it may contain credential-bearing query
-      // parameters.
-      state.otlpExporterInstalled = false;
-      logTelemetryError("otlp_exporter_configuration_failed");
-    }
-  }
-  if (state.testExporter) {
-    processors.push(new SimpleSpanProcessor({ exporter: state.testExporter }));
-  }
-  return processors;
-}
-
 /**
 Initialize the official OpenTelemetry SDK synchronously and exactly
 once. With no configured endpoint and no test exporter, the API's
@@ -287,7 +258,15 @@ export function ensureOtelInitialized(): Tracer {
   if (state.initialized) return state.tracer;
   state.initialized = true;
   try {
-    const spanProcessors = buildSpanProcessors();
+    const built = buildOtlpSpanProcessors({
+      endpoint: externalTelemetry?.endpoint ?? readOtlpTraceEndpoint(),
+      headers: externalTelemetry?.headers ?? readOtlpHeaders("traces"),
+      testExporter: state.testExporter,
+      onExporterError: () =>
+        logTelemetryError("otlp_exporter_configuration_failed")
+    });
+    state.otlpExporterInstalled = built.hasOtlpExporter;
+    const spanProcessors = built.processors;
     if (spanProcessors.length === 0) return state.tracer;
     const provider = registerTracerProvider({
       resource: buildResource(),

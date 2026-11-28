@@ -78,6 +78,8 @@
       // Packages installed for their executables, which the runtime launches
       // by package name (resolveRuntimePackageBin, MCP launcher, gateway).
       "ignoreDependencies": [
+        "@agentclientprotocol/claude-agent-acp",
+        "@agentclientprotocol/codex-acp",
         "@ganglion/xacpx",
         "@jackwener/opencli",
         "@modelcontextprotocol/server-filesystem",

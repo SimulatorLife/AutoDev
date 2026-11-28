@@ -1264,22 +1264,30 @@ function failureRows(report: SessionDiagnosticsReport): FailureRow[] {
   return rows;
 }
 
+function failureAtColumn<Row extends { readonly at: string }>(): ColumnDef<
+  DataTableFeatures,
+  Row,
+  unknown
+> {
+  return {
+    id: "at",
+    header: TIME_UTC_HEADER,
+    cell: ({ row: { original: row } }) =>
+      React.createElement(InstantDisplay, {
+        value: row.at,
+        label: "Request time"
+      }),
+    meta: { weight: 170, align: "tokens" }
+  };
+}
+
 function failureColumns(): readonly ColumnDef<
   DataTableFeatures,
   FailureRow,
   unknown
 >[] {
   return [
-    {
-      id: "at",
-      header: TIME_UTC_HEADER,
-      cell: ({ row: { original: row } }) =>
-        React.createElement(InstantDisplay, {
-          value: row.at,
-          label: "Request time"
-        }),
-      meta: { weight: 170, align: "tokens" }
-    },
+    failureAtColumn<FailureRow>(),
     {
       id: "thread",
       header: "Thread",
@@ -1385,16 +1393,7 @@ function renderFailures(
       React.createElement<DataTableProperties<RouterFailureRow>>(DataTable, {
         data: routerFailures,
         columns: [
-          {
-            id: "at",
-            header: TIME_UTC_HEADER,
-            cell: ({ row: { original: row } }) =>
-              React.createElement(InstantDisplay, {
-                value: row.at,
-                label: "Request time"
-              }),
-            meta: { weight: 170, align: "tokens" }
-          },
+          failureAtColumn<RouterFailureRow>(),
           {
             id: "thread",
             header: "Thread",

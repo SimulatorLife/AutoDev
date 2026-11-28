@@ -78,8 +78,10 @@ export class RouterIngressSupervisor {
   private readonly workers = new Map<string, ChildProcess>();
   private readonly workerXacpxSockets = new Map<string, string>();
   private readonly stoppingWorkers = new WeakMap<ChildProcess, Promise<void>>();
-  // Verified worker entry of the active and rollback generations only.
+  // Verified worker entries for all live workers and the retained rollback
+  // target. A retiring process still resolves modules from its own release.
   private readonly releases = new Map<string, string>();
+  private readonly recoveringReleases = new Set<string>();
   private readonly lifetime = new AbortController();
   private readonly serialized = createSerialQueue();
   private rollbackGenerationId: string | null = null;
@@ -123,7 +125,11 @@ export class RouterIngressSupervisor {
               path.join(path.dirname(options.controlSocket), "shared-state.sock")
           });
     this.xacpxSocketRouter = options.xacpxSocketPath
-      ? new XacpxOrchestrationSocketRouter(options.xacpxSocketPath)
+      ? new XacpxOrchestrationSocketRouter(
+          options.xacpxSocketPath,
+          (coordinatorSession) =>
+            this.ingress.resolveXacpxGeneration(coordinatorSession)
+        )
       : null;
     this.controlServer = createServer((request, response) => {
       void this.handle(request, response).catch(() => {
@@ -421,7 +427,6 @@ export class RouterIngressSupervisor {
       child.kill("SIGTERM");
       throw error;
     }
-    this.xacpxSocketRouter?.setActiveGeneration(id);
     this.workers.set(id, child);
     this.superviseWorker(id, child);
     this.releases.set(id, verified);
@@ -429,12 +434,23 @@ export class RouterIngressSupervisor {
       this.rollbackGenerationId = previous;
       void this.retire(previous);
     }
-    for (const generationId of this.releases.keys()) {
-      if (generationId !== id && generationId !== this.rollbackGenerationId)
-        this.releases.delete(generationId);
-    }
+    this.pruneReleasedGenerations();
     this.persistGenerationsState();
     return { activeGenerationId: id, retiringGenerationId: previous };
+  }
+
+  private pruneReleasedGenerations(): void {
+    const activeId = this.ingress.getStatus().activeGenerationId;
+    for (const generationId of this.releases.keys()) {
+      if (
+        generationId !== activeId &&
+        generationId !== this.rollbackGenerationId &&
+        !this.workers.has(generationId) &&
+        !this.recoveringReleases.has(generationId)
+      ) {
+        this.releases.delete(generationId);
+      }
+    }
   }
 
   private persistGenerationsState(): void {
@@ -498,7 +514,14 @@ export class RouterIngressSupervisor {
         signal
       });
       this.ingress.failGeneration(id);
-      if (wasActive) void this.restart(id, performance.now() - startedAt);
+      if (wasActive) {
+        // Keep the crashed active release protected while its restart is
+        // pending. A successful activation prunes it when no longer needed.
+        void this.restart(id, performance.now() - startedAt);
+      } else {
+        this.pruneReleasedGenerations();
+        this.persistGenerationsState();
+      }
     });
   }
 
@@ -513,6 +536,7 @@ export class RouterIngressSupervisor {
       });
       return;
     }
+    this.recoveringReleases.add(failedId);
     const policy = retry(handleAll, {
       maxAttempts: RESTART_ACTIVATION_RETRIES,
       backoff: new ExponentialBackoff()
@@ -539,6 +563,10 @@ export class RouterIngressSupervisor {
           phase: "generation_restart_exhausted",
           generationId: failedId
         });
+    } finally {
+      this.recoveringReleases.delete(failedId);
+      this.pruneReleasedGenerations();
+      this.persistGenerationsState();
     }
   }
 
@@ -579,6 +607,7 @@ export class RouterIngressSupervisor {
     if (worker) await this.stopWorker(worker);
     this.workers.delete(id);
     this.cleanupGenerationResources(id);
+    this.pruneReleasedGenerations();
     this.persistGenerationsState();
   }
 

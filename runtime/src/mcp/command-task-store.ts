@@ -24,14 +24,7 @@ never observes a half-written record, and every record is dropped once its
 retention window passes.
 */
 import { randomBytes } from "node:crypto";
-import {
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync
-} from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 
 import {
@@ -45,6 +38,7 @@ import type {
   Result,
   Task
 } from "@modelcontextprotocol/sdk/types.js";
+import { atomicWriteSync } from "@simulatorlife/autodev-data/files";
 
 /**
 The most tasks one scope may hold at once.
@@ -190,7 +184,6 @@ export class DurableCommandTaskStore implements TaskStore {
   private readonly authorize: () => void;
   private readonly cancel: ((taskId: string) => Promise<void>) | undefined;
   private readonly maxTasks: number;
-  private writes = 0;
 
   constructor(options: DurableCommandTaskStoreOptions) {
     this.directory = path.resolve(options.directory);
@@ -233,23 +226,13 @@ export class DurableCommandTaskStore implements TaskStore {
   }
 
   /**
-  Replace a record in one atomic step, so a concurrent reader sees either
-  the previous record or the new one, never a partial write.
+  Replace a record in one atomic step via the shared Data helper, so a
+  concurrent reader sees either the previous record or the new one, never a
+  partial write.
   */
   private write(record: TaskRecord): void {
     const file = this.recordPath(record.task.taskId);
-    const temporary = `${file}.${process.pid}.${this.writes++}.tmp`;
-    try {
-      writeFileSync(temporary, JSON.stringify(record), { mode: 0o600 });
-      renameSync(temporary, file);
-    } catch (error) {
-      try {
-        rmSync(temporary, { force: true });
-      } catch {
-        // The temporary file is already gone.
-      }
-      throw error;
-    }
+    atomicWriteSync(file, JSON.stringify(record), { mode: 0o600 });
   }
 
   /**

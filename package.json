@@ -7,6 +7,7 @@
   },
   "scripts": {
     "dev": "node runtime/src/cli/dev.ts",
+    "clean": "rm -rf console/.next console/.next-dev console/.next-staging-* console/next-env.d.ts console/test-results playwright-report && find . -name .git -prune -o -type d \\( -name tmp -o -name .tmp -o -name node_modules -o -name .venv -o -name .probe -o -name .cocoindex_code -o -name .playwright-mcp \\) -prune -exec node --input-type=module -e 'import { rmSync } from \"node:fs\"; for (const target of process.argv.slice(1)) rmSync(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });' '{}' + && find . -name .git -prune -o -type f \\( -name '*.tsbuildinfo' -o -name .eslintcache \\) -exec rm -f '{}' + && pnpm store prune",
     "test:root": "node --import ./runtime/tests/support/isolate-autodev-state.ts --test tests/*.test.ts tests/**/*.test.ts",
     "test": "pnpm run test:root; root_status=$?; pnpm --recursive --workspace-concurrency=1 --if-present test; workspace_status=$?; test \"$root_status\" -eq 0 -a \"$workspace_status\" -eq 0",
     "typecheck:root": "tsc --noEmit",
@@ -45,7 +46,7 @@
     "eslint": "^10.15.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-import-resolver-typescript": "^4.4.5",
-    "eslint-plugin-boundaries": "7.4.4",
+    "eslint-plugin-boundaries": "7.4.5",
     "eslint-plugin-de-morgan": "^2.3.0",
     "eslint-plugin-eslint-comments": "^3.2.0",
     "eslint-plugin-import-x": "^4.18.1",

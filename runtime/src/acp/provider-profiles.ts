@@ -11,6 +11,7 @@ AutoDev's ACP `session/request_permission` boundary enforces the canonical role
 contract uniformly across all providers.
 */
 
+import { createHash } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -365,13 +366,15 @@ export function buildAcpProviderLaunchSpec(
     }
     case "antigravity": {
       const agyAgent = `autodev-${options.role}`;
-      const isolatedAppDirectory = path.join(
-        baseEnvironment.AUTODEV_HOME!,
-        "run",
-        "acp",
-        "antigravity",
-        options.sessionId
-      );
+      // agy interprets --app-data-dir as a name relative to its own app
+      // data root, not an absolute filesystem path. Use a stable opaque
+      // component so even an externally supplied session ID cannot traverse
+      // that root or select another provider profile.
+      const isolatedAppDirectory = `autodev-acp-${createHash("sha256")
+        .update(
+          JSON.stringify([baseEnvironment.AUTODEV_HOME, options.sessionId])
+        )
+        .digest("hex")}`;
       return {
         ...sharedFields,
         provider: "antigravity",

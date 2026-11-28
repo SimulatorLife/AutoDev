@@ -45,7 +45,6 @@ import {
   AggregationTemporalityPreference,
   OTLPMetricExporter
 } from "@opentelemetry/exporter-metrics-otlp-http";
-import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import {
   type InMemoryMetricExporter,
@@ -53,13 +52,10 @@ import {
   type MetricReader,
   PeriodicExportingMetricReader
 } from "@opentelemetry/sdk-metrics";
-import {
-  BatchSpanProcessor,
-  type ReadableSpan,
-  SimpleSpanProcessor,
-  type SpanExporter,
-  type SpanProcessor,
-  type TracerProvider
+import type {
+  ReadableSpan,
+  SpanExporter,
+  TracerProvider
 } from "@opentelemetry/sdk-trace";
 // Stable attribute keys come from the semantic-conventions index.
 import {
@@ -82,7 +78,10 @@ import {
   safeAutoDevAgentRole,
   safeAutoDevWorkspaceKey
 } from "@simulatorlife/autodev-runtime/telemetry/resource-context";
-import { registerTracerProvider } from "@simulatorlife/autodev-runtime/telemetry/tracer-provider";
+import {
+  buildOtlpSpanProcessors,
+  registerTracerProvider
+} from "@simulatorlife/autodev-runtime/telemetry/tracer-provider";
 
 import { createRouterWorkspaceGitCommitObserver } from "./git-commit-observation.ts";
 import type { RouterIngressEvent } from "./ingress.ts";
@@ -554,33 +553,6 @@ export async function flushTelemetryMetrics(): Promise<void> {
   }
 }
 
-function buildSpanProcessors(): SpanProcessor[] {
-  const processors: SpanProcessor[] = [];
-  const endpoint = readOtlpTraceEndpoint();
-  if (endpoint) {
-    try {
-      processors.push(
-        new BatchSpanProcessor({
-          exporter: new OTLPTraceExporter({
-            url: endpoint,
-            headers: readOtlpHeaders("traces")
-          })
-        })
-      );
-      state.otlpExporterInstalled = true;
-    } catch {
-      // Keep routing healthy if exporter construction fails. Do not log the
-      // endpoint because it may contain credential-bearing query parameters.
-      state.otlpExporterInstalled = false;
-      logTelemetryError("otlp_exporter_configuration_failed");
-    }
-  }
-  if (state.testExporter) {
-    processors.push(new SimpleSpanProcessor({ exporter: state.testExporter }));
-  }
-  return processors;
-}
-
 /**
 Initialize the official OpenTelemetry SDK synchronously and exactly once.
 With no configured endpoint and no test exporter, the API's no-op tracer
@@ -592,7 +564,15 @@ export function ensureOtelInitialized(): Tracer {
   state.initialized = true;
   initializeMetrics();
   try {
-    const spanProcessors = buildSpanProcessors();
+    const built = buildOtlpSpanProcessors({
+      endpoint: readOtlpTraceEndpoint(),
+      headers: readOtlpHeaders("traces"),
+      testExporter: state.testExporter,
+      onExporterError: () =>
+        logTelemetryError("otlp_exporter_configuration_failed")
+    });
+    state.otlpExporterInstalled = built.hasOtlpExporter;
+    const spanProcessors = built.processors;
     if (spanProcessors.length === 0) return state.tracer;
     const provider = registerTracerProvider({
       resource: resourceFromAttributes({

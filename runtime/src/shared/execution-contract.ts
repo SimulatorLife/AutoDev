@@ -243,3 +243,11 @@ Sorted canonical role names declared in `config/execution-contract.json`.
 export function declaredRoleNames(): string[] {
   return Object.keys(CONTRACT.roles).sort();
 }
+
+/** Canonical child roles, excluding all orchestrator declarations. */
+export function declaredDelegatedRoleNames(): string[] {
+  return declaredRoleNames().filter(
+    (role) =>
+      role !== "orchestrator" && roleContract(role).kind !== "orchestrator"
+  );
+}

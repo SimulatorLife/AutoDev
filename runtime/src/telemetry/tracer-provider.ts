@@ -17,8 +17,49 @@ import {
   W3CBaggagePropagator,
   W3CTraceContextPropagator
 } from "@opentelemetry/core";
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import type { Resource } from "@opentelemetry/resources";
-import { type SpanProcessor, TracerProvider } from "@opentelemetry/sdk-trace";
+import {
+  BatchSpanProcessor,
+  SimpleSpanProcessor,
+  type SpanExporter,
+  type SpanProcessor,
+  TracerProvider
+} from "@opentelemetry/sdk-trace";
+
+export function buildOtlpSpanProcessors(options: {
+  readonly endpoint: string | null | undefined;
+  readonly headers: Record<string, string> | undefined;
+  readonly testExporter: SpanExporter | null;
+  readonly onExporterError: () => void;
+}): {
+  readonly processors: SpanProcessor[];
+  readonly hasOtlpExporter: boolean;
+} {
+  const processors: SpanProcessor[] = [];
+  let hasOtlpExporter = false;
+  if (options.endpoint) {
+    try {
+      processors.push(
+        new BatchSpanProcessor({
+          exporter: new OTLPTraceExporter({
+            url: options.endpoint,
+            ...(options.headers !== undefined && { headers: options.headers })
+          })
+        })
+      );
+      hasOtlpExporter = true;
+    } catch {
+      options.onExporterError();
+    }
+  }
+  if (options.testExporter) {
+    processors.push(
+      new SimpleSpanProcessor({ exporter: options.testExporter })
+    );
+  }
+  return { processors, hasOtlpExporter };
+}
 
 export function registerTracerProvider(options: {
   readonly resource: Resource;

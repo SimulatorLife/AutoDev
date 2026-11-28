@@ -17,7 +17,7 @@ import {
   resolveRuntimePackageBin,
   runtimeBinDirectory
 } from "@simulatorlife/autodev-runtime/shared/executables";
-import { declaredRoleNames } from "@simulatorlife/autodev-runtime/shared/execution-contract";
+import { declaredDelegatedRoleNames } from "@simulatorlife/autodev-runtime/shared/execution-contract";
 import { writeErrorLine } from "@simulatorlife/autodev-runtime/shared/output";
 import { resolveRuntimeSourceRoot } from "@simulatorlife/autodev-runtime/shared/runtime-source-root";
 import { resolveSkillRoots } from "@simulatorlife/autodev-runtime/shared/skill-reads";
@@ -314,7 +314,7 @@ export function resolveCocoindexInitRoot(
   return root;
 }
 
-function ensureXacpxConfig(
+export function ensureXacpxConfig(
   configPath: string,
   workspaceKey: string | undefined,
   workspaceDir: string
@@ -334,15 +334,12 @@ function ensureXacpxConfig(
   const channel = isRecord(existing.channel)
     ? existing.channel
     : { type: "weixin", replyMode: "verbose" };
-  const agents: Record<string, unknown> = isRecord(existing.agents)
-    ? { ...existing.agents }
-    : {};
-  for (const role of declaredRoleNames()) {
-    if (role === "orchestrator") continue;
-    if (!isRecord(agents[role])) {
-      agents[role] = { driver: "codex" };
-    }
-  }
+  // This projection is owned by AutoDev. XACPX advertises the keys in
+  // agents verbatim; retaining retired roles or provider aliases makes
+  // discovery promise targets that Runtime's role admission rejects.
+  const agents = Object.fromEntries(
+    declaredDelegatedRoleNames().map((role) => [role, { driver: "codex" }])
+  );
   const workspaces: Record<string, unknown> = isRecord(existing.workspaces)
     ? { ...existing.workspaces }
     : {};

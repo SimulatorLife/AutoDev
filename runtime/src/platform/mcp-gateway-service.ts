@@ -555,6 +555,57 @@ export interface McpGatewayDependencies {
   ): void;
 }
 
+function createRemoteMcpTransport(
+  server: string,
+  descriptor: Record<string, unknown>,
+  environment: NodeJS.ProcessEnv
+): StreamableHTTPClientTransport {
+  return new StreamableHTTPClientTransport(new URL(String(descriptor.url)), {
+    requestInit: {
+      headers: resolveRemoteMcpHeaders(
+        {
+          url: String(descriptor.url),
+          ...(typeof descriptor.bearer_token_env_var === "string" && {
+            bearer_token_env_var: descriptor.bearer_token_env_var
+          }),
+          ...(Boolean(descriptor.http_headers) &&
+          typeof descriptor.http_headers === "object" &&
+          !Array.isArray(descriptor.http_headers)
+            ? {
+                http_headers: descriptor.http_headers as Record<string, string>
+              }
+            : {})
+        },
+        server,
+        environment
+      )
+    }
+  });
+}
+
+async function listPaginatedMcpTools(
+  client: Client,
+  onTool: (tool: {
+    readonly name: string;
+    readonly annotations?:
+      { readonly readOnlyHint?: boolean | undefined } | undefined;
+  }) => void
+): Promise<void> {
+  let cursor: string | undefined;
+  const seenCursors = new Set<string>();
+  do {
+    const page = await client.listTools(cursor ? { cursor } : {}, {
+      timeout: 20_000
+    });
+    for (const tool of page.tools) {
+      onTool(tool);
+    }
+    cursor = page.nextCursor;
+    if (cursor && seenCursors.has(cursor)) break;
+    if (cursor) seenCursors.add(cursor);
+  } while (cursor);
+}
+
 async function discoverServerTools(
   server: string,
   descriptor: Record<string, unknown>,
@@ -626,52 +677,19 @@ async function discoverServerTools(
             stderr: "pipe"
           });
         })()
-      : new StreamableHTTPClientTransport(new URL(String(descriptor.url)), {
-          requestInit: {
-            headers: resolveRemoteMcpHeaders(
-              {
-                url: String(descriptor.url),
-                ...(typeof descriptor.bearer_token_env_var === "string" && {
-                  bearer_token_env_var: descriptor.bearer_token_env_var
-                }),
-                ...(Boolean(descriptor.http_headers) &&
-                typeof descriptor.http_headers === "object" &&
-                !Array.isArray(descriptor.http_headers)
-                  ? {
-                      http_headers: descriptor.http_headers as Record<
-                        string,
-                        string
-                      >
-                    }
-                  : {})
-              },
-              server,
-              environment
-            )
-          }
-        });
+      : createRemoteMcpTransport(server, descriptor, environment);
   try {
     await client.connect(transport, { timeout: 20_000 });
     const discovered: string[] = [];
-    let cursor: string | undefined;
-    const seenCursors = new Set<string>();
-    do {
-      const page = await client.listTools(cursor ? { cursor } : {}, {
-        timeout: 20_000
-      });
-      for (const tool of page.tools) {
-        if (
-          !isReadOnly ||
-          server === MCP_SERVER_FILESYSTEM ||
-          tool.annotations?.readOnlyHint === true
-        ) {
-          discovered.push(tool.name);
-        }
+    await listPaginatedMcpTools(client, (tool) => {
+      if (
+        !isReadOnly ||
+        server === MCP_SERVER_FILESYSTEM ||
+        tool.annotations?.readOnlyHint === true
+      ) {
+        discovered.push(tool.name);
       }
-      cursor = page.nextCursor;
-      if (cursor && seenCursors.has(cursor)) break;
-      if (cursor) seenCursors.add(cursor);
-    } while (cursor);
+    });
     return [...new Set(discovered)];
   } finally {
     await Promise.allSettled([
@@ -734,55 +752,19 @@ async function discoverRawRemoteServerTools(
     name: "autodev-mcp-gateway-policy-discovery",
     version: "1.0.0"
   });
-  const transport = new StreamableHTTPClientTransport(
-    new URL(String(descriptor.url)),
-    {
-      requestInit: {
-        headers: resolveRemoteMcpHeaders(
-          {
-            url: String(descriptor.url),
-            ...(typeof descriptor.bearer_token_env_var === "string" && {
-              bearer_token_env_var: descriptor.bearer_token_env_var
-            }),
-            ...(Boolean(descriptor.http_headers) &&
-            typeof descriptor.http_headers === "object" &&
-            !Array.isArray(descriptor.http_headers)
-              ? {
-                  http_headers: descriptor.http_headers as Record<
-                    string,
-                    string
-                  >
-                }
-              : {})
-          },
-          server,
-          environment
-        )
-      }
-    }
-  );
+  const transport = createRemoteMcpTransport(server, descriptor, environment);
   try {
     await client.connect(transport, { timeout: 20_000 });
     const discovered: DiscoveredToolEntry[] = [];
     const seenNames = new Set<string>();
-    let cursor: string | undefined;
-    const seenCursors = new Set<string>();
-    do {
-      const page = await client.listTools(cursor ? { cursor } : {}, {
-        timeout: 20_000
+    await listPaginatedMcpTools(client, (tool) => {
+      if (seenNames.has(tool.name)) return;
+      seenNames.add(tool.name);
+      discovered.push({
+        name: tool.name,
+        readOnlyHint: tool.annotations?.readOnlyHint === true
       });
-      for (const tool of page.tools) {
-        if (seenNames.has(tool.name)) continue;
-        seenNames.add(tool.name);
-        discovered.push({
-          name: tool.name,
-          readOnlyHint: tool.annotations?.readOnlyHint === true
-        });
-      }
-      cursor = page.nextCursor;
-      if (cursor && seenCursors.has(cursor)) break;
-      if (cursor) seenCursors.add(cursor);
-    } while (cursor);
+    });
     return discovered;
   } finally {
     await Promise.allSettled([client.close(), transport.close()]);

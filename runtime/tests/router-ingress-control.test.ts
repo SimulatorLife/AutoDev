@@ -65,14 +65,19 @@ function workerSource(options: { exitAfterReadiness?: boolean } = {}): string {
   ].join("\n");
 }
 
-async function startIngress(directory: string, releases: string) {
+async function startIngress(
+  directory: string,
+  releases: string,
+  drainMs = 750
+) {
   const socket = path.join(directory, "control.sock");
   const started = await startRouterIngressProcess({
     AUTODEV_ROUTER_INGRESS_CONTROL_SOCKET: socket,
     AUTODEV_ROUTER_INGRESS_CONTROL_TOKEN: TOKEN,
     AUTODEV_ROUTER_RELEASES_DIRECTORY: releases,
-    AUTODEV_ROUTER_INGRESS_DRAIN_MS: "750",
+    AUTODEV_ROUTER_INGRESS_DRAIN_MS: String(drainMs),
     AUTODEV_ROUTER_INGRESS_WORKER_SHUTDOWN_MS: "1000",
+    AUTODEV_XACPX_ORCHESTRATION_SOCKET: "none",
     CODEX_MODEL_ROUTER_HOST: "127.0.0.1",
     CODEX_MODEL_ROUTER_PORT: "0"
   });
@@ -332,6 +337,47 @@ test(
     }
   }
 );
+
+test("three overlapping releases stay protected until the oldest worker exits", { timeout: 20_000 }, async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "autodev-release-retention-"));
+  const releases = path.join(directory, "releases");
+  const names = [".src-old", ".src-middle", ".src-new"];
+  const entries = await Promise.all(names.map(async (name) => {
+    const entry = path.join(releases, name, "router", "worker.mjs");
+    await mkdir(path.dirname(entry), { recursive: true });
+    await writeFile(entry, workerSource());
+    return entry;
+  }));
+  const handle = await startIngress(directory, releases, 3000);
+  const protectedReleases = async (): Promise<string[]> => {
+    const state = JSON.parse(await readFile(path.join(directory, "generations-state.json"), "utf8")) as { protectedReleases: string[] };
+    return state.protectedReleases;
+  };
+  const activate = async (id: string, entry: string) => {
+    assert.equal((await controlRequest(handle.socket, "POST", "/v1/generations", TOKEN, { id, entry })).status, 200);
+  };
+  try {
+    // The fixture named generation-b deliberately ignores SIGTERM.
+    await activate("generation-b", entries[0]!);
+    const response = await fetch(handle.base + "/stream");
+    const reader = response.body!.getReader();
+    await reader.read();
+    const aborted = assert.rejects(reader.read());
+    await activate("generation-middle", entries[1]!);
+    await activate("generation-new", entries[2]!);
+    assert.deepEqual(await protectedReleases(), [...names].sort());
+    await aborted;
+    // Traffic retirement is not process retirement; retain the closure while
+    // the supervisor is still waiting for graceful shutdown/escalation.
+    assert.ok((await protectedReleases()).includes(".src-old"));
+    await waitForWorkerRetirement(handle.socket, "generation-b");
+    assert.deepEqual(await protectedReleases(), [".src-middle", ".src-new"]);
+    assert.equal(await (await fetch(handle.base)).text(), "generation-new");
+  } finally {
+    await handle.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test("control socket refuses to bind in a directory others can reach", async () => {
   const directory = await mkdtemp(

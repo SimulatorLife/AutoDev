@@ -325,6 +325,42 @@ export function WorkspaceVisualPlaytestTargetManager({
 
   useEffect(() => setTargets(initialTargets), [initialTargets]);
 
+  async function submitVisualTargetMutation(options: {
+    readonly url: string;
+    readonly body: URLSearchParams;
+    readonly invalidMessage: string;
+    readonly unreachableMessage: string;
+    readonly onSuccess: (saved: {
+      readonly targets: readonly WorkspaceVisualPlaytestTargetApproval[];
+    }) => void;
+  }): Promise<void> {
+    try {
+      const response = await fetch(options.url, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/x-www-form-urlencoded"
+        },
+        body: options.body
+      });
+      const payload: unknown = await response.json().catch(() => null);
+      if (!response.ok) {
+        const current = targetsFromMutationResponse(payload, workspaceId);
+        if (current) setTargets(current.targets);
+        setFailure(responseMessage(payload));
+        return;
+      }
+      const saved = targetsFromMutationResponse(payload, workspaceId);
+      if (!saved) {
+        setFailure(options.invalidMessage);
+        return;
+      }
+      options.onSuccess(saved);
+    } catch {
+      setFailure(options.unreachableMessage);
+    }
+  }
+
   async function submitTarget(
     event: React.FormEvent<HTMLFormElement>
   ): Promise<void> {
@@ -343,40 +379,21 @@ export function WorkspaceVisualPlaytestTargetManager({
       if (typeof value === "string") body.append(key, value);
     }
     try {
-      const response = await fetch(
-        workspaceVisualPlaytestTargetsPath(workspaceId),
-        {
-          method: "POST",
-          headers: {
-            accept: "application/json",
-            "content-type": "application/x-www-form-urlencoded"
-          },
-          body
+      await submitVisualTargetMutation({
+        url: workspaceVisualPlaytestTargetsPath(workspaceId),
+        body,
+        invalidMessage:
+          "Runtime returned an incompatible visual target approval response.",
+        unreachableMessage:
+          "The same-origin visual target request could not reach Runtime.",
+        onSuccess: (saved) => {
+          setTargets(saved.targets);
+          setAnnouncement(
+            `Visual target ${targetId} approval was saved. Runtime still checks driver availability and target permissions before any play begins.`
+          );
+          setName("");
         }
-      );
-      const payload: unknown = await response.json().catch(() => null);
-      if (!response.ok) {
-        const current = targetsFromMutationResponse(payload, workspaceId);
-        if (current) setTargets(current.targets);
-        setFailure(responseMessage(payload));
-        return;
-      }
-      const saved = targetsFromMutationResponse(payload, workspaceId);
-      if (!saved) {
-        setFailure(
-          "Runtime returned an incompatible visual target approval response."
-        );
-        return;
-      }
-      setTargets(saved.targets);
-      setAnnouncement(
-        `Visual target ${targetId} approval was saved. Runtime still checks driver availability and target permissions before any play begins.`
-      );
-      setName("");
-    } catch {
-      setFailure(
-        "The same-origin visual target request could not reach Runtime."
-      );
+      });
     } finally {
       setPending(false);
     }
@@ -401,40 +418,21 @@ export function WorkspaceVisualPlaytestTargetManager({
       returnTo: workspacePath(workspaceId)
     });
     try {
-      const response = await fetch(
-        workspaceVisualPlaytestTargetRevocationPath(
+      await submitVisualTargetMutation({
+        url: workspaceVisualPlaytestTargetRevocationPath(
           workspaceId,
           target.targetId
         ),
-        {
-          method: "POST",
-          headers: {
-            accept: "application/json",
-            "content-type": "application/x-www-form-urlencoded"
-          },
-          body
+        body,
+        invalidMessage:
+          "Runtime returned an incompatible visual target revocation response.",
+        unreachableMessage:
+          "The same-origin visual target revocation could not reach Runtime.",
+        onSuccess: (saved) => {
+          setTargets(saved.targets);
+          setAnnouncement(`Visual target ${target.targetId} was revoked.`);
         }
-      );
-      const payload: unknown = await response.json().catch(() => null);
-      if (!response.ok) {
-        const current = targetsFromMutationResponse(payload, workspaceId);
-        if (current) setTargets(current.targets);
-        setFailure(responseMessage(payload));
-        return;
-      }
-      const saved = targetsFromMutationResponse(payload, workspaceId);
-      if (!saved) {
-        setFailure(
-          "Runtime returned an incompatible visual target revocation response."
-        );
-        return;
-      }
-      setTargets(saved.targets);
-      setAnnouncement(`Visual target ${target.targetId} was revoked.`);
-    } catch {
-      setFailure(
-        "The same-origin visual target revocation could not reach Runtime."
-      );
+      });
     } finally {
       setPendingTargetId(null);
     }

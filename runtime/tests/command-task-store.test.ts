@@ -13,6 +13,7 @@ import {
   mkdtempSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -290,7 +291,9 @@ test("the task store's records are private to their scope", async () => {
     const files = readdirSync(directory);
     assert.equal(files.length, 1);
     assert.ok(files[0]?.endsWith(".json"));
-    assert.ok(existsSync(path.join(directory, files[0]!)));
+    const recordFile = path.join(directory, files[0]!);
+    assert.ok(existsSync(recordFile));
+    assert.equal(statSync(recordFile).mode & 0o777, 0o600);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

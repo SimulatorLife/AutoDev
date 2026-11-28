@@ -461,6 +461,21 @@ export class RouterIngress {
     generation.sessions.add(key);
   }
 
+  /**
+  Resolve XACPX coordinator affinity through the same generation lifecycle
+  as HTTP sessions. XACPX has no coordinator-close RPC; its pins therefore
+  remain until generation failure or the bounded retirement deadline.
+  */
+  resolveXacpxGeneration(coordinatorSession: string | null): string | null {
+    return (
+      this.resolveTargetGeneration(
+        coordinatorSession
+          ? { key: `xacpx:${coordinatorSession}`, endsSession: false }
+          : null
+      )?.endpoint.id ?? null
+    );
+  }
+
   private resolveTargetGeneration(
     affinity: SessionAffinity | null
   ): Generation | null {
