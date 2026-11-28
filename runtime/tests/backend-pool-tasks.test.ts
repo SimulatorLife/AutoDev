@@ -7,6 +7,8 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import {
   CreateTaskResultSchema,
+  LATEST_PROTOCOL_VERSION,
+  SUPPORTED_PROTOCOL_VERSIONS,
   TaskSchema
 } from "@modelcontextprotocol/sdk/types.js";
 
@@ -18,7 +20,8 @@ const IDLE_MS = 80;
 
 async function fixture(
   conversationScoped = false,
-  observations?: GatewayCallObservations
+  observations?: GatewayCallObservations,
+  backendProtocol?: string
 ) {
   const temporary = mkdtempDisposableSync(
     path.join(tmpdir(), "autodev-pool-task-")
@@ -35,7 +38,12 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   const request = JSON.parse(line);
   const reply = (result) => send({ id: request.id, result });
   if (request.method === "initialize") {
-    reply({ protocolVersion: request.params.protocolVersion, capabilities: { tools: {}, tasks: {} },
+    if (request.params.protocolVersion !== ${JSON.stringify(LATEST_PROTOCOL_VERSION)}) {
+      send({ id: request.id, error: { code: -32602, message: "Pool must offer the latest SDK protocol" } });
+      return;
+    }
+    reply({ protocolVersion: ${JSON.stringify(backendProtocol ?? null)} ?? request.params.protocolVersion,
+      capabilities: { tools: {}, tasks: {} },
       serverInfo: { name: "task-fixture", version: "1" } });
   } else if (request.method === "tools/call") {
     if (request.params.arguments?.loseReply) return;
@@ -142,11 +150,12 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     };
     const open = async () => {
       const response = await request(null, "initialize", {
-        protocolVersion: "2025-03-26",
+        protocolVersion: LATEST_PROTOCOL_VERSION,
         capabilities: {}
       });
       assert.ok(response.session);
-      assert.ok(response.body.result);
+      assert.equal(response.body.result?.protocolVersion, LATEST_PROTOCOL_VERSION);
+      assert.deepEqual(response.body.result.capabilities.tasks, {});
       return response.session;
     };
     return {
@@ -177,6 +186,45 @@ async function waitForReap(
   }
   assert.fail("backend did not become idle after the task retention window");
 }
+
+test("protocol negotiation follows the pinned SDK on both MCP boundaries", async () => {
+  const f = await fixture();
+  try {
+    for (const requested of [...SUPPORTED_PROTOCOL_VERSIONS, "unsupported-fixture"]) {
+      const { body } = await f.request(null, "initialize", {
+        protocolVersion: requested,
+        capabilities: {}
+      });
+      assert.equal(
+        body.result?.protocolVersion,
+        SUPPORTED_PROTOCOL_VERSIONS.includes(requested)
+          ? requested
+          : LATEST_PROTOCOL_VERSION
+      );
+    }
+    assert.equal(f.pool.stats().fixture?.spawns, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+test("unsupported backend protocol fails initialization without publishing capabilities", async () => {
+  const f = await fixture(false, undefined, "unsupported-fixture");
+  try {
+    const { body } = await f.request(null, "initialize", {
+      protocolVersion: LATEST_PROTOCOL_VERSION,
+      capabilities: {}
+    });
+    assert.equal(body.result, undefined);
+    assert.equal(
+      body.error?.message,
+      "Backend negotiated an unsupported MCP protocol version"
+    );
+    assert.equal(f.pool.stats().fixture?.running, false);
+  } finally {
+    await f.close();
+  }
+});
 
 test(
   "native task handles retain their backend past idle and unrelated RPC timeout",

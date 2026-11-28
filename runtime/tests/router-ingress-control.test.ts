@@ -16,6 +16,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace";
 
+import { configuredControlApiListener } from "../src/router/control-plane-config.ts";
 import { startRouterIngressProcess } from "../src/router/ingress-main.ts";
 import {
   getFinishedSpans,
@@ -377,6 +378,41 @@ test("three overlapping releases stay protected until the oldest worker exits", 
     await handle.close();
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("an invalid Control API listener is refused before the ingress listens on anything", async () => {
+  const directory = await mkdtemp("/tmp/adic-");
+  try {
+    await chmod(directory, 0o700);
+    const controlSocket = path.join(directory, "control.sock");
+    await assert.rejects(
+      startRouterIngressProcess({
+        AUTODEV_ROUTER_INGRESS_CONTROL_SOCKET: controlSocket,
+        AUTODEV_ROUTER_INGRESS_CONTROL_TOKEN: TOKEN,
+        AUTODEV_ROUTER_RELEASES_DIRECTORY: directory,
+        AUTODEV_XACPX_ORCHESTRATION_SOCKET: "none",
+        CODEX_MODEL_ROUTER_PORT: "0",
+        AUTODEV_CONTROL_API_LISTEN_HOST: "127.0.0.1",
+        AUTODEV_CONTROL_API_LISTEN_PORT: "65536"
+      }),
+      /AUTODEV_CONTROL_API_LISTEN_PORT must be between 0 and 65535/u
+    );
+    // Nothing was left listening behind the refusal.
+    await assert.rejects(stat(controlSocket), { code: "ENOENT" });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("the Control API listener accepts port 0 for a port the system chooses", () => {
+  assert.deepEqual(
+    configuredControlApiListener(0, {
+      AUTODEV_CONTROL_API_LISTEN_HOST: "127.0.0.1",
+      AUTODEV_CONTROL_API_LISTEN_PORT: "0"
+    }),
+    { host: "127.0.0.1", port: 0 }
+  );
+  assert.equal(configuredControlApiListener(0, {}), null);
 });
 
 test("control socket refuses to bind in a directory others can reach", async () => {

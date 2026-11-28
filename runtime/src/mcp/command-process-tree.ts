@@ -1,19 +1,24 @@
 /**
-Track the command's descendants across process groups and terminate them
-when the command ends. A process group is a signal-delivery mechanism,
-not a lifetime boundary: pnpm starts ordinary non-interactive lifecycle
-scripts in their own groups. All descendants inherit the command's
-Seatbelt profile regardless of their group.
+Track command descendants across process groups without blocking the broker.
+A process group is not a lifetime boundary. All command descendants inherit
+the command's Seatbelt profile, regardless of their process group.
 */
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { setTimeout as delay } from "node:timers/promises";
+import { promisify } from "node:util";
 
+const listProcesses = promisify(execFile);
 const PROCESS_LIST = "/bin/ps";
+const SNAPSHOT_TIMEOUT_MS = 1000;
+const CLEANUP_BUDGET_MS = 5000;
 const FREEZE_ROUNDS = 8;
 const FREEZE_INTERVAL_MS = 25;
-const PROCESS_LINE = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.+?)\s*$/u;
+const PROCESS_LINE = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.+?)\s*$/u;
 
-interface ProcessRecord {
+export interface ProcessRecord {
   readonly parent: number;
+  readonly group: number;
+  readonly state: string;
   readonly started: string;
 }
 
@@ -24,42 +29,60 @@ interface CommandProcessNode {
 }
 
 /**
-Use one OS snapshot per observation. The start timestamp distinguishes
-a previously observed process from a later occupant of its PID.
+Reject malformed snapshots rather than treating an unreadable process as
+absent. Keep zombie records for ancestry; never signal a zombie.
 */
-function readProcesses(): Map<number, ProcessRecord> {
+export function parseCommandProcessSnapshot(
+  output: string,
+  brokerPid: number
+): Map<number, ProcessRecord> {
   const processes = new Map<number, ProcessRecord>();
-  const output = execFileSync(
-    PROCESS_LIST,
-    ["-A", "-o", "pid=", "-o", "ppid=", "-o", "stat=", "-o", "lstart="],
-    {
-      encoding: "utf8",
-      env: { ...process.env, LC_ALL: "C" },
-      timeout: 5000,
-      maxBuffer: 8 * 1024 * 1024
-    }
-  );
   for (const line of output.split("\n")) {
+    if (!line.trim()) continue;
     const match = PROCESS_LINE.exec(line);
-    if (!match) continue;
+    if (!match) throw new Error("Invalid host process snapshot.");
     const pid = Number(match[1]);
     const parent = Number(match[2]);
-    const state = match[3];
-    const started = match[4];
-    // A zombie has already exited and cannot execute or fork.
+    const group = Number(match[3]);
+    const state = match[4];
+    const started = match[5];
     if (
       !Number.isSafeInteger(pid) ||
       !Number.isSafeInteger(parent) ||
+      !Number.isSafeInteger(group) ||
       !state ||
-      state.startsWith("Z") ||
-      !started
+      !started ||
+      processes.has(pid)
     )
-      continue;
-    processes.set(pid, { parent, started });
+      throw new Error("Invalid host process snapshot.");
+    if (pid === 0) continue;
+    processes.set(pid, { parent, group, state, started });
   }
-  if (!processes.has(process.pid))
+  if (!processes.has(brokerPid))
     throw new Error("Host process snapshot is unavailable.");
   return processes;
+}
+
+async function readProcesses(): Promise<Map<number, ProcessRecord>> {
+  const { stdout } = await listProcesses(
+    PROCESS_LIST,
+    [
+      "-A",
+      "-o", "pid=",
+      "-o", "ppid=",
+      "-o", "pgid=",
+      "-o", "stat=",
+      "-o", "lstart="
+    ],
+    {
+      encoding: "utf8",
+      env: { ...process.env, LC_ALL: "C" },
+      timeout: SNAPSHOT_TIMEOUT_MS,
+      maxBuffer: 8 * 1024 * 1024,
+      killSignal: "SIGKILL"
+    }
+  );
+  return parseCommandProcessSnapshot(stdout, process.pid);
 }
 
 function signalProcess(pid: number, signal: NodeJS.Signals): void {
@@ -70,54 +93,50 @@ function signalProcess(pid: number, signal: NodeJS.Signals): void {
   }
 }
 
-function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, milliseconds);
-  });
+function isZombie(record: ProcessRecord): boolean {
+  return record.state.startsWith("Z");
 }
 
 /**
-A command-lifetime observation ledger. Keep live observed descendants even
-if they are reparented, and follow their children as well. Never treat an
-independent process group as evidence of an escape. A descendant that forks
-and is orphaned entirely between observations is not discoverable by ps;
-that residual remains confined by Seatbelt.
+Pure ownership ledger. Known descendants remain anchors across reparenting
+and group changes. An independently launched root group can recover a
+previously unseen member only while a matching known member still anchors
+that group. Never rediscover an empty group by its numeric ID alone.
 */
-export class CommandProcessTree {
-  private readonly rootPid: number | undefined;
-  private rootExited = false;
-  private rootStarted: string | undefined;
+export class CommandProcessLedger {
   private readonly tracked = new Map<number, CommandProcessNode>();
+  private rootStarted: string | undefined;
+  private rootGroup: number | undefined;
 
-  constructor(rootPid: number | undefined) {
-    this.rootPid = rootPid;
-  }
-
-  markRootExited(): void {
-    this.rootExited = true;
-    if (this.rootPid !== undefined) this.tracked.delete(this.rootPid);
-  }
-
-  observe(): CommandProcessNode[] {
-    const processes = readProcesses();
+  observe(
+    processes: ReadonlyMap<number, ProcessRecord>,
+    rootPid: number | undefined,
+    brokerPid: number,
+    rootExited: boolean
+  ): CommandProcessNode[] {
     for (const [pid, node] of this.tracked) {
       if (processes.get(pid)?.started !== node.started)
         this.tracked.delete(pid);
     }
-    if (!this.rootExited && this.rootPid !== undefined) {
-      const root = processes.get(this.rootPid);
+    if (rootExited && rootPid !== undefined) this.tracked.delete(rootPid);
+    if (!rootExited && rootPid !== undefined) {
+      const root = processes.get(rootPid);
       if (
-        root?.parent === process.pid &&
+        root?.parent === brokerPid &&
         (this.rootStarted === undefined || this.rootStarted === root.started)
       ) {
         this.rootStarted = root.started;
-        this.tracked.set(this.rootPid, {
-          pid: this.rootPid,
+        this.tracked.set(rootPid, {
+          pid: rootPid,
           started: root.started,
           depth: 0
         });
+        // Execa starts the command in an independent session/group. Only
+        // a directly observed root can establish that group's ownership.
+        if (root.group === rootPid) this.rootGroup = root.group;
       }
     }
+
     const children = new Map<number, number[]>();
     for (const [pid, record] of processes) {
       const siblings = children.get(record.parent);
@@ -125,38 +144,120 @@ export class CommandProcessTree {
       else children.set(record.parent, [pid]);
     }
     const frontier = [...this.tracked.values()];
-    for (let index = 0; index < frontier.length; index++) {
-      const parent = frontier[index];
-      if (!parent) continue;
-      for (const pid of children.get(parent.pid) ?? []) {
-        if (this.tracked.has(pid)) continue;
-        const record = processes.get(pid);
-        if (!record) continue;
-        const node = { pid, started: record.started, depth: parent.depth + 1 };
-        this.tracked.set(pid, node);
-        frontier.push(node);
+    const add = (pid: number, depth: number): void => {
+      if (
+        pid === brokerPid ||
+        (rootExited && pid === rootPid) ||
+        this.tracked.has(pid)
+      )
+        return;
+      const record = processes.get(pid);
+      if (!record) return;
+      const node = { pid, started: record.started, depth };
+      this.tracked.set(pid, node);
+      frontier.push(node);
+    };
+    const expandChildren = (start: number): void => {
+      for (let index = start; index < frontier.length; index++) {
+        const parent = frontier[index];
+        if (!parent) continue;
+        for (const pid of children.get(parent.pid) ?? [])
+          add(pid, parent.depth + 1);
+      }
+    };
+    expandChildren(0);
+    const rootGroup = this.rootGroup;
+    if (rootGroup !== undefined) {
+      const anchored = frontier.some(
+        (node) => processes.get(node.pid)?.group === rootGroup
+      );
+      if (anchored) {
+        const start = frontier.length;
+        for (const [pid, record] of processes) {
+          if (record.group === rootGroup) add(pid, 1);
+        }
+        expandChildren(start);
+      } else {
+        this.rootGroup = undefined;
       }
     }
-    return [...this.tracked.values()];
+    // Use zombies as ancestry anchors but never signal them. A root that
+    // the ChildProcess exit event has reaped is not a signal target.
+    return frontier.filter((node) => {
+      const record = processes.get(node.pid);
+      return record && !isZombie(record) && !(rootExited && node.pid === rootPid);
+    });
+  }
+}
+
+/**
+One in-flight OS snapshot per command, shared by periodic observation and
+cleanup. Snapshot-based tracking still cannot prove ownership of a child
+that changes group and is fully orphaned between observations.
+*/
+export class CommandProcessTree {
+  private readonly rootPid: number | undefined;
+  private readonly ledger = new CommandProcessLedger();
+  private rootExited = false;
+  private pending: Promise<CommandProcessNode[]> | undefined;
+
+  constructor(rootPid: number | undefined) {
+    this.rootPid = rootPid;
+  }
+
+  markRootExited(): void {
+    this.rootExited = true;
+  }
+
+  observe(): Promise<CommandProcessNode[]> {
+    if (!this.pending) {
+      // A snapshot already in flight at root exit may still contain its
+      // final descendants. Use its original observation phase for discovery
+      // but exclude the reaped root from the returned signal targets.
+      const rootExitedAtStart = this.rootExited;
+      this.pending = readProcesses()
+        .then((processes) =>
+          this.ledger
+            .observe(
+              processes,
+              this.rootPid,
+              process.pid,
+              rootExitedAtStart
+            )
+            .filter((node) => !(this.rootExited && node.pid === this.rootPid))
+        )
+        .finally(() => {
+          this.pending = undefined;
+        });
+    }
+    return this.pending;
   }
 
   /**
-  Freeze every observed live process before killing deepest first. Refresh
-  while frozen to find children forked immediately before the stop. Keep
-  the root last so no known live child loses its parent before termination.
+  Freeze observed live processes before killing deepest first. Reinspect
+  during cleanup, including descendants reparented after initial discovery.
+  Bound host-inspection latency; inability to establish exit fails closed.
   */
   async terminate(): Promise<void> {
+    if (this.rootPid === undefined) return;
+    const deadline = performance.now() + CLEANUP_BUDGET_MS;
+    const inspect = async (): Promise<CommandProcessNode[]> => {
+      if (performance.now() >= deadline)
+        throw new Error("Command process cleanup exceeded its observation budget.");
+      return this.observe();
+    };
     const frozen = new Map<number, string>();
     let failure: unknown;
     try {
       for (let round = 0; round < FREEZE_ROUNDS; round++) {
-        const fresh = this.observe().filter(
+        const fresh = (await inspect()).filter(
           (node) => frozen.get(node.pid) !== node.started
         );
         if (fresh.length === 0) break;
         for (const node of fresh.sort(
           (left, right) => left.depth - right.depth
         )) {
+          if (this.rootExited && node.pid === this.rootPid) continue;
           signalProcess(node.pid, "SIGSTOP");
           frozen.set(node.pid, node.started);
         }
@@ -165,15 +266,18 @@ export class CommandProcessTree {
     } catch (error) {
       failure = error;
     }
-    // Revalidate retained PIDs even if they have been reparented. Continue
-    // cleanup after an inspection or signaling failure, but report it.
-    for (let round = 0; round < FREEZE_ROUNDS; round++) {
+    for (
+      let round = 0;
+      round < FREEZE_ROUNDS && performance.now() < deadline;
+      round++
+    ) {
       try {
-        const live = this.observe().sort(
+        const live = (await inspect()).sort(
           (left, right) => right.depth - left.depth
         );
         if (live.length === 0) break;
         for (const node of live) {
+          if (this.rootExited && node.pid === this.rootPid) continue;
           try {
             signalProcess(node.pid, "SIGKILL");
           } catch (error) {
@@ -185,7 +289,7 @@ export class CommandProcessTree {
       }
       await delay(FREEZE_INTERVAL_MS);
     }
-    if (this.observe().length > 0)
+    if ((await inspect()).length > 0)
       throw new Error("Command descendants did not exit after termination.");
     if (failure) throw failure;
   }

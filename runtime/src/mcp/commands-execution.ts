@@ -672,20 +672,26 @@ export async function runApprovedCommand(
   let termination: "cancelled" | "timed_out" | null = null;
   let cleanupFailed = false;
   let recordingFailed = false;
+  let rootExited = false;
+  let observing = false;
   let cleanup: Promise<void> | undefined;
   let settlementTimer: ReturnType<typeof setTimeout> | undefined;
   const unsettled = Promise.withResolvers<undefined>();
+  const killUnsettledRoot = (): void => {
+    if (rootExited || child.pid === undefined) return;
+    try {
+      child.nodeChildProcess.kill("SIGKILL");
+    } catch {
+      // The caller retains its lease if cleanup remains uncertain.
+    }
+  };
   const terminate = (): Promise<void> => {
     cleanup ??= tree
       .terminate()
       .catch(() => {
         cleanupFailed = true;
         // A failed host process inspection must not leave the root running.
-        try {
-          child.kill("SIGKILL");
-        } catch {
-          // Cleanup is already uncertain; the caller retains its lease.
-        }
+        killUnsettledRoot();
       })
       .then(() => {
         settlementTimer = setTimeout(() => {
@@ -693,6 +699,7 @@ export async function runApprovedCommand(
           // Stop waiting on descriptors whose writers may have escaped
           // observation. Do not claim successful cleanup or release the lease.
           unsettled.resolve(undefined);
+          killUnsettledRoot();
           child.stdout?.destroy();
           child.stderr?.destroy();
         }, OUTPUT_SETTLEMENT_GRACE_MS);
@@ -700,22 +707,27 @@ export async function runApprovedCommand(
     return cleanup;
   };
   const requestTermination = (reason: "cancelled" | "timed_out"): void => {
-    if (termination !== null) return;
+    if (termination !== null || rootExited) return;
     termination = reason;
     void terminate();
   };
   const observe = (): void => {
-    if (cleanup) return;
-    try {
-      tree.observe();
-    } catch {
-      cleanupFailed = true;
-      void terminate();
-    }
+    if (cleanup || observing || child.pid === undefined) return;
+    observing = true;
+    void tree
+      .observe()
+      .catch(() => {
+        cleanupFailed = true;
+        void terminate();
+      })
+      .finally(() => {
+        observing = false;
+      });
   };
   // The exit event precedes stream settlement. Reap known descendants
   // immediately, including those holding the command's output pipes open.
   child.nodeChildProcess.once("exit", () => {
+    rootExited = true;
     tree.markRootExited();
     void terminate();
   });
@@ -748,6 +760,7 @@ export async function runApprovedCommand(
     // The exit listener, not promise settlement, proves root exit.
     await terminate();
     clearTimeout(settlementTimer);
+    if (child.pid !== undefined && !rootExited) cleanupFailed = true;
     if (cleanupFailed) onCleanupUncertain?.();
   }
   if (!result) {

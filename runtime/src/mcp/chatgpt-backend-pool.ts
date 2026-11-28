@@ -52,10 +52,12 @@ import {
   CreateTaskResultSchema,
   GetTaskPayloadResultSchema,
   type JSONRPCMessage,
+  LATEST_PROTOCOL_VERSION,
   ListTasksResultSchema,
   ProgressNotificationSchema,
   type ProgressToken,
   ProgressTokenSchema,
+  SUPPORTED_PROTOCOL_VERSIONS,
   type Task,
   TaskSchema,
   TaskStatusNotificationSchema
@@ -1314,7 +1316,7 @@ class PooledBackendController {
           backend,
           "initialize",
           {
-            protocolVersion: "2025-03-26",
+            protocolVersion: LATEST_PROTOCOL_VERSION,
             capabilities: {},
             clientInfo: {
               name: "autodev-chatgpt-backend-pool",
@@ -1333,9 +1335,14 @@ class PooledBackendController {
               : `Backend "${this.name}" failed initialize`
           );
         }
-        if (typeof initResp.result.protocolVersion === "string") {
-          backend.setProtocolVersion?.(initResp.result.protocolVersion);
+        const backendProtocol = initResp.result.protocolVersion;
+        if (
+          typeof backendProtocol !== "string" ||
+          !SUPPORTED_PROTOCOL_VERSIONS.includes(backendProtocol)
+        ) {
+          throw new Error("Backend negotiated an unsupported MCP protocol version");
         }
+        backend.setProtocolVersion?.(backendProtocol);
         const rawCaps = isRecord(initResp.result.capabilities)
           ? initResp.result.capabilities
           : {};
@@ -1557,8 +1564,13 @@ class PooledBackendController {
         typeof message.params.protocolVersion === "string"
           ? message.params.protocolVersion
           : undefined;
+      // Match the SDK server's negotiation contract. The pool terminates
+      // the client and backend handshakes separately; pinning either to an
+      // old revision prevents native Tasks negotiation.
       const negotiatedProtocol =
-        requestedProtocol === "2024-11-05" ? "2024-11-05" : "2025-03-26";
+        requestedProtocol && SUPPORTED_PROTOCOL_VERSIONS.includes(requestedProtocol)
+          ? requestedProtocol
+          : LATEST_PROTOCOL_VERSION;
       if (!this.cachedInitialize) {
         try {
           if (this.shareDiscovery) {

@@ -868,6 +868,51 @@ The source now checks exact byte length and regular-file status before
 reading candidate duplicates; it does not skip a same-sized protected file
 or relax the sandbox. Re-run to verify this independent hypothesis.
 
+### Asynchronous process observation and native tracking qualification
+
+**2026-11-27 follow-up (source implemented; installed acceptance pending).**
+The process observer now uses a single in-flight asynchronous OS snapshot
+instead of blocking the broker with synchronous `ps` calls. Each snapshot
+has a one-second timeout and cleanup has a five-second observation budget
+(plus at most one already-started snapshot and output settlement grace).
+Malformed snapshots fail closed. The ownership ledger preserves zombie
+ancestry without signaling zombies, tracks observed children across
+reparenting, and discovers previously unseen members of the independent
+root group only while a matching known member anchors that group. It never
+adopts a vanished group merely because its number reappears. The executor
+requires the direct-child exit event before releasing its lease and uses
+the direct ChildProcess handle for last-resort root termination rather than
+signaling a potentially reused process group.
+
+Native tracking was investigated against upstream Apple sources. XNU's
+[event.h](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/event.h)
+states that recursive NOTE_TRACK/NOTE_CHILD support was removed in macOS
+10.5 and that NOTE_FORK does not deliver the new child's PID. Thus kqueue
+fork notifications alone cannot supply lossless subtree ownership.
+[Endpoint Security](https://developer.apple.com/documentation/endpointsecurity)
+exposes fork events, but its descendant client requires the Endpoint
+Security entitlement. Do not require that entitlement or expand broker
+privileges for this migration. Apple's
+[libproc interface](https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/libproc/libproc.h)
+and [unique process identifiers](https://github.com/apple/darwin-xnu/blob/main/bsd/sys/proc_info.h)
+are candidates for a future reviewed native identity probe, not evidence
+of atomic identity-checked signaling or complete fork tracking. Qualify
+availability and deployment on the actual supported macOS SDK before
+introducing a native component. The ps-based observer still has same-second
+PID reuse and snapshot-to-signal races and can miss fully orphaned children
+without a surviving ownership anchor; Seatbelt confinement is unchanged.
+
+Four deterministic ledger regressions passed on a checksum-matched
+isolated Linux copy (malformed snapshots, zombie ancestry/reparenting,
+anchored group discovery, and identity/group reuse). Two isolated real
+process smoke tests also passed (normal completion with observed orphan
+cleanup and preservation of unrelated processes, and cancellation of the
+root and both process groups). This is not macOS Seatbelt or installed
+gateway acceptance. The installed Commands interface still refuses Git
+status because the workspace lease is held. The current real macOS and
+cross-provider regression suites must run after operator-qualified recovery
+and deployment.
+
 ### Bounded output settlement and task ownership
 
 **2026-11-27 follow-up (source implemented; live acceptance pending).**

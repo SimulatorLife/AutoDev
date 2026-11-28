@@ -32,7 +32,7 @@ export function configuredControlApiListener(
   // Port 0 asks the operating system for a free port, as the Router's own
   // port does; the bound address is read back from the server.
   const port = rawPort ? Number(rawPort) : 4101;
-  if (!Number.isInteger(port) || port < 0 || port > 65_535) {
+  if (!Number.isSafeInteger(port) || port < 0 || port > 65_535) {
     throw new Error(
       "AUTODEV_CONTROL_API_LISTEN_PORT must be between 0 and 65535."
     );

@@ -170,7 +170,7 @@ function workerHarnessSource(): string {
     "    return;",
     "  }",
     "  if (req.url === '/cool-provider') {",
-    "    cooldowns.cooldownProvider('claude', { failureClass: 'rate_limit', resetsAt: new Date(Date.now() + 600_000).toISOString(), structured: true });",
+    "    cooldowns.cooldownProvider('claude', { failureClass: 'quota_exhausted', resetsAt: new Date(Date.now() + 600_000).toISOString(), structured: true });",
     "    res.writeHead(200, { 'content-type': 'application/json' });",
     "    res.end(JSON.stringify({ worker: id, cooled: cooldowns.isCooling('claude') }));",
     "    return;",
@@ -280,7 +280,8 @@ test("concurrent generations share concurrency limits, cooldowns, state persiste
     assert.equal(slot1.denied, null);
     assert.equal(slot1.status.activeSubagentThreads, 1);
 
-    // Cool provider on A and verify persistence file was written once cleanly.
+    // A structured quota reset on A is a hard cooldown: every generation
+    // sees it and the shared owner persists it.
     await fetch(`${routerBase}/cool-provider`);
 
     // 2. Cut over to Generation B while A stays alive retiring.
